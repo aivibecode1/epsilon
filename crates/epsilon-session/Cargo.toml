@@ -7,6 +7,12 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
