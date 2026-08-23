@@ -376,6 +376,7 @@ dependencies = [
  "async-trait",
  "epsilon-contracts",
  "epsilon-llm",
+ "epsilon-session",
  "serde_json",
  "tempfile",
  "tokio",

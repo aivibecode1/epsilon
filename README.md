@@ -18,10 +18,12 @@ existing harness offers.
 
 ## Status
 
-**Kernel complete with real file/shell/search capabilities, gated by a ruleset engine.**
-Epsilon can now read, write, edit, grep, glob, list, and run shell commands inside its declared
-workspace — every call passing through last-match-wins permission rules with interactive-ask
-plumbing. Not yet shipped: compaction (M7), skills/extensions/MCP (M8), TUI/server (M9).
+**Real tools + ruleset-gated + long-session capable.**
+Epsilon reads, writes, edits, greps, globs, lists, and runs shell commands inside its declared
+workspace — every call passing through last-match-wins permission rules. Long sessions
+auto-compact past the token threshold (prune, clamp tail, amend summaries) and prompts are
+assembled in byte-stable cache-friendly tiers. Not yet shipped: skills/extensions/MCP (M8),
+TUI/server (M9), OS confinement (M10).
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -32,12 +34,12 @@ plumbing. Not yet shipped: compaction (M7), skills/extensions/MCP (M8), TUI/serv
 | M4 | `epsilon-session` — JSONL tree store, shadow views, leases, crash repair | ✅ shipped |
 | M5 | `epsilon-core` — full agent loop + runnable demo | ✅ shipped |
 | M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
-| M7 | Compaction engine + three-tier prompt builder | next |
-| M8 | Skills, extension host (process-isolated), MCP client | planned |
+| M7 | Compaction engine + three-tier byte-stable prompt builder | ✅ shipped |
+| M8 | Skills, extension host (process-isolated), MCP client | next |
 | M9 | TUI + HTTP/SSE server frontends | planned |
 | M10 | Hardening pass: sandbox backends, release packaging | planned |
 
-29 tests → **56 tests** · zero clippy warnings · every milestone committed with a dev log under
+63 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---
@@ -69,7 +71,7 @@ Prerequisites: Rust ≥ 1.85 (edition 2024), any of stable-msvc/stable-gnu/musl 
 ```sh
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # 29 tests, offline & free
+cargo test --workspace           # 60+ tests, offline & free
 cargo run -p epsilon-cli         # scripted 3-turn demo session
 ```
 
@@ -285,3 +287,6 @@ not review comments; behavior changes need an ADR note. Commit convention:
 *Built as a research-through-implementation project. The reference harnesses under
 `references/` remain the property of their respective authors; their lessons are cited, their
 code is not copied.*
+
+
+

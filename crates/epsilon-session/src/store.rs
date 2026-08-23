@@ -273,6 +273,37 @@ impl SessionStore {
         Ok(chain_rev)
     }
 
+    /// Remove the final entry (overflow-retry discard). Index-aware, O(1).
+    pub fn pop_last(&mut self) -> Result<Option<SessionEntry>, StoreError> {
+        if self.next_seq == 0 {
+            return Ok(None);
+        }
+        let last_seq = self.next_seq - 1;
+        let entry = self.read_entry(last_seq)?;
+        self.index.pop();
+        self.next_seq = last_seq;
+        self.leaf = match self.index.last() {
+            Some(_) => {
+                let prev = self.read_entry(last_seq - 1)?;
+                prev.map(|e| (e.id.clone(), e.seq))
+            }
+            None => None,
+        };
+        // Truncate the physical file to drop the popped line.
+        let good_end = self
+            .index
+            .last()
+            .map(|l| l.offset + l.len as u64)
+            .unwrap_or(0);
+        let mut f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.path)?;
+        f.set_len(good_end)?;
+        f.seek(SeekFrom::End(0))?;
+        self.file = f;
+        Ok(entry)
+    }
     /// Read every parsed entry (oldest first). Used by branch walks and validation tooling.
     pub fn read_all(&self) -> Result<Vec<SessionEntry>, StoreError> {
         let mut out = Vec::with_capacity(self.index.len());
