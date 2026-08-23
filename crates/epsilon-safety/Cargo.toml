@@ -21,6 +21,18 @@ tokio-util = { workspace = true }
 epsilon-llm = { path = "../epsilon-llm" }
 epsilon-tools = { path = "../epsilon-tools" }
 
-[lints]
-workspace = true
+[target.'cfg(windows)'.dependencies]
+winapi = { workspace = true }
+
+# AGENTS.md exception: the job-object FFI in sandbox::jobobject is this crate's ONLY
+# unsafe user; `unsafe_code` cannot stay "forbid" here because forbid is un-overridable.
+# Contained discipline: every unsafe block carries a SAFETY comment (lint below), and no
+# new unsafe may appear outside that module.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+undocumented_unsafe_blocks = "warn"
 

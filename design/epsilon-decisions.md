@@ -112,7 +112,8 @@ approval prompt).
 opencode gates only; (d) single-layer: DSH confinement only.
 
 **Why best.** CA section 5 implication 2: combine the two strongest layers rather than choosing.
-Evidence: pi ships no gate (HA-pi W1 - genuine interactive UX gap); Hermes' regexes are spoofable
+Evidence: 
+pi ships no gate at all (HA-pi W1 - genuine interactive UX gap); Hermes' regexes are spoofable
 (HA-Hermes W4); opencode proves gates can be usable (once/always, corrected feedback, parser-
 derived patterns); DSH proves confinement can fail closed across platforms with escalation
 instead of dead ends. Parser-based command analysis (tree-sitter bash+powershell grammars) feeds
@@ -125,6 +126,21 @@ for cross-platform honesty; matching its Windows ACL runner is post-v1).
 **Best possible?** Yes for v1 scope. Residual risk: tree-sitter parsing of arbitrary shell is
 imperfect (aliases, indirection); the second layer exists precisely because Layer 1 is not
 trustworthy alone.
+
+**Amendment (M10a, Layer 2 landed).** The `Sandbox` trait exists in epsilon-safety with three
+backends: `JobObjectSandbox` (Windows: per-call Job Object with per-process/job memory caps,
+active-process child cap, optional CPU-rate hard cap, KILL_ON_JOB_CLOSE; breakaway refused;
+grandchild survival tested live), `BwrapSandbox` (Unix: bubblewrap argv — fs/namespace isolation
+only; resource caps need cgroups and are explicitly out of v1), and `NullSandbox`
+(fail-closed placeholder). Policy rides each call (DSH rule); `Auto` picks the best platform
+backend and refuses to run when none exists; `--sandbox off` is an explicit, banner-logged,
+transcript-recorded opt-out. Confinement refusals reach the model as `[confinement]`-marked
+error results (DSH denial-signature analog) instead of failing the run. **The Windows ACL
+restricted-token runner remains deferred with this rationale**: it requires a service-account /
+elevation story that cannot be built honestly without a dedicated security review milestone;
+Job Objects already deliver the containment guarantees that matter for tool children (resource
+caps + kill-on-close + no breakaway). The unsafe FFI lives in exactly one module
+(`sandbox::jobobject`) under the AGENTS.md per-crate exception with documented-safety linting.
 
 ---
 

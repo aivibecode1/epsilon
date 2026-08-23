@@ -33,6 +33,7 @@ struct Args {
     workspace: Option<PathBuf>,
     mcp_servers: Vec<McpServerConfig>,
     port: u16,
+    confinement: epsilon_tools::Confinement,
 }
 
 enum Mode {
@@ -49,6 +50,7 @@ fn parse_args() -> Args {
     let mut workspace = None;
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
+    let mut confinement = epsilon_tools::Confinement::Auto;
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
@@ -94,6 +96,23 @@ fn parse_args() -> Args {
                     .unwrap_or_else(|| die("--workspace requires a directory"));
                 workspace = Some(PathBuf::from(dir));
             }
+            "--sandbox" => {
+                i += 1;
+                let mode = raw
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| die("--sandbox requires auto|off"));
+                confinement = match mode.as_str() {
+                    "auto" => epsilon_tools::Confinement::Auto,
+                    "off" => {
+                        eprintln!(
+                            "WARNING: OS confinement disabled (--sandbox off); commands run unconfined"
+                        );
+                        epsilon_tools::Confinement::Off
+                    }
+                    other => die(&format!("unknown --sandbox mode: {other} (want auto|off)")),
+                };
+            }
             "--port" => die("--port belongs to --serve"),
             a if a.starts_with("--mcp") => {
                 let spec = a
@@ -118,6 +137,7 @@ fn parse_args() -> Args {
         workspace,
         mcp_servers,
         port,
+        confinement,
     }
 }
 
@@ -192,10 +212,29 @@ async fn dispatch(args: Args) -> i32 {
 
     match args.mode {
         Mode::Demo => demo_mode().await,
-        Mode::Print(task) => print_mode(workspace, steps, task, &args.mcp_servers).await,
-        Mode::Tui(initial) => tui_mode(workspace, steps, initial, &args.mcp_servers).await,
+        Mode::Print(task) => {
+            print_mode(workspace, steps, task, &args.mcp_servers, &args.confinement).await
+        }
+        Mode::Tui(initial) => {
+            tui_mode(
+                workspace,
+                steps,
+                initial,
+                &args.mcp_servers,
+                &args.confinement,
+            )
+            .await
+        }
         Mode::Serve(initial) => {
-            serve_mode(workspace, steps, initial, args.port, &args.mcp_servers).await
+            serve_mode(
+                workspace,
+                steps,
+                initial,
+                args.port,
+                &args.mcp_servers,
+                &args.confinement,
+            )
+            .await
         }
     }
 }
@@ -218,8 +257,9 @@ async fn build_runtime(
     approvals: Arc<dyn ApprovalUi>,
     mcp_servers: &[McpServerConfig],
     session_file: &str,
+    confinement: &epsilon_tools::Confinement,
 ) -> Result<Arc<Agent>, String> {
-    let mut registry = epsilon_tools::builtin_registry();
+    let mut registry = epsilon_tools::builtin_registry(confinement);
     for cfg in mcp_servers {
         let attached = epsilon_mcp::attach_stdio_server(&mut registry, cfg).await?;
         eprintln!("mcp server '{}' attached ({attached} tools)", cfg.name);
@@ -256,6 +296,7 @@ async fn print_mode(
     steps: Vec<FauxStep>,
     task: String,
     mcp_servers: &[McpServerConfig],
+    confinement: &epsilon_tools::Confinement,
 ) -> i32 {
     // Print is unattended: asks auto-approve rather than dead-ending on a dialog.
     let agent = match build_runtime(
@@ -264,6 +305,7 @@ async fn print_mode(
         Arc::new(epsilon_safety::AutoApprove),
         mcp_servers,
         ".epsilon/sessions/cli.jsonl",
+        confinement,
     )
     .await
     {
@@ -300,6 +342,7 @@ async fn tui_mode(
     steps: Vec<FauxStep>,
     initial_task: Option<String>,
     mcp_servers: &[McpServerConfig],
+    confinement: &epsilon_tools::Confinement,
 ) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
     // Composition happens here; the TUI crate stays a pure frontend.
@@ -309,6 +352,7 @@ async fn tui_mode(
         Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers,
         ".epsilon/sessions/tui.jsonl",
+        confinement,
     )
     .await;
     match agent {
@@ -334,6 +378,7 @@ async fn serve_mode(
     initial_task: Option<String>,
     port: u16,
     mcp_servers: &[McpServerConfig],
+    confinement: &epsilon_tools::Confinement,
 ) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
     let agent = match build_runtime(
@@ -342,6 +387,7 @@ async fn serve_mode(
         Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers,
         ".epsilon/sessions/serve.jsonl",
+        confinement,
     )
     .await
     {

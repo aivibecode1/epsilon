@@ -46,7 +46,9 @@ fn run_agent(
     workspace: &std::path::Path,
 ) -> arctest::Spawned {
     let provider = SlowProvider::new(FauxProvider::new(steps), 50);
-    let registry = Arc::new(epsilon_tools::builtin_registry());
+    let registry = Arc::new(epsilon_tools::builtin_registry(
+        &epsilon_tools::Confinement::Auto,
+    ));
     let agent = epsilon_core::Agent::new(
         LoopLimits {
             max_turns: 8,

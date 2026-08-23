@@ -8,9 +8,18 @@
 mod channel_ui;
 mod engine;
 mod gate;
+pub mod sandbox;
 mod wildcards;
 
 pub use channel_ui::{ChannelApprovalUi, PendingAsk};
 pub use engine::{Action, PermissionEngine, Rule, Ruleset};
 pub use gate::{ApprovalUi, AutoApprove, RulesetGate};
+#[cfg(unix)]
+pub use sandbox::BwrapSandbox;
+#[cfg(windows)]
+pub use sandbox::JobObjectSandbox;
+pub use sandbox::{
+    ConfinedCommand, ConfinedOutcome, ConfinementPolicy, NullSandbox, Sandbox, SandboxError,
+    best_available,
+};
 pub use wildcards::glob_match;

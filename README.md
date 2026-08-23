@@ -20,12 +20,14 @@ existing harness offers.
 
 **Real tools, ruleset-gated, long-session capable, extensible, and fronted.** Epsilon reads,
 writes, edits, greps, globs, lists, and runs shell commands inside its declared workspace — every
-call passing through last-match-wins permission rules. Long sessions auto-compact past the token
-threshold (prune, clamp tail, amend summaries) with byte-stable prompt tiers. Skills load from
-`SKILL.md` directories; third-party extensions run as isolated processes; MCP servers attach over
-the official rmcp SDK's stdio transport. Three frontends share one runtime: an interactive ratatui
-TUI (`--tui`, live events + approval dialogs), print mode (`-p`, headless), and serve mode
-(`--serve`, HTTP/SSE for remote clients). Not yet shipped: OS confinement + release packaging (M10).
+call passing through last-match-wins permission rules AND OS confinement (Windows Job Objects
+with memory/process/CPU caps and kill-on-close; Unix bubblewrap; fail-closed when unavailable).
+Long sessions auto-compact past the token threshold (prune, clamp tail, amend summaries) with
+byte-stable prompt tiers. Skills load from `SKILL.md` directories; third-party extensions run as
+isolated processes; MCP servers attach over the official rmcp SDK's stdio transport. Three
+frontends share one runtime: an interactive ratatui TUI (`--tui`, live events + approval dialogs),
+print mode (`-p`, headless), and serve mode (`--serve`, HTTP/SSE for remote clients). Not yet
+shipped: release packaging (M10b).
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -41,9 +43,11 @@ TUI (`--tui`, live events + approval dialogs), print mode (`-p`, headless), and 
 | M9 | TUI + HTTP/SSE frontends + rmcp stdio transport | ✅ shipped |
 | M9a | Extension event forwarding (closes known-gap #1) + print mode -p | ✅ shipped |
 | M9b | ratatui TUI (`--tui`), serve mode SSE (`--serve`), rmcp stdio transport | ✅ shipped |
-| M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | planned |
+| M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | in progress |
+| M10a | Sandbox seam (Job Objects / bwrap, fail-closed) + permission-event correlation fix | ✅ shipped |
+| M10b | Release packaging: binary size, changelog + tag | next |
 
-98 tests · zero clippy warnings · every milestone committed with a dev log under
+104 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---

@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-core = { path = "../epsilon-core" }
+epsilon-safety = { path = "../epsilon-safety" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }

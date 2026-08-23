@@ -720,6 +720,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "winapi",
 ]
 
 [[package]]
@@ -757,6 +758,7 @@ dependencies = [
  "async-trait",
  "epsilon-contracts",
  "epsilon-core",
+ "epsilon-safety",
  "regex",
  "schemars 1.2.2",
  "serde",

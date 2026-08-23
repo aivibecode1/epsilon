@@ -314,7 +314,9 @@ mod tests {
         let gate = Arc::new(RulesetGate::new(
             Arc::clone(&approvals_src) as Arc<dyn epsilon_safety::ApprovalUi>
         ));
-        let registry = Arc::new(epsilon_tools::builtin_registry());
+        let registry = Arc::new(epsilon_tools::builtin_registry(
+            &epsilon_tools::Confinement::Auto,
+        ));
         let agent = Agent::new(
             epsilon_core::LoopLimits::default(),
             Arc::new(PanicGuard(FauxProvider::new(steps))),

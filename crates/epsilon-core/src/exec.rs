@@ -196,7 +196,10 @@ pub(super) async fn execute_batch(
         // ---- capability gate ------------------------------------------------------------
         // Every registered call passes the gate; policies decide silently or interactively.
         // The subject is the most identifying argument (path / command head) so rules like
-        // `read *.env -> ask` can match precisely.
+        // `read *.env -> ask` can match precisely. For interactive asks BOTH events are
+        // emitted with the same id so frontends can correlate them (M10 fix for M6-era
+        // empty request_ids); the pair lands after resolution because the gate owns the
+        // ask timing (the approval channel notifies interactive frontends live).
         let auth = {
             let (capability, pattern) = gate_subject(name, args, &agent.workspace_root);
             let req = PermissionRequest {
@@ -205,10 +208,13 @@ pub(super) async fn execute_batch(
                 pattern,
                 detail: args.clone(),
             };
-            let a = gate.authorize(req).await;
+            let a = gate.authorize(req.clone()).await;
             if a.asked {
+                agent.emit(AgentEvent::PermissionRequested {
+                    request: req.clone(),
+                });
                 agent.emit(AgentEvent::PermissionDecided {
-                    request_id: String::new(),
+                    request_id: req.request_id.clone(),
                     decision: a.decision.clone(),
                 });
             }
@@ -262,11 +268,11 @@ pub(super) async fn execute_batch(
             agent.emit(AgentEvent::PermissionRequested {
                 request: req.clone(),
             });
-            let verdict = gate.authorize(req).await;
+            let verdict = gate.authorize(req.clone()).await;
             match verdict.decision {
                 d if d.is_denial() => {
                     agent.emit(AgentEvent::PermissionDecided {
-                        request_id: String::new(),
+                        request_id: req.request_id.clone(),
                         decision: d.clone(),
                     });
                     let guidance = d.guidance().map(|g| g.to_string()).unwrap_or_else(|| {
@@ -288,7 +294,7 @@ pub(super) async fn execute_batch(
                 }
                 decision => {
                     agent.emit(AgentEvent::PermissionDecided {
-                        request_id: String::new(),
+                        request_id: req.request_id.clone(),
                         decision,
                     });
                     // Allowed -> reset this call's streak.
