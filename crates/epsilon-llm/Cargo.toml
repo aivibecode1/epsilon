@@ -7,6 +7,22 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+
+genai = { workspace = true, optional = true }
+
+[features]
+# Real network providers (Anthropic/OpenAI/...). Off by default: the faux provider keeps
+# tests offline, deterministic, and free.
+real = ["dep:genai"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true
