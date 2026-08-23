@@ -59,6 +59,12 @@ resume-without-reinventing-the-loop.
 **Decision.** `epsilon-llm` defines a `StreamFn` trait with pi's never-throws failure contract; the
 default implementation adapts `genai 0.6.x`; genai types never leak past this crate.
 
+**Amendment (M10b).** The model identifier is agent configuration, not a loop constant:
+`Agent::set_model_id` feeds the main stream call, the compaction summarizer, and the VOLATILE
+prompt tier (previously hardcoded "faux-1" in all three). genai routes by model name and resolves
+auth per family from env, so a real run is `--provider real --model <id>` with no other wiring.
+The faux default keeps every prompt-hash test byte-stable.
+
 **Alternatives.** (a) Hand-write every provider adapter like pi (~40 adapters); (b) use
 async-openai only; (c) adopt opencode's ai-sdk-equivalent breadth via many provider crates;
 (d) no abstraction, call HTTP directly everywhere.

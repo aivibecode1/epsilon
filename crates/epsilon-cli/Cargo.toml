@@ -10,6 +10,10 @@ authors.workspace = true
 name = "epsilon"
 path = "src/main.rs"
 
+[features]
+# Real network providers via genai (ADR-003). Off by default; keys come from env only.
+real = ["epsilon-llm/real"]
+
 [dependencies]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-llm = { path = "../epsilon-llm" }

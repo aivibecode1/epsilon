@@ -25,7 +25,8 @@ use epsilon_mcp::McpServerConfig;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
 
 const USAGE: &str = "usage: epsilon [-p \"task\"] [--tui [task]] [--serve [--port N] [task]] \
-[--script f] [--mcp name=cmd[:arg,arg]] [--workspace dir]";
+[--script f] [--mcp name=cmd[:arg,arg]] [--workspace dir] [--sandbox auto|off] \
+[--provider faux|real] [--model id]";
 
 struct Args {
     mode: Mode,
@@ -34,6 +35,15 @@ struct Args {
     mcp_servers: Vec<McpServerConfig>,
     port: u16,
     confinement: epsilon_tools::Confinement,
+    provider: Provider,
+    model_id: String,
+}
+
+/// Model source: the offline faux provider (default) or a real genai-backed provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Provider {
+    Faux,
+    Real,
 }
 
 enum Mode {
@@ -51,6 +61,8 @@ fn parse_args() -> Args {
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
+    let mut provider = Provider::Faux;
+    let mut model_id = "faux-1".to_string();
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
@@ -113,6 +125,24 @@ fn parse_args() -> Args {
                     other => die(&format!("unknown --sandbox mode: {other} (want auto|off)")),
                 };
             }
+            "--provider" => {
+                i += 1;
+                match raw.get(i).map(String::as_str) {
+                    Some("faux") => provider = Provider::Faux,
+                    Some("real") => provider = Provider::Real,
+                    other => die(&format!(
+                        "unknown --provider: {:?} (want faux|real; real needs --features real + API keys in env)",
+                        other
+                    )),
+                }
+            }
+            "--model" => {
+                i += 1;
+                model_id = raw
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| die("--model requires a model id (e.g. claude-sonnet-4-5)"));
+            }
             "--port" => die("--port belongs to --serve"),
             a if a.starts_with("--mcp") => {
                 let spec = a
@@ -138,6 +168,8 @@ fn parse_args() -> Args {
         mcp_servers,
         port,
         confinement,
+        provider,
+        model_id,
     }
 }
 
@@ -210,29 +242,53 @@ async fn dispatch(args: Args) -> i32 {
         None => default_steps(),
     };
 
+    // Provider selection (M10): faux by default; real routes through genai, which
+    // resolves auth per model family from standard env vars (never stored).
+    let stream_fn: Arc<dyn epsilon_llm::StreamFn> = match args.provider {
+        Provider::Faux => Arc::new(PanicGuard(FauxProvider::new(steps))),
+        #[cfg(feature = "real")]
+        Provider::Real => {
+            eprintln!("provider: real · model: {} (keys from env)", args.model_id);
+            Arc::new(PanicGuard(epsilon_llm::GenaiAdapter::new()))
+        }
+        #[cfg(not(feature = "real"))]
+        Provider::Real => die("this binary was built without --features real; \
+             rebuild with `cargo build --features real -p epsilon-cli`"),
+    };
+
     match args.mode {
         Mode::Demo => demo_mode().await,
         Mode::Print(task) => {
-            print_mode(workspace, steps, task, &args.mcp_servers, &args.confinement).await
+            print_mode(
+                workspace,
+                stream_fn,
+                task,
+                &args.mcp_servers,
+                &args.confinement,
+                &args.model_id,
+            )
+            .await
         }
         Mode::Tui(initial) => {
             tui_mode(
                 workspace,
-                steps,
+                stream_fn,
                 initial,
                 &args.mcp_servers,
                 &args.confinement,
+                &args.model_id,
             )
             .await
         }
         Mode::Serve(initial) => {
             serve_mode(
                 workspace,
-                steps,
+                stream_fn,
                 initial,
                 args.port,
                 &args.mcp_servers,
                 &args.confinement,
+                &args.model_id,
             )
             .await
         }
@@ -253,11 +309,12 @@ fn default_steps() -> Vec<FauxStep> {
 /// Shared composition: real tools + ruleset gate over the given approval UI.
 async fn build_runtime(
     workspace: PathBuf,
-    steps: Vec<FauxStep>,
+    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     approvals: Arc<dyn ApprovalUi>,
     mcp_servers: &[McpServerConfig],
     session_file: &str,
     confinement: &epsilon_tools::Confinement,
+    model_id: &str,
 ) -> Result<Arc<Agent>, String> {
     let mut registry = epsilon_tools::builtin_registry(confinement);
     for cfg in mcp_servers {
@@ -268,13 +325,14 @@ async fn build_runtime(
     let gate = Arc::new(RulesetGate::new(approvals));
     let agent = Agent::new(
         LoopLimits::default(),
-        Arc::new(PanicGuard(FauxProvider::new(steps))),
+        stream_fn,
         Arc::new(registry),
         gate,
         workspace.clone(),
     );
     let store = epsilon_session::SessionStore::open(workspace.join(session_file))
         .map_err(|e| format!("open session store: {e}"))?;
+    agent.set_model_id(model_id);
     agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
     Ok(agent)
 }
@@ -293,19 +351,21 @@ fn user_message(text: String) -> Message {
 /// Headless single-prompt run; prints only the FINAL assistant text (pi behavior).
 async fn print_mode(
     workspace: PathBuf,
-    steps: Vec<FauxStep>,
+    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     task: String,
     mcp_servers: &[McpServerConfig],
     confinement: &epsilon_tools::Confinement,
+    model_id: &str,
 ) -> i32 {
     // Print is unattended: asks auto-approve rather than dead-ending on a dialog.
     let agent = match build_runtime(
         workspace,
-        steps,
+        stream_fn,
         Arc::new(epsilon_safety::AutoApprove),
         mcp_servers,
         ".epsilon/sessions/cli.jsonl",
         confinement,
+        model_id,
     )
     .await
     {
@@ -339,20 +399,22 @@ async fn print_mode(
 /// Interactive ratatui frontend (M9b).
 async fn tui_mode(
     workspace: PathBuf,
-    steps: Vec<FauxStep>,
+    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     initial_task: Option<String>,
     mcp_servers: &[McpServerConfig],
     confinement: &epsilon_tools::Confinement,
+    model_id: &str,
 ) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
     // Composition happens here; the TUI crate stays a pure frontend.
     let agent = build_runtime(
         workspace,
-        steps,
+        stream_fn,
         Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers,
         ".epsilon/sessions/tui.jsonl",
         confinement,
+        model_id,
     )
     .await;
     match agent {
@@ -374,20 +436,22 @@ async fn tui_mode(
 /// HTTP/SSE server exposing the runtime to remote frontends (M9b).
 async fn serve_mode(
     workspace: PathBuf,
-    steps: Vec<FauxStep>,
+    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     initial_task: Option<String>,
     port: u16,
     mcp_servers: &[McpServerConfig],
     confinement: &epsilon_tools::Confinement,
+    model_id: &str,
 ) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
     let agent = match build_runtime(
         workspace,
-        steps,
+        stream_fn,
         Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers,
         ".epsilon/sessions/serve.jsonl",
         confinement,
+        model_id,
     )
     .await
     {

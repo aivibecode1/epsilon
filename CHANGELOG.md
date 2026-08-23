@@ -1,0 +1,70 @@
+# Changelog
+
+All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
+
+## [0.1.0] - 2026-08-23
+
+The first complete harness: pi's proven loop and session format, DSH-grade two-layer
+safety, Hermes-grade prompt discipline, opencode-grade manners — one static binary,
+three frontends, offline-testable end to end.
+
+### M0–M2 · Foundation
+- Docs baseline, reference audit (pi / DSH / Hermes / opencode), 17 ADRs.
+- 11-crate workspace with compile-enforced dependency direction; quality gates green
+  from commit one (`fmt`, zero-warning `clippy`, offline tests).
+- `epsilon-contracts`: pi's type vocabulary ported — messages, stream events, agent
+  events, tool descriptors, sticky turn-end reasons; types only, zero logic.
+
+### M3 · Provider layer
+- Never-fail `StreamFn` contract: provider failures arrive in-band as
+  `Done{stop_reason: Error}`; a `PanicGuard` converts even panics.
+- Scripted faux provider (offline, deterministic, free) + genai 0.6 adapter for real
+  providers behind the `real` feature; retry policy keyed by error kind.
+
+### M4 · Sessions
+- Append-only JSONL tree store with shadowed model view, cross-process turn leases
+  (30s steal), crash repair (synthetic tool results, typed `TurnEnd{Aborted}` markers).
+
+### M5 · The loop
+- pi's two-level loop verbatim: steering inner / follow-up outer, explicit queue modes.
+- Named improvements: semaphore-bounded parallel tool pool with model-order commits;
+  fail-all-tool-calls on truncation; doom-loop brake at 3 identical calls.
+
+### M6 · Real tools + permissions
+- read/write/edit/bash/grep/glob/ls against the declared workspace; path-escape
+  downgrades to an `external_dir` capability that asks before running.
+- Last-match-wins wildcard rulesets (defaults ← global ← project) with ask/deny/allow,
+  once/session memory, deny-with-guidance fed back to the model.
+
+### M7 · Compaction + prompts
+- Auto-compaction past the token threshold: prune old tool outputs → clamp tail →
+  isolated summarizer call → amend prior summaries → overflow retry once per run.
+- Three-tier byte-stable prompt assembly (STABLE/CONTEXT/VOLATILE), hash-tested.
+
+### M8 · Skills, extensions, MCP bridge
+- Agent-Skills-spec catalog in CONTEXT tier, bodies loaded on demand.
+- Process-isolated extension host over NDJSON-RPC with timeouts, crash budget, and
+  manifest-filtered event forwarding.
+- MCP tools bridged into the normal registry under `mcp__<server>__<tool>`.
+
+### M9 · Frontends
+- **M9a**: extension event forwarding (closes known-gap #1); print mode `-p`.
+- **M9b**: ratatui TUI (`--tui`) — live streaming transcript, approval dialogs, steering
+  from the input box; serve mode (`--serve`) — axum HTTP/SSE with prompt/steer/approve
+  REST; rmcp stdio transport verified against a real spawned MCP server binary.
+
+### M10 · Hardening & release
+- **M10a**: OS confinement seam (ADR-005 Layer 2): Windows Job Objects with
+  memory/active-process/CPU-rate caps, kill-on-close, breakaway refused; Unix bubblewrap
+  backend; fail-closed policy selection (`Auto|Off|Custom`, `--sandbox` flag);
+  `[confinement]` denial signatures distinguish blocks from failures. Permission events
+  now carry correlatable request ids. Windows ACL restricted-token runner deferred with
+  rationale (ADR-005 amendment).
+- **M10b** (this release): real-provider wiring via `--provider real --model <id>`
+  (genai auth from env), configurable model id plumbed through prompt tiers and
+  compaction summarizer, release profile tuned, binary 8.8 MB (<15 MB criterion),
+  changelog + `v0.1.0` tag.
+
+### Verification posture
+104 offline tests, zero clippy warnings, byte-stable prompts hash-tested, full-loop
+scenarios run against scripted providers — CI never touches paid APIs.

@@ -214,6 +214,9 @@ pub struct Agent {
     /// Dedicated auxiliary stream for summarization (isolated from the main loop's
     /// provider/script; pi isolates aux calls for cache reasons, we ALSO isolate scripts).
     summarizer: Mutex<Option<Arc<dyn epsilon_llm::StreamFn>>>,
+    /// Model identifier sent to the provider and rendered in the VOLATILE prompt tier
+    /// ("faux-1" until overridden — real providers route on this).
+    model_id: Mutex<String>,
 }
 
 impl Agent {
@@ -244,7 +247,16 @@ impl Agent {
             overflow_retried: AtomicBool::new(false),
             summarizer: Mutex::new(None),
             skills: Vec::new(),
+            model_id: Mutex::new("faux-1".into()),
         })
+    }
+
+    /// Override the model identifier (M10): genai routes by model name and resolves auth
+    /// per family from standard env vars; the id also renders into the VOLATILE tier.
+    pub fn set_model_id(&self, model_id: impl Into<String>) {
+        if let Ok(mut slot) = self.model_id.lock() {
+            *slot = model_id.into();
+        }
     }
 
     /// Provide a dedicated auxiliary provider for summarization calls.
@@ -571,7 +583,12 @@ impl Agent {
 
         // Isolated summarization call (fresh request; no tools).
         let sctx = compact::summary_context(middle, prior.as_deref());
-        let model = epsilon_llm::ModelRef::new("faux-1");
+        let model_id = self
+            .model_id
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|_| "faux-1".into());
+        let model = epsilon_llm::ModelRef::new(model_id);
         let mut stream = self.summarizer_stream().stream(&model, sctx).await;
         let answer = loop {
             match stream.next().await {
@@ -653,6 +670,11 @@ impl Agent {
                 snippet: d.description.lines().next().unwrap_or("").to_string(),
             })
             .collect();
+        let model_id = self
+            .model_id
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|_| "faux-1".into());
         let system_prompt = prompt::build(
             &prompt::Stable { tools: &tool_lines },
             &prompt::ContextTier {
@@ -661,7 +683,7 @@ impl Agent {
             },
             &prompt::Volatile {
                 cwd: &self.workspace_root,
-                model_id: "faux-1",
+                model_id: &model_id,
                 today: today_string(),
             },
         );
@@ -672,7 +694,7 @@ impl Agent {
             tools: self.tools.descriptors(),
         };
 
-        let model = epsilon_llm::ModelRef::new("faux-1");
+        let model = epsilon_llm::ModelRef::new(model_id);
         let mut stream = self.stream_fn.stream(&model, ctx).await;
         let mut folder = StreamFolder::default();
 

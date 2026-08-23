@@ -26,8 +26,9 @@ Long sessions auto-compact past the token threshold (prune, clamp tail, amend su
 byte-stable prompt tiers. Skills load from `SKILL.md` directories; third-party extensions run as
 isolated processes; MCP servers attach over the official rmcp SDK's stdio transport. Three
 frontends share one runtime: an interactive ratatui TUI (`--tui`, live events + approval dialogs),
-print mode (`-p`, headless), and serve mode (`--serve`, HTTP/SSE for remote clients). Not yet
-shipped: release packaging (M10b).
+print mode (`-p`, headless), and serve mode (`--serve`, HTTP/SSE for remote clients). Real
+providers plug in behind `--features real` + `--provider real`. All ten planned milestones
+shipped; deferred items carry written rationale in the ADRs and milestone ledgers.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -43,9 +44,9 @@ shipped: release packaging (M10b).
 | M9 | TUI + HTTP/SSE frontends + rmcp stdio transport | ✅ shipped |
 | M9a | Extension event forwarding (closes known-gap #1) + print mode -p | ✅ shipped |
 | M9b | ratatui TUI (`--tui`), serve mode SSE (`--serve`), rmcp stdio transport | ✅ shipped |
-| M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | in progress |
-| M10a | Sandbox seam (Job Objects / bwrap, fail-closed) + permission-event correlation fix | ✅ shipped |
-| M10b | Release packaging: binary size, changelog + tag | next |
+| M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | ✅ shipped |
+| M10a | Sandbox seam (Job Objects / bwrap, fail-closed) + permission-event correlation fix; **ACL runner deferred with rationale** (ADR-005) | ✅ shipped |
+| M10b | Release packaging: real providers, model plumbing, 8.8 MB binary, changelog + tag `v0.1.0` | ✅ shipped |
 
 104 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
@@ -113,8 +114,9 @@ its own loop, and it means CI never touches paid APIs.
 ### Real providers (optional)
 
 ```sh
-cargo build -p epsilon-llm --features real   # pulls genai 0.6.5
+cargo build --release -p epsilon-cli --features real   # pulls genai 0.6.5
 $env:ANTHROPIC_API_KEY="..."                 # or OPENAI_API_KEY; read from env only, never stored
+target\release\epsilon.exe --provider real --model claude-sonnet-4-5 -p "summarize this repo"
 ```
 
 ---
@@ -241,11 +243,12 @@ Pick your path:
 
 **You are a developer joining the project**
 1. This README.
-2. [`docs/qa/`](docs/qa) — short narrative notes (why Rust, the lego methodology, what
+2. [`CHANGELOG.md`](CHANGELOG.md) — what shipped when, milestone by milestone.
+3. [`docs/qa/`](docs/qa) — short narrative notes (why Rust, the lego methodology, what
    exists after each phase, the finished-product vision, documentation conventions).
-3. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) §2–§7 — components and
+4. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) §2–§7 — components and
    data flow.
-4. [`docs/milestones/`](docs/milestones) — dev logs in order; each records what was built,
+5. [`docs/milestones/`](docs/milestones) — dev logs in order; each records what was built,
    which bugs the tests caught, and why decisions were made.
 
 **You are researching agent-harness design**
