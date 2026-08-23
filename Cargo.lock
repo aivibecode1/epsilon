@@ -347,6 +347,13 @@ dependencies = [
 [[package]]
 name = "epsilon-cli"
 version = "0.1.0"
+dependencies = [
+ "epsilon-contracts",
+ "epsilon-core",
+ "epsilon-llm",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "epsilon-contracts"
@@ -362,6 +369,15 @@ dependencies = [
 [[package]]
 name = "epsilon-core"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "epsilon-contracts",
+ "epsilon-llm",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "epsilon-ext"

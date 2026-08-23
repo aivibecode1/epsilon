@@ -6,7 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "epsilon"
+path = "src/main.rs"
+
 [dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+epsilon-llm = { path = "../epsilon-llm" }
+epsilon-core = { path = "../epsilon-core" }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

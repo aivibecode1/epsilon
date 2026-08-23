@@ -108,6 +108,11 @@ impl FauxProvider {
     pub fn recorded_requests(&self) -> Vec<LlmContext> {
         self.recorded.lock().map(|r| r.clone()).unwrap_or_default()
     }
+
+    /// Live handle to the request log — lets tests assert after a run completes.
+    pub fn recorded_requests_handle(&self) -> Arc<Mutex<Vec<LlmContext>>> {
+        Arc::clone(&self.recorded)
+    }
 }
 
 #[async_trait]
