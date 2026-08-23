@@ -36,8 +36,8 @@ the registry. Not yet shipped: TUI/server frontends (M9), OS confinement + rmcp 
 | M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
 | M7 | Compaction engine + three-tier byte-stable prompt builder | ✅ shipped |
 | M8 | Skills, extension host (process-isolated), MCP bridge | ✅ shipped |
-| M9 | TUI + HTTP/SSE server frontends + rmcp stdio transport for MCP | next |
-| M10 | Hardening pass: sandbox backends, release packaging | planned |
+| M9 | TUI + HTTP/SSE server frontends + rmcp stdio transport for MCP + **extension event forwarding** (closes known-gap #1, M8 ledger) | next |
+| M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | planned |
 
 83 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
@@ -262,8 +262,8 @@ Pick your path:
 | M6 | Model can read/edit real files and run gated bash on this repo; permission rulesets evaluated last-match-wins with ask/deny/allow; every gate path tested |
 | M7 | Long sessions auto-compact past 80% context; prompts byte-stable across identical inputs (hash-tested); summaries amend prior ones |
 | M8 | A SKILL.md dropped into a directory appears in catalog and loads on demand; an extension process can register a tool; MCP server tools callable |
-| M9 | Interactive TUI renders live events; `-p` print mode completes headlessly; serve mode streams SSE |
-| M10 | Linux confinement verified (landlock/bwrap), release binary <15MB, changelog + tag |
+| M9 | Interactive TUI renders live events; `-p` print mode completes headlessly; serve mode streams SSE; an extension process receives filtered agent events over its stdio protocol |
+| M10 | Linux confinement verified (landlock/bwrap); **Windows: bash children run inside a Job Object (CPU/memory/child caps) and the ACL restricted-token runner ships or is explicitly deferred with rationale**; release binary <15MB, changelog + tag |
 
 ---
 
