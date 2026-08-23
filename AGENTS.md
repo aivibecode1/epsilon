@@ -84,6 +84,21 @@ contracts <- session <- core
 - PowerShell here-string edits miss CRLF/LF variants; prefer proper file-edit tooling over bulk
   string surgery.
 
+## Documentation while building
+
+Documentation is part of "done" — if a change lands without its docs, the task is not finished:
+
+- **Milestone dev log** (`docs/milestones/M<N>-*.md`) updated/created with: what, key
+  decisions, test-caught bugs, verification output.
+- **README status**: milestone table row + suite totals move the same commit as the work.
+- **Design conversations become qa notes**: when a question produces a convention decision
+  (naming, file placement, counts, policies), capture it as `docs/qa/<NN>-<topic>.md` —
+  decisions that live only in chat history are lost to the next contributor and the next agent.
+- **ADR amendments** for behavior-level changes (`design/epsilon-decisions.md`).
+- **New documentation files** must be added to the root README's reading guide so nothing is
+  orphaned; `docs/qa/` numbering stays sequential.
+- Rationale and precedent: see `docs/qa/05-documentation-organization.md`.
+
 ## Conflict resolution
 
 If this file conflicts with direct user instructions, safety-relevant rules still win — explain

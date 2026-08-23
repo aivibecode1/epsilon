@@ -228,8 +228,8 @@ Pick your path:
 
 **You are a developer joining the project**
 1. This README.
-2. [`docs/qa/`](docs/qa) — four short narrative notes: why Rust, the lego methodology, what
-   exists after each phase, the finished-product vision.
+2. [`docs/qa/`](docs/qa) — short narrative notes (why Rust, the lego methodology, what
+   exists after each phase, the finished-product vision, documentation conventions).
 3. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) §2–§7 — components and
    data flow.
 4. [`docs/milestones/`](docs/milestones) — dev logs in order; each records what was built,
