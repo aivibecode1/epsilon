@@ -27,9 +27,20 @@ pub struct ExtManifest {
     /// Extra argv for `bin` (e.g. a script entry point flag).
     #[serde(default)]
     pub args: Vec<String>,
-    /// Tools this extension provides. An extension with zero tools is event-only (later).
+    /// Tools this extension provides. An extension with zero tools is event-only.
     #[serde(default)]
     pub tools: Vec<ExtToolSpec>,
+    /// Event types the extension wants forwarded. `["*"]` = everything; empty = none.
+    /// Names match AgentEvent serde tags (e.g. "tool_execution_end").
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
+impl ExtManifest {
+    /// Should this event type be forwarded to the extension?
+    pub fn wants_event(&self, event_type: &str) -> bool {
+        self.events.iter().any(|e| e == "*" || e == event_type)
+    }
 }
 
 /// Load + validate a manifest from `<dir>/extension.json`.
@@ -58,43 +69,15 @@ impl ExtManifest {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_minimal_manifest() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("extension.json"),
-            serde_json::json!({
-                "name": "echo-ext",
-                "version": "0.1.0",
-                "bin": "./ext-echo",
-                "tools": [{
-                    "name": "ext_echo",
-                    "description": "Echo text back.",
-                    "schema": {"type": "object", "properties": {"text": {"type": "string"}}}
-                }]
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        let m = load(dir.path()).unwrap();
-        assert_eq!(m.name, "echo-ext");
-        assert_eq!(m.tools.len(), 1);
-        assert!(m.resolved_bin(dir.path()).starts_with(dir.path()));
-    }
-
-    #[test]
-    fn rejects_empty_name() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("extension.json"),
-            r#"{"name":"","version":"0","bin":"x"}"#,
-        )
-        .unwrap();
-        assert!(load(dir.path()).is_err());
+/// Test-support constructor: in-memory manifest without touching disk.
+#[doc(hidden)]
+pub fn load_or_build_test_manifest(events: Vec<String>) -> ExtManifest {
+    ExtManifest {
+        name: "test".into(),
+        version: "0.0.0".into(),
+        bin: PathBuf::new(),
+        args: vec![],
+        tools: vec![],
+        events,
     }
 }

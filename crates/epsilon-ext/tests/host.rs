@@ -16,6 +16,7 @@ fn fixture_manifest(mode: &str) -> ExtManifest {
         version: "0.1.0".into(),
         bin: Path::new(FIXTURE_EXE).to_path_buf(),
         args: vec![mode.to_string()],
+        events: vec![],
         tools: vec![ExtToolSpec {
             name: "ext_echo".into(),
             description: "Echo uppercase.".into(),

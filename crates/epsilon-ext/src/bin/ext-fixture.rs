@@ -7,6 +7,7 @@ use std::io::{BufRead, BufWriter, Write};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
+    let mut events_seen: usize = 0;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = BufWriter::new(stdout.lock());
@@ -24,6 +25,17 @@ fn main() {
             Ok(v) => v,
             Err(_) => continue,
         };
+        if v.get("type").and_then(|t| t.as_str()) == Some("event") {
+            events_seen += 1;
+            let etype = v["event"]["type"].as_str().unwrap_or("?").to_string();
+            writeln!(
+                out,
+                r#"{{"type":"log","text":"saw {etype} #{events_seen}"}}"#
+            )
+            .unwrap();
+            out.flush().unwrap();
+            continue;
+        }
         let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
         match mode.as_str() {
             "--die" => std::process::exit(7),

@@ -36,7 +36,7 @@ the registry. Not yet shipped: TUI/server frontends (M9), OS confinement + rmcp 
 | M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
 | M7 | Compaction engine + three-tier byte-stable prompt builder | ✅ shipped |
 | M8 | Skills, extension host (process-isolated), MCP bridge | ✅ shipped |
-| M9 | TUI + HTTP/SSE server frontends + rmcp stdio transport for MCP + **extension event forwarding** (closes known-gap #1, M8 ledger) | next |
+| M9 | TUI + HTTP/SSE frontends + rmcp stdio transport | next |\n| M9a | **Extension event forwarding** (closes known-gap #1) + print mode -p | ✅ shipped |
 | M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | planned |
 
 83 tests · zero clippy warnings · every milestone committed with a dev log under
@@ -287,6 +287,7 @@ not review comments; behavior changes need an ADR note. Commit convention:
 *Built as a research-through-implementation project. The reference harnesses under
 `references/` remain the property of their respective authors; their lessons are cited, their
 code is not copied.*
+
 
 
 

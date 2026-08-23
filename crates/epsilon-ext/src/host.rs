@@ -52,6 +52,8 @@ struct ChildIo {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    /// Diagnostics/receipts the child sends via {"type":"log"} lines (capped).
+    logs: Vec<String>,
     /// Held so kill_on_drop applies when the host is dropped.
     #[allow(dead_code)]
     child: Child,
@@ -104,6 +106,7 @@ impl ExtHost {
                 stdout: reader,
                 next_id: 0,
                 child,
+                logs: Vec::new(),
             }),
             disabled: AtomicBool::new(false),
             crashes: AtomicU32::new(0),
@@ -118,6 +121,28 @@ impl ExtHost {
     /// True once the crash budget is exhausted.
     pub fn is_disabled(&self) -> bool {
         self.disabled.load(Ordering::SeqCst)
+    }
+
+    /// Forward one agent event to the child (fire-and-forget, subject to the extension's
+    /// declared interest filter). Best-effort: event delivery must never break a run.
+    pub async fn send_event(&self, filtered: bool, event: &serde_json::Value) {
+        if filtered {
+            return;
+        }
+        let mut io = self.io.lock().await;
+        let mut line = serde_json::to_string(&serde_json::json!({
+            "type": "event",
+            "event": event,
+        }))
+        .expect("event serializes");
+        line.push('\n');
+        let _ = io.stdin.write_all(line.as_bytes()).await;
+        let _ = io.stdin.flush().await;
+    }
+
+    /// Log receipts the child sent via {"type":"log"} lines.
+    pub async fn logs(&self) -> Vec<String> {
+        self.io.lock().await.logs.clone()
     }
 
     /// Invoke one tool by name. Serialized per extension (extensions own their ordering);
@@ -188,6 +213,18 @@ impl ExtHost {
             let Some(line) = line else {
                 return Err(ExtError::Crashed("stdout closed".into()));
             };
+            // Child diagnostics channel: {"type":"log","text":...} — collected, never
+            // treated as a result.
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line)
+                && v.get("type").and_then(|t| t.as_str()) == Some("log")
+            {
+                if let (Some(text), true) =
+                    (v.get("text").and_then(|t| t.as_str()), io.logs.len() < 1000)
+                {
+                    io.logs.push(text.to_string());
+                }
+                continue;
+            }
             let v: serde_json::Value = serde_json::from_str(&line)
                 .map_err(|e| ExtError::Protocol(format!("{e} in: {line}")))?;
             if v.get("type").and_then(|t| t.as_str()) != Some("result") {

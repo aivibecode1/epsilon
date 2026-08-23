@@ -352,6 +352,7 @@ dependencies = [
  "epsilon-core",
  "epsilon-llm",
  "epsilon-safety",
+ "epsilon-session",
  "epsilon-tools",
  "serde_json",
  "tempfile",
