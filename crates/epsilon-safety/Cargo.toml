@@ -7,6 +7,20 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+epsilon-core = { path = "../epsilon-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile = { workspace = true }
+tokio-util = { workspace = true }
+epsilon-llm = { path = "../epsilon-llm" }
+epsilon-tools = { path = "../epsilon-tools" }
 
 [lints]
 workspace = true
+

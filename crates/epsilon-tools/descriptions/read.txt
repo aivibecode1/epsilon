@@ -1,0 +1,1 @@
+Read a text file with line numbers. Returns up to 2000 lines / 256KB; pass offset (1-based) and limit to page through larger files. Refuses binary files. Paths must stay inside the workspace.

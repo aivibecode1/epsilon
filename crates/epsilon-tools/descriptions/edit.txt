@@ -1,0 +1,1 @@
+Replace exact text inside an existing file. old_string must match exactly once unless replace_all is set; on failure you get the closest matching line as a hint. Include enough surrounding context in old_string to be unambiguous.

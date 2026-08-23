@@ -1,0 +1,1 @@
+Find files by pattern. `*` stays within one directory segment, `**` crosses directories, `?` is one character. A pattern without a slash matches at any depth (e.g. `*.rs` finds all Rust sources everywhere).

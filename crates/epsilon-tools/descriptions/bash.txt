@@ -1,0 +1,1 @@
+Execute one shell command in the workspace root (PowerShell on Windows, bash elsewhere). Returns combined stdout/stderr, exit code, and duration. Output beyond 2000 lines / 64KB is truncated; the full output is saved and its path is included so you can read it. Timeout defaults to 120s (max 600).

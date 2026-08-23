@@ -10,9 +10,7 @@
 
 use std::sync::Arc;
 
-use epsilon_contracts::agent_event::{
-    AgentEvent, PermissionDecision, PermissionRequest, TurnEndReason,
-};
+use epsilon_contracts::agent_event::{AgentEvent, PermissionRequest, TurnEndReason};
 use epsilon_contracts::content::ContentBlock;
 use epsilon_contracts::ids::new_id;
 use epsilon_contracts::message::{AssistantMessage, ToolResultMessage};
@@ -32,7 +30,7 @@ pub struct BatchOutcome {
 }
 
 impl BatchOutcome {
-    fn from_results(results: Vec<ToolResultMessage>) -> Self {
+    fn from_results(results: Vec<ToolResultMessage>, denied_any: bool) -> Self {
         let terminate = !results.is_empty()
             && results.iter().all(|r| {
                 r.details
@@ -40,10 +38,15 @@ impl BatchOutcome {
                     .and_then(|t| t.as_bool())
                     .unwrap_or(false)
             });
+        let reason = if denied_any {
+            TurnEndReason::Blocked
+        } else {
+            TurnEndReason::Completed
+        };
         Self {
             results,
             terminate,
-            reason: TurnEndReason::Completed,
+            reason,
         }
     }
 }
@@ -75,6 +78,54 @@ pub fn fail_all_truncated(assistant: &AssistantMessage) -> BatchOutcome {
     }
 }
 
+/// Most identifying argument for rule matching: path-ish fields for file tools, the
+/// command head (first token) for shell, `*` otherwise.
+///
+/// Path arguments resolving outside [`Agent.workspace_root`] downgrade the capability to
+/// `external_dir` so defaults can ask before any tool code runs (tools re-check defensively).
+fn gate_subject(
+    name: &str,
+    args: &serde_json::Value,
+    workspace: &std::path::Path,
+) -> (String, String) {
+    let path_key = ["path", "file_path", "dir"]
+        .iter()
+        .find_map(|k| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()));
+    if let Some(raw) = path_key {
+        let candidate = std::path::Path::new(&raw);
+        let joined = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            workspace.join(candidate)
+        };
+        let mut normalized = std::path::PathBuf::new();
+        for comp in joined.components() {
+            match comp {
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        let inside = normalized.starts_with(workspace);
+        return if inside {
+            (name.to_string(), raw)
+        } else {
+            ("external_dir".to_string(), raw)
+        };
+    }
+    if name == "bash" || name == "shell" {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            return (
+                name.to_string(),
+                cmd.split_whitespace().next().unwrap_or("*").to_string(),
+            );
+        }
+    }
+    (name.to_string(), "*".to_string())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -101,6 +152,7 @@ pub(super) async fn execute_batch(
     // ---- preflight sequentially ------------------------------------------------------
     let mut prepared: Vec<PreparedCall> = Vec::new();
     let mut sequential_batch = false;
+    let mut denied_any = false;
 
     for (i, (call_id, name, args)) in assistant.tool_calls().enumerate() {
         let Some(tool) = registry.get(name) else {
@@ -141,6 +193,48 @@ pub(super) async fn execute_batch(
             continue;
         }
 
+        // ---- capability gate ------------------------------------------------------------
+        // Every registered call passes the gate; policies decide silently or interactively.
+        // The subject is the most identifying argument (path / command head) so rules like
+        // `read *.env -> ask` can match precisely.
+        let auth = {
+            let (capability, pattern) = gate_subject(name, args, &agent.workspace_root);
+            let req = PermissionRequest {
+                request_id: new_id("perm"),
+                capability,
+                pattern,
+                detail: args.clone(),
+            };
+            let a = gate.authorize(req).await;
+            if a.asked {
+                agent.emit(AgentEvent::PermissionDecided {
+                    request_id: String::new(),
+                    decision: a.decision.clone(),
+                });
+            }
+            a
+        };
+        if !auth.allowed() {
+            let guidance = auth
+                .decision
+                .guidance()
+                .map(|g| g.to_string())
+                .unwrap_or_else(|| {
+                    "Permission denied by policy. Adjust approach or ask the user.".to_string()
+                });
+            prepared.push(PreparedCall {
+                index: i,
+                invocation: ToolInvocation {
+                    tool_call_id: call_id.to_string(),
+                    args: args.clone(),
+                },
+                ctx_tool_name: name.to_string(),
+                blocked_result: Some(error_result(call_id, name, guidance)),
+            });
+            denied_any = true;
+            continue;
+        }
+
         // ---- doom-loop brake ----------------------------------------------------------
         // Streak state lives on the Agent (run-scoped): opencode counts consecutive
         // identical calls across batches, not within one batch.
@@ -168,11 +262,17 @@ pub(super) async fn execute_batch(
             agent.emit(AgentEvent::PermissionRequested {
                 request: req.clone(),
             });
-            match gate.decide(req).await {
-                PermissionDecision::Deny => {
+            let verdict = gate.authorize(req).await;
+            match verdict.decision {
+                d if d.is_denial() => {
                     agent.emit(AgentEvent::PermissionDecided {
                         request_id: String::new(),
-                        decision: PermissionDecision::Deny,
+                        decision: d.clone(),
+                    });
+                    let guidance = d.guidance().map(|g| g.to_string()).unwrap_or_else(|| {
+                        "Blocked by doom-loop guard: identical call repeated. \
+                             Change approach or ask the user."
+                            .to_string()
                     });
                     prepared.push(PreparedCall {
                         index: i,
@@ -181,12 +281,9 @@ pub(super) async fn execute_batch(
                             args: args.clone(),
                         },
                         ctx_tool_name: name.to_string(),
-                        blocked_result: Some(error_result(
-                            call_id,
-                            name,
-                            "Blocked by doom-loop guard: identical call repeated. Change approach or ask the user.".to_string(),
-                        )),
+                        blocked_result: Some(error_result(call_id, name, guidance)),
                     });
+                    denied_any = true;
                     continue;
                 }
                 decision => {
@@ -259,7 +356,7 @@ pub(super) async fn execute_batch(
         .flatten()
         .collect::<Vec<ToolResultMessage>>();
 
-    Ok(BatchOutcome::from_results(results))
+    Ok(BatchOutcome::from_results(results, denied_any))
 }
 
 async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage {
@@ -281,8 +378,9 @@ async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage 
 
     let ctx = ToolContext {
         session_id: String::from("inline"),
-        cwd: std::env::current_dir().unwrap_or_default(),
-        spill_dir: std::env::temp_dir().join("epsilon-spill"),
+        // Tools operate on the AGENT's declared workspace, not the process's incidental cwd.
+        cwd: agent.workspace_root.clone(),
+        spill_dir: agent.workspace_root.join(".epsilon").join("spill"),
         token: tokio_util::sync::CancellationToken::new(),
     };
     let sink: epsilon_contracts::tool::ToolUpdateSink =

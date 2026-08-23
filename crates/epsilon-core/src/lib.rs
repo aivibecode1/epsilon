@@ -24,7 +24,7 @@ use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
 use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
 use epsilon_contracts::stream::{StreamEvent, StreamFolder};
 
-pub use gate::{AutoAllow, AutoDeny, PermissionGate};
+pub use gate::{Authorization, AutoAllow, AutoDeny, PermissionGate};
 pub use registry::ToolRegistry;
 
 /// How many queued messages a drain point releases.
@@ -138,6 +138,9 @@ pub struct Agent {
     running: AtomicBool,
     /// Run-scoped doom-loop counters; cleared when a run starts (see exec.rs).
     doom_streaks: Mutex<HashMap<String, usize>>,
+    /// Declared workspace root; path arguments resolving outside it get gated under the
+    /// xternal_dir capability instead of their tool name.
+    pub(crate) workspace_root: std::path::PathBuf,
 }
 
 impl Agent {
@@ -147,6 +150,7 @@ impl Agent {
         stream_fn: Arc<dyn epsilon_llm::StreamFn>,
         tools: Arc<ToolRegistry>,
         gate: Arc<dyn PermissionGate>,
+        workspace_root: std::path::PathBuf,
     ) -> Arc<Self> {
         let (events_tx, _) = broadcast::channel(1024);
         let steering_queue = PendingQueue::new(limits.steering_mode);
@@ -162,6 +166,7 @@ impl Agent {
             events_tx,
             running: AtomicBool::new(false),
             doom_streaks: Mutex::new(HashMap::new()),
+            workspace_root,
         })
     }
 
@@ -303,8 +308,16 @@ impl Agent {
 
                 for r in &results {
                     let m = Message::ToolResult(r.clone());
+                    // pi emits full message lifecycle for tool results too — frontends
+                    // render from these events, not by scraping internals.
+                    self.emit(AgentEvent::MessageStart {
+                        message: Box::new(m.clone()),
+                    });
                     self.push_message(&m);
                     produced.push(m);
+                    self.emit(AgentEvent::MessageEnd {
+                        message: Box::new(Message::ToolResult(r.clone())),
+                    });
                 }
 
                 self.emit(AgentEvent::TurnEnd {

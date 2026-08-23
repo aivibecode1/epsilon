@@ -1,5 +1,5 @@
-//! Epsilon CLI — currently the M5 milestone demo: runs a fully scripted session against the
-//! faux provider and prints the live event stream.
+//! Epsilon CLI — M6 demo: runs a scripted session with REAL built-in tools
+//! (write → read → grep) inside a temporary workspace, gated by the ruleset engine.
 //!
 //! ```text
 //! cargo run -p epsilon-cli
@@ -8,44 +8,57 @@
 use std::sync::Arc;
 
 use epsilon_contracts::agent_event::AgentEvent;
-use epsilon_core::testing::{EchoTool, FailTool};
-use epsilon_core::{LoopLimits, ToolRegistry};
+use epsilon_core::LoopLimits;
 use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
+use epsilon_safety::{AutoApprove, RulesetGate};
 
 fn script() -> Vec<FauxStep> {
     vec![
+        FauxStep::call(
+            "tc_1",
+            "write",
+            serde_json::json!({
+                "path": "notes/demo.txt",
+                "content": "hello from epsilon\nline two\n"
+            }),
+        ),
+        FauxStep::call(
+            "tc_2",
+            "read",
+            serde_json::json!({"path": "notes/demo.txt"}),
+        ),
         FauxStep::ToolCalls {
-            text: Some("I'll inspect the two files, then write the fix.".into()),
-            calls: vec![
-                FauxToolCall {
-                    id: "tc_1".into(),
-                    name: "echo".into(),
-                    arguments: serde_json::json!({"text": "reading src/auth.rs"}),
-                },
-                FauxToolCall {
-                    id: "tc_2".into(),
-                    name: "echo".into(),
-                    arguments: serde_json::json!({"text": "reading tests/auth.rs"}),
-                },
-            ],
+            text: Some("Now let me confirm the content is on disk.".into()),
+            calls: vec![FauxToolCall {
+                id: "tc_3".into(),
+                name: "grep".into(),
+                arguments: serde_json::json!({"pattern": "epsilon"}),
+            }],
         },
-        FauxStep::call("tc_3", "fail", serde_json::json!({})),
-        FauxStep::say("One check failed; here is the summary of what I found."),
+        FauxStep::say(
+            "Wrote notes/demo.txt, read it back, and grepped for 'epsilon' — \
+             the file pipeline works end to end.",
+        ),
     ]
 }
 
 #[tokio::main]
 async fn main() {
+    // Fresh scratch workspace per run; everything the agent touches lives here.
+    let workspace = tempfile::tempdir().expect("tempdir");
+
     let provider = FauxProvider::new(script());
-    let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(EchoTool::new()));
-    registry.register(Arc::new(FailTool::new()));
+    let registry = epsilon_tools::builtin_registry();
+    // Default ruleset + auto-approving UI so the demo is non-interactive;
+    // swap AutoApprove for a TUI dialog implementation in M9.
+    let gate = RulesetGate::new(Arc::new(AutoApprove));
 
     let agent = epsilon_core::Agent::new(
         LoopLimits::default(),
         Arc::new(PanicGuard(provider)),
         Arc::new(registry),
-        Arc::new(epsilon_core::AutoAllow),
+        Arc::new(gate),
+        workspace.path().to_path_buf(),
     );
     let mut rx = agent.subscribe();
 
@@ -54,20 +67,24 @@ async fn main() {
             id: epsilon_contracts::new_id("msg"),
             timestamp_ms: 0,
             content: vec![epsilon_contracts::content::UserContent::Text {
-                text: "fix the flaky auth tests".into(),
+                text: "create and verify notes/demo.txt".into(),
             }],
         });
 
-    let agent_task = tokio::spawn(async move { agent.run(prompt).await });
+    let run_task = tokio::spawn(async move { agent.run(prompt).await });
 
-    // Print the live event stream (this is what the TUI will consume in M9).
     while let Ok(ev) = rx.recv().await {
         match &*ev {
             AgentEvent::AgentStart => println!("\n=== run start ==="),
             AgentEvent::TurnStart { turn_index } => println!("-- turn {turn_index} --"),
+            AgentEvent::PermissionRequested { request } => {
+                println!("permission ask> {} {}", request.capability, request.pattern);
+            }
             AgentEvent::MessageEnd { message } => match &**message {
                 epsilon_contracts::message::Message::Assistant(a) => {
-                    println!("assistant> {}", a.text());
+                    if !a.text().is_empty() {
+                        println!("assistant> {}", a.text());
+                    }
                     for (_, name, _) in a.tool_calls() {
                         println!("tool-call> {name}");
                     }
@@ -95,7 +112,7 @@ async fn main() {
         }
     }
 
-    match agent_task.await.expect("run task") {
+    match run_task.await.expect("run task") {
         Ok(outcome) => println!(
             "\nfinal reason: {:?}\nmessages produced: {}\ntokens in/out: {}/{}",
             outcome.reason,

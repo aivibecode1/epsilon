@@ -61,15 +61,39 @@ pub struct PermissionRequest {
 }
 
 /// The user's answer to a [`PermissionRequest`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum PermissionDecision {
     /// Allow exactly this invocation.
     AllowOnce,
     /// Allow this invocation and remember for the session.
     AlwaysSession,
-    /// Deny with optional corrective guidance fed back to the model.
+    /// Deny outright.
     Deny,
+    /// Deny with corrective guidance fed back to the model so it can adapt
+    /// (opencode's reject-with-feedback).
+    DenyWithGuidance {
+        /// Message the model sees in the blocked tool result.
+        guidance: String,
+    },
+}
+
+impl PermissionDecision {
+    /// True for both denial shapes.
+    pub fn is_denial(&self) -> bool {
+        matches!(
+            self,
+            PermissionDecision::Deny | PermissionDecision::DenyWithGuidance { .. }
+        )
+    }
+
+    /// Guidance text when denial carries it.
+    pub fn guidance(&self) -> Option<&str> {
+        match self {
+            PermissionDecision::DenyWithGuidance { guidance } => Some(guidance.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// Everything that happens during a run, in order.

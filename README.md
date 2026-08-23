@@ -18,7 +18,10 @@ existing harness offers.
 
 ## Status
 
-**Kernel complete. Not yet usable on real codebases** (tools are stubs until M6).
+**Kernel complete with real file/shell/search capabilities, gated by a ruleset engine.**
+Epsilon can now read, write, edit, grep, glob, list, and run shell commands inside its declared
+workspace — every call passing through last-match-wins permission rules with interactive-ask
+plumbing. Not yet shipped: compaction (M7), skills/extensions/MCP (M8), TUI/server (M9).
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -28,13 +31,13 @@ existing harness offers.
 | M3 | `epsilon-llm` — StreamFn contract, faux provider, genai adapter, retry | ✅ shipped |
 | M4 | `epsilon-session` — JSONL tree store, shadow views, leases, crash repair | ✅ shipped |
 | M5 | `epsilon-core` — full agent loop + runnable demo | ✅ shipped |
-| M6 | Real tools (read/write/edit/bash/grep) + permission ruleset engine | next |
-| M7 | Compaction engine + three-tier prompt builder | planned |
+| M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
+| M7 | Compaction engine + three-tier prompt builder | next |
 | M8 | Skills, extension host (process-isolated), MCP client | planned |
 | M9 | TUI + HTTP/SSE server frontends | planned |
 | M10 | Hardening pass: sandbox backends, release packaging | planned |
 
-29 tests · zero clippy warnings · every milestone committed with a dev log under
+29 tests → **56 tests** · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---

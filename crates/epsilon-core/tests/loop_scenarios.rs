@@ -4,9 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use epsilon_contracts::agent_event::{
-    AgentEvent, PermissionDecision, PermissionRequest, TurnEndReason,
-};
+use epsilon_contracts::agent_event::{AgentEvent, PermissionRequest, TurnEndReason};
 use epsilon_contracts::content::UserContent;
 use epsilon_contracts::message::{Message, UserMessage};
 use epsilon_core::testing::{EchoTool, FailTool, SlowProvider};
@@ -37,6 +35,7 @@ fn agent_with(
         Arc::new(epsilon_llm::PanicGuard(provider)),
         Arc::new(registry),
         gate,
+        std::env::temp_dir(),
     )
 }
 
@@ -122,12 +121,19 @@ async fn doom_loop_brake_denies_repetition() {
     }
     #[async_trait]
     impl epsilon_core::PermissionGate for DoomDeny {
-        async fn decide(&self, req: PermissionRequest) -> PermissionDecision {
+        async fn authorize(&self, req: PermissionRequest) -> epsilon_core::Authorization {
+            use epsilon_contracts::agent_event::PermissionDecision as PD;
             if req.capability == "doom_loop" {
                 *self.asks.lock().unwrap() += 1;
-                return PermissionDecision::Deny;
+                return epsilon_core::Authorization {
+                    decision: PD::Deny,
+                    asked: true,
+                };
             }
-            PermissionDecision::AllowOnce
+            epsilon_core::Authorization {
+                decision: PD::AllowOnce,
+                asked: false,
+            }
         }
     }
 
@@ -176,6 +182,7 @@ async fn steering_prefill_drains_before_second_call() {
         Arc::new(epsilon_llm::PanicGuard(provider)),
         Arc::new(registry),
         Arc::new(AutoAllow),
+        std::env::temp_dir(),
     );
 
     // User interjects before the run starts (classic steering window).
@@ -260,6 +267,7 @@ async fn concurrent_runs_are_rejected() {
         Arc::new(epsilon_llm::PanicGuard(provider)),
         Arc::new(ToolRegistry::new()),
         Arc::new(AutoAllow),
+        std::env::temp_dir(),
     );
 
     let a2 = Arc::clone(&agent);

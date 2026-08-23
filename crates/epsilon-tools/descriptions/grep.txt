@@ -1,0 +1,1 @@
+Search file contents with a Rust regex across the workspace (build/VCS dirs skipped). Returns path:line: text matches, capped at 200. Use ignore_case for case-insensitive search.

@@ -1,0 +1,1 @@
+List one directory's entries with sizes (directories suffixed `/`). Orientation tool: use glob or grep to search deeper.

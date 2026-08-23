@@ -1,0 +1,1 @@
+Create or completely overwrite a file. Parent directories are created automatically. For modifying existing files prefer edit (it shows a diff-style safety net); write is for new files or intentional full rewrites.
