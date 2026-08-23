@@ -53,6 +53,19 @@ cargo run -p epsilon-cli                # demo unaffected
 New suites: skills units (3) · ext manifest (2) · ext host integration (3, real child
 processes incl. timeout + crash paths) · mcp bridge (2).
 
+## Known gaps after M8 (honest ledger)
+
+1. **Extension event-broadcast is not wired.** Extensions can provide tools (fully working);
+   they cannot yet SUBSCRIBE to agent events (turn started, file edited…). The internal
+   broadcast channel exists (`Agent.subscribe()`); the missing piece is forwarding into child
+   processes with per-extension filters. Scheduled with M9 so the design lands alongside the
+   first real event consumer (the TUI).
+2. **Windows confinement: neither ACL tokens NOR Job Objects exist in code yet.** ADR-005's
+   "job-object limits meanwhile" phrasing describes the PLAN, not shipped work. Today Windows
+   runs Layer-1 gated but Layer-2 unconfined. Both mitigations are M10 scope.
+   (Correction recorded here after an imprecise session summary claimed otherwise.)
+
 ## Next
 
-M9 — TUI (ratatui) + print/serve modes + rmcp stdio transport for MCP.
+M9 — TUI (ratatui) + print/serve modes + rmcp stdio transport for MCP (+ extension event
+forwarding).
