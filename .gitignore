@@ -1,0 +1,17 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Epsilon runtime state (never commit session data or spills)
+/.epsilon/
+epsilon.local.toml
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Env files carry secrets; never commit
+.env
+.env.*
