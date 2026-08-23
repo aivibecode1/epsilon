@@ -7,6 +7,15 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["process", "io-util", "time"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio-util = { workspace = true }
 
 [lints]
 workspace = true

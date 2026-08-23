@@ -279,6 +279,12 @@ stdio/streamable-http transports; discovered tools register under `mcp__<server>
 availability probes cached with TTL+grace (Hermes check_fn pattern); server instructions render
 into CONTEXT tier; OAuth flows supported via rmcp.
 
+**Amendment (M8, staged delivery).** M8 ships everything EXCEPT the wire transport:
+declarative server config, the `Connector` transport seam, and the registry bridge
+(qualified names, untrusted-output handling) — all tested against an in-process connector
+double. The rmcp-backed stdio connector lands in M9/M10 alongside real-server integration
+tests. Staging keeps every shipped line tested while preserving the architecture exactly.
+
 **Alternatives.** Hand-rolled client (all four references did); defer MCP post-v1.
 
 **Why best.** MCP is table stakes proven by all four references; hand-rolling re-fights protocol

@@ -18,12 +18,12 @@ existing harness offers.
 
 ## Status
 
-**Real tools + ruleset-gated + long-session capable.**
-Epsilon reads, writes, edits, greps, globs, lists, and runs shell commands inside its declared
-workspace — every call passing through last-match-wins permission rules. Long sessions
-auto-compact past the token threshold (prune, clamp tail, amend summaries) and prompts are
-assembled in byte-stable cache-friendly tiers. Not yet shipped: skills/extensions/MCP (M8),
-TUI/server (M9), OS confinement (M10).
+**Real tools, ruleset-gated, long-session capable, and extensible.** Epsilon reads, writes,
+edits, greps, globs, lists, and runs shell commands inside its declared workspace — every call
+passing through last-match-wins permission rules. Long sessions auto-compact past the token
+threshold (prune, clamp tail, amend summaries) with byte-stable prompt tiers. Skills load from
+`SKILL.md` directories; third-party extensions run as isolated processes; MCP tools bridge into
+the registry. Not yet shipped: TUI/server frontends (M9), OS confinement + rmcp transport (M10).
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -35,11 +35,11 @@ TUI/server (M9), OS confinement (M10).
 | M5 | `epsilon-core` — full agent loop + runnable demo | ✅ shipped |
 | M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
 | M7 | Compaction engine + three-tier byte-stable prompt builder | ✅ shipped |
-| M8 | Skills, extension host (process-isolated), MCP client | next |
-| M9 | TUI + HTTP/SSE server frontends | planned |
+| M8 | Skills, extension host (process-isolated), MCP bridge | ✅ shipped |
+| M9 | TUI + HTTP/SSE server frontends + rmcp stdio transport for MCP | next |
 | M10 | Hardening pass: sandbox backends, release packaging | planned |
 
-63 tests · zero clippy warnings · every milestone committed with a dev log under
+83 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---
@@ -287,6 +287,7 @@ not review comments; behavior changes need an ADR note. Commit convention:
 *Built as a research-through-implementation project. The reference harnesses under
 `references/` remain the property of their respective authors; their lessons are cited, their
 code is not copied.*
+
 
 
 

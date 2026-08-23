@@ -32,10 +32,12 @@ pub struct Stable<'a> {
 }
 
 /// Project-sourced instructions (AGENTS.md family), hash-tagged for observability.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ContextTier {
     /// Project instruction files as `(source_path, content)` pairs; order = file order given.
     pub instructions: Vec<(String, String)>,
+    /// Pre-rendered skill catalog lines (progressive disclosure; see skills.rs).
+    pub skills_catalog: Option<String>,
 }
 
 /// Per-turn runtime snapshot. Must stay LAST in the assembled prompt.
@@ -86,6 +88,12 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
             ));
         }
         p.push_str("</project_context>\n");
+    }
+
+    // ---- Skills catalog (still CONTEXT tier: stable while skill set unchanged) --------
+    if let Some(cat) = &context.skills_catalog {
+        p.push('\n');
+        p.push_str(cat);
     }
 
     // ---- Tier 3: VOLATILE --------------------------------------------------------------
@@ -147,6 +155,7 @@ mod tests {
                 Stable { tools: &tools },
                 ContextTier {
                     instructions: vec![],
+                    skills_catalog: None,
                 },
                 Volatile {
                     cwd: Path::new("/w"),
@@ -168,6 +177,7 @@ mod tests {
             &Stable { tools: &tools() },
             &ContextTier {
                 instructions: vec![("AGENTS.md".into(), "be nice".into())],
+                skills_catalog: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),
@@ -193,6 +203,7 @@ mod tests {
             &Stable { tools: &tools() },
             &ContextTier {
                 instructions: vec![],
+                skills_catalog: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),
@@ -204,6 +215,7 @@ mod tests {
             &Stable { tools: &tools() },
             &ContextTier {
                 instructions: vec![("AGENTS.md".into(), "rules".into())],
+                skills_catalog: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),
@@ -223,6 +235,7 @@ mod tests {
             &Stable { tools: &[] },
             &ContextTier {
                 instructions: vec![("A.md".into(), "v1".into())],
+                skills_catalog: None,
             },
             &Volatile {
                 cwd: Path::new("/"),
@@ -234,6 +247,7 @@ mod tests {
             &Stable { tools: &[] },
             &ContextTier {
                 instructions: vec![("A.md".into(), "v2".into())],
+                skills_catalog: None,
             },
             &Volatile {
                 cwd: Path::new("/"),

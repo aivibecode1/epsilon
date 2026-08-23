@@ -12,6 +12,7 @@ mod exec;
 mod gate;
 pub mod prompt;
 mod registry;
+pub mod skills;
 
 #[doc(hidden)]
 pub mod testing;
@@ -208,6 +209,8 @@ pub struct Agent {
     session_store: Mutex<Option<Arc<Mutex<SessionStore>>>>,
     /// Set when an overflow-triggered compaction already retried this run.
     overflow_retried: AtomicBool,
+    /// Discovered skills (catalog in CONTEXT tier; bodies load on demand via skill tool).
+    pub skills: Vec<crate::skills::Skill>,
     /// Dedicated auxiliary stream for summarization (isolated from the main loop's
     /// provider/script; pi isolates aux calls for cache reasons, we ALSO isolate scripts).
     summarizer: Mutex<Option<Arc<dyn epsilon_llm::StreamFn>>>,
@@ -240,6 +243,7 @@ impl Agent {
             session_store: Mutex::new(None),
             overflow_retried: AtomicBool::new(false),
             summarizer: Mutex::new(None),
+            skills: Vec::new(),
         })
     }
 
@@ -654,6 +658,7 @@ impl Agent {
             &prompt::Stable { tools: &tool_lines },
             &prompt::ContextTier {
                 instructions: prompt::load_project_instructions(&self.workspace_root),
+                skills_catalog: Some(crate::skills::catalog(&self.skills)),
             },
             &prompt::Volatile {
                 cwd: &self.workspace_root,
