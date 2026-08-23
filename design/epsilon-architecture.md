@@ -397,7 +397,9 @@ Each exclusion keeps v1 shippable and auditable; all are additive later because 
 
 - `design/epsilon-decisions.md` - ADR log justifying every major decision above.
 - `design/epsilon-skills.md` - bundled/referenced/excluded skill catalog with justifications.
-- `AGENTS.md` - the agent behavior contract Epsilon loads into its CONTEXT tier.
+- `crates/epsilon-core/assets/agent-contract.md` - the agent behavior contract Epsilon embeds
+  into its CONTEXT tier at runtime (include_str! lands with the M7 prompt builder).
+- Root `AGENTS.md` - development rules for working on THIS repository.
 - `reports/harness-analysis.md`, `reports/comparative-analysis.md` - evidentiary foundation.
 
 ---
