@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/epsilon-contracts",
+    "crates/epsilon-llm",
+    "crates/epsilon-session",
+    "crates/epsilon-core",
+    "crates/epsilon-tools",
+    "crates/epsilon-safety",
+    "crates/epsilon-ext",
+    "crates/epsilon-mcp",
+    "crates/epsilon-tui",
+    "crates/epsilon-server",
+    "crates/epsilon-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["Mohamed"]
+
+# Dependency policy (ADR-016): direct external dependencies are pinned to exact
+# versions ("=x.y.z") in [workspace.dependencies] as they are introduced.
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
