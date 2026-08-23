@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-core = { path = "../epsilon-core" }
+epsilon-llm = { path = "../epsilon-llm" }
 epsilon-safety = { path = "../epsilon-safety" }
 serde_json = { workspace = true }
 ratatui = { workspace = true }

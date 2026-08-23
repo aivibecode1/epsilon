@@ -1,1 +1,3 @@
-//! The epsilon binary: argument parsing, configuration, mode dispatch.
+//! Epsilon CLI library: runtime composition helpers shared by the binary.
+
+pub mod runtime;

@@ -289,6 +289,14 @@ route types are already the single source of truth for it.
 **Decision.** Global + project config.toml layers, ${VAR} env interpolation, no code evaluation;
 effective-config dump command; first-use project trust prompt recording a content hash.
 
+**Amendment (M11, first slice).** The global layer now exists in minimal form:
+`~/.config/epsilon/config.toml` with `[model] id` (written by the picker / `/model`,
+read at startup under ADR-018 precedence). Reads fail open; writes are best-effort and
+preserve unknown keys. M11 also fixes two conventional paths pending the full layer:
+skills at `{global,.epsilon}/skills`, extension manifests at
+`{global,.epsilon}/extensions/<dir>/extension.json`. Project layer, trust hash,
+ruleset/extension/MCP declarations in config, and `config dump` remain scheduled for M12.
+
 **Alternatives.** YAML+!!js (DSH), JSONC (opencode), YAML 1.9k-line example (Hermes), JSON (pi).
 
 **Why best.** HA-DSH W3 flags executable config as an attack vector; Epsilon refuses the category.
@@ -421,6 +429,32 @@ policy; Hermes pyproject comment citing its supply-chain event) - convergent evo
 evidence. Vendoring rejected (HA-DSH W5: maintenance burden).
 
 **Best possible?** Within Cargo's model, yes; `cargo vet` adoption planned when team size justifies it.
+
+---
+
+## ADR-018: Model selection — TUI picker over a bundled catalog, env-var auth
+
+**Decision.** Selection precedence everywhere: `--model` flag (ephemeral) > saved
+`~/.config/epsilon/config.toml` `[model] id` (persisted by the picker) > bundled default.
+The TUI exposes pi-style `/models` (filter-driven dialog grouped by provider, current model
+floated to top, custom-id row for unknown models) and `/model <id>`; `--list-models [provider]`
+mirrors it headlessly. Catalog = generated-at-build-time static list in `epsilon-llm::catalog`
+(pi's approach), NOT a remote registry: browsing works with zero keys and zero network.
+Auth detection only: the picker shows whether the provider's env key is set; Epsilon never
+stores credentials (ADR-012's env-interpolation rule).
+
+**Alternatives.** opencode's models.dev registry + `auth login` credential store (better
+freshness/convenience; rejected for v1: network dependency at browse time plus a
+secrets-on-disk subsystem that contradicts ADR-012); Hermes' provider-plugin profiles
+(right shape for exotic auth like OAuth/AWS — revisit when a provider needs them).
+
+**Why best.** pi and opencode — the two TUI-first references — both make an interactive
+picker the primary surface and keep CLI flags secondary; users expect it. Bundled catalog +
+custom row covers 95% of usage (genai routes arbitrary ids by name anyway); the catalog is
+data, so a registry sync later is additive.
+
+**Best possible?** Yes for v1. Deferred: live per-provider listing (genai
+`all_model_names`, auth-gated), favorites/recents memory (opencode), credential store.
 
 ---
 

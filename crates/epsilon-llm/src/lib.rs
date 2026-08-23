@@ -4,7 +4,7 @@
 //! returns an [`EventStream`] of [`StreamEvent`]s whose terminal event carries success OR
 //! failure (encoded as `stop_reason`). This mirrors pi's StreamFn contract one-to-one.
 
-mod catalog;
+pub mod catalog;
 mod faux;
 mod retry;
 mod stream_fn;
@@ -13,7 +13,7 @@ mod stream_fn;
 #[allow(dead_code)]
 mod genai_adapter;
 
-pub use catalog::{ModelInfo, lookup_model};
+pub use catalog::{ModelInfo, curated, display_label, env_key_for, lookup_model};
 pub use faux::{FauxProvider, FauxStep, FauxToolCall};
 pub use retry::{FailureKind, backoff_delay, classify, should_retry};
 pub use stream_fn::{BoxEventStream, EventStream, LlmContext, ModelRef, PanicGuard, StreamFn};

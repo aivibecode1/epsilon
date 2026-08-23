@@ -199,7 +199,8 @@ impl UiState {
                 self.push_system("── run end ──");
             }
             // ToolExecutionUpdate partials and TurnEnd summaries are intentionally not
-            // rendered in v1: status shows activity; full cards arrive with M10 polish.
+            // rendered yet: status shows activity; expandable tool cards stay on the
+            // M12 polish ledger (architecture §11).
             _ => {}
         }
     }

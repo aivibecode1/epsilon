@@ -8,6 +8,7 @@
 //! channel; frontends are reducers over that stream.
 
 mod compact;
+pub mod config;
 mod exec;
 mod gate;
 pub mod prompt;
@@ -210,7 +211,8 @@ pub struct Agent {
     /// Set when an overflow-triggered compaction already retried this run.
     overflow_retried: AtomicBool,
     /// Discovered skills (catalog in CONTEXT tier; bodies load on demand via skill tool).
-    pub skills: Vec<crate::skills::Skill>,
+    /// Interior-mutable so composition code can attach discoveries after Arc<Agent>.
+    skills: Mutex<Vec<crate::skills::Skill>>,
     /// Dedicated auxiliary stream for summarization (isolated from the main loop's
     /// provider/script; pi isolates aux calls for cache reasons, we ALSO isolate scripts).
     summarizer: Mutex<Option<Arc<dyn epsilon_llm::StreamFn>>>,
@@ -246,7 +248,7 @@ impl Agent {
             session_store: Mutex::new(None),
             overflow_retried: AtomicBool::new(false),
             summarizer: Mutex::new(None),
-            skills: Vec::new(),
+            skills: Mutex::new(Vec::new()),
             model_id: Mutex::new("faux-1".into()),
         })
     }
@@ -257,6 +259,17 @@ impl Agent {
         if let Ok(mut slot) = self.model_id.lock() {
             *slot = model_id.into();
         }
+    }
+
+    /// Attach discovered skills for the CONTEXT-tier catalog (M11 wiring).
+    pub fn set_skills(&self, skills: Vec<crate::skills::Skill>) {
+        if let Ok(mut slot) = self.skills.lock() {
+            *slot = skills;
+        }
+    }
+
+    fn skill_list(&self) -> Vec<crate::skills::Skill> {
+        self.skills.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// Provide a dedicated auxiliary provider for summarization calls.
@@ -679,7 +692,7 @@ impl Agent {
             &prompt::Stable { tools: &tool_lines },
             &prompt::ContextTier {
                 instructions: prompt::load_project_instructions(&self.workspace_root),
-                skills_catalog: Some(crate::skills::catalog(&self.skills)),
+                skills_catalog: Some(crate::skills::catalog(&self.skill_list())),
             },
             &prompt::Volatile {
                 cwd: &self.workspace_root,

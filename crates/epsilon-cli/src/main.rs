@@ -36,7 +36,8 @@ struct Args {
     port: u16,
     confinement: epsilon_tools::Confinement,
     provider: Provider,
-    model_id: String,
+    /// `--model` override; None falls back to saved config then the catalog default.
+    model_id: Option<String>,
 }
 
 /// Model source: the offline faux provider (default) or a real genai-backed provider.
@@ -51,6 +52,8 @@ enum Mode {
     Print(String),
     Tui(Option<String>),
     Serve(Option<String>),
+    /// Print the bundled catalog (optionally filtered by provider), then exit.
+    ListModels(Option<String>),
 }
 
 fn parse_args() -> Args {
@@ -62,7 +65,9 @@ fn parse_args() -> Args {
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
     let mut provider = Provider::Faux;
-    let mut model_id = "faux-1".to_string();
+    // None = not given on the command line; resolution falls back to the saved
+    // config value, then the catalog default (ADR-018 precedence).
+    let mut model_id: Option<String> = None;
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
@@ -138,10 +143,14 @@ fn parse_args() -> Args {
             }
             "--model" => {
                 i += 1;
-                model_id = raw
-                    .get(i)
-                    .cloned()
-                    .unwrap_or_else(|| die("--model requires a model id (e.g. claude-sonnet-4-5)"));
+                model_id = Some(raw.get(i).cloned().unwrap_or_else(|| {
+                    die("--model requires a model id (e.g. claude-sonnet-4-5)")
+                }));
+            }
+            "--list-models" => {
+                i += 1;
+                let provider = positional(&raw, &mut i);
+                mode = Mode::ListModels(provider);
             }
             "--port" => die("--port belongs to --serve"),
             a if a.starts_with("--mcp") => {
@@ -242,13 +251,26 @@ async fn dispatch(args: Args) -> i32 {
         None => default_steps(),
     };
 
+    // Model resolution (ADR-018 precedence): --model flag > saved config > default.
+    // The flag is ephemeral; picker/`/model` choices are what get persisted.
+    let model_id = args
+        .model_id
+        .clone()
+        .or_else(epsilon_core::config::load_model_id)
+        .unwrap_or_else(|| epsilon_core::config::DEFAULT_MODEL_ID.to_string());
+    if args.model_id.is_none()
+        && let Some(saved) = epsilon_core::config::load_model_id()
+    {
+        eprintln!("model: {saved} (from saved config)");
+    }
+
     // Provider selection (M10): faux by default; real routes through genai, which
     // resolves auth per model family from standard env vars (never stored).
     let stream_fn: Arc<dyn epsilon_llm::StreamFn> = match args.provider {
         Provider::Faux => Arc::new(PanicGuard(FauxProvider::new(steps))),
         #[cfg(feature = "real")]
         Provider::Real => {
-            eprintln!("provider: real · model: {} (keys from env)", args.model_id);
+            eprintln!("provider: real · model: {model_id} (keys from env)");
             Arc::new(PanicGuard(epsilon_llm::GenaiAdapter::new()))
         }
         #[cfg(not(feature = "real"))]
@@ -256,16 +278,16 @@ async fn dispatch(args: Args) -> i32 {
              rebuild with `cargo build --features real -p epsilon-cli`"),
     };
 
-    match args.mode {
+    match &args.mode {
         Mode::Demo => demo_mode().await,
         Mode::Print(task) => {
             print_mode(
                 workspace,
                 stream_fn,
-                task,
+                task.clone(),
                 &args.mcp_servers,
                 &args.confinement,
-                &args.model_id,
+                &model_id,
             )
             .await
         }
@@ -273,10 +295,10 @@ async fn dispatch(args: Args) -> i32 {
             tui_mode(
                 workspace,
                 stream_fn,
-                initial,
+                initial.clone(),
                 &args.mcp_servers,
                 &args.confinement,
-                &args.model_id,
+                &model_id,
             )
             .await
         }
@@ -284,14 +306,58 @@ async fn dispatch(args: Args) -> i32 {
             serve_mode(
                 workspace,
                 stream_fn,
-                initial,
+                initial.clone(),
                 args.port,
                 &args.mcp_servers,
                 &args.confinement,
-                &args.model_id,
+                &model_id,
             )
             .await
         }
+        Mode::ListModels(provider_filter) => {
+            list_models(provider_filter.as_deref());
+            0
+        }
+    }
+}
+
+/// Headless catalog dump (`--list-models [provider]`) — pi's `list-models` analogue.
+fn list_models(provider_filter: Option<&str>) {
+    let filter = provider_filter.map(|p| p.to_ascii_lowercase());
+    let mut any = false;
+    for info in epsilon_llm::catalog::curated() {
+        if let Some(f) = &filter
+            && !info.provider.eq_ignore_ascii_case(f)
+        {
+            continue;
+        }
+        any = true;
+        let key = if info.env_key.is_empty() {
+            "—".to_string()
+        } else if std::env::var_os(info.env_key).is_some() {
+            format!("🔑 {}", info.env_key)
+        } else {
+            format!("   (set {})", info.env_key)
+        };
+        println!(
+            "{:<22} {:<12} {:>9}-tok  {:<28} {}",
+            info.id,
+            info.provider,
+            format!("{}k", info.context_window / 1_000),
+            info.label,
+            key,
+        );
+    }
+    if !any {
+        let known: Vec<&str> = epsilon_llm::catalog::curated()
+            .iter()
+            .map(|m| m.provider)
+            .collect();
+        eprintln!(
+            "unknown provider '{provider_filter:?}'; bundled providers: {}",
+            known.join(", ")
+        );
+        std::process::exit(2);
     }
 }
 
@@ -322,6 +388,24 @@ async fn build_runtime(
         eprintln!("mcp server '{}' attached ({attached} tools)", cfg.name);
     }
 
+    // Skills (M8 brick, wired M11): conventional roots feed the CONTEXT-tier catalog.
+    let skills = epsilon_core::skills::discover(&epsilon_cli::runtime::skill_roots(&workspace));
+    if !skills.is_empty() {
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        eprintln!("skills: {}", names.join(", "));
+    }
+
+    // Extensions (M8/M9a bricks, wired M11): manifests spawn hosts; tools join the
+    // registry namespaced `ext__<name>__<tool>`; events pump after the agent exists.
+    let (ext_hosts, ext_notices) = epsilon_cli::runtime::attach_extensions(
+        &mut registry,
+        &epsilon_cli::runtime::extension_roots(&workspace),
+    )
+    .await;
+    for line in &ext_notices {
+        eprintln!("{line}");
+    }
+
     let gate = Arc::new(RulesetGate::new(approvals));
     let agent = Agent::new(
         LoopLimits::default(),
@@ -333,7 +417,9 @@ async fn build_runtime(
     let store = epsilon_session::SessionStore::open(workspace.join(session_file))
         .map_err(|e| format!("open session store: {e}"))?;
     agent.set_model_id(model_id);
+    agent.set_skills(skills);
     agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+    epsilon_cli::runtime::spawn_event_forwarder(agent.subscribe(), ext_hosts);
     Ok(agent)
 }
 
@@ -423,6 +509,7 @@ async fn tui_mode(
                 agent,
                 approvals,
                 initial_task,
+                model_id: model_id.to_string(),
             })
             .await
         }

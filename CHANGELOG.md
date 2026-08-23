@@ -2,6 +2,13 @@
 
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
+## [Unreleased]
+
+### M11 - Model picker, catalog, runtime wiring
+- pi-style /models TUI picker (filter, provider groups, custom ids) + /model, /help, --list-models`n- Bundled catalog: 18 models / 10 providers with env-key auth hints
+- [model] id persistence in ~/.config/epsilon/config.toml (first ADR-012 slice)
+- Skills + extensions now load from conventional directories (closes M8 reachability debt)
+
 ## [0.1.0] - 2026-08-23
 
 The first complete harness: pi's proven loop and session format, DSH-grade two-layer
@@ -68,3 +75,4 @@ three frontends, offline-testable end to end.
 ### Verification posture
 104 offline tests, zero clippy warnings, byte-stable prompts hash-tested, full-loop
 scenarios run against scripted providers — CI never touches paid APIs.
+

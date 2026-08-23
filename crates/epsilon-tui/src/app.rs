@@ -34,6 +34,8 @@ pub struct TuiConfig {
     pub approvals: Arc<ChannelApprovalUi>,
     /// Task submitted automatically once the UI is live.
     pub initial_task: Option<String>,
+    /// Active model id (already resolved by the CLI through flag > config > default).
+    pub model_id: String,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -68,11 +70,14 @@ struct App {
     pending_ask: Option<PendingAsk>,
     guidance_mode: bool,
     scroll_from_bottom: usize,
+    model_id: String,
+    picker_open: bool,
+    picker_index: usize,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
 }
 
 impl App {
-    fn new(notices_tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
+    fn new(model_id: String, notices_tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
         Self {
             ui: UiState::new(),
             input: String::new(),
@@ -82,6 +87,9 @@ impl App {
             pending_ask: None,
             guidance_mode: false,
             scroll_from_bottom: 0,
+            model_id,
+            picker_open: false,
+            picker_index: 0,
             notices_tx,
         }
     }
@@ -168,12 +176,72 @@ impl App {
         if text.trim().is_empty() {
             return;
         }
+        if let Some(command) = crate::picker::parse_command(&text) {
+            self.run_command(agent, command);
+            return;
+        }
         let msg = self.submit_text(text);
         if self.ui.running() {
             agent.steer(msg);
             self.notice("steering queued (delivered after current turn)");
         } else {
             self.spawn_run(Arc::clone(agent), msg);
+        }
+    }
+
+    fn run_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) {
+        match command {
+            crate::picker::Command::Models => {
+                self.picker_open = true;
+                self.picker_index = 0;
+                // Reuse the editor line as the picker's filter box.
+                self.input.clear();
+                self.cursor_chars = 0;
+            }
+            crate::picker::Command::Model(id) => self.apply_model(agent, id),
+            crate::picker::Command::Help => {
+                for line in [
+                    "commands: /models · /model <id> · /help",
+                    "keys: Enter submit · Esc quit-when-idle · PgUp/PgDn scroll",
+                ] {
+                    self.notice(line);
+                }
+            }
+        }
+    }
+
+    /// Switch the session model, persist the choice, and tell the user.
+    fn apply_model(&mut self, agent: &Arc<Agent>, id: String) {
+        if id == self.model_id {
+            self.notice(format!("model already {id}"));
+            return;
+        }
+        agent.set_model_id(&id);
+        match epsilon_core::config::save_model_id(&id) {
+            Ok(path) => {
+                self.model_id = id.clone();
+                self.notice(format!(
+                    "model switched to {id} — saved to {}",
+                    path.display()
+                ));
+            }
+            Err(e) => {
+                self.model_id = id.clone();
+                self.notice(format!("model switched to {id} (not saved: {e})"));
+            }
+        }
+    }
+
+    /// Apply the currently highlighted picker row.
+    fn pick_selected(&mut self, agent: &Arc<Agent>) {
+        let rows = crate::picker::build_rows(&self.input, &self.model_id);
+        if let Some(row) = rows.get(self.picker_index) {
+            let id = row.id.clone();
+            self.picker_open = false;
+            self.picker_index = 0;
+            self.input.clear();
+            self.cursor_chars = 0;
+            self.apply_model(agent, id);
         }
     }
 
@@ -212,11 +280,12 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
         agent,
         approvals,
         initial_task,
+        model_id,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
     let (notices_tx, mut notices_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let mut app = App::new(notices_tx);
+    let mut app = App::new(model_id, notices_tx);
 
     if let Some(task) = initial_task {
         let msg = app.submit_text(task);
@@ -287,6 +356,45 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     // Permission dialog captures keys first.
     if let Some(_pending) = app.pending_ask.as_ref() {
         if app.guidance_mode {
+            // Model picker captures keys after the permission dialog.
+            if app.picker_open {
+                match key.code {
+                    KeyCode::Esc => {
+                        app.picker_open = false;
+                        app.picker_index = 0;
+                        app.input.clear();
+                        app.cursor_chars = 0;
+                    }
+                    KeyCode::Enter => app.pick_selected(agent),
+                    KeyCode::Up => {
+                        let total = crate::picker::build_rows(&app.input, &app.model_id).len();
+                        app.picker_index = app
+                            .picker_index
+                            .saturating_sub(1)
+                            .min(total.saturating_sub(1));
+                    }
+                    KeyCode::Down => {
+                        let total = crate::picker::build_rows(&app.input, &app.model_id).len();
+                        if total > 0 {
+                            app.picker_index = (app.picker_index + 1).min(total - 1);
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        app.backspace();
+                        let total = crate::picker::build_rows(&app.input, &app.model_id).len();
+                        if app.picker_index >= total {
+                            app.picker_index = total.saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        app.insert_char(c);
+                        app.picker_index = 0;
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
             match key.code {
                 KeyCode::Enter => {
                     let guidance = std::mem::take(&mut app.input);
@@ -414,9 +522,104 @@ fn draw(f: &mut Frame<'_>, app: &App) {
     draw_input(f, app, input_area);
     draw_status(f, app, status_area);
 
+    if app.picker_open {
+        draw_picker(f, app, f.area());
+    }
     if app.pending_ask.is_some() {
         draw_dialog(f, app, f.area());
     }
+}
+
+/// `/models` overlay: filter-driven list with provider grouping hints and an auth
+/// column. The active model floats to the top (picker::build_rows).
+fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    let rows = crate::picker::build_rows(&app.input, &app.model_id);
+    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let height = 14u16.min(outer.height.saturating_sub(2));
+    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
+    let y = outer.y + 1;
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            format!(" models — filter: '{}' ", app.input),
+            Style::default().fg(Color::Cyan),
+        ));
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no matches — keep typing or press Esc",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let mut last_provider = String::new();
+    for (i, row) in rows.iter().enumerate() {
+        // Provider group separators between distinct providers (not for custom rows).
+        if !row.is_custom && row.provider != last_provider {
+            last_provider = row.provider.clone();
+            lines.push(Line::from(Span::styled(
+                format!("─ {last_provider} "),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        let selected = i == app.picker_index;
+        let marker = match row.id == app.model_id {
+            true => "● ",
+            false => "  ",
+        };
+        let auth = if row.auth_ready { "🔑" } else { "· " };
+        let style = if selected {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let label = if row.is_custom {
+            format!("use custom id '{0}'", row.id)
+        } else {
+            row.label.clone()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_string(), style),
+            Span::styled(
+                format!("{auth} "),
+                Style::default().fg(if row.auth_ready {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
+            ),
+            Span::styled(
+                label,
+                style.add_modifier(if selected {
+                    ratatui::style::Modifier::REVERSED
+                } else {
+                    ratatui::style::Modifier::empty()
+                }),
+            ),
+            Span::styled(
+                format!("  · {}", row.id),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ move · type to filter · Enter apply · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let para = Paragraph::new(lines).block(block);
+    f.render_widget(para, area);
 }
 
 fn draw_transcript(f: &mut Frame<'_>, app: &App, area: Rect) {
@@ -470,7 +673,8 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
     let (tin, tout) = app.ui.usage();
-    let right = format!("tokens in/out: {tin}/{tout}");
+    let model = epsilon_llm::catalog::display_label(&app.model_id);
+    let right = format!("{model} · tokens {tin}/{tout}");
     let left_len = app.ui.status().chars().count();
     let pad = (area.width as usize)
         .saturating_sub(left_len + right.chars().count())

@@ -24,11 +24,13 @@ call passing through last-match-wins permission rules AND OS confinement (Window
 with memory/process/CPU caps and kill-on-close; Unix bubblewrap; fail-closed when unavailable).
 Long sessions auto-compact past the token threshold (prune, clamp tail, amend summaries) with
 byte-stable prompt tiers. Skills load from `SKILL.md` directories; third-party extensions run as
-isolated processes; MCP servers attach over the official rmcp SDK's stdio transport. Three
-frontends share one runtime: an interactive ratatui TUI (`--tui`, live events + approval dialogs),
-print mode (`-p`, headless), and serve mode (`--serve`, HTTP/SSE for remote clients). Real
-providers plug in behind `--features real` + `--provider real`. All ten planned milestones
-shipped; deferred items carry written rationale in the ADRs and milestone ledgers.
+isolated processes launched from manifests; MCP servers attach over the official rmcp SDK's stdio
+transport. Three frontends share one runtime: an interactive ratatui TUI (`--tui`, live events +
+approval dialogs + a pi-style `/models` picker), print mode (`-p`, headless), and serve mode
+(`--serve`, HTTP/SSE for remote clients). Model selection uses a bundled catalog with env-var
+auth detection; real providers plug in behind `--features real` + `--provider real`. All ten
+planned milestones shipped; deferred items carry written rationale in the ADRs and milestone
+ledgers.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -47,8 +49,10 @@ shipped; deferred items carry written rationale in the ADRs and milestone ledger
 | M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | ✅ shipped |
 | M10a | Sandbox seam (Job Objects / bwrap, fail-closed) + permission-event correlation fix; **ACL runner deferred with rationale** (ADR-005) | ✅ shipped |
 | M10b | Release packaging: real providers, model plumbing, 8.8 MB binary, changelog + tag `v0.1.0` | ✅ shipped |
+| M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
+| M12 | Completion pass: full ADR-012 config layer, retry ledger + cancellation + costs, rpc/OpenAPI, Linux verification | next |
 
-104 tests · zero clippy warnings · every milestone committed with a dev log under
+120 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---
@@ -85,6 +89,7 @@ cargo run -p epsilon-cli         # scripted 3-turn demo session
 cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mode
 cargo run -p epsilon-cli -- --tui                           # interactive TUI
 cargo run -p epsilon-cli -- --serve --port 8787             # HTTP/SSE server
+cargo run -p epsilon-cli -- --list-models                   # bundled model catalog
 ```
 
 Demo output:
@@ -301,6 +306,7 @@ not review comments; behavior changes need an ADR note. Commit convention:
 *Built as a research-through-implementation project. The reference harnesses under
 `references/` remain the property of their respective authors; their lessons are cited, their
 code is not copied.*
+
 
 
 

@@ -10,6 +10,7 @@
 //! feature without touching this crate's logic.
 
 pub mod app;
+pub mod picker;
 pub mod state;
 
 pub use app::{TuiConfig, run};
