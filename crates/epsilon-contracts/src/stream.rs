@@ -142,15 +142,15 @@ impl StreamFolder {
                 // live-updated partial above. Parse any string-typed argument payloads here,
                 // which also makes truncated (MaxTokens) calls detectably invalid (Null).
                 for block in &mut message.content {
-                    if let crate::content::ContentBlock::ToolCall { arguments, .. } = block {
-                        if let Some(raw) = arguments.as_str() {
-                            let parsed: serde_json::Value = if raw.trim().is_empty() {
-                                serde_json::json!({})
-                            } else {
-                                serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
-                            };
-                            *arguments = parsed;
-                        }
+                    if let crate::content::ContentBlock::ToolCall { arguments, .. } = block
+                        && let Some(raw) = arguments.as_str()
+                    {
+                        let parsed: serde_json::Value = if raw.trim().is_empty() {
+                            serde_json::json!({})
+                        } else {
+                            serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
+                        };
+                        *arguments = parsed;
                     }
                 }
                 self.partial = None;

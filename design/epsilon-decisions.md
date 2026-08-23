@@ -253,6 +253,13 @@ keeps the API honest.
 **Best possible?** Yes for v1. Deferred: web/desktop consume the same SSE/REST - explicitly
 designed-for, deliberately unbuilt (architecture doc section 14).
 
+**Amendment (M9b, modes shipped).** interactive (ratatui TUI), print, and serve (axum SSE)
+land together; rpc(stdio) stays open for the editor-integration milestone. The shared
+runtime is real: CLI composes provider+tools+gate once and hands `Arc<Agent>` to every
+frontend; permission asks flow through ONE mechanism (`ChannelApprovalUi`) answered by
+the TUI dialog locally or REST remotely. OpenAPI emission deferred with rpc mode — the
+route types are already the single source of truth for it.
+
 ---
 
 ## ADR-012: Configuration TOML, declarative only, project trust
@@ -284,6 +291,13 @@ declarative server config, the `Connector` transport seam, and the registry brid
 (qualified names, untrusted-output handling) — all tested against an in-process connector
 double. The rmcp-backed stdio connector lands in M9/M10 alongside real-server integration
 tests. Staging keeps every shipped line tested while preserving the architecture exactly.
+
+**Amendment (M9b, transport landed).** `StdioConnector` wraps rmcp's child-process
+transport behind the unchanged M8 `Connector` seam — the staging bet pays out as zero
+bridge changes. Integration tests spawn a REAL rmcp server binary (`mcp-fixture-server`)
+over real stdio pipes: handshake, tools/list pagination, and a tools/call round-trip,
+all offline. rmcp types stay inside `stdio.rs` per the adapter rule; streamable-http
+remains future work (same seam, one more connector).
 
 **Alternatives.** Hand-rolled client (all four references did); defer MCP post-v1.
 

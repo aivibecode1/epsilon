@@ -62,16 +62,15 @@ impl RulesetGate {
 impl PermissionGate for RulesetGate {
     async fn authorize(&self, req: PermissionRequest) -> Authorization {
         // 1. Session memory short-circuits before any UI round-trip.
-        if let Ok(mem) = self.memory.lock() {
-            if mem
+        if let Ok(mem) = self.memory.lock()
+            && mem
                 .iter()
                 .any(|(c, p)| *c == req.capability && crate::glob_match(p, &req.pattern))
-            {
-                return Authorization {
-                    decision: PermissionDecision::AllowOnce,
-                    asked: false,
-                };
-            }
+        {
+            return Authorization {
+                decision: PermissionDecision::AllowOnce,
+                asked: false,
+            };
         }
 
         // 2. Engine evaluation.

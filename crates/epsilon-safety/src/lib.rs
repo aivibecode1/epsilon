@@ -5,10 +5,12 @@
 //! fails immediately at evaluation time; `ask` routes through an [`ApprovalUi`] so frontends
 //! own the interaction.
 
+mod channel_ui;
 mod engine;
 mod gate;
 mod wildcards;
 
+pub use channel_ui::{ChannelApprovalUi, PendingAsk};
 pub use engine::{Action, PermissionEngine, Rule, Ruleset};
 pub use gate::{ApprovalUi, AutoApprove, RulesetGate};
 pub use wildcards::glob_match;

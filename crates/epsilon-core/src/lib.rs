@@ -318,12 +318,11 @@ impl Agent {
         if let Ok(mut h) = self.history.lock() {
             h.pop();
         }
-        if let Ok(store) = self.session_store.lock() {
-            if let Some(st) = store.as_ref()
-                && let Ok(mut s) = st.lock()
-            {
-                let _ = s.pop_last();
-            }
+        if let Ok(store) = self.session_store.lock()
+            && let Some(st) = store.as_ref()
+            && let Ok(mut s) = st.lock()
+        {
+            let _ = s.pop_last();
         }
     }
 

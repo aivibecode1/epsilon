@@ -44,20 +44,20 @@ impl SessionLease {
     pub fn acquire(session_path: &Path) -> std::io::Result<LeaseOutcome> {
         let lock_path = session_path.with_extension("lock");
 
-        if lock_path.exists() {
-            if let Ok(meta) = std::fs::metadata(&lock_path) {
-                let age = meta
-                    .modified()
-                    .ok()
-                    .and_then(|m| SystemTime::now().duration_since(m).ok())
-                    .unwrap_or(Duration::ZERO);
-                if age < STALE_AFTER {
-                    let holder = std::fs::read_to_string(&lock_path).ok();
-                    return Ok(LeaseOutcome::Held { holder });
-                }
+        if lock_path.exists()
+            && let Ok(meta) = std::fs::metadata(&lock_path)
+        {
+            let age = meta
+                .modified()
+                .ok()
+                .and_then(|m| SystemTime::now().duration_since(m).ok())
+                .unwrap_or(Duration::ZERO);
+            if age < STALE_AFTER {
+                let holder = std::fs::read_to_string(&lock_path).ok();
+                return Ok(LeaseOutcome::Held { holder });
             }
-            // Stale or unreadable metadata: steal.
         }
+        // Stale or unreadable metadata: steal.
 
         match std::fs::OpenOptions::new()
             .write(true)

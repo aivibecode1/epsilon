@@ -65,14 +65,12 @@ pub fn repair_on_open(store: &mut SessionStore) -> Result<RepairReport, crate::s
             kind: EntryKind::Message { message, .. },
             ..
         }) = branch.last()
+            && let Message::Assistant(a) = message
+            && a.stop_reason.is_failure()
+            && !ends_with_turn_end(&branch)
         {
-            if let Message::Assistant(a) = message
-                && a.stop_reason.is_failure()
-                && !ends_with_turn_end(&branch)
-            {
-                store.record_turn_end(TurnEndReason::Aborted)?;
-                report.appended_turn_end = true;
-            }
+            store.record_turn_end(TurnEndReason::Aborted)?;
+            report.appended_turn_end = true;
         }
         return Ok(report);
     }

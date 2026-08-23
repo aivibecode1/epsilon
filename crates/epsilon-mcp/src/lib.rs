@@ -10,6 +10,10 @@
 //! in-process double now; plugging rmcp's stdio client in later is a connector impl, not a
 //! redesign. ADR-013 carries the amendment.
 
+mod stdio;
+
+pub use stdio::{StdioConnector, attach_stdio_server};
+
 use async_trait::async_trait;
 use epsilon_contracts::tool::{
     Tool, ToolContext, ToolDescriptor, ToolFailure, ToolInvocation, ToolOutput, ToolUpdateSink,

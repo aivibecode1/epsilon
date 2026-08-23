@@ -18,12 +18,14 @@ existing harness offers.
 
 ## Status
 
-**Real tools, ruleset-gated, long-session capable, and extensible.** Epsilon reads, writes,
-edits, greps, globs, lists, and runs shell commands inside its declared workspace — every call
-passing through last-match-wins permission rules. Long sessions auto-compact past the token
+**Real tools, ruleset-gated, long-session capable, extensible, and fronted.** Epsilon reads,
+writes, edits, greps, globs, lists, and runs shell commands inside its declared workspace — every
+call passing through last-match-wins permission rules. Long sessions auto-compact past the token
 threshold (prune, clamp tail, amend summaries) with byte-stable prompt tiers. Skills load from
-`SKILL.md` directories; third-party extensions run as isolated processes; MCP tools bridge into
-the registry. Not yet shipped: TUI/server frontends (M9), OS confinement + rmcp transport (M10).
+`SKILL.md` directories; third-party extensions run as isolated processes; MCP servers attach over
+the official rmcp SDK's stdio transport. Three frontends share one runtime: an interactive ratatui
+TUI (`--tui`, live events + approval dialogs), print mode (`-p`, headless), and serve mode
+(`--serve`, HTTP/SSE for remote clients). Not yet shipped: OS confinement + release packaging (M10).
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -36,10 +38,12 @@ the registry. Not yet shipped: TUI/server frontends (M9), OS confinement + rmcp 
 | M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
 | M7 | Compaction engine + three-tier byte-stable prompt builder | ✅ shipped |
 | M8 | Skills, extension host (process-isolated), MCP bridge | ✅ shipped |
-| M9 | TUI + HTTP/SSE frontends + rmcp stdio transport | next |\n| M9a | **Extension event forwarding** (closes known-gap #1) + print mode -p | ✅ shipped |
+| M9 | TUI + HTTP/SSE frontends + rmcp stdio transport | ✅ shipped |
+| M9a | Extension event forwarding (closes known-gap #1) + print mode -p | ✅ shipped |
+| M9b | ratatui TUI (`--tui`), serve mode SSE (`--serve`), rmcp stdio transport | ✅ shipped |
 | M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | planned |
 
-83 tests · zero clippy warnings · every milestone committed with a dev log under
+98 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---
@@ -71,8 +75,11 @@ Prerequisites: Rust ≥ 1.85 (edition 2024), any of stable-msvc/stable-gnu/musl 
 ```sh
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # 60+ tests, offline & free
+cargo test --workspace           # 90+ tests, offline & free
 cargo run -p epsilon-cli         # scripted 3-turn demo session
+cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mode
+cargo run -p epsilon-cli -- --tui                           # interactive TUI
+cargo run -p epsilon-cli -- --serve --port 8787             # HTTP/SSE server
 ```
 
 Demo output:
@@ -161,9 +168,9 @@ contracts ← session ← core
 | `epsilon-safety` | Permission rulesets + sandbox backends *(M6+)* | wildcard engine, `Sandbox` trait | none in pi |
 | `epsilon-ext` | Process-isolated extension host *(M8)* | NDJSON-RPC protocol, manifests | `core/extensions` |
 | `epsilon-mcp` | MCP client bridging external tools *(M8)* | rmcp-based registry bridge | none in pi core |
-| `epsilon-tui` | ratatui terminal frontend *(M9)* | — | `packages/tui` |
-| `epsilon-server` | HTTP/SSE frontend API *(M9)* | OpenAPI-from-types routes | RPC mode |
-| `epsilon-cli` | Binary: modes dispatch, config | today: the M5 demo | CLI |
+| `epsilon-tui` | ratatui terminal frontend *(M9)*: live event transcript, approval dialog, steering | `UiState` reducer, `TuiConfig` | `packages/tui` |
+| `epsilon-server` | HTTP/SSE frontend API *(M9)*: SSE events, prompt/steer/approve REST | `ServeState`, `router` | RPC mode |
+| `epsilon-cli` | Binary: modes dispatch (demo / print / tui / serve), runtime composition | — | CLI |
 
 ---
 

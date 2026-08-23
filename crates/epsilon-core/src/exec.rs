@@ -115,13 +115,13 @@ fn gate_subject(
             ("external_dir".to_string(), raw)
         };
     }
-    if name == "bash" || name == "shell" {
-        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-            return (
-                name.to_string(),
-                cmd.split_whitespace().next().unwrap_or("*").to_string(),
-            );
-        }
+    if (name == "bash" || name == "shell")
+        && let Some(cmd) = args.get("command").and_then(|v| v.as_str())
+    {
+        return (
+            name.to_string(),
+            cmd.split_whitespace().next().unwrap_or("*").to_string(),
+        );
     }
     (name.to_string(), "*".to_string())
 }

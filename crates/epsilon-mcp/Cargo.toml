@@ -13,8 +13,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+rmcp = { workspace = true }
+
+[[bin]]
+name = "mcp-fixture-server"
+path = "src/bin/mcp_fixture_server.rs"
+# Fixture speaks the SERVER side; only built when the dev/test feature set is on.
+required-features = ["rmcp/server", "rmcp/transport-io"]
 
 [dev-dependencies]
+rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

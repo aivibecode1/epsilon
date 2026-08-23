@@ -7,6 +7,14 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+epsilon-core = { path = "../epsilon-core" }
+epsilon-safety = { path = "../epsilon-safety" }
+serde_json = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 
 [lints]
 workspace = true
