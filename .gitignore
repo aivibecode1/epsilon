@@ -6,6 +6,9 @@
 /.epsilon/
 epsilon.local.toml
 
+# Reference harness sources are read-only research input, not project code
+/references/
+
 # Editor / OS noise
 .vscode/
 .idea/
