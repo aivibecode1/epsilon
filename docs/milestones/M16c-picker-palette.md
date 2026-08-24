@@ -46,6 +46,14 @@ All drive `handle_key` with synthetic KeyEvents per house discipline.
   filtering because catalogs can be long.
 - No new dependencies (fuzzy is ours; dialogs reuse the existing overlay pattern).
 
+## Parity sweep addendum (post-compare loop)
+
+The reference re-read after M16a-c found two pi editor features still missing:
+- **Undo** (`undo.rs`): Ctrl+Z restores `(buffer, cursor)` snapshots pushed before
+  backspace/kill mutations; depth 200; duplicate-suppressing like pi's
+  clone-on-push stack. Key-path tested (backspace undo + kill undo).
+- Scroll indicators were already present from M15's select-list port; no work.
+
 ## Verification
 
 ```

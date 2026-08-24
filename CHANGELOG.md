@@ -13,6 +13,8 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
   close (opencode prompt.stash)
 - Fuzzy matcher ported from pi's fuzzy.ts (word-boundary/consecutive scoring),
   zero new dependencies
+- Editor undo (Ctrl+Z): bounded snapshot stack restoring buffer + cursor before
+  backspaces and kills (pi undo-stack.ts parity)
 
 ### M16b - Editor v2 (pi editor behaviors)
 - Emacs kill-ring: Ctrl+U/Ctrl+W push kills, Ctrl+Y yanks; consecutive kills

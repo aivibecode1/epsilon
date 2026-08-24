@@ -21,6 +21,7 @@ pub mod render_cache;
 pub mod scroll;
 pub mod state;
 pub mod theme;
+pub mod undo;
 pub mod wrap;
 
 pub use app::{LiveFetcher, TuiConfig, run};

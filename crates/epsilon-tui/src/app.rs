@@ -119,6 +119,8 @@ pub(crate) struct App {
     palette_open: bool,
     /// M16c: draft stashed when a dialog opened; restored when it closes.
     stash: Option<(String, usize)>,
+    /// Parity sweep: editor undo stack (Ctrl+Z), pi undo-stack.ts semantics.
+    undo: crate::undo::UndoStack,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
@@ -187,6 +189,7 @@ impl App {
             picker_provider: None,
             palette_open: false,
             stash: None,
+            undo: crate::undo::UndoStack::new(),
             branch_cache: (
                 None,
                 std::time::Instant::now() - std::time::Duration::from_secs(10),
@@ -226,6 +229,7 @@ impl App {
 
     /// Kill from cursor to start (Ctrl+U); pushes onto the kill ring.
     fn kill_to_start(&mut self) {
+        self.push_undo();
         let killed: String = self.input.chars().take(self.cursor_chars).collect();
         let (s, c) = crate::editor_ops::kill_to_start(&self.input, self.cursor_chars);
         // A fresh kill starts a new entry; consecutive kills extend the last one.
@@ -240,6 +244,7 @@ impl App {
     /// Kill the word before the cursor (Ctrl+W); pushes/accumulates on the ring.
     /// Paste markers count as ONE unit.
     fn kill_word_back(&mut self) {
+        self.push_undo();
         let start = crate::editor_ops::word_left_atomic(&self.input, self.cursor_chars);
         let chars: Vec<char> = self.input.chars().collect();
         let killed: String = chars[start..self.cursor_chars].iter().collect();
@@ -300,6 +305,27 @@ impl App {
         if let Some((text, cursor)) = self.stash.take() {
             self.input = text;
             self.cursor_chars = cursor;
+        }
+    }
+
+    /// Snapshot the current state BEFORE a mutation (parity sweep: Ctrl+Z).
+    fn push_undo(&mut self) {
+        self.undo.push(crate::undo::EditorSnapshot {
+            text: self.input.clone(),
+            cursor_chars: self.cursor_chars,
+        });
+    }
+
+    /// Ctrl+Z: restore the most recent pre-mutation snapshot.
+    fn undo(&mut self) -> bool {
+        match self.undo.pop() {
+            Some(snap) => {
+                self.input = snap.text;
+                self.cursor_chars = snap.cursor_chars.min(self.input.chars().count());
+                self.end_yank();
+                true
+            }
+            None => false,
         }
     }
 
@@ -959,7 +985,14 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             false
         }
         KeyCode::Backspace => {
+            app.push_undo();
             app.backspace();
+            app.end_yank();
+            false
+        }
+        KeyCode::Char('z' | 'Z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Parity sweep: editor undo (pi undo-stack.ts).
+            app.undo();
             false
         }
         KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1816,6 +1849,26 @@ mod tests {
         assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
         assert!(!app.picker_open);
         assert_eq!(app.input, "draft in progress");
+    }
+
+    #[tokio::test]
+    async fn ctrl_z_undoes_backspace_and_kills() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "undo me".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        // Backspace deletes "e".
+        handle_key(&mut app, &agent, key(KeyCode::Backspace));
+        assert_eq!(app.input, "undo m");
+        // Ctrl+Z restores it.
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('z')));
+        assert_eq!(app.input, "undo me");
+
+        // Ctrl+W kill is undoable too.
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('w')));
+        assert_eq!(app.input, "undo ");
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('z')));
+        assert_eq!(app.input, "undo me", "kill undone");
     }
 
     #[tokio::test]
