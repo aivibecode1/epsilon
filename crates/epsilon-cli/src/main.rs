@@ -26,7 +26,8 @@ use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
 
 const USAGE: &str = "usage: epsilon [-p \"task\"] [--tui [task]] [--serve [--port N] [task]] \
 [--script f] [--mcp name=cmd[:arg,arg]] [--workspace dir] [--sandbox auto|off] \
-[--provider faux|real] [--model id]";
+[--provider faux|real] [--model id] [--list-models [provider]] [-c|--continue | --resume f] \
+[--rpc] [--version]";
 
 struct Args {
     mode: Mode,
@@ -73,6 +74,10 @@ enum Mode {
 
 fn parse_args() -> Args {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.iter().any(|a| a == "--version" || a == "-V") {
+        println!("epsilon {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
     let mut mode = Mode::Demo;
     let mut script_path = None;
     let mut workspace = None;
