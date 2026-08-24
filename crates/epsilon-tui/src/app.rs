@@ -26,6 +26,14 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::state::{LineKind, UiState};
 
+/// Async provider-listing hook injected by the CLI when built with `--features real`
+/// (M13): takes a model-id hint, returns that provider's live catalog. Errors in-band.
+pub type LiveFetcher = Arc<
+    dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<Vec<String>, String>>
+        + Send
+        + Sync,
+>;
+
 /// Everything the frontend needs: an agent to drive and its approval queue.
 pub struct TuiConfig {
     /// The composed session runtime.
@@ -36,6 +44,8 @@ pub struct TuiConfig {
     pub initial_task: Option<String>,
     /// Active model id (already resolved by the CLI through flag > config > default).
     pub model_id: String,
+    /// Live per-provider listing capability; absent without the `real` feature.
+    pub live: Option<LiveFetcher>,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -73,11 +83,22 @@ struct App {
     model_id: String,
     picker_open: bool,
     picker_index: usize,
+    recents: Vec<String>,
+    live_cache: Vec<String>,
+    live: Option<LiveFetcher>,
+    prefs: crate::state::RenderPrefs,
+    fetching_hint: Option<String>,
+    fetched_tx: tokio::sync::mpsc::UnboundedSender<Result<Vec<String>, String>>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
 }
 
 impl App {
-    fn new(model_id: String, notices_tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        model_id: String,
+        fetched_tx: tokio::sync::mpsc::UnboundedSender<Result<Vec<String>, String>>,
+        notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Self {
         Self {
             ui: UiState::new(),
             input: String::new(),
@@ -90,6 +111,12 @@ impl App {
             model_id,
             picker_open: false,
             picker_index: 0,
+            recents: epsilon_core::config::load_recent_models(),
+            live_cache: Vec::new(),
+            live: None,
+            prefs: crate::state::RenderPrefs::default(),
+            fetching_hint: None,
+            fetched_tx,
             notices_tx,
         }
     }
@@ -210,7 +237,7 @@ impl App {
         }
     }
 
-    /// Switch the session model, persist the choice, and tell the user.
+    /// Switch the session model, persist choice + recents, and tell the user.
     fn apply_model(&mut self, agent: &Arc<Agent>, id: String) {
         if id == self.model_id {
             self.notice(format!("model already {id}"));
@@ -230,11 +257,16 @@ impl App {
                 self.notice(format!("model switched to {id} (not saved: {e})"));
             }
         }
+        if let Ok(path) = epsilon_core::config::push_recent_model(&id) {
+            let _ = path;
+            self.recents = epsilon_core::config::load_recent_models();
+        }
     }
 
     /// Apply the currently highlighted picker row.
     fn pick_selected(&mut self, agent: &Arc<Agent>) {
-        let rows = crate::picker::build_rows(&self.input, &self.model_id);
+        let rows =
+            crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
         if let Some(row) = rows.get(self.picker_index) {
             let id = row.id.clone();
             self.picker_open = false;
@@ -243,6 +275,35 @@ impl App {
             self.cursor_chars = 0;
             self.apply_model(agent, id);
         }
+    }
+
+    /// Kick off a live listing for the highlighted row's provider (M13, `real` builds).
+    fn fetch_live_for_selected(&mut self) {
+        let Some(fetcher) = self.live.as_ref() else {
+            self.notice("live listing unavailable: built without --features real");
+            return;
+        };
+        let rows =
+            crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
+        let Some(row) = rows.get(self.picker_index) else {
+            return;
+        };
+        if row.is_custom {
+            self.notice("custom ids have no provider to list; select one first");
+            return;
+        }
+        if self.fetching_hint.is_some() {
+            return; // one in flight
+        }
+        let hint = row.id.clone();
+        self.fetching_hint = Some(hint.clone());
+        self.notice(format!("fetching live models for '{}'…", row.provider));
+        let tx = self.fetched_tx.clone();
+        let fut = fetcher(hint);
+        tokio::spawn(async move {
+            let result = fut.await;
+            tx.send(result).ok();
+        });
     }
 
     fn spawn_run(&self, agent: Arc<Agent>, msg: Message) {
@@ -281,11 +342,15 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
         approvals,
         initial_task,
         model_id,
+        live,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
     let (notices_tx, mut notices_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let mut app = App::new(model_id, notices_tx);
+    let (fetched_tx, mut fetched_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<Vec<String>, String>>();
+    let mut app = App::new(model_id, fetched_tx, notices_tx);
+    app.live = live;
 
     if let Some(task) = initial_task {
         let msg = app.submit_text(task);
@@ -317,6 +382,20 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
             maybe_notice = notices_rx.recv() => {
                 if let Some(text) = maybe_notice {
                     app.ui.push_notice(text);
+                }
+            },
+
+            maybe_fetched = fetched_rx.recv() => {
+                if let Some(result) = maybe_fetched {
+                    match result {
+                        Ok(mut names) => {
+                            let n = names.len();
+                            app.live_cache.append(&mut names);
+                            app.ui.push_notice(format!("live listing: {n} models merged into /models"));
+                        }
+                        Err(e) => app.ui.push_notice(format!("live listing failed: {e}")),
+                    }
+                    app.fetching_hint = None;
                 }
             },
 
@@ -367,24 +446,46 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                     }
                     KeyCode::Enter => app.pick_selected(agent),
                     KeyCode::Up => {
-                        let total = crate::picker::build_rows(&app.input, &app.model_id).len();
+                        let total = crate::picker::build_rows(
+                            &app.input,
+                            &app.model_id,
+                            &app.recents,
+                            &app.live_cache,
+                        )
+                        .len();
                         app.picker_index = app
                             .picker_index
                             .saturating_sub(1)
                             .min(total.saturating_sub(1));
                     }
                     KeyCode::Down => {
-                        let total = crate::picker::build_rows(&app.input, &app.model_id).len();
+                        let total = crate::picker::build_rows(
+                            &app.input,
+                            &app.model_id,
+                            &app.recents,
+                            &app.live_cache,
+                        )
+                        .len();
                         if total > 0 {
                             app.picker_index = (app.picker_index + 1).min(total - 1);
                         }
                     }
                     KeyCode::Backspace => {
                         app.backspace();
-                        let total = crate::picker::build_rows(&app.input, &app.model_id).len();
+                        let total = crate::picker::build_rows(
+                            &app.input,
+                            &app.model_id,
+                            &app.recents,
+                            &app.live_cache,
+                        )
+                        .len();
                         if app.picker_index >= total {
                             app.picker_index = total.saturating_sub(1);
                         }
+                    }
+                    KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Ctrl+F: fetch live listing for the highlighted row's provider.
+                        app.fetch_live_for_selected();
                     }
                     KeyCode::Char(c) => {
                         app.insert_char(c);
@@ -485,6 +586,17 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(10);
             false
         }
+        KeyCode::Char('x' | 'X') => {
+            // M13 card polish: expand/collapse truncated tool outputs globally.
+            app.prefs.expand_outputs = !app.prefs.expand_outputs;
+            let state = if app.prefs.expand_outputs {
+                "expanded"
+            } else {
+                "collapsed"
+            };
+            app.notice(format!("tool outputs {state} (x toggles)"));
+            false
+        }
         KeyCode::Char(c) => {
             app.insert_char(c);
             false
@@ -508,6 +620,20 @@ fn style_for(kind: LineKind) -> Style {
 fn transcript_rows(app: &App) -> Vec<Line<'static>> {
     let mut rows: Vec<Line<'static>> = Vec::with_capacity(app.ui.lines().len() + 2);
     for l in app.ui.lines() {
+        // M13 card polish: expandable rows show their full payload when toggled.
+        if app.prefs.expand_outputs
+            && let Some(full) = l.full.as_ref()
+        {
+            rows.push(Line::from(Span::styled(full.clone(), style_for(l.kind))));
+            continue;
+        }
+        if l.code {
+            rows.push(Line::from(Span::styled(
+                l.text.clone(),
+                Style::default().fg(Color::DarkGray),
+            )));
+            continue;
+        }
         rows.push(Line::from(Span::styled(l.text.clone(), style_for(l.kind))));
     }
     let streaming = app.ui.streaming_text();
@@ -543,9 +669,9 @@ fn draw(f: &mut Frame<'_>, app: &App) {
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
 /// column. The active model floats to the top (picker::build_rows).
 fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
-    let rows = crate::picker::build_rows(&app.input, &app.model_id);
+    let rows = crate::picker::build_rows(&app.input, &app.model_id, &app.recents, &app.live_cache);
     let width = (outer.width * 4 / 5).max(48).min(outer.width);
-    let height = 14u16.min(outer.height.saturating_sub(2));
+    let height = 15u16.min(outer.height.saturating_sub(2));
     let x = outer.x + (outer.width.saturating_sub(width)) / 2;
     let y = outer.y + 1;
     let area = Rect {
@@ -573,8 +699,8 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     }
     let mut last_provider = String::new();
     for (i, row) in rows.iter().enumerate() {
-        // Provider group separators between distinct providers (not for custom rows).
-        if !row.is_custom && row.provider != last_provider {
+        // Group separators between distinct providers/groups.
+        if row.provider != last_provider {
             last_provider = row.provider.clone();
             lines.push(Line::from(Span::styled(
                 format!("─ {last_provider} "),
@@ -587,6 +713,13 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
             false => "  ",
         };
         let auth = if row.auth_ready { "🔑" } else { "· " };
+        let source_tag = if row.is_live {
+            "⟳ "
+        } else if row.is_recent {
+            "↻ "
+        } else {
+            ""
+        };
         let style = if selected {
             Style::default().fg(Color::Cyan)
         } else {
@@ -607,6 +740,7 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
                     Color::DarkGray
                 }),
             ),
+            Span::styled(source_tag.to_string(), Style::default().fg(Color::Cyan)),
             Span::styled(
                 label,
                 style.add_modifier(if selected {
@@ -624,7 +758,7 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "↑/↓ move · type to filter · Enter apply · Esc cancel",
+        "↑/↓ move · type to filter · Ctrl+F fetch live · Enter apply · Esc cancel",
         Style::default().fg(Color::DarkGray),
     )));
 

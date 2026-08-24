@@ -86,6 +86,85 @@ fn parse_model_id(raw: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Recently used model ids, newest first (`[picker] recent`), capped at [`RECENT_MAX`].
+pub const RECENT_MAX: usize = 8;
+
+/// Recently used model ids from `config_dir/config.toml` (newest first, capped).
+pub fn load_recent_models_in(config_dir: &Path) -> Vec<String> {
+    let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let value: toml::Value = match toml::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    value
+        .get("picker")
+        .and_then(|p| p.get("recent"))
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .filter(|s| !s.trim().is_empty())
+                .take(RECENT_MAX)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Push `model_id` to the front of the recents list (dedup, cap) and persist.
+pub fn push_recent_model_in(config_dir: &Path, model_id: &str) -> Result<PathBuf, String> {
+    if model_id.trim().is_empty() {
+        return Err("refusing to record an empty model id".into());
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    let mut recent = load_recent_models_in(config_dir);
+    recent.retain(|id| id != model_id);
+    recent.insert(0, model_id.to_string());
+    recent.truncate(RECENT_MAX);
+
+    table
+        .entry("picker")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[picker] exists but is not a table".to_string())?
+        .insert(
+            "recent".into(),
+            toml::Value::Array(
+                recent
+                    .into_iter()
+                    .map(toml::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Recently used model ids from the global config (newest first).
+pub fn load_recent_models() -> Vec<String> {
+    global_dir()
+        .map(|d| load_recent_models_in(&d))
+        .unwrap_or_default()
+}
+
+/// Record a picked model in the global recents list.
+pub fn push_recent_model(model_id: &str) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    push_recent_model_in(&dir, model_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +234,42 @@ mod tests {
             None,
             "scalar shape does not parse as our key either"
         );
+    }
+
+    #[test]
+    fn recents_dedup_cap_and_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        assert!(load_recent_models_in(dir).is_empty());
+
+        for id in ["a", "b", "c"] {
+            push_recent_model_in(dir, id).unwrap();
+        }
+        assert_eq!(
+            load_recent_models_in(dir),
+            vec!["c".to_string(), "b".to_string(), "a".to_string()]
+        );
+
+        // Re-picking "a" moves it to front without duplicating.
+        push_recent_model_in(dir, "a").unwrap();
+        assert_eq!(load_recent_models_in(dir)[0], "a");
+        assert_eq!(
+            load_recent_models_in(dir)
+                .iter()
+                .filter(|i| *i == "a")
+                .count(),
+            1
+        );
+
+        // Cap enforced.
+        for i in 0..RECENT_MAX as u32 + 4 {
+            let _ = push_recent_model_in(dir, &format!("m{i}"));
+        }
+        assert_eq!(load_recent_models_in(dir).len(), RECENT_MAX);
+        // And the model id key survived all of this.
+        let _ = save_model_id_in(dir, "deepseek-chat");
+        assert_eq!(load_model_id_in(dir).as_deref(), Some("deepseek-chat"));
+        assert_eq!(load_recent_models_in(dir).len(), RECENT_MAX);
     }
 
     #[test]

@@ -51,9 +51,10 @@ ledgers.
 | M10b | Release packaging: real providers, model plumbing, 8.8 MB binary, changelog + tag `v0.1.0` | ✅ shipped |
 | M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
 | M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
-| M13+ | Optional polish: Linux verification (needs Unix host), live catalog fetch, TUI card polish | open |
+| M13 | Polish: live catalog fetch (Ctrl+F in /models), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
+| future | models.dev registry sync, favorites beyond recents, interactive trust re-prompt | open |
 
-129 tests · zero clippy warnings · every milestone committed with a dev log under
+131 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---

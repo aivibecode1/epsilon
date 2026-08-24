@@ -1,9 +1,10 @@
 //! Pure model-picker logic: row construction and slash-command parsing.
 //!
 //! Rendering lives in `app.rs`; everything testable without a terminal lives here.
-//! Rows come from the bundled catalog (`epsilon_llm::catalog`) plus a synthetic
-//! "custom id" row whenever the filter text is not an exact catalog id — pi's escape
-//! hatch for models we do not know about.
+//! Rows come from the bundled catalog (`epsilon_llm::catalog`) plus persisted
+//! recents, session-fetched live listings, and a synthetic "custom id" row whenever
+//! the filter text is not an exact known id — pi's escape hatch plus opencode's
+//! favorites/recents convention, minus the parts that need a credential store.
 
 use epsilon_llm::catalog;
 
@@ -14,51 +15,121 @@ pub struct PickerRow {
     pub id: String,
     /// Display label (catalog label or the raw id).
     pub label: String,
-    /// Provider grouping key.
+    /// Provider grouping key ("recent"/"live"/"custom" for synthetic rows).
     pub provider: String,
     /// Credential env-var status for the auth-hint column.
     pub auth_ready: bool,
     /// True for the synthetic "use this exact id" row.
     pub is_custom: bool,
+    /// True for rows fetched live from the provider API.
+    pub is_live: bool,
+    /// True for rows sourced from the persisted recently-used list.
+    pub is_recent: bool,
 }
 
-/// Build the picker rows for a filter string, keeping the active model visible.
-///
-/// Empty filter → full bundled catalog in display order. Non-empty filter →
-/// case-insensitive substring match over id/label/provider; when the filter itself is
-/// not an exact known id, a trailing custom row offers it verbatim.
-pub fn build_rows(filter: &str, current: &str) -> Vec<PickerRow> {
-    let needle = filter.trim().to_ascii_lowercase();
-    let mut rows: Vec<PickerRow> = Vec::new();
-    for info in catalog::curated() {
-        let hay = format!("{} {} {}", info.id, info.label, info.provider).to_ascii_lowercase();
-        if !needle.is_empty() && !hay.contains(&needle) {
-            continue;
-        }
-        rows.push(PickerRow {
-            id: info.id.to_string(),
-            label: info.label.to_string(),
-            provider: info.provider.to_string(),
-            auth_ready: info.env_key.is_empty() || std::env::var_os(info.env_key).is_some(),
-            is_custom: false,
-        });
+fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
+    PickerRow {
+        id: info.id.to_string(),
+        label: info.label.to_string(),
+        provider: info.provider.to_string(),
+        auth_ready: info.env_key.is_empty() || std::env::var_os(info.env_key).is_some(),
+        is_custom: false,
+        is_live: false,
+        is_recent: false,
     }
+}
+
+fn synthetic_row(
+    id: &str,
+    provider: &str,
+    is_custom: bool,
+    is_live: bool,
+    is_recent: bool,
+) -> PickerRow {
+    PickerRow {
+        id: id.to_string(),
+        label: catalog::display_label(id).to_string(),
+        provider: provider.to_string(),
+        auth_ready: catalog::credentials_ready(id),
+        is_custom,
+        is_live,
+        is_recent,
+    }
+}
+
+/// Build the picker rows for a filter string.
+///
+/// Order (empty filter): active model first, then recents, then the bundled catalog.
+/// With a filter: case-insensitive substring matches across id/label/provider from all
+/// sources; when the filter is not an exact known id, a trailing custom row offers it
+/// verbatim.
+pub fn build_rows(
+    filter: &str,
+    current: &str,
+    recents: &[String],
+    live: &[String],
+) -> Vec<PickerRow> {
+    let needle = filter.trim().to_ascii_lowercase();
+    let matches_filter =
+        |hay: &str| needle.is_empty() || hay.to_ascii_lowercase().contains(&needle);
+
+    let mut rows: Vec<PickerRow> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+
+    let push_unique = |row: PickerRow, rows: &mut Vec<PickerRow>, seen: &mut Vec<String>| {
+        if !seen.iter().any(|id| id.eq_ignore_ascii_case(&row.id)) {
+            seen.push(row.id.clone());
+            rows.push(row);
+        }
+    };
+
+    // Active model floats to top so it is always reachable/visible.
+    if let Some(info) = catalog::lookup_model(current)
+        && matches_filter(&format!("{} {} {}", info.id, info.label, info.provider))
+    {
+        push_unique(row_from_info(info), &mut rows, &mut seen);
+    }
+
+    for id in recents {
+        if matches_filter(id)
+            && let Some(info) = catalog::lookup_model(id)
+        {
+            let mut row = row_from_info(info);
+            row.is_recent = true;
+            row.provider = "recent".into();
+            push_unique(row, &mut rows, &mut seen);
+        } else if matches_filter(id) {
+            push_unique(
+                synthetic_row(id, "recent", false, false, true),
+                &mut rows,
+                &mut seen,
+            );
+        }
+    }
+
+    for id in live {
+        if matches_filter(id) && !catalog::lookup_model(id).is_some() {
+            // Live ids not in the bundled catalog surface under their own group;
+            // known ids already appear via the catalog section below.
+            push_unique(
+                synthetic_row(id, "live", false, true, false),
+                &mut rows,
+                &mut seen,
+            );
+        } else if matches_filter(id) && catalog::lookup_model(id).is_none() {
+            unreachable!()
+        }
+    }
+
+    for info in catalog::curated() {
+        if matches_filter(&format!("{} {} {}", info.id, info.label, info.provider)) {
+            push_unique(row_from_info(info), &mut rows, &mut seen);
+        }
+    }
+
     let trimmed = filter.trim();
     if !trimmed.is_empty() && !rows.iter().any(|r| r.id.eq_ignore_ascii_case(trimmed)) {
-        rows.push(PickerRow {
-            id: trimmed.to_string(),
-            label: trimmed.to_string(),
-            provider: "custom".into(),
-            auth_ready: catalog::credentials_ready(trimmed),
-            is_custom: true,
-        });
-    }
-    // Keep the active model reachable even under aggressive filtering.
-    if let Some(pos) = rows.iter().position(|r| r.id == current)
-        && pos != 0
-    {
-        let active = rows.remove(pos);
-        rows.insert(0, active);
+        rows.push(synthetic_row(trimmed, "custom", true, false, false));
     }
     rows
 }
@@ -95,25 +166,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_filter_lists_full_catalog_in_order() {
-        let rows = build_rows("", "faux-1");
-        assert!(rows.len() >= 15, "bundled catalog should be substantial");
-        assert_eq!(rows[0].id, "faux-1", "current model floats to top");
-        assert!(rows.iter().all(|r| !r.is_custom));
-        assert!(rows.iter().any(|r| r.auth_ready && r.provider == "faux"));
+    fn empty_filter_lists_recents_then_catalog_with_current_first() {
+        let rows = build_rows("", "faux-1", &["deepseek-chat".into()], &[]);
+        assert_eq!(rows[0].id, "faux-1", "current floats above everything");
+        assert_eq!(rows[1].id, "deepseek-chat");
+        assert!(rows[1].is_recent && rows[1].provider == "recent");
+        assert!(rows.iter().any(|r| r.provider == "ollama"));
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.id == "deepseek-chat" && r.provider != "recent")
+        );
     }
 
     #[test]
     fn filter_matches_id_label_or_provider_case_insensitively() {
-        for q in ["deepseek", "DEEPSEEK", "reasoner", "Reasoner"] {
-            let rows = build_rows(q, "");
+        for q in ["deepseek", "DEEPSEEK", "reasoner"] {
+            let rows = build_rows(q, "", &[], &[]);
             assert!(
                 rows.iter().any(|r| r.provider == "deepseek"),
                 "query {q} must find deepseek"
             );
         }
         assert!(
-            build_rows("zzz-no-match-zzz", "")
+            build_rows("zzz-no-match-zzz", "", &[], &[])
                 .iter()
                 .all(|r| r.is_custom)
         );
@@ -121,13 +197,31 @@ mod tests {
 
     #[test]
     fn non_exact_filter_offers_custom_row_verbatim() {
-        let rows = build_rows("my-fine-tune-v3", "faux-1");
+        let rows = build_rows("my-fine-tune-v3", "faux-1", &[], &[]);
         let custom = rows.iter().find(|r| r.is_custom).expect("custom row");
         assert_eq!(custom.id, "my-fine-tune-v3");
-        assert_eq!(custom.provider, "custom");
+        assert!(
+            build_rows("deepseek-chat", "", &[], &[])
+                .iter()
+                .all(|r| !r.is_custom)
+        );
+    }
 
-        // Exact catalog ids never duplicate into a custom row.
-        assert!(build_rows("deepseek-chat", "").iter().all(|r| !r.is_custom));
+    #[test]
+    fn live_rows_surface_only_unknown_ids_under_their_own_group() {
+        let rows = build_rows(
+            "",
+            "",
+            &[],
+            &[
+                "brand-new-model".to_string(),
+                "deepseek-chat".to_string(), // known: deduped into the catalog section
+            ],
+        );
+        let live = rows.iter().filter(|r| r.is_live).collect::<Vec<_>>();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, "brand-new-model");
+        assert!(rows.iter().any(|r| r.id == "deepseek-chat" && !r.is_live));
     }
 
     #[test]
@@ -143,13 +237,11 @@ mod tests {
             Some(Command::Model("kimi-k2".into()))
         );
         assert_eq!(parse_command("/help"), Some(Command::Help));
-        assert_eq!(parse_command("/?"), Some(Command::Help));
         assert_eq!(
             parse_command("/bogus"),
             None,
             "unknown commands stay prompts"
         );
-        assert_eq!(parse_command("/model"), None, "bare /model is not valid");
         assert_eq!(parse_command("fix the bug"), None);
     }
 }

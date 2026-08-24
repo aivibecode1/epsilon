@@ -18,6 +18,7 @@ cargo fmt --all -- --check              # formatting gate — no diffs tolerated
 cargo clippy --workspace --all-targets  # ZERO warnings tolerated (workspace lints deny)
 cargo test --workspace                  # full suite must stay green (29+ tests)
 cargo run -q -p epsilon-cli             # demo must complete when loop/session/llm touched
+cargo check -p epsilon-cli --features real   # real-provider path must compile (M13 lesson)
 ```
 
 Fix or honestly report failures; never weaken a gate to make it pass.

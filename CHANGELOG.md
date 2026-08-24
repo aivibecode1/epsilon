@@ -3,6 +3,14 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M13 - Polish
+- Live per-provider model listing in `/models` (Ctrl+F; genai resolver behind `real`)
+- Persisted recently-used models (`[picker] recent`, shown as a picker group)
+- Markdown-lite transcript rendering (fenced code blocks styled, inline markers stripped)
+- Expandable tool cards: `x` toggles full output vs truncated head
+- bwrap integration tests (`#[cfg(unix)]`) — runtime verification path for Linux CI
+- Fixed latent `--features real` compile break in the CLI (GenaiAdapter re-export)
+
 
 ### M12 - Completion pass
 - Project config layer: `.epsilon/config.toml` ([model], [[rules]], [[extensions]],

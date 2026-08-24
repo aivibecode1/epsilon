@@ -373,6 +373,22 @@ async fn dispatch(args: Args) -> i32 {
     }
 }
 
+/// Live provider-listing capability for the picker (M13): present only when the binary
+/// was built with `--features real`; the fetch itself runs genai's resolver.
+fn live_fetcher() -> Option<epsilon_tui::LiveFetcher> {
+    #[cfg(feature = "real")]
+    {
+        Some(Arc::new(|hint: String| {
+            Box::pin(async move { epsilon_llm::catalog::live_models(&hint).await })
+                as futures_util::future::BoxFuture<'static, Result<Vec<String>, String>>
+        }))
+    }
+    #[cfg(not(feature = "real"))]
+    {
+        None
+    }
+}
+
 /// Editor-embedding frontend: NDJSON over stdio (ADR-011 rpc mode).
 #[allow(clippy::too_many_arguments)]
 async fn rpc_mode(
@@ -652,6 +668,7 @@ async fn tui_mode(
                 approvals,
                 initial_task,
                 model_id: model_id.to_string(),
+                live: live_fetcher(),
             })
             .await
         }

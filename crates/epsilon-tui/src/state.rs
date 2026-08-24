@@ -32,6 +32,42 @@ pub struct TranscriptLine {
     pub kind: LineKind,
     /// Display text (already summarized/truncated where appropriate).
     pub text: String,
+    /// Untruncated original for expandable rows (tool outputs; M13 card polish).
+    pub full: Option<String>,
+    /// Render as a fenced-code block row (dim + gutter) — markdown-lite polish.
+    pub code: bool,
+}
+
+impl TranscriptLine {
+    /// Plain line with no expansion payload.
+    pub fn plain(kind: LineKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+            full: None,
+            code: false,
+        }
+    }
+
+    /// Expandable line: `text` is the truncated head, `full` the complete body.
+    pub fn expandable(kind: LineKind, text: String, full: String) -> Self {
+        Self {
+            kind,
+            text,
+            full: Some(full),
+            code: false,
+        }
+    }
+
+    /// Fenced-code line (markdown-lite rendering).
+    pub fn code_line(text: impl Into<String>) -> Self {
+        Self {
+            kind: LineKind::Assistant,
+            text: text.into(),
+            full: None,
+            code: true,
+        }
+    }
 }
 
 /// Long tool outputs collapse to a head + ellipsis so one bash call cannot flood the pane.
@@ -85,18 +121,14 @@ impl UiState {
 
     /// Local echo of submitted input; distinct from replayed transcript messages.
     pub fn push_local_input(&mut self, text: &str) {
-        self.lines.push(TranscriptLine {
-            kind: LineKind::User,
-            text: format!("> {text}"),
-        });
+        self.lines
+            .push(TranscriptLine::plain(LineKind::User, format!("> {text}")));
     }
 
     /// Runtime notice (run failures, lag warnings) rendered as a system row.
     pub fn push_notice(&mut self, text: impl Into<String>) {
-        self.lines.push(TranscriptLine {
-            kind: LineKind::System,
-            text: text.into(),
-        });
+        self.lines
+            .push(TranscriptLine::plain(LineKind::System, text));
     }
 
     /// Reduce one lifecycle event into the model.
@@ -121,24 +153,25 @@ impl UiState {
                 Message::Assistant(a) => {
                     let thinking = std::mem::take(&mut self.streaming_thinking);
                     if !thinking.is_empty() {
-                        self.lines.push(TranscriptLine {
-                            kind: LineKind::Thinking,
-                            text: truncate(&thinking, MAX_RESULT_CHARS),
-                        });
+                        self.lines.push(TranscriptLine::plain(
+                            LineKind::Thinking,
+                            truncate(&thinking, MAX_RESULT_CHARS),
+                        ));
                     }
                     self.streaming_text.clear();
                     let text = a.text();
                     if !text.is_empty() {
-                        self.lines.push(TranscriptLine {
-                            kind: LineKind::Assistant,
-                            text,
-                        });
+                        // Markdown-lite (M13): fenced code blocks render as dim gutter
+                        // rows; inline markers are stripped from prose lines.
+                        for line in render_markdown_lite(&text) {
+                            self.lines.push(line);
+                        }
                     }
                     for (_, name, args) in a.tool_calls() {
-                        self.lines.push(TranscriptLine {
-                            kind: LineKind::ToolCall,
-                            text: format!("tool-call {} {}", name, summarize_args(args)),
-                        });
+                        self.lines.push(TranscriptLine::plain(
+                            LineKind::ToolCall,
+                            format!("tool-call {} {}", name, summarize_args(args)),
+                        ));
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
@@ -154,14 +187,16 @@ impl UiState {
                             _ => None,
                         })
                         .collect::<String>();
-                    self.lines.push(TranscriptLine {
-                        kind: if t.is_error {
+                    let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
+                    self.lines.push(TranscriptLine::expandable(
+                        if t.is_error {
                             LineKind::ToolResultErr
                         } else {
                             LineKind::ToolResultOk
                         },
-                        text: format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS)),
-                    });
+                        head,
+                        format!("{} → {}", t.tool_name, body),
+                    ));
                     self.status = "tool done".into();
                 }
                 _ => {}
@@ -206,10 +241,8 @@ impl UiState {
     }
 
     fn push_system(&mut self, text: impl Into<String>) {
-        self.lines.push(TranscriptLine {
-            kind: LineKind::System,
-            text: text.into(),
-        });
+        self.lines
+            .push(TranscriptLine::plain(LineKind::System, text));
     }
 }
 
@@ -239,6 +272,46 @@ fn truncate(s: &str, max: usize) -> String {
     }
     let head: String = s.chars().take(max).collect();
     format!("{head}…")
+}
+
+/// Markdown-lite rendering (M13 polish): split assistant prose into transcript rows,
+/// giving fenced code blocks the `code` style and stripping inline emphasis markers
+/// (`**bold**`, `*italic*`, `` `code` ``) that a plain-text pane cannot style anyway.
+///
+/// Deliberately NOT a full renderer: headings keep their `#` text (visual anchor), lists
+/// keep their bullets — structure survives without pulling in span-per-fragment rows.
+pub fn render_markdown_lite(text: &str) -> Vec<TranscriptLine> {
+    let mut out = Vec::new();
+    let mut in_code = false;
+    for raw in text.lines() {
+        let line = strip_inline_markers(raw);
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+            // Emit the fence as a subtle boundary row too.
+            out.push(TranscriptLine::code_line("·".repeat(3)));
+            continue;
+        }
+        if in_code {
+            out.push(TranscriptLine::code_line(format!("│ {line}")));
+        } else {
+            out.push(TranscriptLine::plain(LineKind::Assistant, line));
+        }
+    }
+    if out.is_empty() {
+        out.push(TranscriptLine::plain(LineKind::Assistant, ""));
+    }
+    out
+}
+
+fn strip_inline_markers(line: &str) -> String {
+    line.replace("**", "").replace("`", "")
+}
+
+/// Whether expandable rows currently render their full payload.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RenderPrefs {
+    /// `x` toggle: tool-result rows show full output instead of the truncated head.
+    pub expand_outputs: bool,
 }
 
 #[cfg(test)]

@@ -673,6 +673,7 @@ dependencies = [
  "epsilon-session",
  "epsilon-tools",
  "epsilon-tui",
+ "futures-util",
  "serde",
  "serde_json",
  "sha2 0.11.0",

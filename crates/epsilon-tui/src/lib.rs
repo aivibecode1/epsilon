@@ -13,4 +13,4 @@ pub mod app;
 pub mod picker;
 pub mod state;
 
-pub use app::{TuiConfig, run};
+pub use app::{LiveFetcher, TuiConfig, run};

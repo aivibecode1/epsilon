@@ -11,11 +11,15 @@ mod retry_stream;
 mod stream_fn;
 
 #[cfg(feature = "real")]
-#[allow(dead_code)]
 mod genai_adapter;
 
 pub use catalog::{ModelInfo, curated, display_label, env_key_for, lookup_model};
+
+#[cfg(feature = "real")]
+pub use catalog::live_models;
 pub use faux::{FauxProvider, FauxStep, FauxToolCall};
+#[cfg(feature = "real")]
+pub use genai_adapter::GenaiAdapter;
 pub use retry::{FailureKind, backoff_delay, classify, should_retry};
 pub use retry_stream::{RetryNotice, Retrying};
 pub use stream_fn::{BoxEventStream, EventStream, LlmContext, ModelRef, PanicGuard, StreamFn};

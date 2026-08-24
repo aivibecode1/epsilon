@@ -290,6 +290,24 @@ pub fn env_key_for(model_id: &str) -> Option<&'static str> {
         .filter(|k| !k.is_empty())
 }
 
+/// Fetch the provider's live model list (M13, `real` feature only).
+///
+/// `model_hint` is any id genai can resolve to a provider family — a catalog id
+/// (`deepseek-chat`), a namespaced id (`anthropic/claude-sonnet-4`), or a raw provider
+/// model name. Requires that provider's env key; errors arrive in-band as strings.
+#[cfg(feature = "real")]
+pub async fn live_models(model_hint: &str) -> Result<Vec<String>, String> {
+    use genai::adapter::AdapterKind;
+    let kind = AdapterKind::from_model(model_hint)
+        .map_err(|e| format!("cannot infer provider for '{model_hint}': {e}"))?;
+    let client = genai::Client::builder().build();
+    let names = client
+        .all_model_names(kind, None::<genai::resolver::ProviderConfig>)
+        .await
+        .map_err(|e| format!("live listing failed: {e}"))?;
+    Ok(names)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
