@@ -21,7 +21,7 @@ use futures_util::StreamExt;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::state::UiState;
@@ -101,6 +101,18 @@ pub(crate) struct App {
     /// M16a: picker rows cached per (filter, sources) tuple; rebuilt only when one
     /// of those changes, never on Up/Down.
     picker_rows: Option<Vec<crate::picker::PickerRow>>,
+    /// M16b: Emacs kill-ring for Ctrl+U/Ctrl+W kills + Ctrl+Y yank.
+    kill_ring: crate::kill_ring::KillRing,
+    /// M16b: true while kills are consecutive (accumulate into one ring entry).
+    last_kill_was_contiguous: bool,
+    /// M16b: a Ctrl+Y sequence is active (repeat cycles entries).
+    yank_in_progress: bool,
+    /// M16b: char-length of the text the current yank inserted.
+    yanked_len: Option<usize>,
+    /// M16b: pasted payloads keyed by marker id, expanded on submit.
+    paste_payloads: std::collections::BTreeMap<usize, String>,
+    /// M16b: next marker id.
+    next_paste_id: usize,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
@@ -160,6 +172,12 @@ impl App {
             spinner_phase: 0,
             render_cache: crate::render_cache::RenderCache::new(),
             picker_rows: None,
+            kill_ring: crate::kill_ring::KillRing::new(),
+            last_kill_was_contiguous: false,
+            yank_in_progress: false,
+            yanked_len: None,
+            paste_payloads: std::collections::BTreeMap::new(),
+            next_paste_id: 1,
             branch_cache: (
                 None,
                 std::time::Instant::now() - std::time::Duration::from_secs(10),
@@ -195,6 +213,82 @@ impl App {
             self.input.remove(prev);
             self.cursor_chars -= 1;
         }
+    }
+
+    /// Kill from cursor to start (Ctrl+U); pushes onto the kill ring.
+    fn kill_to_start(&mut self) {
+        let killed: String = self.input.chars().take(self.cursor_chars).collect();
+        let (s, c) = crate::editor_ops::kill_to_start(&self.input, self.cursor_chars);
+        // A fresh kill starts a new entry; consecutive kills extend the last one.
+        let contiguous = self.last_kill_was_contiguous;
+        self.kill_ring.push(killed, contiguous, false);
+        self.last_kill_was_contiguous = true;
+        self.input = s;
+        self.cursor_chars = c;
+        self.end_yank();
+    }
+
+    /// Kill the word before the cursor (Ctrl+W); pushes/accumulates on the ring.
+    /// Paste markers count as ONE unit.
+    fn kill_word_back(&mut self) {
+        let start = crate::editor_ops::word_left_atomic(&self.input, self.cursor_chars);
+        let chars: Vec<char> = self.input.chars().collect();
+        let killed: String = chars[start..self.cursor_chars].iter().collect();
+        let kept: String = chars[..start]
+            .iter()
+            .chain(chars[self.cursor_chars..].iter())
+            .collect();
+        let contiguous = self.last_kill_was_contiguous;
+        // Backward kills prepend when accumulating (Emacs rule).
+        self.kill_ring.push(killed, contiguous, true);
+        self.last_kill_was_contiguous = true;
+        self.input = kept;
+        self.cursor_chars = start;
+        self.end_yank();
+    }
+
+    /// Yank (Ctrl+Y): insert the top of the kill ring; repeated presses cycle
+    /// through older entries, replacing the previously yanked text (yank-pop).
+    fn yank(&mut self) {
+        if self.kill_ring.is_empty() {
+            return;
+        }
+        if self.yank_in_progress
+            && let Some(prev_len) = self.yanked_len.take()
+        {
+            // Delete the previously yanked span behind the cursor.
+            let del_start_char = self.cursor_chars - prev_len;
+            let byte_start = self.byte_cursor_at(del_start_char);
+            let byte_end = self.byte_cursor_at(self.cursor_chars);
+            self.input.replace_range(byte_start..byte_end, "");
+            self.cursor_chars = del_start_char;
+            self.kill_ring.rotate();
+        }
+        let text = self.kill_ring.peek().cloned().unwrap_or_default();
+        let n = text.chars().count();
+        self.insert_str(&text);
+        self.yanked_len = Some(n);
+        self.yank_in_progress = n > 0;
+    }
+
+    /// Any non-yank edit ends a yank sequence.
+    fn end_yank(&mut self) {
+        self.yank_in_progress = false;
+        self.yanked_len = None;
+    }
+
+    fn insert_str(&mut self, s: &str) {
+        for c in s.chars() {
+            self.insert_char(c);
+        }
+    }
+
+    fn byte_cursor_at(&self, char_idx: usize) -> usize {
+        self.input
+            .char_indices()
+            .nth(char_idx)
+            .map(|(i, _)| i)
+            .unwrap_or(self.input.len())
     }
 
     fn byte_cursor(&self) -> usize {
@@ -247,6 +341,10 @@ impl App {
 
     fn submit_text(&mut self, text: String) -> Message {
         self.remember_history(text.clone());
+        // M16b: persist to the global history file (best-effort; never blocks).
+        if let Err(e) = epsilon_core::config::append_prompt_history(&text) {
+            self.notice(format!("history not saved: {e}"));
+        }
         self.ui.push_local_input(&text);
         Message::User(UserMessage {
             id: new_id("msg"),
@@ -256,9 +354,15 @@ impl App {
     }
 
     /// Submit the editor line; returns `true` when a command requested quit.
+    ///
+    /// M16b: paste markers expand back into their payloads here, so the model sees
+    /// the real pasted text while the editor only ever held the compact marker.
     fn submit_editor(&mut self, agent: &Arc<Agent>) -> bool {
-        let text = std::mem::take(&mut self.input);
+        let raw = std::mem::take(&mut self.input);
         self.cursor_chars = 0;
+        self.end_yank();
+        let text = crate::kill_ring::expand_markers(&raw, &self.paste_payloads);
+        self.paste_payloads.clear();
         if text.trim().is_empty() {
             return false;
         }
@@ -475,6 +579,14 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
         tokio::sync::mpsc::unbounded_channel::<Result<Vec<String>, String>>();
     let mut app = App::new(model_id, fetched_tx, notices_tx);
     app.live = live;
+    // M16b: seed the recall ring from the persisted global history so Up works
+    // across restarts.
+    for entry in epsilon_core::config::load_prompt_history() {
+        app.history.push_back(entry);
+    }
+    while app.history.len() > HISTORY_MAX {
+        app.history.pop_front();
+    }
 
     if let Some(task) = initial_task {
         let msg = app.submit_text(task);
@@ -557,11 +669,15 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                         }
                         _ => {}
                     },
-                    // M15: bracketed paste lands in the editor as plain text.
+                    // M16b: bracketed pastes become atomic `[paste #N]` markers.
                     TermEvent::Paste(text) => {
-                        for c in text.chars().map(|c| if c.is_control() { ' ' } else { c }) {
-                            app.insert_char(c);
+                        let marker =
+                            crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
+                        if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {
+                            app.paste_payloads.insert(app.next_paste_id, text.clone());
+                            app.next_paste_id += 1;
                         }
+                        app.insert_str(&marker);
                     }
                     _ => {}
                 }
@@ -776,15 +892,22 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             false
         }
         KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let (s, c) = crate::editor_ops::kill_to_start(&app.input, app.cursor_chars);
-            app.input = s;
-            app.cursor_chars = c;
+            app.kill_to_start();
             false
         }
         KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let (s, c) = crate::editor_ops::kill_word_back(&app.input, app.cursor_chars);
-            app.input = s;
-            app.cursor_chars = c;
+            app.kill_word_back();
+            false
+        }
+        KeyCode::Char('y' | 'Y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.yank();
+            false
+        }
+        // M16b: Ctrl+J inserts a newline (the reliable multi-line combo — Ctrl+Enter
+        // is indistinguishable from Enter on legacy Windows consoles).
+        KeyCode::Char('j' | 'J') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.insert_char('\n');
+            app.end_yank();
             false
         }
         KeyCode::Char('x' | 'X') => {
@@ -992,9 +1115,9 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
     let title = if app.guidance_mode {
         "guidance for denial — Enter sends, Esc cancels"
     } else if app.ui.running() {
-        "input — typing during a run queues steering"
+        "input — typing during a run queues steering · Ctrl+J newline"
     } else {
-        "input"
+        "input — Ctrl+J newline · Ctrl+Y yank"
     };
     let prompt_color = if app.ui.running() && !app.guidance_mode {
         Color::Yellow
@@ -1005,18 +1128,36 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .title(Span::styled(title, Style::default().fg(Color::DarkGray)));
     let inner_width = area.width.saturating_sub(2) as usize;
-    let para = Paragraph::new(Line::from(vec![
+    let para = Paragraph::new(Text::from(Line::from(vec![
         Span::styled("> ", Style::default().fg(prompt_color)),
         Span::raw(app.input.clone()),
-    ]))
+    ])))
     .block(frame_box);
     f.render_widget(para, area);
 
+    // M16b: cursor position accounts for embedded newlines — the caret sits on the
+    // LAST visible line of the buffer (multi-line drafts clamp to the box).
+    let (line_idx, col_chars) = {
+        let mut line = 0usize;
+        let mut col = 0usize;
+        for c in app.input.chars().take(app.cursor_chars) {
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        // "> " prefix only occupies the first visual line.
+        let prefix = if line == 0 { 2 } else { 0 };
+        (line, col + prefix)
+    };
+    let visible_rows = area.height.saturating_sub(2).max(1) as usize; // borders
+    let row = area.y + 1 + (line_idx.min(visible_rows - 1)) as u16;
     let col = area
         .x
-        .saturating_add(2)
-        .saturating_add(app.cursor_chars.min(inner_width.saturating_sub(1)) as u16);
-    f.set_cursor_position((col, area.y + 1));
+        .saturating_add(col_chars.min(inner_width.saturating_sub(1)) as u16);
+    f.set_cursor_position((col, row));
 }
 
 fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -1323,5 +1464,78 @@ mod tests {
 
         // /quit must request exit through the same Enter path users press.
         assert!(type_and_enter(&mut app, &agent, "/quit"), "/quit exits");
+    }
+
+    #[tokio::test]
+    async fn ctrl_w_then_ctrl_y_round_trips_text_through_the_kill_ring() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "hello world".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        // Ctrl+W kills "world".
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('w')));
+        assert_eq!(app.input, "hello ");
+        // Ctrl+Y yanks it back.
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('y')));
+        assert_eq!(app.input, "hello world", "yank restores the kill");
+    }
+
+    #[tokio::test]
+    async fn ctrl_j_inserts_newline_and_enter_still_submits() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "line one".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('j')));
+        for c in "line two".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.input, "line one\nline two", "Ctrl+J is a newline");
+
+        // Enter submits the WHOLE multi-line buffer (and persists history).
+        let before = app.ui.lines().len();
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+        assert_eq!(app.ui.lines().len(), before + 1);
+        assert_eq!(
+            app.history.back().map(String::as_str),
+            Some("line one\nline two")
+        );
+    }
+
+    #[tokio::test]
+    async fn consecutive_ctrl_w_accumulates_into_one_yank_entry() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "alpha beta gamma".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('w'))); // kills "gamma"
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('w'))); // kills "beta "
+        assert_eq!(app.input, "alpha ");
+        // One yank restores BOTH words (accumulated entry).
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('y')));
+        assert_eq!(
+            app.input,
+            "alpha beta gamma",
+            "{:?} ring={}",
+            app.input,
+            app.kill_ring.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn paste_marker_expands_to_payload_on_submit() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // Simulate a bracketed paste of 3 lines.
+        let pasted = "l1\nl2\nl3";
+        app.paste_payloads.insert(7, pasted.to_string());
+        app.next_paste_id = 8;
+        for c in "summarize [paste #7 +3 lines]".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        let before = app.ui.lines().len();
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+        // The transcript echo must show the EXPANDED payload.
+        let echoed = app.ui.lines()[before].text.clone();
+        assert!(echoed.contains("l1\nl2\nl3"), "{echoed:?}");
     }
 }

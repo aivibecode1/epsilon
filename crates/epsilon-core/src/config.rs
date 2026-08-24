@@ -165,6 +165,74 @@ pub fn push_recent_model(model_id: &str) -> Result<PathBuf, String> {
     push_recent_model_in(&dir, model_id)
 }
 
+// ---- prompt history (M16b) -----------------------------------------------------
+
+/// Maximum persisted prompt-history entries (`<dir>/history`, newest last).
+pub const PROMPT_HISTORY_MAX: usize = 500;
+
+/// Path of the prompt-history file under `config_dir` (`history`).
+fn history_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("history")
+}
+
+/// Parse JSON-lines history; corrupt lines are skipped, never fatal (fail-open
+/// reads, matching [`load_model_id_in`]).
+fn parse_history(raw: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| serde_json::from_str::<String>(line).ok())
+        .collect()
+}
+
+/// Persisted prompt history from `config_dir/history` (oldest first).
+///
+/// Missing/unreadable file yields an empty list; history is advisory and must
+/// never block startup.
+pub fn load_prompt_history_in(config_dir: &Path) -> Vec<String> {
+    match std::fs::read_to_string(history_path(config_dir)) {
+        Ok(raw) => parse_history(&raw),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Append one entry to `config_dir/history` (JSON-lines, capped at
+/// [`PROMPT_HISTORY_MAX`] by rewriting the tail). Consecutive duplicates are
+/// ignored (same rule as the in-session ring). Errors are advisory.
+pub fn append_prompt_history_in(config_dir: &Path, entry: &str) -> Result<PathBuf, String> {
+    if entry.trim().is_empty() {
+        return Err("refusing to persist an empty history entry".into());
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = history_path(config_dir);
+
+    let mut entries = load_prompt_history_in(config_dir);
+    if entries.last().is_some_and(|last| last == entry) {
+        return Ok(path);
+    }
+    entries.push(entry.to_string());
+    let start = entries.len().saturating_sub(PROMPT_HISTORY_MAX);
+    let mut serialized = String::new();
+    for e in &entries[start..] {
+        serialized.push_str(&serde_json::to_string(e).map_err(|e| e.to_string())?);
+        serialized.push('\n');
+    }
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// [`load_prompt_history_in`] against the resolved global directory.
+pub fn load_prompt_history() -> Vec<String> {
+    global_dir()
+        .map(|d| load_prompt_history_in(&d))
+        .unwrap_or_default()
+}
+
+/// [`append_prompt_history_in`] against the resolved global directory.
+pub fn append_prompt_history(entry: &str) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    append_prompt_history_in(&dir, entry)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +353,57 @@ mod tests {
         let saved: Option<String> = Some("deepseek-chat".into());
         let resolved = flag.or(saved).unwrap_or_else(|| DEFAULT_MODEL_ID.into());
         assert_eq!(resolved, "deepseek-chat");
+    }
+
+    #[test]
+    fn prompt_history_appends_dedups_caps_and_survives_reopen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        assert!(load_prompt_history_in(dir).is_empty(), "no file yet");
+
+        append_prompt_history_in(dir, "first task").unwrap();
+        append_prompt_history_in(dir, "second task").unwrap();
+        assert_eq!(
+            load_prompt_history_in(dir),
+            vec!["first task".to_string(), "second task".to_string()]
+        );
+
+        // Consecutive duplicate collapses.
+        append_prompt_history_in(dir, "second task").unwrap();
+        assert_eq!(load_prompt_history_in(dir).len(), 2);
+
+        // Empty entries refused.
+        assert!(append_prompt_history_in(dir, "   ").is_err());
+
+        // Cap enforced (oldest dropped).
+        for i in 0..PROMPT_HISTORY_MAX + 10 {
+            append_prompt_history_in(dir, &format!("task {i}")).unwrap();
+        }
+        let loaded = load_prompt_history_in(dir);
+        assert_eq!(loaded.len(), PROMPT_HISTORY_MAX);
+        assert_eq!(
+            loaded.last().map(String::as_str),
+            Some("task 509"),
+            "newest kept, oldest dropped"
+        );
+    }
+
+    #[test]
+    fn prompt_history_tolerates_corrupt_lines_and_multiline_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir).unwrap();
+        // A multiline entry serializes as one JSON line; a corrupt neighbor is skipped.
+        std::fs::write(
+            dir.join("history"),
+            "not json\n\"good entry\"\n{\"truncated\":\n",
+        )
+        .unwrap();
+        assert_eq!(load_prompt_history_in(dir), vec!["good entry".to_string()]);
+
+        append_prompt_history_in(dir, "has \"quotes\" and\nnewlines").unwrap();
+        let loaded = load_prompt_history_in(dir);
+        assert!(loaded.contains(&"has \"quotes\" and\nnewlines".to_string()));
     }
 }

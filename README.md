@@ -53,10 +53,11 @@ ledgers.
 | M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
 | M13 | Polish: live catalog fetch (Ctrl+F in /models), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
 | M15 | TUI usability overhaul porting pi/opencode patterns — picker scroll window (fixes unreachable rows), unicode editor ops, pulldown-cmark transcript, spinner+elapsed, hint bar, mouse wheel, bracketed paste, slash autocomplete; 146 tests | ✅ shipped |
-| M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode; 169 tests | ✅ shipped |
-| future | M16b editor v2 (multi-line, kill-ring, persistent history) · M16c two-stage picker + command palette · models.dev registry sync · favorites beyond recents · interactive trust re-prompt | open |
+| M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode | ✅ shipped |
+| M16b | Editor v2: Emacs kill-ring (Ctrl+U/W/Y with accumulation + yank-pop), atomic paste markers (`[paste #N +L lines]`, expand on submit, marker-aware Ctrl+W), multi-line buffer (Ctrl+J newline), persistent prompt history (500 entries); 182 tests | ✅ shipped |
+| future | M16c two-stage picker + command palette · models.dev registry sync · favorites beyond recents · interactive trust re-prompt | open |
 
-169 tests · zero clippy warnings · every milestone committed with a dev log under
+182 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---

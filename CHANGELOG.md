@@ -3,6 +3,16 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M16b - Editor v2 (pi editor behaviors)
+- Emacs kill-ring: Ctrl+U/Ctrl+W push kills, Ctrl+Y yanks; consecutive kills
+  accumulate into one entry; repeated Ctrl+Y cycles entries yank-pop style
+- Atomic paste markers: bracketed pastes become `[paste #N +L lines]` in the
+  editor, expand to full text on submit; Ctrl+W removes a marker whole
+- Multi-line buffer: Ctrl+J inserts a newline (reliable on legacy Windows
+  consoles), Enter submits the whole draft; caret tracks line/column
+- Persistent prompt history: `~/.config/epsilon/history` (JSON-lines, capped 500,
+  corrupt-line tolerant), seeded into Up/Down recall across restarts
+
 ### M16a - Rendering efficiency + footer parity
 - Virtualized transcript: only visible rows materialized per draw; markdown+wrap
   happens once per line in an id-keyed render cache (draws ~30–69× faster and

@@ -84,6 +84,45 @@ pub fn delete_forward(s: &str, cursor: usize) -> (String, usize) {
     (kept, cursor)
 }
 
+// ---- M16b: atomic-segment navigation -------------------------------------------
+
+/// Like [`word_left`] but a paste marker counts as ONE unit (pi's
+/// `isAtomicSegment`; Ctrl+W removes `[paste #4 +12 lines]` whole).
+pub fn word_left_atomic(s: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = cursor.min(chars.len());
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    // If text immediately left of the (whitespace-skipped) cursor ends with a
+    // complete marker, jump its full length in one step.
+    let before: String = chars[..i].iter().collect();
+    if before.ends_with(']')
+        && let Some(open) = before.rfind("[paste #")
+        && crate::kill_ring::is_paste_marker(&before[open..])
+    {
+        return open;
+    }
+    word_left(s, cursor)
+}
+
+/// Like [`word_right`] but a paste marker counts as ONE unit.
+pub fn word_right_atomic(s: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = cursor.min(chars.len());
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    let rest: String = chars[i.min(chars.len())..].iter().collect();
+    if rest.starts_with("[paste #")
+        && let Some(close_rel) = rest.find(']')
+        && crate::kill_ring::is_paste_marker(&rest[..=close_rel])
+    {
+        return i + close_rel + 1;
+    }
+    word_right(s, cursor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
