@@ -3,6 +3,16 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M15 - TUI usability overhaul (pi/opencode patterns)
+- Picker viewport fix: centered scroll window (pi select-list) + position indicator —
+  long lists were previously unreachable past the box height
+- Editor: Ctrl+←/→ word jumps, Home/End, Delete, Ctrl+U/Ctrl+W kills (unicode-aware)
+- Markdown rendering for assistant messages via pulldown-cmark (headings, bold/italic,
+  inline code, fenced blocks, lists, quotes)
+- Braille spinner + elapsed seconds while running; contextual key-hint bar
+- Mouse wheel scrolling; bracketed paste support; slash-command autocomplete (Tab)
+- Visual prefixes (❯ user, ✓/✗ tool results); central theme palette
+
 ### M13 - Polish
 - Live per-provider model listing in `/models` (Ctrl+F; genai resolver behind `real`)
 - Persisted recently-used models (`[picker] recent`, shown as a picker group)

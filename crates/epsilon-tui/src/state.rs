@@ -34,8 +34,10 @@ pub struct TranscriptLine {
     pub text: String,
     /// Untruncated original for expandable rows (tool outputs; M13 card polish).
     pub full: Option<String>,
-    /// Render as a fenced-code block row (dim + gutter) — markdown-lite polish.
+    /// Render as a fenced-code block row (dim + gutter).
     pub code: bool,
+    /// Raw markdown source for assistant rows (expanded by the renderer).
+    pub md: Option<String>,
 }
 
 impl TranscriptLine {
@@ -46,6 +48,7 @@ impl TranscriptLine {
             text: text.into(),
             full: None,
             code: false,
+            md: None,
         }
     }
 
@@ -56,6 +59,7 @@ impl TranscriptLine {
             text,
             full: Some(full),
             code: false,
+            md: None,
         }
     }
 
@@ -66,6 +70,19 @@ impl TranscriptLine {
             text: text.into(),
             full: None,
             code: true,
+            md: None,
+        }
+    }
+
+    /// Assistant message carrying raw markdown; expanded at render time.
+    pub fn assistant_md(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            kind: LineKind::Assistant,
+            md: Some(text.clone()),
+            text,
+            full: None,
+            code: false,
         }
     }
 }
@@ -168,11 +185,9 @@ impl UiState {
                     self.streaming_text.clear();
                     let text = a.text();
                     if !text.is_empty() {
-                        // Markdown-lite (M13): fenced code blocks render as dim gutter
-                        // rows; inline markers are stripped from prose lines.
-                        for line in render_markdown_lite(&text) {
-                            self.lines.push(line);
-                        }
+                        // M15: raw markdown stored; the renderer expands it into
+                        // styled rows each frame (crate::markdown::md_to_lines).
+                        self.lines.push(TranscriptLine::assistant_md(text));
                     }
                     for (_, name, args) in a.tool_calls() {
                         self.lines.push(TranscriptLine::plain(
@@ -279,39 +294,6 @@ fn truncate(s: &str, max: usize) -> String {
     }
     let head: String = s.chars().take(max).collect();
     format!("{head}…")
-}
-
-/// Markdown-lite rendering (M13 polish): split assistant prose into transcript rows,
-/// giving fenced code blocks the `code` style and stripping inline emphasis markers
-/// (`**bold**`, `*italic*`, `` `code` ``) that a plain-text pane cannot style anyway.
-///
-/// Deliberately NOT a full renderer: headings keep their `#` text (visual anchor), lists
-/// keep their bullets — structure survives without pulling in span-per-fragment rows.
-pub fn render_markdown_lite(text: &str) -> Vec<TranscriptLine> {
-    let mut out = Vec::new();
-    let mut in_code = false;
-    for raw in text.lines() {
-        let line = strip_inline_markers(raw);
-        if line.trim_start().starts_with("```") {
-            in_code = !in_code;
-            // Emit the fence as a subtle boundary row too.
-            out.push(TranscriptLine::code_line("·".repeat(3)));
-            continue;
-        }
-        if in_code {
-            out.push(TranscriptLine::code_line(format!("│ {line}")));
-        } else {
-            out.push(TranscriptLine::plain(LineKind::Assistant, line));
-        }
-    }
-    if out.is_empty() {
-        out.push(TranscriptLine::plain(LineKind::Assistant, ""));
-    }
-    out
-}
-
-fn strip_inline_markers(line: &str) -> String {
-    line.replace("**", "").replace("`", "")
 }
 
 /// Whether expandable rows currently render their full payload.

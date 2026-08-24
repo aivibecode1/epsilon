@@ -25,6 +25,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::state::{LineKind, UiState};
+use crate::theme::Theme;
 
 /// Async provider-listing hook injected by the CLI when built with `--features real`
 /// (M13): takes a model-id hint, returns that provider's live catalog. Errors in-band.
@@ -90,7 +91,13 @@ struct App {
     fetching_hint: Option<String>,
     fetched_tx: tokio::sync::mpsc::UnboundedSender<Result<Vec<String>, String>>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// M15 spinner/elapsed: set on AgentStart, cleared on AgentEnd.
+    run_started_at: Option<std::time::Instant>,
+    spinner_phase: usize,
 }
+
+/// Braille spinner frames (pi loader convention).
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 impl App {
     #[allow(clippy::too_many_arguments)]
@@ -118,6 +125,8 @@ impl App {
             fetching_hint: None,
             fetched_tx,
             notices_tx,
+            run_started_at: None,
+            spinner_phase: 0,
         }
     }
 
@@ -362,6 +371,7 @@ impl App {
 
 /// Run the interactive frontend until the user quits. Returns the process exit code.
 pub async fn run(cfg: TuiConfig) -> i32 {
+    use crossterm::execute;
     let mut terminal = match ratatui::try_init() {
         Ok(t) => t,
         Err(e) => {
@@ -369,7 +379,18 @@ pub async fn run(cfg: TuiConfig) -> i32 {
             return 1;
         }
     };
+    // M15: bracketed paste + mouse wheel (best-effort; some terminals decline).
+    let _ = execute!(
+        std::io::stdout(),
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableMouseCapture
+    );
     let code = drive(cfg, &mut terminal).await;
+    let _ = execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste
+    );
     if let Err(e) = ratatui::try_restore() {
         eprintln!("terminal restore failed: {e}");
     }
@@ -441,15 +462,58 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
 
             maybe_ev = term_events.next() => {
                 let Some(Ok(ev)) = maybe_ev else { break };
-                if let TermEvent::Key(key) = ev
-                    && key.kind == KeyEventKind::Press
-                    && handle_key(&mut app, &agent, key)
-                {
-                    break;
+                match ev {
+                    TermEvent::Key(key) => {
+                        if key.kind == KeyEventKind::Press
+                            && handle_key(&mut app, &agent, key)
+                        {
+                            break;
+                        }
+                    }
+                    // M15: wheel scrolls the transcript (or navigates the picker).
+                    TermEvent::Mouse(m) => match m.kind {
+                        crossterm::event::MouseEventKind::ScrollUp => {
+                            if app.picker_open {
+                                app.picker_index = app.picker_index.saturating_sub(1);
+                            } else {
+                                app.scroll_from_bottom =
+                                    app.scroll_from_bottom.saturating_add(3);
+                            }
+                        }
+                        crossterm::event::MouseEventKind::ScrollDown => {
+                            if app.picker_open {
+                                let total = crate::picker::build_rows(
+                                    &app.input,
+                                    &app.model_id,
+                                    &app.recents,
+                                    &app.live_cache,
+                                )
+                                .len();
+                                if total > 0 {
+                                    app.picker_index = (app.picker_index + 1).min(total - 1);
+                                }
+                            } else {
+                                app.scroll_from_bottom =
+                                    app.scroll_from_bottom.saturating_sub(3);
+                            }
+                        }
+                        _ => {}
+                    },
+                    // M15: bracketed paste lands in the editor as plain text.
+                    TermEvent::Paste(text) => {
+                        for c in text.chars().map(|c| if c.is_control() { ' ' } else { c }) {
+                            app.insert_char(c);
+                        }
+                    }
+                    _ => {}
                 }
             },
 
-            _ = tick.tick() => {},
+            _ = tick.tick() => {
+                if app.ui.running() {
+                    app.spinner_phase = app.spinner_phase.wrapping_add(1);
+                }
+            },
         }
     }
     0
@@ -459,6 +523,11 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
 fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     let before = app.ui.lines().len();
     app.ui.apply(ev);
+    match ev {
+        AgentEvent::AgentStart => app.run_started_at = Some(std::time::Instant::now()),
+        AgentEvent::AgentEnd { .. } => app.run_started_at = None,
+        _ => {}
+    }
     if app.ui.lines().len() > before {
         app.scroll_from_bottom = 0;
     }
@@ -610,6 +679,14 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             app.backspace();
             false
         }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor_chars = crate::editor_ops::word_left(&app.input, app.cursor_chars);
+            false
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor_chars = crate::editor_ops::word_right(&app.input, app.cursor_chars);
+            false
+        }
         KeyCode::Left => {
             app.cursor_chars = app.cursor_chars.saturating_sub(1);
             false
@@ -634,6 +711,40 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(10);
             false
         }
+        KeyCode::Tab => {
+            // M15 slash autocomplete: Tab completes the first candidate.
+            let candidates = slash_candidates(&app.input);
+            if let Some(first) = candidates.first() {
+                app.input = (*first).to_string();
+                app.cursor_chars = app.input.chars().count();
+            }
+            false
+        }
+        KeyCode::Home => {
+            app.cursor_chars = 0;
+            false
+        }
+        KeyCode::End => {
+            app.cursor_chars = app.input.chars().count();
+            false
+        }
+        KeyCode::Delete => {
+            let (s, _) = crate::editor_ops::delete_forward(&app.input, app.cursor_chars);
+            app.input = s;
+            false
+        }
+        KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let (s, c) = crate::editor_ops::kill_to_start(&app.input, app.cursor_chars);
+            app.input = s;
+            app.cursor_chars = c;
+            false
+        }
+        KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let (s, c) = crate::editor_ops::kill_word_back(&app.input, app.cursor_chars);
+            app.input = s;
+            app.cursor_chars = c;
+            false
+        }
         KeyCode::Char('x' | 'X') => {
             // M13 card polish: expand/collapse truncated tool outputs globally.
             app.prefs.expand_outputs = !app.prefs.expand_outputs;
@@ -654,14 +765,15 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
 }
 
 fn style_for(kind: LineKind) -> Style {
+    use crate::theme::Theme;
     match kind {
-        LineKind::User => Style::default().fg(Color::Cyan),
-        LineKind::Assistant => Style::default(),
-        LineKind::Thinking => Style::default().fg(Color::DarkGray),
-        LineKind::ToolCall => Style::default().fg(Color::Yellow),
-        LineKind::ToolResultOk => Style::default().fg(Color::Green),
-        LineKind::ToolResultErr => Style::default().fg(Color::Red),
-        LineKind::System => Style::default().fg(Color::DarkGray),
+        LineKind::User => Theme::user(),
+        LineKind::Assistant => Theme::assistant(),
+        LineKind::Thinking => Theme::thinking(),
+        LineKind::ToolCall => Theme::tool_call(),
+        LineKind::ToolResultOk => Theme::tool_ok(),
+        LineKind::ToolResultErr => Theme::tool_err(),
+        LineKind::System => Theme::system(),
     }
 }
 
@@ -678,11 +790,36 @@ fn transcript_rows(app: &App) -> Vec<Line<'static>> {
         if l.code {
             rows.push(Line::from(Span::styled(
                 l.text.clone(),
-                Style::default().fg(Color::DarkGray),
+                crate::theme::Theme::code_block(),
             )));
             continue;
         }
-        rows.push(Line::from(Span::styled(l.text.clone(), style_for(l.kind))));
+        // M15: assistant rows carry raw markdown — expand into styled spans.
+        if let Some(md) = l.md.as_ref() {
+            rows.extend(crate::markdown::md_to_lines(md));
+            continue;
+        }
+        // Visual prefixes (opencode convention): ❯ user, ✓/✗ tool results.
+        match l.kind {
+            LineKind::User => {
+                rows.push(Line::from(vec![
+                    Span::styled("❯ ".to_string(), crate::theme::Theme::user()),
+                    Span::styled(l.text.clone(), style_for(l.kind)),
+                ]));
+            }
+            LineKind::ToolResultOk | LineKind::ToolResultErr => {
+                let mark = if l.kind == LineKind::ToolResultErr {
+                    "✗ "
+                } else {
+                    "✓ "
+                };
+                rows.push(Line::from(vec![
+                    Span::styled(mark.to_string(), style_for(l.kind)),
+                    Span::styled(l.text.clone(), style_for(l.kind)),
+                ]));
+            }
+            _ => rows.push(Line::from(Span::styled(l.text.clone(), style_for(l.kind)))),
+        }
     }
     let streaming = app.ui.streaming_text();
     if !streaming.is_empty() {
@@ -694,15 +831,32 @@ fn transcript_rows(app: &App) -> Vec<Line<'static>> {
     rows
 }
 
+/// Contextual key-hint bar (pi's keybinding-hints pattern).
+fn hint_line(app: &App) -> Line<'static> {
+    use crate::theme::Theme;
+    let text = if app.pending_ask.is_some() {
+        "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
+    } else if app.picker_open {
+        "type to filter · ↑/↓ move · Ctrl+F fetch live · Enter apply · Esc close"
+    } else if app.ui.running() {
+        "Esc abort run · type to steer after this turn"
+    } else {
+        "/help commands · /models picker (Ctrl+M) · x expand outputs · Esc quit"
+    };
+    Line::from(Span::styled(text.to_string(), Theme::system()))
+}
+
 fn draw(f: &mut Frame<'_>, app: &App) {
-    let [transcript_area, input_area, status_area] = Layout::vertical([
+    let [transcript_area, hints_area, input_area, status_area] = Layout::vertical([
         Constraint::Min(3),
+        Constraint::Length(1),
         Constraint::Length(3),
         Constraint::Length(1),
     ])
     .areas(f.area());
 
     draw_transcript(f, app, transcript_area);
+    f.render_widget(hint_line(app), hints_area);
     draw_input(f, app, input_area);
     draw_status(f, app, status_area);
 
@@ -712,6 +866,7 @@ fn draw(f: &mut Frame<'_>, app: &App) {
     if app.pending_ask.is_some() {
         draw_dialog(f, app, f.area());
     }
+    draw_slash_autocomplete(f, app, transcript_area);
 }
 
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
@@ -745,21 +900,22 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
             Style::default().fg(Color::DarkGray),
         )));
     }
-    let mut last_provider = String::new();
-    for (i, row) in rows.iter().enumerate() {
-        // Group separators between distinct providers/groups.
-        if row.provider != last_provider {
-            last_provider = row.provider.clone();
-            lines.push(Line::from(Span::styled(
-                format!("─ {last_provider} "),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
+    // M15 viewport fix: pi's centered scroll window — render only the visible slice
+    // so long lists stay navigable (previously rows past the box were unreachable).
+    let capacity = area.height.saturating_sub(4).max(1) as usize; // borders + footer + headroom
+    let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
+    let end = (start + capacity).min(rows.len());
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no matches — keep typing or press Esc",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    for (i, row) in rows.iter().enumerate().skip(start).take(end - start) {
         let selected = i == app.picker_index;
-        let marker = match row.id == app.model_id {
-            true => "● ",
-            false => "  ",
-        };
+        let marker = if row.id == app.model_id { "● " } else { "  " };
         let auth = if row.auth_ready { "🔑" } else { "· " };
         let source_tag = if row.is_live {
             "⟳ "
@@ -798,15 +954,20 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
                 }),
             ),
             Span::styled(
-                format!("  · {}", row.id),
+                format!("  {} · {}", row.provider, row.id),
                 Style::default().fg(Color::DarkGray),
             ),
         ]));
     }
 
     lines.push(Line::from(""));
+    let position = if rows.len() > capacity {
+        format!("{}–{}/{} · ", start + 1, end, rows.len())
+    } else {
+        String::new()
+    };
     lines.push(Line::from(Span::styled(
-        "↑/↓ move · type to filter · Ctrl+F fetch live · Enter apply · Esc cancel",
+        format!("{position}↑/↓ · type filter · Ctrl+F fetch · Enter apply · Esc close"),
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -820,11 +981,7 @@ fn draw_transcript(f: &mut Frame<'_>, app: &App, area: Rect) {
     let visible = area.height as usize;
 
     // Follow mode pins the tail; PageUp/PageDown pin an offset above the bottom.
-    let skip = if total > visible {
-        (total - visible).saturating_sub(app.scroll_from_bottom.min(total - visible))
-    } else {
-        0
-    };
+    let skip = crate::scroll::transcript_skip(total, visible, app.scroll_from_bottom);
 
     let para = Paragraph::new(rows)
         .wrap(Wrap { trim: false })
@@ -876,20 +1033,76 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         }
         None => String::new(),
     };
+
+    // M15 spinner + elapsed while a run is active (pi loader pattern).
+    let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
+    let left = if let Some(started) = app.run_started_at {
+        let secs = started.elapsed().as_secs();
+        format!("{spinner} running {secs}s · {}", app.ui.status())
+    } else if app.ui.running() {
+        format!("{spinner} {}", app.ui.status())
+    } else {
+        app.ui.status().to_string()
+    };
+
     let right = format!("{model}{cost} · tokens {tin}/{tout}");
-    let left_len = app.ui.status().chars().count();
+    let left_len = left.chars().count();
     let pad = (area.width as usize)
         .saturating_sub(left_len + right.chars().count())
         .max(1);
     let line = Line::from(vec![
-        Span::styled(
-            app.ui.status().to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(left, Style::default().fg(Color::DarkGray)),
         Span::raw(" ".repeat(pad)),
         Span::styled(right, Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(line, area);
+}
+
+/// Known slash commands for Tab completion (M15, opencode convention).
+const SLASH_COMMANDS: [&str; 6] = ["/models", "/model ", "/skills", "/clear", "/help", "/quit"];
+
+/// Candidates whose head matches the typed `/prefix` (input has no space yet).
+fn slash_candidates(input: &str) -> Vec<&'static str> {
+    if !input.starts_with('/') || input.contains(' ') {
+        return Vec::new();
+    }
+    SLASH_COMMANDS
+        .iter()
+        .filter(|c| c.starts_with(input))
+        .copied()
+        .collect()
+}
+
+/// Popup listing matching slash commands directly above the input box.
+fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) {
+    let candidates = slash_candidates(&app.input);
+    if candidates.is_empty() || candidates.len() == SLASH_COMMANDS.len() && app.input == "/" {
+        // "/" alone shows all — fine to render; skip only the degenerate no-match case:
+    }
+    if candidates.is_empty() {
+        return;
+    }
+    let height = candidates.len() as u16 + 1;
+    let y = transcript_area.bottom().saturating_sub(height);
+    let area = Rect {
+        x: transcript_area.x,
+        y,
+        width: transcript_area.width.min(48),
+        height,
+    };
+    f.render_widget(Clear, area);
+    let mut lines: Vec<Line<'static>> = candidates
+        .iter()
+        .map(|c| Line::from(Span::styled((*c).to_string(), Theme::accent())))
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Tab completes · Esc dismisses".to_string(),
+        Theme::system(),
+    )));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Theme::accent());
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
