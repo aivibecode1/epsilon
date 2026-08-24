@@ -6,9 +6,12 @@
 //! var), the wire format is code we own, and every failure surfaces in-band as a
 //! `Done { stop_reason: Error }` event per the StreamFn contract.
 
-mod anthropic;
-mod google;
-mod openai_compat;
+pub mod anthropic;
+pub mod google;
+pub mod openai_compat;
+use anthropic::AnthropicWire;
+use google::GoogleWire;
+use openai_compat::OpenAiCompatWire;
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -16,12 +19,9 @@ use epsilon_contracts::content::ContentBlock;
 use epsilon_contracts::message::{AssistantMessage, StopReason, Usage};
 use epsilon_contracts::stream::StreamEvent;
 
-use crate::http::{SseDecoder, SseEvent, http_client};
+pub use crate::http::SseEvent;
+use crate::http::{SseDecoder, http_client};
 use crate::stream_fn::{BoxEventStream, EventStream, LlmContext, ModelRef, StreamFn};
-
-pub(crate) use anthropic::AnthropicWire;
-pub(crate) use google::GoogleWire;
-pub(crate) use openai_compat::OpenAiCompatWire;
 
 // WireApi lives in `crate::catalog` (it is catalog data); re-exported here for the
 // engine's internal use.
@@ -31,7 +31,7 @@ pub(crate) use crate::catalog::WireApi;
 ///
 /// Port shape follows pi's `Api` interface (`buildParams` / stream-event mapping /
 /// stop-reason mapping) as a Rust object-safety boundary.
-pub(crate) trait ProviderWire: Send + Sync {
+pub trait ProviderWire: Send + Sync {
     /// Full streaming URL for this model.
     fn endpoint(&self, model: &str) -> String;
     /// Auth env var consulted for the key.
@@ -71,7 +71,7 @@ pub(crate) fn wire_for(model_id: &str) -> Result<Box<dyn ProviderWire>, String> 
 ///
 /// Owns the partial assistant message, tool-call argument assembly (indexed, since
 /// OpenAI interleaves calls), usage capture, and final `Done` synthesis.
-pub(crate) struct HttpEventStream {
+pub struct HttpEventStream {
     model: String,
     provider: &'static str,
     text: String,
@@ -101,6 +101,11 @@ impl HttpEventStream {
             usage_tail: None,
             prefer_tail_usage,
         }
+    }
+
+    /// Empty stream state for fixture tests (wire adapters drive on_event directly).
+    pub fn empty_for_tests() -> Self {
+        Self::new("test-model", "test", false)
     }
 
     /// Fresh accumulator state for a restarted stream body.
@@ -141,15 +146,18 @@ impl HttpEventStream {
                 .find_map(|k| usage.get(*k).and_then(|v| v.as_u64()))
                 .unwrap_or(0)
         };
-        let mut u = Usage::default();
-        u.input = get_u64(&["prompt_tokens", "input_tokens", "promptTokenCount"]);
-        u.output = get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"]);
-        u.cache_read = usage
-            .pointer("/prompt_tokens_details/cached_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or_else(|| get_u64(&["cache_read_input_tokens", "cachedContentTokenCount"]));
-        u.cache_write = get_u64(&["cache_creation_input_tokens"]);
-        u.total_tokens = get_u64(&["total_tokens", "totalTokenCount"]);
+        let u = Usage {
+            input: get_u64(&["prompt_tokens", "input_tokens", "promptTokenCount"]),
+            output: get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"]),
+            cache_read: usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| {
+                    get_u64(&["cache_read_input_tokens", "cachedContentTokenCount"])
+                }),
+            cache_write: get_u64(&["cache_creation_input_tokens"]),
+            total_tokens: get_u64(&["total_tokens", "totalTokenCount"]),
+        };
         if u.input + u.output > 0 {
             self.usage_tail = Some(u);
         }
@@ -158,7 +166,7 @@ impl HttpEventStream {
     /// Anthropic `message_delta.usage`: fields present overwrite, absent keep seed
     /// (pi preserves `input_tokens` from message_start when proxies omit it here).
     pub(crate) fn update_usage_tail(&mut self, usage: &serde_json::Value) {
-        let mut u = self.usage_seed.clone().unwrap_or_default();
+        let mut u = self.usage_seed.unwrap_or_default();
         let mut any = false;
         for (key, slot) in [
             ("input_tokens", &mut u.input),
@@ -229,13 +237,18 @@ impl HttpEventStream {
     }
 
     /// Any tool activity recorded (drives ToolUse stop mapping on [DONE]).
-    pub(crate) fn has_open_or_closed_tools(&self) -> bool {
+    pub fn has_open_or_closed_tools(&self) -> bool {
         !self.tools_open.is_empty() || !self.tools_closed.is_empty()
     }
 
     /// Remember a provider finish reason seen mid-stream (OpenAI finish_reason).
     pub(crate) fn note_finish_reason(&mut self, reason: &str) {
         self.finish_reason = Some(reason.to_string());
+    }
+
+    /// The stored wire-level finish reason, if any (read back at terminal mapping).
+    pub fn finish_reason(&self) -> Option<&str> {
+        self.finish_reason.as_deref()
     }
 
     // ---- terminal assembly -------------------------------------------------------------
@@ -271,9 +284,9 @@ impl HttpEventStream {
         self.tools_closed.clear();
 
         let usage = if self.prefer_tail_usage {
-            self.usage_tail.clone().or(self.usage_seed.clone())
+            self.usage_tail.or(self.usage_seed)
         } else {
-            self.usage_seed.clone().or(self.usage_tail.clone())
+            self.usage_seed.or(self.usage_tail)
         }
         .unwrap_or_default();
 
@@ -318,7 +331,10 @@ struct WireStream {
     inner: reqwest::Response,
     decoder: SseDecoder,
     /// Line reassembly across chunk boundaries (SSE frames ignore TCP framing).
-    line_buf: String,
+    /// Raw BYTES, not a String: a multi-byte UTF-8 char split across TCP chunks must
+    /// not be lossy-decoded mid-char (plan 006) — decoding happens only on complete
+    /// lines, where any replacement is the provider's own damage.
+    line_buf: Vec<u8>,
     st: HttpEventStream,
     /// Events decoded ahead of the one already returned.
     queued: VecDeque<StreamEvent>,
@@ -328,16 +344,25 @@ struct WireStream {
 impl WireStream {
     /// Feed received bytes; return the first newly produced event, queueing the rest.
     fn ingest(&mut self, chunk: &[u8]) -> Option<StreamEvent> {
-        self.line_buf.push_str(&String::from_utf8_lossy(chunk));
-        while let Some(pos) = self.line_buf.find('\n') {
-            let line: String = self.line_buf.drain(..=pos).collect();
-            let line = line.trim_end_matches(['\n', '\r']);
-            if let Some(ev) = self.decoder.feed(line)
+        self.line_buf.extend_from_slice(chunk);
+        while let Some(pos) = self.line_buf.iter().position(|b| *b == b'\n') {
+            let line_bytes: Vec<u8> = self.line_buf.drain(..=pos).collect();
+            let trimmed: &[u8] = line_bytes
+                .strip_suffix(b"\n")
+                .unwrap_or(&line_bytes)
+                .strip_suffix(b"\r")
+                .unwrap_or(line_bytes.strip_suffix(b"\n").unwrap_or(&line_bytes));
+            let line = String::from_utf8_lossy(trimmed).into_owned();
+            if let Some(ev) = self.decoder.feed(&line)
                 && let Some(mut batch) = self.wire.on_event(&ev, &mut self.st)
             {
-                let first = batch.remove(0);
+                let first = if batch.is_empty() {
+                    None
+                } else {
+                    Some(batch.remove(0))
+                };
                 self.queued.extend(batch);
-                return Some(first);
+                return first;
             }
         }
         None
@@ -505,10 +530,41 @@ impl StreamFn for DirectProvider {
             wire,
             inner: response,
             decoder: SseDecoder::new(),
-            line_buf: String::new(),
+            line_buf: Vec::new(),
             st,
             queued: VecDeque::new(),
             finished: false,
         })
+    }
+}
+
+/// Plan 005/006 test support: the same raw-byte line reassembly `WireStream` uses,
+/// exposed so fixture tests can split provider bytes at arbitrary (even mid-char)
+/// offsets and assert complete lines decode intact.
+pub mod test_support {
+    /// Byte-accurate SSE line reassembler.
+    pub struct LineReassembler {
+        buf: Vec<u8>,
+    }
+
+    impl LineReassembler {
+        /// Build an empty reassembler (test-support convenience).
+        #[allow(clippy::new_without_default)]
+        pub fn new() -> Self {
+            Self { buf: Vec::new() }
+        }
+
+        /// Feed raw chunk bytes; returns the next complete line if one finished.
+        pub fn push(&mut self, chunk: &[u8]) -> Option<String> {
+            self.buf.extend_from_slice(chunk);
+            let pos = self.buf.iter().position(|b| *b == b'\n')?;
+            let line_bytes: Vec<u8> = self.buf.drain(..=pos).collect();
+            let trimmed: &[u8] = line_bytes
+                .strip_suffix(b"\n")
+                .unwrap_or(&line_bytes)
+                .strip_suffix(b"\r")
+                .unwrap_or(line_bytes.strip_suffix(b"\n").unwrap_or(&line_bytes));
+            Some(String::from_utf8_lossy(trimmed).into_owned())
+        }
     }
 }

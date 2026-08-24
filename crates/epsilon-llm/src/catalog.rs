@@ -3,14 +3,19 @@
 //! Port of pi's generated-catalog approach (pi-0.84.2 `packages/ai/src/providers/`):
 //! a bundled snapshot of the models.dev registry so browsing needs no network, with
 //! each row carrying its wire API (`ModelInfo::wire`) the way pi's models carry
-//! `model.api`. Regenerated 2026-08 from a live fetch of <https://models.dev/api.json>;
-//! prices are that registry's REAL published rates (USD per MTok × 1e6), replacing
-//! the M3 placeholders — the footer cost line is an estimate against public list
-//! prices, not a billing feed.
+//! `model.api`.
+//!
+//! The rows themselves live in [`catalog_data`] — **generated** by
+//! `scripts/regen_catalog.py` from a live fetch of <https://models.dev/api.json>
+//! (DIRECTION-05 closure). Never edit that file by hand: refresh it with
+//! `python scripts/regen_catalog.py`, run the gates, fix any moved pins in
+//! `catalog_is_current_generation`, and commit script + data together.
 //!
 //! Binding property since M3: behavior selection reads *capability fields*, never id
 //! substrings (anti-pattern from opencode, see comparative-analysis §4). Routing reads
 //! `wire`; nothing string-matches model families.
+
+mod catalog_data;
 
 /// Which wire format + endpoint family a model speaks (catalog-driven routing,
 /// pi's `model.api` field). Catalog data by design: present in every build, but only
@@ -28,6 +33,16 @@ pub enum WireApi {
     },
     /// Google Generative Language (`:streamGenerateContent?alt=sse`).
     GoogleGenerativeAi,
+}
+
+const ANTHROPIC_WIRE: WireApi = WireApi::AnthropicMessages;
+const GOOGLE_WIRE: WireApi = WireApi::GoogleGenerativeAi;
+const OLLAMA_WIRE: WireApi = openai_compat("http://localhost:11434/v1", None);
+const FAUX_WIRE: WireApi = OLLAMA_WIRE;
+
+/// OpenAI-compatible shorthand (pi's "same API, different endpoint/key" providers).
+const fn openai_compat(base_url: &'static str, env_key: Option<&'static str>) -> WireApi {
+    WireApi::OpenAiCompletions { base_url, env_key }
 }
 
 /// Static description of one model.
@@ -55,453 +70,13 @@ pub struct ModelInfo {
     pub wire: WireApi,
 }
 
-const ANTHROPIC_API: WireApi = WireApi::AnthropicMessages;
-const GOOGLE_API: WireApi = WireApi::GoogleGenerativeAi;
+use catalog_data::CATALOG_ROWS as MODELS;
 
-/// OpenAI-compatible shorthand (pi's "same API, different endpoint/key" providers).
-const fn openai_compat(base_url: &'static str, env_key: Option<&'static str>) -> WireApi {
-    WireApi::OpenAiCompletions { base_url, env_key }
-}
-
-/// Known models, grouped by provider in display order. Curated subset of the
-/// 2026-08 models.dev snapshot: current flagship/workhorse/cheap tiers per provider,
-/// tool-calling chat models only (image/TTS/embedding rows omitted — this harness
-/// streams text+tools).
-pub const MODELS: &[ModelInfo] = &[
-    // ---- offline reference -----------------------------------------------------------
-    ModelInfo {
-        id: "faux-1",
-        provider: "faux",
-        label: "Faux (offline scripted)",
-        context_window: 1_000_000,
-        max_output_tokens: 8_192,
-        input_cost_micro_per_mtok: 0,
-        output_cost_micro_per_mtok: 0,
-        supports_tools: true,
-        env_key: "",
-        wire: openai_compat("http://localhost:9", None), // never dialed; faux is offline
-    },
-    // ---- anthropic --------------------------------------------------------------------
-    ModelInfo {
-        id: "claude-opus-4-5",
-        provider: "anthropic",
-        label: "Claude Opus 4.5",
-        context_window: 200_000,
-        max_output_tokens: 64_000,
-        input_cost_micro_per_mtok: 5_000_000,
-        output_cost_micro_per_mtok: 25_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    ModelInfo {
-        id: "claude-sonnet-4-5",
-        provider: "anthropic",
-        label: "Claude Sonnet 4.5",
-        context_window: 1_000_000,
-        max_output_tokens: 64_000,
-        input_cost_micro_per_mtok: 3_000_000,
-        output_cost_micro_per_mtok: 15_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    ModelInfo {
-        id: "claude-haiku-4-5",
-        provider: "anthropic",
-        label: "Claude Haiku 4.5",
-        context_window: 200_000,
-        max_output_tokens: 64_000,
-        input_cost_micro_per_mtok: 1_000_000,
-        output_cost_micro_per_mtok: 5_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    ModelInfo {
-        id: "claude-opus-4-6",
-        provider: "anthropic",
-        label: "Claude Opus 4.6",
-        context_window: 1_000_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 5_000_000,
-        output_cost_micro_per_mtok: 25_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    ModelInfo {
-        id: "claude-sonnet-4-6",
-        provider: "anthropic",
-        label: "Claude Sonnet 4.6",
-        context_window: 1_000_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 3_000_000,
-        output_cost_micro_per_mtok: 15_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    ModelInfo {
-        id: "claude-opus-5",
-        provider: "anthropic",
-        label: "Claude Opus 5",
-        context_window: 1_000_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 5_000_000,
-        output_cost_micro_per_mtok: 25_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    ModelInfo {
-        id: "claude-sonnet-5",
-        provider: "anthropic",
-        label: "Claude Sonnet 5",
-        context_window: 1_000_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 2_000_000,
-        output_cost_micro_per_mtok: 10_000_000,
-        supports_tools: true,
-        env_key: "ANTHROPIC_API_KEY",
-        wire: ANTHROPIC_API,
-    },
-    // ---- openai -----------------------------------------------------------------------
-    ModelInfo {
-        id: "gpt-5.2",
-        provider: "openai",
-        label: "GPT-5.2",
-        context_window: 400_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 1_750_000,
-        output_cost_micro_per_mtok: 14_000_000,
-        supports_tools: true,
-        env_key: "OPENAI_API_KEY",
-        wire: openai_compat("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "gpt-5.3-codex",
-        provider: "openai",
-        label: "GPT-5.3 Codex",
-        context_window: 400_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 1_750_000,
-        output_cost_micro_per_mtok: 14_000_000,
-        supports_tools: true,
-        env_key: "OPENAI_API_KEY",
-        wire: openai_compat("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "gpt-5.4",
-        provider: "openai",
-        label: "GPT-5.4",
-        context_window: 1_050_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 2_500_000,
-        output_cost_micro_per_mtok: 15_000_000,
-        supports_tools: true,
-        env_key: "OPENAI_API_KEY",
-        wire: openai_compat("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "gpt-5.4-mini",
-        provider: "openai",
-        label: "GPT-5.4 mini",
-        context_window: 400_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 750_000,
-        output_cost_micro_per_mtok: 4_500_000,
-        supports_tools: true,
-        env_key: "OPENAI_API_KEY",
-        wire: openai_compat("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "gpt-5.4-nano",
-        provider: "openai",
-        label: "GPT-5.4 nano",
-        context_window: 400_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 200_000,
-        output_cost_micro_per_mtok: 1_250_000,
-        supports_tools: true,
-        env_key: "OPENAI_API_KEY",
-        wire: openai_compat("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "gpt-5-mini",
-        provider: "openai",
-        label: "GPT-5 mini",
-        context_window: 400_000,
-        max_output_tokens: 128_000,
-        input_cost_micro_per_mtok: 250_000,
-        output_cost_micro_per_mtok: 2_000_000,
-        supports_tools: true,
-        env_key: "OPENAI_API_KEY",
-        wire: openai_compat("https://api.openai.com/v1", Some("OPENAI_API_KEY")),
-    },
-    // ---- deepseek ---------------------------------------------------------------------
-    ModelInfo {
-        id: "deepseek-chat",
-        provider: "deepseek",
-        label: "DeepSeek Chat (V4)",
-        context_window: 1_000_000,
-        max_output_tokens: 384_000,
-        input_cost_micro_per_mtok: 140_000,
-        output_cost_micro_per_mtok: 280_000,
-        supports_tools: true,
-        env_key: "DEEPSEEK_API_KEY",
-        wire: openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
-    },
-    ModelInfo {
-        id: "deepseek-reasoner",
-        provider: "deepseek",
-        label: "DeepSeek Reasoner",
-        context_window: 1_000_000,
-        max_output_tokens: 384_000,
-        input_cost_micro_per_mtok: 140_000,
-        output_cost_micro_per_mtok: 280_000,
-        supports_tools: true,
-        env_key: "DEEPSEEK_API_KEY",
-        wire: openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
-    },
-    ModelInfo {
-        id: "deepseek-v4-pro",
-        provider: "deepseek",
-        label: "DeepSeek V4 Pro",
-        context_window: 1_000_000,
-        max_output_tokens: 384_000,
-        input_cost_micro_per_mtok: 435_000,
-        output_cost_micro_per_mtok: 870_000,
-        supports_tools: true,
-        env_key: "DEEPSEEK_API_KEY",
-        wire: openai_compat("https://api.deepseek.com/v1", Some("DEEPSEEK_API_KEY")),
-    },
-    // ---- google -----------------------------------------------------------------------
-    ModelInfo {
-        id: "gemini-2.5-pro",
-        provider: "google",
-        label: "Gemini 2.5 Pro",
-        context_window: 1_048_576,
-        max_output_tokens: 65_536,
-        input_cost_micro_per_mtok: 1_250_000,
-        output_cost_micro_per_mtok: 10_000_000,
-        supports_tools: true,
-        env_key: "GEMINI_API_KEY",
-        wire: GOOGLE_API,
-    },
-    ModelInfo {
-        id: "gemini-2.5-flash",
-        provider: "google",
-        label: "Gemini 2.5 Flash",
-        context_window: 1_048_576,
-        max_output_tokens: 65_536,
-        input_cost_micro_per_mtok: 300_000,
-        output_cost_micro_per_mtok: 2_500_000,
-        supports_tools: true,
-        env_key: "GEMINI_API_KEY",
-        wire: GOOGLE_API,
-    },
-    ModelInfo {
-        id: "gemini-3-flash-preview",
-        provider: "google",
-        label: "Gemini 3 Flash (preview)",
-        context_window: 1_048_576,
-        max_output_tokens: 65_536,
-        input_cost_micro_per_mtok: 500_000,
-        output_cost_micro_per_mtok: 3_000_000,
-        supports_tools: true,
-        env_key: "GEMINI_API_KEY",
-        wire: GOOGLE_API,
-    },
-    ModelInfo {
-        id: "gemini-3.1-pro-preview",
-        provider: "google",
-        label: "Gemini 3.1 Pro (preview)",
-        context_window: 1_048_576,
-        max_output_tokens: 65_536,
-        input_cost_micro_per_mtok: 2_000_000,
-        output_cost_micro_per_mtok: 12_000_000,
-        supports_tools: true,
-        env_key: "GEMINI_API_KEY",
-        wire: GOOGLE_API,
-    },
-    ModelInfo {
-        id: "gemini-3.6-flash",
-        provider: "google",
-        label: "Gemini 3.6 Flash",
-        context_window: 1_048_576,
-        max_output_tokens: 65_536,
-        input_cost_micro_per_mtok: 750_000,
-        output_cost_micro_per_mtok: 3_750_000,
-        supports_tools: true,
-        env_key: "GEMINI_API_KEY",
-        wire: GOOGLE_API,
-    },
-    // ---- xai --------------------------------------------------------------------------
-    ModelInfo {
-        id: "grok-4.3",
-        provider: "xai",
-        label: "Grok 4.3",
-        context_window: 1_000_000,
-        max_output_tokens: 30_000,
-        input_cost_micro_per_mtok: 1_250_000,
-        output_cost_micro_per_mtok: 2_500_000,
-        supports_tools: true,
-        env_key: "XAI_API_KEY",
-        wire: openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "grok-4.5",
-        provider: "xai",
-        label: "Grok 4.5",
-        context_window: 500_000,
-        max_output_tokens: 500_000,
-        input_cost_micro_per_mtok: 2_000_000,
-        output_cost_micro_per_mtok: 6_000_000,
-        supports_tools: true,
-        env_key: "XAI_API_KEY",
-        wire: openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "grok-4.6",
-        provider: "xai",
-        label: "Grok 4.6",
-        context_window: 500_000,
-        max_output_tokens: 500_000,
-        input_cost_micro_per_mtok: 2_000_000,
-        output_cost_micro_per_mtok: 6_000_000,
-        supports_tools: true,
-        env_key: "XAI_API_KEY",
-        wire: openai_compat("https://api.x.ai/v1", Some("XAI_API_KEY")),
-    },
-    // ---- groq -------------------------------------------------------------------------
-    ModelInfo {
-        id: "llama-3.3-70b-versatile",
-        provider: "groq",
-        label: "Llama 3.3 70B (Groq)",
-        context_window: 131_072,
-        max_output_tokens: 32_768,
-        input_cost_micro_per_mtok: 590_000,
-        output_cost_micro_per_mtok: 790_000,
-        supports_tools: true,
-        env_key: "GROQ_API_KEY",
-        wire: openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
-    },
-    ModelInfo {
-        id: "openai/gpt-oss-120b",
-        provider: "groq",
-        label: "GPT-OSS 120B (Groq)",
-        context_window: 131_072,
-        max_output_tokens: 65_536,
-        input_cost_micro_per_mtok: 150_000,
-        output_cost_micro_per_mtok: 600_000,
-        supports_tools: true,
-        env_key: "GROQ_API_KEY",
-        wire: openai_compat("https://api.groq.com/openai/v1", Some("GROQ_API_KEY")),
-    },
-    // ---- moonshot ---------------------------------------------------------------------
-    ModelInfo {
-        id: "kimi-k2-thinking",
-        provider: "moonshot",
-        label: "Kimi K2 Thinking",
-        context_window: 262_144,
-        max_output_tokens: 262_144,
-        input_cost_micro_per_mtok: 600_000,
-        output_cost_micro_per_mtok: 2_500_000,
-        supports_tools: true,
-        env_key: "MOONSHOT_API_KEY",
-        wire: openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
-    },
-    ModelInfo {
-        id: "kimi-k2.6",
-        provider: "moonshot",
-        label: "Kimi K2.6",
-        context_window: 262_144,
-        max_output_tokens: 262_144,
-        input_cost_micro_per_mtok: 950_000,
-        output_cost_micro_per_mtok: 4_000_000,
-        supports_tools: true,
-        env_key: "MOONSHOT_API_KEY",
-        wire: openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
-    },
-    ModelInfo {
-        id: "kimi-k3",
-        provider: "moonshot",
-        label: "Kimi K3",
-        context_window: 1_048_576,
-        max_output_tokens: 131_072,
-        input_cost_micro_per_mtok: 3_000_000,
-        output_cost_micro_per_mtok: 15_000_000,
-        supports_tools: true,
-        env_key: "MOONSHOT_API_KEY",
-        wire: openai_compat("https://api.moonshot.ai/v1", Some("MOONSHOT_API_KEY")),
-    },
-    // ---- z.ai -------------------------------------------------------------------------
-    ModelInfo {
-        id: "glm-4.7",
-        provider: "zai",
-        label: "GLM-4.7",
-        context_window: 204_800,
-        max_output_tokens: 131_072,
-        input_cost_micro_per_mtok: 600_000,
-        output_cost_micro_per_mtok: 2_200_000,
-        supports_tools: true,
-        env_key: "ZAI_API_KEY",
-        wire: openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
-    },
-    ModelInfo {
-        id: "glm-5",
-        provider: "zai",
-        label: "GLM-5",
-        context_window: 204_800,
-        max_output_tokens: 131_072,
-        input_cost_micro_per_mtok: 1_000_000,
-        output_cost_micro_per_mtok: 3_200_000,
-        supports_tools: true,
-        env_key: "ZAI_API_KEY",
-        wire: openai_compat("https://api.z.ai/api/paas/v4", Some("ZAI_API_KEY")),
-    },
-    // ---- openrouter ---------------------------------------------------------------------
-    ModelInfo {
-        id: "anthropic/claude-sonnet-4.5",
-        provider: "openrouter",
-        label: "Claude Sonnet 4.5 (via OpenRouter)",
-        context_window: 1_000_000,
-        max_output_tokens: 64_000,
-        input_cost_micro_per_mtok: 3_000_000,
-        output_cost_micro_per_mtok: 15_000_000,
-        supports_tools: true,
-        env_key: "OPENROUTER_API_KEY",
-        wire: openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
-    },
-    // ---- ollama (local, no key) ---------------------------------------------------------
-    ModelInfo {
-        id: "llama3.1:8b",
-        provider: "ollama",
-        label: "Llama 3.1 8B (local)",
-        context_window: 131_072,
-        max_output_tokens: 8_192,
-        input_cost_micro_per_mtok: 0,
-        output_cost_micro_per_mtok: 0,
-        supports_tools: false,
-        env_key: "",
-        wire: openai_compat("http://localhost:11434/v1", None),
-    },
-    ModelInfo {
-        id: "qwen3:14b",
-        provider: "ollama",
-        label: "Qwen 3 14B (local)",
-        context_window: 131_072,
-        max_output_tokens: 8_192,
-        input_cost_micro_per_mtok: 0,
-        output_cost_micro_per_mtok: 0,
-        supports_tools: false,
-        env_key: "",
-        wire: openai_compat("http://localhost:11434/v1", None),
-    },
-];
-
-/// Bundled catalog slice (picker/browse source; live fetch via Ctrl+F merges on top).
+/// Bundled catalog slice (picker/browse source; live fetch merges on top).
+///
+/// Generated from models.dev by `scripts/regen_catalog.py`; includes the offline
+/// reference rows (faux) and local ollama rows alongside every current-generation
+/// chat/tool model on the nine direct-API providers.
 pub fn curated() -> &'static [ModelInfo] {
     MODELS
 }
@@ -536,45 +111,51 @@ pub fn env_key_for(model_id: &str) -> Option<&'static str> {
         .filter(|k| !k.is_empty())
 }
 
+/// Whether the provider exposes a live `GET /models` listing at all.
+///
+/// Static knowledge (no network, no feature gate) so UIs can decide whether a
+/// live fetch is even worth attempting before injecting a `real`-feature fetcher.
+pub fn live_listing_available(provider: &str) -> bool {
+    listing_endpoint(provider).is_some()
+}
+
+/// (endpoint URL, auth env var) for a provider's live model listing.
+/// Pure static routing data — the network call itself lives in [`live_models`].
+#[cfg(feature = "real")]
+fn listing_endpoint(provider: &str) -> Option<(&'static str, &'static str)> {
+    match provider {
+        "anthropic" => Some(("https://api.anthropic.com/v1/models", "ANTHROPIC_API_KEY")),
+        "openai" => Some(("https://api.openai.com/v1/models", "OPENAI_API_KEY")),
+        "deepseek" => Some(("https://api.deepseek.com/v1/models", "DEEPSEEK_API_KEY")),
+        "google" => Some((
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            "GEMINI_API_KEY",
+        )),
+        "xai" => Some(("https://api.x.ai/v1/models", "XAI_API_KEY")),
+        "groq" => Some(("https://api.groq.com/openai/v1/models", "GROQ_API_KEY")),
+        "moonshot" => Some(("https://api.moonshot.ai/v1/models", "MOONSHOT_API_KEY")),
+        "zai" => Some(("https://api.z.ai/api/paas/v4/models", "ZAI_API_KEY")),
+        "openrouter" => Some(("https://openrouter.ai/api/v1/models", "OPENROUTER_API_KEY")),
+        _ => None,
+    }
+}
+
+#[cfg(not(feature = "real"))]
+fn listing_endpoint(_provider: &str) -> Option<(&'static str, &'static str)> {
+    None
+}
+
 /// List a provider's live model ids via plain authenticated GET `/models`
 /// (`real` feature only) — pi/opencode convention for the OpenAI-compatible
 /// listing endpoint. Anthropic and Google expose the same shape at their own
 /// base URLs. Errors arrive in-band as strings.
 #[cfg(feature = "real")]
 pub async fn live_models(provider: &str) -> Result<Vec<String>, String> {
-    let (url, env_key): (String, &str) = match provider {
-        "anthropic" => (
-            "https://api.anthropic.com/v1/models".into(),
-            "ANTHROPIC_API_KEY",
-        ),
-        "openai" => ("https://api.openai.com/v1/models".into(), "OPENAI_API_KEY"),
-        "deepseek" => (
-            "https://api.deepseek.com/v1/models".into(),
-            "DEEPSEEK_API_KEY",
-        ),
-        "google" => (
-            "https://generativelanguage.googleapis.com/v1beta/models".into(),
-            "GEMINI_API_KEY",
-        ),
-        "xai" => ("https://api.x.ai/v1/models".into(), "XAI_API_KEY"),
-        "groq" => (
-            "https://api.groq.com/openai/v1/models".into(),
-            "GROQ_API_KEY",
-        ),
-        "moonshot" => (
-            "https://api.moonshot.ai/v1/models".into(),
-            "MOONSHOT_API_KEY",
-        ),
-        "zai" => ("https://api.z.ai/api/paas/v4/models".into(), "ZAI_API_KEY"),
-        "openrouter" => (
-            "https://openrouter.ai/api/v1/models".into(),
-            "OPENROUTER_API_KEY",
-        ),
-        other => return Err(format!("no live listing endpoint for provider '{other}'")),
-    };
+    let (url, env_key) = listing_endpoint(provider)
+        .ok_or_else(|| format!("no live listing endpoint for provider '{provider}'"))?;
     let key = std::env::var(env_key).map_err(|_| format!("missing {env_key}"))?;
     let client = crate::http::http_client();
-    let mut req = client.get(&url);
+    let mut req = client.get(url);
     match provider {
         "anthropic" => {
             req = req
@@ -678,34 +259,66 @@ mod tests {
         }
     }
 
-    /// Prices come from the models.dev snapshot: paid providers carry real rates,
-    /// local/offline rows are exactly zero. Guards against placeholder regression.
+    /// Prices come from the models.dev snapshot: local/offline rows are exactly
+    /// zero, and every cloud provider carries at least one really-priced row —
+    /// proving real registry data flowed in (M3 all-placeholder regression guard).
+    /// Individual unpriced rows are allowed through as-is (e.g. google gemma
+    /// previews have no cost in the registry); we render what upstream states,
+    /// never invented rates.
     #[test]
     fn prices_are_real_registry_rates_or_zero_for_local() {
+        let mut paid_providers = std::collections::BTreeSet::new();
         for m in MODELS {
             if m.provider == "faux" || m.provider == "ollama" {
                 assert_eq!(m.input_cost_micro_per_mtok, 0, "{}", m.id);
                 assert_eq!(m.output_cost_micro_per_mtok, 0, "{}", m.id);
-            } else {
-                assert!(m.input_cost_micro_per_mtok > 0, "{}", m.id);
-                assert!(m.output_cost_micro_per_mtok > 0, "{}", m.id);
+            } else if m.input_cost_micro_per_mtok > 0 || m.output_cost_micro_per_mtok > 0 {
+                paid_providers.insert(m.provider);
             }
+        }
+        for p in [
+            "anthropic",
+            "openai",
+            "deepseek",
+            "google",
+            "xai",
+            "groq",
+            "moonshot",
+            "zai",
+            "openrouter",
+        ] {
+            assert!(
+                paid_providers.contains(p),
+                "provider {p} has no priced row - snapshot looks placeholder"
+            );
         }
     }
 
-    /// Current-generation sanity: the 2026-08 regeneration must not regress to
-    /// pre-4.5 Claude / GPT-5.x-less OpenAI / Gemini-2-only eras again.
+    /// Current-generation sanity pins: regeneration must not regress to older eras.
+    /// Updated whenever `scripts/regen_catalog.py` pulls a newer snapshot
+    /// (2026-08-24 snapshot: 383 rows across 9 direct-API providers).
     #[test]
     fn catalog_is_current_generation() {
+        // Newest flagship of each direct-API family at regen time:
         assert!(lookup_model("claude-opus-5").is_some());
-        assert!(lookup_model("claude-sonnet-4-5").is_some());
-        assert!(lookup_model("gpt-5.4").is_some());
-        assert!(lookup_model("gemini-3.6-flash").is_some());
+        assert!(lookup_model("claude-fable-5").is_some());
+        assert!(lookup_model("gpt-5.6").is_some());
+        assert!(lookup_model("gemini-3.7-flash").is_some());
         assert!(lookup_model("grok-4.6").is_some());
-        assert!(lookup_model("kimi-k2.6").is_some());
-        assert!(lookup_model("glm-5").is_some());
+        assert!(lookup_model("kimi-k3").is_some());
+        assert!(lookup_model("glm-5.2").is_some());
+        assert!(lookup_model("deepseek-v4-pro").is_some());
+        // Long-gone rows must stay gone...
         assert!(lookup_model("claude-sonnet-4").is_none(), "stale row");
-        assert!(lookup_model("gpt-4o").is_none(), "stale row");
+        // ...but anything the registry still lists belongs in the snapshot, even
+        // legacy workhorses the old hand-curated table skipped (registry-faithful,
+        // not taste-curated):
+        assert!(lookup_model("gpt-4o").is_some());
+        // Dated snapshots are excluded in favor of canonical aliases:
+        assert!(
+            lookup_model("claude-haiku-4-5-20251001").is_none(),
+            "dated snapshot row leaked into the catalog"
+        );
     }
 
     #[test]
@@ -723,7 +336,8 @@ mod tests {
 
     #[test]
     fn display_label_falls_back_to_id_for_custom_entries() {
-        assert_eq!(display_label("deepseek-chat"), "DeepSeek Chat (V4)");
+        // Label comes verbatim from the models.dev `name` field.
+        assert_eq!(display_label("deepseek-chat"), "DeepSeek Chat");
         assert_eq!(
             display_label("totally-custom-model"),
             "totally-custom-model"

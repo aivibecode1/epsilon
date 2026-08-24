@@ -46,6 +46,9 @@ pub struct ExtHost {
     io: Mutex<ChildIo>,
     disabled: AtomicBool,
     crashes: AtomicU32,
+    /// Plan 007: the manifest's declared event interests (`["*"]` = all). Empty list
+    /// means the extension receives nothing. Evaluated by `wants_event`.
+    events: Vec<String>,
 }
 
 struct ChildIo {
@@ -110,6 +113,7 @@ impl ExtHost {
             }),
             disabled: AtomicBool::new(false),
             crashes: AtomicU32::new(0),
+            events: manifest.events.clone(),
         }))
     }
 
@@ -123,10 +127,22 @@ impl ExtHost {
         self.disabled.load(Ordering::SeqCst)
     }
 
-    /// Forward one agent event to the child (fire-and-forget, subject to the extension's
-    /// declared interest filter). Best-effort: event delivery must never break a run.
-    pub async fn send_event(&self, filtered: bool, event: &serde_json::Value) {
-        if filtered {
+    /// Forward one agent event to the child (fire-and-forget, subject to the
+    /// extension's declared manifest filter). Best-effort: event delivery must never
+    /// break a run.
+    ///
+    /// Plan 007: the `filtered` parameter is GONE — the host now evaluates its own
+    /// manifest's `events` list (captured at spawn) so a declared `["*"]` genuinely
+    /// receives events and an empty list receives nothing. The old signature with a
+    /// hardcoded `true` made forwarding dead code.
+    pub async fn send_event(&self, event: &serde_json::Value) {
+        // Event type tag lives at the top level of the payload (`event.type`).
+        let tag = event
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown");
+        let wants = self.events.iter().any(|e| e == "*" || e == tag);
+        if !wants {
             return;
         }
         let mut io = self.io.lock().await;

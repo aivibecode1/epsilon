@@ -43,6 +43,9 @@ jobs:
       - name: Real-provider path must compile (M13 lesson)
         run: cargo check -p epsilon-cli --features real
 
+      - name: Wire fixture tests (plan 005 — real feature must be TESTED, not just compiled)
+        run: cargo test -p epsilon-llm --features real
+
       - name: Demo must complete
         run: cargo run -q -p epsilon-cli -- --demo
 

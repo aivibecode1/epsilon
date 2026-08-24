@@ -82,6 +82,18 @@ impedance tax for Anthropic/Gemini.
 its README); if a needed capability (e.g., fine-grained thinking budgets) is missing, the escape
 hatch is a custom StreamFn for that provider - the seam exists precisely for this.
 
+**Amendment (M17, superseded by the pi port).** The escape hatch above became the whole
+design. genai's concrete failure modes were observed in practice and matched this ADR's
+risk call exactly: `AdapterKind::from_model` silently routed bare `kimi-*`/`glm-*`/
+`llama-*` ids to its Ollama adapter; it invented env-var spellings (`OPEN_ROUTER_API_KEY`);
+it carried no model metadata (forcing a models.dev dependency anyway). Epsilon now speaks
+each provider's native HTTP/SSE wire directly - Anthropic Messages, OpenAI-compatible,
+Google streamGenerateContent - behind the unchanged `StreamFn` contract, with routing
+driven by a per-catalog-row `WireApi` column (pi's `model.api`). The never-fail
+contract, retry classification, faux provider, and aux-call isolation all survive
+untouched; only the transport underneath swapped. pi attribution and file mapping:
+`docs/milestones/M17-pi-port.md`.
+
 ---
 
 ## ADR-004: Tools defined as typed structs + schemars-derived JSON Schema
@@ -492,9 +504,10 @@ adapter; (b) OpenRouter's env var under genai is `OPEN_ROUTER_API_KEY`. A unit t
 (`ids_either_auto_resolve_or_carry_genai_namespace`) pins rule (a). The
 `provider::model` id convention itself is deliberately adapter-independent (pi and
 opencode both identify models as provider+model pairs), so a future transport swap
-does not strand saved configs. Known open question: genai remains the only cloud
-transport; pi's raw-HTTP-per-provider adapters are thinner and carry real metadata,
-and replacing genai is a candidate future milestone (see M17 dev log).
+does not strand saved configs. **Resolution (M17):** the open question above was
+closed by the pi port - genai is gone, the transport is direct per-provider HTTP,
+and the catalog's `wire` column now carries the routing metadata pi-style (see the
+ADR-003 amendment and `docs/milestones/M17-pi-port.md`).
 
 ---
 

@@ -69,7 +69,7 @@ pub fn build_rows(
     filter: &str,
     current: &str,
     recents: &[String],
-    live: &[String],
+    live: &[(String, Vec<String>)],
 ) -> Vec<PickerRow> {
     let needle = filter.trim().to_ascii_lowercase();
     let matches_filter =
@@ -109,17 +109,17 @@ pub fn build_rows(
         }
     }
 
-    for id in live {
-        if matches_filter(id) && !catalog::lookup_model(id).is_some() {
-            // Live ids not in the bundled catalog surface under their own group;
-            // known ids already appear via the catalog section below.
-            push_unique(
-                synthetic_row(id, "live", false, true, false),
-                &mut rows,
-                &mut seen,
-            );
-        } else if matches_filter(id) && catalog::lookup_model(id).is_none() {
-            unreachable!()
+    // Live listings (M20): ids fetched from each provider's own API that are NOT
+    // already in the bundled catalog surface under their provider's group.
+    for (provider, ids) in live {
+        for id in ids {
+            if matches_filter(id) && catalog::lookup_model(id).is_none() {
+                push_unique(
+                    synthetic_row(id, provider, false, true, false),
+                    &mut rows,
+                    &mut seen,
+                );
+            }
         }
     }
 
@@ -164,6 +164,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "list discovered skills",
     },
     SlashItem {
+        value: "/search ",
+        description: "search this session's history",
+    },
+    SlashItem {
         value: "/clear",
         description: "clear transcript (totals kept)",
     },
@@ -202,6 +206,8 @@ pub enum Command {
     Clear,
     /// List discovered skills.
     Skills,
+    /// Search the session log (`/search <query>`); empty tail opens with guidance.
+    Search(String),
     /// Exit the session.
     Quit,
     /// A `/word` we do not know — surfaced as an error, never sent to the model.
@@ -226,6 +232,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),
+        "search" => Some(Command::Search(tail.to_string())),
         "quit" | "q" | "exit" => Some(Command::Quit),
         other => Some(Command::Unknown(other.to_string())),
     }
@@ -275,8 +282,14 @@ pub fn build_provider_rows(current: &str) -> Vec<ProviderRow> {
 }
 
 /// Stage-2 rows: the models of ONE provider, reusing [`build_rows`] ordering rules
-/// via fuzzy filter across id + label.
-pub fn build_models_for_provider(provider: &str, filter: &str, current: &str) -> Vec<PickerRow> {
+/// via fuzzy filter across id + label. Live-listed ids for this provider that are
+/// missing from the bundled catalog are merged on top (M20 auto-fetch).
+pub fn build_models_for_provider(
+    provider: &str,
+    filter: &str,
+    current: &str,
+    live: &[(String, Vec<String>)],
+) -> Vec<PickerRow> {
     let needle = filter.trim();
     let mut rows: Vec<PickerRow> = catalog::curated()
         .iter()
@@ -288,6 +301,14 @@ pub fn build_models_for_provider(provider: &str, filter: &str, current: &str) ->
                 || fuzzy::fuzzy_match(needle, &row.label).matches
         })
         .collect();
+    if let Some((_, ids)) = live.iter().find(|(p, _)| p == provider) {
+        for id in ids {
+            let known = rows.iter().any(|r| r.id.eq_ignore_ascii_case(id));
+            if !known && (needle.is_empty() || fuzzy::fuzzy_match(needle, id).matches) {
+                rows.push(synthetic_row(id, provider, false, true, false));
+            }
+        }
+    }
     // Active model floats to top.
     rows.sort_by_key(|r| r.id != current);
     rows
@@ -417,15 +438,51 @@ mod tests {
             "",
             "",
             &[],
-            &[
-                "brand-new-model".to_string(),
-                "deepseek-chat".to_string(), // known: deduped into the catalog section
-            ],
+            &[(
+                "deepseek".to_string(),
+                vec![
+                    "brand-new-model".to_string(),
+                    "deepseek-chat".to_string(), // known: deduped into the catalog section
+                ],
+            )],
         );
         let live = rows.iter().filter(|r| r.is_live).collect::<Vec<_>>();
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].id, "brand-new-model");
+        assert_eq!(live[0].provider, "deepseek", "grouped under its provider");
         assert!(rows.iter().any(|r| r.id == "deepseek-chat" && !r.is_live));
+    }
+
+    /// M20: stage-2 merges live-listed ids for its provider on top of the
+    /// bundled catalog rows (this is the path that makes fresh models appear).
+    #[test]
+    fn stage2_merges_live_ids_for_its_provider_only() {
+        let live = vec![(
+            "deepseek".to_string(),
+            vec!["deepseek-chat".to_string(), "brand-new-model".to_string()],
+        )];
+        let rows = build_models_for_provider("deepseek", "", "", &live);
+        assert!(
+            rows.iter().any(|r| r.id == "brand-new-model" && r.is_live),
+            "unknown live id must surface in stage 2"
+        );
+        // Known id appears once, from the catalog (not duplicated as a live row).
+        assert_eq!(
+            rows.iter().filter(|r| r.id == "deepseek-chat").count(),
+            1,
+            "no duplicate rows for known ids"
+        );
+        // A different provider's live listing must NOT leak in.
+        let other = build_models_for_provider(
+            "anthropic",
+            "",
+            "",
+            &[("openai".to_string(), vec!["gpt-fake-live".to_string()])],
+        );
+        assert!(
+            !other.iter().any(|r| r.is_live),
+            "stage 2 must not show other providers' live ids"
+        );
     }
 
     #[test]

@@ -28,7 +28,8 @@ use crate::state::UiState;
 use crate::theme::Theme;
 
 /// Async provider-listing hook injected by the CLI when built with `--features real`
-/// (M13): takes a model-id hint, returns that provider's live catalog. Errors in-band.
+/// (M13; provider-name arg since M20): takes a PROVIDER name (`"anthropic"`,
+/// `"openrouter"`, ...), returns that provider's live model ids. Errors in-band.
 pub type LiveFetcher = Arc<
     dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<Vec<String>, String>>
         + Send
@@ -87,11 +88,16 @@ pub(crate) struct App {
     picker_open: bool,
     picker_index: usize,
     recents: Vec<String>,
-    live_cache: Vec<String>,
+    /// M13/M20: per-provider live listing results (provider → ids), merged into
+    /// both picker stages on top of the bundled catalog.
+    live_cache: Vec<(String, Vec<String>)>,
     live: Option<LiveFetcher>,
     prefs: crate::state::RenderPrefs,
     fetching_hint: Option<String>,
-    fetched_tx: tokio::sync::mpsc::UnboundedSender<Result<Vec<String>, String>>,
+    /// M20: providers whose live listing already landed this session (auto-fetch
+    /// runs once per provider; Ctrl+F force-refreshes regardless).
+    live_fetched: std::collections::BTreeSet<String>,
+    fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
     /// M15 spinner/elapsed: set on AgentStart, cleared on AgentEnd.
     run_started_at: Option<std::time::Instant>,
@@ -160,7 +166,7 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     fn new(
         model_id: String,
-        fetched_tx: tokio::sync::mpsc::UnboundedSender<Result<Vec<String>, String>>,
+        fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
         notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> Self {
         let workspace_root =
@@ -182,6 +188,7 @@ impl App {
             live: None,
             prefs: crate::state::RenderPrefs::default(),
             fetching_hint: None,
+            live_fetched: std::collections::BTreeSet::new(),
             fetched_tx,
             notices_tx,
             run_started_at: None,
@@ -523,11 +530,15 @@ impl App {
                 // Reuse the editor line as the picker's filter box.
                 self.input.clear();
                 self.cursor_chars = 0;
+                // M20 auto-fetch (opencode/Hermes convention): the highlighted
+                // provider's live list starts refreshing immediately, so by the
+                // time the user descends into it the rows are current.
+                self.request_live(false);
             }
             crate::picker::Command::Model(id) => self.apply_model(agent, id),
             crate::picker::Command::Help => {
                 for line in [
-                    "commands: /models · /model <id> · /skills · /clear · /quit · /help",
+                    "commands: /models · /model <id> · /skills · /search <query> · /clear · /quit · /help",
                     "keys: Enter submit · Esc aborts a run (quits when idle) · x expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker",
                 ] {
@@ -549,6 +560,48 @@ impl App {
                     );
                 } else {
                     self.ui.push_notice(format!("skills: {}", names.join(", ")));
+                }
+            }
+            crate::picker::Command::Search(query) => {
+                if query.trim().is_empty() {
+                    self.ui
+                        .push_notice("usage: /search <query> — scans this session's log");
+                } else {
+                    match agent.search_history(
+                        &query,
+                        &epsilon_core::SearchOptions {
+                            limit: 20,
+                            ..Default::default()
+                        },
+                    ) {
+                        Some(Ok(hits)) if hits.is_empty() => {
+                            self.ui.push_notice(format!("no matches for '{query}'"));
+                        }
+                        Some(Ok(hits)) => {
+                            self.ui.push_notice(format!(
+                                "{} hit{} for '{}':",
+                                hits.len(),
+                                if hits.len() == 1 { "" } else { "s" },
+                                query
+                            ));
+                            for h in &hits {
+                                self.ui.push_notice(format!(
+                                    "#{seq} {role}: {snippet}",
+                                    seq = h.seq,
+                                    role = h.role,
+                                    snippet = h.snippet
+                                ));
+                            }
+                        }
+                        Some(Err(e)) => {
+                            self.ui.push_notice(format!("session search failed: {e}"));
+                        }
+                        None => {
+                            self.ui.push_notice(
+                                "no session log attached (search unavailable this run)",
+                            );
+                        }
+                    }
                 }
             }
             crate::picker::Command::Quit => return true,
@@ -587,32 +640,84 @@ impl App {
         }
     }
 
-    /// Kick off a live listing for the highlighted row's provider (M13, `real` builds).
-    fn fetch_live_for_selected(&mut self) {
+    /// Request the provider's live listing (M13 Ctrl+F; M20 auto-fetch on open).
+    ///
+    /// Stage-aware: in stage 2 it lists THAT provider; from stage 1 it lists the
+    /// highlighted provider directly. Passes the PROVIDER name to the fetcher —
+    /// M17 passed a model id here, which `catalog::live_models` always rejected,
+    /// so live fetch never actually worked until now.
+    ///
+    /// `force` = explicit user action (Ctrl+F): retries even if this provider
+    /// already answered, and surfaces failures as notices. Auto-fetch stays
+    /// silent on failure and never refetches a provider that already replied —
+    /// a stale bundled row beats nagging on every keystroke path.
+    fn request_live(&mut self, force: bool) {
         let Some(fetcher) = self.live.clone() else {
-            self.notice("live listing unavailable: built without --features real");
+            if force {
+                self.notice("live listing unavailable: built without --features real");
+            }
             return;
         };
-        let rows = self.picker_rows();
-        let Some(row) = rows.get(self.picker_index) else {
+        // Target provider: stage 2's provider, else the highlighted stage-1 row.
+        let provider = if let Some(p) = self.picker_provider.clone() {
+            Some(p)
+        } else {
+            crate::picker::build_provider_rows(&self.model_id)
+                .get(self.picker_index)
+                .map(|r| r.id.clone())
+        };
+        let Some(provider) = provider else {
             return;
         };
-        if row.is_custom {
-            self.notice("custom ids have no provider to list; select one first");
+        if !epsilon_llm::catalog::live_listing_available(&provider) {
+            if force {
+                self.notice(format!(
+                    "provider '{provider}' has no live listing endpoint"
+                ));
+            }
+            return;
+        }
+        if self.live_fetched.contains(&provider) && !force {
             return;
         }
         if self.fetching_hint.is_some() {
-            return; // one in flight
+            return; // one fetch in flight; Ctrl+F again after it lands
         }
-        let hint = row.id.clone();
-        self.fetching_hint = Some(hint.clone());
-        self.notice(format!("fetching live models for '{}'…", row.provider));
+        self.fetching_hint = Some(provider.clone());
+        if force {
+            self.notice(format!("fetching live models for '{provider}'…"));
+        } else {
+            self.notice(format!("refreshing '{provider}' models in background…"));
+        }
         let tx = self.fetched_tx.clone();
-        let fut = fetcher(hint);
+        let fut = fetcher(provider.clone());
         tokio::spawn(async move {
             let result = fut.await;
-            tx.send(result).ok();
+            tx.send((provider, result)).ok();
         });
+    }
+
+    /// Record a completed live fetch (event-loop side of [`Self::request_live`]).
+    /// Returns a user-facing notice line when one is warranted.
+    fn record_live_result(
+        &mut self,
+        provider: String,
+        result: Result<Vec<String>, String>,
+    ) -> Option<String> {
+        self.fetching_hint = None;
+        match result {
+            Ok(names) => {
+                let n = names.len();
+                match self.live_cache.iter_mut().find(|(p, _)| *p == provider) {
+                    Some((_, ids)) => *ids = names,
+                    None => self.live_cache.push((provider.clone(), names)),
+                }
+                self.invalidate_picker();
+                self.live_fetched.insert(provider);
+                Some(format!("live listing: {n} models merged into /models"))
+            }
+            Err(e) => Some(format!("live listing failed: {e}")),
+        }
     }
 
     fn spawn_run(&self, agent: Arc<Agent>, msg: Message) {
@@ -684,7 +789,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
     let mut events_rx = agent.subscribe();
     let (notices_tx, mut notices_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let (fetched_tx, mut fetched_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<Vec<String>, String>>();
+        tokio::sync::mpsc::unbounded_channel::<(String, Result<Vec<String>, String>)>();
     let mut app = App::new(model_id, fetched_tx, notices_tx);
     app.live = live;
     // M16b: seed the recall ring from the persisted global history so Up works
@@ -730,17 +835,10 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
             },
 
             maybe_fetched = fetched_rx.recv() => {
-                if let Some(result) = maybe_fetched {
-                    match result {
-                        Ok(mut names) => {
-                            let n = names.len();
-                            app.live_cache.append(&mut names);
-                            app.invalidate_picker();
-                            app.ui.push_notice(format!("live listing: {n} models merged into /models"));
-                        }
-                        Err(e) => app.ui.push_notice(format!("live listing failed: {e}")),
-                    }
-                    app.fetching_hint = None;
+                if let Some((provider, result)) = maybe_fetched
+                    && let Some(text) = app.record_live_result(provider, result)
+                {
+                    app.ui.push_notice(text);
                 }
             },
 
@@ -897,6 +995,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                         provider,
                         &app.input,
                         &app.model_id,
+                        &app.live_cache,
                     );
                     if let Some(row) = rows.get(app.picker_index) {
                         let id = row.id.clone();
@@ -915,6 +1014,9 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                         app.picker_index = 0;
                         app.input.clear();
                         app.cursor_chars = 0;
+                        // M20: entering a provider refreshes its live list once
+                        // per session (no-op when it already answered).
+                        app.request_live(false);
                     }
                 }
             }
@@ -932,8 +1034,13 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Up => {
                 let total = if let Some(provider) = &stage2 {
-                    crate::picker::build_models_for_provider(provider, &app.input, &app.model_id)
-                        .len()
+                    crate::picker::build_models_for_provider(
+                        provider,
+                        &app.input,
+                        &app.model_id,
+                        &app.live_cache,
+                    )
+                    .len()
                 } else {
                     crate::picker::build_provider_rows(&app.model_id).len()
                 };
@@ -944,8 +1051,13 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             }
             KeyCode::Down => {
                 let total = if let Some(provider) = &stage2 {
-                    crate::picker::build_models_for_provider(provider, &app.input, &app.model_id)
-                        .len()
+                    crate::picker::build_models_for_provider(
+                        provider,
+                        &app.input,
+                        &app.model_id,
+                        &app.live_cache,
+                    )
+                    .len()
                 } else {
                     crate::picker::build_provider_rows(&app.model_id).len()
                 };
@@ -963,6 +1075,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                     stage2.as_deref().unwrap_or(""),
                     &app.input,
                     &app.model_id,
+                    &app.live_cache,
                 )
                 .len();
                 if app.picker_index >= total {
@@ -970,8 +1083,9 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 }
             }
             KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Ctrl+F: fetch live listing for the highlighted provider (stage 2).
-                app.fetch_live_for_selected();
+                // Ctrl+F: force a live listing for the target provider (M13; M20
+                // also auto-fetches without this key).
+                app.request_live(true);
             }
             KeyCode::Char(c) => {
                 app.insert_char(c);
@@ -1066,6 +1180,8 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 app.picker_open = true;
                 app.picker_index = 0;
                 app.stash_draft();
+                // M20: same auto-fetch as /models (one code path per open).
+                app.request_live(false);
             }
             false
         }
@@ -1270,7 +1386,7 @@ fn hint_line(app: &App) -> Line<'static> {
     let text = if app.pending_ask.is_some() {
         "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
     } else if app.picker_open {
-        "type to filter · ↑/↓ move · Ctrl+F fetch live · Enter apply · Esc close"
+        "type to filter · ↑/↓ move · Ctrl+F refresh from provider · Enter apply · Esc close"
     } else if app.slash_open {
         "↑/↓ pick · Tab/Enter apply · Esc dismiss"
     } else if app.ui.running() {
@@ -1415,7 +1531,12 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
 
 /// Stage-2 of the two-stage picker: one provider's models with fuzzy filter.
 fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str) {
-    let rows = crate::picker::build_models_for_provider(provider, &app.input, &app.model_id);
+    let rows = crate::picker::build_models_for_provider(
+        provider,
+        &app.input,
+        &app.model_id,
+        &app.live_cache,
+    );
     let width = (outer.width * 4 / 5).max(48).min(outer.width);
     let height = 15u16.min(outer.height.saturating_sub(2));
     let x = outer.x + (outer.width.saturating_sub(width)) / 2;
@@ -1870,8 +1991,64 @@ mod tests {
         handle_key(app, agent, key(KeyCode::Enter))
     }
 
+    #[tokio::test]
+    async fn search_command_reports_hits_from_the_real_session_log() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // Attach a durable mirror and seed it directly through the store API.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+        ));
+        agent.attach_session_store(std::sync::Arc::clone(&store));
+        {
+            let mut st = store.lock().unwrap();
+            use epsilon_contracts::content::UserContent;
+            use epsilon_contracts::message::UserMessage;
+            use epsilon_contracts::session_entry::EntryKind;
+            st.append(EntryKind::Message {
+                message: epsilon_contracts::message::Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    content: vec![UserContent::Text {
+                        text: "the launch codes are under the keyboard".into(),
+                    }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap();
+        }
+
+        // Real key path: /search keyboard
+        assert!(!type_and_enter(&mut app, &agent, "/search keyboard"));
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("#0 user") && t.contains("keyboard")),
+            "expected a hit line mentioning the seeded entry, got {texts:?}"
+        );
+
+        // Miss case
+        assert!(!type_and_enter(&mut app, &agent, "/search quantum-unicorn"));
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("no matches for 'quantum-unicorn'")),
+            "expected the miss notice, got {texts:?}"
+        );
+
+        // Usage hint case
+        assert!(!type_and_enter(&mut app, &agent, "/search"));
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains("usage: /search")),
+            "expected the usage hint, got {texts:?}"
+        );
+    }
+
     type TestReceivers = (
-        tokio::sync::mpsc::UnboundedReceiver<Result<Vec<String>, String>>,
+        tokio::sync::mpsc::UnboundedReceiver<(String, Result<Vec<String>, String>)>,
         tokio::sync::mpsc::UnboundedReceiver<String>,
     );
 

@@ -16,7 +16,7 @@ see `crates/epsilon-core/assets/agent-contract.md`.
 ```sh
 cargo fmt --all -- --check              # formatting gate — no diffs tolerated
 cargo clippy --workspace --all-targets  # ZERO warnings tolerated (workspace lints deny)
-cargo test --workspace                  # full suite must stay green (29+ tests)
+cargo test --workspace                  # full suite must stay green (no count pinned here — README carries the exact-at-milestone number)
 cargo run -q -p epsilon-cli -- --demo  # demo must complete when loop/session/llm touched
 cargo check -p epsilon-cli --features real   # real-provider path must compile (M13 lesson)
 # CI (post-push): .github/workflows/ci.yml runs all gates on Windows, the bwrap
@@ -24,6 +24,22 @@ cargo check -p epsilon-cli --features real   # real-provider path must compile (
 ```
 
 Fix or honestly report failures; never weaken a gate to make it pass.
+
+## Disk hygiene (this machine has a small, chronically-full C: drive)
+
+Rust build artifacts are enormous — this repo's `target/` alone grew past 34 GB and
+pushed C: to 96% full. Whenever a round of builds/installs finishes (and at least
+every few working sessions):
+
+```sh
+cargo install --path crates/epsilon-cli --features real --force  # refresh the user's global exe FIRST
+cargo clean && rm -rf target                                     # then wipe build artifacts (~35-40 GB here)
+df -h /c                                                         # confirm free space recovered
+```
+
+- Always reinstall the global `epsilon.exe` BEFORE cleaning: the user tests the
+  installed binary, not `cargo run` — a stale install makes him think work is lost.
+- Never clean mid-task; only after gates are green and results are delivered.
 
 ## Architecture law
 

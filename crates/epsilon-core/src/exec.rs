@@ -83,6 +83,12 @@ pub fn fail_all_truncated(assistant: &AssistantMessage) -> BatchOutcome {
 ///
 /// Path arguments resolving outside [`Agent.workspace_root`] downgrade the capability to
 /// `external_dir` so defaults can ask before any tool code runs (tools re-check defensively).
+///
+/// Plan 004 (SECURITY-03): the returned subject is LEXICALLY NORMALIZED — leading
+/// `./` stripped, `a/../b` collapsed, trailing `/` removed — and the workspace prefix
+/// is re-relativized, so `.env`, `./.env`, and `src/../.env` all produce the SAME
+/// subject. Rule matching and session-memory keys become consistent (one approval
+/// covers all spellings of one file) instead of tripling prompts on path spelling.
 fn gate_subject(
     name: &str,
     args: &serde_json::Value,
@@ -109,10 +115,22 @@ fn gate_subject(
             }
         }
         let inside = normalized.starts_with(workspace);
-        return if inside {
-            (name.to_string(), raw)
+        // Re-relativize inside-workspace paths so rules match on stable relative
+        // subjects regardless of how the model spelled the path.
+        let subject = if inside {
+            normalized
+                .strip_prefix(workspace)
+                .unwrap_or(&normalized)
+                .to_string_lossy()
+                .trim_end_matches('/')
+                .to_string()
         } else {
-            ("external_dir".to_string(), raw)
+            raw.trim_end_matches('/').to_string()
+        };
+        return if inside {
+            (name.to_string(), subject)
+        } else {
+            ("external_dir".to_string(), subject)
         };
     }
     if (name == "bash" || name == "shell")

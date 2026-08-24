@@ -11,7 +11,8 @@ name = "epsilon"
 path = "src/main.rs"
 
 [features]
-# Real network providers via genai (ADR-003). Off by default; keys come from env only.
+# Real network providers via direct per-provider HTTP (M17 pi port; ADR-003 amendment).
+# Off by default; keys come from env only.
 real = ["epsilon-llm/real"]
 
 [dependencies]

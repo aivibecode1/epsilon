@@ -206,6 +206,10 @@ pub fn skill_roots(workspace: &Path) -> Vec<PathBuf> {
     if let Some(dir) = epsilon_core::config::global_dir() {
         roots.push(dir.join("skills"));
     }
+    // Portable cross-harness convention (.agents/skills — read by most harnesses;
+    // lets one skill tree serve Claude Code, opencode, Epsilon, ...).
+    roots.push(workspace.join(".agents").join("skills"));
+    // Native project-local location (M11).
     roots.push(workspace.join(".epsilon").join("skills"));
     roots
 }
@@ -308,9 +312,10 @@ pub async fn attach_extensions(
     (hosts, notices)
 }
 
-/// Background pump: broadcast agent events into every attached host. The host applies
-/// its manifest's filter internally (`send_event(filtered=true)`, M9a contract), so the
-/// pump stays dumb: forwarding failures never affect the run.
+/// Background pump: broadcast agent events into every attached host. Each host
+/// evaluates its OWN manifest filter (plan 007 — the old hardcoded `true` made
+/// forwarding dead code), so the pump stays dumb: forwarding failures never affect
+/// the run.
 pub fn spawn_event_forwarder(
     mut rx: tokio::sync::broadcast::Receiver<Arc<AgentEvent>>,
     hosts: Vec<Arc<ExtHost>>,
@@ -325,7 +330,7 @@ pub fn spawn_event_forwarder(
                     let payload = serde_json::to_value(&*ev).unwrap_or(serde_json::Value::Null);
                     for host in &hosts {
                         if !host.is_disabled() {
-                            host.send_event(true, &payload).await;
+                            host.send_event(&payload).await;
                         }
                     }
                 }

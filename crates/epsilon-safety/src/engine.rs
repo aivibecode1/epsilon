@@ -126,6 +126,26 @@ pub fn default_ruleset() -> Ruleset {
     }
 }
 
+/// Plan-mode ruleset (opencode's `plan` agent pattern): read-only research.
+///
+/// Mutating capabilities are DENIED — not asked — because a plan run must never touch
+/// the tree even if the user approves mid-run; the correct escape is to exit plan mode,
+/// which keeps the decision out of per-call approval fatigue. Note the engine's
+/// monotonic-deny semantics make this boundary hold no matter what later layers allow.
+/// Internal session bookkeeping (compaction summaries, JSONL appends) does not travel
+/// through the tool gate at all, so long planning runs still persist their log.
+pub fn plan_ruleset() -> Ruleset {
+    Ruleset {
+        name: "plan".into(),
+        rules: vec![
+            Rule::new("write", "*", Action::Deny),
+            Rule::new("edit", "*", Action::Deny),
+            Rule::new("bash", "git commit*", Action::Deny),
+            Rule::new("bash", "git push*", Action::Deny),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +190,41 @@ mod tests {
         }]);
         assert_eq!(engine.evaluate("bash", "git"), Action::Allow);
         assert_eq!(engine.evaluate("webfetch", "*"), Action::Ask); // untouched default
+    }
+
+    #[test]
+    fn plan_mode_denies_mutations_even_when_project_reallows() {
+        // opencode plan-agent parity: research runs cannot touch the tree, and the
+        // monotonic-deny rule means no lower layer can punch through.
+        let engine = PermissionEngine::layered(vec![
+            Ruleset {
+                name: "plan".into(),
+                rules: crate::plan_ruleset().rules,
+            },
+            Ruleset {
+                name: "project".into(),
+                rules: vec![Rule::new("write", "*", Action::Allow)],
+            },
+        ]);
+        assert_eq!(engine.evaluate("write", "src/main.rs"), Action::Deny);
+        assert_eq!(engine.evaluate("edit", "src/main.rs"), Action::Deny);
+        // Reads and search stay free — planning is a research activity.
+        assert_eq!(engine.evaluate("read", "src/main.rs"), Action::Allow);
+        assert_eq!(engine.evaluate("grep", "*"), Action::Allow);
+    }
+
+    #[test]
+    fn plan_mode_blocks_commit_and_push_commands() {
+        let engine = PermissionEngine::layered(vec![Ruleset {
+            name: "plan".into(),
+            rules: crate::plan_ruleset().rules,
+        }]);
+        assert_eq!(engine.evaluate("bash", "git commit -m x"), Action::Deny);
+        assert_eq!(
+            engine.evaluate("bash", "git push origin main"),
+            Action::Deny
+        );
+        // Ordinary shell still follows default ask posture (not silently allowed).
+        assert_eq!(engine.evaluate("bash", "cargo test"), Action::Ask);
     }
 }

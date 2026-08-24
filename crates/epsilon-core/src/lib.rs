@@ -26,7 +26,6 @@ use tokio::sync::broadcast;
 
 use epsilon_contracts::content::UserContent;
 use epsilon_contracts::session_entry::EntryKind;
-use epsilon_session::SessionStore;
 
 /// Token estimate for one message (delegates to compact's heuristic).
 fn estimate_one(m: &Message) -> usize {
@@ -73,6 +72,11 @@ use epsilon_contracts::stream::{StreamEvent, StreamFolder};
 
 pub use gate::{Authorization, AutoAllow, AutoDeny, PermissionGate};
 pub use registry::ToolRegistry;
+// Session-log surface for frontends (pi search/scanning.ts parity). Re-exported here
+// so epsilon-tui/server never need a direct epsilon-session dependency edge.
+pub use epsilon_session::{
+    SearchOptions, SessionSearchHit, SessionStore, StoreError, search_session,
+};
 
 /// How many queued messages a drain point releases.
 ///
@@ -101,6 +105,13 @@ impl PendingQueue {
 
     fn push(&mut self, m: Message) {
         self.inner.push_back(m);
+    }
+
+    /// Restore drained messages to the front (abnormal-exit requeue, plan 002).
+    fn restore(&mut self, msgs: Vec<Message>) {
+        for m in msgs.into_iter().rev() {
+            self.inner.push_front(m);
+        }
     }
 
     fn drain(&mut self) -> Vec<Message> {
@@ -353,6 +364,22 @@ impl Agent {
         self.store().expect("no session store attached")
     }
 
+    /// Search the attached session log (pi `search/scanning.ts` parity).
+    ///
+    /// Case-insensitive substring scan over user/assistant/tool-result text, newest
+    /// hits first; `None` when no durable mirror is attached. Locking note: the
+    /// store mutex is held only for the scan duration and the scan never writes,
+    /// so a concurrent run can proceed on other locks.
+    pub fn search_history(
+        &self,
+        query: &str,
+        opts: &epsilon_session::SearchOptions,
+    ) -> Option<Result<Vec<epsilon_session::SessionSearchHit>, epsilon_session::StoreError>> {
+        let store = self.store()?;
+        let guard = store.lock().ok()?;
+        Some(epsilon_session::search_session(&guard, query, opts))
+    }
+
     /// Append a message to the durable mirror when one is attached.
     fn persist(&self, m: &Message) {
         if let Some(store) = self.store()
@@ -422,6 +449,10 @@ impl Agent {
         if let Ok(mut s) = self.doom_streaks.lock() {
             s.clear();
         }
+        // Overflow recovery (ADR-007 trigger 2) is once PER RUN, not per process:
+        // reset the latch here or the first recovered overflow disables recovery for
+        // every later run in a long-lived TUI/server session.
+        self.overflow_retried.store(false, Ordering::SeqCst);
         self.push_message(&prompt);
         self.emit(AgentEvent::AgentStart);
 
@@ -480,11 +511,15 @@ impl Agent {
                     && token.is_cancelled()
                 {
                     reason = reason.merge_sticky(TurnEndReason::Aborted);
+                    // Plan 002: drained-but-not-yet-injected messages go back to the
+                    // front of their queue so an abort never silently eats user input.
+                    self.requeue_pending(&mut pending);
                     break 'outer;
                 }
 
                 if turn_index >= self.limits.max_turns {
                     reason = reason.merge_sticky(TurnEndReason::BudgetExhausted);
+                    self.requeue_pending(&mut pending);
                     break 'outer;
                 }
 
@@ -504,7 +539,11 @@ impl Agent {
                 // ---- one provider turn --------------------------------------------
                 let assistant = match self.stream_one_turn(&mut usage_total).await {
                     Ok(a) => a,
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        // Error path: same requeue discipline as abort/budget.
+                        self.requeue_pending(&mut pending);
+                        return Err(e);
+                    }
                 };
                 let m = Message::Assistant(assistant.clone());
                 produced.push(m);
@@ -600,6 +639,24 @@ impl Agent {
             .lock()
             .map(|mut q| q.drain())
             .unwrap_or_default()
+    }
+
+    /// Plan 002: on abnormal exits (abort/budget/error), put drained-but-uninjected
+    /// messages back where they came from. `pending` is steering-sourced inside the
+    /// inner loop (follow-ups only enter as fresh `pending` at the outer boundary,
+    /// where an empty follow-up batch simply breaks), so requeueing to the steering
+    /// queue preserves delivery order and loses nothing.
+    fn requeue_pending(&self, pending: &mut Vec<Message>) {
+        if pending.is_empty() {
+            return;
+        }
+        if let Ok(mut q) = self.steering.lock() {
+            for m in pending.drain(..).rev() {
+                q.restore(vec![m]);
+            }
+        } else {
+            pending.clear();
+        }
     }
 
     fn drain_followups(&self) -> Vec<Message> {

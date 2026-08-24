@@ -12,7 +12,8 @@ use epsilon_contracts::stream::StreamEvent;
 use epsilon_contracts::tool::ToolDescriptor;
 use serde_json::json;
 
-pub(crate) struct GoogleWire;
+/// Unit struct implementing the Google Generative Language wire (fixture/test visibility).
+pub struct GoogleWire;
 
 impl ProviderWire for GoogleWire {
     fn endpoint(&self, model: &str) -> String {
@@ -131,6 +132,10 @@ impl ProviderWire for GoogleWire {
     fn on_event(&self, ev: &super::SseEvent, st: &mut HttpEventStream) -> Option<Vec<StreamEvent>> {
         let v: serde_json::Value = serde_json::from_str(&ev.data).ok()?;
         let candidate = v.pointer("/candidates/0")?;
+        // Accumulate across ALL parts: a single chunk can carry text AND a functionCall
+        // (model narrates then calls) — returning on the first text part would drop
+        // the tool call and any usage metadata in the same frame.
+        let mut batch: Vec<StreamEvent> = Vec::new();
         for part in candidate
             .pointer("/content/parts")
             .and_then(|p| p.as_array())
@@ -138,10 +143,11 @@ impl ProviderWire for GoogleWire {
             .flatten()
         {
             if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                return Some(vec![StreamEvent::TextDelta {
+                batch.push(StreamEvent::TextDelta {
                     index: 0,
                     delta: text.to_string(),
-                }]);
+                });
+                continue;
             }
             if let Some(thought) = part.get("thought").and_then(|t| t.as_bool()).filter(|b| *b) {
                 let _ = thought;
@@ -169,11 +175,11 @@ impl ProviderWire for GoogleWire {
             let wire = candidate.get("finishReason").and_then(|f| f.as_str());
             let has_calls = st.has_open_or_closed_tools();
             let (stop, err) = self.map_stop(wire, has_calls);
-            return Some(vec![StreamEvent::Done {
+            batch.push(StreamEvent::Done {
                 message: st.finish(stop, err),
-            }]);
+            });
         }
-        None
+        if batch.is_empty() { None } else { Some(batch) }
     }
 
     fn map_stop(&self, wire: Option<&str>, has_tool_calls: bool) -> (StopReason, Option<String>) {

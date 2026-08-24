@@ -3,6 +3,71 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M20 - Catalog regeneration + live picker refresh
+- **Generated catalog** (DIRECTION-05): `scripts/regen_catalog.py` fetches
+  models.dev and writes `epsilon-llm/src/catalog/catalog_data.rs` — 383 rows
+  across the nine direct-API providers (was ~40 hand-curated), with auditable
+  selection rules (tool-calling text models, dated snapshots excluded,
+  first-provider-wins dedupe) and registry-faithful prices.
+- **Live fetch fixed**: M17's Ctrl+F passed a MODEL ID where `live_models`
+  requires a PROVIDER name, so live listing never worked; the contract is now
+  honored at the single shared call path.
+- **Auto-refresh picker** (opencode/Hermes convention): opening `/models` (or
+  Ctrl+M) and descending into a provider auto-fetch that provider's live list
+  once per session; Ctrl+F still force-refreshes. Live ids merge into both
+  picker stages under their own provider group, no duplicates against bundled
+  rows.
+- **Clippy zero under `--features real --all-targets` too**: M19's fixture
+  visibility widening had left 11 warnings in an ungated lane; docs added on
+  wire structs, collapsible ifs collapsed, `Usage` initializer-built.
+- Suite: 221 tests passing.
+
+### M19 - Audit remediation: all 8 improvement plans executed
+- **Provider stop-reason fidelity** (plan 001): OpenAI `[DONE]` maps the recorded
+  `finish_reason` (`length` → MaxTokens, `content_filter` → Error) instead of always
+  EndTurn; Anthropic `message_stop` consumes `message_delta`'s stop_reason; Gemini
+  early-return now accumulates parts before the finish flag instead of dropping them.
+- **Loop integrity** (plan 002): overflow-retry latch resets per run (recovery works
+  more than once per process); drained-but-uninjected steering messages requeue on
+  abort/budget/error exits; compaction clipping and `/search` snippets are
+  char-boundary safe (CJK/emoji no longer panic or mojibake).
+- **Serve-mode trust boundary** (plan 003): per-boot bearer token required on every
+  route except `/healthz` + `/openapi.json`; loopback Host allow-list + cross-origin
+  Origin rejection; unattended runs default to deny-with-guidance, `--yes` opts into
+  auto-approve with a warning.
+- **Secret-leak closure** (plan 004): engine deny evaluated BEFORE session-memory
+  promotions; grep skips secret-class files (`.env*`, credentials, `.npmrc`, ...);
+  gate subjects lexically normalized so `.env`/`./.env`/`src/../.env` match one rule.
+- **Wire fixture harness** (plan 005): `tests/wire_fixtures.rs` drives all three
+  adapters with raw JSON frames; CI gained a real-feature TEST lane.
+- **Byte-safe SSE buffer** (plan 006): line reassembly is raw bytes; multi-byte chars
+  split across TCP chunks survive.
+- **Extension event forwarding wired** (plan 007): host evaluates its manifest's
+  `events` filter at send time (hardcoded early-return had made it dead code).
+- **CLI composition cleanup** (plan 008): `RunParams`/`SharedRun` structs replace the
+  11-param composition; single Diagnostics sink; reasoned targeted dead_code allow;
+  unused manifest deps dropped; AGENTS.md stale test count fixed.
+- Suite: 220 tests passing. Plans live in `plans/` with the audit report at
+  `reports/re-audit-2026-08-24.md`.
+
+### M18 - Alignment pass: docs audit, pi parity closure, plan mode
+- **Documentation audit**: M14 dev log backfilled from commit evidence
+  (`docs/milestones/M14-harness-maturity.md`); beginner primer added
+  (`docs/qa/06-agent-harness-primer.md`); stale genai-era claims purged from README,
+  architecture doc, ADRs, and qa notes; Rust requirement corrected to >= 1.88;
+  architecture-doc overclaims (edit mutation queue, tracing/OTLP) corrected to
+  shipped reality.
+- **Session search** (pi `search/scanning.ts` parity): case-insensitive scan over
+  user/assistant/tool-result text with snippets, newest-first, limit and
+  active-branch options; `/search <query>` TUI command; re-exported through
+  epsilon-core so the TUI keeps zero direct session dependency. 7 new tests.
+- **Plan mode** (opencode `plan` agent import): `--plan` runs deny write/edit
+  outright plus git commit/push commands; monotonic-deny makes the boundary hold
+  against project rules; startup banner states the posture. Live-verified against
+  the faux provider including a control run.
+- Reports: `reports/pi-alignment-2026-08.md` (layer-by-layer pi correspondence),
+  `reports/research-pass-2-2026-08.md` (community signal + import decisions).
+
 ### M17 - pi-agent provider + TUI port (full attribution)
 - **Provider layer rewritten as a faithful pi port**: direct per-provider HTTP
   (Anthropic Messages, OpenAI-compatible `/chat/completions`, Google

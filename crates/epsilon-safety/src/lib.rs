@@ -12,8 +12,8 @@ pub mod sandbox;
 mod wildcards;
 
 pub use channel_ui::{ChannelApprovalUi, PendingAsk};
-pub use engine::{Action, PermissionEngine, Rule, Ruleset};
-pub use gate::{ApprovalUi, AutoApprove, RulesetGate};
+pub use engine::{Action, PermissionEngine, Rule, Ruleset, plan_ruleset};
+pub use gate::{ApprovalUi, AutoApprove, AutoDeny, RulesetGate};
 #[cfg(unix)]
 pub use sandbox::BwrapSandbox;
 #[cfg(windows)]

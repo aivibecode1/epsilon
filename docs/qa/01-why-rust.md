@@ -22,7 +22,7 @@ show exactly where Rust helps:
 | Long sessions | pi holds the whole transcript in RAM; Hermes hit a synchronous-loop ceiling | Cheap tasks/threads; bounded tool pools without GIL or event-loop limits |
 | Distribution | pi needed Bun-compile workarounds; Hermes needs an exact-pinned Python env | One static binary, no runtime install |
 | Safety layering | DSH needed native addons (koffi FFI, custom Landlock addon) for confinement primitives | Landlock/bwrap/job-objects are first-class crates; process spawning is near-free |
-| Ecosystem | — | tokio (LTS channel), rmcp official MCP SDK, genai multi-provider, ratatui, schemars — all verified current |
+| Ecosystem | — | tokio (LTS channel), rmcp official MCP SDK, direct per-provider HTTP via reqwest (pi-style, M17), ratatui, schemars — all verified current |
 
 ## Honest costs (so this is not cheerleading)
 
@@ -30,8 +30,9 @@ show exactly where Rust helps:
    dynamic loading, instant reflection-style debugging.
 2. **Async Rust learning curve.** Lifetimes x async traits take design effort; patterns trivial
    in JS (closures capturing state) need real structure here.
-3. **Ecosystem breadth.** Fewer batteries than npm/PyPI. Mitigated by wrapping `genai`
-   (ADR-003) instead of hand-writing 40 provider adapters like pi does.
+3. **Ecosystem breadth.** Fewer batteries than npm/PyPI. Mitigated by keeping provider
+   transport behind our own `StreamFn` trait (ADR-003) — first over genai, and since M17 as
+   pi-style direct per-provider HTTP.
 
 ## Verdict
 

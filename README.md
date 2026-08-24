@@ -52,15 +52,19 @@ ledgers.
 | M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
 | M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
 | M13 | Polish: live catalog fetch (Ctrl+F in /models), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
+| M14 | Harness maturity: plain `epsilon` launches the TUI by default (`--demo` preserved), provider auto-detect from env keys with faux fallback + banner, slash-command repairs on the real key path (`/clear` `/skills` `/quit`, unknown-command errors) | ✅ shipped |
 | M15 | TUI usability overhaul porting pi/opencode patterns — picker scroll window (fixes unreachable rows), unicode editor ops, pulldown-cmark transcript, spinner+elapsed, hint bar, mouse wheel, bracketed paste, slash autocomplete; 146 tests | ✅ shipped |
 | M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode | ✅ shipped |
 | M16b | Editor v2: Emacs kill-ring (Ctrl+U/W/Y with accumulation + yank-pop), atomic paste markers (`[paste #N +L lines]`, expand on submit, marker-aware Ctrl+W), multi-line buffer (Ctrl+J newline), persistent prompt history (500 entries) | ✅ shipped |
 | M16c | Picker/palette parity: two-stage model picker (providers → models, fuzzy-filtered), command palette (Ctrl+P) dispatching all commands, draft stash across dialogs, pi fuzzy matcher; 187 tests | ✅ shipped |
 | M17 | **pi-agent port**: direct per-provider HTTP replaces genai (Anthropic/OpenAI-compat/Gemini wires), catalog v2 regenerated from live models.dev (current 2026 generations, REAL prices), slash autocomplete with arrow-key selection + descriptions (pi pattern), keybind parity sweep (Ctrl+A/E/B/F/D/K, Alt+B/F/D, Ctrl+. redo, F2 recents); full attribution in dev log | ✅ shipped |
-| future | catalog auto-refresh · favorites beyond recents · interactive trust re-prompt | open |
+| M18 | Alignment pass: docs audit (M14 log backfilled, beginner primer, stale genai/MSRV claims fixed), pi-alignment report + session search closed (`/search` command, 7 new tests), research pass 2 with community signal, **plan mode** imported from opencode (`--plan` read-only runs, monotonic-deny boundary, live-verified) | ✅ shipped |
+| M19 | Audit remediation: all 8 improvement plans executed — provider stop-reason fidelity on all three wires, loop integrity (latch reset, steering requeue, UTF-8 safety), serve-mode bearer token + Host guard, deny-beats-memory + grep secret-file skip, wire fixture tests in CI, byte-safe SSE buffer, ext event forwarding wired, CLI `RunParams` composition cleanup | ✅ shipped |
+| M20 | Catalog regeneration + live picker refresh: `scripts/regen_catalog.py` generates the catalog from models.dev (383 rows vs ~40 curated — DIRECTION-05 closed), live `GET /models` fetch FIXED (M17's Ctrl+F passed a model id where a provider name was required) and AUTO-FIRES on picker open / provider descent (opencode/Hermes convention), live ids merged into both picker stages | ✅ shipped |
+| future | favorites beyond recents · interactive trust re-prompt · session repair wiring decision · weekly catalog-drift CI PR | open |
 
-190+ tests · zero clippy warnings · every milestone committed with a dev log under
-[`docs/milestones/`](docs/milestones).
+221 tests · zero clippy warnings (both feature configs) · every milestone committed
+with a dev log under [`docs/milestones/`](docs/milestones).
 
 ---
 
@@ -86,12 +90,13 @@ Four convictions, each traceable to evidence in our reference audit
 
 ## Quick start
 
-Prerequisites: Rust ≥ 1.85 (edition 2024), any of stable-msvc/stable-gnu/musl targets.
+Prerequisites: Rust ≥ 1.88 (edition 2024; the workspace declares `rust-version = 1.88`
+and CI verifies it), any of stable-msvc/stable-gnu/musl targets.
 
 ```sh
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # 90+ tests, offline & free
+cargo test --workspace           # 221 tests, offline & free
 epsilon                          # interactive TUI (auto-detects your API keys)
 cargo run -p epsilon-cli -- --demo   # scripted offline demo
 cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mode
@@ -129,10 +134,17 @@ its own loop, and it means CI never touches paid APIs.
 ### Real providers (optional)
 
 ```sh
-cargo build --release -p epsilon-cli --features real   # pulls genai 0.6.5
-$env:ANTHROPIC_API_KEY="..."                 # or OPENAI_API_KEY; read from env only, never stored
-target\release\epsilon.exe --provider real --model claude-sonnet-4-5 -p "summarize this repo"
+cargo build --release -p epsilon-cli --features real   # direct per-provider HTTP (pi-style)
+export ANTHROPIC_API_KEY="..."               # or OPENAI_API_KEY / GEMINI_API_KEY; env only, never stored
+target/release/epsilon                       # auto-detects your key and runs REAL
+# or explicit:
+target/release/epsilon --provider real --model claude-sonnet-4-5 -p "summarize this repo"
 ```
+
+Providers speak their native wire protocol over HTTPS (Anthropic Messages,
+OpenAI-compatible `/chat/completions`, Google `streamGenerateContent`) — no SDK crate
+in between. Routing reads each model catalog row's declared wire type, never id
+substrings. Keys are read from the environment only.
 
 ---
 
@@ -182,7 +194,7 @@ contracts ← session ← core
 | Crate | Role | Key types | Pi analogue |
 |---|---|---|---|
 | `epsilon-contracts` | Shared vocabulary: types + traits, zero logic, zero internal deps | `Message`, `StreamEvent`, `AgentEvent`, `SessionEntry`, `Tool`, `StopReason`, `Usage` | `packages/agent/types.ts` |
-| `epsilon-llm` | Multi-provider LLM layer behind the never-fail contract | `StreamFn`, `EventStream`, `FauxProvider`, `GenaiAdapter`, retry policy | `packages/ai` |
+| `epsilon-llm` | Multi-provider LLM layer behind the never-fail contract: direct per-provider HTTP wires (Anthropic / OpenAI-compat / Google), faux provider, retry policy, catalog | `StreamFn`, `EventStream`, `FauxProvider`, `ProviderWire`, catalog | `packages/ai` |
 | `epsilon-session` | Append-only JSONL tree sessions | `SessionStore`, `SessionLease`, repair helpers | `harness/session` |
 | `epsilon-core` | The loop: queues, batch executor, event bus | `Agent`, `LoopLimits`, `ToolRegistry`, `PermissionGate` | `packages/agent` |
 | `epsilon-tools` | Built-in tools *(M6)* | read/write/edit/bash/grep… | `coding-agent/src/core/tools` |
@@ -234,7 +246,7 @@ Full reasoning lives in [`design/epsilon-decisions.md`](design/epsilon-decisions
 |---|---|
 | 001 | Rust on tokio (LTS channel), single binary |
 | 002 | Port pi's loop shape verbatim; improve only at named seams |
-| 003 | Provider layer wraps genai behind our own `StreamFn`; SDK types never leak |
+| 003 | Provider layer: pi-style direct per-provider HTTP behind our own `StreamFn`; wire types never leak (M17 superseded the original genai wrapper) |
 | 004 | Tools defined as typed structs; schemars-derived JSON Schema; `.txt` descriptions |
 | 005 | Two-layer safety: permission gates over fail-closed confinement; honest per-OS limits |
 | 006 | Sessions = append-only JSONL trees + offset index + advisory-lock turn leases |
@@ -256,11 +268,17 @@ Full reasoning lives in [`design/epsilon-decisions.md`](design/epsilon-decisions
 
 Pick your path:
 
+**You are new to coding agents entirely**
+1. [`docs/qa/06-agent-harness-primer.md`](docs/qa/06-agent-harness-primer.md) — what an
+   agent harness is, in plain language, with zero assumed background.
+2. Then follow the developer path below.
+
 **You are a developer joining the project**
 1. This README.
 2. [`CHANGELOG.md`](CHANGELOG.md) — what shipped when, milestone by milestone.
 3. [`docs/qa/`](docs/qa) — short narrative notes (why Rust, the lego methodology, what
-   exists after each phase, the finished-product vision, documentation conventions).
+   exists after each phase, the finished-product vision, documentation conventions,
+   and a beginner's primer on agent harnesses).
 4. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) §2–§7 — components and
    data flow.
 5. [`docs/milestones/`](docs/milestones) — dev logs in order; each records what was built,

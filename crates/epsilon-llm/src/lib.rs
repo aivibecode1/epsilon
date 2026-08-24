@@ -12,7 +12,7 @@ pub mod catalog;
 mod faux;
 mod http;
 #[cfg(feature = "real")]
-mod providers;
+pub mod providers;
 mod retry;
 mod retry_stream;
 mod stream_fn;

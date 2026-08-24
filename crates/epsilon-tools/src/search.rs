@@ -15,6 +15,26 @@ use crate::util::{self, escaped_workspace};
 
 // ---- grep -----------------------------------------------------------------------
 
+/// Secret-class file names (plan 004): grep never prints their lines. Mirrors the
+/// read-gate defaults (`*.env` asks, `*.env.example` allowed) so the two layers agree.
+fn is_secret_class_file(rel: &Path) -> bool {
+    let name = rel
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if name == ".env.example" || name.ends_with(".env.example") {
+        return false;
+    }
+    // `.env`, `.env.local`, `prod.env`, and common credential file names.
+    let env_shaped = name.split('.').any(|seg| seg == "env")
+        && (name.starts_with(".env") || name.ends_with(".env") || name.contains(".env."));
+    let cred_named = matches!(
+        name.as_str(),
+        "credentials" | "credentials.json" | ".npmrc" | ".netrc" | "secrets.yaml" | "secrets.yml"
+    ) || name.contains("secret");
+    env_shaped || cred_named
+}
+
 /// Arguments for grep.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GrepArgs {
@@ -92,9 +112,18 @@ impl Tool for GrepTool {
         let mut hits: Vec<String> = Vec::new();
         let mut files_scanned = 0usize;
         let mut truncated = false;
+        let mut skipped_secrets: Vec<String> = Vec::new();
         'outer: for rel in util::walk_files(&root) {
             let abs = root.join(&rel);
             if abs.is_dir() {
+                continue;
+            }
+            // Plan 004 (SECURITY-03): never print lines from secret-class files.
+            // The read-gate protects `read .env`, but grep would otherwise print the
+            // same secrets line-by-line into the transcript ungated. `.env.example`
+            // is public by design and stays searchable.
+            if is_secret_class_file(&rel) {
+                skipped_secrets.push(rel.to_string_lossy().replace('\\', "/"));
                 continue;
             }
             let Ok(text) = util::read_text_capped(&abs) else {
@@ -111,6 +140,14 @@ impl Tool for GrepTool {
                     }
                 }
             }
+        }
+
+        if !skipped_secrets.is_empty() {
+            hits.push(format!(
+                "[grep] skipped {} secret-class file(s): {}",
+                skipped_secrets.len(),
+                skipped_secrets.join(", ")
+            ));
         }
 
         if hits.is_empty() {

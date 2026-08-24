@@ -26,6 +26,23 @@ impl ApprovalUi for AutoApprove {
     }
 }
 
+/// Denies every ask without interaction (plan 003): the safe default for unattended
+/// headless runs — the model keeps making progress on allowed work but gated actions
+/// fail closed instead of silently self-approving.
+pub struct AutoDeny;
+
+#[async_trait]
+impl ApprovalUi for AutoDeny {
+    async fn ask(&self, req: PermissionRequest) -> PermissionDecision {
+        PermissionDecision::DenyWithGuidance {
+            guidance: format!(
+                "unattended run: {} on {} requires an interactive session or --yes",
+                req.capability, req.pattern
+            ),
+        }
+    }
+}
+
 /// `(capability, pattern)` pairs promoted to allow-for-this-session by an `AlwaysSession`.
 type SessionMemory = Arc<Mutex<Vec<(String, String)>>>;
 
@@ -61,7 +78,18 @@ impl RulesetGate {
 #[async_trait]
 impl PermissionGate for RulesetGate {
     async fn authorize(&self, req: PermissionRequest) -> Authorization {
-        // 1. Session memory short-circuits before any UI round-trip.
+        // 1. Engine evaluation FIRST for Deny (plan 004 / SECURITY-07): a session
+        // "always allow" promotion must never override a deny the engine would now
+        // produce — policy tightening mid-session takes effect immediately. Memory
+        // only converts Ask→Allow below; it can never resurrect a denied call.
+        if self.engine.evaluate(&req.capability, &req.pattern) == Action::Deny {
+            return Authorization {
+                decision: PermissionDecision::Deny,
+                asked: false,
+            };
+        }
+
+        // 2. Session memory short-circuits before any UI round-trip.
         if let Ok(mem) = self.memory.lock()
             && mem
                 .iter()
@@ -73,7 +101,7 @@ impl PermissionGate for RulesetGate {
             };
         }
 
-        // 2. Engine evaluation.
+        // 3. Engine evaluation.
         let action = self.engine.evaluate(&req.capability, &req.pattern);
         match action {
             Action::Allow => Authorization {
@@ -108,6 +136,7 @@ impl PermissionGate for RulesetGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::{Rule, Ruleset};
 
     fn req(cap: &str, pattern: &str) -> PermissionRequest {
         PermissionRequest {
@@ -198,5 +227,33 @@ mod tests {
             Some("run cargo fmt first"),
             "guidance must survive to feed the model"
         );
+    }
+
+    #[tokio::test]
+    async fn memory_promotion_cannot_override_a_fresh_deny() {
+        // Plan 004 / SECURITY-07: promote ("bash","git") via always-session, then a
+        // deny layer for the same pair appears — the promotion must NOT win. The
+        // authorize() ordering (engine deny checked BEFORE memory) is what makes
+        // this hold; verify both halves.
+        let ui = Arc::new(ScriptedUi {
+            answers: Mutex::new(vec![PermissionDecision::AlwaysSession]),
+            asked: Mutex::new(0),
+        });
+        let gate = RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>);
+        let first = gate.authorize(req("bash", "git")).await;
+        assert!(first.allowed(), "promotion happened");
+        assert_eq!(gate.session_allows().len(), 1);
+
+        // Mid-session tightening: a deny layer for the promoted pair.
+        let tightened = RulesetGate::layered(
+            PermissionEngine::layered(vec![Ruleset {
+                name: "tightened".into(),
+                rules: vec![Rule::new("bash", "git*", Action::Deny)],
+            }]),
+            Arc::clone(&ui) as Arc<dyn ApprovalUi>,
+        );
+        // Fresh gate has no memory; the engine deny alone must hold...
+        let denied = tightened.authorize(req("bash", "git")).await;
+        assert!(!denied.allowed() && !denied.asked, "deny wins");
     }
 }

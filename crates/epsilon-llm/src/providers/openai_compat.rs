@@ -14,7 +14,8 @@ use epsilon_contracts::stream::StreamEvent;
 use epsilon_contracts::tool::ToolDescriptor;
 use serde_json::json;
 
-pub(crate) struct OpenAiCompatWire {
+/// OpenAI-compatible `/chat/completions` wire descriptor (fixture/test visibility).
+pub struct OpenAiCompatWire {
     /// Base URL ending without a trailing slash (pi providers' `baseUrl` field).
     pub base_url: &'static str,
     /// Auth env var (`None` for local Ollama).
@@ -165,7 +166,7 @@ impl ProviderWire for OpenAiCompatWire {
         let data = ev.data.trim();
         if data == "[DONE]" {
             let has_calls = st.has_open_or_closed_tools();
-            let (stop, err) = self.map_stop(None, has_calls);
+            let (stop, err) = self.map_stop(st.finish_reason(), has_calls);
             return Some(vec![StreamEvent::Done {
                 message: st.finish(stop, err),
             }]);
@@ -181,21 +182,21 @@ impl ProviderWire for OpenAiCompatWire {
         }
         for choice in v.get("choices").and_then(|c| c.as_array())?.iter() {
             if let Some(delta) = choice.get("delta") {
-                if let Some(text) = delta.get("content").and_then(|t| t.as_str()) {
-                    if !text.is_empty() {
-                        return Some(vec![StreamEvent::TextDelta {
-                            index: 0,
-                            delta: text.to_string(),
-                        }]);
-                    }
+                if let Some(text) = delta.get("content").and_then(|t| t.as_str())
+                    && !text.is_empty()
+                {
+                    return Some(vec![StreamEvent::TextDelta {
+                        index: 0,
+                        delta: text.to_string(),
+                    }]);
                 }
-                if let Some(reasoning) = delta.get("reasoning_content").and_then(|t| t.as_str()) {
-                    if !reasoning.is_empty() {
-                        return Some(vec![StreamEvent::ThinkingDelta {
-                            index: 0,
-                            delta: reasoning.to_string(),
-                        }]);
-                    }
+                if let Some(reasoning) = delta.get("reasoning_content").and_then(|t| t.as_str())
+                    && !reasoning.is_empty()
+                {
+                    return Some(vec![StreamEvent::ThinkingDelta {
+                        index: 0,
+                        delta: reasoning.to_string(),
+                    }]);
                 }
                 if let Some(calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                     for call in calls {

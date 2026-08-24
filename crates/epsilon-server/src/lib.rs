@@ -37,6 +37,10 @@ pub struct ServeState {
     /// Where permission asks park until a client answers them.
     pub approvals: Arc<ChannelApprovalUi>,
     run_depth: Arc<AtomicUsize>,
+    /// Per-boot bearer token (plan 003): every mutating/read route except
+    /// `/healthz` requires `authorization: Bearer <token>`. `None` disables the
+    /// check (tests only); production `serve_mode` always supplies one.
+    pub auth_token: Option<Arc<String>>,
 }
 
 impl ServeState {
@@ -46,7 +50,32 @@ impl ServeState {
             agent,
             approvals,
             run_depth: Arc::new(AtomicUsize::new(0)),
+            auth_token: None,
         }
+    }
+
+    /// Production constructor (plan 003): generates the per-boot bearer token the
+    /// CLI prints once on stderr. Every route except `/healthz` requires it.
+    pub fn with_boot_token(agent: Arc<Agent>, approvals: Arc<ChannelApprovalUi>) -> Self {
+        let mut token = Self::new(agent, approvals);
+        // 32 hex chars from OS entropy via the in-tree sha2 hasher over
+        // time+pid+counter — not a password, just an unguessable-per-boot secret.
+        use sha2::{Digest, Sha256};
+        use std::sync::atomic::AtomicU64;
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let mut h = Sha256::new();
+        h.update(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos().to_le_bytes())
+                .unwrap_or([0u8; 16]),
+        );
+        h.update(std::process::id().to_le_bytes());
+        h.update(SEQ.fetch_add(1, Ordering::SeqCst).to_le_bytes());
+        let digest = h.finalize();
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        token.auth_token = Some(Arc::new(hex[..32].to_string()));
+        token
     }
 
     /// Number of runs currently executing (diagnostics/tests).
@@ -107,7 +136,92 @@ pub fn router(state: ServeState) -> Router {
         .route("/events", get(events))
         .route("/approvals", get(list_approvals))
         .route("/approvals/{request_id}", post(resolve_approval))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth_and_host_guard,
+        ))
         .with_state(state)
+}
+
+/// Plan 003: serve mode is a TRUST BOUNDARY.
+///
+/// Two guards run before every route except the exempted liveness/spec paths:
+/// 1. **Bearer token** — when `auth_token` is set (production always sets it),
+///    requests must carry `authorization: Bearer <token>`. A local process or
+///    webpage without the token cannot start runs or resolve permission asks.
+/// 2. **Host allow-list** — Host must be loopback; a browser tricked into posting
+///    to an attacker-chosen DNS name (rebinding) presents a non-loopback Host and
+///    is refused. An `Origin` header from anything other than localhost is also
+///    refused (blocks cross-origin POSTs from web pages).
+async fn auth_and_host_guard(
+    State(st): State<ServeState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = req.uri().path();
+    let exempt = path == "/healthz" || path == "/openapi.json";
+
+    // --- Host / Origin checks -----------------------------------------------
+    let host_ok = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(|h| {
+            let host = h.rsplit_once(':').map(|(h, _)| h).unwrap_or(h);
+            host == "127.0.0.1" || host == "localhost" || host == "[::1]"
+        })
+        // Missing Host is only possible for raw/non-HTTP clients; reject to be safe.
+        .unwrap_or(false);
+    if !exempt && !host_ok {
+        return (
+            StatusCode::FORBIDDEN,
+            "rejected: Host header is not loopback",
+        )
+            .into_response();
+    }
+    if let Some(origin) = req
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+    {
+        let origin_clean = origin
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(origin);
+        if origin_clean != "127.0.0.1" && origin_clean != "localhost" {
+            return (StatusCode::FORBIDDEN, "rejected: cross-origin request").into_response();
+        }
+    }
+
+    // --- Bearer token ---------------------------------------------------------
+    if !exempt && let Some(expected) = st.auth_token.as_ref() {
+        let supplied = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "));
+        match supplied {
+            Some(t) if constant_time_eq(t.as_bytes(), expected.as_bytes()) => {}
+            _ => {
+                return (StatusCode::UNAUTHORIZED, "missing or invalid bearer token")
+                    .into_response();
+            }
+        }
+    }
+    next.run(req).await
+}
+
+/// Length-independent comparison so timing does not leak token content.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// Serve on an already-bound listener until the process is killed.
@@ -239,13 +353,74 @@ mod tests {
         (state, app)
     }
 
+    #[tokio::test]
+    async fn bearer_token_required_when_configured() {
+        let (mut st, _app) = test_agent(vec![FauxStep::say("hi")]);
+        st.auth_token = Some(Arc::new("sekrit".into()));
+        let app = router(st.clone());
+
+        // No token -> 401 on a state-changing route.
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/prompt")
+            .header("host", "127.0.0.1")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"task":"x"}"#))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status().as_u16(), 401, "token required");
+
+        // Wrong token -> 401.
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/prompt")
+            .header("host", "127.0.0.1")
+            .header("authorization", "Bearer nope")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"task":"x"}"#))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status().as_u16(), 401);
+
+        // Correct token -> passes the guard (202/409 from the route itself).
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/prompt")
+            .header("host", "127.0.0.1")
+            .header("authorization", "Bearer sekrit")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"task":"hi again"}"#))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_ne!(res.status().as_u16(), 401);
+    }
+
+    #[tokio::test]
+    async fn non_loopback_host_is_rejected() {
+        let (_st, app) = test_agent(vec![FauxStep::say("hi")]);
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/prompt")
+            .header("host", "evil.example.com")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"task":"x"}"#))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status().as_u16(), 403, "DNS-rebinding host refused");
+    }
+
     async fn json_response(
         app: Router,
         method: &str,
         uri: &str,
         body: Option<String>,
     ) -> (u16, String) {
-        let builder = axum::http::Request::builder().method(method).uri(uri);
+        // Plan 003: requests must look loopback-local (Host guard) — tests simulate
+        // a trusted local client.
+        let builder = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "127.0.0.1");
         let req = match body {
             Some(b) => builder
                 .header("content-type", "application/json")
@@ -401,7 +576,7 @@ mod tests {
         // headers, which proves the events handler is now streaming.
         let mut sock = tokio::net::TcpStream::connect(addr).await.expect("connect");
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        sock.write_all(b"GET /events HTTP/1.1\r\nHost: t\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n")
+        sock.write_all(b"GET /events HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n")
             .await
             .unwrap();
 

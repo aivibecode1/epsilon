@@ -14,7 +14,8 @@ use epsilon_contracts::stream::StreamEvent;
 use epsilon_contracts::tool::ToolDescriptor;
 use serde_json::json;
 
-pub(crate) struct AnthropicWire;
+/// Unit struct implementing the Anthropic Messages wire (fixture/test visibility).
+pub struct AnthropicWire;
 
 impl ProviderWire for AnthropicWire {
     fn endpoint(&self, model: &str) -> String {
@@ -183,11 +184,22 @@ impl ProviderWire for AnthropicWire {
                 if let Some(usage) = data.get("usage") {
                     st.update_usage_tail(usage);
                 }
+                // Terminal stop reason rides message_delta (max_tokens / refusal /
+                // pause_turn); remembered and mapped at message_stop below.
+                if let Some(sr) = data.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
+                    st.note_finish_reason(sr);
+                }
                 None
             }
-            "message_stop" => Some(vec![StreamEvent::Done {
-                message: st.finish(StopReason::EndTurn, None),
-            }]),
+            "message_stop" => {
+                // Wire stop reason (from message_delta) drives the mapping; tool_use
+                // still wins when calls are present, matching map_stop's ordering.
+                let has_calls = st.has_open_or_closed_tools();
+                let (stop, err) = self.map_stop(st.finish_reason(), has_calls);
+                Some(vec![StreamEvent::Done {
+                    message: st.finish(stop, err),
+                }])
+            }
             "error" => {
                 let detail = data
                     .pointer("/error/message")

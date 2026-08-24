@@ -50,7 +50,7 @@ Design non-negotiables (derived from Phase 1-2 evidence):
 |         v                                                      v          |
 |  +----------------+   +----------------+   +--------------------+         |
 |  | provider       |   | permission     |   | sandbox            |         |
-|  | (genai-based   |   | (rulesets +    |   | (landlock/bwrap/   |         |
+|  | (direct HTTP   |   | (rulesets +    |   | (landlock/bwrap/   |         |
 |  |  StreamFn impl)|   |  ask UI hook)  |   |  seatbelt/win32)   |         |
 |  +----------------+   +----------------+   +--------------------+         |
 |                                                                          |
@@ -71,7 +71,7 @@ it holds types and traits only and depends on nothing internal:
 | Crate | Role | Pi analogue |
 |---|---|---|
 | `epsilon-contracts` | Shared vocabulary: Message/ContentBlock/StreamEvent/AgentEvent/TurnEndReason/Usage, SessionEntry shapes, Tool trait. Zero logic, zero internal deps | (types split out of `packages/agent/types.ts`) |
-| `epsilon-llm` | Unified multi-provider LLM API: StreamFn trait, faux provider, provider adapters (wrapping `genai`), retry policy, model catalog | `packages/ai` |
+| `epsilon-llm` | Unified multi-provider LLM API: StreamFn trait, faux provider, direct per-provider HTTP wire adapters (Anthropic / OpenAI-compat / Google, pi-style; M17), retry policy, model catalog | `packages/ai` |
 | `epsilon-session` | JSONL tree session store: append/read/fork/navigate, shadow views, leases, crash repair, replay CLI | `packages/agent/src/harness/session` |
 | `epsilon-core` | Agent loop, Agent state machine, steering/follow-up queues, event broadcast, tool pipeline driver; compaction engine + prompt builder attach here in later milestones | `packages/agent` |
 | `epsilon-tools` | Built-in tools: read, write, edit, bash, grep, glob, ls, todo, task(subagent), webfetch | `coding-agent/src/core/tools` |
@@ -158,9 +158,12 @@ pub trait Tool: Send + Sync {
 - **Spill rule** (DSH): outputs above `spill_threshold_bytes` (default 256 KiB) are written to
   `.epsilon/spill/<hash>` and replaced by head/tail preview + locator path the model can Read.
 - Built-in set at launch (deliberately close to pi's surface):
-  read, write, edit (with diff preview + file-mutation queue serialization),
-  bash, grep (ripgrep-backed), glob, ls, todo, webfetch, task (subagent), skill.
+  read, write, edit, bash, grep (ripgrep-style walker), glob, ls.
   MCP tools attach dynamically under `mcp__<server>__<name>`.
+  Mutation ordering is enforced by the batch executor's sequential-barrier rule
+  (`ExecutionMode::Sequential` on write/edit/bash), matching pi's
+  sequential-degradation semantics; there is no edit-specific diff preview or
+  mutation queue.
 - **Concurrency classification** (DSH): each built-in declares whether it is concurrency-safe
   (read/grep/glob/ls/webfetch yes; write/edit/bash/todo/task no).
 
@@ -284,7 +287,7 @@ Rules:
 - Sections have fixed order and names; extensions register sections into named slots with
   priorities (DSH section registry) instead of replacing whole strings; conflicts are visible.
 - Provider cache breakpoints applied at tier boundaries where supported (Anthropic cache_control;
-  OpenAI prompt_cache_key) - genai exposes both.
+  OpenAI prompt_cache_key) — set directly by our own wire adapters (M17).
 - Skills catalog lists name/description only; body loads via the read tool on demand
   (progressive disclosure; Agent Skills spec compliance like pi/Hermes).
 
@@ -301,17 +304,20 @@ pub trait StreamFn: Send + Sync {
 }
 ```
 
-- Default implementation wraps `genai 0.6.x` (verified: native-protocol multi-provider,
-  26+ adapters incl. anthropic/openai/gemini/deepseek/openrouter/xai/moonshot; CacheControl and
-  ReasoningEffort supported) behind our own event vocabulary so the rest of the system never sees
-  genai types. Custom endpoints/providers register additional `StreamFn`s (pi's registerProvider).
+- Default implementation is pi-style **direct per-provider HTTP** (M17): a `ProviderWire`
+  trait per wire protocol with three adapters — Anthropic Messages, OpenAI-compatible
+  `/chat/completions`, Google `streamGenerateContent` — each mapping our types to/from that
+  provider's native SSE stream (`providers/{anthropic,openai_compat,google}.rs` + `http.rs`).
+  No SDK/router crate sits in between; routing reads the catalog row's `wire` column
+  (`WireApi`), never model-id substrings. Custom endpoints/providers register additional
+  `StreamFn`s (pi's registerProvider).
 - Retry: exponential backoff with decorrelated jitter honoring Retry-After (bounded), classified
   by error kind (rate-limit/server/network/auth-nonretryable); auxiliary calls (summaries, titles)
   use fresh ids and no cache writes (pi).
-- Model catalog: static generated table (build script) + models.dev fetch refresh option
-  (opencode), with explicit capability metadata (context window, max output, vision, reasoning,
-  cost) - **no model-id substring sniffing** anywhere in behavior selection (anti-pattern from
-  opencode).
+- Model catalog: static generated table + models.dev refresh option (opencode), with explicit
+  capability metadata (context window, max output, vision, reasoning, real prices) — **no
+  model-id substring sniffing** anywhere in behavior selection (anti-pattern from opencode).
+  Live listing in `real` builds is a plain authenticated GET `/models` per provider.
 - Fallback chains: optional ordered fallback models activated on classified failures, restored to
   primary next turn (Hermes).
 
@@ -374,7 +380,10 @@ Two declarative layers, no executable config:
   resume recomputes attempt counts.
 - Sticky typed turn-end reasons; interrupted runs resume cleanly from the log (lease released,
   dangling tool calls repaired synthetically).
-- Structured tracing spans (tracing crate) per turn/tool/provider call; opt-in OTLP export.
+- Observability, shipped honestly: the AgentEvent broadcast bus plus the append-only session
+  log ARE the observability surface today — every UI and extension consumes the same stream,
+  and any bug reproduces by replaying JSONL (ADR-017). The `tracing` crate / OTLP export
+  named in earlier drafts of this section is future work, not shipped code.
 - Cost tracking: usage accumulated per session from provider usage events (u64 micro-cent
   accumulator to avoid float drift - ZSeven-W agent-rs pattern), rendered in footer.
 - Repeat-call advisory guard and doom-loop brake (sections 3/5).
@@ -409,8 +418,11 @@ Verification notes (researched during design, see ADRs for citations):
 - tokio 1.53.x current / 1.51.x LTS until 2027-03, MSRV 1.71 (tokio releases, crates.io, July 2026).
 - ratatui 0.30.2 current (June 2026 release notes).
 - rmcp 3.1.4 official MCP Rust SDK implementing spec 2026-07-28 (crates.io, Aug 2026).
-- genai 0.6.5 stable multi-provider native-protocol library incl. CacheControl + ReasoningEffort
-  (docs.rs / repo README, v0.6.0 May 2026).
+- Workspace MSRV is 1.88 (ratatui 0.30 and rmcp 3.1 both declare it; M9b raised the
+  original 1.85 plan). CI runs an explicit 1.88 toolchain check.
 - landlock 0.4.7 (crates.io, July 2026); Landlock ABI v8+ supports all-thread enforcement.
 - portable-pty (wezterm) provides cross-platform PTY incl. ConPTY.
 - schemars 1.2.x generates JSON Schema 2020-12 from derives (crates.io, July 2026).
+- genai 0.6.5 served as the multi-provider transport through M16; the M17 pi-port
+  replaced it with direct per-provider HTTP (`reqwest =0.13.4`, already in-tree via
+  rmcp), removing its silent id-routing and env-var spelling failure classes entirely.

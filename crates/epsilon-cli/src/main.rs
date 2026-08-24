@@ -28,7 +28,7 @@ const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon -p \"task\"       headless run · epsilon --serve [--port N] · epsilon --rpc
   epsilon --demo          scripted offline demo · --list-models [provider]
   flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b]
-         --sandbox auto|off · -c/--continue | --resume f · --version";
+         --sandbox auto|off · --plan (read-only) · -c/--continue | --resume f · --version";
 
 struct Args {
     mode: Mode,
@@ -43,6 +43,12 @@ struct Args {
     model_id: Option<String>,
     /// `--resume <path>` / `--continue`: seed history from a prior session file.
     resume: Resume,
+    /// `--plan`: read-only research run (opencode plan-agent parity) — write/edit
+    /// denied outright, `git commit`/`git push` blocked; everything else normal.
+    plan_mode: bool,
+    /// `--yes`: headless runs auto-APPROVE gated asks instead of the safe default
+    /// (auto-deny). Explicit opt-in for trusted automation.
+    auto_approve: bool,
 }
 
 /// Session-restore selection (M12).
@@ -90,6 +96,10 @@ fn parse_args() -> Args {
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
+    // --plan: read-only research run (opencode plan-agent parity).
+    let mut plan_mode = false;
+    // --yes: unattended runs approve gated asks (explicit opt-in; default is deny).
+    let mut auto_approve = false;
     let mut provider: Option<Provider> = None;
     let mut resume = Resume::default();
     // None = not given on the command line; resolution falls back to the saved
@@ -175,6 +185,8 @@ fn parse_args() -> Args {
                 }));
             }
             "--demo" => mode = Mode::Demo,
+            "--plan" => plan_mode = true,
+            "--yes" => auto_approve = true,
             "-c" | "--continue" => resume = Resume::Latest,
             "--resume" => {
                 i += 1;
@@ -228,6 +240,8 @@ fn parse_args() -> Args {
         provider,
         model_id,
         resume,
+        plan_mode,
+        auto_approve,
     }
 }
 
@@ -293,11 +307,29 @@ async fn dispatch(args: Args) -> i32 {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
+    // One diagnostics collector for the whole startup path (plan 008 / DEBT-04):
+    // replaces the three ad-hoc Vec<String> patterns (project notices, banners,
+    // extension notices) with a single ordered sink flushed once.
+    struct Diagnostics(Vec<String>);
+    impl Diagnostics {
+        fn push(&mut self, line: impl Into<String>) {
+            self.0.push(line.into());
+        }
+        /// Extend from a Vec<String> produced by a loader (keeps call sites terse).
+        fn extend_from(&mut self, lines: Vec<String>) {
+            self.0.extend(lines);
+        }
+        fn flush_stderr(&self) {
+            for line in &self.0 {
+                eprintln!("{line}");
+            }
+        }
+    }
+    let mut diag = Diagnostics(Vec::new());
+
     // Project layer (ADR-012, M12): .epsilon/config.toml + trust hash.
     let (project, project_notices) = epsilon_cli::runtime::load_project_config(&workspace);
-    for line in &project_notices {
-        eprintln!("{line}");
-    }
+    diag.extend_from(project_notices);
 
     // ---- provider + model resolution (M14: real harness out of the box) ------------
     // Precedence for the model id: --model flag > project config > global saved.
@@ -306,15 +338,6 @@ async fn dispatch(args: Args) -> i32 {
     // ready), run REAL; only when nothing is configured do we fall back to the offline
     // faux provider, with a banner saying exactly how to go real. pi/opencode parity:
     // a fresh user with one env var gets a working agent with zero flags.
-    //
-    // The bench mode needs none of this (no provider, no banners) — short-circuit.
-    if let Mode::TuiBench(n) = args.mode {
-        for line in epsilon_tui::bench::run(n) {
-            println!("{line}");
-        }
-        return 0;
-    }
-
     let candidate_model = args
         .model_id
         .clone()
@@ -339,7 +362,12 @@ async fn dispatch(args: Args) -> i32 {
             .map(|i| (i.id.to_string(), i.env_key.to_string()))
     };
 
-    let mut banners: Vec<String> = Vec::new();
+    if args.plan_mode {
+        diag.push(
+            "PLAN MODE: read-only research run — write/edit are denied outright; \
+             re-run without --plan to apply changes",
+        );
+    }
     let use_real: bool = match args.provider {
         Some(Provider::Faux) => false,
         Some(Provider::Real) => true,
@@ -351,10 +379,9 @@ async fn dispatch(args: Args) -> i32 {
             #[cfg(not(feature = "real"))]
             {
                 if auto_real(&candidate_model).is_some() {
-                    banners.push(
+                    diag.push(
                         "API key detected but this binary lacks --features real — \
-                         running offline faux. Rebuild: cargo install --path crates/epsilon-cli --features real"
-                            .into(),
+                         running offline faux. Rebuild: cargo install --path crates/epsilon-cli --features real",
                     );
                 }
                 false
@@ -392,7 +419,7 @@ async fn dispatch(args: Args) -> i32 {
     let stream_fn: Arc<dyn epsilon_llm::StreamFn> = if use_real {
         #[cfg(feature = "real")]
         {
-            banners.push(format!(
+            diag.push(format!(
                 "provider: real (direct HTTP) · model: {model_id} · key from env"
             ));
             Arc::new(PanicGuard(epsilon_llm::DirectProvider::new()))
@@ -400,67 +427,28 @@ async fn dispatch(args: Args) -> i32 {
         #[cfg(not(feature = "real"))]
         unreachable!("use_real cannot be true without the real feature")
     } else {
-        banners.push("provider: faux (offline scripted)".into());
+        diag.push("provider: faux (offline scripted)");
         Arc::new(PanicGuard(FauxProvider::new(steps)))
     };
-    for line in &banners {
-        eprintln!("{line}");
-    }
+    // Startup notices flush here, in order, once (plan 008).
+    diag.flush_stderr();
 
+    let shared = SharedRun {
+        workspace,
+        stream_fn,
+        mcp_servers: args.mcp_servers.clone(),
+        confinement: args.confinement.clone(),
+        model_id,
+        resume: args.resume.clone(),
+        project,
+        plan_mode: args.plan_mode,
+    };
     match &args.mode {
         Mode::Demo => demo_mode().await,
-        Mode::Print(task) => {
-            print_mode(
-                workspace,
-                stream_fn,
-                task.clone(),
-                &args.mcp_servers,
-                &args.confinement,
-                &model_id,
-                &args.resume,
-                &project,
-            )
-            .await
-        }
-        Mode::Tui(initial) => {
-            tui_mode(
-                workspace,
-                stream_fn,
-                initial.clone(),
-                &args.mcp_servers,
-                &args.confinement,
-                &model_id,
-                &args.resume,
-                &project,
-            )
-            .await
-        }
-        Mode::Serve(initial) => {
-            serve_mode(
-                workspace,
-                stream_fn,
-                initial.clone(),
-                args.port,
-                &args.mcp_servers,
-                &args.confinement,
-                &model_id,
-                &args.resume,
-                &project,
-            )
-            .await
-        }
-        Mode::Rpc => {
-            rpc_mode(
-                workspace,
-                stream_fn,
-                &args.mcp_servers,
-                &args.confinement,
-                &model_id,
-                &args.resume,
-                &project,
-            )
-            .await
-        }
+        Mode::Print(task) => print_mode(&shared, args.auto_approve, task.clone()).await,
+        Mode::Tui(initial) => tui_mode(&shared, initial.clone()).await,
+        Mode::Serve(initial) => serve_mode(&shared, initial.clone(), args.port).await,
+        Mode::Rpc => rpc_mode(&shared).await,
         Mode::ListModels(provider_filter) => {
             list_models(provider_filter.as_deref());
             0
@@ -492,29 +480,20 @@ fn live_fetcher() -> Option<epsilon_tui::LiveFetcher> {
 }
 
 /// Editor-embedding frontend: NDJSON over stdio (ADR-011 rpc mode).
-#[allow(clippy::too_many_arguments)]
-async fn rpc_mode(
-    workspace: PathBuf,
-    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
-    mcp_servers: &[McpServerConfig],
-    confinement: &epsilon_tools::Confinement,
-    model_id: &str,
-    resume: &Resume,
-    project: &epsilon_cli::runtime::ProjectConfig,
-) -> i32 {
+async fn rpc_mode(shared: &SharedRun) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
-    let agent = match build_runtime(
-        &workspace,
-        stream_fn,
-        Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
-        mcp_servers,
-        ".epsilon/sessions/rpc.jsonl",
-        confinement,
-        model_id,
-        resume,
-        project,
-        &workspace,
-    )
+    let agent = match build_runtime(RunParams {
+        workspace: &shared.workspace,
+        stream_fn: Arc::clone(&shared.stream_fn),
+        approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
+        mcp_servers: &shared.mcp_servers,
+        session_file: ".epsilon/sessions/rpc.jsonl",
+        confinement: &shared.confinement,
+        model_id: &shared.model_id,
+        resume: &shared.resume,
+        project: &shared.project,
+        plan_mode: shared.plan_mode,
+    })
     .await
     {
         Ok(a) => a,
@@ -578,18 +557,49 @@ fn default_steps() -> Vec<FauxStep> {
 }
 
 /// Shared composition: real tools + ruleset gate over the given approval UI.
-#[allow(clippy::too_many_arguments)]
-async fn build_runtime(
-    workspace: &Path,
+/// Inputs every frontend mode shares (plan 008): one struct instead of nine
+/// positionally-similar parameters per mode function.
+struct SharedRun {
+    workspace: PathBuf,
+    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
+    mcp_servers: Vec<McpServerConfig>,
+    confinement: epsilon_tools::Confinement,
+    model_id: String,
+    resume: Resume,
+    project: epsilon_cli::runtime::ProjectConfig,
+    plan_mode: bool,
+}
+
+/// Everything `build_runtime` needs to compose one agent (plan 008 / DEBT-01).
+/// One `workspace` field replaces the old twin (`workspace` + `workspace`
+/// were always the same path at every call site — the second name was pure noise).
+struct RunParams<'a> {
+    workspace: &'a Path,
     stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     approvals: Arc<dyn ApprovalUi>,
-    mcp_servers: &[McpServerConfig],
-    session_file: &str,
-    confinement: &epsilon_tools::Confinement,
-    model_id: &str,
-    resume: &Resume,
-    project: &epsilon_cli::runtime::ProjectConfig,
-    workspace_for_roots: &Path,
+    mcp_servers: &'a [McpServerConfig],
+    /// Session JSONL path, relative to the workspace (e.g. ".epsilon/sessions/tui.jsonl").
+    session_file: &'a str,
+    confinement: &'a epsilon_tools::Confinement,
+    model_id: &'a str,
+    resume: &'a Resume,
+    project: &'a epsilon_cli::runtime::ProjectConfig,
+    plan_mode: bool,
+}
+
+async fn build_runtime(
+    RunParams {
+        workspace,
+        stream_fn,
+        approvals,
+        mcp_servers,
+        session_file,
+        confinement,
+        model_id,
+        resume,
+        project,
+        plan_mode,
+    }: RunParams<'_>,
 ) -> Result<Arc<Agent>, String> {
     let mut registry = epsilon_tools::builtin_registry(confinement);
     let mut all_mcp: Vec<McpServerConfig> = mcp_servers.to_vec();
@@ -600,8 +610,7 @@ async fn build_runtime(
     }
 
     // Skills (M8 brick, wired M11): conventional roots feed the CONTEXT-tier catalog.
-    let skills =
-        epsilon_core::skills::discover(&epsilon_cli::runtime::skill_roots(workspace_for_roots));
+    let skills = epsilon_core::skills::discover(&epsilon_cli::runtime::skill_roots(workspace));
     if !skills.is_empty() {
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         eprintln!("skills: {}", names.join(", "));
@@ -609,9 +618,9 @@ async fn build_runtime(
 
     // Extensions (M8/M9a bricks, wired M11): conventional roots PLUS project-declared
     // dirs resolved against the workspace's .epsilon/ (ADR-012 project layer, M12).
-    let mut ext_roots = epsilon_cli::runtime::extension_roots(workspace_for_roots);
+    let mut ext_roots = epsilon_cli::runtime::extension_roots(workspace);
     if !project.extension_dirs.is_empty() {
-        let base = workspace_for_roots.join(".epsilon");
+        let base = workspace.join(".epsilon");
         ext_roots.extend(project.extension_dirs.iter().map(|d| base.join(d)));
     }
     let (ext_hosts, ext_notices) =
@@ -621,17 +630,19 @@ async fn build_runtime(
     }
 
     // Ruleset gate: defaults + optional project [[rules]] layer (last-match-wins; any
-    // deny still wins immediately — ADR-006 stacking semantics).
-    let gate = Arc::new(RulesetGate::layered(
-        if project.rules.is_empty() {
-            epsilon_safety::PermissionEngine::with_defaults()
-        } else {
-            epsilon_safety::PermissionEngine::layered(vec![
-                epsilon_cli::runtime::project_rules_layer(&project.rules),
-            ])
-        },
-        approvals,
-    ));
+    // deny still wins immediately — ADR-006 stacking semantics). `--plan` prepends the
+    // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
+    // makes that boundary hold regardless of project rules or approvals.
+    let base_engine = if plan_mode {
+        epsilon_safety::PermissionEngine::layered(vec![epsilon_safety::plan_ruleset()])
+    } else if project.rules.is_empty() {
+        epsilon_safety::PermissionEngine::with_defaults()
+    } else {
+        epsilon_safety::PermissionEngine::layered(vec![epsilon_cli::runtime::project_rules_layer(
+            &project.rules,
+        )])
+    };
+    let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
     let agent = Agent::new(
         LoopLimits::default(),
         stream_fn,
@@ -656,8 +667,21 @@ async fn build_runtime(
         }
     };
     if let Some(rp) = resume_path {
-        let restored = epsilon_session::SessionStore::open(&rp)
+        let mut restored = epsilon_session::SessionStore::open(&rp)
             .map_err(|e| format!("open {}: {e}", rp.display()))?;
+        // ponytail-audit follow-up: repair is now WIRED, not test-only — a crashed
+        // prior run leaves dangling tool calls on the active branch; synthesize
+        // tombstones before the model view so the resumed context stays provider-valid.
+        match epsilon_session::repair::repair_on_open(&mut restored) {
+            Ok(report) if report.repaired_tool_calls > 0 || report.appended_turn_end => eprintln!(
+                "repaired {}: {} tool results synthesized, turn_end: {}",
+                rp.display(),
+                report.repaired_tool_calls,
+                report.appended_turn_end
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!("repair warning (continuing): {e}"),
+        }
         let msgs: Vec<Message> = restored
             .model_view()
             .map_err(|e| format!("read {}: {e}", rp.display()))?
@@ -683,30 +707,27 @@ fn user_message(text: String) -> Message {
 }
 
 /// Headless single-prompt run; prints only the FINAL assistant text (pi behavior).
-#[allow(clippy::too_many_arguments)]
-async fn print_mode(
-    workspace: PathBuf,
-    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
-    task: String,
-    mcp_servers: &[McpServerConfig],
-    confinement: &epsilon_tools::Confinement,
-    model_id: &str,
-    resume: &Resume,
-    project: &epsilon_cli::runtime::ProjectConfig,
-) -> i32 {
+async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
     // Print is unattended: asks auto-approve rather than dead-ending on a dialog.
-    let agent = match build_runtime(
-        &workspace,
-        stream_fn,
-        Arc::new(epsilon_safety::AutoApprove),
-        mcp_servers,
-        ".epsilon/sessions/cli.jsonl",
-        confinement,
-        model_id,
-        resume,
-        project,
-        &workspace,
-    )
+    let approvals_ui: Arc<dyn ApprovalUi> = if yes {
+        eprintln!("WARNING: --yes set — permission asks are AUTO-APPROVED in this run");
+        Arc::new(epsilon_safety::AutoApprove)
+    } else {
+        // Plan 003: unattended runs fail closed on asks (deny-with-guidance).
+        Arc::new(epsilon_safety::AutoDeny)
+    };
+    let agent = match build_runtime(RunParams {
+        workspace: &shared.workspace,
+        stream_fn: Arc::clone(&shared.stream_fn),
+        approvals: approvals_ui,
+        mcp_servers: &shared.mcp_servers,
+        session_file: ".epsilon/sessions/cli.jsonl",
+        confinement: &shared.confinement,
+        model_id: &shared.model_id,
+        resume: &shared.resume,
+        project: &shared.project,
+        plan_mode: shared.plan_mode,
+    })
     .await
     {
         Ok(a) => a,
@@ -737,31 +758,21 @@ async fn print_mode(
 }
 
 /// Interactive ratatui frontend (M9b).
-#[allow(clippy::too_many_arguments)]
-async fn tui_mode(
-    workspace: PathBuf,
-    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
-    initial_task: Option<String>,
-    mcp_servers: &[McpServerConfig],
-    confinement: &epsilon_tools::Confinement,
-    model_id: &str,
-    resume: &Resume,
-    project: &epsilon_cli::runtime::ProjectConfig,
-) -> i32 {
+async fn tui_mode(shared: &SharedRun, initial_task: Option<String>) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
     // Composition happens here; the TUI crate stays a pure frontend.
-    let agent = build_runtime(
-        &workspace,
-        stream_fn,
-        Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
-        mcp_servers,
-        ".epsilon/sessions/tui.jsonl",
-        confinement,
-        model_id,
-        resume,
-        project,
-        &workspace,
-    )
+    let agent = build_runtime(RunParams {
+        workspace: &shared.workspace,
+        stream_fn: Arc::clone(&shared.stream_fn),
+        approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
+        mcp_servers: &shared.mcp_servers,
+        session_file: ".epsilon/sessions/tui.jsonl",
+        confinement: &shared.confinement,
+        model_id: &shared.model_id,
+        resume: &shared.resume,
+        project: &shared.project,
+        plan_mode: shared.plan_mode,
+    })
     .await;
     match agent {
         Ok(agent) => {
@@ -769,7 +780,7 @@ async fn tui_mode(
                 agent,
                 approvals,
                 initial_task,
-                model_id: model_id.to_string(),
+                model_id: shared.model_id.clone(),
                 live: live_fetcher(),
             })
             .await
@@ -782,31 +793,20 @@ async fn tui_mode(
 }
 
 /// HTTP/SSE server exposing the runtime to remote frontends (M9b).
-#[allow(clippy::too_many_arguments)]
-async fn serve_mode(
-    workspace: PathBuf,
-    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
-    initial_task: Option<String>,
-    port: u16,
-    mcp_servers: &[McpServerConfig],
-    confinement: &epsilon_tools::Confinement,
-    model_id: &str,
-    resume: &Resume,
-    project: &epsilon_cli::runtime::ProjectConfig,
-) -> i32 {
+async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
-    let agent = match build_runtime(
-        &workspace,
-        stream_fn,
-        Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
-        mcp_servers,
-        ".epsilon/sessions/serve.jsonl",
-        confinement,
-        model_id,
-        resume,
-        project,
-        &workspace,
-    )
+    let agent = match build_runtime(RunParams {
+        workspace: &shared.workspace,
+        stream_fn: Arc::clone(&shared.stream_fn),
+        approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
+        mcp_servers: &shared.mcp_servers,
+        session_file: ".epsilon/sessions/serve.jsonl",
+        confinement: &shared.confinement,
+        model_id: &shared.model_id,
+        resume: &shared.resume,
+        project: &shared.project,
+        plan_mode: shared.plan_mode,
+    })
     .await
     {
         Ok(a) => a,
@@ -835,7 +835,16 @@ async fn serve_mode(
     eprintln!(
         "epsilon serving on http://{addr}\n  events: GET  /events (SSE)\n  prompt: POST /prompt {{\"task\":\"…\"}}\n  approvals: GET /approvals · POST /approvals/<id>"
     );
-    let state = epsilon_server::ServeState::new(agent, approvals);
+    // Plan 003: per-boot bearer token — printed ONCE here; every request except
+    // /healthz must carry `authorization: Bearer <token>`. Serve mode is a trust
+    // boundary; without the token a local process or webpage could drive runs.
+    let state = {
+        let st = epsilon_server::ServeState::with_boot_token(agent, approvals);
+        if let Some(t) = st.auth_token.as_ref() {
+            eprintln!("  auth: authorization: Bearer {t}");
+        }
+        st
+    };
     match epsilon_server::serve(state, listener).await {
         Ok(()) => 0,
         Err(e) => {

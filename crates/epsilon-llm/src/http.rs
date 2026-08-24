@@ -12,10 +12,7 @@ use std::sync::OnceLock;
 
 /// One decoded server-sent event.
 #[derive(Debug, Clone)]
-pub(crate) struct SseEvent {
-    /// `data:` payload with continuation lines joined by `\n`.
-    #[allow(dead_code)] // anthropic-style frames key off data.type; kept for parity
-    pub event: Option<String>,
+pub struct SseEvent {
     /// `data:` payload with continuation lines joined by `\n`.
     pub data: String,
 }
@@ -23,7 +20,6 @@ pub(crate) struct SseEvent {
 /// Incremental decoder: feed received lines, pull completed events out.
 #[derive(Default)]
 pub(crate) struct SseDecoder {
-    event: Option<String>,
     data: Vec<String>,
 }
 
@@ -38,20 +34,18 @@ impl SseDecoder {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.is_empty() {
             if self.data.is_empty() {
-                self.event = None;
                 return None;
             }
             let ev = SseEvent {
-                event: self.event.take(),
                 data: self.data.join("\n"),
             };
             self.data.clear();
             return Some(ev);
         }
-        // Comments (leading ':') and `id:`/`retry:` fields carry nothing we need.
-        if let Some(rest) = line.strip_prefix("event:") {
-            self.event = Some(rest.trim_start().to_string());
-        } else if let Some(rest) = line.strip_prefix("data:") {
+        // Comments (leading ':') and `id:`/`retry:`/`event:` fields carry nothing we
+        // need: all three wires key frames off the data JSON's own `type`/shape
+        // (ponytail-audit #4 removed the unused event-field plumbing).
+        if let Some(rest) = line.strip_prefix("data:") {
             self.data
                 .push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
         }
@@ -105,11 +99,12 @@ mod tests {
     }
 
     #[test]
-    fn decoder_captures_event_names_for_anthropic_style_frames() {
+    fn decoder_ignores_event_names_but_keeps_data() {
+        // ponytail-audit #4: event-field plumbing removed; data must survive.
         let mut d = SseDecoder::new();
         assert!(d.feed("event: content_block_delta").is_none());
         assert!(d.feed("data: {\"type\":\"x\"}").is_none());
         let ev = d.feed("").expect("completed");
-        assert_eq!(ev.event.as_deref(), Some("content_block_delta"));
+        assert_eq!(ev.data, "{\"type\":\"x\"}");
     }
 }

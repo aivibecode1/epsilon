@@ -96,9 +96,17 @@ pub fn summary_context(
                     })
                     .collect::<String>();
                 // Tool outputs get a hard cap here — they dominate transcripts.
+                // Char-boundary floor walk: byte 2000 can land mid-character on CJK
+                // or emoji output and `&txt[..CAP]` would panic (plan 002).
                 const CAP: usize = 2_000;
                 let clipped = if txt.len() > CAP {
-                    format!("{}…[clipped]", &txt[..CAP])
+                    let cut = txt
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .take_while(|i| *i <= CAP)
+                        .last()
+                        .unwrap_or(CAP);
+                    format!("{}…[clipped]", &txt[..cut])
                 } else {
                     txt
                 };
@@ -198,4 +206,67 @@ pub fn prune_old_tool_results(
         }
     }
     (out, pruned)
+}
+
+#[cfg(test)]
+mod plan002_tests {
+    use super::*;
+    use epsilon_contracts::content::{ContentBlock, UserContent};
+    use epsilon_contracts::message::{Message, ToolResultMessage, UserMessage};
+
+    fn tool_result_with_output(text: &str) -> Message {
+        Message::ToolResult(ToolResultMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: epsilon_contracts::new_id("call"),
+            tool_name: "bash".into(),
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            details: serde_json::json!({}),
+            usage: None,
+            is_error: false,
+        })
+    }
+
+    #[test]
+    fn clipping_multi_byte_tool_output_does_not_panic() {
+        // CJK chars are 3 bytes each; byte 2000 lands mid-character. The tombstone
+        // path (prune) and the summary clip path must both be panic-free.
+        let cjk: String = "好".repeat(1000); // 3000 bytes
+        let msgs = vec![tool_result_with_output(&cjk)];
+        // prune with tail protection 0: cut_index stays 0 → no pruning, passthrough.
+        let (out, pruned) = prune_old_tool_results(&msgs, 0);
+        assert_eq!(pruned, 0);
+        assert!(matches!(&out[0], Message::ToolResult(_)));
+        // The panic used to happen inside summary_context's clip path:
+        let ctx = summary_context(&msgs, None);
+        assert!(!ctx.system_prompt.is_empty() || !ctx.messages.is_empty());
+    }
+
+    #[test]
+    fn summary_context_clips_multi_byte_without_panicking() {
+        let cjk: String = "🌍".repeat(1500); // ~6000 bytes, crosses the 2000-byte cap
+        let msgs = vec![tool_result_with_output(&cjk)];
+        // Must not panic; body contains a clipped marker.
+        let ctx = summary_context(&msgs, None);
+        assert!(!ctx.system_prompt.is_empty() || !ctx.messages.is_empty());
+    }
+
+    #[test]
+    fn summary_context_amend_mode_includes_prior_summary_marker() {
+        let user = Message::User(UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text {
+                text: "progress note".into(),
+            }],
+        });
+        let ctx = summary_context(&[user], Some("PREV"));
+        let rendered = format!("{:?}", ctx.messages);
+        assert!(
+            rendered.contains("<prior_summary>") && rendered.contains("PREV"),
+            "amend prompt must embed the prior summary"
+        );
+    }
 }
