@@ -197,15 +197,15 @@ impl App {
         })
     }
 
-    fn submit_editor(&mut self, agent: &Arc<Agent>) {
+    /// Submit the editor line; returns `true` when a command requested quit.
+    fn submit_editor(&mut self, agent: &Arc<Agent>) -> bool {
         let text = std::mem::take(&mut self.input);
         self.cursor_chars = 0;
         if text.trim().is_empty() {
-            return;
+            return false;
         }
         if let Some(command) = crate::picker::parse_command(&text) {
-            self.run_command(agent, command);
-            return;
+            return self.run_command(agent, command);
         }
         let msg = self.submit_text(text);
         if self.ui.running() {
@@ -214,9 +214,15 @@ impl App {
         } else {
             self.spawn_run(Arc::clone(agent), msg);
         }
+        false
     }
 
-    fn run_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) {
+    /// Execute a parsed slash command; returns `true` to quit the session.
+    /// Execute a parsed slash command; returns `true` to quit the session.
+    ///
+    /// Replies are pushed synchronously into the transcript so they render on the
+    /// very next frame; the notices channel stays reserved for async events.
+    fn run_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
             crate::picker::Command::Models => {
                 self.picker_open = true;
@@ -228,37 +234,61 @@ impl App {
             crate::picker::Command::Model(id) => self.apply_model(agent, id),
             crate::picker::Command::Help => {
                 for line in [
-                    "commands: /models · /model <id> · /help",
-                    "keys: Enter submit · Esc quit-when-idle · PgUp/PgDn scroll",
+                    "commands: /models · /model <id> · /skills · /clear · /quit · /help",
+                    "keys: Enter submit · Esc aborts a run (quits when idle) · x expands tool output",
+                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker",
                 ] {
-                    self.notice(line);
+                    self.ui.push_notice(line);
                 }
             }
+            crate::picker::Command::Clear => {
+                let (tin, tout) = self.ui.usage();
+                self.ui.clear_lines();
+                self.ui.push_notice(format!(
+                    "transcript cleared — session totals kept (tokens {tin}/{tout})"
+                ));
+            }
+            crate::picker::Command::Skills => {
+                let names = agent.skill_names();
+                if names.is_empty() {
+                    self.ui.push_notice(
+                        "no skills discovered — drop SKILL.md dirs into .epsilon/skills/",
+                    );
+                } else {
+                    self.ui.push_notice(format!("skills: {}", names.join(", ")));
+                }
+            }
+            crate::picker::Command::Quit => return true,
+            crate::picker::Command::Unknown(word) => {
+                self.ui
+                    .push_notice(format!("unknown command '/{word}' — /help lists commands"));
+            }
         }
+        false
     }
 
     /// Switch the session model, persist choice + recents, and tell the user.
     fn apply_model(&mut self, agent: &Arc<Agent>, id: String) {
         if id == self.model_id {
-            self.notice(format!("model already {id}"));
+            self.ui.push_notice(format!("model already {id}"));
             return;
         }
         agent.set_model_id(&id);
         match epsilon_core::config::save_model_id(&id) {
             Ok(path) => {
                 self.model_id = id.clone();
-                self.notice(format!(
+                self.ui.push_notice(format!(
                     "model switched to {id} — saved to {}",
                     path.display()
                 ));
             }
             Err(e) => {
                 self.model_id = id.clone();
-                self.notice(format!("model switched to {id} (not saved: {e})"));
+                self.ui
+                    .push_notice(format!("model switched to {id} (not saved: {e})"));
             }
         }
-        if let Ok(path) = epsilon_core::config::push_recent_model(&id) {
-            let _ = path;
+        if epsilon_core::config::push_recent_model(&id).is_ok() {
             self.recents = epsilon_core::config::load_recent_models();
         }
     }
@@ -267,14 +297,24 @@ impl App {
     fn pick_selected(&mut self, agent: &Arc<Agent>) {
         let rows =
             crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
-        if let Some(row) = rows.get(self.picker_index) {
-            let id = row.id.clone();
-            self.picker_open = false;
-            self.picker_index = 0;
-            self.input.clear();
-            self.cursor_chars = 0;
-            self.apply_model(agent, id);
+        let Some(row) = rows.get(self.picker_index) else {
+            return;
+        };
+        // UX guard (M14): Enter on the already-active model must not silently close
+        // the picker with zero feedback — that read as "slash commands don't work".
+        if row.id == self.model_id {
+            self.ui.push_notice(format!(
+                "{id} is already active — ↓ to browse, Esc to close",
+                id = row.id
+            ));
+            return;
         }
+        let id = row.id.clone();
+        self.picker_open = false;
+        self.picker_index = 0;
+        self.input.clear();
+        self.cursor_chars = 0;
+        self.apply_model(agent, id);
     }
 
     /// Kick off a live listing for the highlighted row's provider (M13, `real` builds).
@@ -432,70 +472,71 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         return true;
     }
 
-    // Permission dialog captures keys first.
+    // Model picker captures keys before the permission dialog (it can open while a
+    // run is active, and must always be operable).
+    if app.picker_open {
+        match key.code {
+            KeyCode::Esc => {
+                app.picker_open = false;
+                app.picker_index = 0;
+                app.input.clear();
+                app.cursor_chars = 0;
+            }
+            KeyCode::Enter => app.pick_selected(agent),
+            KeyCode::Up => {
+                let total = crate::picker::build_rows(
+                    &app.input,
+                    &app.model_id,
+                    &app.recents,
+                    &app.live_cache,
+                )
+                .len();
+                app.picker_index = app
+                    .picker_index
+                    .saturating_sub(1)
+                    .min(total.saturating_sub(1));
+            }
+            KeyCode::Down => {
+                let total = crate::picker::build_rows(
+                    &app.input,
+                    &app.model_id,
+                    &app.recents,
+                    &app.live_cache,
+                )
+                .len();
+                if total > 0 {
+                    app.picker_index = (app.picker_index + 1).min(total - 1);
+                }
+            }
+            KeyCode::Backspace => {
+                app.backspace();
+                let total = crate::picker::build_rows(
+                    &app.input,
+                    &app.model_id,
+                    &app.recents,
+                    &app.live_cache,
+                )
+                .len();
+                if app.picker_index >= total {
+                    app.picker_index = total.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+F: fetch live listing for the highlighted row's provider.
+                app.fetch_live_for_selected();
+            }
+            KeyCode::Char(c) => {
+                app.insert_char(c);
+                app.picker_index = 0;
+            }
+            _ => {}
+        }
+        return false;
+    }
+
+    // Permission dialog captures keys next.
     if let Some(_pending) = app.pending_ask.as_ref() {
         if app.guidance_mode {
-            // Model picker captures keys after the permission dialog.
-            if app.picker_open {
-                match key.code {
-                    KeyCode::Esc => {
-                        app.picker_open = false;
-                        app.picker_index = 0;
-                        app.input.clear();
-                        app.cursor_chars = 0;
-                    }
-                    KeyCode::Enter => app.pick_selected(agent),
-                    KeyCode::Up => {
-                        let total = crate::picker::build_rows(
-                            &app.input,
-                            &app.model_id,
-                            &app.recents,
-                            &app.live_cache,
-                        )
-                        .len();
-                        app.picker_index = app
-                            .picker_index
-                            .saturating_sub(1)
-                            .min(total.saturating_sub(1));
-                    }
-                    KeyCode::Down => {
-                        let total = crate::picker::build_rows(
-                            &app.input,
-                            &app.model_id,
-                            &app.recents,
-                            &app.live_cache,
-                        )
-                        .len();
-                        if total > 0 {
-                            app.picker_index = (app.picker_index + 1).min(total - 1);
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        app.backspace();
-                        let total = crate::picker::build_rows(
-                            &app.input,
-                            &app.model_id,
-                            &app.recents,
-                            &app.live_cache,
-                        )
-                        .len();
-                        if app.picker_index >= total {
-                            app.picker_index = total.saturating_sub(1);
-                        }
-                    }
-                    KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        // Ctrl+F: fetch live listing for the highlighted row's provider.
-                        app.fetch_live_for_selected();
-                    }
-                    KeyCode::Char(c) => {
-                        app.insert_char(c);
-                        app.picker_index = 0;
-                    }
-                    _ => {}
-                }
-                return false;
-            }
-
             match key.code {
                 KeyCode::Enter => {
                     let guidance = std::mem::take(&mut app.input);
@@ -554,8 +595,15 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 true
             }
         }
-        KeyCode::Enter => {
-            app.submit_editor(agent);
+        KeyCode::Enter => app.submit_editor(agent),
+        KeyCode::Char('m' | 'M') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Layout-independent picker access (slash may need AltGr on some layouts).
+            if !app.picker_open {
+                app.picker_open = true;
+                app.picker_index = 0;
+                app.input.clear();
+                app.cursor_chars = 0;
+            }
             false
         }
         KeyCode::Backspace => {
@@ -892,4 +940,128 @@ fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
 
     let para = Paragraph::new(body).block(block);
     f.render_widget(para, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEventState;
+    use epsilon_safety::ChannelApprovalUi;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    /// Type a string one char at a time, then Enter — the real key path.
+    fn type_and_enter(app: &mut App, agent: &Arc<Agent>, text: &str) -> bool {
+        for c in text.chars() {
+            handle_key(app, agent, key(KeyCode::Char(c)));
+        }
+        handle_key(app, agent, key(KeyCode::Enter))
+    }
+
+    type TestReceivers = (
+        tokio::sync::mpsc::UnboundedReceiver<Result<Vec<String>, String>>,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    );
+
+    fn test_app() -> (App, Arc<Agent>, TestReceivers) {
+        let (ftx, frx) = tokio::sync::mpsc::unbounded_channel();
+        let (ntx, nrx) = tokio::sync::mpsc::unbounded_channel();
+        let approvals = Arc::new(ChannelApprovalUi::new());
+        let gate = Arc::new(epsilon_safety::RulesetGate::new(
+            Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
+        ));
+        let agent = Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+                vec![],
+            ))),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            gate,
+            std::env::temp_dir(),
+        );
+        (App::new("faux-1".into(), ftx, ntx), agent, (frx, nrx))
+    }
+
+    #[tokio::test]
+    async fn slash_models_opens_picker_via_real_key_path() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "/models".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+            if app.picker_open {
+                panic!("picker opened early at char {c:?} — some arm intercepts typing");
+            }
+        }
+        assert_eq!(app.input, "/models", "typing must land in the editor");
+        let quit_now = handle_key(&mut app, &agent, key(KeyCode::Enter));
+        assert!(!quit_now);
+        assert!(app.picker_open, "/models must open the picker");
+        assert!(app.input.is_empty(), "editor becomes the filter box");
+
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+        assert!(!app.picker_open);
+    }
+
+    #[tokio::test]
+    async fn slash_model_direct_applies_instantly() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let before = app.ui.lines().len();
+        assert!(!type_and_enter(&mut app, &agent, "/model deepseek-chat"));
+        assert_eq!(
+            app.model_id, "deepseek-chat",
+            "direct /model applies instantly"
+        );
+        let line = &app.ui.lines()[before];
+        assert!(line.text.contains("deepseek-chat"), "{:?}", line.text);
+        assert!(
+            app.recents.contains(&"deepseek-chat".to_string()),
+            "recents updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_slash_word_errors_instead_of_prompting_the_model() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let before = app.ui.lines().len();
+        assert!(!type_and_enter(&mut app, &agent, "/bogus"));
+        assert!(!app.ui.running(), "must NOT start a run");
+        assert_eq!(app.ui.lines().len(), before + 1, "one system notice");
+        assert!(app.ui.lines()[before].text.contains("/bogus"));
+    }
+
+    #[tokio::test]
+    async fn ctrl_m_opens_picker_without_typing_slash() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('m'))));
+        assert!(app.picker_open);
+    }
+
+    #[tokio::test]
+    async fn x_toggles_expand_and_quit_requests_exit() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('x'))));
+        assert!(app.prefs.expand_outputs);
+
+        assert!(!type_and_enter(&mut app, &agent, "/clear"));
+        let last = app.ui.lines().last().unwrap();
+        assert!(last.text.contains("cleared"), "{:?}", last.text);
+
+        // /quit must request exit through the same Enter path users press.
+        assert!(type_and_enter(&mut app, &agent, "/quit"), "/quit exits");
+    }
 }

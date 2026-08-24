@@ -277,6 +277,11 @@ impl Agent {
         self.skills.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
+    /// Names of discovered skills (for `/skills` and diagnostics).
+    pub fn skill_names(&self) -> Vec<String> {
+        self.skill_list().into_iter().map(|s| s.name).collect()
+    }
+
     /// Seed the transcript from a previous session (M12 `--resume`).
     ///
     /// Messages are restored into runtime history WITHOUT re-persisting (they already

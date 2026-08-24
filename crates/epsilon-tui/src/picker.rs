@@ -143,9 +143,21 @@ pub enum Command {
     Model(String),
     /// Show the command reference.
     Help,
+    /// Clear the transcript pane.
+    Clear,
+    /// List discovered skills.
+    Skills,
+    /// Exit the session.
+    Quit,
+    /// A `/word` we do not know — surfaced as an error, never sent to the model.
+    Unknown(String),
 }
 
 /// Parse submitted input that starts with `/`; `None` means ordinary prompt text.
+///
+/// Slash input is ALWAYS a command attempt (pi/opencode convention): unknown words
+/// come back as [`Command::Unknown`] so the UI can correct the user instead of
+/// silently prompting the model with literal `/typo`.
 pub fn parse_command(input: &str) -> Option<Command> {
     let trimmed = input.trim();
     let rest = trimmed.strip_prefix('/')?;
@@ -154,10 +166,13 @@ pub fn parse_command(input: &str) -> Option<Command> {
         None => (rest, ""),
     };
     match head.to_ascii_lowercase().as_str() {
-        "models" => Some(Command::Models),
-        "model" if !tail.is_empty() => Some(Command::Model(tail.to_string())),
+        "models" | "model" if tail.is_empty() => Some(Command::Models),
+        "model" => Some(Command::Model(tail.to_string())),
         "help" | "?" => Some(Command::Help),
-        _ => None,
+        "clear" => Some(Command::Clear),
+        "skills" => Some(Command::Skills),
+        "quit" | "q" | "exit" => Some(Command::Quit),
+        other => Some(Command::Unknown(other.to_string())),
     }
 }
 
@@ -227,6 +242,11 @@ mod tests {
     #[test]
     fn commands_parse_with_optional_args_and_case() {
         assert_eq!(parse_command("/models"), Some(Command::Models));
+        assert_eq!(
+            parse_command("/model"),
+            Some(Command::Models),
+            "bare /model opens the picker"
+        );
         assert_eq!(parse_command(" /MODELS "), Some(Command::Models));
         assert_eq!(
             parse_command("/model deepseek-chat"),
@@ -237,10 +257,15 @@ mod tests {
             Some(Command::Model("kimi-k2".into()))
         );
         assert_eq!(parse_command("/help"), Some(Command::Help));
+        assert_eq!(parse_command("/?"), Some(Command::Help));
+        assert_eq!(parse_command("/clear"), Some(Command::Clear));
+        assert_eq!(parse_command("/skills"), Some(Command::Skills));
+        assert_eq!(parse_command("/quit"), Some(Command::Quit));
+        assert_eq!(parse_command("/q"), Some(Command::Quit));
         assert_eq!(
             parse_command("/bogus"),
-            None,
-            "unknown commands stay prompts"
+            Some(Command::Unknown("bogus".into())),
+            "unknown slash words error out — never sent to the model"
         );
         assert_eq!(parse_command("fix the bug"), None);
     }

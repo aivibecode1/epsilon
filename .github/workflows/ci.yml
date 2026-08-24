@@ -44,7 +44,7 @@ jobs:
         run: cargo check -p epsilon-cli --features real
 
       - name: Demo must complete
-        run: cargo run -q -p epsilon-cli
+        run: cargo run -q -p epsilon-cli -- --demo
 
   linux-confinement:
     runs-on: ubuntu-latest

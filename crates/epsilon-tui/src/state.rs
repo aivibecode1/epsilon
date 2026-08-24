@@ -131,6 +131,13 @@ impl UiState {
             .push(TranscriptLine::plain(LineKind::System, text));
     }
 
+    /// Drop all transcript rows (`/clear`); usage counters survive.
+    pub fn clear_lines(&mut self) {
+        self.lines.clear();
+        self.streaming_text.clear();
+        self.streaming_thinking.clear();
+    }
+
     /// Reduce one lifecycle event into the model.
     pub fn apply(&mut self, ev: &AgentEvent) {
         match ev {

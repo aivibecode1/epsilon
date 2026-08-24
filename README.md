@@ -87,7 +87,8 @@ Prerequisites: Rust ≥ 1.85 (edition 2024), any of stable-msvc/stable-gnu/musl 
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
 cargo test --workspace           # 90+ tests, offline & free
-cargo run -p epsilon-cli         # scripted 3-turn demo session
+epsilon                          # interactive TUI (auto-detects your API keys)
+cargo run -p epsilon-cli -- --demo   # scripted offline demo
 cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mode
 cargo run -p epsilon-cli -- --tui                           # interactive TUI
 cargo run -p epsilon-cli -- --serve --port 8787             # HTTP/SSE server

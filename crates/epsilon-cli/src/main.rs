@@ -24,10 +24,11 @@ use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
 use epsilon_mcp::McpServerConfig;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
 
-const USAGE: &str = "usage: epsilon [-p \"task\"] [--tui [task]] [--serve [--port N] [task]] \
-[--script f] [--mcp name=cmd[:arg,arg]] [--workspace dir] [--sandbox auto|off] \
-[--provider faux|real] [--model id] [--list-models [provider]] [-c|--continue | --resume f] \
-[--rpc] [--version]";
+const USAGE: &str = "usage: epsilon            interactive TUI (default)
+  epsilon -p \"task\"       headless run · epsilon --serve [--port N] · epsilon --rpc
+  epsilon --demo          scripted offline demo · --list-models [provider]
+  flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b]
+         --sandbox auto|off · -c/--continue | --resume f · --version";
 
 struct Args {
     mode: Mode,
@@ -36,7 +37,8 @@ struct Args {
     mcp_servers: Vec<McpServerConfig>,
     port: u16,
     confinement: epsilon_tools::Confinement,
-    provider: Provider,
+    /// Explicit --provider; None = auto-detect from env keys (M14).
+    provider: Option<Provider>,
     /// `--model` override; None falls back to saved config then the catalog default.
     model_id: Option<String>,
     /// `--resume <path>` / `--continue`: seed history from a prior session file.
@@ -78,13 +80,13 @@ fn parse_args() -> Args {
         println!("epsilon {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
-    let mut mode = Mode::Demo;
+    let mut mode = Mode::Tui(None); // M14: plain `epsilon` opens the interactive TUI
     let mut script_path = None;
     let mut workspace = None;
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
-    let mut provider = Provider::Faux;
+    let mut provider: Option<Provider> = None;
     let mut resume = Resume::default();
     // None = not given on the command line; resolution falls back to the saved
     // config value, then the catalog default (ADR-018 precedence).
@@ -154,8 +156,8 @@ fn parse_args() -> Args {
             "--provider" => {
                 i += 1;
                 match raw.get(i).map(String::as_str) {
-                    Some("faux") => provider = Provider::Faux,
-                    Some("real") => provider = Provider::Real,
+                    Some("faux") => provider = Some(Provider::Faux),
+                    Some("real") => provider = Some(Provider::Real),
                     other => die(&format!(
                         "unknown --provider: {:?} (want faux|real; real needs --features real + API keys in env)",
                         other
@@ -168,6 +170,7 @@ fn parse_args() -> Args {
                     die("--model requires a model id (e.g. claude-sonnet-4-5)")
                 }));
             }
+            "--demo" => mode = Mode::Demo,
             "-c" | "--continue" => resume = Resume::Latest,
             "--resume" => {
                 i += 1;
@@ -282,40 +285,102 @@ async fn dispatch(args: Args) -> i32 {
         eprintln!("{line}");
     }
 
-    // Model resolution (ADR-018 precedence, project layer inserted at M12):
-    // --model flag > project config > global saved config > catalog default.
-    let model_id = args
+    // ---- provider + model resolution (M14: real harness out of the box) ------------
+    // Precedence for the model id: --model flag > project config > global saved.
+    // Provider: explicit --provider wins; otherwise AUTO — if any catalog provider's
+    // API key is present in the environment (and the chosen model's credentials are
+    // ready), run REAL; only when nothing is configured do we fall back to the offline
+    // faux provider, with a banner saying exactly how to go real. pi/opencode parity:
+    // a fresh user with one env var gets a working agent with zero flags.
+    let candidate_model = args
         .model_id
         .clone()
         .or_else(|| project.model_id.clone())
-        .or_else(epsilon_core::config::load_model_id)
-        .unwrap_or_else(|| epsilon_core::config::DEFAULT_MODEL_ID.to_string());
-    if args.model_id.is_none()
-        && let Some(saved) = epsilon_core::config::load_model_id()
-    {
-        eprintln!("model: {saved} (from saved config)");
-    }
-    let steps: Vec<FauxStep> = match &args.script_path {
-        Some(p) => {
-            let raw = std::fs::read_to_string(p).unwrap_or_else(|e| die(&format!("read {p}: {e}")));
-            serde_json::from_str(&raw).unwrap_or_else(|e| die(&format!("invalid script json: {e}")))
+        .or_else(epsilon_core::config::load_model_id);
+
+    let auto_real = |candidate: &Option<String>| -> Option<(String, String)> {
+        if let Some(m) = candidate
+            && epsilon_llm::catalog::credentials_ready(m)
+        {
+            let key = epsilon_llm::catalog::env_key_for(m)
+                .unwrap_or("")
+                .to_string();
+            return Some((m.clone(), key));
         }
-        None => default_steps(),
+        // No usable candidate: first tooled model whose key is present.
+        epsilon_llm::catalog::curated()
+            .iter()
+            .find(|i| {
+                i.supports_tools && !i.env_key.is_empty() && std::env::var_os(i.env_key).is_some()
+            })
+            .map(|i| (i.id.to_string(), i.env_key.to_string()))
     };
 
-    // Provider selection (M10): faux by default; real routes through genai, which
-    // resolves auth per model family from standard env vars (never stored).
-    let stream_fn: Arc<dyn epsilon_llm::StreamFn> = match args.provider {
-        Provider::Faux => Arc::new(PanicGuard(FauxProvider::new(steps))),
+    let mut banners: Vec<String> = Vec::new();
+    let use_real: bool = match args.provider {
+        Some(Provider::Faux) => false,
+        Some(Provider::Real) => true,
+        None => {
+            #[cfg(feature = "real")]
+            {
+                auto_real(&candidate_model).is_some()
+            }
+            #[cfg(not(feature = "real"))]
+            {
+                if auto_real(&candidate_model).is_some() {
+                    banners.push(
+                        "API key detected but this binary lacks --features real — \
+                         running offline faux. Rebuild: cargo install --path crates/epsilon-cli --features real"
+                            .into(),
+                    );
+                }
+                false
+            }
+        }
+    };
+
+    let model_id = if use_real {
+        match candidate_model.filter(|m| epsilon_llm::catalog::credentials_ready(m)) {
+            Some(m) => m,
+            None => match auto_real(&None) {
+                Some((m, _)) => m,
+                None => die("--provider real requested but no provider API key found \
+                     (set e.g. DEEPSEEK_API_KEY / ANTHROPIC_API_KEY)"),
+            },
+        }
+    } else {
+        candidate_model.unwrap_or_else(|| epsilon_core::config::DEFAULT_MODEL_ID.to_string())
+    };
+
+    let steps: Vec<FauxStep> = if use_real {
+        Vec::new()
+    } else {
+        match &args.script_path {
+            Some(p) => {
+                let raw =
+                    std::fs::read_to_string(p).unwrap_or_else(|e| die(&format!("read {p}: {e}")));
+                serde_json::from_str(&raw)
+                    .unwrap_or_else(|e| die(&format!("invalid script json: {e}")))
+            }
+            None => default_steps(),
+        }
+    };
+
+    let stream_fn: Arc<dyn epsilon_llm::StreamFn> = if use_real {
         #[cfg(feature = "real")]
-        Provider::Real => {
-            eprintln!("provider: real · model: {model_id} (keys from env)");
+        {
+            banners.push(format!("provider: real · model: {model_id} · key from env"));
             Arc::new(PanicGuard(epsilon_llm::GenaiAdapter::new()))
         }
         #[cfg(not(feature = "real"))]
-        Provider::Real => die("this binary was built without --features real; \
-             rebuild with `cargo build --features real -p epsilon-cli`"),
+        unreachable!("use_real cannot be true without the real feature")
+    } else {
+        banners.push("provider: faux (offline scripted)".into());
+        Arc::new(PanicGuard(FauxProvider::new(steps)))
     };
+    for line in &banners {
+        eprintln!("{line}");
+    }
 
     match &args.mode {
         Mode::Demo => demo_mode().await,
