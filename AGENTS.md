@@ -19,6 +19,8 @@ cargo clippy --workspace --all-targets  # ZERO warnings tolerated (workspace lin
 cargo test --workspace                  # full suite must stay green (29+ tests)
 cargo run -q -p epsilon-cli             # demo must complete when loop/session/llm touched
 cargo check -p epsilon-cli --features real   # real-provider path must compile (M13 lesson)
+# CI (post-push): .github/workflows/ci.yml runs all gates on Windows, the bwrap
+# Linux-confinement suite on ubuntu-latest, and an MSRV 1.88 check.
 ```
 
 Fix or honestly report failures; never weaken a gate to make it pass.

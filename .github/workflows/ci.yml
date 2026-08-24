@@ -1,0 +1,89 @@
+# Epsilon CI (M13): every gate from AGENTS.md, on both confinement platforms.
+#
+# - windows: the full suite runs here — Job Object sandbox tests, TUI reducer tests,
+#   everything. This is the primary development platform.
+# - linux: closes the "Linux confinement verified" acceptance item — the bwrap
+#   integration suite (tests/bwrap_unix.rs) executes against real bubblewrap.
+# - msrv: the workspace declares rust-version = 1.88; prove it still compiles there.
+#
+# All tests are offline by design (faux providers); no secrets are needed or used.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-full:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatting gate (no diffs tolerated)
+        run: cargo fmt --all -- --check
+
+      - name: Clippy gate (zero warnings tolerated)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test suite (includes Windows Job Object confinement tests)
+        run: cargo test --workspace
+
+      - name: Real-provider path must compile (M13 lesson)
+        run: cargo check -p epsilon-cli --features real
+
+      - name: Demo must complete
+        run: cargo run -q -p epsilon-cli
+
+  linux-confinement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install bubblewrap (bwrap)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 runners restrict unprivileged user namespaces via AppArmor;
+          # bwrap needs them for --unshare-all. Documented runner workaround.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --version
+
+      - name: Linux confinement verification (closes the M10/M13 criterion)
+        run: cargo test -p epsilon-safety --test bwrap_unix -- --nocapture
+
+      - name: Full suite on Linux too (portability guard)
+        run: cargo test --workspace
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSRV toolchain (1.88, from Cargo.toml rust-version)
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Workspace compiles under MSRV
+        run: cargo check --workspace
