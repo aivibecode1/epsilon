@@ -51,6 +51,14 @@ marker round-trip expansion, and atomic word-nav.
 - Clippy collapsed-if warnings on three nested ifs — merged with let-chains
   (edition 2024 makes these idiomatic).
 
+## Self-review fix (post-ship)
+
+The comparison loop caught my own gap against the handoff acceptance: "editor area
+grows to fit up to N lines then scrolls internally." Ctrl+J created newlines but the
+layout gave the input a fixed 3-row slot, so line 2+ was invisible. Now the box
+grows with the draft (1–8 rows via INPUT_MAX_ROWS), and past 8 it shows the TAIL
+(where the caret is) — caret math accounts for the internal scroll offset.
+
 ## Verification
 
 ```

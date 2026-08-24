@@ -21,7 +21,7 @@ use futures_util::StreamExt;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::state::UiState;
@@ -147,6 +147,10 @@ impl App {
 
 /// Braille spinner frames (pi loader convention).
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// M16b acceptance: editor grows to fit the draft up to this many rows, then
+/// scrolls internally (tail visible — that's where the caret lives).
+const INPUT_MAX_ROWS: usize = 8;
 
 impl App {
     #[allow(clippy::too_many_arguments)]
@@ -1103,10 +1107,14 @@ fn hint_line(app: &App) -> Line<'static> {
 }
 
 fn draw(f: &mut Frame<'_>, app: &mut App) {
+    // M16b acceptance: the editor grows to fit the draft up to N lines, then
+    // scrolls internally. Height follows the live buffer's line count.
+    let draft_lines = app.input.split('\n').count().clamp(1, INPUT_MAX_ROWS);
+    let input_height = draft_lines as u16 + 2; // borders
     let [transcript_area, hints_area, input_area, status_area] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(1),
-        Constraint::Length(3),
+        Constraint::Length(input_height),
         Constraint::Length(1),
     ])
     .areas(f.area());
@@ -1340,7 +1348,7 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
     } else if app.ui.running() {
         "input — typing during a run queues steering · Ctrl+J newline"
     } else {
-        "input — Ctrl+J newline · Ctrl+Y yank"
+        "input — Ctrl+J newline · Ctrl+Y yank · Ctrl+Z undo"
     };
     let prompt_color = if app.ui.running() && !app.guidance_mode {
         Color::Yellow
@@ -1351,15 +1359,32 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .title(Span::styled(title, Style::default().fg(Color::DarkGray)));
     let inner_width = area.width.saturating_sub(2) as usize;
-    let para = Paragraph::new(Text::from(Line::from(vec![
-        Span::styled("> ", Style::default().fg(prompt_color)),
-        Span::raw(app.input.clone()),
-    ])))
-    .block(frame_box);
+
+    // M16b acceptance: show the TAIL of the draft once it exceeds the box (the
+    // caret is where the user is typing), scrolling internally.
+    let all_lines: Vec<&str> = app.input.split('\n').collect();
+    let total_lines = all_lines.len();
+    let visible_rows = area.height.saturating_sub(2).max(1) as usize;
+    let skip_lines = total_lines.saturating_sub(visible_rows);
+    let shown: Vec<Line<'static>> = all_lines
+        .iter()
+        .skip(skip_lines)
+        .enumerate()
+        .map(|(vis_idx, line_text)| {
+            if vis_idx == 0 && skip_lines == 0 {
+                Line::from(vec![
+                    Span::styled("> ", Style::default().fg(prompt_color)),
+                    Span::raw((*line_text).to_string()),
+                ])
+            } else {
+                Line::from(Span::raw((*line_text).to_string()))
+            }
+        })
+        .collect();
+    let para = Paragraph::new(shown).block(frame_box);
     f.render_widget(para, area);
 
-    // M16b: cursor position accounts for embedded newlines — the caret sits on the
-    // LAST visible line of the buffer (multi-line drafts clamp to the box).
+    // Caret: line/col within the whole buffer; clamp to what is on screen.
     let (line_idx, col_chars) = {
         let mut line = 0usize;
         let mut col = 0usize;
@@ -1375,8 +1400,8 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
         let prefix = if line == 0 { 2 } else { 0 };
         (line, col + prefix)
     };
-    let visible_rows = area.height.saturating_sub(2).max(1) as usize; // borders
-    let row = area.y + 1 + (line_idx.min(visible_rows - 1)) as u16;
+    let screen_line = line_idx.saturating_sub(skip_lines);
+    let row = area.y + 1 + screen_line.min(visible_rows - 1) as u16;
     let col = area
         .x
         .saturating_add(col_chars.min(inner_width.saturating_sub(1)) as u16);
