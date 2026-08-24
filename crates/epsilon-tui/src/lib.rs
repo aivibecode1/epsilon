@@ -13,6 +13,7 @@ pub mod app;
 pub mod bench;
 pub mod editor_ops;
 pub mod footer;
+pub mod fuzzy;
 pub mod kill_ring;
 pub mod markdown;
 pub mod picker;

@@ -3,6 +3,17 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M16c - Picker/palette parity (opencode patterns)
+- Two-stage model picker: providers first (auth + active marks, model counts),
+  Enter descends into that provider's models with live fuzzy filtering;
+  Esc walks back stage-by-stage; Ctrl+F live-fetch retained
+- Command palette (Ctrl+P): fuzzy-filtered list of all commands with keybinding
+  hints, dispatched through the same parse path as typed slashes
+- Draft stash: opening any dialog parks the in-progress draft and restores it on
+  close (opencode prompt.stash)
+- Fuzzy matcher ported from pi's fuzzy.ts (word-boundary/consecutive scoring),
+  zero new dependencies
+
 ### M16b - Editor v2 (pi editor behaviors)
 - Emacs kill-ring: Ctrl+U/Ctrl+W push kills, Ctrl+Y yanks; consecutive kills
   accumulate into one entry; repeated Ctrl+Y cycles entries yank-pop style

@@ -113,6 +113,12 @@ pub(crate) struct App {
     paste_payloads: std::collections::BTreeMap<usize, String>,
     /// M16b: next marker id.
     next_paste_id: usize,
+    /// M16c: picker stage — None = single-stage legacy list, Some(provider) = stage 2.
+    picker_provider: Option<String>,
+    /// M16c: command palette open (Ctrl+P).
+    palette_open: bool,
+    /// M16c: draft stashed when a dialog opened; restored when it closes.
+    stash: Option<(String, usize)>,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
@@ -178,6 +184,9 @@ impl App {
             yanked_len: None,
             paste_payloads: std::collections::BTreeMap::new(),
             next_paste_id: 1,
+            picker_provider: None,
+            palette_open: false,
+            stash: None,
             branch_cache: (
                 None,
                 std::time::Instant::now() - std::time::Duration::from_secs(10),
@@ -275,6 +284,23 @@ impl App {
     fn end_yank(&mut self) {
         self.yank_in_progress = false;
         self.yanked_len = None;
+    }
+
+    /// Stash the current draft (opencode prompt.stash): called when a dialog opens.
+    /// The editor becomes the dialog's filter box.
+    fn stash_draft(&mut self) {
+        if !self.input.is_empty() {
+            self.stash = Some((std::mem::take(&mut self.input), self.cursor_chars));
+            self.cursor_chars = 0;
+        }
+    }
+
+    /// Restore the stashed draft (opencode onCleanup/onMount pair).
+    fn unstash_draft(&mut self) {
+        if let Some((text, cursor)) = self.stash.take() {
+            self.input = text;
+            self.cursor_chars = cursor;
+        }
     }
 
     fn insert_str(&mut self, s: &str) {
@@ -454,29 +480,6 @@ impl App {
             self.recents = epsilon_core::config::load_recent_models();
             self.invalidate_picker();
         }
-    }
-
-    /// Apply the currently highlighted picker row.
-    fn pick_selected(&mut self, agent: &Arc<Agent>) {
-        let rows = self.picker_rows();
-        let Some(row) = rows.get(self.picker_index) else {
-            return;
-        };
-        // UX guard (M14): Enter on the already-active model must not silently close
-        // the picker with zero feedback — that read as "slash commands don't work".
-        if row.id == self.model_id {
-            self.ui.push_notice(format!(
-                "{id} is already active — ↓ to browse, Esc to close",
-                id = row.id
-            ));
-            return;
-        }
-        let id = row.id.clone();
-        self.picker_open = false;
-        self.picker_index = 0;
-        self.input.clear();
-        self.cursor_chars = 0;
-        self.apply_model(agent, id);
     }
 
     /// Kick off a live listing for the highlighted row's provider (M13, `real` builds).
@@ -715,26 +718,37 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         return true;
     }
 
-    // Model picker captures keys before the permission dialog (it can open while a
-    // run is active, and must always be operable).
-    if app.picker_open {
+    // Command palette (M16c) captures keys before everything else.
+    if app.palette_open {
         match key.code {
             KeyCode::Esc => {
-                app.picker_open = false;
+                app.palette_open = false;
                 app.picker_index = 0;
                 app.input.clear();
                 app.cursor_chars = 0;
             }
-            KeyCode::Enter => app.pick_selected(agent),
+            KeyCode::Enter => {
+                let entries = crate::picker::filter_palette(&app.input);
+                if let Some(entry) = entries.get(app.picker_index) {
+                    let command = entry.command.clone();
+                    app.palette_open = false;
+                    app.picker_index = 0;
+                    app.input.clear();
+                    app.cursor_chars = 0;
+                    if let Some(parsed) = crate::picker::parse_command(&command) {
+                        return app.run_command(agent, parsed);
+                    }
+                }
+            }
             KeyCode::Up => {
-                let total = app.picker_rows().len();
+                let total = crate::picker::filter_palette(&app.input).len();
                 app.picker_index = app
                     .picker_index
                     .saturating_sub(1)
                     .min(total.saturating_sub(1));
             }
             KeyCode::Down => {
-                let total = app.picker_rows().len();
+                let total = crate::picker::filter_palette(&app.input).len();
                 if total > 0 {
                     app.picker_index = (app.picker_index + 1).min(total - 1);
                 }
@@ -742,13 +756,116 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             KeyCode::Backspace => {
                 app.backspace();
                 app.invalidate_picker();
-                let total = app.picker_rows().len();
+            }
+            KeyCode::Char(c) => {
+                app.insert_char(c);
+                app.picker_index = 0;
+            }
+            _ => {}
+        }
+        return false;
+    }
+
+    // Model picker captures keys before the permission dialog (it can open while a
+    // run is active, and must always be operable).
+    if app.picker_open {
+        // Stage-aware navigation (M16c): stage 1 = providers, stage 2 = models.
+        let stage2 = app.picker_provider.clone();
+        match key.code {
+            KeyCode::Esc => {
+                if stage2.is_some() {
+                    // Stage 2 → back to provider list.
+                    app.picker_provider = None;
+                    app.picker_index = 0;
+                    app.input.clear();
+                } else {
+                    app.picker_open = false;
+                    app.picker_index = 0;
+                    app.input.clear();
+                    app.cursor_chars = 0;
+                    app.unstash_draft();
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(provider) = &stage2 {
+                    let rows = crate::picker::build_models_for_provider(
+                        provider,
+                        &app.input,
+                        &app.model_id,
+                    );
+                    if let Some(row) = rows.get(app.picker_index) {
+                        let id = row.id.clone();
+                        app.picker_open = false;
+                        app.picker_provider = None;
+                        app.picker_index = 0;
+                        app.input.clear();
+                        app.cursor_chars = 0;
+                        app.apply_model(agent, id);
+                    }
+                } else {
+                    // Stage 1: descend into the selected provider's model list.
+                    let rows = crate::picker::build_provider_rows(&app.model_id);
+                    if let Some(row) = rows.get(app.picker_index) {
+                        app.picker_provider = Some(row.id.clone());
+                        app.picker_index = 0;
+                        app.input.clear();
+                        app.cursor_chars = 0;
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Down | KeyCode::Char('f' | 'F')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                unreachable!("handled by guarded arms below")
+            }
+            _ => {}
+        }
+        if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
+            return false;
+        }
+        // Remaining keys: Up/Down move, Backspace filters (stage 2 only), chars filter.
+        match key.code {
+            KeyCode::Up => {
+                let total = if let Some(provider) = &stage2 {
+                    crate::picker::build_models_for_provider(provider, &app.input, &app.model_id)
+                        .len()
+                } else {
+                    crate::picker::build_provider_rows(&app.model_id).len()
+                };
+                app.picker_index = app
+                    .picker_index
+                    .saturating_sub(1)
+                    .min(total.saturating_sub(1));
+            }
+            KeyCode::Down => {
+                let total = if let Some(provider) = &stage2 {
+                    crate::picker::build_models_for_provider(provider, &app.input, &app.model_id)
+                        .len()
+                } else {
+                    crate::picker::build_provider_rows(&app.model_id).len()
+                };
+                if total > 0 {
+                    app.picker_index = (app.picker_index + 1).min(total - 1);
+                }
+            }
+            KeyCode::Backspace => {
+                app.backspace();
+                app.invalidate_picker();
+                if stage2.is_none() {
+                    return false; // stage-1 filter is display-only; no index fixups
+                }
+                let total = crate::picker::build_models_for_provider(
+                    stage2.as_deref().unwrap_or(""),
+                    &app.input,
+                    &app.model_id,
+                )
+                .len();
                 if app.picker_index >= total {
                     app.picker_index = total.saturating_sub(1);
                 }
             }
             KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Ctrl+F: fetch live listing for the highlighted row's provider.
+                // Ctrl+F: fetch live listing for the highlighted provider (stage 2).
                 app.fetch_live_for_selected();
             }
             KeyCode::Char(c) => {
@@ -828,8 +945,16 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             if !app.picker_open {
                 app.picker_open = true;
                 app.picker_index = 0;
-                app.input.clear();
-                app.cursor_chars = 0;
+                app.stash_draft();
+            }
+            false
+        }
+        KeyCode::Char('p' | 'P') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // M16c: command palette (opencode prompt.palette).
+            if !app.palette_open && !app.picker_open {
+                app.palette_open = true;
+                app.picker_index = 0;
+                app.stash_draft();
             }
             false
         }
@@ -961,6 +1086,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     if app.picker_open {
         draw_picker(f, app, f.area());
     }
+    if app.palette_open {
+        draw_palette(f, app, f.area());
+    }
     if app.pending_ask.is_some() {
         draw_dialog(f, app, f.area());
     }
@@ -981,7 +1109,15 @@ pub(crate) fn draw_frame(f: &mut Frame<'_>, app: &mut App) {
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
 /// column. The active model floats to the top (picker::build_rows).
 fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
-    let rows = app.picker_rows();
+    // M16c two-stage: stage 1 lists providers; stage 2 that provider's models.
+    if let Some(provider) = &app.picker_provider.clone() {
+        draw_picker_stage2(f, app, outer, provider);
+        return;
+    }
+    let rows = crate::picker::build_provider_rows(&app.model_id)
+        .into_iter()
+        .map(|p| (p.id, p.model_count, p.auth_ready, p.is_active))
+        .collect::<Vec<_>>();
     let width = (outer.width * 4 / 5).max(48).min(outer.width);
     let height = 15u16.min(outer.height.saturating_sub(2));
     let x = outer.x + (outer.width.saturating_sub(width)) / 2;
@@ -1005,7 +1141,7 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
-            "no matches — keep typing or press Esc",
+            "no providers",
             Style::default().fg(Color::DarkGray),
         )));
     }
@@ -1015,33 +1151,93 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
     let end = (start + capacity).min(rows.len());
 
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    if rows.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "no matches — keep typing or press Esc",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-    for (i, row) in rows.iter().enumerate().skip(start).take(end - start) {
+    for (i, (id, count, auth_ready, is_active)) in
+        rows.iter().enumerate().skip(start).take(end - start)
+    {
         let selected = i == app.picker_index;
-        let marker = if row.id == app.model_id { "● " } else { "  " };
-        let auth = if row.auth_ready { "🔑" } else { "· " };
-        let source_tag = if row.is_live {
-            "⟳ "
-        } else if row.is_recent {
-            "↻ "
-        } else {
-            ""
-        };
+        let marker = if *is_active { "● " } else { "  " };
+        let auth = if *auth_ready { "🔑" } else { "· " };
         let style = if selected {
             Style::default().fg(Color::Cyan)
         } else {
             Style::default()
         };
-        let label = if row.is_custom {
-            format!("use custom id '{0}'", row.id)
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_string(), style),
+            Span::styled(
+                format!("{auth} "),
+                Style::default().fg(if *auth_ready {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
+            ),
+            Span::styled(
+                id.clone(),
+                style.add_modifier(if selected {
+                    ratatui::style::Modifier::REVERSED
+                } else {
+                    ratatui::style::Modifier::empty()
+                }),
+            ),
+            Span::styled(
+                format!("  {count} models"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ · Enter browse models · Esc close".to_string(),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let para = Paragraph::new(lines).block(block);
+    f.render_widget(para, area);
+}
+
+/// Stage-2 of the two-stage picker: one provider's models with fuzzy filter.
+fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str) {
+    let rows = crate::picker::build_models_for_provider(provider, &app.input, &app.model_id);
+    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let height = 15u16.min(outer.height.saturating_sub(2));
+    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
+    let y = outer.y + 1;
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            format!(" models — {provider}: filter '{}' ", app.input),
+            Style::default().fg(Color::Cyan),
+        ));
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no matches — Backspace to widen, Esc closes",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let capacity = area.height.saturating_sub(4).max(1) as usize;
+    let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
+    let end = (start + capacity).min(rows.len());
+    for (i, row) in rows.iter().enumerate().skip(start).take(end - start) {
+        let selected = i == app.picker_index;
+        let marker = if row.id == app.model_id { "● " } else { "  " };
+        let auth = if row.auth_ready { "🔑" } else { "· " };
+        let style = if selected {
+            Style::default().fg(Color::Cyan)
         } else {
-            row.label.clone()
+            Style::default()
         };
         lines.push(Line::from(vec![
             Span::styled(marker.to_string(), style),
@@ -1053,9 +1249,8 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
                     Color::DarkGray
                 }),
             ),
-            Span::styled(source_tag.to_string(), Style::default().fg(Color::Cyan)),
             Span::styled(
-                label,
+                row.label.clone(),
                 style.add_modifier(if selected {
                     ratatui::style::Modifier::REVERSED
                 } else {
@@ -1063,20 +1258,15 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
                 }),
             ),
             Span::styled(
-                format!("  {} · {}", row.provider, row.id),
+                format!("  {}", row.id),
                 Style::default().fg(Color::DarkGray),
             ),
         ]));
     }
 
     lines.push(Line::from(""));
-    let position = if rows.len() > capacity {
-        format!("{}–{}/{} · ", start + 1, end, rows.len())
-    } else {
-        String::new()
-    };
     lines.push(Line::from(Span::styled(
-        format!("{position}↑/↓ · type filter · Ctrl+F fetch · Enter apply · Esc close"),
+        "type filters (fuzzy) · Enter apply · Backspace/Esc back",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -1244,6 +1434,69 @@ fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     line_spans.push(Span::raw(" ".repeat(pad)));
     line_spans.extend(right_spans);
     f.render_widget(Line::from(line_spans), area);
+}
+
+/// Command palette overlay (M16c, opencode command-palette pattern): fuzzy-filtered
+/// list of all commands with keybinding hints.
+fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    let entries = crate::picker::filter_palette(&app.input);
+    let width = (outer.width * 3 / 5).max(48).min(outer.width);
+    let height = 12u16.min(outer.height.saturating_sub(2));
+    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
+    let y = outer.y + 1;
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            format!(" commands — filter: '{}' ", app.input),
+            Style::default().fg(Color::Cyan),
+        ));
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if entries.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no matching commands",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let capacity = area.height.saturating_sub(4).max(1) as usize;
+    let start = crate::scroll::scroll_start(entries.len(), app.picker_index, capacity);
+    let end = (start + capacity).min(entries.len());
+    for (i, entry) in entries.iter().enumerate().skip(start).take(end - start) {
+        let selected = i == app.picker_index;
+        let mut spans = vec![Span::styled(
+            entry.title.clone(),
+            if selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::REVERSED)
+            } else {
+                Style::default()
+            },
+        )];
+        if let Some(b) = entry.binding {
+            spans.push(Span::styled(
+                format!("  [{b}]"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "type to filter · ↑/↓ move · Enter run · Esc close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Known slash commands for Tab completion (M15, opencode convention).
@@ -1537,5 +1790,52 @@ mod tests {
         // The transcript echo must show the EXPANDED payload.
         let echoed = app.ui.lines()[before].text.clone();
         assert!(echoed.contains("l1\nl2\nl3"), "{echoed:?}");
+    }
+
+    #[tokio::test]
+    async fn ctrl_p_opens_palette_runs_command_and_restores_draft() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "draft in progress".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        // Ctrl+P opens the palette and stashes the draft.
+        assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('p'))));
+        assert!(app.palette_open);
+        assert_eq!(app.input, "", "editor becomes the filter box");
+        assert_eq!(
+            app.stash.as_ref().map(|(t, _)| t.as_str()),
+            Some("draft in progress")
+        );
+
+        // Enter runs the first entry (/models) → opens the picker instead.
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+        assert!(!app.palette_open);
+        assert!(app.picker_open);
+
+        // Esc closes the picker AND restores the stashed draft.
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+        assert!(!app.picker_open);
+        assert_eq!(app.input, "draft in progress");
+    }
+
+    #[tokio::test]
+    async fn two_stage_picker_descends_and_applies_model() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // Open the picker via Ctrl+M (stage 1: providers).
+        assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('m'))));
+        assert!(app.picker_open);
+        assert!(app.picker_provider.is_none(), "starts at stage 1");
+
+        // Enter on the first provider descends to stage 2.
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+        assert!(app.picker_provider.is_some(), "descended into provider");
+
+        // Esc goes back to stage 1 (picker still open).
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+        assert!(app.picker_open && app.picker_provider.is_none());
+
+        // Esc again closes entirely and unstashes (nothing stashed here).
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+        assert!(!app.picker_open);
     }
 }

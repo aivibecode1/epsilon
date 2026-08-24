@@ -8,6 +8,8 @@
 
 use epsilon_llm::catalog;
 
+use crate::fuzzy;
+
 /// One selectable line in the `/models` dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerRow {
@@ -174,6 +176,140 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "quit" | "q" | "exit" => Some(Command::Quit),
         other => Some(Command::Unknown(other.to_string())),
     }
+}
+
+// ---- M16c: two-stage picker (opencode dialog-provider → dialog-model) -----------
+
+/// One provider entry in stage 1 of the model picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderRow {
+    /// Provider key (matches [`epsilon_llm::ModelInfo::provider`]).
+    pub id: String,
+    /// Number of catalog models under this provider.
+    pub model_count: usize,
+    /// True when any model of this provider has its credential env var set.
+    pub auth_ready: bool,
+    /// True when the ACTIVE model belongs to this provider.
+    pub is_active: bool,
+}
+
+/// Stage-1 rows: one per distinct provider in the bundled catalog, ordered by
+/// (auth-ready desc, id asc) — ready providers first, alphabetical within groups.
+pub fn build_provider_rows(current: &str) -> Vec<ProviderRow> {
+    let mut rows: Vec<ProviderRow> = Vec::new();
+    for info in catalog::curated() {
+        let active = current.starts_with(&format!("{}/", info.provider)) || info.id == current;
+        let is_active_provider = catalog::lookup_model(current)
+            .map(|m| m.provider == info.provider)
+            .unwrap_or(false);
+        match rows.iter_mut().find(|r| r.id == info.provider) {
+            Some(row) => {
+                row.model_count += 1;
+                row.auth_ready |=
+                    info.env_key.is_empty() || std::env::var_os(info.env_key).is_some();
+                row.is_active |= is_active_provider || (active && info.id == current);
+            }
+            None => rows.push(ProviderRow {
+                id: info.provider.to_string(),
+                model_count: 1,
+                auth_ready: info.env_key.is_empty() || std::env::var_os(info.env_key).is_some(),
+                is_active: is_active_provider,
+            }),
+        }
+    }
+    rows.sort_by(|a, b| b.auth_ready.cmp(&a.auth_ready).then(a.id.cmp(&b.id)));
+    rows
+}
+
+/// Stage-2 rows: the models of ONE provider, reusing [`build_rows`] ordering rules
+/// via fuzzy filter across id + label.
+pub fn build_models_for_provider(provider: &str, filter: &str, current: &str) -> Vec<PickerRow> {
+    let needle = filter.trim();
+    let mut rows: Vec<PickerRow> = catalog::curated()
+        .iter()
+        .filter(|i| i.provider == provider)
+        .map(row_from_info)
+        .filter(|row| {
+            needle.is_empty()
+                || fuzzy::fuzzy_match(needle, &row.id).matches
+                || fuzzy::fuzzy_match(needle, &row.label).matches
+        })
+        .collect();
+    // Active model floats to top.
+    rows.sort_by_key(|r| r.id != current);
+    rows
+}
+
+// ---- M16c: command palette -----------------------------------------------------
+
+/// One palette entry (opencode command-palette pattern): a named action with an
+/// optional keybinding hint and slash alias.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteEntry {
+    /// Display title.
+    pub title: String,
+    /// Command executed when selected (slash-style parse input).
+    pub command: String,
+    /// Key hint shown on the right (e.g. "Ctrl+M").
+    pub binding: Option<&'static str>,
+}
+
+/// All palette commands (slash commands + direct actions), in display order.
+pub fn palette_entries() -> Vec<PaletteEntry> {
+    vec![
+        PaletteEntry {
+            title: "Models — switch model".into(),
+            command: "/models".into(),
+            binding: Some("Ctrl+M"),
+        },
+        PaletteEntry {
+            title: "Skills — list discovered skills".into(),
+            command: "/skills".into(),
+            binding: None,
+        },
+        PaletteEntry {
+            title: "Clear transcript".into(),
+            command: "/clear".into(),
+            binding: None,
+        },
+        PaletteEntry {
+            title: "Help — command reference".into(),
+            command: "/help".into(),
+            binding: None,
+        },
+        PaletteEntry {
+            title: "Quit session".into(),
+            command: "/quit".into(),
+            binding: None,
+        },
+        PaletteEntry {
+            title: "Toggle tool output expand".into(),
+            command: "\u{1}expand".into(),
+            binding: Some("x"),
+        },
+    ]
+}
+
+/// Fuzzy-filtered palette entries; empty query returns everything.
+pub fn filter_palette(query: &str) -> Vec<PaletteEntry> {
+    let q = query.trim();
+    if q.is_empty() {
+        return palette_entries();
+    }
+    let mut scored: Vec<(i64, PaletteEntry)> = palette_entries()
+        .into_iter()
+        .filter_map(|e| {
+            let m = fuzzy::fuzzy_match(q, &e.title);
+            let m2 = fuzzy::fuzzy_match(q, &e.command);
+            if m.matches || m2.matches {
+                Some((m.score.min(m2.score), e))
+            } else {
+                None
+            }
+        })
+        .collect();
+    scored.sort_by_key(|(s, _)| *s);
+    scored.into_iter().map(|(_, e)| e).collect()
 }
 
 #[cfg(test)]
