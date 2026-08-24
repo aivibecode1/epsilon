@@ -13,6 +13,193 @@ use epsilon_contracts::agent_event::AgentEvent;
 use epsilon_core::ToolRegistry;
 use epsilon_ext::ExtHost;
 
+/// Parsed `.epsilon/config.toml` — the project layer of ADR-012.
+///
+/// Declarative only; unknown keys are preserved on disk but ignored by the runtime.
+/// First use records a SHA-256 trust hash (`.epsilon/trust.json`); later runs warn
+/// loudly when the file changes underneath them.
+#[derive(Debug, Default, Clone)]
+pub struct ProjectConfig {
+    /// `[model] id` — overrides the global saved model, under the `--model` flag.
+    pub model_id: Option<String>,
+    /// `[[rules]]` entries stacked over the defaults as a `"project"` layer
+    /// (last-match-wins; any deny still wins immediately per ADR-006 semantics).
+    pub rules: Vec<ProjectRule>,
+    /// `[[extensions]]` dirs relative to `.epsilon/`.
+    pub extension_dirs: Vec<String>,
+    /// `[[mcp_servers]]` stdio servers, same shape as the `--mcp` flag.
+    pub mcp_servers: Vec<epsilon_mcp::McpServerConfig>,
+}
+
+/// One `[[rules]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectRule {
+    /// Capability name (`bash`, `read`, `external_dir`, …).
+    pub capability: String,
+    /// Glob pattern for the gate subject (`*` allowed).
+    pub pattern: String,
+    /// `"allow" | "ask" | "deny"`.
+    pub action: String,
+}
+
+const PROJECT_CONFIG_REL: &str = ".epsilon/config.toml";
+const TRUST_FILE_REL: &str = ".epsilon/trust.json";
+
+/// Load + trust-check the project config. Returns `(config, diagnostics)`.
+///
+/// Trust policy (v1, headless): first sight auto-trusts and records the hash; any later
+/// content change prints a loud banner but still loads. Interactive re-prompting is a
+/// TUI concern and stays open for M13 polish.
+pub fn load_project_config(workspace: &Path) -> (ProjectConfig, Vec<String>) {
+    let mut notices = Vec::new();
+    let path = workspace.join(PROJECT_CONFIG_REL);
+    if !path.is_file() {
+        return (ProjectConfig::default(), notices);
+    }
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            notices.push(format!("project config unreadable: {e}"));
+            return (ProjectConfig::default(), notices);
+        }
+    };
+
+    // ---- trust hash -----------------------------------------------------------------
+    let hash = sha256_hex(raw.as_bytes());
+    let trust_path = workspace.join(TRUST_FILE_REL);
+    let previous = std::fs::read_to_string(&trust_path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| {
+            v.get("config_sha256")
+                .and_then(|h| h.as_str())
+                .map(String::from)
+        });
+    match previous {
+        None => {
+            notices.push(format!(
+                "trusting project config {} (hash recorded)",
+                path.display()
+            ));
+        }
+        Some(prev) if prev != hash => {
+            notices.push(
+                "WARNING: .epsilon/config.toml CHANGED since it was trusted; \
+                 review before running untrusted projects"
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+    let _ = std::fs::write(
+        &trust_path,
+        serde_json::json!({ "config_sha256": hash }).to_string(),
+    );
+
+    // ---- parse ----------------------------------------------------------------------
+    let mut cfg = ProjectConfig::default();
+    let parsed: toml::Value = match toml::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            notices.push(format!("invalid project config: {e}"));
+            return (cfg, notices);
+        }
+    };
+
+    cfg.model_id = parsed
+        .get("model")
+        .and_then(|m| m.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    if let Some(rules) = parsed.get("rules").and_then(|r| r.as_array()) {
+        for r in rules {
+            let cap = r.get("capability").and_then(|v| v.as_str());
+            let pat = r.get("pattern").and_then(|v| v.as_str());
+            let act = r.get("action").and_then(|v| v.as_str());
+            match (cap, pat, act) {
+                (Some(c), Some(p), Some(a)) if matches!(a, "allow" | "ask" | "deny") => {
+                    cfg.rules.push(ProjectRule {
+                        capability: c.into(),
+                        pattern: p.into(),
+                        action: a.into(),
+                    });
+                }
+                _ => notices.push(format!("ignoring malformed [[rules]] entry: {r}")),
+            }
+        }
+    }
+
+    if let Some(exts) = parsed.get("extensions").and_then(|r| r.as_array()) {
+        for e in exts {
+            if let Some(dir) = e.get("dir").and_then(|v| v.as_str()) {
+                cfg.extension_dirs.push(dir.to_string());
+            } else {
+                notices.push(format!("ignoring [[extensions] without dir: {e}"));
+            }
+        }
+    }
+
+    if let Some(servers) = parsed.get("mcp_servers").and_then(|r| r.as_array()) {
+        for s in servers {
+            match (
+                s.get("name").and_then(|v| v.as_str()),
+                s.get("command").and_then(|v| v.as_str()),
+            ) {
+                (Some(name), Some(command)) => {
+                    cfg.mcp_servers.push(epsilon_mcp::McpServerConfig {
+                        name: name.into(),
+                        command: command.into(),
+                        args: s
+                            .get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    });
+                }
+                _ => notices.push(format!(
+                    "ignoring [[mcp_servers]] missing name/command: {s}"
+                )),
+            }
+        }
+    }
+
+    (cfg, notices)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Convert declared project rules into an engine layer appended over the defaults.
+pub fn project_rules_layer(rules: &[ProjectRule]) -> epsilon_safety::Ruleset {
+    use epsilon_safety::{Action, Rule, Ruleset};
+    Ruleset {
+        name: "project".into(),
+        rules: rules
+            .iter()
+            .map(|r| {
+                Rule::new(
+                    &r.capability,
+                    &r.pattern,
+                    match r.action.as_str() {
+                        "allow" => Action::Allow,
+                        "deny" => Action::Deny,
+                        _ => Action::Ask,
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
 /// Skill roots: global (`~/.config/epsilon/skills`) then project (`.epsilon/skills`).
 pub fn skill_roots(workspace: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
@@ -170,6 +357,16 @@ fn event_type_tag(ev: &AgentEvent) -> &'static str {
     }
 }
 
+/// Newest `*.jsonl` session under `dir` (for `--continue`).
+pub fn latest_session_file(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+        .map(|e| e.path())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +453,25 @@ mod tests {
         // set at compile time, keeping forwarded-tag mapping honest.
         let ev = AgentEvent::AgentStart;
         assert_eq!(event_type_tag(&ev), "agent_start");
+    }
+
+    #[test]
+    fn latest_session_picks_newest_jsonl_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(latest_session_file(&dir), None);
+
+        let old = dir.join("old.jsonl");
+        let new = dir.join("new.jsonl");
+        std::fs::write(&old, "{}").unwrap();
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+
+        // Ensure distinct mtimes even on coarse filesystem clocks.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&new, "{}").unwrap();
+
+        assert_eq!(latest_session_file(&dir), Some(new));
+        let _ = old;
     }
 }

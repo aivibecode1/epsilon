@@ -25,11 +25,16 @@ epsilon-tui = { path = "../epsilon-tui" }
 epsilon-server = { path = "../epsilon-server" }
 epsilon-mcp = { path = "../epsilon-mcp" }
 epsilon-ext = { path = "../epsilon-ext" }
+sha2 = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+
 
 

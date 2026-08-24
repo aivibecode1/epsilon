@@ -7,6 +7,7 @@
 pub mod catalog;
 mod faux;
 mod retry;
+mod retry_stream;
 mod stream_fn;
 
 #[cfg(feature = "real")]
@@ -16,6 +17,7 @@ mod genai_adapter;
 pub use catalog::{ModelInfo, curated, display_label, env_key_for, lookup_model};
 pub use faux::{FauxProvider, FauxStep, FauxToolCall};
 pub use retry::{FailureKind, backoff_delay, classify, should_retry};
+pub use retry_stream::{RetryNotice, Retrying};
 pub use stream_fn::{BoxEventStream, EventStream, LlmContext, ModelRef, PanicGuard, StreamFn};
 
 /// Default maximum attempts for provider retries (opencode parity: 5).

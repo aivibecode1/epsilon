@@ -18,6 +18,7 @@ use std::sync::{
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
+mod openapi;
 use axum::routing::{get, post};
 use axum::{Router, http::StatusCode, response::IntoResponse};
 use epsilon_contracts::content::UserContent;
@@ -99,6 +100,7 @@ pub fn router(state: ServeState) -> Router {
             "/healthz",
             get(|| async { Json(serde_json::json!({"ok": true})) }),
         )
+        .route("/openapi.json", get(|| async { Json(openapi::spec()) }))
         .route("/prompt", post(prompt))
         .route("/steer", post(steer))
         .route("/followup", post(followup))

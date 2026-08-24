@@ -50,9 +50,10 @@ ledgers.
 | M10a | Sandbox seam (Job Objects / bwrap, fail-closed) + permission-event correlation fix; **ACL runner deferred with rationale** (ADR-005) | ✅ shipped |
 | M10b | Release packaging: real providers, model plumbing, 8.8 MB binary, changelog + tag `v0.1.0` | ✅ shipped |
 | M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
-| M12 | Completion pass: full ADR-012 config layer, retry ledger + cancellation + costs, rpc/OpenAPI, Linux verification | next |
+| M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
+| M13+ | Optional polish: Linux verification (needs Unix host), live catalog fetch, TUI card polish | open |
 
-120 tests · zero clippy warnings · every milestone committed with a dev log under
+129 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---
@@ -90,6 +91,8 @@ cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mod
 cargo run -p epsilon-cli -- --tui                           # interactive TUI
 cargo run -p epsilon-cli -- --serve --port 8787             # HTTP/SSE server
 cargo run -p epsilon-cli -- --list-models                   # bundled model catalog
+cargo run -p epsilon-cli -- --continue -p "next step"   # resume newest session
+cargo run -p epsilon-cli -- --rpc                           # NDJSON-over-stdio for editors
 ```
 
 Demo output:

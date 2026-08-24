@@ -219,6 +219,10 @@ pub struct Agent {
     /// Model identifier sent to the provider and rendered in the VOLATILE prompt tier
     /// ("faux-1" until overridden — real providers route on this).
     model_id: Mutex<String>,
+    /// Token for the ACTIVE run; cancelled by [`Agent::abort_current_run`]. Tools
+    /// receive clones through their `ToolContext` so long-running work bails
+    /// cooperatively (M12: closes the never-cancelled-token gap, ADR-010).
+    run_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
 }
 
 impl Agent {
@@ -250,6 +254,7 @@ impl Agent {
             summarizer: Mutex::new(None),
             skills: Mutex::new(Vec::new()),
             model_id: Mutex::new("faux-1".into()),
+            run_token: Mutex::new(None),
         })
     }
 
@@ -270,6 +275,22 @@ impl Agent {
 
     fn skill_list(&self) -> Vec<crate::skills::Skill> {
         self.skills.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Seed the transcript from a previous session (M12 `--resume`).
+    ///
+    /// Messages are restored into runtime history WITHOUT re-persisting (they already
+    /// live in the durable mirror); subsequent messages append normally. Call before
+    /// the first `run()`.
+    pub fn restore_history(&self, messages: Vec<Message>) {
+        if let Ok(mut h) = self.history.lock() {
+            *h = messages;
+        }
+    }
+
+    /// Number of restored transcript entries (diagnostics after `restore_history`).
+    pub fn restored_len(&self) -> usize {
+        self.history.lock().map(|h| h.len()).unwrap_or(0)
     }
 
     /// Provide a dedicated auxiliary provider for summarization calls.
@@ -385,6 +406,13 @@ impl Agent {
             return Err(RunError::AlreadyRunning);
         }
 
+        // Fresh run-scoped token (M12): tools observe it via ToolContext; abort ends
+        // the run cooperatively instead of only via process exit.
+        let token = tokio_util::sync::CancellationToken::new();
+        if let Ok(mut slot) = self.run_token.lock() {
+            *slot = Some(token.clone());
+        }
+
         if let Ok(mut s) = self.doom_streaks.lock() {
             s.clear();
         }
@@ -393,6 +421,9 @@ impl Agent {
 
         let outcome = self.run_inner(prompt).await;
 
+        if let Ok(mut slot) = self.run_token.lock() {
+            *slot = None;
+        }
         self.emit(AgentEvent::AgentEnd {
             messages: outcome
                 .as_ref()
@@ -401,6 +432,28 @@ impl Agent {
         });
         self.running.store(false, Ordering::SeqCst);
         outcome
+    }
+
+    /// Cancel the active run's token: in-flight tools see cancellation and the loop
+    /// stops at the next checkpoint with `TurnEndReason::Aborted`.
+    ///
+    /// Returns false when no run is active. Idempotent.
+    pub fn abort_current_run(&self) -> bool {
+        if let Ok(slot) = self.run_token.lock()
+            && let Some(token) = slot.as_ref()
+        {
+            token.cancel();
+            return true;
+        }
+        false
+    }
+
+    /// Clone of the active run's token for `ToolContext` distribution.
+    fn current_run_token(&self) -> Option<tokio_util::sync::CancellationToken> {
+        self.run_token
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().cloned())
     }
 
     async fn run_inner(self: &Arc<Self>, _prompt: Message) -> Result<RunOutcome, RunError> {
@@ -416,6 +469,14 @@ impl Agent {
             let mut has_more_tools = true;
 
             while has_more_tools || !pending.is_empty() {
+                // Abort checkpoint (M12): a cancelled token ends the run cooperatively.
+                if let Some(token) = self.current_run_token()
+                    && token.is_cancelled()
+                {
+                    reason = reason.merge_sticky(TurnEndReason::Aborted);
+                    break 'outer;
+                }
+
                 if turn_index >= self.limits.max_turns {
                     reason = reason.merge_sticky(TurnEndReason::BudgetExhausted);
                     break 'outer;

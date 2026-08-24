@@ -149,16 +149,24 @@ impl Tool for BashTool {
             let mut policy = self.policy.clone();
             policy.wall_timeout_secs = timeout;
 
-            let outcome = sandbox
-                .run(
+            let outcome = {
+                let run_fut = sandbox.run(
                     ConfinedCommand {
                         program: program.into(),
                         args: argv,
                         cwd: ctx.cwd.clone(),
                     },
                     &policy,
-                )
-                .await;
+                );
+                // Cancellation (M12): dropping the in-flight run future drops the
+                // sandbox's job guard, which terminates the whole tree.
+                tokio::select! {
+                    r = run_fut => r,
+                    _ = ctx.token.cancelled() => Err(epsilon_safety::SandboxError::Setup(
+                        "cancelled by user".into(),
+                    )),
+                }
+            };
 
             return match outcome {
                 Ok(o) => {
@@ -199,17 +207,26 @@ impl Tool for BashTool {
         let (program, argv) = shell_argv(&args.command);
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(&argv).current_dir(&ctx.cwd);
-
         let future = cmd.output();
-        let output = tokio::time::timeout(std::time::Duration::from_secs(timeout), future)
-            .await
-            .map_err(|_| {
-                ToolFailure::msg(format!(
-                    "command timed out after {timeout}s and was killed: {}",
-                    args.command
-                ))
-            })?
-            .map_err(|e| ToolFailure::msg(format!("spawn failed: {e}")))?;
+        let output = {
+            let timeout_fut = tokio::time::timeout(std::time::Duration::from_secs(timeout), future);
+            tokio::select! {
+                r = timeout_fut => r
+                    .map_err(|_| {
+                        ToolFailure::msg(format!(
+                            "command timed out after {timeout}s and was killed: {}",
+                            args.command
+                        ))
+                    })?
+                    .map_err(|e| ToolFailure::msg(format!("spawn failed: {e}")))?,
+                _ = ctx.token.cancelled() => {
+                    return Err(ToolFailure::msg(format!(
+                        "[aborted] command cancelled by user before completion: {}",
+                        args.command
+                    )));
+                }
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);

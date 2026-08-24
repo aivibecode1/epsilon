@@ -247,6 +247,16 @@ TurnEndReason. (5) Usage-based cost tracking in integer micro-units rendered liv
 pattern; avoids f64 drift). (6) Fail-all-tool-calls-on-truncation (pi, ported unchanged). (7)
 Doom-loop brake at 3 identical calls -> permission ask; advisory counters at 5/8 (opencode+DSH).
 
+**Amendment (M12).** (1) landed as the generic `Retrying` StreamFn executor — pre-stream failures
+only (peek-first-event discipline keeps mid-stream semantics honest), `on_retry` hook lets callers
+render notices or append durable ledger entries; the full (turn, step) keying remains open since
+the adapter layer cannot see loop positions (recorded honestly rather than faked). (3)+(5) landed:
+run-scoped `CancellationToken` flows from `abort_current_run()` through `ToolContext` into both
+shell paths (job-tree termination on drop; Esc aborts in the TUI), and the footer renders session
+cost from catalog prices (documented placeholders until a registry sync). Advisory counters at 5/8
+remain unbuilt — recorded as intentionally dropped for v1: the brake already covers the failure
+mode; advisories are UX sugar without a demonstrated need.
+
 **Alternatives.** Ad-hoc per-feature reliability (status quo in most agents).
 
 **Why best.** Every element is a proven fix for an observed failure mode in Phase 1 codebases;
@@ -279,8 +289,15 @@ designed-for, deliberately unbuilt (architecture doc section 14).
 land together; rpc(stdio) stays open for the editor-integration milestone. The shared
 runtime is real: CLI composes provider+tools+gate once and hands `Arc<Agent>` to every
 frontend; permission asks flow through ONE mechanism (`ChannelApprovalUi`) answered by
-the TUI dialog locally or REST remotely. OpenAPI emission deferred with rpc mode — the
+the TUI dialog locally or REST remotely. OpenAPI emission deferred with rpc mode ? the
 route types are already the single source of truth for it.
+
+**Amendment (M12, all four modes).** rpc(stdio) ships (`--rpc`: NDJSON requests in,
+AgentEvent frames out — same runtime and approval channel as serve, transport is the
+only difference) and the serve API serves a hand-maintained OpenAPI 3.1 document at
+`/openapi.json`, guarded by a drift test asserting spec paths == registered routes.
+Codegen (utoipa) deliberately skipped while the surface is seven routes; revisit on
+growth.
 
 ---
 
@@ -296,6 +313,14 @@ preserve unknown keys. M11 also fixes two conventional paths pending the full la
 skills at `{global,.epsilon}/skills`, extension manifests at
 `{global,.epsilon}/extensions/<dir>/extension.json`. Project layer, trust hash,
 ruleset/extension/MCP declarations in config, and `config dump` remain scheduled for M12.
+
+**Amendment (M12, project layer landed).** `.epsilon/config.toml` now carries the
+project layer: `[model] id`, `[[rules]]` (capability/pattern/action stacked as a
+"project" engine layer over defaults — last-match-wins with any-deny-wins preserved),
+`[[extensions]] dir`, `[[mcp_servers]] name/command/args`. First use records a SHA-256
+trust hash at `.epsilon/trust.json`; later content changes print a loud review banner
+(interactive re-prompt deferred to TUI polish). Precedence for models is now:
+`--model` flag > project config > global saved > default.
 
 **Alternatives.** YAML+!!js (DSH), JSONC (opencode), YAML 1.9k-line example (Hermes), JSON (pi).
 

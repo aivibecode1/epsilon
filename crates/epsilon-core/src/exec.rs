@@ -387,7 +387,8 @@ async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage 
         // Tools operate on the AGENT's declared workspace, not the process's incidental cwd.
         cwd: agent.workspace_root.clone(),
         spill_dir: agent.workspace_root.join(".epsilon").join("spill"),
-        token: tokio_util::sync::CancellationToken::new(),
+        // Run-scoped cancellation (M12): abort_current_run() reaches in-flight tools.
+        token: agent.current_run_token().unwrap_or_default(),
     };
     let sink: epsilon_contracts::tool::ToolUpdateSink =
         Arc::new(|_partial: epsilon_contracts::tool::ToolPartial| {});

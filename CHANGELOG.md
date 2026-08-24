@@ -4,11 +4,21 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
 
 ## [Unreleased]
 
+### M12 - Completion pass
+- Project config layer: `.epsilon/config.toml` ([model], [[rules]], [[extensions]],
+  [[mcp_servers]]) with SHA-256 trust hash + change banner (completes ADR-012 core)
+- Reliability: `Retrying` StreamFn executor (pre-stream failures, classified, jittered
+  backoff, on_retry hook); run-scoped cancellation reaching both shell paths (Esc aborts);
+  session cost in the TUI footer
+- `--resume <path>` / `-c/--continue` (newest session file; shadowed-view restore)
+- rpc(stdio) mode (`--rpc`) - NDJSON ops in, AgentEvent frames out
+- `GET /openapi.json` on serve mode (hand-maintained 3.1 spec + drift-guard test)
+
 ### M11 - Model picker, catalog, runtime wiring
-- pi-style /models TUI picker (filter, provider groups, custom ids) + /model, /help, --list-models`n- Bundled catalog: 18 models / 10 providers with env-key auth hints
+- pi-style /models TUI picker (filter, provider groups, custom ids) + /model, /help, --list-models
+- Bundled catalog: 18 models / 10 providers with env-key auth hints
 - [model] id persistence in ~/.config/epsilon/config.toml (first ADR-012 slice)
 - Skills + extensions now load from conventional directories (closes M8 reachability debt)
-
 ## [0.1.0] - 2026-08-23
 
 The first complete harness: pi's proven loop and session format, DSH-grade two-layer

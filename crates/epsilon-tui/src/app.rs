@@ -442,7 +442,17 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     }
 
     match key.code {
-        KeyCode::Esc => !app.ui.running(), // Esc quits when idle; harmless mid-run
+        KeyCode::Esc => {
+            // M12: Esc during a run aborts it cooperatively; idle Esc quits.
+            if app.ui.running() {
+                if agent.abort_current_run() {
+                    app.notice("abort requested — cancelling current run…");
+                }
+                false
+            } else {
+                true
+            }
+        }
         KeyCode::Enter => {
             app.submit_editor(agent);
             false
@@ -674,7 +684,17 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
     let (tin, tout) = app.ui.usage();
     let model = epsilon_llm::catalog::display_label(&app.model_id);
-    let right = format!("{model} · tokens {tin}/{tout}");
+    // Cost from catalog placeholder prices when the model is known (ADR-010 item 5;
+    // integer micro-USD, no float drift). Unknown/custom ids omit cost honestly.
+    let cost = match epsilon_llm::catalog::lookup_model(&app.model_id) {
+        Some(info) => {
+            let micro = tin * info.input_cost_micro_per_mtok / 1_000_000
+                + tout * info.output_cost_micro_per_mtok / 1_000_000;
+            format!(" · ${:.4}", micro as f64 / 1_000_000.0)
+        }
+        None => String::new(),
+    };
+    let right = format!("{model}{cost} · tokens {tin}/{tout}");
     let left_len = app.ui.status().chars().count();
     let pad = (area.width as usize)
         .saturating_sub(left_len + right.chars().count())
