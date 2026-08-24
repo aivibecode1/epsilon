@@ -117,6 +117,10 @@ pub(crate) struct App {
     picker_provider: Option<String>,
     /// M16c: command palette open (Ctrl+P).
     palette_open: bool,
+    /// M17b: slash-autocomplete popup active (drives Up/Down/Tab/Enter interception).
+    slash_open: bool,
+    /// M17b: selected index within the open slash popup.
+    slash_index: usize,
     /// M16c: draft stashed when a dialog opened; restored when it closes.
     stash: Option<(String, usize)>,
     /// Parity sweep: editor undo stack (Ctrl+Z), pi undo-stack.ts semantics.
@@ -192,6 +196,8 @@ impl App {
             next_paste_id: 1,
             picker_provider: None,
             palette_open: false,
+            slash_open: false,
+            slash_index: 0,
             stash: None,
             undo: crate::undo::UndoStack::new(),
             branch_cache: (
@@ -322,11 +328,34 @@ impl App {
 
     /// Ctrl+Z: restore the most recent pre-mutation snapshot.
     fn undo(&mut self) -> bool {
-        match self.undo.pop() {
+        let current = crate::undo::EditorSnapshot {
+            text: self.input.clone(),
+            cursor_chars: self.cursor_chars,
+        };
+        match self.undo.undo(current) {
             Some(snap) => {
                 self.input = snap.text;
                 self.cursor_chars = snap.cursor_chars.min(self.input.chars().count());
                 self.end_yank();
+                self.sync_slash_state();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// M17b: Ctrl+. re-applies the most recently undone edit (opencode input_redo).
+    fn redo(&mut self) -> bool {
+        let current = crate::undo::EditorSnapshot {
+            text: self.input.clone(),
+            cursor_chars: self.cursor_chars,
+        };
+        match self.undo.redo(current) {
+            Some(snap) => {
+                self.input = snap.text;
+                self.cursor_chars = snap.cursor_chars.min(self.input.chars().count());
+                self.end_yank();
+                self.sync_slash_state();
                 true
             }
             None => false,
@@ -407,6 +436,52 @@ impl App {
             timestamp_ms: now_ms(),
             content: vec![UserContent::Text { text }],
         })
+    }
+
+    /// Insert text and refresh the slash-popup state (open/close + index reset).
+    fn insert_char_tracked(&mut self, c: char) {
+        self.insert_char(c);
+        self.sync_slash_state();
+    }
+
+    /// Backspace and refresh the slash-popup state.
+    fn backspace_tracked(&mut self) {
+        self.backspace();
+        self.sync_slash_state();
+    }
+
+    /// Re-derive slash popup open/index from the current editor buffer
+    /// (pi: autocomplete state follows the text, never lingers).
+    fn sync_slash_state(&mut self) {
+        let candidates = crate::picker::slash_items(&self.input);
+        if candidates.is_empty() {
+            if self.slash_open {
+                self.slash_open = false;
+            }
+            self.slash_index = 0;
+        } else {
+            if !self.slash_open {
+                self.slash_open = true;
+            }
+            if self.slash_index >= candidates.len() {
+                self.slash_index = 0;
+            }
+        }
+    }
+
+    /// Apply the currently highlighted slash candidate (pi `applyCompletion`):
+    /// replace the whole editor with the item's value, cursor at end.
+    fn apply_slash_selection(&mut self) {
+        let candidates = crate::picker::slash_items(&self.input);
+        if let Some(item) = candidates.get(self.slash_index) {
+            self.input = item.value.to_string();
+            self.cursor_chars = self.input.chars().count();
+            self.end_yank();
+        }
+        // After applying, "/model " keeps the popup closed (argument typing next);
+        // bare commands close it too — pi closes the menu on selection.
+        self.slash_open = false;
+        self.slash_index = 0;
     }
 
     /// Submit the editor line; returns `true` when a command requested quit.
@@ -959,7 +1034,13 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
 
     match key.code {
         KeyCode::Esc => {
-            // M12: Esc during a run aborts it cooperatively; idle Esc quits.
+            // M17b: Esc first dismisses the slash popup (pi prompt.autocomplete.hide);
+            // then aborts a run; only when idle+quiet does it quit.
+            if app.slash_open {
+                app.slash_open = false;
+                app.slash_index = 0;
+                return false;
+            }
             if app.ui.running() {
                 if agent.abort_current_run() {
                     app.notice("abort requested — cancelling current run…");
@@ -969,7 +1050,16 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 true
             }
         }
-        KeyCode::Enter => app.submit_editor(agent),
+        KeyCode::Enter => {
+            // M17b: with the popup open, Enter first applies the highlighted
+            // suggestion (pi prompt.autocomplete.select) — then FALLS THROUGH to
+            // submit, because a completed command like "/clear" is meant to RUN.
+            // Bare-text suggestions (no popup) submit unchanged.
+            if app.slash_open {
+                app.apply_slash_selection();
+            }
+            app.submit_editor(agent)
+        }
         KeyCode::Char('m' | 'M') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Layout-independent picker access (slash may need AltGr on some layouts).
             if !app.picker_open {
@@ -988,15 +1078,82 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             }
             false
         }
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+            // Alt+Backspace: kill word backward (opencode input_delete_word_backward).
+            app.kill_word_back();
+            app.sync_slash_state();
+            false
+        }
         KeyCode::Backspace => {
             app.push_undo();
-            app.backspace();
+            app.backspace_tracked();
             app.end_yank();
             false
         }
         KeyCode::Char('z' | 'Z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Parity sweep: editor undo (pi undo-stack.ts).
             app.undo();
+            false
+        }
+        // M17b: redo (opencode input_redo, ctrl+.) and line-wise ops (pi/opencode).
+        KeyCode::Char('.' | '>') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.redo();
+            false
+        }
+        KeyCode::Char('a' | 'A') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor_chars = crate::editor_ops::line_home(&app.input, app.cursor_chars);
+            false
+        }
+        KeyCode::Char('e' | 'E') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor_chars = crate::editor_ops::line_end(&app.input, app.cursor_chars);
+            false
+        }
+        KeyCode::Char('k' | 'K') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let (_, killed, _) = crate::editor_ops::kill_to_line_end(&app.input, app.cursor_chars);
+            let (s, c) = (app.input.clone(), app.cursor_chars);
+            let kept: String = {
+                let chars: Vec<char> = s.chars().collect();
+                chars[..c]
+                    .iter()
+                    .chain(chars[c + killed.chars().count()..].iter())
+                    .collect()
+            };
+            app.push_undo();
+            let contiguous = app.last_kill_was_contiguous;
+            app.kill_ring.push(killed, contiguous, false);
+            app.last_kill_was_contiguous = true;
+            app.input = kept;
+            app.end_yank();
+            false
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.cursor_chars = crate::editor_ops::word_left_atomic(&app.input, app.cursor_chars);
+            false
+        }
+        KeyCode::Char('b' | 'B') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor_chars = app.cursor_chars.saturating_sub(1);
+            false
+        }
+        KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor_chars = (app.cursor_chars + 1).min(app.input.chars().count());
+            false
+        }
+        KeyCode::Char('b' | 'B') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.cursor_chars = crate::editor_ops::word_left_atomic(&app.input, app.cursor_chars);
+            false
+        }
+        KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.cursor_chars = crate::editor_ops::word_right_atomic(&app.input, app.cursor_chars);
+            false
+        }
+        KeyCode::Char('d' | 'D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Forward-delete character under cursor (pi input.delete / opencode ctrl+d).
+            if app.cursor_chars < app.input.chars().count() {
+                let (s, _) = crate::editor_ops::delete_forward(&app.input, app.cursor_chars);
+                app.push_undo();
+                app.input = s;
+                app.sync_slash_state();
+            }
             false
         }
         KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1016,10 +1173,27 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             false
         }
         KeyCode::Up => {
+            // M17b: when the slash popup is open, arrows navigate IT (pi
+            // prompt.autocomplete.prev) instead of history recall.
+            if app.slash_open {
+                let total = crate::picker::slash_items(&app.input).len();
+                app.slash_index = app
+                    .slash_index
+                    .saturating_sub(1)
+                    .min(total.saturating_sub(1));
+                return false;
+            }
             app.recall(true);
             false
         }
         KeyCode::Down => {
+            if app.slash_open {
+                let total = crate::picker::slash_items(&app.input).len();
+                if total > 0 {
+                    app.slash_index = (app.slash_index + 1).min(total - 1);
+                }
+                return false;
+            }
             app.recall(false);
             false
         }
@@ -1032,11 +1206,9 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             false
         }
         KeyCode::Tab => {
-            // M15 slash autocomplete: Tab completes the first candidate.
-            let candidates = slash_candidates(&app.input);
-            if let Some(first) = candidates.first() {
-                app.input = (*first).to_string();
-                app.cursor_chars = app.input.chars().count();
+            // M15/M17b: Tab applies the HIGHLIGHTED slash candidate (pi tui.input.tab).
+            if app.slash_open {
+                app.apply_slash_selection();
             }
             false
         }
@@ -1059,6 +1231,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         }
         KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.kill_word_back();
+            app.sync_slash_state();
             false
         }
         KeyCode::Char('y' | 'Y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1084,7 +1257,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             false
         }
         KeyCode::Char(c) => {
-            app.insert_char(c);
+            app.insert_char_tracked(c);
             false
         }
         _ => false,
@@ -1098,6 +1271,8 @@ fn hint_line(app: &App) -> Line<'static> {
         "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
     } else if app.picker_open {
         "type to filter · ↑/↓ move · Ctrl+F fetch live · Enter apply · Esc close"
+    } else if app.slash_open {
+        "↑/↓ pick · Tab/Enter apply · Esc dismiss"
     } else if app.ui.running() {
         "Esc abort run · type to steer after this turn"
     } else {
@@ -1557,28 +1732,15 @@ fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// Known slash commands for Tab completion (M15, opencode convention).
-const SLASH_COMMANDS: [&str; 6] = ["/models", "/model ", "/skills", "/clear", "/help", "/quit"];
+// (M17b: slash registry moved to `picker::SLASH_ITEMS`/`picker::slash_items` —
+// descriptions + selection live there now.)
 
-/// Candidates whose head matches the typed `/prefix` (input has no space yet).
-fn slash_candidates(input: &str) -> Vec<&'static str> {
-    if !input.starts_with('/') || input.contains(' ') {
-        return Vec::new();
-    }
-    SLASH_COMMANDS
-        .iter()
-        .filter(|c| c.starts_with(input))
-        .copied()
-        .collect()
-}
-
-/// Popup listing matching slash commands directly above the input box.
+/// Popup listing matching slash commands directly above the input box
+/// (M17b: pi SelectList rendering — highlighted selection + dim descriptions,
+/// arrow-key navigable via `slash_index`).
 fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) {
-    let candidates = slash_candidates(&app.input);
-    if candidates.is_empty() || candidates.len() == SLASH_COMMANDS.len() && app.input == "/" {
-        // "/" alone shows all — fine to render; skip only the degenerate no-match case:
-    }
-    if candidates.is_empty() {
+    let candidates = crate::picker::slash_items(&app.input);
+    if !app.slash_open || candidates.is_empty() {
         return;
     }
     let height = candidates.len() as u16 + 1;
@@ -1586,16 +1748,38 @@ fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) 
     let area = Rect {
         x: transcript_area.x,
         y,
-        width: transcript_area.width.min(48),
+        width: transcript_area.width.min(56),
         height,
     };
     f.render_widget(Clear, area);
     let mut lines: Vec<Line<'static>> = candidates
         .iter()
-        .map(|c| Line::from(Span::styled((*c).to_string(), Theme::accent())))
+        .enumerate()
+        .map(|(i, item)| {
+            let selected = i == app.slash_index;
+            let mut spans = vec![Span::styled(
+                format!(" {} ", item.value),
+                if selected {
+                    Theme::accent().add_modifier(Modifier::REVERSED)
+                } else {
+                    Theme::accent()
+                },
+            )];
+            if !item.description.is_empty() {
+                spans.push(Span::styled(
+                    format!(" {}", item.description),
+                    if selected {
+                        Theme::system().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Theme::system()
+                    },
+                ));
+            }
+            Line::from(spans)
+        })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Tab completes · Esc dismisses".to_string(),
+        "↑/↓ pick · Tab/Enter apply · Esc dismiss".to_string(),
         Theme::system(),
     )));
     let block = Block::default()
@@ -1915,5 +2099,188 @@ mod tests {
         // Esc again closes entirely and unstashes (nothing stashed here).
         assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
         assert!(!app.picker_open);
+    }
+
+    // ---- M17b: slash autocomplete navigation + selection ---------------------------
+
+    #[tokio::test]
+    async fn slash_popup_opens_and_arrows_move_selection() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // Typing "/" opens the popup with all 6 candidates.
+        for c in "/".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open, "popup opens on slash");
+        assert_eq!(app.slash_index, 0);
+
+        // Down moves the highlight; Up at top stays clamped.
+        handle_key(&mut app, &agent, key(KeyCode::Down));
+        assert_eq!(app.slash_index, 1);
+        handle_key(&mut app, &agent, key(KeyCode::Up));
+        handle_key(&mut app, &agent, key(KeyCode::Up));
+        assert_eq!(app.slash_index, 0, "clamped at top");
+
+        // Arrows must NOT touch history while the popup is open.
+        assert_eq!(app.input, "/");
+    }
+
+    #[tokio::test]
+    async fn enter_applies_highlighted_suggestion_then_runs_it() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "/m".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open);
+        let candidates = crate::picker::slash_items("/m");
+        assert!(candidates.len() >= 2, "/models and /model both match");
+
+        // Highlight the second candidate (/model — argument form) then Enter.
+        // pi semantics: apply THEN submit, so "/model " opens the picker with
+        // the filter prefilled (parse_command maps bare /model to Models).
+        handle_key(&mut app, &agent, key(KeyCode::Down));
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+        assert!(app.picker_open, "applied /model ran and opened the picker");
+        assert!(!app.slash_open, "popup closed after apply");
+    }
+
+    #[tokio::test]
+    async fn enter_with_popup_on_exact_text_still_edits_before_running() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // "/cl" → only /clear matches; Enter applies+runs it.
+        for c in "/cl".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open);
+        assert_eq!(crate::picker::slash_items("/cl").len(), 1);
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Enter)));
+        assert!(
+            app.ui
+                .lines()
+                .last()
+                .is_some_and(|l| l.text.contains("cleared")),
+            "/clear executed via Enter-apply"
+        );
+        assert!(!app.slash_open);
+    }
+
+    #[tokio::test]
+    async fn esc_dismisses_popup_before_quitting_or_aborting() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "/h".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open);
+        // Idle Esc would quit — but the popup eats it first.
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
+        assert!(!app.slash_open);
+        assert_eq!(app.input, "/h", "text survives dismissal");
+        // Next Esc quits (idle).
+        assert!(handle_key(&mut app, &agent, key(KeyCode::Esc)));
+    }
+
+    #[tokio::test]
+    async fn tab_completes_highlighted_candidate() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "/c".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open);
+        assert!(!handle_key(&mut app, &agent, key(KeyCode::Tab)));
+        assert_eq!(app.input, "/clear", "Tab completed the only /c match");
+        assert!(!app.slash_open);
+    }
+
+    #[tokio::test]
+    async fn popup_tracks_edits_and_closes_when_not_a_command() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "/help".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert!(app.slash_open);
+        // A space makes it an argument line → popup closes.
+        handle_key(&mut app, &agent, key(KeyCode::Char(' ')));
+        assert!(!app.slash_open, "space closes the command-name popup");
+    }
+
+    // ---- M17b: new editor keys -------------------------------------------------------
+
+    #[tokio::test]
+    async fn ctrl_a_ctrl_e_home_end_line_semantics() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "hello world".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('a')));
+        assert_eq!(app.cursor_chars, 0, "Ctrl+A = line home");
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('e')));
+        assert_eq!(
+            app.cursor_chars,
+            app.input.chars().count(),
+            "Ctrl+E = line end"
+        );
+    }
+
+    #[tokio::test]
+    async fn ctrl_k_kills_to_line_end_into_kill_ring() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "hello world".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('a'))); // home
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('e'))); // end
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('b'))); // back one
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('k'))); // kill "d"
+        assert_eq!(app.input, "hello worl");
+        // Ctrl+Y yanks the killed text back.
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('y')));
+        assert_eq!(app.input, "hello world");
+    }
+
+    #[tokio::test]
+    async fn ctrl_d_forward_deletes_and_alt_backspace_kills_word() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "ab cd".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('a')));
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('d')));
+        assert_eq!(app.input, "b cd", "Ctrl+D deleted 'a'");
+
+        handle_key(&mut app, &agent, key(KeyCode::End));
+        let alt_bs = KeyEvent {
+            code: KeyCode::Backspace,
+            modifiers: KeyModifiers::ALT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key(&mut app, &agent, alt_bs);
+        assert_eq!(app.input, "b ", "Alt+Backspace killed 'cd'");
+    }
+
+    #[tokio::test]
+    async fn ctrl_dot_redoes_what_ctrl_z_undid() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "keep me".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, &agent, key(KeyCode::Backspace));
+        assert_eq!(app.input, "keep m");
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('z')));
+        assert_eq!(app.input, "keep me", "undo restored");
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('.')));
+        assert_eq!(app.input, "keep m", "redo re-applied the deletion");
+    }
+
+    #[tokio::test]
+    async fn ctrl_b_ctrl_f_move_cursor_by_char() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        for c in "abc".chars() {
+            handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.cursor_chars, 3);
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('b')));
+        assert_eq!(app.cursor_chars, 2);
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('f')));
+        assert_eq!(app.cursor_chars, 3);
     }
 }

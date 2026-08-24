@@ -258,7 +258,8 @@ impl Agent {
         })
     }
 
-    /// Override the model identifier (M10): genai routes by model name and resolves auth
+    /// Override the model identifier (M10): providers route via the catalog's wire
+    /// column and resolve auth from env vars at call time
     /// per family from standard env vars; the id also renders into the VOLATILE tier.
     pub fn set_model_id(&self, model_id: impl Into<String>) {
         if let Ok(mut slot) = self.model_id.lock() {

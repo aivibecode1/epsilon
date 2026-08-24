@@ -3,6 +3,41 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M17 - pi-agent provider + TUI port (full attribution)
+- **Provider layer rewritten as a faithful pi port**: direct per-provider HTTP
+  (Anthropic Messages, OpenAI-compatible `/chat/completions`, Google
+  `streamGenerateContent`) replaces the genai router crate entirely.
+  Ported from pi-0.84.2 `packages/ai/src/api/` and `packages/ai/src/providers/`;
+  SSE decoding follows pi's `iterateAnthropicEvents` wire handling; request shapes,
+  auth headers (`x-api-key`+`anthropic-version`, `Bearer`, `x-goog-api-key`), usage
+  extraction (`message_start`/`message_delta`, `include_usage`, `usageMetadata`),
+  tool-call assembly (indexed OpenAI deltas, `input_json_delta` buffering) all cite
+  their pi origin in doc comments. New dep: `reqwest =0.13.4` (already in-tree via
+  rmcp); `genai` removed from the workspace.
+- **Catalog v2** regenerated from a live models.dev fetch (2026-08): current model
+  generations across anthropic/openai/deepseek/google/xai/groq/moonshot/z.ai/
+  openrouter/ollama with REAL published prices replacing M3 placeholders — footer
+  cost is now an estimate against public list prices. Each row carries a `wire`
+  column (pi's `model.api`): routing reads capability data, never id substrings.
+  Ids are provider-native (`kimi-k2.6`, `glm-5`, `grok-4.6`, `gpt-5.4`,
+  `claude-opus-5`, `gemini-3.6-flash`).
+- **Live listing** (`real` builds) now plain authenticated GET `/models` per provider
+  (pi/opencode convention), replacing genai's resolver.
+- **Slash autocomplete rebuilt on pi's pattern**: arrow-key navigable popup with
+  descriptions (pi `AutocompleteItem`+`SelectList`), Up/Down move the highlight
+  (history recall suspended while open), Enter applies-and-runs the highlighted
+  command (pi applyCompletion→submit fall-through), Tab completes the highlight,
+  Esc dismisses before quit/abort. Popup state tracks the buffer — it never lingers
+  over unrelated text.
+- **Keybind parity sweep** (opencode keybind.ts / pi keybindings.ts defaults):
+  Ctrl+A/E line home/end, Ctrl+B/F char left/right, Alt+B/F and Alt+←/→ word jumps,
+  Alt+Backspace word kill, Ctrl+D forward delete, Ctrl+K kill-to-line-end (kill-ring
+  integrated), Ctrl+. redo (new redo rail in undo.rs; divergent push clears it),
+  F2 cycles recent models.
+- Tests: epsilon-tui 79 green (12 new key-path regressions), epsilon-llm 24 green
+  under `--features real` (SSE decoder fixtures, catalog routing/auth invariants,
+  current-generation guards).
+
 ### M16c - Picker/palette parity (opencode patterns)
 - Two-stage model picker: providers first (auth + active marks, model counts),
   Enter descends into that provider's models with live fuzzy filtering;

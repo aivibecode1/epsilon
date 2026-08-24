@@ -14,12 +14,12 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 
-genai = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [features]
-# Real network providers (Anthropic/OpenAI/...). Off by default: the faux provider keeps
-# tests offline, deterministic, and free.
-real = ["dep:genai"]
+# Real network providers (pi-style direct HTTP adapters). Off by default: the faux
+# provider keeps tests offline, deterministic, and free.
+real = ["dep:reqwest"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

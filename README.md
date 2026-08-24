@@ -37,7 +37,7 @@ ledgers.
 | M0 | Docs baseline, git, build-order ADR | ✅ shipped |
 | M1 | 11-crate workspace, quality gates green from commit one | ✅ shipped |
 | M2 | `epsilon-contracts` — pi's type vocabulary ported | ✅ shipped |
-| M3 | `epsilon-llm` — StreamFn contract, faux provider, genai adapter, retry | ✅ shipped |
+| M3 | `epsilon-llm` — StreamFn contract, faux provider, provider adapter, retry (M17: adapter is now pi-style direct HTTP) | ✅ shipped |
 | M4 | `epsilon-session` — JSONL tree store, shadow views, leases, crash repair | ✅ shipped |
 | M5 | `epsilon-core` — full agent loop + runnable demo | ✅ shipped |
 | M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
@@ -56,9 +56,10 @@ ledgers.
 | M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode | ✅ shipped |
 | M16b | Editor v2: Emacs kill-ring (Ctrl+U/W/Y with accumulation + yank-pop), atomic paste markers (`[paste #N +L lines]`, expand on submit, marker-aware Ctrl+W), multi-line buffer (Ctrl+J newline), persistent prompt history (500 entries) | ✅ shipped |
 | M16c | Picker/palette parity: two-stage model picker (providers → models, fuzzy-filtered), command palette (Ctrl+P) dispatching all commands, draft stash across dialogs, pi fuzzy matcher; 187 tests | ✅ shipped |
-| future | models.dev registry sync · favorites beyond recents · interactive trust re-prompt | open |
+| M17 | **pi-agent port**: direct per-provider HTTP replaces genai (Anthropic/OpenAI-compat/Gemini wires), catalog v2 regenerated from live models.dev (current 2026 generations, REAL prices), slash autocomplete with arrow-key selection + descriptions (pi pattern), keybind parity sweep (Ctrl+A/E/B/F/D/K, Alt+B/F/D, Ctrl+. redo, F2 recents); full attribution in dev log | ✅ shipped |
+| future | catalog auto-refresh · favorites beyond recents · interactive trust re-prompt | open |
 
-187 tests · zero clippy warnings · every milestone committed with a dev log under
+190+ tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---

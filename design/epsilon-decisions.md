@@ -481,6 +481,21 @@ data, so a registry sync later is additive.
 **Best possible?** Yes for v1. Deferred: live per-provider listing (genai
 `all_model_names`, auth-gated), favorites/recents memory (opencode), credential store.
 
+**Amendment (2026-08, M17).** Catalog regenerated from a live models.dev fetch with
+REAL prices (placeholder era ends; footer cost is now an estimate against public list
+prices). Two genai-0.6 routing facts discovered while doing it are now encoded as
+catalog invariants: (a) bare ids only where `AdapterKind::from_model` infers the right
+provider — everything else carries genai's explicit `namespace::name` form
+(`groq::`, `moonshot::`, `zai::`, `open_router::`; genai strips the namespace on the
+wire), because bare `kimi-*`/`glm-*`/`llama-*` silently fall through to its Ollama
+adapter; (b) OpenRouter's env var under genai is `OPEN_ROUTER_API_KEY`. A unit test
+(`ids_either_auto_resolve_or_carry_genai_namespace`) pins rule (a). The
+`provider::model` id convention itself is deliberately adapter-independent (pi and
+opencode both identify models as provider+model pairs), so a future transport swap
+does not strand saved configs. Known open question: genai remains the only cloud
+transport; pi's raw-HTTP-per-provider adapters are thinner and carry real metadata,
+and replacing genai is a candidate future milestone (see M17 dev log).
+
 ---
 
 ## Superseded / deferred

@@ -30,7 +30,9 @@ async-trait = "=0.1.89"
 tokio = { version = "=1.53.1", features = ["sync", "time", "macros", "rt", "fs", "process", "io-util", "io-std"] }
 tokio-util = "=0.7.19"
 futures-util = "=0.3.31"
-genai = "=0.6.5"
+# M17 (pi port): direct per-provider HTTP transport replaces genai. reqwest was already
+# in-tree via rmcp; pinned exact per ADR-016.
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "stream"] }
 tempfile = "=3.23.0"
 regex = "=1.13.1"
 schemars = { version = "=1.2.2", features = ["derive"] }

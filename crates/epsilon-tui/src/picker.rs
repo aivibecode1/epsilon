@@ -136,6 +136,59 @@ pub fn build_rows(
     rows
 }
 
+// ---- M17b: slash autocomplete with descriptions + selection (pi pattern) --------
+
+/// One slash-autocomplete candidate (pi's `AutocompleteItem` + `SlashCommand`):
+/// value to insert, display label, and an optional description/argument hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashItem {
+    /// Text inserted when the item is chosen (e.g. `/models`).
+    pub value: &'static str,
+    /// Optional description rendered dim beside the label.
+    pub description: &'static str,
+}
+
+/// All known slash commands with descriptions (pi's command registry shape;
+/// descriptions follow pi/opencode conventions).
+pub const SLASH_ITEMS: &[SlashItem] = &[
+    SlashItem {
+        value: "/models",
+        description: "switch model (picker)",
+    },
+    SlashItem {
+        value: "/model ",
+        description: "set model by id, e.g. /model kimi-k2.6",
+    },
+    SlashItem {
+        value: "/skills",
+        description: "list discovered skills",
+    },
+    SlashItem {
+        value: "/clear",
+        description: "clear transcript (totals kept)",
+    },
+    SlashItem {
+        value: "/help",
+        description: "command reference",
+    },
+    SlashItem {
+        value: "/quit",
+        description: "exit the session",
+    },
+];
+
+/// Candidates whose head matches the typed `/prefix` (input has no space yet),
+/// in registry order — pi returns fuzzy-filtered registry order too.
+pub fn slash_items(input: &str) -> Vec<&'static SlashItem> {
+    if !input.starts_with('/') || input.contains(' ') {
+        return Vec::new();
+    }
+    SLASH_ITEMS
+        .iter()
+        .filter(|item| item.value.starts_with(input))
+        .collect()
+}
+
 /// A parsed editor command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {

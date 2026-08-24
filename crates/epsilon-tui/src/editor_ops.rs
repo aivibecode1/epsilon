@@ -123,6 +123,42 @@ pub fn word_right_atomic(s: &str, cursor: usize) -> usize {
     word_right(s, cursor)
 }
 
+// ---- M17b: line-wise editing ops (opencode keybind parity) ----------------------
+
+/// Index of the start of the line containing char position `cursor`.
+/// Multi-line aware: stops at the `\n` left of the cursor.
+pub fn line_home(s: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = cursor.min(chars.len());
+    while i > 0 && chars[i - 1] != '\n' {
+        i -= 1;
+    }
+    i
+}
+
+/// Index just past the end of the line containing char position `cursor`
+/// (the `\n` itself excluded). Multi-line aware.
+pub fn line_end(s: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = cursor.min(chars.len());
+    while i < chars.len() && chars[i] != '\n' {
+        i += 1;
+    }
+    i
+}
+
+// ---- M17b: kill-to-line-end (Ctrl+K, opencode input_delete_to_line_end) ---------
+
+/// Delete from `cursor` to end of line (multi-line aware: stops at `\n`).
+/// Returns (buffer, new_cursor); the killed text is returned for the kill ring.
+pub fn kill_to_line_end(s: &str, cursor: usize) -> (String, String, usize) {
+    let chars: Vec<char> = s.chars().collect();
+    let end = line_end(s, cursor);
+    let killed: String = chars[cursor..end].iter().collect();
+    let kept: String = chars[..cursor].iter().chain(chars[end..].iter()).collect();
+    (kept, killed, cursor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

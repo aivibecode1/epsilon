@@ -57,7 +57,8 @@ enum Resume {
     Path(PathBuf),
 }
 
-/// Model source: the offline faux provider (default) or a real genai-backed provider.
+/// Model source: the offline faux provider (default) or a real direct-HTTP provider
+/// (M17 pi port).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Provider {
     Faux,
@@ -391,8 +392,10 @@ async fn dispatch(args: Args) -> i32 {
     let stream_fn: Arc<dyn epsilon_llm::StreamFn> = if use_real {
         #[cfg(feature = "real")]
         {
-            banners.push(format!("provider: real · model: {model_id} · key from env"));
-            Arc::new(PanicGuard(epsilon_llm::GenaiAdapter::new()))
+            banners.push(format!(
+                "provider: real (direct HTTP) · model: {model_id} · key from env"
+            ));
+            Arc::new(PanicGuard(epsilon_llm::DirectProvider::new()))
         }
         #[cfg(not(feature = "real"))]
         unreachable!("use_real cannot be true without the real feature")
@@ -471,8 +474,9 @@ async fn dispatch(args: Args) -> i32 {
     }
 }
 
-/// Live provider-listing capability for the picker (M13): present only when the binary
-/// was built with `--features real`; the fetch itself runs genai's resolver.
+/// Live provider-listing capability for the picker (M13, M17 rewire): present only
+/// when the binary was built with `--features real`; the fetch is a plain
+/// authenticated GET against the provider's models endpoint.
 fn live_fetcher() -> Option<epsilon_tui::LiveFetcher> {
     #[cfg(feature = "real")]
     {
