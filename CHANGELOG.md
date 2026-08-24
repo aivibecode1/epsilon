@@ -3,6 +3,17 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M16a - Rendering efficiency + footer parity
+- Virtualized transcript: only visible rows materialized per draw; markdown+wrap
+  happens once per line in an id-keyed render cache (draws ~30–69× faster and
+  near-flat as sessions grow — bench via new `--tui-bench <n>` mode)
+- Picker rows cached per filter; navigation no longer re-filters on every keypress
+- pi footer parity: cwd (~-shortened) + git branch, compact token format (k/M),
+  context-window usage with `?` right after compaction, cache-hit rate (CH%),
+  session cost; threshold coloring >70%/90%
+- Own unicode-width word-wrap replacing Paragraph::wrap (style-preserving,
+  hard-splits oversized words, CJK-correct)
+
 ### M15 - TUI usability overhaul (pi/opencode patterns)
 - Picker viewport fix: centered scroll window (pi select-list) + position indicator —
   long lists were previously unreachable past the box height

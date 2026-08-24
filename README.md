@@ -52,9 +52,11 @@ ledgers.
 | M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
 | M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
 | M13 | Polish: live catalog fetch (Ctrl+F in /models), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
-| future | models.dev registry sync, favorites beyond recents, interactive trust re-prompt | open |
+| M15 | TUI usability overhaul porting pi/opencode patterns — picker scroll window (fixes unreachable rows), unicode editor ops, pulldown-cmark transcript, spinner+elapsed, hint bar, mouse wheel, bracketed paste, slash autocomplete; 146 tests | ✅ shipped |
+| M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode; 169 tests | ✅ shipped |
+| future | M16b editor v2 (multi-line, kill-ring, persistent history) · M16c two-stage picker + command palette · models.dev registry sync · favorites beyond recents · interactive trust re-prompt | open |
 
-131 tests · zero clippy warnings · every milestone committed with a dev log under
+169 tests · zero clippy warnings · every milestone committed with a dev log under
 [`docs/milestones/`](docs/milestones).
 
 ---

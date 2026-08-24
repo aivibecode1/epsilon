@@ -22,9 +22,9 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use crate::state::{LineKind, UiState};
+use crate::state::UiState;
 use crate::theme::Theme;
 
 /// Async provider-listing hook injected by the CLI when built with `--features real`
@@ -72,7 +72,9 @@ fn summarize_detail(detail: &serde_json::Value) -> String {
     }
 }
 
-struct App {
+/// Terminal runtime state (crate-private; the bench module drives it through
+/// [`bench_app`] + [`draw_frame`]).
+pub(crate) struct App {
     ui: UiState,
     input: String,
     cursor_chars: usize,
@@ -94,6 +96,33 @@ struct App {
     /// M15 spinner/elapsed: set on AgentStart, cleared on AgentEnd.
     run_started_at: Option<std::time::Instant>,
     spinner_phase: usize,
+    /// M16a: markdown+wrap happens once per line here, never in the draw loop.
+    render_cache: crate::render_cache::RenderCache,
+    /// M16a: picker rows cached per (filter, sources) tuple; rebuilt only when one
+    /// of those changes, never on Up/Down.
+    picker_rows: Option<Vec<crate::picker::PickerRow>>,
+    /// Workspace root for the footer (pi footer parity).
+    workspace_root: std::path::PathBuf,
+    /// Cached git branch + when it was read (2s TTL — no git dependency).
+    branch_cache: (Option<String>, std::time::Instant),
+}
+
+impl App {
+    /// Invalidate the picker row cache (call whenever filter/recents/live change).
+    fn invalidate_picker(&mut self) {
+        self.picker_rows = None;
+    }
+
+    /// Current picker rows, filtered+ordered (cached; see [`Self::invalidate_picker`]).
+    fn picker_rows(&mut self) -> Vec<crate::picker::PickerRow> {
+        if let Some(rows) = &self.picker_rows {
+            return rows.clone();
+        }
+        let rows =
+            crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
+        self.picker_rows = Some(rows.clone());
+        rows
+    }
 }
 
 /// Braille spinner frames (pi loader convention).
@@ -106,6 +135,8 @@ impl App {
         fetched_tx: tokio::sync::mpsc::UnboundedSender<Result<Vec<String>, String>>,
         notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> Self {
+        let workspace_root =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         Self {
             ui: UiState::new(),
             input: String::new(),
@@ -127,7 +158,25 @@ impl App {
             notices_tx,
             run_started_at: None,
             spinner_phase: 0,
+            render_cache: crate::render_cache::RenderCache::new(),
+            picker_rows: None,
+            branch_cache: (
+                None,
+                std::time::Instant::now() - std::time::Duration::from_secs(10),
+            ),
+            workspace_root,
         }
+    }
+
+    /// Git branch with a short TTL so we read `.git/HEAD` at most every 2s (pi's
+    /// footer-data-provider caching, minus the watcher).
+    fn cached_branch(&mut self) -> Option<String> {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(2);
+        if self.branch_cache.1.elapsed() > TTL {
+            let b = crate::footer::git_branch(&self.workspace_root);
+            self.branch_cache = (b, std::time::Instant::now());
+        }
+        self.branch_cache.0.clone()
     }
 
     fn insert_char(&mut self, c: char) {
@@ -299,13 +348,13 @@ impl App {
         }
         if epsilon_core::config::push_recent_model(&id).is_ok() {
             self.recents = epsilon_core::config::load_recent_models();
+            self.invalidate_picker();
         }
     }
 
     /// Apply the currently highlighted picker row.
     fn pick_selected(&mut self, agent: &Arc<Agent>) {
-        let rows =
-            crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
+        let rows = self.picker_rows();
         let Some(row) = rows.get(self.picker_index) else {
             return;
         };
@@ -328,12 +377,11 @@ impl App {
 
     /// Kick off a live listing for the highlighted row's provider (M13, `real` builds).
     fn fetch_live_for_selected(&mut self) {
-        let Some(fetcher) = self.live.as_ref() else {
+        let Some(fetcher) = self.live.clone() else {
             self.notice("live listing unavailable: built without --features real");
             return;
         };
-        let rows =
-            crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
+        let rows = self.picker_rows();
         let Some(row) = rows.get(self.picker_index) else {
             return;
         };
@@ -367,6 +415,21 @@ impl App {
     fn notice(&self, text: impl Into<String>) {
         self.notices_tx.send(text.into()).ok();
     }
+
+    /// Bench/test seam (M16a): build an [`App`] over a caller-supplied [`UiState`] with
+    /// inert channels and default picker state. Not part of normal composition.
+    pub(crate) fn over_ui(ui: UiState, model_id: String) -> Self {
+        let mut app = Self::new(model_id.clone(), inert_channel(), inert_channel());
+        app.ui = ui;
+        app
+    }
+}
+
+/// Fresh sender for [`App::over_ui`]; the matching receiver is dropped immediately.
+fn inert_channel<T>() -> tokio::sync::mpsc::UnboundedSender<T> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    tx
 }
 
 /// Run the interactive frontend until the user quits. Returns the process exit code.
@@ -422,7 +485,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(TICK_MS));
 
     loop {
-        let _ = terminal.draw(|f| draw(f, &app));
+        let _ = terminal.draw(|f| draw(f, &mut app));
 
         tokio::select! {
             ev = events_rx.recv() => match ev {
@@ -452,6 +515,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                         Ok(mut names) => {
                             let n = names.len();
                             app.live_cache.append(&mut names);
+                            app.invalidate_picker();
                             app.ui.push_notice(format!("live listing: {n} models merged into /models"));
                         }
                         Err(e) => app.ui.push_notice(format!("live listing failed: {e}")),
@@ -482,13 +546,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                         }
                         crossterm::event::MouseEventKind::ScrollDown => {
                             if app.picker_open {
-                                let total = crate::picker::build_rows(
-                                    &app.input,
-                                    &app.model_id,
-                                    &app.recents,
-                                    &app.live_cache,
-                                )
-                                .len();
+                                let total = app.picker_rows().len();
                                 if total > 0 {
                                     app.picker_index = (app.picker_index + 1).min(total - 1);
                                 }
@@ -553,39 +611,22 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             }
             KeyCode::Enter => app.pick_selected(agent),
             KeyCode::Up => {
-                let total = crate::picker::build_rows(
-                    &app.input,
-                    &app.model_id,
-                    &app.recents,
-                    &app.live_cache,
-                )
-                .len();
+                let total = app.picker_rows().len();
                 app.picker_index = app
                     .picker_index
                     .saturating_sub(1)
                     .min(total.saturating_sub(1));
             }
             KeyCode::Down => {
-                let total = crate::picker::build_rows(
-                    &app.input,
-                    &app.model_id,
-                    &app.recents,
-                    &app.live_cache,
-                )
-                .len();
+                let total = app.picker_rows().len();
                 if total > 0 {
                     app.picker_index = (app.picker_index + 1).min(total - 1);
                 }
             }
             KeyCode::Backspace => {
                 app.backspace();
-                let total = crate::picker::build_rows(
-                    &app.input,
-                    &app.model_id,
-                    &app.recents,
-                    &app.live_cache,
-                )
-                .len();
+                app.invalidate_picker();
+                let total = app.picker_rows().len();
                 if app.picker_index >= total {
                     app.picker_index = total.saturating_sub(1);
                 }
@@ -596,6 +637,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             }
             KeyCode::Char(c) => {
                 app.insert_char(c);
+                app.invalidate_picker();
                 app.picker_index = 0;
             }
             _ => {}
@@ -764,73 +806,6 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     }
 }
 
-fn style_for(kind: LineKind) -> Style {
-    use crate::theme::Theme;
-    match kind {
-        LineKind::User => Theme::user(),
-        LineKind::Assistant => Theme::assistant(),
-        LineKind::Thinking => Theme::thinking(),
-        LineKind::ToolCall => Theme::tool_call(),
-        LineKind::ToolResultOk => Theme::tool_ok(),
-        LineKind::ToolResultErr => Theme::tool_err(),
-        LineKind::System => Theme::system(),
-    }
-}
-
-fn transcript_rows(app: &App) -> Vec<Line<'static>> {
-    let mut rows: Vec<Line<'static>> = Vec::with_capacity(app.ui.lines().len() + 2);
-    for l in app.ui.lines() {
-        // M13 card polish: expandable rows show their full payload when toggled.
-        if app.prefs.expand_outputs
-            && let Some(full) = l.full.as_ref()
-        {
-            rows.push(Line::from(Span::styled(full.clone(), style_for(l.kind))));
-            continue;
-        }
-        if l.code {
-            rows.push(Line::from(Span::styled(
-                l.text.clone(),
-                crate::theme::Theme::code_block(),
-            )));
-            continue;
-        }
-        // M15: assistant rows carry raw markdown — expand into styled spans.
-        if let Some(md) = l.md.as_ref() {
-            rows.extend(crate::markdown::md_to_lines(md));
-            continue;
-        }
-        // Visual prefixes (opencode convention): ❯ user, ✓/✗ tool results.
-        match l.kind {
-            LineKind::User => {
-                rows.push(Line::from(vec![
-                    Span::styled("❯ ".to_string(), crate::theme::Theme::user()),
-                    Span::styled(l.text.clone(), style_for(l.kind)),
-                ]));
-            }
-            LineKind::ToolResultOk | LineKind::ToolResultErr => {
-                let mark = if l.kind == LineKind::ToolResultErr {
-                    "✗ "
-                } else {
-                    "✓ "
-                };
-                rows.push(Line::from(vec![
-                    Span::styled(mark.to_string(), style_for(l.kind)),
-                    Span::styled(l.text.clone(), style_for(l.kind)),
-                ]));
-            }
-            _ => rows.push(Line::from(Span::styled(l.text.clone(), style_for(l.kind)))),
-        }
-    }
-    let streaming = app.ui.streaming_text();
-    if !streaming.is_empty() {
-        rows.push(Line::from(Span::styled(
-            format!("{streaming}▌"),
-            Style::default().add_modifier(Modifier::DIM),
-        )));
-    }
-    rows
-}
-
 /// Contextual key-hint bar (pi's keybinding-hints pattern).
 fn hint_line(app: &App) -> Line<'static> {
     use crate::theme::Theme;
@@ -846,7 +821,7 @@ fn hint_line(app: &App) -> Line<'static> {
     Line::from(Span::styled(text.to_string(), Theme::system()))
 }
 
-fn draw(f: &mut Frame<'_>, app: &App) {
+fn draw(f: &mut Frame<'_>, app: &mut App) {
     let [transcript_area, hints_area, input_area, status_area] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(1),
@@ -869,10 +844,21 @@ fn draw(f: &mut Frame<'_>, app: &App) {
     draw_slash_autocomplete(f, app, transcript_area);
 }
 
+/// Headless render seam used by `--tui-bench` (M16a): build a persistent [`App`]
+/// whose caches live across frames exactly like the real event loop.
+pub(crate) fn bench_app(ui: UiState) -> App {
+    App::over_ui(ui, "faux-1".to_string())
+}
+
+/// Draw one frame with a caller-owned App (production draw path).
+pub(crate) fn draw_frame(f: &mut Frame<'_>, app: &mut App) {
+    draw(f, app);
+}
+
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
 /// column. The active model floats to the top (picker::build_rows).
-fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
-    let rows = crate::picker::build_rows(&app.input, &app.model_id, &app.recents, &app.live_cache);
+fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
+    let rows = app.picker_rows();
     let width = (outer.width * 4 / 5).max(48).min(outer.width);
     let height = 15u16.min(outer.height.saturating_sub(2));
     let x = outer.x + (outer.width.saturating_sub(width)) / 2;
@@ -975,17 +961,30 @@ fn draw_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(para, area);
 }
 
-fn draw_transcript(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let rows = transcript_rows(app);
-    let total = rows.len();
+/// M16a virtualized draw: reconcile the render cache (renders ONLY unseen lines),
+/// then materialize just the visible window. Per-frame cost is O(visible), not
+/// O(transcript).
+fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let width = area.width.saturating_sub(1) as usize; // 1-col slack, no h-scroll
+    app.render_cache
+        .reconcile(app.ui.lines(), width, app.prefs.expand_outputs);
+    let total = app.render_cache.total_rows();
     let visible = area.height as usize;
 
     // Follow mode pins the tail; PageUp/PageDown pin an offset above the bottom.
     let skip = crate::scroll::transcript_skip(total, visible, app.scroll_from_bottom);
+    let mut rows = app.render_cache.visible_rows(skip, visible);
 
-    let para = Paragraph::new(rows)
-        .wrap(Wrap { trim: false })
-        .scroll((skip as u16, 0));
+    // Streaming tail (in-flight assistant text) rides under the cached rows.
+    let streaming = app.ui.streaming_text().to_string();
+    if !streaming.is_empty() {
+        rows.push(Line::from(Span::styled(
+            format!("{streaming}▌"),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+    }
+
+    let para = Paragraph::new(rows).scroll((skip as u16, 0));
     f.render_widget(para, area);
 }
 
@@ -1020,21 +1019,8 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
     f.set_cursor_position((col, area.y + 1));
 }
 
-fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let (tin, tout) = app.ui.usage();
-    let model = epsilon_llm::catalog::display_label(&app.model_id);
-    // Cost from catalog placeholder prices when the model is known (ADR-010 item 5;
-    // integer micro-USD, no float drift). Unknown/custom ids omit cost honestly.
-    let cost = match epsilon_llm::catalog::lookup_model(&app.model_id) {
-        Some(info) => {
-            let micro = tin * info.input_cost_micro_per_mtok / 1_000_000
-                + tout * info.output_cost_micro_per_mtok / 1_000_000;
-            format!(" · ${:.4}", micro as f64 / 1_000_000.0)
-        }
-        None => String::new(),
-    };
-
-    // M15 spinner + elapsed while a run is active (pi loader pattern).
+fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    // ---- left: run state (spinner + status + elapsed, M15 behavior) --------------
     let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
     let left = if let Some(started) = app.run_started_at {
         let secs = started.elapsed().as_secs();
@@ -1045,17 +1031,78 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         app.ui.status().to_string()
     };
 
-    let right = format!("{model}{cost} · tokens {tin}/{tout}");
-    let left_len = left.chars().count();
-    let pad = (area.width as usize)
-        .saturating_sub(left_len + right.chars().count())
+    // ---- right: pi footer stats — where/what/how-much ----------------------------
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from);
+    let mut pwd = crate::footer::format_cwd(&app.workspace_root, home.as_deref());
+    if let Some(branch) = app.cached_branch() {
+        pwd.push_str(&format!(" ({branch})"));
+    }
+
+    let (tin, tout) = app.ui.usage();
+    let (cread, cwrite) = app.ui.cache_usage();
+    // Cost from catalog placeholder prices when the model is known (ADR-010 item 5;
+    // integer micro-USD, no float drift). Unknown/custom ids omit cost honestly.
+    let cost_micro: u64 = match epsilon_llm::catalog::lookup_model(&app.model_id) {
+        Some(info) => {
+            tin * info.input_cost_micro_per_mtok / 1_000_000
+                + tout * info.output_cost_micro_per_mtok / 1_000_000
+        }
+        None => 0,
+    };
+    let mut parts = crate::footer::stats_parts(&crate::footer::FooterStats {
+        tokens_in: tin,
+        tokens_out: tout,
+        cache_read: cread,
+        cache_write: cwrite,
+        latest_prompt_tokens: app.ui.latest_prompt_tokens(),
+        compacted: app.ui.is_compacted(),
+        context_window: epsilon_llm::catalog::lookup_model(&app.model_id).map(|i| i.context_window),
+        cost_micro_usd: cost_micro,
+    });
+    // Model id anchors the far right (pi puts it there too).
+    parts.push(crate::footer::FooterPart {
+        text: epsilon_llm::catalog::display_label(&app.model_id).to_string(),
+        tone: crate::footer::Tone::Normal,
+    });
+
+    let tone_color = |t: crate::footer::Tone| match t {
+        crate::footer::Tone::Normal => Color::DarkGray,
+        crate::footer::Tone::Warn => Color::Yellow,
+        crate::footer::Tone::Error => Color::Red,
+    };
+    let right_spans: Vec<Span<'static>> =
+        std::iter::once(Span::styled(pwd, Style::default().fg(Color::DarkGray)))
+            .chain(
+                parts
+                    .iter()
+                    .flat_map(|p| {
+                        [
+                            Span::raw(" · "),
+                            Span::styled(p.text.clone(), Style::default().fg(tone_color(p.tone))),
+                        ]
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .collect();
+
+    // Fit: truncate the LEFT side first (status is less important than the stats).
+    let right_len: usize = right_spans.iter().map(|s| s.content.chars().count()).sum();
+    let width = area.width as usize;
+    let left_fit = left
+        .chars()
+        .count()
+        .min(width.saturating_sub(right_len + 2));
+    let pad = width
+        .saturating_sub(right_len)
+        .saturating_sub(left_fit)
         .max(1);
-    let line = Line::from(vec![
-        Span::styled(left, Style::default().fg(Color::DarkGray)),
-        Span::raw(" ".repeat(pad)),
-        Span::styled(right, Style::default().fg(Color::DarkGray)),
-    ]);
-    f.render_widget(line, area);
+
+    let mut line_spans = vec![Span::styled(left, Style::default().fg(Color::DarkGray))];
+    line_spans.push(Span::raw(" ".repeat(pad)));
+    line_spans.extend(right_spans);
+    f.render_widget(Line::from(line_spans), area);
 }
 
 /// Known slash commands for Tab completion (M15, opencode convention).

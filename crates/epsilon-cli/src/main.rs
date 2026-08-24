@@ -72,6 +72,9 @@ enum Mode {
     Rpc,
     /// Print the bundled catalog (optionally filtered by provider), then exit.
     ListModels(Option<String>),
+    /// Hidden M16a benchmark: build n synthetic transcript messages, time real draws,
+    /// print a report, exit. Not advertised in --help usage beyond this line.
+    TuiBench(usize),
 }
 
 fn parse_args() -> Args {
@@ -181,6 +184,16 @@ fn parse_args() -> Args {
                 resume = Resume::Path(PathBuf::from(p));
             }
             "--rpc" => mode = Mode::Rpc,
+            "--tui-bench" => {
+                i += 1;
+                let n = raw
+                    .get(i)
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or_else(|| {
+                        die("--tui-bench requires a message count (e.g. --tui-bench 200)")
+                    });
+                mode = Mode::TuiBench(n);
+            }
             "--list-models" => {
                 i += 1;
                 let provider = positional(&raw, &mut i);
@@ -292,6 +305,15 @@ async fn dispatch(args: Args) -> i32 {
     // ready), run REAL; only when nothing is configured do we fall back to the offline
     // faux provider, with a banner saying exactly how to go real. pi/opencode parity:
     // a fresh user with one env var gets a working agent with zero flags.
+    //
+    // The bench mode needs none of this (no provider, no banners) — short-circuit.
+    if let Mode::TuiBench(n) = args.mode {
+        for line in epsilon_tui::bench::run(n) {
+            println!("{line}");
+        }
+        return 0;
+    }
+
     let candidate_model = args
         .model_id
         .clone()
@@ -438,6 +460,12 @@ async fn dispatch(args: Args) -> i32 {
         }
         Mode::ListModels(provider_filter) => {
             list_models(provider_filter.as_deref());
+            0
+        }
+        Mode::TuiBench(n) => {
+            for line in epsilon_tui::bench::run(*n) {
+                println!("{line}");
+            }
             0
         }
     }

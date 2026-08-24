@@ -10,11 +10,15 @@
 //! feature without touching this crate's logic.
 
 pub mod app;
+pub mod bench;
 pub mod editor_ops;
+pub mod footer;
 pub mod markdown;
 pub mod picker;
+pub mod render_cache;
 pub mod scroll;
 pub mod state;
 pub mod theme;
+pub mod wrap;
 
 pub use app::{LiveFetcher, TuiConfig, run};

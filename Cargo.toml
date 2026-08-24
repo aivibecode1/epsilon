@@ -45,6 +45,9 @@ winapi = { version = "=0.3.9", features = ["jobapi2", "processthreadsapi", "hand
 toml = "=1.1.4"
 sha2 = "=0.11.0"
 pulldown-cmark = "=0.13.4"
+# M16a: display-width math for the transcript wrap + footer (CJK/emoji columns).
+# Already in-tree transitively via ratatui-core's `>=0.2.0` requirement; pinned exact.
+unicode-width = "=0.2.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

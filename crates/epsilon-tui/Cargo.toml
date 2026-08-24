@@ -15,8 +15,12 @@ serde_json = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 pulldown-cmark = { workspace = true }
+unicode-width = { workspace = true }
 futures-util = { workspace = true }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

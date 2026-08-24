@@ -822,7 +822,9 @@ dependencies = [
  "pulldown-cmark",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tokio",
+ "unicode-width",
 ]
 
 [[package]]

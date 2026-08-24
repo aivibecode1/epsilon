@@ -25,9 +25,22 @@ pub enum LineKind {
     System,
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Process-wide id source. Uniqueness is what the render cache needs (content-stable,
+/// never reused), whether lines come from a live session or are built ad hoc in tests.
+static NEXT_LINE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn take_line_id() -> u64 {
+    NEXT_LINE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// One rendered transcript row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptLine {
+    /// Monotonic unique id (M16a): the render cache keys wrapped rows on this, so
+    /// committed lines never re-render while content is unchanged.
+    pub id: u64,
     /// Visual class driving styling.
     pub kind: LineKind,
     /// Display text (already summarized/truncated where appropriate).
@@ -41,49 +54,42 @@ pub struct TranscriptLine {
 }
 
 impl TranscriptLine {
-    /// Plain line with no expansion payload.
-    pub fn plain(kind: LineKind, text: impl Into<String>) -> Self {
+    fn new(
+        kind: LineKind,
+        text: impl Into<String>,
+        full: Option<String>,
+        code: bool,
+        md: Option<String>,
+    ) -> Self {
         Self {
+            id: take_line_id(),
             kind,
             text: text.into(),
-            full: None,
-            code: false,
-            md: None,
+            full,
+            code,
+            md,
         }
+    }
+
+    /// Plain line with no expansion payload.
+    pub fn plain(kind: LineKind, text: impl Into<String>) -> Self {
+        Self::new(kind, text, None, false, None)
     }
 
     /// Expandable line: `text` is the truncated head, `full` the complete body.
     pub fn expandable(kind: LineKind, text: String, full: String) -> Self {
-        Self {
-            kind,
-            text,
-            full: Some(full),
-            code: false,
-            md: None,
-        }
+        Self::new(kind, text, Some(full), false, None)
     }
 
     /// Fenced-code line (markdown-lite rendering).
     pub fn code_line(text: impl Into<String>) -> Self {
-        Self {
-            kind: LineKind::Assistant,
-            text: text.into(),
-            full: None,
-            code: true,
-            md: None,
-        }
+        Self::new(LineKind::Assistant, text, None, true, None)
     }
 
     /// Assistant message carrying raw markdown; expanded at render time.
     pub fn assistant_md(text: impl Into<String>) -> Self {
         let text = text.into();
-        Self {
-            kind: LineKind::Assistant,
-            md: Some(text.clone()),
-            text,
-            full: None,
-            code: false,
-        }
+        Self::new(LineKind::Assistant, text.clone(), None, false, Some(text))
     }
 }
 
@@ -100,6 +106,10 @@ pub struct UiState {
     running: bool,
     tokens_in: u64,
     tokens_out: u64,
+    cache_read: u64,
+    cache_write: u64,
+    latest_prompt_tokens: u64,
+    compacted: bool,
 }
 
 impl UiState {
@@ -131,21 +141,37 @@ impl UiState {
         self.running
     }
 
-    /// Accumulated provider usage across the session.
+    /// Accumulated provider usage across the session: (input, output) billed tokens.
     pub fn usage(&self) -> (u64, u64) {
         (self.tokens_in, self.tokens_out)
     }
 
+    /// Accumulated prompt-cache traffic across the session: (cache read, cache write).
+    pub fn cache_usage(&self) -> (u64, u64) {
+        (self.cache_read, self.cache_write)
+    }
+
+    /// Latest single-call prompt size = input + cache_read + cache_write
+    /// (pi footer convention: this is what "context usage" measures). Zero until the
+    /// first provider response of the session.
+    pub fn latest_prompt_tokens(&self) -> u64 {
+        self.latest_prompt_tokens
+    }
+
+    /// True right after a compaction pass, before the next provider response reports
+    /// fresh token counts (pi shows `?` for context % in exactly this window).
+    pub fn is_compacted(&self) -> bool {
+        self.compacted
+    }
+
     /// Local echo of submitted input; distinct from replayed transcript messages.
     pub fn push_local_input(&mut self, text: &str) {
-        self.lines
-            .push(TranscriptLine::plain(LineKind::User, format!("> {text}")));
+        self.push_line(TranscriptLine::plain(LineKind::User, format!("> {text}")));
     }
 
     /// Runtime notice (run failures, lag warnings) rendered as a system row.
     pub fn push_notice(&mut self, text: impl Into<String>) {
-        self.lines
-            .push(TranscriptLine::plain(LineKind::System, text));
+        self.push_line(TranscriptLine::plain(LineKind::System, text));
     }
 
     /// Drop all transcript rows (`/clear`); usage counters survive.
@@ -177,7 +203,7 @@ impl UiState {
                 Message::Assistant(a) => {
                     let thinking = std::mem::take(&mut self.streaming_thinking);
                     if !thinking.is_empty() {
-                        self.lines.push(TranscriptLine::plain(
+                        self.push_line(TranscriptLine::plain(
                             LineKind::Thinking,
                             truncate(&thinking, MAX_RESULT_CHARS),
                         ));
@@ -186,17 +212,25 @@ impl UiState {
                     let text = a.text();
                     if !text.is_empty() {
                         // M15: raw markdown stored; the renderer expands it into
-                        // styled rows each frame (crate::markdown::md_to_lines).
-                        self.lines.push(TranscriptLine::assistant_md(text));
+                        // styled rows (via the M16a render cache — once per message).
+                        self.push_line(TranscriptLine::assistant_md(text));
                     }
                     for (_, name, args) in a.tool_calls() {
-                        self.lines.push(TranscriptLine::plain(
+                        self.push_line(TranscriptLine::plain(
                             LineKind::ToolCall,
                             format!("tool-call {} {}", name, summarize_args(args)),
                         ));
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
+                    self.cache_read += a.usage.cache_read;
+                    self.cache_write += a.usage.cache_write;
+                    // pi footer convention: context size = latest call's full prompt.
+                    let prompt = a.usage.input + a.usage.cache_read + a.usage.cache_write;
+                    if prompt > 0 {
+                        self.latest_prompt_tokens = prompt;
+                        self.compacted = false; // fresh counts retire the `?` marker
+                    }
                 }
                 Message::ToolResult(t) => {
                     let body = t
@@ -210,7 +244,7 @@ impl UiState {
                         })
                         .collect::<String>();
                     let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
-                    self.lines.push(TranscriptLine::expandable(
+                    self.push_line(TranscriptLine::expandable(
                         if t.is_error {
                             LineKind::ToolResultErr
                         } else {
@@ -246,6 +280,9 @@ impl UiState {
             AgentEvent::CompactionFinished => {
                 self.status = "context compacted".into();
                 self.push_system("── compaction finished ──");
+                // Context size is now unknown until the next provider response
+                // (pi footer: render `?` for the context percentage in this window).
+                self.compacted = true;
             }
             AgentEvent::AgentEnd { .. } => {
                 // Flush any dangling stream buffer (error paths skip MessageEnd).
@@ -263,8 +300,13 @@ impl UiState {
     }
 
     fn push_system(&mut self, text: impl Into<String>) {
-        self.lines
-            .push(TranscriptLine::plain(LineKind::System, text));
+        self.push_line(TranscriptLine::plain(LineKind::System, text));
+    }
+
+    /// Single mutation point for transcript appends. Ids come from the line itself
+    /// (unique by construction, M16a); kept as a choke point for future hooks.
+    fn push_line(&mut self, line: TranscriptLine) {
+        self.lines.push(line);
     }
 }
 
