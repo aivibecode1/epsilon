@@ -67,7 +67,7 @@ plus negative pins for gone/dated ids.
   now passes the provider name. Fixed at the single call site via the shared path.
 - `App::request_live(force)` replaces `fetch_live_for_selected`: stage-aware target
   resolution (stage 2's provider, else highlighted stage-1 row), once-per-session
-  dedupe via `live_fetched`, one-fetch-in-flight guard. `force=true` (Ctrl+F)
+  dedupe via `live_fetched`, one-fetch-in-flight guard. `force=true` (Ctrl+F then; Ctrl+G since M23)
   retries and surfaces failures; auto-fetch is quiet on failure and never refetches.
 - Auto-fire hooks: `/models` open, Ctrl+M open, and Enter-descent into a provider
   all call `request_live(false)` (opencode/Hermes convention: the list you are

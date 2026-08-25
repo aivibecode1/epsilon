@@ -131,17 +131,26 @@ pub fn live_listing_available(provider: &str) -> bool {
 /// env vars stay as the fallback for CI and users who prefer them. An empty
 /// stored key is treated as absent.
 pub fn resolve_api_key(provider: &str) -> Option<String> {
-    if let Some(cred) = crate::auth::load_credentials_in(&crate::auth::global_dir()?).get(provider)
-    {
+    resolve_api_key_in(&crate::auth::global_dir()?, provider, &|name| {
+        std::env::var_os(name).map(|v| v.to_string_lossy().into_owned())
+    })
+}
+
+/// The precedence core, with the store directory and env lookup injected so
+/// tests can pin stored-wins/env-fallback without touching `$HOME`.
+fn resolve_api_key_in(
+    dir: &std::path::Path,
+    provider: &str,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if let Some(cred) = crate::auth::load_credentials_in(dir).get(provider) {
         let k = cred.key.trim();
         if !k.is_empty() {
             return Some(k.to_string());
         }
     }
     let env_key = lookup_model_first_env(provider)?;
-    std::env::var_os(env_key)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string_lossy().into_owned())
+    env_lookup(env_key).filter(|v| !v.is_empty())
 }
 
 /// The canonical env var of a provider, taken from any catalog row of that
@@ -234,6 +243,57 @@ pub async fn live_models(provider: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_api_key_stored_wins_then_env_fallback() {
+        // Injected dir + env lookup: no $HOME touched, no env::set_var needed
+        // (that's forbidden under unsafe_code=forbid in edition 2024).
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let env = |want: &'static str| {
+            move |name: &str| {
+                if name == want {
+                    Some("env-key".to_string())
+                } else {
+                    None
+                }
+            }
+        };
+
+        // Neither present -> None.
+        let none: Option<String> = None;
+        assert_eq!(
+            resolve_api_key_in(dir, "anthropic", &|_| none.clone()),
+            None,
+            "no store, no env"
+        );
+
+        // Env only -> env value.
+        assert_eq!(
+            resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
+            Some("env-key".into())
+        );
+
+        // Stored beats env.
+        crate::auth::save_credential_in(dir, "anthropic", "stored-key").expect("save");
+        assert_eq!(
+            resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
+            Some("stored-key".into()),
+            "stored credential must win over the env var"
+        );
+
+        // Blank stored key falls back to env (trim-then-check contract). The
+        // store refuses blank keys, so simulate a legacy/corrupt file directly.
+        std::fs::write(
+            crate::auth::auth_path_in(dir),
+            serde_json::json!({ "anthropic": { "type": "api", "key": "   " } }).to_string(),
+        )
+        .expect("write legacy blank key");
+        assert_eq!(
+            resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
+            Some("env-key".into())
+        );
+    }
 
     #[test]
     fn lookup_is_exact_match() {

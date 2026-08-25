@@ -17,7 +17,7 @@ the command palette, and future list UIs.
   and a model count; sorted auth-ready-first then alphabetical.
 - Enter descends into stage 2 (that provider's models, fuzzy-filtered as you type,
   active model floated to top); Esc walks back a stage before closing.
-- Ctrl+F live-fetch retained on stage 2 (fetches that provider's live catalog).
+- Ctrl+F live-fetch retained on stage 2 at the time (since M23: Ctrl+F stars a favorite, Ctrl+G refreshes).
 - The legacy single-list `build_rows` remains for `/model <id>` direct application
   and recents handling.
 

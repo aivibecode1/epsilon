@@ -57,7 +57,8 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
   honored at the single shared call path.
 - **Auto-refresh picker** (opencode/Hermes convention): opening `/models` (or
   Ctrl+M) and descending into a provider auto-fetch that provider's live list
-  once per session; Ctrl+F still force-refreshes. Live ids merge into both
+  once per session; Ctrl+F force-refreshed at the time (since M23 that key
+  stars a favorite and Ctrl+G refreshes). Live ids merge into both
   picker stages under their own provider group, no duplicates against bundled
   rows.
 - **Clippy zero under `--features real --all-targets` too**: M19's fixture
@@ -140,8 +141,9 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
 - **Keybind parity sweep** (opencode keybind.ts / pi keybindings.ts defaults):
   Ctrl+A/E line home/end, Ctrl+B/F char left/right, Alt+B/F and Alt+←/→ word jumps,
   Alt+Backspace word kill, Ctrl+D forward delete, Ctrl+K kill-to-line-end (kill-ring
-  integrated), Ctrl+. redo (new redo rail in undo.rs; divergent push clears it),
-  F2 cycles recent models.
+  integrated), Ctrl+. redo (new redo rail in undo.rs; divergent push clears it).
+  (An "F2 cycles recents" claim in this entry was aspirational and never shipped;
+  F2 arrived in M23 cycling favorites.)
 - Tests: epsilon-tui 79 green (12 new key-path regressions), epsilon-llm 24 green
   under `--features real` (SSE decoder fixtures, catalog routing/auth invariants,
   current-generation guards).

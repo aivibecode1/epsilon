@@ -30,7 +30,7 @@ pub struct StoredCredential {
 }
 
 /// `auth.json` inside a config dir (opencode's file name and location).
-fn auth_path_in(config_dir: &Path) -> PathBuf {
+pub(crate) fn auth_path_in(config_dir: &Path) -> PathBuf {
     config_dir.join("auth.json")
 }
 
@@ -225,5 +225,19 @@ mod tests {
             "blank keys are rejected at write time"
         );
         assert!(load_credentials_in(dir).is_empty(), "nothing was persisted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_file_is_owner_only_on_unix() {
+        // The M22 doc/CHANGELOG claim "0600" must hold; the write-side
+        // set_permissions result is ignored in save (best-effort), so pin the
+        // observable mode instead of the call.
+        use std::os::unix::fs::MetadataExt as _;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let path = save_credential_in(dir, "anthropic", "sk-test").expect("save");
+        let mode = std::fs::metadata(path).expect("stat").mode() & 0o777;
+        assert_eq!(mode, 0o600, "auth.json must be owner-read/write only");
     }
 }

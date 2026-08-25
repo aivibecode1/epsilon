@@ -79,7 +79,7 @@ opencode `prompt.autocomplete.*` keybinds):
 
 Ctrl+A/E line home/end · Ctrl+B/F char left/right · Alt+B/F + Alt+←/→ word jumps ·
 Alt+Backspace word kill · Ctrl+D forward delete · Ctrl+K kill-to-line-end (feeds
-the kill ring) · Ctrl+. redo · F2 cycles recent models. All multi-line aware
+the kill ring) · Ctrl+. redo. All multi-line aware
 (`editor_ops::line_home/line_end/kill_to_line_end`). Ctrl+J newline, Ctrl+W/U/Y,
 Ctrl+M picker, Ctrl+P palette unchanged.
 

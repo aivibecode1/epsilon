@@ -57,13 +57,13 @@ and real providers need a build with `--features real`.
 | M10b | Release packaging: real providers, model plumbing, 8.8 MB binary, changelog + tag `v0.1.0` | ✅ shipped |
 | M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
 | M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
-| M13 | Polish: live catalog fetch (Ctrl+F in /models), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
+| M13 | Polish: live catalog fetch (Ctrl+F in /models at the time; that key is Ctrl+F=favorite and Ctrl+G=refresh since M23), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
 | M14 | Harness maturity: plain `epsilon` launches the TUI by default (`--demo` preserved), provider auto-detect from env keys with faux fallback + banner, slash-command repairs on the real key path (`/clear` `/skills` `/quit`, unknown-command errors) | ✅ shipped |
 | M15 | TUI usability overhaul porting pi/opencode patterns — picker scroll window (fixes unreachable rows), unicode editor ops, pulldown-cmark transcript, spinner+elapsed, hint bar, mouse wheel, bracketed paste, slash autocomplete; 146 tests | ✅ shipped |
 | M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode | ✅ shipped |
 | M16b | Editor v2: Emacs kill-ring (Ctrl+U/W/Y with accumulation + yank-pop), atomic paste markers (`[paste #N +L lines]`, expand on submit, marker-aware Ctrl+W), multi-line buffer (Ctrl+J newline), persistent prompt history (500 entries) | ✅ shipped |
 | M16c | Picker/palette parity: two-stage model picker (providers → models, fuzzy-filtered), command palette (Ctrl+P) dispatching all commands, draft stash across dialogs, pi fuzzy matcher; 187 tests | ✅ shipped |
-| M17 | **pi-agent port**: direct per-provider HTTP replaces genai (Anthropic/OpenAI-compat/Gemini wires), catalog v2 regenerated from live models.dev (current 2026 generations, REAL prices), slash autocomplete with arrow-key selection + descriptions (pi pattern), keybind parity sweep (Ctrl+A/E/B/F/D/K, Alt+B/F/D, Ctrl+. redo, F2 recents); full attribution in dev log | ✅ shipped |
+| M17 | **pi-agent port**: direct per-provider HTTP replaces genai (Anthropic/OpenAI-compat/Gemini wires), catalog v2 regenerated from live models.dev (current 2026 generations, REAL prices), slash autocomplete with arrow-key selection + descriptions (pi pattern), keybind parity sweep (Ctrl+A/E/B/F/D/K, Alt+B/F/D, Ctrl+. redo); full attribution in dev log | ✅ shipped |
 | M18 | Alignment pass: docs audit (M14 log backfilled, beginner primer, stale genai/MSRV claims fixed), pi-alignment report + session search closed (`/search` command, 7 new tests), research pass 2 with community signal, **plan mode** imported from opencode (`--plan` read-only runs, monotonic-deny boundary, live-verified) | ✅ shipped |
 | M19 | Audit remediation: all 8 improvement plans executed — provider stop-reason fidelity on all three wires, loop integrity (latch reset, steering requeue, UTF-8 safety), serve-mode bearer token + Host guard, deny-beats-memory + grep secret-file skip, wire fixture tests in CI, byte-safe SSE buffer, ext event forwarding wired, CLI `RunParams` composition cleanup | ✅ shipped |
 | M20 | Catalog regeneration + live picker refresh: `scripts/regen_catalog.py` generates the catalog from models.dev (383 rows vs ~40 curated — DIRECTION-05 closed), live `GET /models` fetch FIXED (M17's Ctrl+F passed a model id where a provider name was required) and AUTO-FIRES on picker open / provider descent (opencode/Hermes convention), live ids merged into both picker stages | ✅ shipped |
@@ -72,7 +72,8 @@ and real providers need a build with `--features real`.
 | M23 | Picker favorites (DIRECTION-06): star any model with Ctrl+F inside the picker (★ column, Favorites section above Recents), F2/Shift+F2 cycle favorites forward/backward from the editor (pi cycling semantics over opencode's favorite list); persisted in config `[picker] favorite` | ✅ shipped |
 | future | MCP TTL+grace probes or ADR amendment · fallback chains build-or-defer · weekly catalog-drift CI PR · footer thinking-level indicator · per-favorite thinking level (pi scoped models) | open |
 
-239 tests, zero clippy warnings in both build configurations. Every milestone has a dev log
+235 tests offline (247 with --features real), zero clippy warnings in both build
+configurations. Every milestone has a dev log
 under [`docs/milestones/`](docs/milestones).
 
 ---
@@ -105,7 +106,7 @@ and CI verifies it), any of stable-msvc/stable-gnu/musl targets.
 ```sh
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # 234 tests, offline & free
+cargo test --workspace           # ~235 tests, offline & free
 epsilon                          # interactive TUI (auto-detects your API keys)
 epsilon auth login anthropic     # store a key once — no env vars needed
 cargo run -p epsilon-cli -- --demo   # scripted offline demo

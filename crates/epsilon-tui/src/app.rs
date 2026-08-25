@@ -579,15 +579,13 @@ impl App {
                     self.trust_review_pending = false;
                     // Persist the acceptance (M22 fix): without this the changed
                     // config re-prompted on every run forever. Best-effort — a
-                    // failed write keeps the gate active for the next run.
-                    match epsilon_core::config::current_project_config_hash_in(
-                        std::path::Path::new("."),
-                    ) {
+                    // failed write keeps the gate active for the next run. The
+                    // workspace root (captured at startup) is the anchor, never
+                    // a bare "." which would follow any cwd change.
+                    let ws = self.workspace_root.clone();
+                    match epsilon_core::config::current_project_config_hash_in(&ws) {
                         Some(hash) => {
-                            match epsilon_core::config::accept_project_config_hash_in(
-                                std::path::Path::new("."),
-                                &hash,
-                            ) {
+                            match epsilon_core::config::accept_project_config_hash_in(&ws, &hash) {
                                 Ok(path) => self.ui.push_notice(format!(
                                     "project config accepted for this workspace (saved to {})",
                                     path.display()
@@ -2660,6 +2658,20 @@ mod tests {
             KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT),
         );
         assert_eq!(app.model_id, "deepseek-chat", "shift = backward");
+
+        // Persistence side effects: cycling routes through apply_model, so the
+        // saved model id AND the recents list must reflect the last switch.
+        assert_eq!(
+            epsilon_core::config::load_model_id(),
+            Some("deepseek-chat".to_string()),
+            "cycle persisted the active model like any apply_model call"
+        );
+        let recents = epsilon_core::config::load_recent_models();
+        assert_eq!(
+            recents.first().map(String::as_str),
+            Some("deepseek-chat"),
+            "cycled-to model recorded as most recent"
+        );
     }
 
     #[tokio::test]

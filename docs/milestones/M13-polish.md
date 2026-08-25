@@ -7,7 +7,7 @@ what remains requires hardware we do not have (a Unix host) or is genuinely futu
 
 - **Live model listing** (`real` feature): `catalog::live_models(hint)` resolves any
   id to its provider family via genai's `AdapterKind::from_model` and fetches the
-  provider's `/models` list. The TUI picker gains **Ctrl+F**: fetches for the
+  provider's `/models` list. The TUI picker gains **Ctrl+F** (historical: since M23 this key stars a favorite; live refresh is Ctrl+G): fetches for the
   highlighted row's provider, merges unknown ids under a `⟳ live` group (known ids
   dedupe into the catalog section), one fetch in flight at a time. The CLI injects the
   fetcher via a new `TuiConfig.live` hook so the TUI stays decoupled from genai.
