@@ -446,6 +446,51 @@ impl Default for DirectProvider {
     }
 }
 
+/// Attempt one direct-HTTP stream for `model_id` with an explicit key.
+///
+/// Returns the live event stream on success, or a classified failure detail
+/// when the attempt failed BEFORE streaming started (bad model, auth, HTTP
+/// error). This is the seam [`crate::fallback::FallbackProvider`] uses to
+/// decide whether to try the next candidate in its chain.
+#[cfg(feature = "real")]
+pub async fn try_stream_direct(
+    model_id: &str,
+    key: &str,
+    ctx: crate::stream_fn::LlmContext,
+) -> Result<BoxEventStream, String> {
+    let wire = wire_for(model_id)?;
+    let mut req = http_client()
+        .post(wire.endpoint(model_id))
+        .header("content-type", "application/json")
+        .header("accept", "text/event-stream");
+    for (name, value) in wire.headers(key) {
+        req = req.header(name, value);
+    }
+    let body = wire.request_body(model_id, &ctx)?;
+    let response = req
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let head = response.text().await.unwrap_or_default();
+        let clipped: String = head.chars().take(400).collect();
+        return Err(format!("HTTP {status}: {clipped}"));
+    }
+
+    let st = HttpEventStream::new(model_id, "", wire.finalize_usage_from_tail());
+    Ok(Box::new(WireStream {
+        wire,
+        inner: response,
+        decoder: SseDecoder::new(),
+        line_buf: Vec::new(),
+        st,
+        queued: std::collections::VecDeque::new(),
+        finished: false,
+    }))
+}
+
 #[async_trait::async_trait]
 impl StreamFn for DirectProvider {
     async fn stream(&self, model: &ModelRef, ctx: LlmContext) -> BoxEventStream {

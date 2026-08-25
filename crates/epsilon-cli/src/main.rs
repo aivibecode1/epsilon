@@ -44,6 +44,9 @@ struct Args {
     provider: Option<Provider>,
     /// `--model` override; None falls back to saved config then the catalog default.
     model_id: Option<String>,
+    /// `--fallback <model>`: extra candidates tried in order when the primary
+    /// fails with a retryable error (rate limit, 5xx, network). Repeatable.
+    fallbacks: Vec<String>,
     /// `--resume <path>` / `--continue`: seed history from a prior session file.
     resume: Resume,
     /// `--plan`: read-only research run (opencode plan-agent parity) — write/edit
@@ -140,6 +143,7 @@ fn parse_args() -> Args {
             confinement: epsilon_tools::Confinement::Auto,
             provider: None,
             model_id: None,
+            fallbacks: Vec::new(),
             resume: Resume::default(),
             plan_mode: false,
             auto_approve: false,
@@ -160,6 +164,7 @@ fn parse_args() -> Args {
     // None = not given on the command line; resolution falls back to the saved
     // config value, then the catalog default (ADR-018 precedence).
     let mut model_id: Option<String> = None;
+    let mut fallbacks: Vec<String> = Vec::new();
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
@@ -239,6 +244,14 @@ fn parse_args() -> Args {
                     die("--model requires a model id (e.g. claude-sonnet-4-5)")
                 }));
             }
+            "--fallback" => {
+                i += 1;
+                fallbacks.push(
+                    raw.get(i).cloned().unwrap_or_else(|| {
+                        die("--fallback requires a model id (e.g. deepseek-chat)")
+                    }),
+                );
+            }
             "--demo" => mode = Mode::Demo,
             "--plan" => plan_mode = true,
             "--yes" => auto_approve = true,
@@ -294,6 +307,7 @@ fn parse_args() -> Args {
         confinement,
         provider,
         model_id,
+        fallbacks,
         resume,
         plan_mode,
         auto_approve,
@@ -615,7 +629,17 @@ async fn dispatch(args: Args) -> i32 {
             diag.push(format!(
                 "provider: real (direct HTTP) · model: {model_id} · key {key_source}"
             ));
-            Arc::new(PanicGuard(epsilon_llm::DirectProvider::new()))
+            // DIRECTION-03: with --fallback, wrap in the chain provider
+            // (primary first, candidates after; per-turn primary restoration).
+            if args.fallbacks.is_empty() {
+                Arc::new(PanicGuard(epsilon_llm::DirectProvider::new()))
+            } else {
+                diag.push(format!("fallbacks: {}", args.fallbacks.join(" -> ")));
+                Arc::new(PanicGuard(epsilon_llm::fallback::FallbackProvider::new(
+                    std::iter::once(model_id.as_str())
+                        .chain(args.fallbacks.iter().map(String::as_str)),
+                )))
+            }
         }
         #[cfg(not(feature = "real"))]
         unreachable!("use_real cannot be true without the real feature")
@@ -626,6 +650,10 @@ async fn dispatch(args: Args) -> i32 {
         );
         Arc::new(PanicGuard(FauxProvider::new(steps)))
     };
+    // Silence the never-read warning in faux builds: fallbacks only matter on
+    // the real path (see the use_real branch above).
+    #[cfg(not(feature = "real"))]
+    let _ = &args.fallbacks;
     // Startup notices flush here, in order, once (plan 008).
     diag.flush_stderr();
 
