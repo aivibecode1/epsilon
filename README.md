@@ -1,5 +1,9 @@
 # Epsilon
 
+<p align="center">
+  <img src="Logo.png" alt="Epsilon logo" width="160">
+</p>
+
 **A coding-agent harness written in Rust** — a faithful port of [pi](https://pi.dev)'s proven
 agent loop, session format, and tool pipeline, selectively hardened with the best ideas from
 three other production harnesses we audited at source level:
