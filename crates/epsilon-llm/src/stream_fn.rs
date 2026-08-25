@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures_util::FutureExt;
 use std::panic::AssertUnwindSafe;
 
-use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+use epsilon_contracts::message::{AssistantMessage, Message, StopReason, ThinkingLevel, Usage};
 use epsilon_contracts::stream::StreamEvent;
 use epsilon_contracts::tool::ToolDescriptor;
 
@@ -32,6 +32,10 @@ pub struct LlmContext {
     pub messages: Vec<Message>,
     /// Tools offered for this call.
     pub tools: Vec<ToolDescriptor>,
+    /// Requested thinking/reasoning effort (pi's per-call `reasoning` option).
+    /// Wires map/clamp this to provider-native parameters; `Off` sends nothing
+    /// unless the wire must explicitly disable (e.g. OpenRouter).
+    pub thinking_level: ThinkingLevel,
 }
 
 /// A stream of [`StreamEvent`]s terminating with exactly one `Done`.
@@ -180,6 +184,7 @@ mod tests {
                     system_prompt: String::new(),
                     messages: vec![],
                     tools: vec![],
+                    thinking_level: ThinkingLevel::Off,
                 },
             )
             .await;
@@ -205,6 +210,7 @@ mod tests {
                     system_prompt: String::new(),
                     messages: vec![],
                     tools: vec![],
+                    thinking_level: ThinkingLevel::Off,
                 },
             )
             .await;

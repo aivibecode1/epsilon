@@ -142,6 +142,7 @@ impl ProviderWire for OpenAiCompatWire {
             // pi: request usage explicitly; several providers omit it otherwise.
             "stream_options": {"include_usage": true},
         });
+        apply_thinking(&mut body, model, ctx.thinking_level);
         if !ctx.tools.is_empty() {
             let tools: Vec<serde_json::Value> = ctx
                 .tools
@@ -240,5 +241,59 @@ impl ProviderWire for OpenAiCompatWire {
 
     fn finalize_usage_from_tail(&self) -> bool {
         false
+    }
+}
+
+/// Apply the shared thinking ladder to an OpenAI-compatible request body
+/// (pi openai-completions.ts:747-840, reduced to the families our catalog
+/// actually routes): OpenAI-style `reasoning_effort` for gpt/o-series/xai,
+/// nested `reasoning.effort` for OpenRouter, `enable_thinking` for zai,
+/// `thinking.type` for deepseek. Unknown ids get plain `reasoning_effort`
+/// only when the level is on; `Off` sends nothing (API defaults are off).
+fn apply_thinking(
+    body: &mut serde_json::Value,
+    model: &str,
+    level: epsilon_contracts::ThinkingLevel,
+) {
+    if !level.enabled() {
+        return;
+    }
+    let effort = effort_str(level);
+    if model.starts_with("openrouter/") || model.contains("/openrouter/") {
+        body["reasoning"] = json!({ "effort": effort });
+    } else if model.starts_with("deepseek") && model != "deepseek-chat" {
+        // deepseek-reasoner / v4 reasoning rows take a thinking switch + effort.
+        body["thinking"] = json!({"type": "enabled"});
+        body["reasoning_effort"] = json!(effort);
+    } else if model.starts_with("glm") || model.starts_with("zai/") {
+        // Z.ai GLM family: explicit enable + effort.
+        body["thinking"] = json!({"type": "enabled", "clear_thinking": false});
+        body["reasoning_effort"] = json!(effort);
+    } else if model.starts_with("kimi") {
+        // Moonshot kimi-thinking rows honor effort; others ignore it harmlessly.
+        if model.contains("thinking") {
+            body["reasoning_effort"] = json!(effort);
+        }
+    } else if ["o1", "o3", "o4"].iter().any(|p| model.starts_with(p)) || model.starts_with("gpt-5")
+    {
+        body["reasoning_effort"] = json!(effort);
+    } else {
+        // Unknown/other compat models: send the standard knob when enabled;
+        // providers that lack it reject loudly rather than silently misroute
+        // (same posture as pi's default branch).
+        body["reasoning_effort"] = json!(effort);
+    }
+}
+
+/// Ladder -> OpenAI-style effort string (`xhigh` included; pi maps 1:1).
+fn effort_str(level: epsilon_contracts::ThinkingLevel) -> &'static str {
+    use epsilon_contracts::ThinkingLevel as T;
+    match level {
+        T::Off => "off",
+        T::Minimal => "minimal",
+        T::Low => "low",
+        T::Medium => "medium",
+        T::High => "high",
+        T::XHigh | T::Max => "xhigh",
     }
 }

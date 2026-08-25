@@ -126,3 +126,87 @@ fn multi_byte_char_split_across_chunks_survives() {
     assert_eq!(decoded.len(), 1);
     assert!(decoded[0].contains("🌍 done"), "{}", decoded[0]);
 }
+
+// ---- M21: thinking-level request mapping (pi parity on the hottest path) ----
+
+use epsilon_contracts::ThinkingLevel;
+use epsilon_contracts::tool::ToolDescriptor;
+use epsilon_llm::LlmContext;
+
+fn thinking_ctx(level: ThinkingLevel) -> LlmContext {
+    LlmContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        tools: vec![ToolDescriptor {
+            name: "bash".into(),
+            label: "bash".into(),
+            description: "run shell".into(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: epsilon_contracts::ExecutionMode::Parallel,
+        }],
+        thinking_level: level,
+    }
+}
+
+#[test]
+fn anthropic_adaptive_thinking_and_effort_when_enabled() {
+    let w = AnthropicWire;
+    let body = w
+        .request_body("claude-opus-4-8", &thinking_ctx(ThinkingLevel::High))
+        .unwrap();
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["output_config"]["effort"], "high");
+    // Off sends nothing at all.
+    let off = w
+        .request_body("claude-opus-4-8", &thinking_ctx(ThinkingLevel::Off))
+        .unwrap();
+    assert!(off.get("thinking").is_none(), "off must omit the key");
+    assert!(off.get("output_config").is_none());
+}
+
+#[test]
+fn openai_compat_reasoning_effort_by_family() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1",
+        env_key: None,
+    };
+    // OpenAI-style family.
+    let gpt = w
+        .request_body("gpt-5.6", &thinking_ctx(ThinkingLevel::XHigh))
+        .unwrap();
+    assert_eq!(gpt["reasoning_effort"], "xhigh");
+    // OpenRouter nested object.
+    let or = w
+        .request_body(
+            "openrouter/anthropic/claude-opus-5",
+            &thinking_ctx(ThinkingLevel::Medium),
+        )
+        .unwrap();
+    assert_eq!(or["reasoning"]["effort"], "medium");
+    // Off omits everything.
+    let off = w
+        .request_body("gpt-5.6", &thinking_ctx(ThinkingLevel::Off))
+        .unwrap();
+    assert!(off.get("reasoning_effort").is_none());
+    assert!(off.get("reasoning").is_none());
+}
+
+#[test]
+fn google_thinking_config_with_level() {
+    let w = GoogleWire;
+    let body = w
+        .request_body("gemini-3.7-flash", &thinking_ctx(ThinkingLevel::Low))
+        .unwrap();
+    assert_eq!(
+        body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        serde_json::json!("LOW")
+    );
+    assert_eq!(
+        body["generationConfig"]["thinkingConfig"]["includeThoughts"],
+        serde_json::json!(true)
+    );
+    let off = w
+        .request_body("gemini-3.7-flash", &thinking_ctx(ThinkingLevel::Off))
+        .unwrap();
+    assert!(off.get("generationConfig").is_none());
+}

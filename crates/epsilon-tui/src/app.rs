@@ -517,6 +517,15 @@ impl App {
         false
     }
 
+    /// Apply a thinking level (shared by /think and Ctrl+T; pi's
+    /// cycleThinkingLevel + status line).
+    fn set_thinking(&mut self, agent: &Arc<Agent>, level: epsilon_contracts::ThinkingLevel) {
+        agent.set_thinking_level(level);
+        // Direct push: slash replies render this frame (see run_command docs).
+        self.ui
+            .push_notice(format!("thinking level: {}", level.as_str()));
+    }
+
     /// Execute a parsed slash command; returns `true` to quit the session.
     /// Execute a parsed slash command; returns `true` to quit the session.
     ///
@@ -536,9 +545,28 @@ impl App {
                 self.request_live(false);
             }
             crate::picker::Command::Model(id) => self.apply_model(agent, id),
+            crate::picker::Command::Think(arg) => {
+                match arg.as_deref().map(str::trim) {
+                    None => {
+                        let cur = agent.thinking_level();
+                        self.notice(format!("thinking level: {}", cur.as_str()));
+                    }
+                    Some(word) => match epsilon_contracts::ThinkingLevel::parse(word) {
+                        Some(level) => self.set_thinking(agent, level),
+                        None => {
+                            // Direct push: slash replies render this frame.
+                            self.ui.push_notice(format!(
+                                "unknown level '{word}' - use: {}",
+                                levels_help()
+                            ));
+                        }
+                    },
+                }
+            }
             crate::picker::Command::Help => {
                 for line in [
-                    "commands: /models · /model <id> · /skills · /search <query> · /clear · /quit · /help",
+                    "commands: /models · /model <id> · /think [level] · /skills · /search <query> · /clear · /quit · /help",
+                    "thinking: Ctrl+T cycles · current level shown in notices",
                     "keys: Enter submit · Esc aborts a run (quits when idle) · x expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker",
                 ] {
@@ -1185,6 +1213,13 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             }
             false
         }
+        KeyCode::Char('t' | 'T') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Cycle thinking level (pi app.thinking.cycle, Shift+Tab there —
+            // Shift+Tab is unreliable across terminals, Ctrl+T is not taken).
+            let next = agent.thinking_level().next();
+            app.set_thinking(agent, next);
+            false
+        }
         KeyCode::Char('p' | 'P') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // M16c: command palette (opencode prompt.palette).
             if !app.palette_open && !app.picker_open {
@@ -1378,6 +1413,15 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         }
         _ => false,
     }
+}
+
+/// Comma list of valid thinking levels for error messages.
+fn levels_help() -> String {
+    epsilon_contracts::ThinkingLevel::ALL
+        .iter()
+        .map(|l| l.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Contextual key-hint bar (pi's keybinding-hints pattern).
@@ -2276,6 +2320,55 @@ mod tests {
         // Esc again closes entirely and unstashes (nothing stashed here).
         assert!(!handle_key(&mut app, &agent, key(KeyCode::Esc)));
         assert!(!app.picker_open);
+    }
+
+    // ---- M21: thinking level surface -------------------------------------------------
+
+    #[tokio::test]
+    async fn think_command_sets_levels_and_reports_unknown() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        assert!(!type_and_enter(&mut app, &agent, "/think high"));
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High
+        );
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(texts.iter().any(|t| t.contains("thinking level: high")));
+
+        // Bare /think reports the current level without changing it.
+        assert!(!type_and_enter(&mut app, &agent, "/think"));
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High
+        );
+
+        // Unknown level is corrected, not sent to the model.
+        assert!(!type_and_enter(&mut app, &agent, "/think banana"));
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High
+        );
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(texts.iter().any(|t| t.contains("unknown level 'banana'")));
+    }
+
+    #[tokio::test]
+    async fn ctrl_t_cycles_the_thinking_ladder() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::Off
+        );
+        for _ in 0..3 {
+            handle_key(&mut app, &agent, ctrl(KeyCode::Char('t')));
+        }
+        // off -> minimal -> low -> medium
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::Medium
+        );
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(texts.iter().any(|t| t.contains("thinking level: medium")));
     }
 
     // ---- M17b: slash autocomplete navigation + selection ---------------------------

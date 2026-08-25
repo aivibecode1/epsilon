@@ -185,6 +185,7 @@ mod tests {
             system_prompt: String::new(),
             messages: vec![],
             tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
         }
     }
 

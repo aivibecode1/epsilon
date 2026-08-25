@@ -306,6 +306,7 @@ mod tests {
             system_prompt: "s".into(),
             messages: vec![],
             tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
         }
     }
 

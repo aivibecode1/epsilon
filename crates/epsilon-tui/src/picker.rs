@@ -160,6 +160,10 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "set model by id, e.g. /model kimi-k2.6",
     },
     SlashItem {
+        value: "/think ",
+        description: "thinking effort: off..max (Ctrl+T cycles)",
+    },
+    SlashItem {
         value: "/skills",
         description: "list discovered skills",
     },
@@ -200,6 +204,8 @@ pub enum Command {
     Models,
     /// Set the model id directly (everything after `/model `).
     Model(String),
+    /// Set thinking effort (level after `/think `; bare `/think` shows current).
+    Think(Option<String>),
     /// Show the command reference.
     Help,
     /// Clear the transcript pane.
@@ -229,6 +235,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
     match head.to_ascii_lowercase().as_str() {
         "models" | "model" if tail.is_empty() => Some(Command::Models),
         "model" => Some(Command::Model(tail.to_string())),
+        "think" => Some(Command::Think(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),

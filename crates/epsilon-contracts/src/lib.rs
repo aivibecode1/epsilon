@@ -18,7 +18,9 @@ pub mod tool;
 pub use agent_event::{AgentEvent, PermissionDecision, PermissionRequest, TurnEndReason};
 pub use content::{ContentBlock, ImageRef, UserContent};
 pub use ids::{MessageId, SessionId, ToolCallId, new_id};
-pub use message::{AssistantMessage, CustomMessage, Message, StopReason, ToolResultMessage, Usage};
+pub use message::{
+    AssistantMessage, CustomMessage, Message, StopReason, ThinkingLevel, ToolResultMessage, Usage,
+};
 pub use session_entry::{EntryKind, SessionEntry};
 pub use stream::StreamEvent;
 pub use tool::{

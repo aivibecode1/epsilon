@@ -122,6 +122,8 @@ pub fn summary_context(
     body.push_str("</conversation>\n");
 
     epsilon_llm::LlmContext {
+        // Summarization calls never need reasoning (ADR-007: isolated, cheap).
+        thinking_level: epsilon_contracts::ThinkingLevel::Off,
         system_prompt: SUMMARY_SYSTEM.into(),
         messages: vec![Message::User(epsilon_contracts::message::UserMessage {
             id: epsilon_contracts::new_id("msg"),

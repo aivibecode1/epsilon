@@ -24,7 +24,6 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         env_key: "",
         wire: super::FAUX_WIRE,
     },
-
     // ---- anthropic -------------------------------------------------------------
     ModelInfo {
         id: "claude-fable-5",
@@ -4630,7 +4629,6 @@ pub(super) const CATALOG_ROWS: &[super::ModelInfo] = &[
         env_key: "OPENROUTER_API_KEY",
         wire: super::openai_compat("https://openrouter.ai/api/v1", Some("OPENROUTER_API_KEY")),
     },
-
     // ---- ollama (local, no key; hand-curated: not in models.dev) ----------------------
     ModelInfo {
         id: "llama3.1:8b",

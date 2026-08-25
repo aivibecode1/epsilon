@@ -61,9 +61,10 @@ ledgers.
 | M18 | Alignment pass: docs audit (M14 log backfilled, beginner primer, stale genai/MSRV claims fixed), pi-alignment report + session search closed (`/search` command, 7 new tests), research pass 2 with community signal, **plan mode** imported from opencode (`--plan` read-only runs, monotonic-deny boundary, live-verified) | ✅ shipped |
 | M19 | Audit remediation: all 8 improvement plans executed — provider stop-reason fidelity on all three wires, loop integrity (latch reset, steering requeue, UTF-8 safety), serve-mode bearer token + Host guard, deny-beats-memory + grep secret-file skip, wire fixture tests in CI, byte-safe SSE buffer, ext event forwarding wired, CLI `RunParams` composition cleanup | ✅ shipped |
 | M20 | Catalog regeneration + live picker refresh: `scripts/regen_catalog.py` generates the catalog from models.dev (383 rows vs ~40 curated — DIRECTION-05 closed), live `GET /models` fetch FIXED (M17's Ctrl+F passed a model id where a provider name was required) and AUTO-FIRES on picker open / provider descent (opencode/Hermes convention), live ids merged into both picker stages | ✅ shipped |
-| future | favorites beyond recents · interactive trust re-prompt · session repair wiring decision · weekly catalog-drift CI PR | open |
+| M21 | Thinking fidelity sweep (DIRECTION-04): shared `ThinkingLevel` ladder in contracts, per-wire native mapping (Anthropic adaptive+effort, OpenAI `reasoning_effort`/OpenRouter/zai/deepseek/kimi, Google `thinkingConfig`) with fixture pins, `/think <level>` + Ctrl+T cycle, session-carried like pi; compaction stays Off per ADR-007 | ✅ shipped |
+| future | favorites beyond recents · interactive trust re-prompt · session repair wiring decision · weekly catalog-drift CI PR · footer thinking-level indicator | open |
 
-221 tests · zero clippy warnings (both feature configs) · every milestone committed
+226 tests · zero clippy warnings (both feature configs) · every milestone committed
 with a dev log under [`docs/milestones/`](docs/milestones).
 
 ---
@@ -96,7 +97,7 @@ and CI verifies it), any of stable-msvc/stable-gnu/musl targets.
 ```sh
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # 221 tests, offline & free
+cargo test --workspace           # 226 tests, offline & free
 epsilon                          # interactive TUI (auto-detects your API keys)
 cargo run -p epsilon-cli -- --demo   # scripted offline demo
 cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mode

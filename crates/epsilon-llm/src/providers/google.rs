@@ -112,6 +112,18 @@ impl ProviderWire for GoogleWire {
         if !ctx.system_prompt.is_empty() {
             body["systemInstruction"] = json!({"parts": [{"text": ctx.system_prompt}]});
         }
+        // Thinking config (pi google-generative-ai.ts:386-397): include thoughts
+        // and pass the ladder level directly — Google's enum names match ours
+        // (MINIMAL..HIGH). `Off` sends nothing; Gemini 3 Pro cannot disable
+        // thinking anyway, so omitting the key is the honest default.
+        if ctx.thinking_level.enabled() {
+            body["generationConfig"] = json!({
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingLevel": google_level(ctx.thinking_level),
+                }
+            });
+        }
         if !ctx.tools.is_empty() {
             let decls: Vec<serde_json::Value> = ctx
                 .tools
@@ -199,5 +211,18 @@ impl ProviderWire for GoogleWire {
 
     fn finalize_usage_from_tail(&self) -> bool {
         false
+    }
+}
+
+/// Ladder -> Google `thinkingLevel` enum (uppercase; xhigh/max clamp to HIGH,
+/// pi's google-shared clamping for models that lack those values).
+fn google_level(level: epsilon_contracts::ThinkingLevel) -> &'static str {
+    use epsilon_contracts::ThinkingLevel as T;
+    match level {
+        T::Off => "OFF",
+        T::Minimal => "MINIMAL",
+        T::Low => "LOW",
+        T::Medium => "MEDIUM",
+        T::High | T::XHigh | T::Max => "HIGH",
     }
 }

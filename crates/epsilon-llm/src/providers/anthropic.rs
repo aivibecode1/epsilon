@@ -115,6 +115,17 @@ impl ProviderWire for AnthropicWire {
         if !tools.is_empty() {
             body["tools"] = json!(tools);
         }
+        // Thinking configuration (pi anthropic-messages.ts:1049-1073). Every
+        // Anthropic-API model in the generated catalog is the adaptive-thinking
+        // generation (Claude 4.5+); `Off` sends nothing (API default is off).
+        // ponytail: budget-based `{"type":"enabled","budget_tokens":N}` returns
+        // here if a pre-adaptive Claude row ever enters the catalog.
+        if ctx.thinking_level.enabled() {
+            body["thinking"] = json!({"type": "adaptive", "display": "summarized"});
+            if let Some(effort) = anthropic_effort(ctx.thinking_level) {
+                body["output_config"] = json!({ "effort": effort });
+            }
+        }
         Ok(body)
     }
 
@@ -277,4 +288,17 @@ fn max_output_for(model: &str) -> u64 {
     crate::catalog::lookup_model(model)
         .map(|m| m.max_output_tokens)
         .unwrap_or(16_384)
+}
+
+/// Map the shared ladder onto Anthropic effort values (pi `mapAnthropicEffort`).
+/// `Max` has no native value yet and is dropped (adaptive decides on its own).
+fn anthropic_effort(level: epsilon_contracts::ThinkingLevel) -> Option<&'static str> {
+    use epsilon_contracts::ThinkingLevel as T;
+    match level {
+        T::Off | T::Max => None,
+        T::Minimal | T::Low => Some("low"),
+        T::Medium => Some("medium"),
+        T::High => Some("high"),
+        T::XHigh => Some("xhigh"),
+    }
 }

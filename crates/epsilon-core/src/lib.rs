@@ -230,6 +230,8 @@ pub struct Agent {
     /// Model identifier sent to the provider and rendered in the VOLATILE prompt tier
     /// ("faux-1" until overridden — real providers route on this).
     model_id: Mutex<String>,
+    /// Session thinking level (pi's session.thinkingLevel); rides every run.
+    thinking_level: Mutex<epsilon_contracts::ThinkingLevel>,
     /// Token for the ACTIVE run; cancelled by [`Agent::abort_current_run`]. Tools
     /// receive clones through their `ToolContext` so long-running work bails
     /// cooperatively (M12: closes the never-cancelled-token gap, ADR-010).
@@ -265,6 +267,7 @@ impl Agent {
             summarizer: Mutex::new(None),
             skills: Mutex::new(Vec::new()),
             model_id: Mutex::new("faux-1".into()),
+            thinking_level: Mutex::new(epsilon_contracts::ThinkingLevel::Off),
             run_token: Mutex::new(None),
         })
     }
@@ -276,6 +279,19 @@ impl Agent {
         if let Ok(mut slot) = self.model_id.lock() {
             *slot = model_id.into();
         }
+    }
+
+    /// Set the thinking/reasoning effort for subsequent runs (pi's per-session
+    /// `thinkingLevel`; provider wires map it to native parameters).
+    pub fn set_thinking_level(&self, level: epsilon_contracts::ThinkingLevel) {
+        if let Ok(mut slot) = self.thinking_level.lock() {
+            *slot = level;
+        }
+    }
+
+    /// Current thinking level (session state, like the model id).
+    pub fn thinking_level(&self) -> epsilon_contracts::ThinkingLevel {
+        self.thinking_level.lock().map(|l| *l).unwrap_or_default()
     }
 
     /// Attach discovered skills for the CONTEXT-tier catalog (M11 wiring).
@@ -826,6 +842,7 @@ impl Agent {
         );
 
         let ctx = epsilon_llm::LlmContext {
+            thinking_level: self.thinking_level(),
             system_prompt,
             messages: Self::convert_to_llm(&history),
             tools: self.tools.descriptors(),

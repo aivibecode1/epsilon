@@ -5,6 +5,77 @@ use serde::{Deserialize, Serialize};
 use crate::content::{ContentBlock, UserContent};
 use crate::ids::{MessageId, ToolCallId};
 
+/// How much reasoning the model should do before answering (pi's `ThinkingLevel`).
+///
+/// One shared ladder for every wire; each provider maps/clamps it to its own
+/// parameter shape at request-build time (`ProviderWire::apply_thinking`). The
+/// level rides in [`crate::LlmContext`](epsilon context) per call and persists
+/// across turns like the model id.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    /// No extended thinking requested.
+    #[default]
+    Off,
+    /// Smallest useful budget.
+    Minimal,
+    /// Low effort.
+    Low,
+    /// Balanced default for hard tasks.
+    Medium,
+    /// High effort.
+    High,
+    /// Extra-high (Anthropic `xhigh`, OpenAI `xhigh`).
+    XHigh,
+    /// Maximum the provider allows.
+    Max,
+}
+
+impl ThinkingLevel {
+    /// All levels in ascending order (pi's `THINKING_LEVELS`).
+    pub const ALL: [ThinkingLevel; 7] = [
+        ThinkingLevel::Off,
+        ThinkingLevel::Minimal,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+        ThinkingLevel::XHigh,
+        ThinkingLevel::Max,
+    ];
+
+    /// Next level in the ladder, wrapping to `Off` (pi's cycle semantics).
+    pub fn next(&self) -> ThinkingLevel {
+        let i = Self::ALL.iter().position(|l| l == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// Lowercase display name (`"off"`, `"xhigh"`, ...).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThinkingLevel::Off => "off",
+            ThinkingLevel::Minimal => "minimal",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::XHigh => "xhigh",
+            ThinkingLevel::Max => "max",
+        }
+    }
+
+    /// Parse a lowercase name; unknown ids fall back to [`ThinkingLevel::Off`].
+    pub fn parse(s: &str) -> Option<ThinkingLevel> {
+        Self::ALL
+            .iter()
+            .find(|l| l.as_str() == s.to_ascii_lowercase())
+            .copied()
+    }
+
+    /// Whether this level requests any thinking at all.
+    pub fn enabled(&self) -> bool {
+        *self != ThinkingLevel::Off
+    }
+}
+
 /// Why the provider stopped producing the assistant message.
 ///
 /// Ported from pi's stop reasons with one rename: `length` becomes [`StopReason::MaxTokens`]

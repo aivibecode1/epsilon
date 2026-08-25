@@ -3,6 +3,21 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M21 - Thinking fidelity sweep (DIRECTION-04)
+- **Shared ladder** (`epsilon-contracts::ThinkingLevel`): off/minimal/low/
+  medium/high/xhigh/max with cycle + parse semantics ported from pi.
+- **Per-wire native mapping**: Anthropic adaptive thinking + `output_config.effort`;
+  OpenAI-compat family dispatch (gpt/o-series + kimi `reasoning_effort`,
+  OpenRouter nested `reasoning`, zai GLM `thinking{clear_thinking}`, deepseek
+  `thinking{enabled}`); Google `generationConfig.thinkingConfig` with
+  `includeThoughts` + level. `Off` sends nothing on every wire. Fixture tests
+  pin all three request shapes.
+- **Session state**: `Agent::set_thinking_level`/`thinking_level`; the level
+  rides every run like the model id; compaction summarizer stays Off (ADR-007).
+- **TUI surface**: `/think <level>` (bare = report, unknown = inline correction)
+  and Ctrl+T to cycle the ladder with an immediate notice.
+- Suite: 226 tests passing.
+
 ### M20 - Catalog regeneration + live picker refresh
 - **Generated catalog** (DIRECTION-05): `scripts/regen_catalog.py` fetches
   models.dev and writes `epsilon-llm/src/catalog/catalog_data.rs` — 383 rows
