@@ -480,8 +480,22 @@ mod tests {
 
         let (found, problems) = discover_extension_manifests(&[a.parent().unwrap().to_path_buf()]);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].1.version, "0.1.0");
+        // Exactly one problem, naming the directory that lost. Which directory
+        // wins depends on read_dir order (alphabetical on NTFS, arbitrary on
+        // ext4 — this failed on Linux CI where 'b' can precede 'a'), so assert
+        // the contract "first seen wins" rather than a specific version.
         assert_eq!(problems.len(), 1);
+        let winner_dir = found[0]
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("dir name");
+        let loser = if winner_dir == "a" { "b" } else { "a" };
+        assert!(
+            problems[0].contains(&format!("at .*{loser}")) || problems[0].contains(loser),
+            "problem should name the skipped dir {loser}: {:?}",
+            problems[0]
+        );
     }
 
     #[test]
