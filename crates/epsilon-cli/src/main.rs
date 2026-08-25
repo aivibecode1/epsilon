@@ -368,6 +368,17 @@ fn main() {
 /// reads the key from the argument when given (scripting) or prompts on the
 /// terminal when omitted (interactive; the typed key is not echoed where the
 /// terminal supports it — best-effort, same as opencode's prompt fallback).
+///
+/// Mask a stored key for `auth list`: short keys hide entirely; longer ones
+/// show only the last 4 characters. A bug here leaks secrets to screenshots.
+fn mask_key(key: &str) -> String {
+    if key.len() <= 4 {
+        "****".to_string()
+    } else {
+        format!("…{}", &key[key.len() - 4..])
+    }
+}
+
 fn auth_command(action: &AuthAction) -> i32 {
     match action {
         AuthAction::List => {
@@ -380,12 +391,7 @@ fn auth_command(action: &AuthAction) -> i32 {
             println!("stored credentials (~/.config/epsilon/auth.json):");
             for (provider, cred) in &creds {
                 let k = cred.key.trim();
-                let masked = if k.len() <= 4 {
-                    "****".to_string()
-                } else {
-                    format!("…{}", &k[k.len() - 4..])
-                };
-                println!("  {provider:<14} {masked}");
+                println!("  {provider:<14} {}", mask_key(k));
             }
             0
         }
@@ -1130,5 +1136,28 @@ fn render_demo_event(ev: &Arc<AgentEvent>) {
         },
         AgentEvent::AgentEnd { .. } => println!("=== run end ==="),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::*;
+
+    #[test]
+    fn mask_hides_short_keys_entirely() {
+        assert_eq!(mask_key(""), "****");
+        assert_eq!(mask_key("abc"), "****");
+        assert_eq!(mask_key("abcd"), "****");
+    }
+
+    #[test]
+    fn mask_shows_only_last_four_of_long_keys() {
+        assert_eq!(mask_key("sk-ant-0123456789"), "…6789");
+        assert_eq!(mask_key("12345"), "…2345");
+        // The full key must never appear in the masked output.
+        let key = "gsk_super_secret_value";
+        let masked = mask_key(key);
+        assert!(!masked.contains("super"));
+        assert!(masked.ends_with("alue"));
     }
 }

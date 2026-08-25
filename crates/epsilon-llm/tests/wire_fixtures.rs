@@ -189,6 +189,41 @@ fn openai_compat_reasoning_effort_by_family() {
         .unwrap();
     assert!(off.get("reasoning_effort").is_none());
     assert!(off.get("reasoning").is_none());
+
+    // DeepSeek reasoning rows: switch + effort; plain deepseek-chat stays clean.
+    let ds = w
+        .request_body("deepseek-reasoner", &thinking_ctx(ThinkingLevel::High))
+        .unwrap();
+    assert_eq!(ds["thinking"]["type"], "enabled");
+    assert_eq!(ds["reasoning_effort"], "high");
+    let ds_chat = w
+        .request_body("deepseek-chat", &thinking_ctx(ThinkingLevel::High))
+        .unwrap();
+    assert!(
+        ds_chat.get("thinking").is_none(),
+        "deepseek-chat must not take the thinking switch"
+    );
+
+    // Z.ai GLM family: enable + clear_thinking=false + effort.
+    let glm = w
+        .request_body("glm-5.2", &thinking_ctx(ThinkingLevel::Medium))
+        .unwrap();
+    assert_eq!(glm["thinking"]["type"], "enabled");
+    assert_eq!(glm["thinking"]["clear_thinking"], false);
+    assert_eq!(glm["reasoning_effort"], "medium");
+
+    // kimi-thinking rows take effort; plain kimi rows ignore it harmlessly.
+    let kimi_t = w
+        .request_body("kimi-thinking", &thinking_ctx(ThinkingLevel::Low))
+        .unwrap();
+    assert_eq!(kimi_t["reasoning_effort"], "low");
+    let kimi_plain = w
+        .request_body("kimi-k3", &thinking_ctx(ThinkingLevel::Low))
+        .unwrap();
+    assert!(
+        kimi_plain.get("reasoning_effort").is_none(),
+        "non-thinking kimi rows must not carry the knob"
+    );
 }
 
 #[test]

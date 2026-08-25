@@ -499,6 +499,34 @@ mod tests {
     }
 
     #[test]
+    fn favorites_cap_at_max_with_loud_error() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        for i in 0..FAVORITE_MAX {
+            assert!(
+                !toggle_favorite_model_in(dir, &format!("m{i}")).unwrap(),
+                "insertion {i} should report added"
+            );
+        }
+        // The next NEW favorite is refused with guidance; existing ones still
+        // toggle off fine (the cap only gates growth).
+        let err = toggle_favorite_model_in(dir, "overflow-model").unwrap_err();
+        assert!(
+            err.contains(&FAVORITE_MAX.to_string()),
+            "error should name the cap: {err}"
+        );
+        assert_eq!(load_favorite_models_in(dir).len(), FAVORITE_MAX);
+        assert!(
+            toggle_favorite_model_in(dir, "m0").unwrap(),
+            "removing an existing favorite still works at cap"
+        );
+        assert!(
+            !toggle_favorite_model_in(dir, "overflow-model").unwrap(),
+            "after freeing a slot the new one fits"
+        );
+    }
+
+    #[test]
     fn precedence_documented_flag_over_saved_over_default() {
         // Documentation-by-test of the resolution order implemented at call sites:
         // flag.map(...).or(load_model_id()).unwrap_or(DEFAULT_MODEL_ID)

@@ -298,6 +298,33 @@ mod tests {
     use super::*;
     use crate::ids::new_id;
 
+    #[test]
+    fn thinking_level_ladder_wraps_parses_and_serializes() {
+        // Full-ladder cycle from Off lands back on Off.
+        let mut level = ThinkingLevel::Off;
+        for expected in ThinkingLevel::ALL.iter().skip(1) {
+            level = level.next();
+            assert_eq!(&level, expected);
+        }
+        assert_eq!(level.next(), ThinkingLevel::Off, "Max wraps to Off");
+
+        // Parse is case-insensitive and rejects unknowns.
+        assert_eq!(ThinkingLevel::parse("XHIGH"), Some(ThinkingLevel::XHigh));
+        assert_eq!(ThinkingLevel::parse("off"), Some(ThinkingLevel::Off));
+        assert_eq!(ThinkingLevel::parse("bogus"), None);
+
+        // serde round-trip uses snake_case ids (session persistence format).
+        let json = serde_json::to_string(&ThinkingLevel::XHigh).expect("serialize");
+        assert_eq!(json, "\"x_high\"", "serde rename keeps the wire id stable");
+        let back: ThinkingLevel = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, ThinkingLevel::XHigh);
+
+        // Enabled is exactly "not Off".
+        for l in ThinkingLevel::ALL {
+            assert_eq!(l.enabled(), l != ThinkingLevel::Off);
+        }
+    }
+
     fn assistant(stop: StopReason) -> AssistantMessage {
         AssistantMessage {
             id: new_id("msg"),
