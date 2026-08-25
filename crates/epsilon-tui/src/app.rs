@@ -933,9 +933,21 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
             .push_notice("type `trust` to accept the new config, or `trust no` to quit");
     }
 
+    // M22 fix: an initial task (positional arg / --tui "task") must respect the
+    // trust gate like any other submit. When review is pending, stash the text
+    // into the editor instead of running it; after `trust` accepts, the user
+    // presses Enter to send it (or edits first — their call, not ours).
     if let Some(task) = initial_task {
-        let msg = app.submit_text(task);
-        app.spawn_run(Arc::clone(&agent), msg);
+        if app.trust_review_pending {
+            for c in task.chars() {
+                app.insert_char(c);
+            }
+            app.ui
+                .push_notice("task staged in the input; answer the config review first");
+        } else {
+            let msg = app.submit_text(task);
+            app.spawn_run(Arc::clone(&agent), msg);
+        }
     }
 
     let mut term_events = EventStream::new();
@@ -1345,10 +1357,18 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         }
         KeyCode::Char('p' | 'P') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // M16c: command palette (opencode prompt.palette).
+            // M22: not while the trust review holds — palette commands bypass
+            // submit_editor, so they must not open against unreviewed rules.
             if !app.palette_open && !app.picker_open {
-                app.palette_open = true;
-                app.picker_index = 0;
-                app.stash_draft();
+                if app.trust_review_pending {
+                    app.ui.push_notice(
+                        "config review pending - type `trust` to accept or `trust no` to quit",
+                    );
+                } else {
+                    app.palette_open = true;
+                    app.picker_index = 0;
+                    app.stash_draft();
+                }
             }
             false
         }
@@ -2550,6 +2570,21 @@ mod tests {
             type_and_enter(&mut app, &agent, "trust no"),
             "declining exits the session"
         );
+    }
+
+    #[tokio::test]
+    async fn trust_gate_blocks_palette_and_stages_initial_task() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.trust_review_pending = true;
+
+        // Ctrl+P must NOT open the palette while review is pending.
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('p')));
+        assert!(!app.palette_open, "palette stays closed under the gate");
+
+        // After accepting, the palette opens normally again.
+        assert!(!type_and_enter(&mut app, &agent, "trust"));
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('p')));
+        assert!(app.palette_open, "palette works after review");
     }
 
     // ---- M23: favorites ----------------------------------------------------------------
