@@ -3,6 +3,17 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M24 - MCP health probes + fallback chains (DIRECTION-02/03 closed)
+- **MCP health probes**: `Connector::is_healthy` (stdio detects a dead child
+  via rmcp); the bridge probes at most once per 30s TTL before each call, so
+  a dead server fails fast with "process is not running... re-attach with
+  --mcp" instead of hanging or erroring opaquely mid-call.
+- **Provider fallback chains**: repeatable `--fallback <model>` composes
+  `epsilon_llm::fallback::FallbackProvider(primary, candidates...)`.
+  Retryable failures (rate limit / transient 5xx / network) walk the chain;
+  auth failures stop it. Per-turn primary restoration: every call starts at
+  the head, so a recovered primary is used again automatically.
+
 ### M23 - Picker favorites + favorite cycling (DIRECTION-06)
 - **Star any model** with Ctrl+F inside the picker (opencode's
   `model_favorite_toggle`); ★ column in both picker stages; persisted in

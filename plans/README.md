@@ -49,16 +49,19 @@ honor its STOP conditions, and update your row when done.
 - **DEBT-03 god-file splits (main.rs modes / app.rs draw)**: facts verified, payoff
   MED; folded into future milestone work rather than an advisor plan.
 - **DIRECTION findings**: trust re-prompt (DIRECTION-01) — **CLOSED in M22**
-  (`docs/milestones/M22-auth-and-trust.md`), MCP TTL+grace probes or ADR
-  amendment (02), fallback chains build-or-defer (03), thinking fidelity sweep
-  (04) — **CLOSED in M21** (`docs/milestones/M21-thinking-fidelity.md`),
-  catalog regenerate script (05) — **CLOSED in M20** (`scripts/regen_catalog.py`,
-  383-row generated catalog + live picker refresh, see
+  (`docs/milestones/M22-auth-and-trust.md`), MCP TTL+grace probes (02) —
+  **CLOSED**: `Connector::is_healthy` + 30s TTL-cached probe in the bridge,
+  fail-fast with honest message (`crates/epsilon-mcp/src/lib.rs`), fallback
+  chains build-or-defer (03) — **BUILT** (Hermes' error-classified chain:
+  `epsilon_llm::fallback::FallbackProvider` + repeatable `--fallback <model>`
+  flag; retryable classes walk the chain, per-turn primary restoration),
+  thinking fidelity sweep (04) — **CLOSED in M21**
+  (`docs/milestones/M21-thinking-fidelity.md`), catalog regenerate script
+  (05) — **CLOSED in M20** (`scripts/regen_catalog.py`, 383-row generated
+  catalog + live picker refresh, see
   `docs/milestones/M20-catalog-regen-live-picker.md`), picker favorites (06) —
-  **CLOSED in M23** (`docs/milestones/M23-picker-favorites.md`) — all grounded
-  and logged in reports/research-pass-2-2026-08.md. Remaining open:
-  DIRECTION-02/03 as maintainer options. Recommended next: a fresh /improve
-  deep pass over M21–M23.
+  **CLOSED in M23** (`docs/milestones/M23-picker-favorites.md`). All six
+  DIRECTION items now closed; grounded in reports/research-pass-2-2026-08.md.
 
 ## Provenance
 

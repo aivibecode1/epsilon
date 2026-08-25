@@ -70,9 +70,10 @@ and real providers need a build with `--features real`.
 | M21 | Thinking fidelity sweep (DIRECTION-04): shared `ThinkingLevel` ladder in contracts, per-wire native mapping (Anthropic adaptive+effort, OpenAI `reasoning_effort`/OpenRouter/zai/deepseek/kimi, Google `thinkingConfig`) with fixture pins, `/think <level>` + Ctrl+T cycle, session-carried like pi; compaction stays Off per ADR-007 | ✅ shipped |
 | M22 | opencode auth store + trust re-prompt (DIRECTION-01): `epsilon auth login/list/logout` — keys live once in `~/.config/epsilon/auth.json` (opencode schema, stored-wins/env-fallback), auto-real detection + picker + live listing all follow; changed `.epsilon/config.toml` now holds the TUI until you answer (`trust` / `trust no`) instead of banner-and-run | ✅ shipped |
 | M23 | Picker favorites (DIRECTION-06): star any model with Ctrl+F inside the picker (★ column, Favorites section above Recents), F2/Shift+F2 cycle favorites forward/backward from the editor (pi cycling semantics over opencode's favorite list); persisted in config `[picker] favorite` | ✅ shipped |
-| future | MCP TTL+grace probes or ADR amendment · fallback chains build-or-defer · weekly catalog-drift CI PR · footer thinking-level indicator · per-favorite thinking level (pi scoped models) | open |
+| M24 | Reliability polish (DIRECTION-02/03 closed): MCP health probes with 30s TTL + fail-fast honest errors (`Connector::is_healthy`, stdio death detection), provider fallback chains (`--fallback <model>`, repeatable — retryable failures walk the chain, per-turn primary restoration, Hermes pattern on our StreamFn seam) | ✅ shipped |
+| future | footer thinking-level indicator · per-favorite thinking level (pi scoped models) · weekly catalog-drift CI PR | open |
 
-235 tests offline (247 with --features real), zero clippy warnings in both build
+241 tests offline (253 with --features real), zero clippy warnings in both build
 configurations. Every milestone has a dev log
 under [`docs/milestones/`](docs/milestones).
 
