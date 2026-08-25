@@ -48,6 +48,11 @@ pub struct TuiConfig {
     pub model_id: String,
     /// Live per-provider listing capability; absent without the `real` feature.
     pub live: Option<LiveFetcher>,
+    /// Startup diagnostics flushed as notices once the UI is live (project
+    /// config notices, trust banners). M22: also carries the trust re-prompt
+    /// trigger — a `TrustDecision::Changed` line makes the TUI ask before the
+    /// first run proceeds (pi trust-manager semantics, ADR-012).
+    pub startup_notices: Vec<String>,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -82,6 +87,9 @@ pub(crate) struct App {
     history: VecDeque<String>,
     history_idx: Option<usize>,
     pending_ask: Option<PendingAsk>,
+    /// M22 / DIRECTION-01: set when the project config changed since trust;
+    /// blocks submits until the user answers (`trust` / `trust no`).
+    trust_review_pending: bool,
     guidance_mode: bool,
     scroll_from_bottom: usize,
     model_id: String,
@@ -178,6 +186,7 @@ impl App {
             history: VecDeque::new(),
             history_idx: None,
             pending_ask: None,
+            trust_review_pending: false,
             guidance_mode: false,
             scroll_from_bottom: 0,
             model_id,
@@ -504,6 +513,27 @@ impl App {
         if text.trim().is_empty() {
             return false;
         }
+        // M22 / DIRECTION-01: a changed project config holds ALL submits until
+        // reviewed (pi trust-manager: nothing runs against unreviewed rules).
+        // Only the two review answers are accepted; everything else is bounced.
+        if self.trust_review_pending {
+            match text.trim().to_ascii_lowercase().as_str() {
+                "trust" | "trust yes" | "y" => {
+                    self.trust_review_pending = false;
+                    self.ui
+                        .push_notice("project config accepted for this workspace");
+                }
+                "trust no" | "n" => {
+                    return true; // quit — user declined the changed config
+                }
+                _ => {
+                    self.ui.push_notice(
+                        "config review pending - type `trust` to accept or `trust no` to quit",
+                    );
+                }
+            }
+            return false;
+        }
         if let Some(command) = crate::picker::parse_command(&text) {
             return self.run_command(agent, command);
         }
@@ -548,8 +578,10 @@ impl App {
             crate::picker::Command::Think(arg) => {
                 match arg.as_deref().map(str::trim) {
                     None => {
+                        // Direct push: slash replies render this frame.
                         let cur = agent.thinking_level();
-                        self.notice(format!("thinking level: {}", cur.as_str()));
+                        self.ui
+                            .push_notice(format!("thinking level: {}", cur.as_str()));
                     }
                     Some(word) => match epsilon_contracts::ThinkingLevel::parse(word) {
                         Some(level) => self.set_thinking(agent, level),
@@ -812,6 +844,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
         initial_task,
         model_id,
         live,
+        startup_notices,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
@@ -827,6 +860,20 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
     }
     while app.history.len() > HISTORY_MAX {
         app.history.pop_front();
+    }
+
+    // M22 / DIRECTION-01: flush startup diagnostics as notices, and if the
+    // project config changed since it was trusted, hold the first submit until
+    // the user answers the review prompt (pi trust-manager semantics).
+    for line in startup_notices {
+        if line.contains("CHANGED since it was trusted") {
+            app.trust_review_pending = true;
+        }
+        app.ui.push_notice(line);
+    }
+    if app.trust_review_pending {
+        app.ui
+            .push_notice("type `trust` to accept the new config, or `trust no` to quit");
     }
 
     if let Some(task) = initial_task {
@@ -2369,6 +2416,42 @@ mod tests {
         );
         let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
         assert!(texts.iter().any(|t| t.contains("thinking level: medium")));
+    }
+
+    // ---- M22: credential store + trust review ----------------------------------------
+
+    #[tokio::test]
+    async fn trust_review_holds_submits_until_answered() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // Simulate the startup banner having flagged a changed config.
+        app.trust_review_pending = true;
+
+        // Any normal text is bounced with guidance, never sent to the model.
+        assert!(!type_and_enter(&mut app, &agent, "run my tests"));
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(texts.iter().any(|t| t.contains("config review pending")));
+        assert!(!app.ui.running(), "nothing was submitted");
+
+        // `trust` accepts and unblocks.
+        assert!(!type_and_enter(&mut app, &agent, "trust"));
+        assert!(!app.trust_review_pending);
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(texts.iter().any(|t| t.contains("project config accepted")));
+
+        // After acceptance, submits flow normally again (bare /think reports).
+        assert!(!type_and_enter(&mut app, &agent, "/think"));
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        assert!(texts.iter().any(|t| t.contains("thinking level:")));
+    }
+
+    #[tokio::test]
+    async fn trust_no_quits_instead_of_running_against_unreviewed_config() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.trust_review_pending = true;
+        assert!(
+            type_and_enter(&mut app, &agent, "trust no"),
+            "declining exits the session"
+        );
     }
 
     // ---- M17b: slash autocomplete navigation + selection ---------------------------

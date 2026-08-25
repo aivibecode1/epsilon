@@ -8,6 +8,7 @@
 //! ([`DirectProvider`], pi port) — no SDK/router crate. Routing is catalog-driven via
 //! each model's [`crate::catalog::ModelInfo::wire`] field.
 
+pub mod auth;
 pub mod catalog;
 mod faux;
 mod http;
@@ -17,7 +18,8 @@ mod retry;
 mod retry_stream;
 mod stream_fn;
 
-pub use catalog::{ModelInfo, curated, display_label, env_key_for, lookup_model};
+pub use auth::{StoredCredential, load_credentials_in, remove_credential_in, save_credential_in};
+pub use catalog::{ModelInfo, curated, display_label, env_key_for, lookup_model, resolve_api_key};
 
 #[cfg(feature = "real")]
 pub use catalog::WireApi;

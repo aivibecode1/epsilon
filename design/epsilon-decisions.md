@@ -334,6 +334,15 @@ trust hash at `.epsilon/trust.json`; later content changes print a loud review b
 (interactive re-prompt deferred to TUI polish). Precedence for models is now:
 `--model` flag > project config > global saved > default.
 
+**Amendment (M22, interactive re-prompt landed — DIRECTION-01).** The deferred
+re-prompt is real: `load_project_config` returns an explicit
+`TrustDecision::{Absent, Trusted, Unchanged, Changed}` and the TUI holds ALL
+submits while a changed config is unreviewed — type `trust` to accept (and
+persist nothing until then: the old hash stays on disk so every run re-reports)
+or `trust no` to quit. Headless modes keep the M12 banner policy. Rationale:
+project rules can tighten OR loosen permissions; silently running against
+changed rules was the last banner-only path in the trust story.
+
 **Alternatives.** YAML+!!js (DSH), JSONC (opencode), YAML 1.9k-line example (Hermes), JSON (pi).
 
 **Why best.** HA-DSH W3 flags executable config as an attack vector; Epsilon refuses the category.

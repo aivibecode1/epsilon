@@ -3,6 +3,20 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M22 - opencode auth store + trust re-prompt (DIRECTION-01)
+- **`epsilon auth` subcommand** (opencode auth.json port): `login <provider>
+  [key]`, `list` (masked), `logout <provider>`. Keys live in
+  `~/.config/epsilon/auth.json` in opencode's exact schema; 0600 on unix.
+- **Precedence**: stored key wins, env var falls back (`catalog::resolve_api_key`);
+  auto-real detection, picker auth column, live `/models` fetching, and request
+  auth all follow one resolver. Store lives in epsilon-llm (pi keeps provider
+  auth inside `packages/ai`; dependency law forbids llm -> core).
+- **Trust re-prompt** (pi trust-manager semantics): `load_project_config`
+  returns an explicit `TrustDecision`; the TUI holds all submits on a changed
+  `.epsilon/config.toml` until you type `trust` (accept) or `trust no` (quit).
+  Headless modes keep the banner policy; the old hash persists until accepted.
+- Suite: 234 tests passing.
+
 ### M21 - Thinking fidelity sweep (DIRECTION-04)
 - **Shared ladder** (`epsilon-contracts::ThinkingLevel`): off/minimal/low/
   medium/high/xhigh/max with cycle + parse semantics ported from pi.

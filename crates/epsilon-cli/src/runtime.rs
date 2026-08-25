@@ -45,22 +45,43 @@ pub struct ProjectRule {
 const PROJECT_CONFIG_REL: &str = ".epsilon/config.toml";
 const TRUST_FILE_REL: &str = ".epsilon/trust.json";
 
-/// Load + trust-check the project config. Returns `(config, diagnostics)`.
+/// Outcome of the project-config trust check (ADR-012).
 ///
-/// Trust policy (v1, headless): first sight auto-trusts and records the hash; any later
-/// content change prints a loud banner but still loads. Interactive re-prompting is a
-/// TUI concern and stays open for M13 polish.
-pub fn load_project_config(workspace: &Path) -> (ProjectConfig, Vec<String>) {
+/// v1 (headless) collapsed everything into banners; M22 makes the decision
+/// explicit so the TUI can re-prompt and headless modes keep their policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrustDecision {
+    /// No project config present (or unreadable): nothing to trust.
+    Absent,
+    /// First sight: hash recorded, config loaded.
+    Trusted,
+    /// Hash matches the recorded one.
+    Unchanged,
+    /// Config content changed since it was trusted; `previous` is the old hash.
+    Changed {
+        /// The SHA-256 recorded in `.epsilon/trust.json` before this run.
+        previous: String,
+    },
+}
+
+/// Load + trust-check the project config. Returns `(config, trust decision,
+/// diagnostics)`.
+///
+/// Trust policy: first sight records the hash and loads; an unchanged hash
+/// loads silently; a CHANGED hash still loads but reports [`TrustDecision::
+/// Changed`] so frontends decide — the interactive TUI re-prompts (pi's
+/// trust-manager semantics), headless modes print the loud banner as before.
+pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, Vec<String>) {
     let mut notices = Vec::new();
     let path = workspace.join(PROJECT_CONFIG_REL);
     if !path.is_file() {
-        return (ProjectConfig::default(), notices);
+        return (ProjectConfig::default(), TrustDecision::Absent, notices);
     }
     let raw = match std::fs::read_to_string(&path) {
         Ok(r) => r,
         Err(e) => {
             notices.push(format!("project config unreadable: {e}"));
-            return (ProjectConfig::default(), notices);
+            return (ProjectConfig::default(), TrustDecision::Absent, notices);
         }
     };
 
@@ -75,26 +96,27 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, Vec<String>) {
                 .and_then(|h| h.as_str())
                 .map(String::from)
         });
-    match previous {
+    let decision = match &previous {
         None => {
             notices.push(format!(
                 "trusting project config {} (hash recorded)",
                 path.display()
             ));
+            TrustDecision::Trusted
         }
-        Some(prev) if prev != hash => {
-            notices.push(
-                "WARNING: .epsilon/config.toml CHANGED since it was trusted; \
-                 review before running untrusted projects"
-                    .to_string(),
-            );
-        }
-        _ => {}
+        Some(prev) if prev != &hash => TrustDecision::Changed {
+            previous: prev.clone(),
+        },
+        Some(_) => TrustDecision::Unchanged,
+    };
+    // Only persist on first trust / confirmed-unchanged; a changed config keeps
+    // the OLD hash until the user accepts it, so every run re-reports until then.
+    if !matches!(decision, TrustDecision::Changed { .. }) || previous.is_none() {
+        let _ = std::fs::write(
+            &trust_path,
+            serde_json::json!({ "config_sha256": hash }).to_string(),
+        );
     }
-    let _ = std::fs::write(
-        &trust_path,
-        serde_json::json!({ "config_sha256": hash }).to_string(),
-    );
 
     // ---- parse ----------------------------------------------------------------------
     let mut cfg = ProjectConfig::default();
@@ -102,7 +124,7 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, Vec<String>) {
         Ok(v) => v,
         Err(e) => {
             notices.push(format!("invalid project config: {e}"));
-            return (cfg, notices);
+            return (cfg, decision, notices);
         }
     };
 
@@ -168,7 +190,7 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, Vec<String>) {
         }
     }
 
-    (cfg, notices)
+    (cfg, decision, notices)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -176,6 +198,24 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Record `hash` as trusted in `<workspace>/.epsilon/trust.json` (the user
+/// accepted a changed project config — pi trust-manager's "trust" answer).
+pub fn accept_project_config_hash(workspace: &Path, hash: &str) -> Result<(), String> {
+    let path = workspace.join(TRUST_FILE_REL);
+    std::fs::write(
+        &path,
+        serde_json::json!({ "config_sha256": hash }).to_string(),
+    )
+    .map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+/// Current SHA-256 of the project config file, if present (used by the TUI
+/// re-prompt to persist an acceptance).
+pub fn current_project_config_hash(workspace: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(workspace.join(PROJECT_CONFIG_REL)).ok()?;
+    Some(sha256_hex(raw.as_bytes()))
 }
 
 /// Convert declared project rules into an engine layer appended over the defaults.

@@ -34,7 +34,8 @@ fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
         id: info.id.to_string(),
         label: info.label.to_string(),
         provider: info.provider.to_string(),
-        auth_ready: info.env_key.is_empty() || std::env::var_os(info.env_key).is_some(),
+        // M22: stored credentials (auth.json) count, not just env vars.
+        auth_ready: catalog::credentials_ready(info.id),
         is_custom: false,
         is_live: false,
         is_recent: false,
@@ -276,14 +277,13 @@ pub fn build_provider_rows(current: &str) -> Vec<ProviderRow> {
         match rows.iter_mut().find(|r| r.id == info.provider) {
             Some(row) => {
                 row.model_count += 1;
-                row.auth_ready |=
-                    info.env_key.is_empty() || std::env::var_os(info.env_key).is_some();
+                row.auth_ready |= catalog::credentials_ready(info.id);
                 row.is_active |= is_active_provider || (active && info.id == current);
             }
             None => rows.push(ProviderRow {
                 id: info.provider.to_string(),
                 model_count: 1,
-                auth_ready: info.env_key.is_empty() || std::env::var_os(info.env_key).is_some(),
+                auth_ready: catalog::credentials_ready(info.id),
                 is_active: is_active_provider,
             }),
         }

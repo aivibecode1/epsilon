@@ -528,6 +528,7 @@ dependencies = [
  "epsilon-contracts",
  "epsilon-llm",
  "epsilon-session",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -558,6 +559,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

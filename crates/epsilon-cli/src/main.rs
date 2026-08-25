@@ -27,6 +27,9 @@ use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
 const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon -p \"task\"       headless run · epsilon --serve [--port N] · epsilon --rpc
   epsilon --demo          scripted offline demo · --list-models [provider]
+  epsilon auth list       stored provider keys (~/.config/epsilon/auth.json)
+  epsilon auth login <provider> [key]   save an API key (prompted if key omitted)
+  epsilon auth logout <provider>        remove the stored key
   flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b]
          --sandbox auto|off · --plan (read-only) · -c/--continue | --resume f · --version";
 
@@ -79,9 +82,25 @@ enum Mode {
     Rpc,
     /// Print the bundled catalog (optionally filtered by provider), then exit.
     ListModels(Option<String>),
+    /// M22: opencode-style credential management (list/login/logout), then exit.
+    Auth(AuthAction),
     /// Hidden M16a benchmark: build n synthetic transcript messages, time real draws,
     /// print a report, exit. Not advertised in --help usage beyond this line.
     TuiBench(usize),
+}
+
+/// One `epsilon auth …` subcommand (opencode auth parity).
+#[derive(Debug, Clone)]
+enum AuthAction {
+    /// Show stored providers with masked keys.
+    List,
+    /// Store a key for a provider; prompts on the terminal when omitted.
+    Login {
+        provider: String,
+        key: Option<String>,
+    },
+    /// Remove a provider's stored key.
+    Logout { provider: String },
 }
 
 fn parse_args() -> Args {
@@ -89,6 +108,42 @@ fn parse_args() -> Args {
     if raw.iter().any(|a| a == "--version" || a == "-V") {
         println!("epsilon {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
+    }
+    // M22: `epsilon auth <sub>` is a pre-mode subcommand — it never touches the
+    // workspace or runtime, so parse and dispatch it immediately.
+    if raw.first().map(|a| a == "auth").unwrap_or(false) {
+        let mode = match raw.get(1).map(|s| s.as_str()) {
+            Some("list") => Mode::Auth(AuthAction::List),
+            Some("login") => {
+                let provider = raw
+                    .get(2)
+                    .cloned()
+                    .unwrap_or_else(|| die("auth login requires a provider id (e.g. anthropic)"));
+                let key = raw.get(3).cloned();
+                Mode::Auth(AuthAction::Login { provider, key })
+            }
+            Some("logout") => {
+                let provider = raw
+                    .get(2)
+                    .cloned()
+                    .unwrap_or_else(|| die("auth logout requires a provider id"));
+                Mode::Auth(AuthAction::Logout { provider })
+            }
+            _ => die("usage: epsilon auth list | login <provider> [key] | logout <provider>"),
+        };
+        return Args {
+            mode,
+            script_path: None,
+            workspace: None,
+            mcp_servers: Vec::new(),
+            port: 8787,
+            confinement: epsilon_tools::Confinement::Auto,
+            provider: None,
+            model_id: None,
+            resume: Resume::default(),
+            plan_mode: false,
+            auto_approve: false,
+        };
     }
     let mut mode = Mode::Tui(None); // M14: plain `epsilon` opens the interactive TUI
     let mut script_path = None;
@@ -293,12 +348,117 @@ fn die(msg: &str) -> ! {
 
 fn main() {
     let args = parse_args();
+    // M22: auth subcommands are plain file I/O — handle them before building
+    // the tokio runtime (and exit immediately after).
+    if let Mode::Auth(action) = &args.mode {
+        std::process::exit(auth_command(action));
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
     let code = runtime.block_on(dispatch(args));
     std::process::exit(code);
+}
+
+/// `epsilon auth list|login|logout` — opencode's credential UX (M22).
+///
+/// Keys are stored in `~/.config/epsilon/auth.json`; `list` masks everything
+/// but the last 4 characters so screenshots never leak full secrets. Login
+/// reads the key from the argument when given (scripting) or prompts on the
+/// terminal when omitted (interactive; the typed key is not echoed where the
+/// terminal supports it — best-effort, same as opencode's prompt fallback).
+fn auth_command(action: &AuthAction) -> i32 {
+    match action {
+        AuthAction::List => {
+            let creds = epsilon_llm::auth::load_credentials_in(
+                &epsilon_llm::auth::global_dir().unwrap_or_default(),
+            );
+            if creds.is_empty() {
+                println!("no stored credentials (~/.config/epsilon/auth.json)");
+                println!("add one:  epsilon auth login <provider>");
+                return 0;
+            }
+            println!("stored credentials (~/.config/epsilon/auth.json):");
+            for (provider, cred) in &creds {
+                let k = cred.key.trim();
+                let masked = if k.len() <= 4 {
+                    "****".to_string()
+                } else {
+                    format!("…{}", &k[k.len() - 4..])
+                };
+                println!("  {provider:<14} {masked}");
+            }
+            0
+        }
+        AuthAction::Login { provider, key } => {
+            let key = match key {
+                Some(k) => k.clone(),
+                None => {
+                    // Interactive: read a line without echoing when possible.
+                    eprint!("API key for {provider} (input hidden): ");
+                    match read_secret_line() {
+                        Some(k) if !k.trim().is_empty() => k,
+                        _ => {
+                            eprintln!("no key entered; nothing stored");
+                            return 2;
+                        }
+                    }
+                }
+            };
+            match epsilon_llm::auth::save_credential(provider.trim(), key.trim()) {
+                Ok(path) => {
+                    println!("stored {provider} key in {}", path.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        AuthAction::Logout { provider } => {
+            match epsilon_llm::auth::remove_credential(provider.trim()) {
+                Ok(true) => {
+                    println!("removed stored key for {provider}");
+                    0
+                }
+                Ok(false) => {
+                    println!("no stored key for {provider}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+    }
+}
+
+/// Read one line of input with echo suppressed where the platform allows it.
+/// Falls back to plain stdin when the console API declines (piped input).
+#[cfg(windows)]
+fn read_secret_line() -> Option<String> {
+    // Plain stdin line read: the secret never lands in shell history, and
+    // echo suppression is deferred until a console-API pass needs it (the
+    // workspace forbids `unsafe`, which ReadConsole tricks would require).
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .ok()
+        .map(|_| line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// Unix variant mirrors the Windows one (line read; no termios dance yet).
+#[cfg(not(windows))]
+fn read_secret_line() -> Option<String> {
+    use std::io::BufRead;
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .ok()
+        .map(|_| line.trim_end_matches(['\r', '\n']).to_string())
 }
 
 async fn dispatch(args: Args) -> i32 {
@@ -315,10 +475,6 @@ async fn dispatch(args: Args) -> i32 {
         fn push(&mut self, line: impl Into<String>) {
             self.0.push(line.into());
         }
-        /// Extend from a Vec<String> produced by a loader (keeps call sites terse).
-        fn extend_from(&mut self, lines: Vec<String>) {
-            self.0.extend(lines);
-        }
         fn flush_stderr(&self) {
             for line in &self.0 {
                 eprintln!("{line}");
@@ -328,8 +484,18 @@ async fn dispatch(args: Args) -> i32 {
     let mut diag = Diagnostics(Vec::new());
 
     // Project layer (ADR-012, M12): .epsilon/config.toml + trust hash.
-    let (project, project_notices) = epsilon_cli::runtime::load_project_config(&workspace);
-    diag.extend_from(project_notices);
+    // M22: the trust decision is explicit. Headless modes keep the loud-banner
+    // policy (still load); the TUI re-prompts interactively via startup_notices.
+    let (project, trust, project_notices) = epsilon_cli::runtime::load_project_config(&workspace);
+    let mut startup_notices = project_notices;
+    if matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. }) {
+        startup_notices.extend([
+            "WARNING: .epsilon/config.toml CHANGED since it was trusted; \
+             review before running untrusted projects"
+                .to_string(),
+            "(the interactive TUI asks before anything executes; --yes skips the ask)".to_string(),
+        ]);
+    }
 
     // ---- provider + model resolution (M14: real harness out of the box) ------------
     // Precedence for the model id: --model flag > project config > global saved.
@@ -419,8 +585,17 @@ async fn dispatch(args: Args) -> i32 {
     let stream_fn: Arc<dyn epsilon_llm::StreamFn> = if use_real {
         #[cfg(feature = "real")]
         {
+            // M22: say WHERE the key came from so users can tell auth.json from env.
+            let provider = epsilon_llm::catalog::lookup_model(model_id.as_str())
+                .map(|m| m.provider)
+                .unwrap_or("");
+            let key_source = if epsilon_llm::auth::load_credentials().contains_key(provider) {
+                "stored (epsilon auth login)"
+            } else {
+                "env var"
+            };
             diag.push(format!(
-                "provider: real (direct HTTP) · model: {model_id} · key from env"
+                "provider: real (direct HTTP) · model: {model_id} · key {key_source}"
             ));
             Arc::new(PanicGuard(epsilon_llm::DirectProvider::new()))
         }
@@ -428,6 +603,9 @@ async fn dispatch(args: Args) -> i32 {
         unreachable!("use_real cannot be true without the real feature")
     } else {
         diag.push("provider: faux (offline scripted)");
+        diag.push(
+            "go real:  epsilon auth login <provider>   (or set the provider's API key env var)",
+        );
         Arc::new(PanicGuard(FauxProvider::new(steps)))
     };
     // Startup notices flush here, in order, once (plan 008).
@@ -442,8 +620,10 @@ async fn dispatch(args: Args) -> i32 {
         resume: args.resume.clone(),
         project,
         plan_mode: args.plan_mode,
+        startup_notices,
     };
     match &args.mode {
+        Mode::Auth(_) => unreachable!("auth subcommands exit inside main() before dispatch"),
         Mode::Demo => demo_mode().await,
         Mode::Print(task) => print_mode(&shared, args.auto_approve, task.clone()).await,
         Mode::Tui(initial) => tui_mode(&shared, initial.clone()).await,
@@ -568,6 +748,9 @@ struct SharedRun {
     resume: Resume,
     project: epsilon_cli::runtime::ProjectConfig,
     plan_mode: bool,
+    /// Project-config notices + trust banner; the TUI re-prompts when the
+    /// trust line is present (M22 / DIRECTION-01).
+    startup_notices: Vec<String>,
 }
 
 /// Everything `build_runtime` needs to compose one agent (plan 008 / DEBT-01).
@@ -782,6 +965,7 @@ async fn tui_mode(shared: &SharedRun, initial_task: Option<String>) -> i32 {
                 initial_task,
                 model_id: shared.model_id.clone(),
                 live: live_fetcher(),
+                startup_notices: shared.startup_notices.clone(),
             })
             .await
         }

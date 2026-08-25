@@ -10,6 +10,7 @@ authors.workspace = true
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-llm = { path = "../epsilon-llm" }
 epsilon-session = { path = "../epsilon-session" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }

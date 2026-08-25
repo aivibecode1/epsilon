@@ -23,6 +23,7 @@ real = ["dep:reqwest"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

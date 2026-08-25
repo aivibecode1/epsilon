@@ -97,9 +97,13 @@ pub fn display_label(id: &str) -> &str {
 /// Models with an empty [`ModelInfo::env_key`] (faux/local) are always ready. Unknown
 /// ids conservatively report `false` — the picker shows them under custom entries where
 /// the user has already taken responsibility for auth.
+///
+/// M22: readiness consults [`resolve_api_key`], so a key saved by
+/// `epsilon auth login` counts even when no env var is set (stored wins, env
+/// fallback — opencode's model).
 pub fn credentials_ready(model_id: &str) -> bool {
     match lookup_model(model_id) {
-        Some(info) => info.env_key.is_empty() || std::env::var_os(info.env_key).is_some(),
+        Some(info) => info.env_key.is_empty() || resolve_api_key(info.provider).is_some(),
         None => false,
     }
 }
@@ -117,6 +121,36 @@ pub fn env_key_for(model_id: &str) -> Option<&'static str> {
 /// live fetch is even worth attempting before injecting a `real`-feature fetcher.
 pub fn live_listing_available(provider: &str) -> bool {
     listing_endpoint(provider).is_some()
+}
+
+/// Resolve the API key for a provider: stored credential first
+/// (`~/.config/epsilon/auth.json`, opencode's auth pattern), then the
+/// provider's env var. Returns `None` when neither is present.
+///
+/// Stored-wins matters because `epsilon auth login` is the documented path;
+/// env vars stay as the fallback for CI and users who prefer them. An empty
+/// stored key is treated as absent.
+pub fn resolve_api_key(provider: &str) -> Option<String> {
+    if let Some(cred) = crate::auth::load_credentials_in(&crate::auth::global_dir()?).get(provider)
+    {
+        let k = cred.key.trim();
+        if !k.is_empty() {
+            return Some(k.to_string());
+        }
+    }
+    let env_key = lookup_model_first_env(provider)?;
+    std::env::var_os(env_key)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string_lossy().into_owned())
+}
+
+/// The canonical env var of a provider, taken from any catalog row of that
+/// provider (rows share it by construction — see `wire_auth_matches_row_auth`).
+fn lookup_model_first_env(provider: &str) -> Option<&'static str> {
+    MODELS
+        .iter()
+        .find(|m| m.provider == provider && !m.env_key.is_empty())
+        .map(|m| m.env_key)
 }
 
 /// (endpoint URL, auth env var) for a provider's live model listing.
@@ -151,9 +185,15 @@ fn listing_endpoint(_provider: &str) -> Option<(&'static str, &'static str)> {
 /// base URLs. Errors arrive in-band as strings.
 #[cfg(feature = "real")]
 pub async fn live_models(provider: &str) -> Result<Vec<String>, String> {
-    let (url, env_key) = listing_endpoint(provider)
+    let (url, _env_key) = listing_endpoint(provider)
         .ok_or_else(|| format!("no live listing endpoint for provider '{provider}'"))?;
-    let key = std::env::var(env_key).map_err(|_| format!("missing {env_key}"))?;
+    // M22: stored credential wins, env var falls back (same precedence as
+    // request auth in DirectProvider).
+    let key = resolve_api_key(provider).ok_or_else(|| {
+        format!(
+            "no API key for '{provider}' (run `epsilon auth login {provider}` or set {_env_key})"
+        )
+    })?;
     let client = crate::http::http_client();
     let mut req = client.get(url);
     match provider {
