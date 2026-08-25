@@ -57,11 +57,9 @@ impl Connector for StdioConnector {
     /// with an opaque transport error; report that honestly and cheaply.
     async fn is_healthy(&self) -> Result<(), String> {
         if self.service.is_closed() {
-            return Err(
-                "mcp server process is not running (exited or crashed); \
+            return Err("mcp server process is not running (exited or crashed); \
                  restart the session or re-attach with --mcp"
-                    .to_string(),
-            );
+                .to_string());
         }
         Ok(())
     }
