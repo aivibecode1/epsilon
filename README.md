@@ -1,7 +1,7 @@
 # Epsilon
 
 <p align="center">
-  <img src="assets/Logo.png" alt="Epsilon logo" width="400">
+  <img src="assets/Logo.png" alt="Epsilon logo" width="800">
 </p>
 
 **A coding-agent harness written in Rust** — a faithful port of [pi](https://pi.dev)'s proven
