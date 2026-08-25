@@ -89,6 +89,36 @@ fn parse_model_id(raw: &str) -> Option<String> {
 /// Recently used model ids, newest first (`[picker] recent`), capped at [`RECENT_MAX`].
 pub const RECENT_MAX: usize = 8;
 
+// ---- project trust hash (M22; shared by cli loader + tui acceptance) -------------
+
+/// SHA-256 hex of `bytes` (the trust-hash primitive both cli and tui need).
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Record `hash` as trusted in `<workspace>/.epsilon/trust.json` — the user
+/// accepted a changed project config (pi trust-manager's "trust" answer).
+pub fn accept_project_config_hash_in(workspace: &Path, hash: &str) -> Result<PathBuf, String> {
+    let path = workspace.join(".epsilon").join("trust.json");
+    std::fs::create_dir_all(workspace.join(".epsilon"))
+        .map_err(|e| format!("create .epsilon: {e}"))?;
+    std::fs::write(
+        &path,
+        serde_json::json!({ "config_sha256": hash }).to_string(),
+    )
+    .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Current SHA-256 of `<workspace>/.epsilon/config.toml`, if present.
+pub fn current_project_config_hash_in(workspace: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(workspace.join(".epsilon").join("config.toml")).ok()?;
+    Some(sha256_hex(raw.as_bytes()))
+}
+
 /// Favorite (starred) model ids (`[picker] favorite`), insertion order, uncapped —
 /// opencode's `favorite` list semantics (toggled in the picker, cycled with
 /// Ctrl+P like pi's scoped-models cycling).

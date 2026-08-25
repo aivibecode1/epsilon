@@ -459,20 +459,27 @@ impl StreamFn for DirectProvider {
                 });
             }
         };
-        let Some(key) = std::env::var_os(wire.env_key())
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_string_lossy().into_owned())
-        else {
-            let detail = format!(
-                "missing {} for model '{}' - set it in your environment",
-                wire.env_key(),
-                model.id
-            );
-            return Box::new(OnceStream {
-                ev: Some(StreamEvent::Done {
-                    message: crate::stream_fn::error_message(detail),
-                }),
-            });
+        // M22 fix: stored credentials (epsilon auth login) win, env var falls
+        // back — same precedence as credentials_ready/live_models. Without this
+        // the login flow set up everything EXCEPT actual chat requests.
+        let provider = crate::catalog::lookup_model(&model.id)
+            .map(|m| m.provider)
+            .unwrap_or("");
+        let key = match crate::catalog::resolve_api_key(provider) {
+            Some(k) => k,
+            None => {
+                let detail = format!(
+                    "no API key for '{}' (model '{}') - run `epsilon auth login {provider}` or set {}",
+                    provider,
+                    model.id,
+                    wire.env_key()
+                );
+                return Box::new(OnceStream {
+                    ev: Some(StreamEvent::Done {
+                        message: crate::stream_fn::error_message(detail),
+                    }),
+                });
+            }
         };
 
         let body = match wire.request_body(&model.id, &ctx) {

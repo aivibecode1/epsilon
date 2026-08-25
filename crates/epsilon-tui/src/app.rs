@@ -577,8 +577,31 @@ impl App {
             match text.trim().to_ascii_lowercase().as_str() {
                 "trust" | "trust yes" | "y" => {
                     self.trust_review_pending = false;
-                    self.ui
-                        .push_notice("project config accepted for this workspace");
+                    // Persist the acceptance (M22 fix): without this the changed
+                    // config re-prompted on every run forever. Best-effort — a
+                    // failed write keeps the gate active for the next run.
+                    match epsilon_core::config::current_project_config_hash_in(
+                        std::path::Path::new("."),
+                    ) {
+                        Some(hash) => {
+                            match epsilon_core::config::accept_project_config_hash_in(
+                                std::path::Path::new("."),
+                                &hash,
+                            ) {
+                                Ok(path) => self.ui.push_notice(format!(
+                                    "project config accepted for this workspace (saved to {})",
+                                    path.display()
+                                )),
+                                Err(e) => {
+                                    self.ui.push_notice(format!("accepted, but not saved: {e}"))
+                                }
+                            }
+                        }
+                        None => {
+                            self.ui
+                                .push_notice("project config accepted for this session");
+                        }
+                    }
                 }
                 "trust no" | "n" => {
                     return true; // quit — user declined the changed config
