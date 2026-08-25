@@ -371,9 +371,7 @@ fn main() {
 fn auth_command(action: &AuthAction) -> i32 {
     match action {
         AuthAction::List => {
-            let creds = epsilon_llm::auth::load_credentials_in(
-                &epsilon_llm::auth::global_dir().unwrap_or_default(),
-            );
+            let creds = epsilon_llm::auth::load_credentials();
             if creds.is_empty() {
                 println!("no stored credentials (~/.config/epsilon/auth.json)");
                 println!("add one:  epsilon auth login <provider>");

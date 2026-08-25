@@ -18,7 +18,7 @@ mod retry;
 mod retry_stream;
 mod stream_fn;
 
-pub use auth::{StoredCredential, load_credentials_in, remove_credential_in, save_credential_in};
+pub use auth::{StoredCredential, load_credentials, remove_credential, save_credential};
 pub use catalog::{ModelInfo, curated, display_label, env_key_for, lookup_model, resolve_api_key};
 
 #[cfg(feature = "real")]

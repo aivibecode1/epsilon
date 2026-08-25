@@ -63,9 +63,10 @@ ledgers.
 | M20 | Catalog regeneration + live picker refresh: `scripts/regen_catalog.py` generates the catalog from models.dev (383 rows vs ~40 curated — DIRECTION-05 closed), live `GET /models` fetch FIXED (M17's Ctrl+F passed a model id where a provider name was required) and AUTO-FIRES on picker open / provider descent (opencode/Hermes convention), live ids merged into both picker stages | ✅ shipped |
 | M21 | Thinking fidelity sweep (DIRECTION-04): shared `ThinkingLevel` ladder in contracts, per-wire native mapping (Anthropic adaptive+effort, OpenAI `reasoning_effort`/OpenRouter/zai/deepseek/kimi, Google `thinkingConfig`) with fixture pins, `/think <level>` + Ctrl+T cycle, session-carried like pi; compaction stays Off per ADR-007 | ✅ shipped |
 | M22 | opencode auth store + trust re-prompt (DIRECTION-01): `epsilon auth login/list/logout` — keys live once in `~/.config/epsilon/auth.json` (opencode schema, stored-wins/env-fallback), auto-real detection + picker + live listing all follow; changed `.epsilon/config.toml` now holds the TUI until you answer (`trust` / `trust no`) instead of banner-and-run | ✅ shipped |
-| future | picker favorites · MCP TTL+grace probes or ADR amendment · fallback chains build-or-defer · weekly catalog-drift CI PR · footer thinking-level indicator · hidden key entry (crossterm) | open |
+| M23 | Picker favorites (DIRECTION-06): star any model with Ctrl+F inside the picker (★ column, Favorites section above Recents), F2/Shift+F2 cycle favorites forward/backward from the editor (pi cycling semantics over opencode's favorite list); persisted in config `[picker] favorite` | ✅ shipped |
+| future | MCP TTL+grace probes or ADR amendment · fallback chains build-or-defer · weekly catalog-drift CI PR · footer thinking-level indicator · per-favorite thinking level (pi scoped models) | open |
 
-234 tests · zero clippy warnings (both feature configs) · every milestone committed
+239 tests · zero clippy warnings (both feature configs) · every milestone committed
 with a dev log under [`docs/milestones/`](docs/milestones).
 
 ---

@@ -3,6 +3,20 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M23 - Picker favorites + favorite cycling (DIRECTION-06)
+- **Star any model** with Ctrl+F inside the picker (opencode's
+  `model_favorite_toggle`); ★ column in both picker stages; persisted in
+  config `[picker] favorite` (cap 16, loud error when full).
+- **Favorites section above Recents** in stage-1 rows, recents filtered to
+  exclude favorited ids (opencode dialog order); star follows the id into the
+  full catalog list too.
+- **F2 / Shift+F2** cycle favorites forward/backward from the editor (pi
+  `cycleModel` semantics: wrap-around, non-listed current enters forward,
+  every switch persists + updates recents). Empty list gives guidance.
+- Live force-refresh moved from Ctrl+F to Ctrl+G (auto-fetch on open already
+  covers the common case). Hint bar updated.
+- Suite: 239 tests passing.
+
 ### M22 - opencode auth store + trust re-prompt (DIRECTION-01)
 - **`epsilon auth` subcommand** (opencode auth.json port): `login <provider>
   [key]`, `list` (masked), `logout <provider>`. Keys live in

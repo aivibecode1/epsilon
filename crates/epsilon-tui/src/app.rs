@@ -96,6 +96,9 @@ pub(crate) struct App {
     picker_open: bool,
     picker_index: usize,
     recents: Vec<String>,
+    /// Favorite (starred) model ids, persisted in config `[picker] favorite`
+    /// (M23; opencode favorites / pi scoped-models hybrid).
+    favorites: Vec<String>,
     /// M13/M20: per-provider live listing results (provider → ids), merged into
     /// both picker stages on top of the bundled catalog.
     live_cache: Vec<(String, Vec<String>)>,
@@ -156,10 +159,63 @@ impl App {
         if let Some(rows) = &self.picker_rows {
             return rows.clone();
         }
-        let rows =
-            crate::picker::build_rows(&self.input, &self.model_id, &self.recents, &self.live_cache);
+        let rows = crate::picker::build_rows_with(
+            &self.input,
+            &self.model_id,
+            &self.recents,
+            &self.favorites,
+            &self.live_cache,
+        );
         self.picker_rows = Some(rows.clone());
         rows
+    }
+
+    /// Toggle the favorite star on a model id (M23, opencode toggleFavorite):
+    /// persists immediately and reports the NEW state for the notice.
+    fn toggle_favorite(&mut self, id: &str) {
+        match epsilon_core::config::toggle_favorite_model(id) {
+            Ok(now_favorite) => {
+                self.favorites = epsilon_core::config::load_favorite_models();
+                self.invalidate_picker();
+                self.ui.push_notice(if now_favorite {
+                    format!("★ {id} favorited (Ctrl+P cycles favorites)")
+                } else {
+                    format!("☆ {id} unfavorited")
+                });
+            }
+            Err(e) => {
+                self.ui.push_notice(format!("favorite not saved: {e}"));
+            }
+        }
+    }
+
+    /// Cycle to the next/previous favorite model (M23; pi's cycleModel over
+    /// scoped models — opencode's `cycleFavorite`). No-op with guidance when
+    /// no favorites exist.
+    fn cycle_favorite(&mut self, agent: &Arc<Agent>, direction: isize) {
+        if self.favorites.is_empty() {
+            self.ui
+                .push_notice("no favorites yet — star one in the picker (Ctrl+F)");
+            return;
+        }
+        let len = self.favorites.len() as isize;
+        let idx = self
+            .favorites
+            .iter()
+            .position(|f| f.eq_ignore_ascii_case(&self.model_id));
+        // pi semantics: current-not-in-list enters at the forward end.
+        let next = match idx {
+            Some(i) => {
+                let n = (i as isize + direction).rem_euclid(len);
+                self.favorites[n as usize].clone()
+            }
+            None if direction > 0 => self.favorites[0].clone(),
+            None => self.favorites[(len - 1) as usize].clone(),
+        };
+        if next.eq_ignore_ascii_case(&self.model_id) {
+            return; // single-entry list: already there
+        }
+        self.apply_model(agent, next);
     }
 }
 
@@ -193,6 +249,7 @@ impl App {
             picker_open: false,
             picker_index: 0,
             recents: epsilon_core::config::load_recent_models(),
+            favorites: epsilon_core::config::load_favorite_models(),
             live_cache: Vec::new(),
             live: None,
             prefs: crate::state::RenderPrefs::default(),
@@ -1158,8 +1215,27 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 }
             }
             KeyCode::Char('f' | 'F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Ctrl+F: force a live listing for the target provider (M13; M20
-                // also auto-fetches without this key).
+                // M23: Ctrl+F toggles the favorite star on the highlighted row
+                // (opencode model_favorite_toggle). Live force-refresh moved to
+                // Ctrl+G; auto-fetch on open still covers the common case.
+                let rows = if app.picker_provider.is_some() {
+                    crate::picker::build_models_for_provider(
+                        app.picker_provider.as_deref().unwrap_or(""),
+                        &app.input,
+                        &app.model_id,
+                        &app.live_cache,
+                    )
+                } else {
+                    app.picker_rows()
+                };
+                if let Some(row) = rows.get(app.picker_index) {
+                    let id = row.id.clone();
+                    app.toggle_favorite(&id);
+                }
+            }
+            KeyCode::Char('g' | 'G') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+G: force a live listing (M13's Ctrl+F job; M20 also
+                // auto-fetches without any key).
                 app.request_live(true);
             }
             KeyCode::Char(c) => {
@@ -1274,6 +1350,18 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 app.picker_index = 0;
                 app.stash_draft();
             }
+            false
+        }
+        KeyCode::F(2) => {
+            // M23: F2 cycles favorites forward (pi app.model.cycleForward over
+            // scoped models; opencode model_cycle_recent family). Shift+F2 goes
+            // backward.
+            let dir = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                -1
+            } else {
+                1
+            };
+            app.cycle_favorite(agent, dir);
             false
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
@@ -1477,7 +1565,7 @@ fn hint_line(app: &App) -> Line<'static> {
     let text = if app.pending_ask.is_some() {
         "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
     } else if app.picker_open {
-        "type to filter · ↑/↓ move · Ctrl+F refresh from provider · Enter apply · Esc close"
+        "type filters · ↑/↓ move · Ctrl+F favorite ★ · Ctrl+G refresh · Enter apply · Esc close"
     } else if app.slash_open {
         "↑/↓ pick · Tab/Enter apply · Esc dismiss"
     } else if app.ui.running() {
@@ -1662,6 +1750,8 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         let selected = i == app.picker_index;
         let marker = if row.id == app.model_id { "● " } else { "  " };
         let auth = if row.auth_ready { "🔑" } else { "· " };
+        // M23: ★ marks favorites (opencode's star column); Ctrl+F toggles.
+        let star = if row.is_favorite { "★" } else { " " };
         let style = if selected {
             Style::default().fg(Color::Cyan)
         } else {
@@ -1673,6 +1763,14 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
                 format!("{auth} "),
                 Style::default().fg(if row.auth_ready {
                     Color::Green
+                } else {
+                    Color::DarkGray
+                }),
+            ),
+            Span::styled(
+                format!("{star} "),
+                Style::default().fg(if row.is_favorite {
+                    Color::Yellow
                 } else {
                     Color::DarkGray
                 }),
@@ -2454,7 +2552,57 @@ mod tests {
         );
     }
 
-    // ---- M17b: slash autocomplete navigation + selection ---------------------------
+    // ---- M23: favorites ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn favorites_section_orders_above_recents_and_marks_stars() {
+        let rows = crate::picker::build_rows_with(
+            "",
+            "faux-1",
+            &["deepseek-chat".to_string()],
+            &["kimi-k2.6".to_string()],
+            &[],
+        );
+        // Active model, then favorite, then recent (favorite NOT repeated in
+        // recents), then catalog.
+        assert_eq!(rows[0].id, "faux-1");
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let fav_pos = ids.iter().position(|i| *i == "kimi-k2.6").unwrap();
+        let rec_pos = ids.iter().position(|i| *i == "deepseek-chat").unwrap();
+        assert!(fav_pos < rec_pos, "favorite must precede recent: {ids:?}");
+        assert_eq!(rows[fav_pos].provider, "favorite");
+        assert!(rows[fav_pos].is_favorite);
+        // The star also shows on the same id inside the catalog section.
+        assert!(
+            rows.iter()
+                .all(|r| if r.id == "kimi-k2.6" && r.provider != "favorite" {
+                    r.is_favorite
+                } else {
+                    true
+                })
+        );
+    }
+
+    #[tokio::test]
+    async fn f2_cycles_favorites_and_guides_when_empty() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        // Empty list: guidance, no crash, model unchanged.
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "faux-1");
+
+        app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "deepseek-chat", "forward cycle");
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "faux-1", "wraps around");
+
+        handle_key(
+            &mut app,
+            &agent,
+            KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.model_id, "deepseek-chat", "shift = backward");
+    }
 
     #[tokio::test]
     async fn slash_popup_opens_and_arrows_move_selection() {

@@ -27,6 +27,8 @@ pub struct PickerRow {
     pub is_live: bool,
     /// True for rows sourced from the persisted recently-used list.
     pub is_recent: bool,
+    /// True when the id is starred in the persisted favorites list (M23).
+    pub is_favorite: bool,
 }
 
 fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
@@ -39,6 +41,7 @@ fn row_from_info(info: &epsilon_llm::ModelInfo) -> PickerRow {
         is_custom: false,
         is_live: false,
         is_recent: false,
+        is_favorite: false,
     }
 }
 
@@ -57,19 +60,33 @@ fn synthetic_row(
         is_custom,
         is_live,
         is_recent,
+        is_favorite: false,
     }
 }
 
 /// Build the picker rows for a filter string.
 ///
-/// Order (empty filter): active model first, then recents, then the bundled catalog.
-/// With a filter: case-insensitive substring matches across id/label/provider from all
-/// sources; when the filter is not an exact known id, a trailing custom row offers it
-/// verbatim.
+/// Order (empty filter): active model first, then FAVORITES, then recents, then
+/// the bundled catalog (opencode's model-dialog section order). With a filter:
+/// case-insensitive substring matches across id/label/provider from all
+/// sources; when the filter is not an exact known id, a trailing custom row
+/// offers it verbatim.
 pub fn build_rows(
     filter: &str,
     current: &str,
     recents: &[String],
+    live: &[(String, Vec<String>)],
+) -> Vec<PickerRow> {
+    build_rows_with(filter, current, recents, &[], live)
+}
+
+/// [`build_rows`] with an explicit favorites list (M23; kept as a separate
+/// function so existing call sites/tests keep their shape).
+pub fn build_rows_with(
+    filter: &str,
+    current: &str,
+    recents: &[String],
+    favorites: &[String],
     live: &[(String, Vec<String>)],
 ) -> Vec<PickerRow> {
     let needle = filter.trim().to_ascii_lowercase();
@@ -93,7 +110,29 @@ pub fn build_rows(
         push_unique(row_from_info(info), &mut rows, &mut seen);
     }
 
-    for id in recents {
+    // Favorites (M23, opencode "Favorites" section): starred ids first.
+    for id in favorites {
+        if matches_filter(id)
+            && let Some(info) = catalog::lookup_model(id)
+        {
+            let mut row = row_from_info(info);
+            row.is_favorite = true;
+            row.provider = "favorite".into();
+            push_unique(row, &mut rows, &mut seen);
+        } else if matches_filter(id) {
+            push_unique(
+                synthetic_row(id, "favorite", false, false, false),
+                &mut rows,
+                &mut seen,
+            );
+        }
+    }
+
+    // Recents exclude favorites (opencode filters them out of "Recent").
+    for id in recents
+        .iter()
+        .filter(|id| !favorites.iter().any(|f| f.eq_ignore_ascii_case(id)))
+    {
         if matches_filter(id)
             && let Some(info) = catalog::lookup_model(id)
         {
@@ -126,7 +165,10 @@ pub fn build_rows(
 
     for info in catalog::curated() {
         if matches_filter(&format!("{} {} {}", info.id, info.label, info.provider)) {
-            push_unique(row_from_info(info), &mut rows, &mut seen);
+            let mut row = row_from_info(info);
+            // Star marker follows the id into the full catalog list too.
+            row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+            push_unique(row, &mut rows, &mut seen);
         }
     }
 

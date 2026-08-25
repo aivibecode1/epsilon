@@ -89,6 +89,100 @@ fn parse_model_id(raw: &str) -> Option<String> {
 /// Recently used model ids, newest first (`[picker] recent`), capped at [`RECENT_MAX`].
 pub const RECENT_MAX: usize = 8;
 
+/// Favorite (starred) model ids (`[picker] favorite`), insertion order, uncapped —
+/// opencode's `favorite` list semantics (toggled in the picker, cycled with
+/// Ctrl+P like pi's scoped-models cycling).
+pub const FAVORITE_MAX: usize = 16;
+
+/// Favorite model ids from `config_dir/config.toml` (insertion order, capped).
+pub fn load_favorite_models_in(config_dir: &Path) -> Vec<String> {
+    let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let value: toml::Value = match toml::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    value
+        .get("picker")
+        .and_then(|p| p.get("favorite"))
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .filter(|s| !s.trim().is_empty())
+                .take(FAVORITE_MAX)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Toggle `model_id` in the favorites list: present -> remove, absent ->
+/// append (opencode `toggleFavorite` semantics). Persists immediately.
+pub fn toggle_favorite_model_in(config_dir: &Path, model_id: &str) -> Result<bool, String> {
+    if model_id.trim().is_empty() {
+        return Err("refusing to favorite an empty model id".into());
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    let mut favs = load_favorite_models_in(config_dir);
+    let existed = match favs.iter().position(|id| id == model_id) {
+        Some(i) => {
+            favs.remove(i);
+            true
+        }
+        None => {
+            if favs.len() >= FAVORITE_MAX {
+                return Err(format!(
+                    "favorites are full ({FAVORITE_MAX}); unfavorite one first"
+                ));
+            }
+            favs.push(model_id.to_string());
+            false
+        }
+    };
+
+    table
+        .entry("picker")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[picker] exists but is not a table".to_string())?
+        .insert(
+            "favorite".into(),
+            toml::Value::Array(
+                favs.into_iter()
+                    .map(toml::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(existed)
+}
+
+/// [`load_favorite_models_in`] against the resolved global directory.
+pub fn load_favorite_models() -> Vec<String> {
+    global_dir()
+        .map(|d| load_favorite_models_in(&d))
+        .unwrap_or_default()
+}
+
+/// [`toggle_favorite_model_in`] against the resolved global directory.
+/// Returns the NEW state: true = now a favorite, false = unfavorited.
+pub fn toggle_favorite_model(model_id: &str) -> Result<bool, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    toggle_favorite_model_in(&dir, model_id)
+}
+
 /// Recently used model ids from `config_dir/config.toml` (newest first, capped).
 pub fn load_recent_models_in(config_dir: &Path) -> Vec<String> {
     let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
@@ -338,6 +432,40 @@ mod tests {
         let _ = save_model_id_in(dir, "deepseek-chat");
         assert_eq!(load_model_id_in(dir).as_deref(), Some("deepseek-chat"));
         assert_eq!(load_recent_models_in(dir).len(), RECENT_MAX);
+    }
+
+    #[test]
+    fn favorites_toggle_round_trip_and_survive_recents_writes() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // Toggle on: reports new state true, list grows in insertion order.
+        assert!(!toggle_favorite_model_in(dir, "kimi-k2.6").unwrap());
+        assert!(!toggle_favorite_model_in(dir, "deepseek-chat").unwrap());
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["kimi-k2.6".to_string(), "deepseek-chat".to_string()]
+        );
+
+        // Toggle off the first: removed, order of the rest preserved.
+        assert!(toggle_favorite_model_in(dir, "kimi-k2.6").unwrap());
+        assert_eq!(load_favorite_models_in(dir), vec!["deepseek-chat"]);
+
+        // Recents writes must not clobber favorites (separate [picker] key).
+        let _ = push_recent_model_in(dir, "deepseek-chat");
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["deepseek-chat".to_string()]
+        );
+        assert_eq!(
+            load_recent_models_in(dir),
+            vec!["deepseek-chat".to_string()]
+        );
+
+        // Empty id refused; missing file reads empty.
+        assert!(toggle_favorite_model_in(dir, "  ").is_err());
+        let empty = tempfile::tempdir().unwrap();
+        assert!(load_favorite_models_in(empty.path()).is_empty());
     }
 
     #[test]

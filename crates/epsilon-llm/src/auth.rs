@@ -30,7 +30,7 @@ pub struct StoredCredential {
 }
 
 /// `auth.json` inside a config dir (opencode's file name and location).
-pub fn auth_path_in(config_dir: &Path) -> PathBuf {
+fn auth_path_in(config_dir: &Path) -> PathBuf {
     config_dir.join("auth.json")
 }
 

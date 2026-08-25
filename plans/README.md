@@ -48,16 +48,17 @@ honor its STOP conditions, and update your row when done.
   before touching. Recorded as the next audit cycle's first candidates.
 - **DEBT-03 god-file splits (main.rs modes / app.rs draw)**: facts verified, payoff
   MED; folded into future milestone work rather than an advisor plan.
-- **DIRECTION findings**: trust re-prompt (DIRECTION-01), MCP TTL+grace probes or ADR
-  amendment (02), fallback chains build-or-defer (03), thinking fidelity sweep (04)
-  — **CLOSED in M21** (`docs/milestones/M21-thinking-fidelity.md`),
+- **DIRECTION findings**: trust re-prompt (DIRECTION-01) — **CLOSED in M22**
+  (`docs/milestones/M22-auth-and-trust.md`), MCP TTL+grace probes or ADR
+  amendment (02), fallback chains build-or-defer (03), thinking fidelity sweep
+  (04) — **CLOSED in M21** (`docs/milestones/M21-thinking-fidelity.md`),
   catalog regenerate script (05) — **CLOSED in M20** (`scripts/regen_catalog.py`,
   383-row generated catalog + live picker refresh, see
-  `docs/milestones/M20-catalog-regen-live-picker.md`), picker favorites (06) — all
-  grounded and logged in
-  reports/research-pass-2-2026-08.md and the direction audit; they are maintainer
-  options, not plans here. Recommended next: DIRECTION-01 (trust re-prompt,
-  safety-adjacent).
+  `docs/milestones/M20-catalog-regen-live-picker.md`), picker favorites (06) —
+  **CLOSED in M23** (`docs/milestones/M23-picker-favorites.md`) — all grounded
+  and logged in reports/research-pass-2-2026-08.md. Remaining open:
+  DIRECTION-02/03 as maintainer options. Recommended next: a fresh /improve
+  deep pass over M21–M23.
 
 ## Provenance
 
