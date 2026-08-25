@@ -522,6 +522,22 @@ ADR-003 amendment and `docs/milestones/M17-pi-port.md`).
 
 ## Superseded / deferred
 
+**Amendment (M24).** Two previously deferred items from the research pass landed:
+
+- **MCP health probes (DIRECTION-02).** `Connector::is_healthy` with a
+  default-trusting implementation; the stdio connector detects dead children
+  via rmcp's `is_closed()`; the bridge probes before each call behind a 30s
+  TTL, and a failed call resets the cache. Rationale: one relaxed atomic load
+  per healthy call is cheap insurance against opaque transport errors; see
+  `docs/milestones/M24-mcp-health-and-fallbacks.md`.
+- **Provider fallback chains (DIRECTION-03).** New `epsilon_llm::fallback::FallbackProvider`
+  (`--fallback <model>`, repeatable) walks candidates within a turn on
+  retryable failure classes only (same classification as the retry executor),
+  restores the primary next turn by construction (stateless chain head start),
+  and never switches after streaming began. ADR-003's never-fail StreamFn
+  contract is preserved: all-failed chains still terminate in an in-band
+  Error message naming every candidate's last error.
+
 - **ADR-D01 (deferred): WASM extension sandbox.** Revisit if process-isolation overhead ever
   matters or component model stabilizes further.
 - **ADR-D02 (deferred): Windows ACL restricted-token confinement backend.** Post-v1; requires

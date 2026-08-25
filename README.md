@@ -10,10 +10,13 @@ harnesses we read at source level:
 
 | Inherits | From | What it adds |
 |---|---|---|
-| The skeleton | **pi** (Earendil Works) | Two-level loop, steering/follow-up queues, JSONL session trees, never-fail provider contract |
+| The skeleton | **[pi](https://github.com/earendil-works/pi)** (Earendil Works) | Two-level loop, steering/follow-up queues, JSONL session trees, never-fail provider contract |
 | The armor | **DeepSeek Harness (DSH)** | Fail-closed OS confinement seam, bounded tool pools, sticky turn reasons |
-| The discipline | **Hermes Agent** | Byte-stable prompt tiers, replay fidelity, cross-process leases |
-| The manners | **opencode** | Wildcard permission gates, doom-loop brake, structured compaction |
+| The discipline | **Hermes Agent** ([Nous Research](https://github.com/NousResearch/hermes-agent)) | Byte-stable prompt tiers, replay fidelity, cross-process leases |
+| The manners | **opencode** ([Anomaly](https://github.com/anomalyco/opencode)) | Wildcard permission gates, auth store, picker favorites, plan mode |
+
+Full credits and what each harness taught us: [Credits and references](#credits-and-references)
+at the bottom of this file.
 
 The end result is a single static binary that runs pi's loop with DSH's safety rules. We
 couldn't find another harness doing both, so we built one.
@@ -73,7 +76,7 @@ and real providers need a build with `--features real`.
 | M24 | Reliability polish (DIRECTION-02/03 closed): MCP health probes with 30s TTL + fail-fast honest errors (`Connector::is_healthy`, stdio death detection), provider fallback chains (`--fallback <model>`, repeatable — retryable failures walk the chain, per-turn primary restoration, Hermes pattern on our StreamFn seam) | ✅ shipped |
 | future | footer thinking-level indicator · per-favorite thinking level (pi scoped models) · weekly catalog-drift CI PR | open |
 
-241 tests offline (253 with --features real), zero clippy warnings in both build
+241 tests offline (255 with --features real), zero clippy warnings in both build
 configurations. Every milestone has a dev log
 under [`docs/milestones/`](docs/milestones).
 
@@ -107,7 +110,7 @@ and CI verifies it), any of stable-msvc/stable-gnu/musl targets.
 ```sh
 git clone <this-repo> epsilon && cd epsilon
 cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # ~235 tests, offline & free
+cargo test --workspace           # 241 tests, offline & free
 epsilon                          # interactive TUI (auto-detects your API keys)
 epsilon auth login anthropic     # store a key once — no env vars needed
 cargo run -p epsilon-cli -- --demo   # scripted offline demo
@@ -330,6 +333,28 @@ House rules: dependencies are pinned exactly (`=x.y.z`) after checking feature n
 crate's own manifest. No logic in `contracts`. Architectural violations should be build errors,
 not review comments. Behavior changes need an ADR note. Commits look like `feat(mN): ...`,
 `fix(mN): ...`, or `docs: ...`.
+
+---
+
+## Credits and references
+
+Epsilon is a learning project built by reading four open-source coding agents and
+reimplementing the best of what we found. No code was copied; every idea is cited where it
+appears in this repo, and the Rust implementation is written from scratch. The reference
+snapshots we read live in `references/` (pinned versions, unmodified).
+
+| Harness | Source | What Epsilon took | Where it landed |
+|---|---|---|---|
+| **pi** (v0.84.2) by Mario Zechner / Earendil Works | [github.com/earendil-works/pi](https://github.com/earendil-works/pi) · [pi.dev](https://pi.dev) | The skeleton: two-level agent loop, steering and follow-up queues, never-fail `StreamFn` provider contract, fail-all-on-truncation, JSONL session trees with compaction shadow views, turn leases, model picker and cycling semantics, fuzzy matcher, thinking levels carried per session | `epsilon-core`, `epsilon-llm`, `epsilon-session`, `epsilon-tui` throughout |
+| **DeepSeek Harness "DSH"** (v0.1.1-rc.2) by DeepSeek | snapshot in `references/` (no public repo URL verified at time of writing) | The armor: fail-closed OS confinement seam (Job Objects on Windows, bubblewrap on Unix), bounded tool pools, sticky turn reasons, plugin-style process isolation for extensions | `epsilon-safety`, `epsilon-ext`, loop executor in `epsilon-core` |
+| **Hermes Agent** (2026.8.19) by Nous Research | [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) | The discipline: byte-stable three-tier prompt assembly, replay fidelity via request hashing, cross-process turn leases, TTL health probes for optional tools (M24), error-classified fallback chains with per-turn primary restoration (M24), incident-driven documentation culture | `epsilon-core` prompts, `epsilon-session` leases, `epsilon-mcp` probes, `epsilon-llm/src/fallback.rs`, `docs/qa/` |
+| **opencode** (v1.18.21) by Anomaly (formerly SST) | [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode) | The manners: wildcard permission rulesets with last-match-wins ask/deny/allow, auth store (`epsilon auth login`) with stored-key-wins precedence, picker favorites and two-stage provider→model selection, doom-loop brake, plan mode (`--plan` read-only runs), structured compaction UX | `epsilon-safety` rulesets, `epsilon-llm/src/auth.rs`, `epsilon-tui` picker, plan mode in `epsilon-core` |
+
+Two more debts worth naming: the [models.dev](https://models.dev) catalog feeds our bundled
+model data through `scripts/regen_catalog.py`, and this documentation style (and the honesty
+pass over it) follows Wikipedia's "Signs of AI writing" guidance via the humanizer checklist.
+Full source-level audits behind these choices: [`reports/harness-analysis.md`](reports/harness-analysis.md)
+and [`reports/comparative-analysis.md`](reports/comparative-analysis.md).
 
 ---
 

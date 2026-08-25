@@ -99,7 +99,10 @@ and found each has one great strength:
 The plan: take pi's skeleton exactly, then bolt on the best part of each other system
 at clearly named places. The full reasoning lives in `reports/comparative-analysis.md`
 and the ADRs (`design/epsilon-decisions.md`). Nothing was copied blindly; every ported
-idea cites its origin in comments and dev logs.
+idea cites its origin in comments and dev logs. Later milestones kept importing: the
+auth store and picker favorites come from opencode (M22, M23), and MCP health probes
+plus provider fallback chains come from Hermes (M24). The complete credit table with
+links is in `README.md` under "Credits and references".
 
 ## Part 5 — How to explore this repository without drowning
 

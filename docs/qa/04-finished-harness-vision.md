@@ -77,12 +77,12 @@ $ epsilon
 
 ## What Epsilon has that none of them have
 
-1. **Both safety layers combined by default** — intent gates AND OS confinement, wired together
-2. **Process-isolated extensions as default distribution** — everyone else runs extensions
-   same-process; only DSH sandboxes them, experimentally
-3. **Single static binary** with this feature set
-4. **Windows-first-class development** — the references treat win32 as second-class
-5. **pi-grade architectural simplicity WITH DSH-grade safety** — offered together by no
-   existing harness
+1. **Both safety layers combined by default**: intent gates AND OS confinement, wired together.
+2. **Process-isolated extensions as default distribution**: everyone else runs extensions
+   same-process; only DSH sandboxes them, experimentally.
+3. **Single static binary** with this feature set.
+4. **Windows-first-class development**: the references treat win32 as second-class.
+5. **pi-grade architectural simplicity WITH DSH-grade safety**: no existing harness offers both.
 
-One-line summary: *pi's clean heart, DSH's armor, Hermes' discipline, opencode's manners.*
+One-line summary: pi's loop and structure, DSH's safety spine, Hermes' cache discipline,
+opencode's permission UX.
