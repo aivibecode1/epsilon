@@ -53,6 +53,10 @@ pub struct TuiConfig {
     /// trigger — a `TrustDecision::Changed` line makes the TUI ask before the
     /// first run proceeds (pi trust-manager semantics, ADR-012).
     pub startup_notices: Vec<String>,
+    /// M22 (audit): typed trust-review trigger. The TUI must not sniff banner
+    /// strings for security behavior — rewording copy would silently disable
+    /// the gate.
+    pub trust_review_pending: bool,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -923,6 +927,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
         model_id,
         live,
         startup_notices,
+        trust_review_pending,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
@@ -943,10 +948,10 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
     // M22 / DIRECTION-01: flush startup diagnostics as notices, and if the
     // project config changed since it was trusted, hold the first submit until
     // the user answers the review prompt (pi trust-manager semantics).
+    // Audit fix: the trigger is the typed flag from TuiConfig, not a substring
+    // match on banner copy (rewording text must never disable a gate).
+    app.trust_review_pending = trust_review_pending;
     for line in startup_notices {
-        if line.contains("CHANGED since it was trusted") {
-            app.trust_review_pending = true;
-        }
         app.ui.push_notice(line);
     }
     if app.trust_review_pending {
@@ -1251,19 +1256,47 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 // M23: Ctrl+F toggles the favorite star on the highlighted row
                 // (opencode model_favorite_toggle). Live force-refresh moved to
                 // Ctrl+G; auto-fetch on open still covers the common case.
-                let rows = if app.picker_provider.is_some() {
-                    crate::picker::build_models_for_provider(
-                        app.picker_provider.as_deref().unwrap_or(""),
-                        &app.input,
-                        &app.model_id,
-                        &app.live_cache,
-                    )
+                // Audit fix: stage 1 lists PROVIDERS while picker_rows() holds
+                // MODELS — with a filter typed, rows[picker_index] is an
+                // invisible model and the star lands on a hidden target.
+                // Stage 1 therefore stars the highlighted provider's active or
+                // first known model instead of indexing the wrong list.
+                let stage1_target = if app.picker_provider.is_none() {
+                    crate::picker::build_provider_rows(&app.model_id)
+                        .get(app.picker_index)
+                        .map(|p| p.id.clone())
+                        .and_then(|provider| {
+                            epsilon_llm::catalog::lookup_model(&app.model_id)
+                                .filter(|m| m.provider == provider)
+                                .map(|_| app.model_id.clone())
+                                .or_else(|| {
+                                    crate::picker::build_models_for_provider(
+                                        &provider,
+                                        &app.input,
+                                        &app.model_id,
+                                        &app.live_cache,
+                                    )
+                                    .first()
+                                    .map(|r| r.id.clone())
+                                })
+                        })
                 } else {
-                    app.picker_rows()
+                    None
                 };
-                if let Some(row) = rows.get(app.picker_index) {
-                    let id = row.id.clone();
-                    app.toggle_favorite(&id);
+                match stage1_target {
+                    Some(id) => app.toggle_favorite(&id),
+                    None => {
+                        let rows = crate::picker::build_models_for_provider(
+                            app.picker_provider.as_deref().unwrap_or(""),
+                            &app.input,
+                            &app.model_id,
+                            &app.live_cache,
+                        );
+                        if let Some(row) = rows.get(app.picker_index) {
+                            let id = row.id.clone();
+                            app.toggle_favorite(&id);
+                        }
+                    }
                 }
             }
             KeyCode::Char('g' | 'G') if key.modifiers.contains(KeyModifiers::CONTROL) => {

@@ -371,12 +371,22 @@ fn main() {
 ///
 /// Mask a stored key for `auth list`: short keys hide entirely; longer ones
 /// show only the last 4 characters. A bug here leaks secrets to screenshots.
+/// Char-boundary safe: a hand-edited auth.json with a non-ASCII tail must not
+/// panic (the old byte-index slice could).
 fn mask_key(key: &str) -> String {
-    if key.len() <= 4 {
-        "****".to_string()
-    } else {
-        format!("…{}", &key[key.len() - 4..])
+    let total = key.chars().count();
+    if total <= 4 {
+        return "****".to_string();
     }
+    let last4: String = key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("…{last4}")
 }
 
 fn auth_command(action: &AuthAction) -> i32 {
@@ -400,7 +410,10 @@ fn auth_command(action: &AuthAction) -> i32 {
                 Some(k) => k.clone(),
                 None => {
                     // Interactive: read a line without echoing when possible.
-                    eprint!("API key for {provider} (input hidden): ");
+                    // No echo suppression is wired yet: the key IS visible as
+                    // you type (documented limitation, M22 log). The prompt
+                    // must not claim otherwise.
+                    eprint!("API key for {provider} (visible while typing): ");
                     match read_secret_line() {
                         Some(k) if !k.trim().is_empty() => k,
                         _ => {
@@ -492,7 +505,8 @@ async fn dispatch(args: Args) -> i32 {
     // policy (still load); the TUI re-prompts interactively via startup_notices.
     let (project, trust, project_notices) = epsilon_cli::runtime::load_project_config(&workspace);
     let mut startup_notices = project_notices;
-    if matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. }) {
+    let trust_review_pending = matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. });
+    if trust_review_pending {
         startup_notices.extend([
             "WARNING: .epsilon/config.toml CHANGED since it was trusted; \
              review before running untrusted projects"
@@ -625,6 +639,7 @@ async fn dispatch(args: Args) -> i32 {
         project,
         plan_mode: args.plan_mode,
         startup_notices,
+        trust_review_pending,
     };
     match &args.mode {
         Mode::Auth(_) => unreachable!("auth subcommands exit inside main() before dispatch"),
@@ -752,9 +767,10 @@ struct SharedRun {
     resume: Resume,
     project: epsilon_cli::runtime::ProjectConfig,
     plan_mode: bool,
-    /// Project-config notices + trust banner; the TUI re-prompts when the
-    /// trust line is present (M22 / DIRECTION-01).
+    /// Project-config notices + trust banner (M22 / DIRECTION-01).
     startup_notices: Vec<String>,
+    /// Typed trust-review trigger for the TUI gate (audit: no string sniffing).
+    trust_review_pending: bool,
 }
 
 /// Everything `build_runtime` needs to compose one agent (plan 008 / DEBT-01).
@@ -970,6 +986,7 @@ async fn tui_mode(shared: &SharedRun, initial_task: Option<String>) -> i32 {
                 model_id: shared.model_id.clone(),
                 live: live_fetcher(),
                 startup_notices: shared.startup_notices.clone(),
+                trust_review_pending: shared.trust_review_pending,
             })
             .await
         }
@@ -1159,5 +1176,22 @@ mod mask_tests {
         let masked = mask_key(key);
         assert!(!masked.contains("super"));
         assert!(masked.ends_with("alue"));
+    }
+
+    #[test]
+    fn mask_is_char_boundary_safe_on_non_ascii_tails() {
+        // Multi-byte chars in the tail: must not panic (the old byte-index
+        // slice did) and must expose only the final four CHARACTERS.
+        let masked = mask_key("key-أبجد");
+        assert!(masked.starts_with('…'));
+        assert!(masked.ends_with("بجد"));
+
+        let masked = mask_key("日本語テスト");
+        assert_eq!(masked, "…語テスト"); // exactly the last 4 chars
+
+        let masked = mask_key("éééééé");
+        assert_eq!(masked.chars().count(), 5); // … + last 4 chars
+
+        assert_eq!(mask_key("ééé"), "****"); // 4 or fewer chars: hidden fully
     }
 }
