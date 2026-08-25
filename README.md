@@ -4,9 +4,9 @@
   <img src="assets/Logo.png" alt="Epsilon logo" width="800">
 </p>
 
-**A coding-agent harness written in Rust** — a faithful port of [pi](https://pi.dev)'s proven
-agent loop, session format, and tool pipeline, selectively hardened with the best ideas from
-three other production harnesses we audited at source level:
+A coding-agent harness in Rust. It started as a straight port of [pi](https://pi.dev)'s agent
+loop, session format, and tool pipeline, then picked up specific ideas from three other
+harnesses we read at source level:
 
 | Inherits | From | What it adds |
 |---|---|---|
@@ -15,26 +15,28 @@ three other production harnesses we audited at source level:
 | The discipline | **Hermes Agent** | Byte-stable prompt tiers, replay fidelity, cross-process leases |
 | The manners | **opencode** | Wildcard permission gates, doom-loop brake, structured compaction |
 
-Result: *one static binary* with pi-grade simplicity **and** DSH-grade safety — a combination no
-existing harness offers.
+The end result is a single static binary that runs pi's loop with DSH's safety rules. We
+couldn't find another harness doing both, so we built one.
 
 ---
 
 ## Status
 
-**Real tools, ruleset-gated, long-session capable, extensible, and fronted.** Epsilon reads,
-writes, edits, greps, globs, lists, and runs shell commands inside its declared workspace — every
-call passing through last-match-wins permission rules AND OS confinement (Windows Job Objects
-with memory/process/CPU caps and kill-on-close; Unix bubblewrap; fail-closed when unavailable).
-Long sessions auto-compact past the token threshold (prune, clamp tail, amend summaries) with
-byte-stable prompt tiers. Skills load from `SKILL.md` directories; third-party extensions run as
-isolated processes launched from manifests; MCP servers attach over the official rmcp SDK's stdio
-transport. Three frontends share one runtime: an interactive ratatui TUI (`--tui`, live events +
-approval dialogs + a pi-style `/models` picker), print mode (`-p`, headless), and serve mode
-(`--serve`, HTTP/SSE for remote clients). Model selection uses a bundled catalog with env-var
-auth detection; real providers plug in behind `--features real` + `--provider real`. All ten
-planned milestones shipped; deferred items carry written rationale in the ADRs and milestone
-ledgers.
+Epsilon reads, writes, edits, greps, globs, lists, and runs shell commands inside its declared
+workspace. Every tool call passes through two checks: permission rules (last match wins) and OS
+confinement. On Windows that's Job Objects with memory, process, and CPU caps plus kill-on-close.
+On Unix it's bubblewrap. If the sandbox isn't available, calls fail closed rather than running
+free.
+
+Long sessions auto-compact once they pass the token threshold: prune old ranges, clamp the tail,
+amend summaries in place, keep prompts byte-stable so the provider's cache still hits. Skills
+load from `SKILL.md` directories. Extensions run as separate processes launched from manifests.
+MCP servers attach over rmcp's stdio transport.
+
+Three frontends sit on one runtime: a ratatui TUI (`--tui`, live events, approval dialogs, a
+pi-style model picker), print mode (`-p`, headless), and serve mode (`--serve`, HTTP/SSE). Model
+selection reads a bundled catalog; keys come from `epsilon auth login` or environment variables,
+and real providers need a build with `--features real`.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -70,27 +72,27 @@ ledgers.
 | M23 | Picker favorites (DIRECTION-06): star any model with Ctrl+F inside the picker (★ column, Favorites section above Recents), F2/Shift+F2 cycle favorites forward/backward from the editor (pi cycling semantics over opencode's favorite list); persisted in config `[picker] favorite` | ✅ shipped |
 | future | MCP TTL+grace probes or ADR amendment · fallback chains build-or-defer · weekly catalog-drift CI PR · footer thinking-level indicator · per-favorite thinking level (pi scoped models) | open |
 
-239 tests · zero clippy warnings (both feature configs) · every milestone committed
-with a dev log under [`docs/milestones/`](docs/milestones).
+239 tests, zero clippy warnings in both build configurations. Every milestone has a dev log
+under [`docs/milestones/`](docs/milestones).
 
 ---
 
 ## Why it exists
 
-Four convictions, each traceable to evidence in our reference audit
+Four convictions, each backed by evidence we can point to in the reference audit
 ([`reports/harness-analysis.md`](reports/harness-analysis.md)):
 
-1. **Deterministic latency and real parallelism.** pi folds streaming tokens into a live UI;
-   garbage-collector pauses work directly against that. Hermes' synchronous loop capped
-   parallel tool execution structurally. Rust gives both for free.
-2. **Safety needs two layers, not one.** opencode proved intent-level permission gates can be
-   usable; DSH proved OS confinement can fail closed without dead-ending the agent.
-   Every existing harness ships only one layer. Epsilon wires both together: a sandbox denial
-   escalates into an approval prompt instead of failing the task.
+1. **Rust gives deterministic latency and real parallelism.** pi folds streaming tokens into a
+   live UI; garbage-collector pauses work directly against that. Hermes' synchronous loop made
+   parallel tool execution hard by design. Rust has neither problem.
+2. **Safety needs two layers.** opencode showed intent-level permission gates can be usable. DSH
+   showed OS confinement can fail closed without dead-ending the agent. Every existing harness
+   ships one or the other; Epsilon wires both together, so a sandbox denial escalates into an
+   approval prompt instead of failing the task.
 3. **Prompt-cache preservation is an invariant, not an optimization.** Byte-stable prompt tiers,
    auxiliary calls isolated from the live cache prefix, replay fidelity via request hashing.
-4. **Build like lego.** Contracts first, bricks second, integration last — so any bug reproduces
-   by replaying a deterministic log instead of poking a live system. See
+4. **Build like lego.** Contracts first, bricks second, integration last. Any bug reproduces by
+   replaying a deterministic log instead of poking a live system. See
    [`docs/qa/02-lego-brick-methodology.md`](docs/qa/02-lego-brick-methodology.md).
 
 ---
@@ -135,24 +137,25 @@ messages produced: 6
 tokens in/out: 300/150
 ```
 
-Everything runs against the **faux provider** — a scripted deterministic LLM — so builds,
-tests, and demos are offline, instant, and cost nothing. This is deliberate: it is how pi tests
-its own loop, and it means CI never touches paid APIs.
+Everything runs against the **faux provider**, a scripted deterministic LLM. Builds, tests, and
+demos are offline, instant, and cost nothing. pi tests its loop the same way, and it means CI
+never touches paid APIs.
 
 ### Real providers (optional)
 
 ```sh
 cargo build --release -p epsilon-cli --features real   # direct per-provider HTTP (pi-style)
-export ANTHROPIC_API_KEY="..."               # or OPENAI_API_KEY / GEMINI_API_KEY; env only, never stored
-target/release/epsilon                       # auto-detects your key and runs REAL
-# or explicit:
+epsilon auth login anthropic                  # stores a key in ~/.config/epsilon/auth.json
+target/release/epsilon                        # finds the key and runs REAL
+# or set the env var instead: ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY
+# or be explicit:
 target/release/epsilon --provider real --model claude-sonnet-4-5 -p "summarize this repo"
 ```
 
 Providers speak their native wire protocol over HTTPS (Anthropic Messages,
-OpenAI-compatible `/chat/completions`, Google `streamGenerateContent`) — no SDK crate
-in between. Routing reads each model catalog row's declared wire type, never id
-substrings. Keys are read from the environment only.
+OpenAI-compatible `/chat/completions`, Google `streamGenerateContent`), with no SDK crate in
+between. Routing reads each catalog row's declared wire type, never id substrings. A stored key
+wins over an environment variable; both work.
 
 ---
 
@@ -217,32 +220,32 @@ contracts ← session ← core
 
 ## Key mechanisms
 
-- **Two-level loop** (pi verbatim): inner loop runs while tool calls remain or steering is
-  pending; outer loop drains follow-ups when the agent would otherwise stop. Each queue has an
-  explicit drain mode (`all` vs `one-at-a-time`).
-- **Never-fail provider contract**: `StreamFn` implementations cannot throw; failures arrive as
-  a terminal `Done { stop_reason: Error | Aborted }`. A blanket `PanicGuard` converts even
-  panics into that shape.
+- **Two-level loop** (pi verbatim): the inner loop runs while tool calls remain or steering is
+  pending; the outer loop drains follow-ups when the agent would otherwise stop. Each queue has
+  an explicit drain mode (`all` vs one at a time).
+- **Never-fail provider contract**: `StreamFn` implementations cannot throw. Failures arrive as a
+  terminal `Done { stop_reason: Error | Aborted }`. A blanket `PanicGuard` converts even panics
+  into that shape.
 - **Fail-all-on-truncation**: when output hits the token limit, every tool call in that message
-  fails with a re-issue hint instead of executing plausibly-corrupt JSON arguments.
-- **Doom-loop brake**: three consecutive identical calls (counted across batches, run-scoped)
-  raise a permission ask instead of burning tokens.
+  fails with a re-issue hint instead of executing plausibly corrupt JSON arguments.
+- **Doom-loop brake**: three identical calls in a row (counted across batches, per run) raise a
+  permission ask instead of burning tokens.
 - **Bounded parallel pool**: parallel-safe tools run concurrently up to a semaphore cap;
-  sequential tools act as barriers; results always commit in model order so transcripts replay.
-- **Shadowed model view**: compaction rewrites what the MODEL sees while the human JSONL keeps
-  every line — audit intact, context small.
-- **Turn leases**: an advisory lock file lets CLI/TUI/server coexist on one session file;
-  crash leftovers are stealable after 30s.
-- **Crash repair**: dangling tool calls become synthetic error results; failure-stopped turns
-  get typed `TurnEnd{Aborted}` markers. Idempotent by construction.
+  sequential tools act as barriers; results commit in model order so transcripts replay.
+- **Shadowed model view**: compaction rewrites what the model sees while the human-readable JSONL
+  keeps every line. Audit intact, context small.
+- **Turn leases**: an advisory lock file lets CLI, TUI, and server coexist on one session file.
+  Crash leftovers can be stolen after 30 seconds.
+- **Crash repair**: dangling tool calls become synthetic error results; failure-stopped turns get
+  typed `TurnEnd{Aborted}` markers. Idempotent by construction.
 
 ## Testing strategy
 
-The faux provider makes full-loop integration tests offline, deterministic, and millisecond-fast
-(pi's own pattern). Time-sensitive scenarios use `SlowProvider`, never sleeps-and-hope. Each
-brick carries its own integration tests; loop scenarios assert exact transcripts, event
-sequences, and sticky reasons. Property-style coverage arrives where pure functions warrant it
-(permission evaluation, M6).
+The faux provider makes full-loop integration tests offline, deterministic, and fast (pi's own
+pattern). Time-sensitive scenarios use `SlowProvider`, never bare sleeps. Each brick carries its
+own integration tests; loop scenarios assert exact transcripts, event sequences, and sticky stop
+reasons. Pure functions get property-style coverage where it pays off (permission evaluation,
+M6).
 
 ---
 
@@ -274,39 +277,28 @@ Full reasoning lives in [`design/epsilon-decisions.md`](design/epsilon-decisions
 
 ## How to read this repository
 
-Pick your path:
+New to coding agents entirely? Start with
+[`docs/qa/06-agent-harness-primer.md`](docs/qa/06-agent-harness-primer.md): what an agent harness
+is, in plain language, no background assumed. Then follow the developer path below.
 
-**You are new to coding agents entirely**
-1. [`docs/qa/06-agent-harness-primer.md`](docs/qa/06-agent-harness-primer.md) — what an
-   agent harness is, in plain language, with zero assumed background.
-2. Then follow the developer path below.
+Joining as a developer? Read this README, then [`CHANGELOG.md`](CHANGELOG.md) for what shipped
+when, then the short notes in [`docs/qa/`](docs/qa) (why Rust, the lego methodology, what exists
+after each phase). [`design/epsilon-architecture.md`](design/epsilon-architecture.md) sections 2
+through 7 cover components and data flow, and [`docs/milestones/`](docs/milestones) has the dev
+logs in order: what was built, which bugs the tests caught, why decisions went the way they did.
 
-**You are a developer joining the project**
-1. This README.
-2. [`CHANGELOG.md`](CHANGELOG.md) — what shipped when, milestone by milestone.
-3. [`docs/qa/`](docs/qa) — short narrative notes (why Rust, the lego methodology, what
-   exists after each phase, the finished-product vision, documentation conventions,
-   and a beginner's primer on agent harnesses).
-4. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) §2–§7 — components and
-   data flow.
-5. [`docs/milestones/`](docs/milestones) — dev logs in order; each records what was built,
-   which bugs the tests caught, and why decisions were made.
+Researching harness design? [`reports/harness-analysis.md`](reports/harness-analysis.md) audits
+pi, DSH, Hermes, and opencode at source level with file-anchored strengths and weaknesses.
+[`reports/comparative-analysis.md`](reports/comparative-analysis.md) ranks who does what best.
+[`design/epsilon-decisions.md`](design/epsilon-decisions.md) shows how the audit became choices.
 
-**You are researching agent-harness design**
-1. [`reports/harness-analysis.md`](reports/harness-analysis.md) — source-level audit of pi /
-   DSH / Hermes / opencode with file-anchored strengths and weaknesses.
-2. [`reports/comparative-analysis.md`](reports/comparative-analysis.md) — who does what best,
-   reuse list, anti-pattern list.
-3. [`design/epsilon-decisions.md`](design/epsilon-decisions.md) — how the audit became choices.
-
-**You are a coding agent working in this repository**
-1. Root [`AGENTS.md`](AGENTS.md) — commands, gates, laws of this repo. It loads automatically.
-2. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) §2 — crate boundaries you
-   must not violate.
-3. Latest [`docs/milestones/`](docs/milestones) entry — current state and next step.
-4. The runtime behavior contract Epsilon will ship lives at
-   [`crates/epsilon-core/assets/agent-contract.md`](crates/epsilon-core/assets/agent-contract.md);
-   it describes the *product*, not this repo's development rules.
+Working in this repo as a coding agent? Root [`AGENTS.md`](AGENTS.md) has the commands and gates
+and loads automatically. [`design/epsilon-architecture.md`](design/epsilon-architecture.md)
+section 2 lists the crate boundaries you must not cross. The latest entry in
+[`docs/milestones/`](docs/milestones) tells you the current state. The runtime behavior contract
+Epsilon ships lives at
+[`crates/epsilon-core/assets/agent-contract.md`](crates/epsilon-core/assets/agent-contract.md);
+it describes the product, not this repo's development rules.
 
 ---
 
@@ -332,16 +324,15 @@ cargo clippy --workspace --all-targets   # zero warnings tolerated
 cargo test --workspace                   # full suite green
 ```
 
-Rules of the house: dependencies pinned exactly (`=x.y.z`) after verifying features against the
-crate's own manifest; no logic in `contracts`; architectural violations should be build errors,
-not review comments; behavior changes need an ADR note. Commit convention:
-`feat(mN): …` / `fix(mN): …` / `docs: …`.
+House rules: dependencies are pinned exactly (`=x.y.z`) after checking feature names against the
+crate's own manifest. No logic in `contracts`. Architectural violations should be build errors,
+not review comments. Behavior changes need an ADR note. Commits look like `feat(mN): ...`,
+`fix(mN): ...`, or `docs: ...`.
 
 ---
 
-*Built as a research-through-implementation project. The reference harnesses under
-`references/` remain the property of their respective authors; their lessons are cited, their
-code is not copied.*
+*This repo is a research-through-implementation project. The reference harnesses under
+`references/` belong to their authors; we cite their lessons and don't copy their code.*
 
 
 

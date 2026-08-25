@@ -51,28 +51,37 @@ async fn echo_runs_under_bubblewrap() {
     assert_eq!(outcome.backend, "bwrap");
 }
 
-/// The unshared mount namespace must isolate tmpfs /tmp: a file planted in the HOST
-/// temp dir is invisible inside the sandbox.
+/// The unshared mount namespace must isolate tmpfs /tmp from the HOST temp dir. The probe
+/// marker lives in a fresh directory OUTSIDE the confined command's workspace, so the only
+/// way `sh` could see it is through the host mount (an actual isolation failure). Earlier
+/// versions of this test planted the marker inside /tmp AND set cwd to /tmp, which made the
+/// workspace bind itself expose the marker by design and failed on any runner whose
+/// TMPDIR was /tmp.
 #[tokio::test]
 async fn host_tmp_is_not_visible_inside_sandbox() {
     let Some(sb) = sandbox() else {
         eprintln!("skipping: bubblewrap not installed");
         return;
     };
-    let marker = std::env::temp_dir().join(format!("eps-bwrap-marker-{}", std::process::id()));
-    std::fs::write(&marker, "host-only").expect("plant marker");
-    let _cleanup = MarkerGuard(&marker);
+    // Workspace: its own scratch dir. Marker: a sibling dir that is NOT under it.
+    let ws = std::env::temp_dir().join(format!("eps-bwrap-isolated-ws-{}", std::process::id()));
+    std::fs::create_dir_all(&ws).expect("create workspace dir");
+    let _ws_guard = DirGuard(&ws);
+
+    let outside = std::env::temp_dir().join(format!("eps-bwrap-marker-{}", std::process::id()));
+    std::fs::write(&outside, "host-only").expect("plant marker");
+    let _cleanup = MarkerGuard(&outside);
 
     let script = format!(
         "if [ -f '{}' ]; then echo SEEN; else echo ISOLATED; fi",
-        marker.display()
+        outside.display()
     );
     let outcome = sb
         .run(
             ConfinedCommand {
                 program: "sh".into(),
                 args: vec!["-c".into(), script],
-                cwd: std::env::temp_dir(),
+                cwd: ws.clone(),
             },
             &policy(),
         )
@@ -82,6 +91,14 @@ async fn host_tmp_is_not_visible_inside_sandbox() {
         outcome.stdout.contains("ISOLATED"),
         "host tmp leaked into sandbox: {outcome:?}"
     );
+}
+
+/// Removes a planted directory tree on drop.
+struct DirGuard<'a>(&'a std::path::Path);
+impl Drop for DirGuard<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0);
+    }
 }
 
 /// Root is bound read-only: writes to `/` must fail inside the sandbox while the

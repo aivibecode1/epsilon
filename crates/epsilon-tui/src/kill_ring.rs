@@ -201,7 +201,7 @@ mod tests {
     fn char_count_markers_for_long_single_lines() {
         let long = "x".repeat(120);
         let marker = make_paste_marker(2, &long);
-        assert_eq!(marker, format!("[paste #2 120 chars]"));
+        assert_eq!(marker, "[paste #2 120 chars]");
         assert!(is_paste_marker(&marker));
     }
 
