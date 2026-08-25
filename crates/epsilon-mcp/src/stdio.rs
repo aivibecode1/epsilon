@@ -53,6 +53,18 @@ impl StdioConnector {
 
 #[async_trait]
 impl Connector for StdioConnector {
+    /// DIRECTION-02: a dead stdio child means every call would hang or fail
+    /// with an opaque transport error; report that honestly and cheaply.
+    async fn is_healthy(&self) -> Result<(), String> {
+        if self.service.is_closed() {
+            return Err(
+                "mcp server process is not running (exited or crashed); \
+                 restart the session or re-attach with --mcp"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
     async fn list_tools(&self) -> Result<Vec<McpToolInfo>, String> {
         let tools = self
             .service
