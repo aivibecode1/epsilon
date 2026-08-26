@@ -9,6 +9,10 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
   (`catalog-drift/latest`) when the bundled catalog drifted. Silent when it
   did not. Never pushes main; the refresh rides the normal CI gates like any
   change. Manual fire available via workflow_dispatch.
+- **Audit follow-up (same milestone)**: F2 favorite cycling is now gated by
+  the M22 project-config trust review, like Ctrl+P already was — since M26 a
+  cycle also mutates the thinking level and persists config, so it must not
+  act against unreviewed rules. Gate-blocked regression test added.
 
 ### M26 - Per-favorite thinking levels
 - **Ctrl+F remembers the level**: starring a model stores your current

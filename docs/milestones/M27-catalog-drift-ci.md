@@ -51,14 +51,18 @@ Also matches repo law: never push main directly; PRs are where review lives.
 
 ## Verification
 
-- YAML parsed clean (`yaml.safe_load`), LF line endings.
-- Local dry-run of the pipeline steps on this machine:
-  regeneration against a cached models.dev snapshot produced a byte-identical
-  catalog_data.rs (no drift today, as expected after M20's regen) — so the
-  first scheduled Monday run should also be quiet unless the registry moves
-  this week.
-- Real end-to-end proof lands with the first scheduled run or a manual
-  workflow_dispatch fire; the job is 4 small steps, all individually logged.
+```
+cargo fmt --all -- --check          clean
+cargo clippy --workspace --all-targets   0 warnings
+cargo test --workspace              245 passed, 0 failed
+cargo test --workspace --features real   259 passed, 0 failed (one flaky rerun:
+                                    grandchildren_die_with_the_job, known, lesson 18)
+cargo run -q -p epsilon-cli -- --demo    completes
+```
+
+New tests:
+
+- `trust_gate_blocks_f2_favorite_cycling` — the audit's gate-blocked regression.
 
 ## Docs
 

@@ -1476,7 +1476,15 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         KeyCode::F(2) => {
             // M23: F2 cycles favorites forward (pi app.model.cycleForward over
             // scoped models; opencode model_cycle_recent family). Shift+F2 goes
-            // backward.
+            // backward. M27 audit: gated like Ctrl+P — cycling persists config
+            // (model id, recents) and since M26 also mutates the thinking
+            // level, so it must not act against unreviewed rules.
+            if app.trust_review_pending {
+                app.ui.push_notice(
+                    "config review pending - type `trust` to accept or `trust no` to quit",
+                );
+                return false;
+            }
             let dir = if key.modifiers.contains(KeyModifiers::SHIFT) {
                 -1
             } else {
@@ -2690,6 +2698,34 @@ mod tests {
         assert!(!type_and_enter(&mut app, &agent, "trust"));
         handle_key(&mut app, &agent, ctrl(KeyCode::Char('p')));
         assert!(app.palette_open, "palette works after review");
+    }
+
+    #[tokio::test]
+    async fn trust_gate_blocks_f2_favorite_cycling() {
+        // M27 audit (lesson 14: every input path gets a gate test): F2 cycles
+        // models AND mutates the thinking level (M26), persisting config — it
+        // must not act while the project-config review is pending.
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
+        app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
+        app.trust_review_pending = true;
+
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "faux-1", "model unchanged under the gate");
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::Off,
+            "thinking level unchanged under the gate"
+        );
+
+        // After accepting, cycling applies model + remembered level as usual.
+        assert!(!type_and_enter(&mut app, &agent, "trust"));
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "deepseek-chat");
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High
+        );
     }
 
     // ---- M23: favorites ----------------------------------------------------------------
