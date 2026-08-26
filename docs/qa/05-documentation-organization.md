@@ -34,5 +34,8 @@ code and shipped beside the binary. Conflating them meant the repo's own develop
 
 ### Documentation must move with the code (the rule this note institutionalizes)
 
-See AGENTS.md § *Documentation while building*: README status tables, qa notes for design
-conversations, ADR amendments, and milestone logs are part of "done", not an optional afterthought.
+See AGENTS.md § *Documentation while building*: history-timeline rows in `docs/history.md`,
+qa notes for design conversations, ADR amendments, and milestone logs are part of "done",
+not an optional afterthought. (Since the 2026-08 README restructure, milestone tables
+live here and in `docs/history.md`, not in the root README — that file stays
+reader-first.)

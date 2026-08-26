@@ -86,7 +86,8 @@ contracts <- session <- core
 - One milestone = one commit = one dev log at `docs/milestones/M<N>-<name>.md`
   (what / key decisions / gotchas / verification output).
 - Behavior-level changes require an ADR entry or amendment in `design/epsilon-decisions.md`.
-- Update `README.md` status table when a milestone lands.
+- Update [`docs/history.md`](docs/history.md) milestone timeline when a milestone lands
+  (the root README stays reader-first: quick start and product story only).
 
 ## Git discipline
 
@@ -109,7 +110,8 @@ Documentation is part of "done" — if a change lands without its docs, the task
 
 - **Milestone dev log** (`docs/milestones/M<N>-*.md`) updated/created with: what, key
   decisions, test-caught bugs, verification output.
-- **README status**: milestone table row + suite totals move the same commit as the work.
+- **History timeline**: milestone row + suite totals move the same commit as the
+  work ([`docs/history.md`](docs/history.md); README carries no milestone tables).
 - **Design conversations become qa notes**: when a question produces a convention decision
   (naming, file placement, counts, policies), capture it as `docs/qa/<NN>-<topic>.md` —
   decisions that live only in chat history are lost to the next contributor and the next agent.
