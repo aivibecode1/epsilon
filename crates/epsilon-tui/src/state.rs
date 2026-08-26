@@ -257,6 +257,16 @@ impl UiState {
                         return;
                     }
                     let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
+                    // M30: edit results with a diff show the unified diff when
+                    // expanded (Ctrl+X), giving the user a clear before/after view.
+                    let full = if t.tool_name == "edit"
+                        && let Some(diff) = t.details.get("diff").and_then(|d| d.as_str())
+                        && !diff.is_empty()
+                    {
+                        format!("{} → diff:\n{diff}", t.tool_name)
+                    } else {
+                        format!("{} → {}", t.tool_name, body)
+                    };
                     self.push_line(TranscriptLine::expandable(
                         if t.is_error {
                             LineKind::ToolResultErr
@@ -264,7 +274,7 @@ impl UiState {
                             LineKind::ToolResultOk
                         },
                         head,
-                        format!("{} → {}", t.tool_name, body),
+                        full,
                     ));
                     self.status = "tool done".into();
                 }
@@ -626,5 +636,55 @@ mod tests {
         let line = &st.lines()[0];
         assert_eq!(line.kind, LineKind::ToolResultErr, "generic error path");
         assert!(line.text.starts_with("todo → "));
+    }
+
+    // ---- M30: edit diff preview rows -----------------------------------------------
+
+    #[test]
+    fn edit_result_with_diff_shows_diff_when_expanded() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "edit".into(),
+                content: vec![ContentBlock::text("edited a.rs (1 replacement(s))")],
+                details: serde_json::json!({"diff": "@@ -1,2 +1,2 @@\n old\n-new\n+new\n"}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let line = &st.lines()[0];
+        // Head stays short — the diff is hidden until Ctrl+X.
+        assert!(line.text.starts_with("edit → "), "head: {:?}", line.text);
+        let full = line.full.as_deref().expect("full must exist");
+        assert!(full.contains("@@"), "full should contain the diff: {full}");
+        assert!(full.contains("-new"));
+        assert!(full.contains("+new"));
+    }
+
+    #[test]
+    fn edit_result_without_diff_uses_body_for_full() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "edit".into(),
+                content: vec![ContentBlock::text("edited b.rs (1 replacement(s))")],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let line = &st.lines()[0];
+        let full = line.full.as_deref().expect("full must exist");
+        assert!(full.contains("edited b.rs"));
+        assert!(
+            !full.contains("@@"),
+            "no diff in full when details.diff is absent"
+        );
     }
 }

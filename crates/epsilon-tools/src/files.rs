@@ -269,13 +269,23 @@ impl Tool for EditTool {
                 strategy,
             } => {
                 let updated = crate::edit_match::restore_eol(&output, eol);
+                let diff = crate::util::unified_diff(&raw, &updated);
                 std::fs::write(&path, &updated)
                     .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                Ok(ToolOutput::text(format!(
-                    "edited {} ({count} replacement(s)){}",
-                    args.path,
-                    strategy.note()
-                )))
+                let mut details = serde_json::json!({});
+                if !diff.is_empty() {
+                    details["diff"] = serde_json::Value::String(diff);
+                }
+                Ok(ToolOutput {
+                    content: vec![epsilon_contracts::content::ContentBlock::text(format!(
+                        "edited {} ({count} replacement(s)){}",
+                        args.path,
+                        strategy.note()
+                    ))],
+                    details,
+                    usage: None,
+                    terminate: false,
+                })
             }
             crate::edit_match::EditOutcome::Ambiguous(n) => Err(ToolFailure::msg(format!(
                 "old_string matches {n} locations in {}; widen the context or set replace_all",

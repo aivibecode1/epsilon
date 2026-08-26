@@ -24,6 +24,103 @@ pub const WALK_MAX_DEPTH: usize = 16;
 /// Directories never worth searching (build artifacts and VCS internals).
 pub const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "dist", ".epsilon"];
 
+// ---------------------------------------------------------------------------
+// M30: lightweight unified diff (no crate dependency — opencode does the same)
+// ---------------------------------------------------------------------------
+
+/// Generate a compact unified diff between two string contents.
+///
+/// Returns the diff text directly (suitable for storing in `details.diff`).
+/// When the inputs are identical the output is empty — callers can skip storing
+/// it entirely.
+pub fn unified_diff(old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    // (marker, line) where marker is '-', '+', or ' ' (context).
+    let mut ops: Vec<(char, &str)> = Vec::new();
+    let max = old_lines.len().max(new_lines.len());
+    for i in 0..max {
+        match (old_lines.get(i), new_lines.get(i)) {
+            (Some(o), Some(n)) if *o == *n => ops.push((' ', o)),
+            (Some(o), Some(n)) => {
+                ops.push(('-', o));
+                ops.push(('+', n));
+            }
+            (Some(o), None) => ops.push(('-', o)),
+            (None, Some(n)) => ops.push(('+', n)),
+            (None, None) => {}
+        }
+    }
+    if ops.iter().all(|o| o.0 == ' ') {
+        return String::new();
+    }
+    const CTX: usize = 3;
+    let first_change = ops.iter().position(|o| o.0 != ' ').unwrap_or(0);
+    let last_change = ops
+        .iter()
+        .rposition(|o| o.0 != ' ')
+        .unwrap_or(ops.len() - 1);
+    let from = first_change.saturating_sub(CTX);
+    let to = (last_change + CTX + 1).min(ops.len());
+    let mut old_line = 1usize;
+    let mut new_line = 1usize;
+    for &(m, _) in &ops[..from] {
+        if m != '+' {
+            old_line += 1;
+        }
+        if m != '-' {
+            new_line += 1;
+        }
+    }
+    let mut old_count = 0usize;
+    let mut new_count = 0usize;
+    for &(m, _) in &ops[from..to] {
+        if m != '+' {
+            old_count += 1;
+        }
+        if m != '-' {
+            new_count += 1;
+        }
+    }
+    let mut out = format!("@@ -{old_line},{old_count} +{new_line},{new_count} @@\n");
+    for &(m, text) in &ops[from..to] {
+        out.push(m);
+        out.push_str(text);
+        out.push('\n');
+    }
+    out
+}
+
+#[cfg(test)]
+mod diff_tests {
+    use super::*;
+
+    #[test]
+    fn identical_inputs_produce_no_output() {
+        assert!(unified_diff("hello\n", "hello\n").is_empty());
+    }
+
+    #[test]
+    fn simple_replacement() {
+        let d = unified_diff("a\nb\nc\n", "a\nx\nc\n");
+        assert!(d.contains("-b"));
+        assert!(d.contains("+x"));
+        assert!(d.contains("@@"));
+    }
+
+    #[test]
+    fn pure_insertion() {
+        let d = unified_diff("a\n", "a\nb\n");
+        assert!(d.contains("+b"));
+    }
+
+    #[test]
+    fn pure_deletion() {
+        let d = unified_diff("a\nb\n", "a\n");
+        assert!(d.contains("-b"));
+    }
+}
+
 /// Resolve `raw` against `root`, normalizing `.`/`..` WITHOUT touching the filesystem,
 /// then report whether the result stayed inside the workspace.
 ///
