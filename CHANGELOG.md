@@ -3,6 +3,13 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M27 - Weekly catalog-drift CI job
+- **Monday regeneration against live models.dev**: a scheduled workflow runs
+  `scripts/regen_catalog.py`, formats, and opens/refreshes ONE pull request
+  (`catalog-drift/latest`) when the bundled catalog drifted. Silent when it
+  did not. Never pushes main; the refresh rides the normal CI gates like any
+  change. Manual fire available via workflow_dispatch.
+
 ### M26 - Per-favorite thinking levels
 - **Ctrl+F remembers the level**: starring a model stores your current
   thinking level for it (`[picker.favorite_thinking]` in the global config);

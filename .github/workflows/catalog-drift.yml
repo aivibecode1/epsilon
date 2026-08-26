@@ -1,0 +1,94 @@
+# Weekly catalog-drift check (M27): keeps the bundled model catalog honest.
+#
+# Every Monday the generator re-reads https://models.dev/api.json and rewrites
+# crates/epsilon-llm/src/catalog/catalog_data.rs. If anything changed, this
+# workflow opens (or refreshes) ONE pull request from the standing branch
+# `catalog-drift/latest`. It NEVER pushes to main: you merge the PR after the
+# normal ci.yml gates run on it, same as any change.
+#
+# If the PR's CI comes back red, a test pin needs manual attention — see the
+# doc comment in scripts/regen_catalog.py ("fix moved pins in
+# catalog_is_current_generation").
+#
+# Manual trigger available via workflow_dispatch. Scheduled runs on private
+# repos use Actions minutes; this job stays tiny (one Python download, one
+# rustfmt, one git push — no cargo build).
+
+name: catalog-drift
+
+on:
+  schedule:
+    # Mondays 04:23 UTC (off the top-of-hour crunch).
+    - cron: '23 4 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rustfmt only, for the generated code)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate the catalog from live models.dev
+        run: python scripts/regen_catalog.py
+
+      - name: Format the generated Rust (generator emits pre-fmt source)
+        run: cargo fmt -p epsilon-llm
+
+      - name: Detect drift
+        id: diff
+        run: |
+          if git diff --quiet crates/epsilon-llm/src/catalog/catalog_data.rs; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No drift: registry matches the bundled catalog."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat crates/epsilon-llm/src/catalog/catalog_data.rs
+          fi
+
+      - name: Push the refreshed catalog to the standing PR branch
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "epsilon-bot"
+          git config user.email "aivibecode@hotmail.com"
+          git checkout -B catalog-drift/latest
+          git add crates/epsilon-llm/src/catalog/catalog_data.rs
+          git commit -m "chore(catalog): regenerate from models.dev ($(date -u +%F))"
+          git push --force origin catalog-drift/latest
+
+      - name: Open or refresh the drift PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY=$(cat <<'EOF'
+          Automated weekly catalog regeneration (scripts/regen_catalog.py against live models.dev).
+
+          Review the catalog_data.rs diff like any generated-code change. If CI is red on this PR, a pin in a catalog test moved and needs a human touch: the failing test names the row.
+
+          Merge when green.
+          EOF
+          )
+          if gh pr view catalog-drift/latest --json state --jq .state >/dev/null 2>&1; then
+            gh pr edit catalog-drift/latest --title "chore(catalog): weekly models.dev refresh ($(date -u +%F))" --body "$BODY"
+            echo "Existing drift PR refreshed."
+          else
+            gh pr create \
+              --base main \
+              --head catalog-drift/latest \
+              --title "chore(catalog): weekly models.dev refresh ($(date -u +%F))" \
+              --body "$BODY"
+          fi
