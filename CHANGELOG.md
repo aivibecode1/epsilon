@@ -3,6 +3,16 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M28 - Custom OpenAI-compatible providers
+- **`[provider_custom.<name>]` in the global config** declares an endpoint
+  (`base_url`, optional `env_key`); `<name>/<model>` ids then stream to it on
+  the existing OpenAI-compat wire — LM Studio, vLLM, llama.cpp server, fresh
+  cloud providers (opencode `baseURL` / Hermes `base_url_override` pattern).
+- **Keys resolve like built-ins**: stored `epsilon auth login <name>` first,
+  then the row's env var; no key is fine for local servers. Fallback chains
+  and the startup key-source diagnostic understand customs. Catalog ids
+  always win over same-named custom rows.
+
 ### M27 - Weekly catalog-drift CI job
 - **Monday regeneration against live models.dev**: a scheduled workflow runs
   `scripts/regen_catalog.py`, formats, and opens/refreshes ONE pull request

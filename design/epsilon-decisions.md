@@ -518,6 +518,17 @@ closed by the pi port - genai is gone, the transport is direct per-provider HTTP
 and the catalog's `wire` column now carries the routing metadata pi-style (see the
 ADR-003 amendment and `docs/milestones/M17-pi-port.md`).
 
+**Amendment (M28).** Routing gained a config-declared escape hatch:
+`[provider_custom.<name>]` rows in the global config (`base_url` required,
+`env_key` optional) let `<name>/<model>` ids stream to user-declared
+OpenAI-compatible endpoints (LM Studio, vLLM, fresh cloud providers) on the
+existing wire seam — opencode's `provider.options.baseURL`, Hermes'
+`base_url_override`. Catalog ids always win over customs; keys follow the
+stored-then-env precedence under the custom name. The type and its TOML
+parsing live in `epsilon_llm::custom` (next to the routing that consumes it);
+the OpenAI-compat wire descriptor went from `&'static str` to owned `String`
+so both catalog rows and customs ride one implementation.
+
 ---
 
 ## Superseded / deferred

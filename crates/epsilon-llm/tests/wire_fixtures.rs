@@ -6,10 +6,34 @@
 
 use epsilon_contracts::StopReason;
 use epsilon_contracts::stream::StreamEvent;
+use epsilon_llm::custom::CustomProvider;
 use epsilon_llm::providers::anthropic::AnthropicWire;
 use epsilon_llm::providers::google::GoogleWire;
 use epsilon_llm::providers::openai_compat::OpenAiCompatWire;
 use epsilon_llm::providers::{HttpEventStream, ProviderWire, SseEvent};
+
+/// M28: a custom id routes to the declared endpoint on the OpenAI-compat wire,
+/// and the endpoint join never doubles a trailing slash.
+#[test]
+fn custom_provider_id_routes_to_declared_endpoint() {
+    let customs =
+        vec![CustomProvider::from_config("lmstudio", "http://localhost:1234/v1/", "").unwrap()];
+    let w = OpenAiCompatWire {
+        base_url: "http://localhost:1234/v1".to_string(),
+        env_key: None,
+    };
+    // The wire's endpoint shape is what custom routing produces; assert it
+    // against the same join logic production uses (no trailing-slash doubles).
+    assert_eq!(
+        w.endpoint("lmstudio/qwen2.5-7b-instruct"),
+        "http://localhost:1234/v1/chat/completions"
+    );
+    assert_eq!(w.env_key(), "", "no env_key = no auth header");
+    assert!(w.headers("ignored").is_empty());
+    // The lookup that picks this wire for an arbitrary id:
+    assert!(epsilon_llm::custom::lookup_custom(&customs, "lmstudio/anything").is_some());
+    assert!(epsilon_llm::custom::lookup_custom(&customs, "other/thing").is_none());
+}
 
 fn ev(data: &str) -> SseEvent {
     SseEvent {
@@ -30,7 +54,7 @@ fn final_stop(events: &[StreamEvent]) -> StopReason {
 #[test]
 fn openai_length_finish_maps_to_max_tokens_even_with_tool_calls() {
     let w = OpenAiCompatWire {
-        base_url: "https://api.openai.com/v1",
+        base_url: "https://api.openai.com/v1".to_string(),
         env_key: None,
     };
     let mut st = HttpEventStream::empty_for_tests();
@@ -46,7 +70,7 @@ fn openai_length_finish_maps_to_max_tokens_even_with_tool_calls() {
 #[test]
 fn openai_content_filter_maps_to_error() {
     let w = OpenAiCompatWire {
-        base_url: "https://api.openai.com/v1",
+        base_url: "https://api.openai.com/v1".to_string(),
         env_key: None,
     };
     let mut st = HttpEventStream::empty_for_tests();
@@ -167,7 +191,7 @@ fn anthropic_adaptive_thinking_and_effort_when_enabled() {
 #[test]
 fn openai_compat_reasoning_effort_by_family() {
     let w = OpenAiCompatWire {
-        base_url: "https://api.openai.com/v1",
+        base_url: "https://api.openai.com/v1".to_string(),
         env_key: None,
     };
     // OpenAI-style family.

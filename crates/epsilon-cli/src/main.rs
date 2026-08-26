@@ -618,10 +618,17 @@ async fn dispatch(args: Args) -> i32 {
         #[cfg(feature = "real")]
         {
             // M22: say WHERE the key came from so users can tell auth.json from env.
-            let provider = epsilon_llm::catalog::lookup_model(model_id.as_str())
-                .map(|m| m.provider)
-                .unwrap_or("");
-            let key_source = if epsilon_llm::auth::load_credentials().contains_key(provider) {
+            // M28: custom ids (`lmstudio/foo`) resolve under the custom provider's
+            // name, so the diagnostic names it correctly for those too.
+            let customs = epsilon_llm::custom::load_custom_providers();
+            let provider = epsilon_llm::custom::lookup_custom(&customs, &model_id)
+                .map(|c| c.name.clone())
+                .or_else(|| {
+                    epsilon_llm::catalog::lookup_model(model_id.as_str())
+                        .map(|m| m.provider.to_string())
+                })
+                .unwrap_or_default();
+            let key_source = if epsilon_llm::auth::load_credentials().contains_key(&provider) {
                 "stored (epsilon auth login)"
             } else {
                 "env var"

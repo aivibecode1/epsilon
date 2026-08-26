@@ -52,6 +52,13 @@ generated from [models.dev](https://models.dev) by `scripts/regen_catalog.py`. E
 row carries context window, prices, tool support, and the wire type. Browsing models
 needs no network and no API key.
 
+**Custom provider** — An endpoint you declare yourself in
+`~/.config/epsilon/config.toml` under `[provider_custom.<name>]` (a `base_url`
+plus optional `env_key`). Model ids like `lmstudio/qwen2.5-7b-instruct` then
+stream to your server on the normal OpenAI-compatible wire. How Epsilon talks
+to LM Studio, vLLM, or a provider the bundled catalog does not know yet.
+Bundled catalog ids always win over same-named custom rows.
+
 **Faux provider** — A scripted fake LLM used by tests, demos, and offline runs. It
 replays deterministic steps, which makes full-loop integration tests instant, free,
 and reproducible in CI. pi tests its loop the same way.

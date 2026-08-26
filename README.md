@@ -117,6 +117,27 @@ picker entirely:
 target/release/epsilon --provider real --model claude-sonnet-4-5 -p "summarize this repo"
 ```
 
+### Custom endpoints (LM Studio, vLLM, any OpenAI-compatible server)
+
+Anything not in the catalog can be declared once in
+`~/.config/epsilon/config.toml`:
+
+```toml
+[provider_custom.lmstudio]
+base_url = "http://localhost:1234/v1"
+# env_key = "LMSTUDIO_API_KEY"   # optional; omit for keyless local servers
+```
+
+Then use `<name>/<model>` ids like any other model:
+
+```sh
+target/release/epsilon --model lmstudio/qwen2.5-7b-instruct -p "hi"
+```
+
+Keys follow the same rules as built-ins (`epsilon auth login <name>` stored
+first, then the row's `env_key`). Catalog ids always win over custom rows with
+the same name.
+
 Providers speak their native wire protocol over HTTPS: Anthropic Messages,
 OpenAI-compatible `/chat/completions`, Google `streamGenerateContent`. There is no
 SDK crate in between. Routing reads each catalog row's declared wire type rather than
@@ -221,7 +242,7 @@ normal test run ever costs money.
 
 ## Status
 
-244 tests offline (258 with `--features real`), zero clippy warnings in both build
+249 tests offline (264 with `--features real`), zero clippy warnings in both build
 configurations. CI runs all gates on Windows, a bubblewrap confinement suite on
 Linux, and an MSRV 1.88 check. A weekly job
 ([`.github/workflows/catalog-drift.yml`](.github/workflows/catalog-drift.yml))
@@ -250,6 +271,7 @@ shipped, which decisions were made, and which bugs the tests caught.
 | M25 | Footer thinking-level indicator: `think:<level>` in the status bar (pi pattern), hidden while Off; mirrored at the `set_thinking` choke point so displayed state always equals executed state |
 | M26 | Per-favorite thinking levels (pi scoped-models): Ctrl+F remembers the current level per starred model, F2/Shift+F2 apply it on cycle, unremembered favorites inherit |
 | M27 | Weekly catalog-drift CI job: regenerates the bundled catalog against live models.dev every Monday and opens a refresh PR when rows changed (never pushes main); audit follow-up put F2 favorite cycling under the trust gate |
+| M28 | Custom OpenAI-compatible providers (`[provider_custom.<name>]` + `--model lmstudio/foo`): user-declared endpoints ride the existing wire routing with stored/env keys, fallback chains included (opencode/Hermes pattern) |
 | future | — | — |
 
 ---

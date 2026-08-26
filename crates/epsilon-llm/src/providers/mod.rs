@@ -35,7 +35,7 @@ pub trait ProviderWire: Send + Sync {
     /// Full streaming URL for this model.
     fn endpoint(&self, model: &str) -> String;
     /// Auth env var consulted for the key.
-    fn env_key(&self) -> &'static str;
+    fn env_key(&self) -> &str;
     /// Auth/version headers derived from the raw key.
     fn headers(&self, key: &str) -> Vec<(String, String)>;
     /// Build the JSON request body for one call.
@@ -53,18 +53,44 @@ pub trait ProviderWire: Send + Sync {
     fn finalize_usage_from_tail(&self) -> bool;
 }
 
-/// Resolve the wire implementation for a model id via its catalog entry. Unknown ids
-/// error honestly — no silent default provider.
-pub(crate) fn wire_for(model_id: &str) -> Result<Box<dyn ProviderWire>, String> {
-    let info = crate::catalog::lookup_model(model_id)
-        .ok_or_else(|| format!("unknown model '{model_id}' - pick one from /models"))?;
-    Ok(match info.wire {
-        WireApi::AnthropicMessages => Box::new(AnthropicWire),
-        WireApi::OpenAiCompletions { base_url, env_key } => {
-            Box::new(OpenAiCompatWire { base_url, env_key })
-        }
-        WireApi::GoogleGenerativeAi => Box::new(GoogleWire),
-    })
+/// Resolve the wire implementation for a model id via its catalog entry, with
+/// user-declared custom providers (M28) as the fallback for unknown ids.
+///
+/// A custom id has the form `<name>/<model>` where `<name>` matches a
+/// `[provider_custom.<name>]` row in the global config; it rides the
+/// OpenAI-compat wire to that row's `base_url` (opencode's
+/// `provider.options.baseURL`, Hermes' `base_url_override`). Known catalog ids
+/// always win over customs — a custom row cannot shadow a real provider.
+pub(crate) fn wire_for(
+    model_id: &str,
+    customs: &[crate::custom::CustomProvider],
+) -> Result<Box<dyn ProviderWire>, String> {
+    if let Some(info) = crate::catalog::lookup_model(model_id) {
+        return Ok(match info.wire {
+            WireApi::AnthropicMessages => Box::new(AnthropicWire),
+            WireApi::OpenAiCompletions { base_url, env_key } => Box::new(OpenAiCompatWire {
+                base_url: base_url.to_string(),
+                env_key: env_key.map(str::to_string),
+            }),
+            WireApi::GoogleGenerativeAi => Box::new(GoogleWire),
+        });
+    }
+    let Some((name, _rest)) = model_id.split_once('/') else {
+        return Err(format!(
+            "unknown model '{model_id}' - pick one from /models or declare \
+             [provider_custom.<name>] with base_url"
+        ));
+    };
+    match customs.iter().find(|c| c.name == name.to_ascii_lowercase()) {
+        Some(c) => Ok(Box::new(OpenAiCompatWire {
+            base_url: c.base_url.clone(),
+            env_key: (!c.env_key.is_empty()).then(|| c.env_key.clone()),
+        })),
+        None => Err(format!(
+            "unknown provider '{name}' in '{model_id}' - no catalog row and no \
+             [provider_custom.{name}] declaration"
+        )),
+    }
 }
 
 /// Streaming accumulator shared by all wire implementations.
@@ -458,7 +484,8 @@ pub async fn try_stream_direct(
     key: &str,
     ctx: crate::stream_fn::LlmContext,
 ) -> Result<BoxEventStream, String> {
-    let wire = wire_for(model_id)?;
+    let customs = crate::custom::load_custom_providers();
+    let wire = wire_for(model_id, &customs)?;
     let mut req = http_client()
         .post(wire.endpoint(model_id))
         .header("content-type", "application/json")
@@ -494,7 +521,8 @@ pub async fn try_stream_direct(
 #[async_trait::async_trait]
 impl StreamFn for DirectProvider {
     async fn stream(&self, model: &ModelRef, ctx: LlmContext) -> BoxEventStream {
-        let wire = match wire_for(&model.id) {
+        let customs = crate::custom::load_custom_providers();
+        let wire = match wire_for(&model.id, &customs) {
             Ok(w) => w,
             Err(detail) => {
                 return Box::new(OnceStream {
@@ -507,8 +535,13 @@ impl StreamFn for DirectProvider {
         // M22 fix: stored credentials (epsilon auth login) win, env var falls
         // back — same precedence as credentials_ready/live_models. Without this
         // the login flow set up everything EXCEPT actual chat requests.
-        let provider = crate::catalog::lookup_model(&model.id)
-            .map(|m| m.provider)
+        // M28: custom ids (`lmstudio/foo`) resolve keys under the custom
+        // provider's own name (stored `auth.json` entry for `lmstudio`, then
+        // its declared `env_key`).
+        let customs_ref = &customs;
+        let provider = crate::custom::lookup_custom(customs_ref, &model.id)
+            .map(|c| c.name.as_str())
+            .or_else(|| crate::catalog::lookup_model(&model.id).map(|m| m.provider))
             .unwrap_or("");
         let key = match crate::catalog::resolve_api_key(provider) {
             Some(k) => k,

@@ -10,6 +10,7 @@
 
 pub mod auth;
 pub mod catalog;
+pub mod custom;
 #[cfg(feature = "real")]
 pub mod fallback;
 mod faux;

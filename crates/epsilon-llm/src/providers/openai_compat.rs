@@ -17,14 +17,16 @@ use serde_json::json;
 /// OpenAI-compatible `/chat/completions` wire descriptor (fixture/test visibility).
 pub struct OpenAiCompatWire {
     /// Base URL ending without a trailing slash (pi providers' `baseUrl` field).
-    pub base_url: &'static str,
-    /// Auth env var (`None` for local Ollama).
-    pub env_key: Option<&'static str>,
+    /// Owned since M28 so user-declared custom endpoints can ride the same wire.
+    pub base_url: String,
+    /// Auth env var (`None` for local Ollama). Owned for the same reason.
+    pub env_key: Option<String>,
 }
 
 impl OpenAiCompatWire {
     fn auth_header(&self, key: &str) -> Option<(String, String)> {
         self.env_key
+            .as_ref()
             .map(|_| ("Authorization".to_string(), format!("Bearer {key}")))
     }
 }
@@ -34,8 +36,8 @@ impl ProviderWire for OpenAiCompatWire {
         format!("{}/chat/completions", self.base_url)
     }
 
-    fn env_key(&self) -> &'static str {
-        self.env_key.unwrap_or("")
+    fn env_key(&self) -> &str {
+        self.env_key.as_deref().unwrap_or("")
     }
 
     fn headers(&self, key: &str) -> Vec<(String, String)> {

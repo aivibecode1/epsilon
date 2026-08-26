@@ -86,6 +86,58 @@ pub fn lookup_model(id: &str) -> Option<&'static ModelInfo> {
     MODELS.iter().find(|m| m.id == id)
 }
 
+// ---- custom OpenAI-compatible providers (M28; opencode `provider.options.baseURL`,
+//      Hermes `base_url_override`) ----------------------------------------------
+
+/// One user-declared OpenAI-compatible endpoint (`[provider_custom.<name>]`
+/// in the global config: `base_url` required, `env_key` optional). The model
+/// id `<name>/<model>` streams to `<base_url>/chat/completions` with the key
+/// resolved for provider `<name>` (stored auth.json entry wins, then
+/// `env_key`). Lives in this crate because wire routing consumes it; the TOML
+/// parsing stays with config in epsilon-core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomProvider {
+    /// Provider prefix before `/` in a model id (`lmstudio` of
+    /// `lmstudio/qwen2.5-7b-instruct`). Lowercase.
+    pub name: String,
+    /// Endpoint root without trailing slash (`http://localhost:1234/v1`).
+    pub base_url: String,
+    /// Env var holding the API key. Empty = no key sent (local servers).
+    pub env_key: String,
+}
+
+impl CustomProvider {
+    /// Build from raw config strings; `None` when there is no usable endpoint.
+    /// Normalizes name to lowercase and strips one trailing slash so endpoint
+    /// joins never double it.
+    pub fn from_config(name: &str, base_url: &str, env_key: &str) -> Option<Self> {
+        let base_url = base_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return None;
+        }
+        Some(Self {
+            name: name.trim().to_ascii_lowercase(),
+            base_url: base_url.to_string(),
+            env_key: env_key.trim().to_string(),
+        })
+    }
+
+    /// The provider segment a model id must carry to route here.
+    pub fn matches_id(&self, model_id: &str) -> bool {
+        model_id
+            .split_once('/')
+            .is_some_and(|(prefix, _)| prefix.eq_ignore_ascii_case(&self.name))
+    }
+}
+
+/// Look up a custom provider by the `<name>/...` prefix of a model id.
+pub fn lookup_custom<'a>(
+    customs: &'a [CustomProvider],
+    model_id: &str,
+) -> Option<&'a CustomProvider> {
+    customs.iter().find(|c| c.matches_id(model_id))
+}
+
 /// Display label for an arbitrary id: catalog label when known, else the id itself
 /// (custom entries always render as typed).
 pub fn display_label(id: &str) -> &str {
