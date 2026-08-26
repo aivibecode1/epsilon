@@ -194,10 +194,12 @@ they are not part of this repository).
 | **Hermes Agent** (2026.8.19) by Nous Research | [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) | The discipline: byte-stable three-tier prompt assembly, replay fidelity via request hashing, cross-process turn leases, TTL health probes for optional tools (M24), error-classified fallback chains with per-turn primary restoration (M24), incident-driven documentation culture | `epsilon-core` prompts, `epsilon-session` leases, `epsilon-mcp` probes, `epsilon-llm/src/fallback.rs`, `docs/qa/` |
 | **opencode** (v1.18.21) by Anomaly (formerly SST) | [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode) | The manners: wildcard permission rulesets with last-match-wins ask/deny/allow, auth store with stored-key-wins precedence, picker favorites and two-stage selection, doom-loop brake, plan mode, structured compaction UX | `epsilon-safety` rulesets, `epsilon-llm/src/auth.rs`, `epsilon-tui` picker, plan mode in `epsilon-core` |
 
-Two more debts worth naming: the [models.dev](https://models.dev) catalog feeds our
-bundled model data through `scripts/regen_catalog.py`, and this documentation follows
-Wikipedia's "Signs of AI writing" guidance via the humanizer checklist. Full
-source-level audits behind these choices:
+More credits worth naming: the [models.dev](https://models.dev) catalog feeds our
+bundled model data through `scripts/regen_catalog.py`; the [improve](https://github.com/shadcn/improve)
+skill (by shadcn) drives our audit-and-plan loop behind every improvement
+milestone; and the [ponytail](https://github.com/DietrichGebert/ponytail) skill
+(by Dietrich Gebert) keeps every change at the laziest solution that actually
+works — this repo's smallest diffs are its fingerprints. Full source-level audits:
 [`reports/harness-analysis.md`](reports/harness-analysis.md) and
 [`reports/comparative-analysis.md`](reports/comparative-analysis.md).
 
