@@ -6,6 +6,7 @@
 //! - refuses paths that escape the declared workspace;
 //! - caps and spills oversized outputs (DSH locator pattern).
 
+mod edit_match;
 mod files;
 mod search;
 mod shell;

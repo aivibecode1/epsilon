@@ -251,43 +251,52 @@ impl Tool for EditTool {
             return Err(ToolFailure::msg("old_string must not be empty"));
         }
         let path = ensure_inside(&ctx, &args.path)?;
-        let content = util::read_text_capped(&path)?;
+        let raw = util::read_text_capped(&path)?;
 
-        let occurrences = content.matches(&args.old_string).count();
-        match occurrences {
-            0 => {
+        // M30 (opencode edit.ts replacer chain, simplified): match on an
+        // LF-normalized copy — `read` shows LF lines, so byte-matching CRLF
+        // files failed systematically — with line-trimmed and
+        // indentation-flexible fallbacks before giving up.
+        let eol = crate::edit_match::detect_eol(&raw);
+        let content_lf = crate::edit_match::normalize_to_lf(&raw);
+        let old_lf = crate::edit_match::normalize_to_lf(&args.old_string);
+        let new_lf = crate::edit_match::normalize_to_lf(&args.new_string);
+
+        match crate::edit_match::plan(&content_lf, &old_lf, &new_lf, args.replace_all) {
+            crate::edit_match::EditOutcome::Applied {
+                output,
+                count,
+                strategy,
+            } => {
+                let updated = crate::edit_match::restore_eol(&output, eol);
+                std::fs::write(&path, &updated)
+                    .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
+                Ok(ToolOutput::text(format!(
+                    "edited {} ({count} replacement(s)){}",
+                    args.path,
+                    strategy.note()
+                )))
+            }
+            crate::edit_match::EditOutcome::Ambiguous(n) => Err(ToolFailure::msg(format!(
+                "old_string matches {n} locations in {}; widen the context or set replace_all",
+                args.path
+            ))),
+            crate::edit_match::EditOutcome::NotFound => {
                 // Show a nearby hint so the model can self-correct.
-                let first_line = args.old_string.lines().next().unwrap_or("");
-                let hint = content
+                let first_line = old_lf.lines().next().unwrap_or("");
+                let hint = content_lf
                     .lines()
                     .find(|l| !first_line.is_empty() && l.contains(first_line.trim()))
                     .unwrap_or("");
                 Err(ToolFailure::msg(format!(
-                    "old_string not found in {}.{}",
+                    "old_string not found in {} (exact, whitespace-trimmed, and indentation- \
+                     flexible matching all failed).{}",
                     args.path,
                     if hint.is_empty() {
                         String::new()
                     } else {
                         format!(" Closest matching line: {hint}")
                     }
-                )))
-            }
-            n if n > 1 && !args.replace_all => Err(ToolFailure::msg(format!(
-                "old_string matches {n} locations in {}; widen the context or set replace_all",
-                args.path
-            ))),
-            _ => {
-                let updated = if args.replace_all {
-                    content.replace(&args.old_string, &args.new_string)
-                } else {
-                    content.replacen(&args.old_string, &args.new_string, 1)
-                };
-                std::fs::write(&path, &updated)
-                    .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                let count = if args.replace_all { occurrences } else { 1 };
-                Ok(ToolOutput::text(format!(
-                    "edited {} ({count} replacement(s))",
-                    args.path
                 )))
             }
         }

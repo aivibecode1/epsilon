@@ -128,6 +128,100 @@ async fn write_creates_then_edit_modifies_with_safety() {
     assert!(content.contains("TWO") && !content.contains("| two"));
 }
 
+// M30 (opencode edit.ts semantics): read renders LF-stripped lines, so on
+// CRLF files a model's copied old_string must still match — and the file
+// keeps its native endings after the write.
+#[tokio::test]
+async fn edit_matches_lf_args_against_crlf_files_and_preserves_crlf() {
+    let (_d, ctx) = seeded_workspace();
+    let write = WriteTool::new();
+    let edit = EditTool::new();
+    let read = ReadTool::new();
+
+    std::fs::write(ctx.cwd.join("crlf.txt"), "first\r\nsecond\r\nthird\r\n").unwrap();
+
+    run(
+        &edit,
+        &ctx,
+        serde_json::json!({
+            "path": "crlf.txt",
+            "old_string": "second",
+            "new_string": "SECOND"
+        }),
+    )
+    .await
+    .unwrap();
+    let raw = std::fs::read_to_string(ctx.cwd.join("crlf.txt")).unwrap();
+    assert_eq!(raw, "first\r\nSECOND\r\nthird\r\n", "CRLF preserved");
+
+    // Multi-line LF arguments spanning lines also match a CRLF file.
+    run(
+        &write,
+        &ctx,
+        serde_json::json!({"path": "crlf2.txt", "content": "a\r\nb\r\nc\r\n"}),
+    )
+    .await
+    .unwrap();
+    run(
+        &edit,
+        &ctx,
+        serde_json::json!({
+            "path": "crlf2.txt",
+            "old_string": "a\nb",
+            "new_string": "x\ny"
+        }),
+    )
+    .await
+    .unwrap();
+    let raw2 = std::fs::read_to_string(ctx.cwd.join("crlf2.txt")).unwrap();
+    assert_eq!(raw2, "x\r\ny\r\nc\r\n");
+
+    // The read tool still renders it normally.
+    let shown = run(&read, &ctx, serde_json::json!({"path": "crlf2.txt"}))
+        .await
+        .unwrap();
+    assert!(shown.contains("y"));
+}
+
+#[tokio::test]
+async fn edit_falls_back_to_line_trimmed_and_indent_flexible_matching() {
+    let (_d, ctx) = seeded_workspace();
+    let edit = EditTool::new();
+
+    std::fs::write(ctx.cwd.join("ws.txt"), "fn a() {\n    tick();\n}\n").unwrap();
+
+    // Trailing whitespace in old_string (copied artifact) still matches,
+    // and the result note says so.
+    let note = run(
+        &edit,
+        &ctx,
+        serde_json::json!({
+            "path": "ws.txt",
+            "old_string": "fn a() {\n    tick();   \n}",
+            "new_string": "fn a() {\n    tock();\n}"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(note.contains("trailing whitespace"), "got: {note}");
+
+    // Wrong indentation depth matches at the loosest stage.
+    let note2 = run(
+        &edit,
+        &ctx,
+        serde_json::json!({
+            "path": "ws.txt",
+            "old_string": "fn a() {\n  tock();\n}",
+            "new_string": "fn a() {\n    hum();\n}"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(note2.contains("indentation"), "got: {note2}");
+    let body = std::fs::read_to_string(ctx.cwd.join("ws.txt")).unwrap();
+    assert_eq!(body, "fn a() {\n    hum();\n}\n");
+}
+
 #[tokio::test]
 async fn grep_glob_ls_find_seeded_content() {
     let (_d, ctx) = seeded_workspace();
