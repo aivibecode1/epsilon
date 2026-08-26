@@ -7,6 +7,7 @@
 //! favorites/recents convention, minus the parts that need a credential store.
 
 use epsilon_llm::catalog;
+use epsilon_llm::custom::CustomProvider;
 
 use crate::fuzzy;
 
@@ -77,7 +78,7 @@ pub fn build_rows(
     recents: &[String],
     live: &[(String, Vec<String>)],
 ) -> Vec<PickerRow> {
-    build_rows_with(filter, current, recents, &[], live)
+    build_rows_with(filter, current, recents, &[], live, &[])
 }
 
 /// [`build_rows`] with an explicit favorites list (M23; kept as a separate
@@ -88,6 +89,7 @@ pub fn build_rows_with(
     recents: &[String],
     favorites: &[String],
     live: &[(String, Vec<String>)],
+    customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
     let needle = filter.trim().to_ascii_lowercase();
     let matches_filter =
@@ -169,6 +171,20 @@ pub fn build_rows_with(
             // Star marker follows the id into the full catalog list too.
             row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
             push_unique(row, &mut rows, &mut seen);
+        }
+    }
+
+    // M28: declared custom providers surface one guidance row each, so a
+    // configured endpoint is discoverable without reading docs. Selecting it
+    // stages `<name>/` in the input for completing with the model name.
+    for c in customs {
+        let hint = format!("{}/", c.name);
+        if matches_filter(&hint) {
+            push_unique(
+                synthetic_row(&hint, "custom provider", true, false, false),
+                &mut rows,
+                &mut seen,
+            );
         }
     }
 
@@ -309,7 +325,9 @@ pub struct ProviderRow {
 
 /// Stage-1 rows: one per distinct provider in the bundled catalog, ordered by
 /// (auth-ready desc, id asc) — ready providers first, alphabetical within groups.
-pub fn build_provider_rows(current: &str) -> Vec<ProviderRow> {
+/// M28: declared custom providers are appended after the bundled ones so they
+/// are visible and descendable without typing an id.
+pub fn build_provider_rows(current: &str, customs: &[CustomProvider]) -> Vec<ProviderRow> {
     let mut rows: Vec<ProviderRow> = Vec::new();
     for info in catalog::curated() {
         let active = current.starts_with(&format!("{}/", info.provider)) || info.id == current;
@@ -330,6 +348,21 @@ pub fn build_provider_rows(current: &str) -> Vec<ProviderRow> {
             }),
         }
     }
+    // Customs never shadow a bundled provider (routing guarantees the same);
+    // auth_ready reflects whether a stored key or declared env var exists.
+    for c in customs {
+        if rows.iter().any(|r| r.id.eq_ignore_ascii_case(&c.name)) {
+            continue;
+        }
+        let env_present =
+            !c.env_key.is_empty() && std::env::var_os(&c.env_key).is_some_and(|v| !v.is_empty());
+        rows.push(ProviderRow {
+            id: c.name.clone(),
+            model_count: 0, // endpoint-declared; model names come from the server
+            auth_ready: env_present || epsilon_llm::auth::load_credentials().contains_key(&c.name),
+            is_active: current.starts_with(&format!("{}/", c.name)),
+        });
+    }
     rows.sort_by(|a, b| b.auth_ready.cmp(&a.auth_ready).then(a.id.cmp(&b.id)));
     rows
 }
@@ -337,13 +370,26 @@ pub fn build_provider_rows(current: &str) -> Vec<ProviderRow> {
 /// Stage-2 rows: the models of ONE provider, reusing [`build_rows`] ordering rules
 /// via fuzzy filter across id + label. Live-listed ids for this provider that are
 /// missing from the bundled catalog are merged on top (M20 auto-fetch).
+/// M28: for a declared custom provider, one guidance row (`<name>/`) is offered —
+/// select it, append the model name, Enter applies the full id.
 pub fn build_models_for_provider(
     provider: &str,
     filter: &str,
     current: &str,
     live: &[(String, Vec<String>)],
+    customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
     let needle = filter.trim();
+    if let Some(c) = customs.iter().find(|c| c.name == provider) {
+        let hint = format!("{}/", c.name);
+        let mut rows = vec![synthetic_row(&hint, "custom provider", true, false, false)];
+        // A typed filter past the prefix becomes a directly applicable id row.
+        let candidate = filter.trim();
+        if !candidate.is_empty() && candidate.starts_with(&hint) && candidate.len() > hint.len() {
+            rows.insert(0, synthetic_row(candidate, &c.name, true, false, false));
+        }
+        return rows;
+    }
     let mut rows: Vec<PickerRow> = catalog::curated()
         .iter()
         .filter(|i| i.provider == provider)
@@ -514,7 +560,7 @@ mod tests {
             "deepseek".to_string(),
             vec!["deepseek-chat".to_string(), "brand-new-model".to_string()],
         )];
-        let rows = build_models_for_provider("deepseek", "", "", &live);
+        let rows = build_models_for_provider("deepseek", "", "", &live, &[]);
         assert!(
             rows.iter().any(|r| r.id == "brand-new-model" && r.is_live),
             "unknown live id must surface in stage 2"
@@ -531,11 +577,44 @@ mod tests {
             "",
             "",
             &[("openai".to_string(), vec!["gpt-fake-live".to_string()])],
+            &[],
         );
         assert!(
             !other.iter().any(|r| r.is_live),
             "stage 2 must not show other providers' live ids"
         );
+    }
+
+    #[test]
+    fn custom_providers_surface_in_stage1_and_guide_stage2() {
+        // M28: a declared endpoint appears as a descendable provider row, and
+        // its stage 2 guides toward `<name>/<model>` completion.
+        let customs =
+            vec![CustomProvider::from_config("lmstudio", "http://localhost:1234/v1", "").unwrap()];
+
+        let stage1 = build_provider_rows("faux-1", &customs);
+        let lm = stage1.iter().find(|r| r.id == "lmstudio");
+        assert!(lm.is_some(), "custom provider visible in stage 1");
+        assert_eq!(lm.unwrap().model_count, 0);
+
+        let stage2 = build_models_for_provider("lmstudio", "", "", &[], &customs);
+        assert!(
+            stage2
+                .iter()
+                .any(|r| r.id == "lmstudio/" && r.provider == "custom provider")
+        );
+
+        // Typing past the prefix offers the full id directly.
+        let typed = build_models_for_provider("lmstudio", "lmstudio/qwen", "", &[], &customs);
+        assert!(
+            typed.iter().any(|r| r.id == "lmstudio/qwen"),
+            "filter text becomes an applicable custom id row"
+        );
+
+        // Customs never shadow a bundled provider of the same name.
+        let shadow = CustomProvider::from_config("deepseek", "http://x/v1", "").unwrap();
+        let rows = build_provider_rows("", &[shadow]);
+        assert_eq!(rows.iter().filter(|r| r.id == "deepseek").count(), 1);
     }
 
     #[test]

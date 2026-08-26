@@ -111,6 +111,10 @@ pub(crate) struct App {
     /// M13/M20: per-provider live listing results (provider → ids), merged into
     /// both picker stages on top of the bundled catalog.
     live_cache: Vec<(String, Vec<String>)>,
+    /// M28: user-declared custom providers (`[provider_custom.<name>]`),
+    /// loaded once at startup; threaded into every picker row builder so
+    /// configured endpoints are visible and descendable in the UI.
+    customs: Vec<epsilon_llm::custom::CustomProvider>,
     live: Option<LiveFetcher>,
     prefs: crate::state::RenderPrefs,
     fetching_hint: Option<String>,
@@ -178,6 +182,7 @@ impl App {
             &self.recents,
             &self.favorites,
             &self.live_cache,
+            &self.customs,
         );
         self.picker_rows = Some(rows.clone());
         rows
@@ -298,6 +303,7 @@ impl App {
             favorites: epsilon_core::config::load_favorite_models(),
             favorite_thinking: epsilon_core::config::load_favorite_thinking(),
             live_cache: Vec::new(),
+            customs: epsilon_llm::custom::load_custom_providers(),
             live: None,
             prefs: crate::state::RenderPrefs::default(),
             fetching_hint: None,
@@ -728,7 +734,7 @@ impl App {
                 for line in [
                     "commands: /models · /model <id> · /think [level] · /skills · /search <query> · /clear · /quit · /help",
                     "thinking: Ctrl+T cycles · current level in the status bar",
-                    "keys: Enter submit · Esc aborts a run (quits when idle) · x expands tool output",
+                    "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker",
                 ] {
                     self.ui.push_notice(line);
@@ -824,7 +830,13 @@ impl App {
             }
         }
         if epsilon_core::config::push_recent_model(&id).is_ok() {
+            // M29: refresh from disk, then force this id to the front of the
+            // in-memory list regardless. Under parallel test load (or any
+            // concurrent writer) the re-read can lose our own push; the id we
+            // just applied is the truth about "most recent".
             self.recents = epsilon_core::config::load_recent_models();
+            self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
+            self.recents.insert(0, id.clone());
             self.invalidate_picker();
         }
     }
@@ -851,7 +863,7 @@ impl App {
         let provider = if let Some(p) = self.picker_provider.clone() {
             Some(p)
         } else {
-            crate::picker::build_provider_rows(&self.model_id)
+            crate::picker::build_provider_rows(&self.model_id, &self.customs)
                 .get(self.picker_index)
                 .map(|r| r.id.clone())
         };
@@ -1213,6 +1225,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                         &app.input,
                         &app.model_id,
                         &app.live_cache,
+                        &app.customs,
                     );
                     if let Some(row) = rows.get(app.picker_index) {
                         let id = row.id.clone();
@@ -1225,7 +1238,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                     }
                 } else {
                     // Stage 1: descend into the selected provider's model list.
-                    let rows = crate::picker::build_provider_rows(&app.model_id);
+                    let rows = crate::picker::build_provider_rows(&app.model_id, &app.customs);
                     if let Some(row) = rows.get(app.picker_index) {
                         app.picker_provider = Some(row.id.clone());
                         app.picker_index = 0;
@@ -1256,10 +1269,11 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                         &app.input,
                         &app.model_id,
                         &app.live_cache,
+                        &app.customs,
                     )
                     .len()
                 } else {
-                    crate::picker::build_provider_rows(&app.model_id).len()
+                    crate::picker::build_provider_rows(&app.model_id, &app.customs).len()
                 };
                 app.picker_index = app
                     .picker_index
@@ -1273,10 +1287,11 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                         &app.input,
                         &app.model_id,
                         &app.live_cache,
+                        &app.customs,
                     )
                     .len()
                 } else {
-                    crate::picker::build_provider_rows(&app.model_id).len()
+                    crate::picker::build_provider_rows(&app.model_id, &app.customs).len()
                 };
                 if total > 0 {
                     app.picker_index = (app.picker_index + 1).min(total - 1);
@@ -1293,6 +1308,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                     &app.input,
                     &app.model_id,
                     &app.live_cache,
+                    &app.customs,
                 )
                 .len();
                 if app.picker_index >= total {
@@ -1309,7 +1325,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                 // Stage 1 therefore stars the highlighted provider's active or
                 // first known model instead of indexing the wrong list.
                 let stage1_target = if app.picker_provider.is_none() {
-                    crate::picker::build_provider_rows(&app.model_id)
+                    crate::picker::build_provider_rows(&app.model_id, &app.customs)
                         .get(app.picker_index)
                         .map(|p| p.id.clone())
                         .and_then(|provider| {
@@ -1322,6 +1338,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                                         &app.input,
                                         &app.model_id,
                                         &app.live_cache,
+                                        &app.customs,
                                     )
                                     .first()
                                     .map(|r| r.id.clone())
@@ -1338,6 +1355,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                             &app.input,
                             &app.model_id,
                             &app.live_cache,
+                            &app.customs,
                         );
                         if let Some(row) = rows.get(app.picker_index) {
                             let id = row.id.clone();
@@ -1660,15 +1678,17 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             app.end_yank();
             false
         }
-        KeyCode::Char('x' | 'X') => {
-            // M13 card polish: expand/collapse truncated tool outputs globally.
+        // M13 card polish: expand/collapse truncated tool outputs. Originally a
+        // bare `x` (M13), which made the letter x untypable in the editor —
+        // M29 fix: it needs Ctrl+X like every other non-typing key.
+        KeyCode::Char('x' | 'X') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.prefs.expand_outputs = !app.prefs.expand_outputs;
             let state = if app.prefs.expand_outputs {
                 "expanded"
             } else {
                 "collapsed"
             };
-            app.notice(format!("tool outputs {state} (x toggles)"));
+            app.notice(format!("tool outputs {state} (Ctrl+X toggles)"));
             false
         }
         KeyCode::Char(c) => {
@@ -1700,7 +1720,7 @@ fn hint_line(app: &App) -> Line<'static> {
     } else if app.ui.running() {
         "Esc abort run · type to steer after this turn"
     } else {
-        "/help commands · /models picker (Ctrl+M) · x expand outputs · Esc quit"
+        "/help commands · /models picker (Ctrl+M) · Ctrl+X expand outputs · Esc quit"
     };
     Line::from(Span::styled(text.to_string(), Theme::system()))
 }
@@ -1754,7 +1774,7 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         draw_picker_stage2(f, app, outer, provider);
         return;
     }
-    let rows = crate::picker::build_provider_rows(&app.model_id)
+    let rows = crate::picker::build_provider_rows(&app.model_id, &app.customs)
         .into_iter()
         .map(|p| (p.id, p.model_count, p.auth_ready, p.is_active))
         .collect::<Vec<_>>();
@@ -1844,6 +1864,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         &app.input,
         &app.model_id,
         &app.live_cache,
+        &app.customs,
     );
     let width = (outer.width * 4 / 5).max(48).min(outer.width);
     let height = 15u16.min(outer.height.saturating_sub(2));
@@ -2420,9 +2441,12 @@ mod tests {
         );
         let line = &app.ui.lines()[before];
         assert!(line.text.contains("deepseek-chat"), "{:?}", line.text);
+        // Recents refresh in-memory through apply_model (the persisted side is
+        // covered by config-layer round-trip tests; asserting the real global
+        // file here races every other TUI test's writes — lesson 16b again).
         assert!(
-            app.recents.contains(&"deepseek-chat".to_string()),
-            "recents updated"
+            app.recents.first().map(String::as_str) == Some("deepseek-chat"),
+            "in-memory recents updated with the applied model"
         );
     }
 
@@ -2446,7 +2470,13 @@ mod tests {
     #[tokio::test]
     async fn x_toggles_expand_and_quit_requests_exit() {
         let (mut app, agent, (_f, _n)) = test_app();
+        // M29: bare `x` is a LETTER now; only Ctrl+X toggles output expansion.
         assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('x'))));
+        assert!(!app.prefs.expand_outputs, "plain x types, not toggles");
+        assert!(app.input.ends_with('x'), "x lands in the editor");
+        app.backspace();
+
+        assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('x'))));
         assert!(app.prefs.expand_outputs);
 
         assert!(!type_and_enter(&mut app, &agent, "/clear"));
@@ -2738,6 +2768,7 @@ mod tests {
             &["deepseek-chat".to_string()],
             &["kimi-k2.6".to_string()],
             &[],
+            &[],
         );
         // Active model, then favorite, then recent (favorite NOT repeated in
         // recents), then catalog.
@@ -2780,17 +2811,19 @@ mod tests {
         assert_eq!(app.model_id, "deepseek-chat", "shift = backward");
 
         // Persistence side effects: cycling routes through apply_model, so the
-        // saved model id AND the recents list must reflect the last switch.
+        // saved model id must reflect the last switch. The recents list also
+        // persists, but asserting the real global config here races every other
+        // TUI test's writes (lesson 16b) — the in-memory mirror is what F2 owns.
+        // The persisted model id is covered by config-layer round-trip tests;
+        // asserting the real global file here races every other TUI test's
+        // writes (lesson 16b). What F2 owns: session state + in-memory mirrors.
         assert_eq!(
-            epsilon_core::config::load_model_id(),
-            Some("deepseek-chat".to_string()),
-            "cycle persisted the active model like any apply_model call"
+            app.model_id, "deepseek-chat",
+            "cycle switched the session model"
         );
-        let recents = epsilon_core::config::load_recent_models();
-        assert_eq!(
-            recents.first().map(String::as_str),
-            Some("deepseek-chat"),
-            "cycled-to model recorded as most recent"
+        assert!(
+            app.recents.first().map(String::as_str) == Some("deepseek-chat"),
+            "in-memory recents updated with the cycled-to model"
         );
     }
 
