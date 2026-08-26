@@ -1128,7 +1128,10 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
     0
 }
 
-/// Apply one event; any newly appended transcript row resets follow-scroll pinning.
+/// Apply one event and maintain scroll discipline (pi scroll-view `followEnd`
+/// semantics): a pinned view follows new tail rows; once the user has scrolled
+/// up, appended lines shift the offset so the reading window stays FROZEN on
+/// the same content instead of yanking back to the bottom mid-stream.
 fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     let before = app.ui.lines().len();
     app.ui.apply(ev);
@@ -1137,8 +1140,10 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
         AgentEvent::AgentEnd { .. } => app.run_started_at = None,
         _ => {}
     }
-    if app.ui.lines().len() > before {
-        app.scroll_from_bottom = 0;
+    let appended = app.ui.lines().len().saturating_sub(before);
+    if appended > 0 && app.scroll_from_bottom > 0 {
+        // Frozen read: keep the same absolute window as the transcript grows.
+        app.scroll_from_bottom += appended;
     }
 }
 
@@ -3037,5 +3042,30 @@ mod tests {
         assert_eq!(app.cursor_chars, 2);
         handle_key(&mut app, &agent, ctrl(KeyCode::Char('f')));
         assert_eq!(app.cursor_chars, 3);
+    }
+
+    // ---- M30: sticky scroll (pi followEnd semantics) ----------------------------------
+
+    #[tokio::test]
+    async fn scrolling_up_freezes_the_reading_window_while_lines_append() {
+        let mut app = App::over_ui(UiState::new(), "faux-1".into());
+        app.ui.push_notice("one");
+        app.ui.push_notice("two");
+        // User pages up 10 rows from the bottom.
+        app.scroll_from_bottom = 10;
+        // Three rows append mid-read (each AgentStart pushes one system row).
+        for _ in 0..3 {
+            apply_with_scroll(&mut app, &AgentEvent::AgentStart);
+            apply_with_scroll(&mut app, &AgentEvent::AgentEnd { messages: vec![] });
+        }
+        assert_eq!(
+            app.scroll_from_bottom, 16,
+            "offset grows with appends (2 rows x 3 pairs) so the window stays put"
+        );
+
+        // A pinned view (offset 0) keeps following the tail.
+        app.scroll_from_bottom = 0;
+        apply_with_scroll(&mut app, &AgentEvent::AgentStart);
+        assert_eq!(app.scroll_from_bottom, 0, "pinned view follows new rows");
     }
 }
