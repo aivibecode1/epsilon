@@ -161,6 +161,7 @@ HTTP exchanges, and real-provider checks sit behind env-var-gated `#[ignore]`.
 |---|---|
 | New to coding agents | [`docs/qa/06-agent-harness-primer.md`](docs/qa/06-agent-harness-primer.md): what a harness even is, no background assumed. Keep [`docs/glossary.md`](docs/glossary.md) open beside it; it defines every term from StreamFn to shadow view. |
 | A developer joining | [`AGENTS.md`](AGENTS.md) (developer contract), [`CHANGELOG.md`](CHANGELOG.md) (what shipped when), [`docs/history.md`](docs/history.md) (milestone timeline + decision index), [`design/epsilon-architecture.md`](design/epsilon-architecture.md) (components and data flow), [`docs/milestones/`](docs/milestones) (dev logs in order). |
+| Curious about TUI keys | [`docs/qa/07-tui-keymap-audit.md`](docs/qa/07-tui-keymap-audit.md): every binding, the plain-letters-type rule, and why each modal state captures what it does. |
 | Researching harness design | [`reports/harness-analysis.md`](reports/harness-analysis.md): source-level audit of pi, DSH, Hermes, opencode with file-anchored strengths and weaknesses. [`reports/comparative-analysis.md`](reports/comparative-analysis.md) ranks who does what best. |
 | A coding agent working here | [`AGENTS.md`](AGENTS.md) loads automatically; the newest entry in [`docs/milestones/`](docs/milestones) tells you the current state. The shipped product contract lives at [`crates/epsilon-core/assets/agent-contract.md`](crates/epsilon-core/assets/agent-contract.md). |
 
