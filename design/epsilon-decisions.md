@@ -546,6 +546,13 @@ Off. The TUI mirrors the level in one `App` field written only by
 state cannot drift from executed state (key-path test pins equality).
 Cosmetic-only; no loop, wire, or session-format change.
 
+**Amendment (M26).** Per-favorite thinking levels (the other deferred item,
+pi scoped-models' optional per-entry level) landed: `[picker.favorite_thinking]`
+rows in the global config remember a level per starred model; F2/Shift+F2
+cycling overrides the session level when remembered and inherits otherwise;
+unstarring clears. Levels apply through `set_thinking`, so the M25 footer
+mirror stays exact by construction.
+
 
 - **ADR-D01 (deferred): WASM extension sandbox.** Revisit if process-isolation overhead ever
   matters or component model stabilizes further.

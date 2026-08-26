@@ -213,6 +213,93 @@ pub fn toggle_favorite_model(model_id: &str) -> Result<bool, String> {
     toggle_favorite_model_in(&dir, model_id)
 }
 
+// ---- per-favorite thinking levels (M26; pi scoped-models' per-entry level) ------
+
+/// Per-favorite thinking levels from `config_dir/config.toml`, read from the
+/// optional `[picker.favorite_thinking]` table (`<model-id> = "high"`). An
+/// absent entry means "inherit the session level" — exactly pi's optional
+/// `thinkingLevel` on scoped models (`agent-session.ts:204`). Entries for
+/// models that are not favorites are ignored by callers; `unstar` removes
+/// them at the source.
+pub fn load_favorite_thinking_in(config_dir: &Path) -> Vec<(String, String)> {
+    let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let value: toml::Value = match toml::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    value
+        .get("picker")
+        .and_then(|p| p.get("favorite_thinking"))
+        .and_then(|t| t.as_table())
+        .map(|t| {
+            t.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Set (or clear with `None`) the remembered thinking level for one favorite
+/// model id. Persists immediately; unknown keys survive.
+pub fn set_favorite_thinking_in(
+    config_dir: &Path,
+    model_id: &str,
+    level: Option<&str>,
+) -> Result<PathBuf, String> {
+    if model_id.trim().is_empty() {
+        return Err("refusing to remember thinking for an empty model id".into());
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    {
+        let picker = table
+            .entry("picker")
+            .or_insert(toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| "[picker] exists but is not a table".to_string())?;
+        let sub = picker
+            .entry("favorite_thinking")
+            .or_insert(toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| "[picker.favorite_thinking] exists but is not a table".to_string())?;
+        match level {
+            Some(l) => {
+                sub.insert(model_id.into(), toml::Value::String(l.to_string()));
+            }
+            None => {
+                sub.remove(model_id);
+            }
+        }
+    }
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// [`load_favorite_thinking_in`] against the resolved global directory.
+pub fn load_favorite_thinking() -> Vec<(String, String)> {
+    global_dir()
+        .map(|d| load_favorite_thinking_in(&d))
+        .unwrap_or_default()
+}
+
+/// [`set_favorite_thinking_in`] against the resolved global directory.
+pub fn set_favorite_thinking(model_id: &str, level: Option<&str>) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    set_favorite_thinking_in(&dir, model_id, level)
+}
+
 /// Recently used model ids from `config_dir/config.toml` (newest first, capped).
 pub fn load_recent_models_in(config_dir: &Path) -> Vec<String> {
     let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
@@ -496,6 +583,55 @@ mod tests {
         assert!(toggle_favorite_model_in(dir, "  ").is_err());
         let empty = tempfile::tempdir().unwrap();
         assert!(load_favorite_models_in(empty.path()).is_empty());
+    }
+
+    #[test]
+    fn favorite_thinking_set_clear_and_survive_other_writes() {
+        // M26: per-favorite thinking memory round-trips, clears, and coexists
+        // with the favorites/recents keys in the same [picker] table.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // No memory until one is set; unknown ids read as absent.
+        assert!(load_favorite_thinking_in(dir).is_empty());
+
+        set_favorite_thinking_in(dir, "kimi-k2.6", Some("high")).unwrap();
+        set_favorite_thinking_in(dir, "deepseek-chat", Some("off")).unwrap();
+        // Table iteration order depends on the toml crate's feature flags, so
+        // compare as a sorted set, not positional rows.
+        let mut got = load_favorite_thinking_in(dir);
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("deepseek-chat".to_string(), "off".to_string()),
+                ("kimi-k2.6".to_string(), "high".to_string())
+            ]
+        );
+
+        // Clearing removes only that entry.
+        set_favorite_thinking_in(dir, "kimi-k2.6", None).unwrap();
+        assert_eq!(
+            load_favorite_thinking_in(dir),
+            vec![("deepseek-chat".to_string(), "off".to_string())]
+        );
+
+        // Other [picker] writes must not clobber the memory (separate keys).
+        let _ = toggle_favorite_model_in(dir, "deepseek-chat");
+        let _ = push_recent_model_in(dir, "deepseek-chat");
+        assert_eq!(
+            load_favorite_thinking_in(dir),
+            vec![("deepseek-chat".to_string(), "off".to_string())]
+        );
+        // ...and the memory write must not clobber favorites or recents either.
+        assert_eq!(load_favorite_models_in(dir), vec!["deepseek-chat"]);
+        assert_eq!(
+            load_recent_models_in(dir).first().map(String::as_str),
+            Some("deepseek-chat")
+        );
+
+        // Empty id refused; malformed table reads empty instead of crashing.
+        assert!(set_favorite_thinking_in(dir, "  ", Some("high")).is_err());
     }
 
     #[test]

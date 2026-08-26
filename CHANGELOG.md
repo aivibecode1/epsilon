@@ -3,6 +3,15 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M26 - Per-favorite thinking levels
+- **Ctrl+F remembers the level**: starring a model stores your current
+  thinking level for it (`[picker.favorite_thinking]` in the global config);
+  unstarring drops the memory. Star notice names what it remembered.
+- **F2 / Shift+F2 apply it** (pi scoped-models semantics): a remembered level
+  overrides the session level on cycle; favorites without a memory inherit.
+  Memory is mirrored on `App` (loaded at startup, refreshed on toggle) so
+  cycling never touches disk mid-keypress.
+
 ### M25 - Footer thinking-level indicator
 - **`think:<level>` in the status bar** (pi pattern): renders between cost and
   model whenever extended thinking is active, hidden while Off. `/help`

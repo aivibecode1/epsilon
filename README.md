@@ -221,7 +221,7 @@ normal test run ever costs money.
 
 ## Status
 
-242 tests offline (256 with `--features real`), zero clippy warnings in both build
+244 tests offline (258 with `--features real`), zero clippy warnings in both build
 configurations. CI runs all gates on Windows, a bubblewrap confinement suite on
 Linux, and an MSRV 1.88 check.
 
@@ -245,7 +245,8 @@ shipped, which decisions were made, and which bugs the tests caught.
 | M23 | Picker favorites: Ctrl+F stars, favorites above recents, F2/Shift+F2 cycling (pi semantics) |
 | M24 | MCP health probes (30s TTL, fail-fast honest errors), provider fallback chains (`--fallback`, repeatable, per-turn primary restoration) |
 | M25 | Footer thinking-level indicator: `think:<level>` in the status bar (pi pattern), hidden while Off; mirrored at the `set_thinking` choke point so displayed state always equals executed state |
-| future | Per-favorite thinking levels · weekly catalog-drift CI PR | open |
+| M26 | Per-favorite thinking levels (pi scoped-models): Ctrl+F remembers the current level per starred model, F2/Shift+F2 apply it on cycle, unremembered favorites inherit |
+| future | Weekly catalog-drift CI PR | open |
 
 ---
 

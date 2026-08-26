@@ -103,6 +103,11 @@ pub(crate) struct App {
     /// Favorite (starred) model ids, persisted in config `[picker] favorite`
     /// (M23; opencode favorites / pi scoped-models hybrid).
     favorites: Vec<String>,
+    /// M26: per-favorite thinking levels `[picker.favorite_thinking]`
+    /// (pi scoped-models' optional per-entry level), loaded at startup and
+    /// refreshed by toggle_favorite. Kept in memory so cycling never hits
+    /// disk mid-keypress (and tests can inject without touching global state).
+    favorite_thinking: Vec<(String, String)>,
     /// M13/M20: per-provider live listing results (provider → ids), merged into
     /// both picker stages on top of the bundled catalog.
     live_cache: Vec<(String, Vec<String>)>,
@@ -180,13 +185,34 @@ impl App {
 
     /// Toggle the favorite star on a model id (M23, opencode toggleFavorite):
     /// persists immediately and reports the NEW state for the notice.
-    fn toggle_favorite(&mut self, id: &str) {
+    ///
+    /// M26 (pi scoped-models' per-entry thinking level): starring remembers the
+    /// CURRENT session level for that model; unstarring drops the memory. The
+    /// level is captured through `agent`, which is also why this takes the
+    /// handle instead of reading it in the caller.
+    fn toggle_favorite(&mut self, agent: &Arc<Agent>, id: &str) {
         match epsilon_core::config::toggle_favorite_model(id) {
             Ok(now_favorite) => {
+                let level = epsilon_core::config::set_favorite_thinking(
+                    id,
+                    if now_favorite {
+                        Some(agent.thinking_level().as_str())
+                    } else {
+                        None
+                    },
+                );
+                if let Err(e) = level {
+                    self.ui
+                        .push_notice(format!("thinking memory not saved: {e}"));
+                }
                 self.favorites = epsilon_core::config::load_favorite_models();
+                self.favorite_thinking = epsilon_core::config::load_favorite_thinking();
                 self.invalidate_picker();
                 self.ui.push_notice(if now_favorite {
-                    format!("★ {id} favorited (Ctrl+P cycles favorites)")
+                    format!(
+                        "★ {id} favorited at think:{} (Ctrl+P cycles favorites)",
+                        agent.thinking_level().as_str()
+                    )
                 } else {
                     format!("☆ {id} unfavorited")
                 });
@@ -223,6 +249,18 @@ impl App {
         if next.eq_ignore_ascii_case(&self.model_id) {
             return; // single-entry list: already there
         }
+        // M26 (pi `_cycleScopedModel`, agent-session.ts:1625-1647): an explicit
+        // per-favorite level overrides the session level; no memory inherits it.
+        // Read from the in-memory mirror (loaded at startup, refreshed on star
+        // toggle) so cycling stays a pure keypress operation.
+        if let Some(level) = self
+            .favorite_thinking
+            .iter()
+            .find(|(id, _)| id == &next)
+            .and_then(|(_, lvl)| epsilon_contracts::ThinkingLevel::parse(lvl))
+        {
+            self.set_thinking(agent, level);
+        }
         self.apply_model(agent, next);
     }
 }
@@ -258,6 +296,7 @@ impl App {
             picker_index: 0,
             recents: epsilon_core::config::load_recent_models(),
             favorites: epsilon_core::config::load_favorite_models(),
+            favorite_thinking: epsilon_core::config::load_favorite_thinking(),
             live_cache: Vec::new(),
             live: None,
             prefs: crate::state::RenderPrefs::default(),
@@ -1292,7 +1331,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                     None
                 };
                 match stage1_target {
-                    Some(id) => app.toggle_favorite(&id),
+                    Some(id) => app.toggle_favorite(agent, &id),
                     None => {
                         let rows = crate::picker::build_models_for_provider(
                             app.picker_provider.as_deref().unwrap_or(""),
@@ -1302,7 +1341,7 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
                         );
                         if let Some(row) = rows.get(app.picker_index) {
                             let id = row.id.clone();
-                            app.toggle_favorite(&id);
+                            app.toggle_favorite(agent, &id);
                         }
                     }
                 }
@@ -2716,6 +2755,37 @@ mod tests {
             recents.first().map(String::as_str),
             Some("deepseek-chat"),
             "cycled-to model recorded as most recent"
+        );
+    }
+
+    #[tokio::test]
+    async fn f2_applies_the_favorite_remembered_thinking_level() {
+        // M26 (pi _cycleScopedModel): a remembered level overrides the session
+        // level on cycle; no memory inherits it. Both paths end with the footer
+        // mirror equal to the agent's actual level. The memory is injected via
+        // the App field (the same thing a real star toggle populates) so this
+        // test never touches the user's real config.
+        let (mut app, agent, (_f, _n)) = test_app();
+        app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
+        app.favorite_thinking = vec![("deepseek-chat".into(), "high".into())];
+
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "deepseek-chat");
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High,
+            "remembered level applied on cycle"
+        );
+        assert_eq!(app.thinking, agent.thinking_level(), "mirror stays exact");
+
+        // Cycle back to faux-1, which has NO memory: session level inherited
+        // (stays High), never reset by surprise.
+        handle_key(&mut app, &agent, key(KeyCode::F(2)));
+        assert_eq!(app.model_id, "faux-1");
+        assert_eq!(
+            agent.thinking_level(),
+            epsilon_contracts::ThinkingLevel::High,
+            "unremembered favorite inherits the session level"
         );
     }
 
