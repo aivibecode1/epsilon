@@ -166,6 +166,15 @@ pub fn stats_parts(stats: &FooterStats) -> Vec<FooterPart> {
             tone: Tone::Normal,
         });
     }
+    // M25: thinking-level indicator (pi shows the level in its status line; the
+    // README's future row promised this). Off stays hidden — no noise when
+    // extended thinking is not requested.
+    if let Some(level) = stats.thinking_level.filter(|l| l.enabled()) {
+        parts.push(FooterPart {
+            text: format!("think:{}", level.as_str()),
+            tone: Tone::Normal,
+        });
+    }
     parts.extend(context_parts(
         stats.latest_prompt_tokens,
         stats.compacted,
@@ -191,6 +200,8 @@ pub struct FooterStats {
     pub compacted: bool,
     /// Active model's context window (None/0 hides the context component honestly).
     pub context_window: Option<u64>,
+    /// Active thinking level (M25 footer indicator). `None`/Off hides it.
+    pub thinking_level: Option<epsilon_contracts::ThinkingLevel>,
     /// Session cost so far in integer micro-USD (ADR-010; never floats internally).
     pub cost_micro_usd: u64,
 }
@@ -301,6 +312,7 @@ mod tests {
             compacted: false,
             context_window: Some(200_000),
             cost_micro_usd: 42_500,
+            thinking_level: None,
         };
         let texts: Vec<String> = stats_parts(&s).into_iter().map(|p| p.text).collect();
         assert_eq!(
@@ -324,5 +336,29 @@ mod tests {
             .map(|p| p.text)
             .collect();
         assert!(texts.is_empty(), "no usage yet → no fake numbers");
+    }
+
+    #[test]
+    fn thinking_indicator_hides_when_off_and_shows_the_level_otherwise() {
+        // M25: Off (and None) render nothing — no noise when thinking is off.
+        let off = FooterStats {
+            thinking_level: Some(epsilon_contracts::ThinkingLevel::Off),
+            ..FooterStats::default()
+        };
+        assert!(
+            stats_parts(&off)
+                .iter()
+                .all(|p| !p.text.starts_with("think:"))
+        );
+
+        let high = FooterStats {
+            tokens_in: 1_000,
+            latest_prompt_tokens: 1_000,
+            context_window: Some(200_000),
+            thinking_level: Some(epsilon_contracts::ThinkingLevel::High),
+            ..FooterStats::default()
+        };
+        let texts: Vec<String> = stats_parts(&high).into_iter().map(|p| p.text).collect();
+        assert!(texts.contains(&"think:high".to_string()));
     }
 }

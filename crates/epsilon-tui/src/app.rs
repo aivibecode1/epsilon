@@ -150,6 +150,10 @@ pub(crate) struct App {
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
     branch_cache: (Option<String>, std::time::Instant),
+    /// M25: mirror of the agent's thinking level for the footer. Written ONLY
+    /// by [`Self::set_thinking`] (the same choke point that updates the agent),
+    /// so display and execution state cannot drift apart.
+    thinking: epsilon_contracts::ThinkingLevel,
 }
 
 impl App {
@@ -282,6 +286,7 @@ impl App {
                 std::time::Instant::now() - std::time::Duration::from_secs(10),
             ),
             workspace_root,
+            thinking: epsilon_contracts::ThinkingLevel::default(),
         }
     }
 
@@ -633,6 +638,9 @@ impl App {
     /// cycleThinkingLevel + status line).
     fn set_thinking(&mut self, agent: &Arc<Agent>, level: epsilon_contracts::ThinkingLevel) {
         agent.set_thinking_level(level);
+        // M25: mirror for the footer; this is the ONLY writer of `self.thinking`,
+        // so what the footer shows is exactly what the agent will use.
+        self.thinking = level;
         // Direct push: slash replies render this frame (see run_command docs).
         self.ui
             .push_notice(format!("thinking level: {}", level.as_str()));
@@ -680,7 +688,7 @@ impl App {
             crate::picker::Command::Help => {
                 for line in [
                     "commands: /models · /model <id> · /think [level] · /skills · /search <query> · /clear · /quit · /help",
-                    "thinking: Ctrl+T cycles · current level shown in notices",
+                    "thinking: Ctrl+T cycles · current level in the status bar",
                     "keys: Enter submit · Esc aborts a run (quits when idle) · x expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker",
                 ] {
@@ -2007,6 +2015,7 @@ fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         latest_prompt_tokens: app.ui.latest_prompt_tokens(),
         compacted: app.ui.is_compacted(),
         context_window: epsilon_llm::catalog::lookup_model(&app.model_id).map(|i| i.context_window),
+        thinking_level: Some(app.thinking),
         cost_micro_usd: cost_micro,
     });
     // Model id anchors the far right (pi puts it there too).
@@ -2586,6 +2595,9 @@ mod tests {
             agent.thinking_level(),
             epsilon_contracts::ThinkingLevel::Medium
         );
+        // M25: the footer mirror must equal what the agent actually carries
+        // (displayed state == executed state, never a stale estimate).
+        assert_eq!(app.thinking, agent.thinking_level());
         let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
         assert!(texts.iter().any(|t| t.contains("thinking level: medium")));
     }

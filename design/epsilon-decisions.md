@@ -538,6 +538,15 @@ ADR-003 amendment and `docs/milestones/M17-pi-port.md`).
   contract is preserved: all-failed chains still terminate in an in-band
   Error message naming every candidate's last error.
 
+**Amendment (M25).** The footer thinking-level indicator (a deferred item on
+the README's future row) landed: `FooterStats` carries the active level and
+`stats_parts` renders `think:<level>` between cost and model, hidden while
+Off. The TUI mirrors the level in one `App` field written only by
+`set_thinking`, the same choke point that updates the agent, so displayed
+state cannot drift from executed state (key-path test pins equality).
+Cosmetic-only; no loop, wire, or session-format change.
+
+
 - **ADR-D01 (deferred): WASM extension sandbox.** Revisit if process-isolation overhead ever
   matters or component model stabilizes further.
 - **ADR-D02 (deferred): Windows ACL restricted-token confinement backend.** Post-v1; requires

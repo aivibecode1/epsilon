@@ -3,6 +3,14 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M25 - Footer thinking-level indicator
+- **`think:<level>` in the status bar** (pi pattern): renders between cost and
+  model whenever extended thinking is active, hidden while Off. `/help`
+  updated to match.
+- **Displayed state = executed state**: the level is mirrored into one `App`
+  field written only by `set_thinking` (the same choke point that updates the
+  agent); a key-path test asserts mirror == agent after Ctrl+T cycles.
+
 ### M24 - MCP health probes + fallback chains (DIRECTION-02/03 closed)
 - **MCP health probes**: `Connector::is_healthy` (stdio detects a dead child
   via rmcp); the bridge probes at most once per 30s TTL before each call, so
