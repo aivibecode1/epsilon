@@ -15,7 +15,8 @@ best of each. No code copied; every borrowed idea is cited where it appears.
 - **pi** gave us the skeleton: two-level loop, steering queues, JSONL session
   trees ([github.com/earendil-works/pi](https://github.com/earendil-works/pi))
 - **DeepSeek Harness (DSH)** gave us the armor: fail-closed OS confinement,
-  bounded tool pools (no public repo URL verified at time of writing)
+  bounded tool pools
+  ([github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness))
 - **Hermes Agent** gave us the discipline: byte-stable prompt tiers, replay
   fidelity ([github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent))
 - **opencode** gave us the manners: wildcard permission gates, auth store,
@@ -189,7 +190,7 @@ they are not part of this repository).
 | Harness | Source | What Epsilon took | Where it landed |
 |---|---|---|---|
 | **pi** (v0.84.2) by Mario Zechner / Earendil Works | [github.com/earendil-works/pi](https://github.com/earendil-works/pi) · [pi.dev](https://pi.dev) | The skeleton: two-level agent loop, steering and follow-up queues, never-fail `StreamFn` contract, fail-all-on-truncation, JSONL session trees with compaction shadow views, turn leases, model picker and cycling semantics, fuzzy matcher, thinking levels carried per session | `epsilon-core`, `epsilon-llm`, `epsilon-session`, `epsilon-tui` throughout |
-| **DeepSeek Harness "DSH"** (v0.1.1-rc.2) by DeepSeek | no public repo URL verified at time of writing | The armor: fail-closed OS confinement seam (Job Objects on Windows, bubblewrap on Unix), bounded tool pools, sticky turn reasons, plugin-style process isolation for extensions | `epsilon-safety`, `epsilon-ext`, loop executor in `epsilon-core` |
+| **DeepSeek Harness "DSH"** (v0.1.1-rc.2) by DeepSeek | [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) | The armor: fail-closed OS confinement seam (Job Objects on Windows, bubblewrap on Unix), bounded tool pools, sticky turn reasons, plugin-style process isolation for extensions | `epsilon-safety`, `epsilon-ext`, loop executor in `epsilon-core` |
 | **Hermes Agent** (2026.8.19) by Nous Research | [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) | The discipline: byte-stable three-tier prompt assembly, replay fidelity via request hashing, cross-process turn leases, TTL health probes for optional tools (M24), error-classified fallback chains with per-turn primary restoration (M24), incident-driven documentation culture | `epsilon-core` prompts, `epsilon-session` leases, `epsilon-mcp` probes, `epsilon-llm/src/fallback.rs`, `docs/qa/` |
 | **opencode** (v1.18.21) by Anomaly (formerly SST) | [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode) | The manners: wildcard permission rulesets with last-match-wins ask/deny/allow, auth store with stored-key-wins precedence, picker favorites and two-stage selection, doom-loop brake, plan mode, structured compaction UX | `epsilon-safety` rulesets, `epsilon-llm/src/auth.rs`, `epsilon-tui` picker, plan mode in `epsilon-core` |
 
