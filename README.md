@@ -4,125 +4,71 @@
   <img src="assets/Logo.png" alt="Epsilon logo" width="800">
 </p>
 
-A coding-agent harness in Rust. It started as a straight port of [pi](https://pi.dev)'s agent
-loop, session format, and tool pipeline, then picked up specific ideas from three other
-harnesses we read at source level:
+A coding-agent harness in Rust. You type a prompt, the model reads your files, edits
+them, runs commands, and keeps going until the job is done, with every tool call
+passing through permission rules and an OS sandbox first.
 
-| Inherits | From | What it adds |
+We built it by reading four open-source harnesses at source level and porting the
+best of each. No code was copied. Every borrowed idea is cited where it appears.
+
+| We took | From | What came over |
 |---|---|---|
 | The skeleton | **[pi](https://github.com/earendil-works/pi)** (Earendil Works) | Two-level loop, steering/follow-up queues, JSONL session trees, never-fail provider contract |
-| The armor | **DeepSeek Harness (DSH)** | Fail-closed OS confinement seam, bounded tool pools, sticky turn reasons |
+| The armor | **DeepSeek Harness (DSH)** | Fail-closed OS confinement, bounded tool pools, sticky turn reasons |
 | The discipline | **Hermes Agent** ([Nous Research](https://github.com/NousResearch/hermes-agent)) | Byte-stable prompt tiers, replay fidelity, cross-process leases |
 | The manners | **opencode** ([Anomaly](https://github.com/anomalyco/opencode)) | Wildcard permission gates, auth store, picker favorites, plan mode |
 
-Full credits and what each harness taught us: [Credits and references](#credits-and-references)
-at the bottom of this file.
+Full credit table with links and file-level detail lives at the bottom:
+[Credits and references](#credits-and-references).
 
-The end result is a single static binary that runs pi's loop with DSH's safety rules. We
-couldn't find another harness doing both, so we built one.
-
----
-
-## Status
-
-Epsilon reads, writes, edits, greps, globs, lists, and runs shell commands inside its declared
-workspace. Every tool call passes through two checks: permission rules (last match wins) and OS
-confinement. On Windows that's Job Objects with memory, process, and CPU caps plus kill-on-close.
-On Unix it's bubblewrap. If the sandbox isn't available, calls fail closed rather than running
-free.
-
-Long sessions auto-compact once they pass the token threshold: prune old ranges, clamp the tail,
-amend summaries in place, keep prompts byte-stable so the provider's cache still hits. Skills
-load from `SKILL.md` directories. Extensions run as separate processes launched from manifests.
-MCP servers attach over rmcp's stdio transport.
-
-Three frontends sit on one runtime: a ratatui TUI (`--tui`, live events, approval dialogs, a
-pi-style model picker), print mode (`-p`, headless), and serve mode (`--serve`, HTTP/SSE). Model
-selection reads a bundled catalog; keys come from `epsilon auth login` or environment variables,
-and real providers need a build with `--features real`.
-
-| Milestone | Scope | State |
-|---|---|---|
-| M0 | Docs baseline, git, build-order ADR | ✅ shipped |
-| M1 | 11-crate workspace, quality gates green from commit one | ✅ shipped |
-| M2 | `epsilon-contracts` — pi's type vocabulary ported | ✅ shipped |
-| M3 | `epsilon-llm` — StreamFn contract, faux provider, provider adapter, retry (M17: adapter is now pi-style direct HTTP) | ✅ shipped |
-| M4 | `epsilon-session` — JSONL tree store, shadow views, leases, crash repair | ✅ shipped |
-| M5 | `epsilon-core` — full agent loop + runnable demo | ✅ shipped |
-| M6 | Real tools (read/write/edit/bash/grep/glob/ls) + permission ruleset engine | ✅ shipped |
-| M7 | Compaction engine + three-tier byte-stable prompt builder | ✅ shipped |
-| M8 | Skills, extension host (process-isolated), MCP bridge | ✅ shipped |
-| M9 | TUI + HTTP/SSE frontends + rmcp stdio transport | ✅ shipped |
-| M9a | Extension event forwarding (closes known-gap #1) + print mode -p | ✅ shipped |
-| M9b | ratatui TUI (`--tui`), serve mode SSE (`--serve`), rmcp stdio transport | ✅ shipped |
-| M10 | Hardening pass: sandbox backends incl. **Windows Job Objects + ACL runner** (closes known-gap #2, M8 ledger), release packaging | ✅ shipped |
-| M10a | Sandbox seam (Job Objects / bwrap, fail-closed) + permission-event correlation fix; **ACL runner deferred with rationale** (ADR-005) | ✅ shipped |
-| M10b | Release packaging: real providers, model plumbing, 8.8 MB binary, changelog + tag `v0.1.0` | ✅ shipped |
-| M11 | Model picker + bundled catalog (`/models`, `--list-models`), config slice, skills/extensions runtime wiring | ✅ shipped |
-| M12 | Completion pass: project config + trust hash, retry executor + run cancellation + cost display, --resume, --rpc mode, OpenAPI endpoint | ✅ shipped |
-| M13 | Polish: live catalog fetch (Ctrl+F in /models at the time; that key is Ctrl+F=favorite and Ctrl+G=refresh since M23), recents, markdown-lite transcript, expandable tool cards, bwrap test suite for Linux CI | ✅ shipped |
-| M14 | Harness maturity: plain `epsilon` launches the TUI by default (`--demo` preserved), provider auto-detect from env keys with faux fallback + banner, slash-command repairs on the real key path (`/clear` `/skills` `/quit`, unknown-command errors) | ✅ shipped |
-| M15 | TUI usability overhaul porting pi/opencode patterns — picker scroll window (fixes unreachable rows), unicode editor ops, pulldown-cmark transcript, spinner+elapsed, hint bar, mouse wheel, bracketed paste, slash autocomplete; 146 tests | ✅ shipped |
-| M16a | TUI rendering efficiency: id-keyed render cache (markdown+wrap once per line), virtualized transcript (~30–69× faster draws, near-flat vs session length), cached picker rows, pi footer parity (cwd/branch/compact tokens/context %/cache-hit rate), `--tui-bench` mode | ✅ shipped |
-| M16b | Editor v2: Emacs kill-ring (Ctrl+U/W/Y with accumulation + yank-pop), atomic paste markers (`[paste #N +L lines]`, expand on submit, marker-aware Ctrl+W), multi-line buffer (Ctrl+J newline), persistent prompt history (500 entries) | ✅ shipped |
-| M16c | Picker/palette parity: two-stage model picker (providers → models, fuzzy-filtered), command palette (Ctrl+P) dispatching all commands, draft stash across dialogs, pi fuzzy matcher; 187 tests | ✅ shipped |
-| M17 | **pi-agent port**: direct per-provider HTTP replaces genai (Anthropic/OpenAI-compat/Gemini wires), catalog v2 regenerated from live models.dev (current 2026 generations, REAL prices), slash autocomplete with arrow-key selection + descriptions (pi pattern), keybind parity sweep (Ctrl+A/E/B/F/D/K, Alt+B/F/D, Ctrl+. redo); full attribution in dev log | ✅ shipped |
-| M18 | Alignment pass: docs audit (M14 log backfilled, beginner primer, stale genai/MSRV claims fixed), pi-alignment report + session search closed (`/search` command, 7 new tests), research pass 2 with community signal, **plan mode** imported from opencode (`--plan` read-only runs, monotonic-deny boundary, live-verified) | ✅ shipped |
-| M19 | Audit remediation: all 8 improvement plans executed — provider stop-reason fidelity on all three wires, loop integrity (latch reset, steering requeue, UTF-8 safety), serve-mode bearer token + Host guard, deny-beats-memory + grep secret-file skip, wire fixture tests in CI, byte-safe SSE buffer, ext event forwarding wired, CLI `RunParams` composition cleanup | ✅ shipped |
-| M20 | Catalog regeneration + live picker refresh: `scripts/regen_catalog.py` generates the catalog from models.dev (383 rows vs ~40 curated — DIRECTION-05 closed), live `GET /models` fetch FIXED (M17's Ctrl+F passed a model id where a provider name was required) and AUTO-FIRES on picker open / provider descent (opencode/Hermes convention), live ids merged into both picker stages | ✅ shipped |
-| M21 | Thinking fidelity sweep (DIRECTION-04): shared `ThinkingLevel` ladder in contracts, per-wire native mapping (Anthropic adaptive+effort, OpenAI `reasoning_effort`/OpenRouter/zai/deepseek/kimi, Google `thinkingConfig`) with fixture pins, `/think <level>` + Ctrl+T cycle, session-carried like pi; compaction stays Off per ADR-007 | ✅ shipped |
-| M22 | opencode auth store + trust re-prompt (DIRECTION-01): `epsilon auth login/list/logout` — keys live once in `~/.config/epsilon/auth.json` (opencode schema, stored-wins/env-fallback), auto-real detection + picker + live listing all follow; changed `.epsilon/config.toml` now holds the TUI until you answer (`trust` / `trust no`) instead of banner-and-run | ✅ shipped |
-| M23 | Picker favorites (DIRECTION-06): star any model with Ctrl+F inside the picker (★ column, Favorites section above Recents), F2/Shift+F2 cycle favorites forward/backward from the editor (pi cycling semantics over opencode's favorite list); persisted in config `[picker] favorite` | ✅ shipped |
-| M24 | Reliability polish (DIRECTION-02/03 closed): MCP health probes with 30s TTL + fail-fast honest errors (`Connector::is_healthy`, stdio death detection), provider fallback chains (`--fallback <model>`, repeatable — retryable failures walk the chain, per-turn primary restoration, Hermes pattern on our StreamFn seam) | ✅ shipped |
-| future | footer thinking-level indicator · per-favorite thinking level (pi scoped models) · weekly catalog-drift CI PR | open |
-
-241 tests offline (255 with --features real), zero clippy warnings in both build
-configurations. Every milestone has a dev log
-under [`docs/milestones/`](docs/milestones).
+The result is a single static binary running pi's loop under DSH's safety rules. We
+could not find another harness doing both, so we built one.
 
 ---
 
-## Why it exists
+## What it does
 
-Four convictions, each backed by evidence we can point to in the reference audit
-([`reports/harness-analysis.md`](reports/harness-analysis.md)):
+Epsilon reads, writes, edits, greps, globs, lists, and runs shell commands inside its
+declared workspace. Every call passes two gates in order: permission rules (last
+match wins), then OS confinement. On Windows that is Job Objects with memory,
+process-count, and CPU caps plus kill-on-close. On Unix it is bubblewrap. If the
+sandbox cannot start, the call fails closed. It never runs free.
 
-1. **Rust gives deterministic latency and real parallelism.** pi folds streaming tokens into a
-   live UI; garbage-collector pauses work directly against that. Hermes' synchronous loop made
-   parallel tool execution hard by design. Rust has neither problem.
-2. **Safety needs two layers.** opencode showed intent-level permission gates can be usable. DSH
-   showed OS confinement can fail closed without dead-ending the agent. Every existing harness
-   ships one or the other; Epsilon wires both together, so a sandbox denial escalates into an
-   approval prompt instead of failing the task.
-3. **Prompt-cache preservation is an invariant, not an optimization.** Byte-stable prompt tiers,
-   auxiliary calls isolated from the live cache prefix, replay fidelity via request hashing.
-4. **Build like lego.** Contracts first, bricks second, integration last. Any bug reproduces by
-   replaying a deterministic log instead of poking a live system. See
-   [`docs/qa/02-lego-brick-methodology.md`](docs/qa/02-lego-brick-methodology.md).
+Long sessions auto-compact past a token threshold: old ranges get pruned from the
+model's view while the transcript on disk keeps every line. Skills load from
+`SKILL.md` directories on demand. Extensions run as separate processes. MCP servers
+attach over stdio.
+
+Three frontends share one runtime:
+
+```sh
+epsilon                                  # ratatui TUI (default), live events, approvals, model picker
+epsilon -p "summarize this repo"         # print mode, headless, reply to stdout
+epsilon --serve --port 8787              # HTTP/SSE server for editors and scripts
+epsilon --rpc                            # NDJSON over stdio for embedding
+```
+
+Model selection reads a bundled catalog of 386 models (generated from
+[models.dev](https://models.dev), with real prices), so browsing needs no network and
+no API key. Keys come from `epsilon auth login` or environment variables. Talking to
+real providers requires a build with `--features real`; everything else runs against
+a scripted offline provider.
 
 ---
 
 ## Quick start
 
-Prerequisites: Rust ≥ 1.88 (edition 2024; the workspace declares `rust-version = 1.88`
-and CI verifies it), any of stable-msvc/stable-gnu/musl targets.
+You need Rust 1.88 or newer. Install it from [rustup.rs](https://rustup.rs) if you
+do not have it.
 
 ```sh
 git clone <this-repo> epsilon && cd epsilon
-cargo build --workspace          # compile all 11 crates
-cargo test --workspace           # 241 tests, offline & free
-epsilon                          # interactive TUI (auto-detects your API keys)
-epsilon auth login anthropic     # store a key once — no env vars needed
-cargo run -p epsilon-cli -- --demo   # scripted offline demo
-cargo run -p epsilon-cli -- -p "summarize this repo"        # headless print mode
-cargo run -p epsilon-cli -- --tui                           # interactive TUI
-cargo run -p epsilon-cli -- --serve --port 8787             # HTTP/SSE server
-cargo run -p epsilon-cli -- --list-models                   # bundled model catalog
-cargo run -p epsilon-cli -- --continue -p "next step"   # resume newest session
-cargo run -p epsilon-cli -- --rpc                           # NDJSON-over-stdio for editors
+cargo build --workspace          # compiles all 11 crates
+cargo test --workspace           # full suite, offline and free
+cargo run -p epsilon-cli -- --demo   # scripted demo, proves the loop works
 ```
 
-Demo output:
+The demo output looks like this:
 
 ```
 === run start ===
@@ -142,25 +88,40 @@ messages produced: 6
 tokens in/out: 300/150
 ```
 
-Everything runs against the **faux provider**, a scripted deterministic LLM. Builds, tests, and
-demos are offline, instant, and cost nothing. pi tests its loop the same way, and it means CI
-never touches paid APIs.
+Builds, tests, and demos never touch a paid API. They run against the **faux
+provider**, a deterministic scripted LLM, which is also how pi tests its own loop.
+CI stays free and instant.
+
+More ways to drive it once it builds:
+
+```sh
+cargo run -p epsilon-cli -- --tui                # interactive TUI explicitly
+cargo run -p epsilon-cli -- --list-models        # show the bundled catalog
+cargo run -p epsilon-cli -- --continue -p "next step"   # resume newest session
+```
 
 ### Real providers (optional)
 
 ```sh
-cargo build --release -p epsilon-cli --features real   # direct per-provider HTTP (pi-style)
-epsilon auth login anthropic                  # stores a key in ~/.config/epsilon/auth.json
-target/release/epsilon                        # finds the key and runs REAL
-# or set the env var instead: ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY
-# or be explicit:
+cargo build --release -p epsilon-cli --features real   # enables direct HTTP wires
+epsilon auth login anthropic                           # stores a key once
+target/release/epsilon                                 # finds it and runs REAL
+```
+
+`auth login` writes `~/.config/epsilon/auth.json` (opencode's schema). A stored key
+wins over an environment variable; both work. Environment equivalents:
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and friends. To skip the
+picker entirely:
+
+```sh
 target/release/epsilon --provider real --model claude-sonnet-4-5 -p "summarize this repo"
 ```
 
-Providers speak their native wire protocol over HTTPS (Anthropic Messages,
-OpenAI-compatible `/chat/completions`, Google `streamGenerateContent`), with no SDK crate in
-between. Routing reads each catalog row's declared wire type, never id substrings. A stored key
-wins over an environment variable; both work.
+Providers speak their native wire protocol over HTTPS: Anthropic Messages,
+OpenAI-compatible `/chat/completions`, Google `streamGenerateContent`. There is no
+SDK crate in between. Routing reads each catalog row's declared wire type rather than
+guessing from the model id. Retryable failures walk fallback chains given with
+repeatable `--fallback <model>` flags; auth failures stop the chain.
 
 ---
 
@@ -171,92 +132,126 @@ One turn through the system:
 ```
 prompt ──► Agent.run()
              │  drain steering queue (messages typed while busy)
-             │
              ▼
         convert_to_llm(history)          drop harness-only messages
-             │
              ▼
         StreamFn.stream(model, ctx)      NEVER fails; failures arrive in-band
-             │  StreamEvent*              text/thinking/toolcall deltas
+             │  StreamEvent*             text/thinking/toolcall deltas
              ▼
         AssistantMessage (Done = authoritative final)
-             │
-             ▼  stop_reason == MaxTokens?
+             │  stop_reason == MaxTokens?
         fail ALL tool calls              truncated args are unsafe (pi rule)
-             │
              ▼  otherwise
         execute_batch:
           preflight sequentially: resolve → validate → gate.ask()?
           doom-loop brake: ≥3 identical calls → ask
           parallel-safe calls → Semaphore(8)-bounded pool
           sequential tools    → barrier; results commit in MODEL order
-             │
              ▼
         ToolResultMessage* appended      transcript persists to .epsilon/sessions/*.jsonl
-             │                            (append-only tree; compaction shadows ranges)
+             │                           (append-only tree; compaction shadows ranges)
              └── loop while tools remain || steering queued
                   then drain follow-ups, else emit AgentEnd
 ```
 
 ### The eleven crates
 
-Dependency direction is compile-enforced: nothing may depend upward.
+Dependency direction is compile-enforced. Nothing depends upward.
 
 ```
 contracts ← llm ← core ← {tools, safety, ext, mcp} ← {tui, server} ← cli
 contracts ← session ← core
 ```
 
-| Crate | Role | Key types | Pi analogue |
-|---|---|---|---|
-| `epsilon-contracts` | Shared vocabulary: types + traits, zero logic, zero internal deps | `Message`, `StreamEvent`, `AgentEvent`, `SessionEntry`, `Tool`, `StopReason`, `Usage` | `packages/agent/types.ts` |
-| `epsilon-llm` | Multi-provider LLM layer behind the never-fail contract: direct per-provider HTTP wires (Anthropic / OpenAI-compat / Google), faux provider, retry policy, catalog | `StreamFn`, `EventStream`, `FauxProvider`, `ProviderWire`, catalog | `packages/ai` |
-| `epsilon-session` | Append-only JSONL tree sessions | `SessionStore`, `SessionLease`, repair helpers | `harness/session` |
-| `epsilon-core` | The loop: queues, batch executor, event bus | `Agent`, `LoopLimits`, `ToolRegistry`, `PermissionGate` | `packages/agent` |
-| `epsilon-tools` | Built-in tools *(M6)* | read/write/edit/bash/grep… | `coding-agent/src/core/tools` |
-| `epsilon-safety` | Permission rulesets + sandbox backends *(M6+)* | wildcard engine, `Sandbox` trait | none in pi |
-| `epsilon-ext` | Process-isolated extension host *(M8)* | NDJSON-RPC protocol, manifests | `core/extensions` |
-| `epsilon-mcp` | MCP client bridging external tools *(M8)* | rmcp-based registry bridge | none in pi core |
-| `epsilon-tui` | ratatui terminal frontend *(M9)*: live event transcript, approval dialog, steering | `UiState` reducer, `TuiConfig` | `packages/tui` |
-| `epsilon-server` | HTTP/SSE frontend API *(M9)*: SSE events, prompt/steer/approve REST | `ServeState`, `router` | RPC mode |
-| `epsilon-cli` | Binary: modes dispatch (demo / print / tui / serve), runtime composition | — | CLI |
+| Crate | Role | Key types |
+|---|---|---|
+| `epsilon-contracts` | Shared vocabulary: types and traits only, zero logic | `Message`, `StreamEvent`, `AgentEvent`, `SessionEntry`, `Tool`, `StopReason`, `Usage` |
+| `epsilon-llm` | Multi-provider layer behind the never-fail contract: three direct HTTP wires, faux provider, retry, fallback chains, catalog | `StreamFn`, `EventStream`, `FallbackProvider`, `ProviderWire` |
+| `epsilon-session` | Append-only JSONL tree sessions | `SessionStore`, `SessionLease`, repair helpers |
+| `epsilon-core` | The loop: queues, batch executor, event bus, prompts, compaction | `Agent`, `LoopLimits`, `ToolRegistry`, `PermissionGate` |
+| `epsilon-tools` | Built-in tools: read/write/edit/bash/grep/glob/ls | typed tool structs |
+| `epsilon-safety` | Permission rulesets and sandbox backends | wildcard engine, `Sandbox` trait |
+| `epsilon-ext` | Process-isolated extension host | NDJSON-RPC protocol, manifests |
+| `epsilon-mcp` | MCP client bridging external tools | rmcp-based registry bridge, health probes |
+| `epsilon-tui` | Terminal frontend: live transcript, dialogs, picker, palette | `UiState` reducer, editor ops |
+| `epsilon-server` | HTTP/SSE frontend | `ServeState`, router, bearer guard |
+| `epsilon-cli` | Binary: mode dispatch and runtime composition | CLI |
+
+### Key mechanisms
+
+- **Two-level loop** (pi verbatim). The inner loop runs while tool calls remain or
+  steering is pending. The outer loop drains follow-ups when the agent would
+  otherwise stop. Each queue has an explicit drain mode.
+- **Never-fail provider contract.** `StreamFn` implementations cannot throw. Even
+  panics become a terminal `Done { stop_reason }` through a blanket `PanicGuard`.
+  The loop handles exactly one error shape.
+- **Fail-all-on-truncation.** When output hits the token limit, every tool call in
+  that message fails with a re-issue hint. Truncated JSON arguments look plausible
+  and execute dangerously wrong, so none of them run.
+- **Doom-loop brake.** Three identical calls in a row raise a permission ask instead
+  of burning tokens.
+- **Bounded parallel pool.** Independent tools run concurrently up to a semaphore
+  cap; sequential tools act as barriers; results commit in model order so transcripts
+  replay byte-exactly.
+- **Shadowed model view.** Compaction rewrites what the model sees. The JSONL on disk
+  keeps every original line. Audit intact, context small.
+- **Turn leases.** An advisory lock file lets CLI, TUI, and server share one session
+  file. Crash leftovers can be taken over after 30 seconds.
+- **Crash repair.** Dangling tool calls become synthetic error results on load;
+  failure-stopped turns get explicit markers. Idempotent by construction.
+- **Byte-stable prompt tiers.** Identical inputs produce byte-identical prompts,
+  hash-tested, so the provider's prompt cache keeps hitting. This is the economic
+  core of the whole design.
 
 ---
 
-## Key mechanisms
-
-- **Two-level loop** (pi verbatim): the inner loop runs while tool calls remain or steering is
-  pending; the outer loop drains follow-ups when the agent would otherwise stop. Each queue has
-  an explicit drain mode (`all` vs one at a time).
-- **Never-fail provider contract**: `StreamFn` implementations cannot throw. Failures arrive as a
-  terminal `Done { stop_reason: Error | Aborted }`. A blanket `PanicGuard` converts even panics
-  into that shape.
-- **Fail-all-on-truncation**: when output hits the token limit, every tool call in that message
-  fails with a re-issue hint instead of executing plausibly corrupt JSON arguments.
-- **Doom-loop brake**: three identical calls in a row (counted across batches, per run) raise a
-  permission ask instead of burning tokens.
-- **Bounded parallel pool**: parallel-safe tools run concurrently up to a semaphore cap;
-  sequential tools act as barriers; results commit in model order so transcripts replay.
-- **Shadowed model view**: compaction rewrites what the model sees while the human-readable JSONL
-  keeps every line. Audit intact, context small.
-- **Turn leases**: an advisory lock file lets CLI, TUI, and server coexist on one session file.
-  Crash leftovers can be stolen after 30 seconds.
-- **Crash repair**: dangling tool calls become synthetic error results; failure-stopped turns get
-  typed `TurnEnd{Aborted}` markers. Idempotent by construction.
-
 ## Testing strategy
 
-The faux provider makes full-loop integration tests offline, deterministic, and fast (pi's own
-pattern). Time-sensitive scenarios use `SlowProvider`, never bare sleeps. Each brick carries its
-own integration tests; loop scenarios assert exact transcripts, event sequences, and sticky stop
-reasons. Pure functions get property-style coverage where it pays off (permission evaluation,
-M6).
+The faux provider makes full-loop integration tests offline, deterministic, and fast.
+Time-sensitive scenarios use `SlowProvider` instead of sleeps, so they never flake on
+a loaded machine. Each crate owns integration tests covering its failure paths, not
+just the happy path. Loop scenarios assert exact transcripts and event sequences.
+Provider wire parsing is pinned by fixture tests recorded from real HTTP exchanges.
+Pure functions (permission evaluation especially) get property-style coverage.
+
+Real-provider checks exist but sit behind env-var-gated `#[ignore]` so nothing in a
+normal test run ever costs money.
+
+---
+
+## Status
+
+241 tests offline (255 with `--features real`), zero clippy warnings in both build
+configurations. CI runs all gates on Windows, a bubblewrap confinement suite on
+Linux, and an MSRV 1.88 check.
+
+Every milestone has a dev log under [`docs/milestones/`](docs/milestones) with what
+shipped, which decisions were made, and which bugs the tests caught.
+
+| Milestone | Scope |
+|---|---|
+| M0–M5 | Docs baseline, 11-crate workspace, contracts vocabulary, LLM layer behind StreamFn, JSONL sessions, agent loop with runnable demo |
+| M6–M8 | Real tools + permission ruleset engine, compaction + byte-stable prompt tiers, skills + extension host + MCP bridge |
+| M9–M10b | TUI + serve/print/rpc frontends, extension event forwarding, sandbox backends (Windows Job Objects, bwrap suite), release packaging, tag v0.1.0 |
+| M11–M13 | Model picker + bundled catalog, project trust hashing, retry executor, cost display, resume, RPC mode, live catalog fetch, recents, markdown transcript, expandable tool cards |
+| M14–M15 | Plain `epsilon` launches the TUI with key auto-detection; slash-command repairs; usability overhaul porting pi/opencode interaction patterns |
+| M16a–c | Render cache + virtualized transcript (~30–69x faster draws), pi footer parity, `--tui-bench`; Emacs kill-ring, paste markers, multi-line editor; two-stage picker + command palette |
+| M17 | pi-agent port: genai removed, direct per-provider HTTP (Anthropic/OpenAI-compat/Gemini), catalog regenerated from models.dev with real prices, keybind parity sweep |
+| M18 | Docs audit, beginner primer, session search (`/search`), plan mode imported from opencode (`--plan` read-only runs) |
+| M19 | All 8 improvement plans executed: stop-reason fidelity on all wires, loop integrity fixes, serve-mode bearer auth, secret-leak closure, wire fixtures in CI, byte-safe SSE buffer |
+| M20 | Catalog regeneration pipeline (`scripts/regen_catalog.py`, 383 models.dev rows), live `GET /models` fetch fixed and auto-firing on picker open |
+| M21 | Thinking fidelity: shared ladder in contracts, native mapping per wire, `/think` + Ctrl+T, carried per session |
+| M22 | opencode auth store (`epsilon auth login/list/logout`), trust re-prompt holds the TUI until answered |
+| M23 | Picker favorites: Ctrl+F stars, favorites above recents, F2/Shift+F2 cycling (pi semantics) |
+| M24 | MCP health probes (30s TTL, fail-fast honest errors), provider fallback chains (`--fallback`, repeatable, per-turn primary restoration) |
+| future | Footer thinking-level indicator · per-favorite thinking levels · weekly catalog-drift CI PR | open |
 
 ---
 
 ## Design decisions digest
 
-Full reasoning lives in [`design/epsilon-decisions.md`](design/epsilon-decisions.md); one line each:
+Full reasoning lives in [`design/epsilon-decisions.md`](design/epsilon-decisions.md).
+One line each:
 
 | ADR | Decision |
 |---|---|
@@ -277,45 +272,39 @@ Full reasoning lives in [`design/epsilon-decisions.md`](design/epsilon-decisions
 | 015 | Agent-Skills-spec compliance: catalog in prompt, body loaded on demand |
 | 016 | Supply-chain policy inherited from pi: exact pins, advisories in CI |
 | 017 | Build order + debug tooling per brick; contracts freeze policy |
+| 018 | Model selection: TUI picker over bundled generated catalog; flag > saved config > default precedence; auth detection only in the picker (credentials via the M22 auth store) |
 
 ---
 
 ## How to read this repository
 
 New to coding agents entirely? Start with
-[`docs/qa/06-agent-harness-primer.md`](docs/qa/06-agent-harness-primer.md): what an agent harness
-is, in plain language, no background assumed. Then follow the developer path below.
+[`docs/qa/06-agent-harness-primer.md`](docs/qa/06-agent-harness-primer.md): what a
+harness even is, in plain language, no background assumed. Then keep
+[`docs/glossary.md`](docs/glossary.md) open while you read; it defines every term
+this project uses, from StreamFn to shadow view.
 
-Joining as a developer? Read this README, then [`CHANGELOG.md`](CHANGELOG.md) for what shipped
-when, then the short notes in [`docs/qa/`](docs/qa) (why Rust, the lego methodology, what exists
-after each phase). [`design/epsilon-architecture.md`](design/epsilon-architecture.md) sections 2
-through 7 cover components and data flow, and [`docs/milestones/`](docs/milestones) has the dev
-logs in order: what was built, which bugs the tests caught, why decisions went the way they did.
+Joining as a developer? Read this README, then [`CHANGELOG.md`](CHANGELOG.md) for
+what shipped when, then the short notes in [`docs/qa/`](docs/qa): why Rust, the lego
+methodology, partial vs full ports, documentation organization. The developer
+contract is root [`AGENTS.md`](AGENTS.md), which loads automatically for coding
+agents. [`design/epsilon-architecture.md`](design/epsilon-architecture.md) sections 2
+through 7 cover components and data flow, and
+[`design/epsilon-skills.md`](design/epsilon-skills.md) inventories the skill library.
+[`docs/milestones/`](docs/milestones) has the dev logs in order. Session-to-session
+work orders live in [`docs/handoff/`](docs/handoff).
 
-Researching harness design? [`reports/harness-analysis.md`](reports/harness-analysis.md) audits
-pi, DSH, Hermes, and opencode at source level with file-anchored strengths and weaknesses.
-[`reports/comparative-analysis.md`](reports/comparative-analysis.md) ranks who does what best.
-[`design/epsilon-decisions.md`](design/epsilon-decisions.md) shows how the audit became choices.
+Researching harness design? [`reports/harness-analysis.md`](reports/harness-analysis.md)
+audits pi, DSH, Hermes, and opencode at source level with file-anchored strengths and
+weaknesses. [`reports/comparative-analysis.md`](reports/comparative-analysis.md) ranks
+who does what best. The remaining reports in [`reports/`](reports) record alignment
+passes and re-audits against those references.
 
-Working in this repo as a coding agent? Root [`AGENTS.md`](AGENTS.md) has the commands and gates
-and loads automatically. [`design/epsilon-architecture.md`](design/epsilon-architecture.md)
-section 2 lists the crate boundaries you must not cross. The latest entry in
-[`docs/milestones/`](docs/milestones) tells you the current state. The runtime behavior contract
-Epsilon ships lives at
+Working in this repo as a coding agent? Root [`AGENTS.md`](AGENTS.md) again. The
+latest entry in [`docs/milestones/`](docs/milestones) tells you the current state.
+The runtime behavior contract Epsilon ships lives at
 [`crates/epsilon-core/assets/agent-contract.md`](crates/epsilon-core/assets/agent-contract.md);
 it describes the product, not this repo's development rules.
-
----
-
-## Roadmap acceptance criteria
-
-| Milestone | Done when |
-|---|---|
-| M6 | Model can read/edit real files and run gated bash on this repo; permission rulesets evaluated last-match-wins with ask/deny/allow; every gate path tested |
-| M7 | Long sessions auto-compact past 80% context; prompts byte-stable across identical inputs (hash-tested); summaries amend prior ones |
-| M8 | A SKILL.md dropped into a directory appears in catalog and loads on demand; an extension process can register a tool; MCP server tools callable |
-| M9 | Interactive TUI renders live events; `-p` print mode completes headlessly; serve mode streams SSE; an extension process receives filtered agent events over its stdio protocol |
-| M10 | Linux confinement verified (landlock/bwrap); **Windows: bash children run inside a Job Object (CPU/memory/child caps) and the ACL restricted-token runner ships or is explicitly deferred with rationale**; release binary <15MB, changelog + tag |
 
 ---
 
@@ -329,40 +318,52 @@ cargo clippy --workspace --all-targets   # zero warnings tolerated
 cargo test --workspace                   # full suite green
 ```
 
-House rules: dependencies are pinned exactly (`=x.y.z`) after checking feature names against the
-crate's own manifest. No logic in `contracts`. Architectural violations should be build errors,
-not review comments. Behavior changes need an ADR note. Commits look like `feat(mN): ...`,
-`fix(mN): ...`, or `docs: ...`.
+House rules: dependencies are pinned exactly (`=x.y.z`) after checking feature names
+against the crate's own manifest. No logic in `contracts`. Architectural violations
+should be build errors, not review comments. Behavior changes need an ADR note.
+Commits look like `feat(mN): ...`, `fix(mN): ...`, or `docs: ...`.
+
+---
+
+## Roadmap acceptance criteria
+
+Original acceptance criteria, kept for the record:
+
+| Milestone | Done when |
+|---|---|
+| M6 | Model reads/edits real files and runs gated bash here; rulesets evaluated last-match-wins with ask/deny/allow; every gate path tested |
+| M7 | Long sessions auto-compact past 80% context; prompts byte-stable across identical inputs (hash-tested); summaries amend prior ones |
+| M8 | A SKILL.md dropped into a directory appears in catalog and loads on demand; an extension process registers a tool; MCP server tools callable |
+| M9 | Interactive TUI renders live events; `-p` completes headlessly; serve streams SSE; an extension receives filtered events over stdio |
+| M10 | Linux confinement verified (bwrap); Windows bash children run inside a Job Object; ACL runner shipped or explicitly deferred with rationale; release binary <15MB, changelog + tag |
+
+All five are closed. M10's ACL runner was deferred with rationale (ADR-005).
 
 ---
 
 ## Credits and references
 
 Epsilon is a learning project built by reading four open-source coding agents and
-reimplementing the best of what we found. No code was copied; every idea is cited where it
-appears in this repo, and the Rust implementation is written from scratch. The reference
-snapshots we read live in `references/` (pinned versions, unmodified).
+reimplementing the best of what we found. No code was copied; every idea is cited
+where it appears in this repo, and the Rust implementation is written from scratch.
+The reference snapshots we read live in `references/` (pinned versions, unmodified).
 
 | Harness | Source | What Epsilon took | Where it landed |
 |---|---|---|---|
-| **pi** (v0.84.2) by Mario Zechner / Earendil Works | [github.com/earendil-works/pi](https://github.com/earendil-works/pi) · [pi.dev](https://pi.dev) | The skeleton: two-level agent loop, steering and follow-up queues, never-fail `StreamFn` provider contract, fail-all-on-truncation, JSONL session trees with compaction shadow views, turn leases, model picker and cycling semantics, fuzzy matcher, thinking levels carried per session | `epsilon-core`, `epsilon-llm`, `epsilon-session`, `epsilon-tui` throughout |
+| **pi** (v0.84.2) by Mario Zechner / Earendil Works | [github.com/earendil-works/pi](https://github.com/earendil-works/pi) · [pi.dev](https://pi.dev) | The skeleton: two-level agent loop, steering and follow-up queues, never-fail `StreamFn` contract, fail-all-on-truncation, JSONL session trees with compaction shadow views, turn leases, model picker and cycling semantics, fuzzy matcher, thinking levels carried per session | `epsilon-core`, `epsilon-llm`, `epsilon-session`, `epsilon-tui` throughout |
 | **DeepSeek Harness "DSH"** (v0.1.1-rc.2) by DeepSeek | snapshot in `references/` (no public repo URL verified at time of writing) | The armor: fail-closed OS confinement seam (Job Objects on Windows, bubblewrap on Unix), bounded tool pools, sticky turn reasons, plugin-style process isolation for extensions | `epsilon-safety`, `epsilon-ext`, loop executor in `epsilon-core` |
 | **Hermes Agent** (2026.8.19) by Nous Research | [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) | The discipline: byte-stable three-tier prompt assembly, replay fidelity via request hashing, cross-process turn leases, TTL health probes for optional tools (M24), error-classified fallback chains with per-turn primary restoration (M24), incident-driven documentation culture | `epsilon-core` prompts, `epsilon-session` leases, `epsilon-mcp` probes, `epsilon-llm/src/fallback.rs`, `docs/qa/` |
-| **opencode** (v1.18.21) by Anomaly (formerly SST) | [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode) | The manners: wildcard permission rulesets with last-match-wins ask/deny/allow, auth store (`epsilon auth login`) with stored-key-wins precedence, picker favorites and two-stage provider→model selection, doom-loop brake, plan mode (`--plan` read-only runs), structured compaction UX | `epsilon-safety` rulesets, `epsilon-llm/src/auth.rs`, `epsilon-tui` picker, plan mode in `epsilon-core` |
+| **opencode** (v1.18.21) by Anomaly (formerly SST) | [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode) | The manners: wildcard permission rulesets with last-match-wins ask/deny/allow, auth store with stored-key-wins precedence, picker favorites and two-stage selection, doom-loop brake, plan mode, structured compaction UX | `epsilon-safety` rulesets, `epsilon-llm/src/auth.rs`, `epsilon-tui` picker, plan mode in `epsilon-core` |
 
-Two more debts worth naming: the [models.dev](https://models.dev) catalog feeds our bundled
-model data through `scripts/regen_catalog.py`, and this documentation style (and the honesty
-pass over it) follows Wikipedia's "Signs of AI writing" guidance via the humanizer checklist.
-Full source-level audits behind these choices: [`reports/harness-analysis.md`](reports/harness-analysis.md)
-and [`reports/comparative-analysis.md`](reports/comparative-analysis.md).
+Two more debts worth naming: the [models.dev](https://models.dev) catalog feeds our
+bundled model data through `scripts/regen_catalog.py`, and this documentation follows
+Wikipedia's "Signs of AI writing" guidance via the humanizer checklist. Full
+source-level audits behind these choices:
+[`reports/harness-analysis.md`](reports/harness-analysis.md) and
+[`reports/comparative-analysis.md`](reports/comparative-analysis.md).
 
 ---
 
-*This repo is a research-through-implementation project. The reference harnesses under
-`references/` belong to their authors; we cite their lessons and don't copy their code.*
-
-
-
-
-
-
+*This repo is a research-through-implementation project. The reference harnesses
+under `references/` belong to their authors; we cite their lessons and don't copy
+their code.*
