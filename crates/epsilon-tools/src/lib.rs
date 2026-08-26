@@ -10,6 +10,7 @@ mod edit_match;
 mod files;
 mod search;
 mod shell;
+mod todo;
 pub mod util;
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use epsilon_safety::Sandbox;
 pub use files::{EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool};
 pub use search::{GlobArgs, GlobTool, GrepArgs, GrepTool, LsArgs, LsTool};
 pub use shell::{BashArgs, BashTool};
+pub use todo::{TodoArgs, TodoItemArgs, TodoStatus, TodoTool};
 
 /// How Layer-2 OS confinement applies to the built-ins (ADR-005).
 #[derive(Clone)]
@@ -66,6 +68,9 @@ pub fn register_builtins(registry: &mut ToolRegistry, confinement: &Confinement)
     registry.register(Arc::new(GrepTool::new()));
     registry.register(Arc::new(GlobTool::new()));
     registry.register(Arc::new(LsTool::new()));
+    // M30: closes the agent-contract gap — the contract told the model to use
+    // `todo` long before a tool with that name existed.
+    registry.register(Arc::new(TodoTool::new()));
 }
 
 /// A fresh registry containing exactly the built-ins.

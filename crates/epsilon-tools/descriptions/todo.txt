@@ -1,0 +1,8 @@
+Track multi-step work with a visible checklist.
+
+Send the COMPLETE list on every call — this replaces the previous list
+entirely. Keep statuses current: mark items in_progress when you start them
+and completed as soon as they finish, so the user can follow progress.
+
+Use for tasks with 3+ distinct steps or when the user asks you to track
+work. Skip it for single-step requests.

@@ -243,6 +243,19 @@ impl UiState {
                             _ => None,
                         })
                         .collect::<String>();
+                    // M30: todo results render their checklist (opencode's todo
+                    // block) — short lists fully visible, long ones summarized.
+                    if t.tool_name == "todo"
+                        && let Some(head) = todo_head(&t.details)
+                    {
+                        self.push_line(TranscriptLine::expandable(
+                            LineKind::ToolResultOk,
+                            head,
+                            format!("todo\n{body}"),
+                        ));
+                        self.status = "tool done".into();
+                        return;
+                    }
                     let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
                     self.push_line(TranscriptLine::expandable(
                         if t.is_error {
@@ -318,6 +331,42 @@ fn thinking_of(a: &AssistantMessage) -> String {
             _ => None,
         })
         .collect()
+}
+
+/// Glanceable head for todo results (opencode's todo block): up to five items
+/// render fully with their markers; longer lists summarize to counts.
+/// Returns None when the details payload isn't the expected shape (then the
+/// generic tool-result rendering takes over).
+fn todo_head(details: &serde_json::Value) -> Option<String> {
+    let items = details.get("todo")?.as_array()?;
+    let marker = |status: &str| match status {
+        "completed" => "[x]",
+        "in_progress" => "[~]",
+        _ => "[ ]",
+    };
+    let rendered: Vec<String> = items
+        .iter()
+        .filter_map(|i| {
+            Some(format!(
+                "{} {}",
+                marker(i.get("status")?.as_str()?),
+                i.get("content")?.as_str()?.trim()
+            ))
+        })
+        .collect();
+    if rendered.len() != items.len() {
+        return None;
+    }
+    if rendered.len() <= 5 {
+        Some(format!("todo {}", rendered.join(" · ")))
+    } else {
+        let done = rendered.iter().filter(|r| r.starts_with("[x]")).count();
+        Some(format!(
+            "todo ({done}/{} done) {}…",
+            rendered.len(),
+            rendered.first().unwrap_or(&String::new())
+        ))
+    }
 }
 
 fn summarize_args(args: &serde_json::Value) -> String {
@@ -500,5 +549,82 @@ mod tests {
         st.push_local_input("fix the tests");
         assert_eq!(st.lines()[0].text, "> fix the tests");
         assert_eq!(st.lines()[0].kind, LineKind::User);
+    }
+
+    // ---- M30: todo results render their checklist --------------------------------------
+
+    #[test]
+    fn todo_results_render_as_a_checklist_head() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "todo".into(),
+                content: vec![ContentBlock::text("[x] one\n[ ] two\n(1/2 completed)")],
+                details: serde_json::json!({"todo": [
+                    {"content": "one", "status": "completed"},
+                    {"content": "two", "status": "pending"}
+                ]}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let line = &st.lines()[0];
+        assert_eq!(
+            line.text, "todo [x] one · [ ] two",
+            "short lists render fully: {:?}",
+            line.text
+        );
+        assert!(line.full.as_deref().is_some_and(|f| f.contains("[x] one")));
+    }
+
+    #[test]
+    fn long_todo_lists_summarize_to_counts() {
+        let mut st = UiState::new();
+        let items: Vec<serde_json::Value> = (0..7)
+            .map(|i| {
+                serde_json::json!({"content": format!("task {i}"), "status": if i < 3 {
+                    "completed"
+                } else {
+                    "pending"
+                }})
+            })
+            .collect();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "todo".into(),
+                content: vec![ContentBlock::text("...")],
+                details: serde_json::json!({ "todo": items }),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let line = &st.lines()[0];
+        assert!(line.text.starts_with("todo (3/7 done)"), "{:?}", line.text);
+    }
+
+    #[test]
+    fn malformed_todo_details_fall_back_to_generic_rendering() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "todo".into(),
+                content: vec![ContentBlock::text("boom")],
+                details: serde_json::json!({"blocked": true}),
+                usage: None,
+                is_error: true,
+            })),
+        });
+        let line = &st.lines()[0];
+        assert_eq!(line.kind, LineKind::ToolResultErr, "generic error path");
+        assert!(line.text.starts_with("todo → "));
     }
 }
