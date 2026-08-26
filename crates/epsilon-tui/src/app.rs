@@ -123,6 +123,9 @@ pub(crate) struct App {
     live_fetched: std::collections::BTreeSet<String>,
     fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// M30: steer queue length, mirrored on each key event when running so
+    /// draw_status can render a count badge without needing the agent ref.
+    steer_queue_len: usize,
     /// M15 spinner/elapsed: set on AgentStart, cleared on AgentEnd.
     run_started_at: Option<std::time::Instant>,
     spinner_phase: usize,
@@ -332,6 +335,7 @@ impl App {
             ),
             workspace_root,
             thinking: epsilon_contracts::ThinkingLevel::default(),
+            steer_queue_len: 0,
         }
     }
 
@@ -1149,6 +1153,11 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
 
 /// Handle one key press; returns true when the app should quit.
 fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
+    // M30: mirror the steer queue length on every key event while running so
+    // draw_status can show a count badge without needing the agent ref.
+    if app.ui.running() {
+        app.steer_queue_len = agent.steer_queue_len();
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
     {
@@ -1444,7 +1453,26 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             }
             if app.ui.running() {
                 if agent.abort_current_run() {
-                    app.notice("abort requested — cancelling current run…");
+                    // M30: drain queued steering so it doesn't leak into the
+                    // next run, and restore the last message to the editor so
+                    // the user can re-edit rather than losing it.
+                    let drained = agent.drain_steering_all();
+                    if let Some(last_user_text) = drained.into_iter().rev().find_map(|m| {
+                        if let Message::User(u) = m {
+                            u.content.into_iter().find_map(|c| match c {
+                                UserContent::Text { text } => Some(text),
+                                _ => None,
+                            })
+                        } else {
+                            None
+                        }
+                    }) {
+                        app.input = last_user_text.clone();
+                        app.cursor_chars = last_user_text.chars().count();
+                        app.notice("abort requested — queued text restored to editor");
+                    } else {
+                        app.notice("abort requested — cancelling current run…");
+                    }
                 }
                 false
             } else {
@@ -2053,7 +2081,12 @@ fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
     let left = if let Some(started) = app.run_started_at {
         let secs = started.elapsed().as_secs();
-        format!("{spinner} running {secs}s · {}", app.ui.status())
+        let badge = if app.steer_queue_len > 0 {
+            format!(" · {} queued", app.steer_queue_len)
+        } else {
+            String::new()
+        };
+        format!("{spinner} running {secs}s · {}{badge}", app.ui.status())
     } else if app.ui.running() {
         format!("{spinner} {}", app.ui.status())
     } else {

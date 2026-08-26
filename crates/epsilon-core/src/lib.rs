@@ -120,6 +120,15 @@ impl PendingQueue {
             QueueMode::OneAtATime => self.inner.pop_front().into_iter().collect(),
         }
     }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Drain all queued messages regardless of mode (used by abort restore).
+    fn drain_all(&mut self) -> Vec<Message> {
+        self.inner.drain(..).collect()
+    }
 }
 
 /// Loop tuning knobs (defaults from the reference audit; see ADR-002/010).
@@ -351,6 +360,13 @@ impl Agent {
         if let Ok(mut q) = self.steering.lock() {
             q.push(m);
         }
+    }
+
+    // M30: queue visibility — the TUI reads this to show a count badge in the
+    // status bar so the user knows their interjections are queued, not lost.
+    /// Number of steering messages waiting to be delivered after the current turn.
+    pub fn steer_queue_len(&self) -> usize {
+        self.steering.lock().map(|q| q.len()).unwrap_or(0)
     }
 
     /// Queue work for after the agent would otherwise stop.
@@ -654,6 +670,15 @@ impl Agent {
         self.steering
             .lock()
             .map(|mut q| q.drain())
+            .unwrap_or_default()
+    }
+
+    /// M30: drain ALL queued steering messages on abort (ignoring queue mode)
+    /// so the TUI can restore them to the editor.
+    pub fn drain_steering_all(&self) -> Vec<Message> {
+        self.steering
+            .lock()
+            .map(|mut q| q.drain_all())
             .unwrap_or_default()
     }
 
