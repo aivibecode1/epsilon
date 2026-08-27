@@ -74,7 +74,7 @@ it holds types and traits only and depends on nothing internal:
 | `epsilon-llm` | Unified multi-provider LLM API: StreamFn trait, faux provider, direct per-provider HTTP wire adapters (Anthropic / OpenAI-compat / Google, pi-style; M17), retry policy, model catalog | `packages/ai` |
 | `epsilon-session` | JSONL tree session store: append/read/fork/navigate, shadow views, leases, crash repair, replay CLI | `packages/agent/src/harness/session` |
 | `epsilon-core` | Agent loop, Agent state machine, steering/follow-up queues, event broadcast, tool pipeline driver; compaction engine + prompt builder attach here in later milestones | `packages/agent` |
-| `epsilon-tools` | Built-in tools: read, write, edit, bash, grep, glob, ls, todo, task(subagent), webfetch | `coding-agent/src/core/tools` |
+| `epsilon-tools` | Built-in tools: read, write, edit, bash, grep, glob, ls, todo, task(subagent) — `webfetch` deferred (rule exists in `epsilon-safety`, ships next milestone) | `coding-agent/src/core/tools` |
 | `epsilon-safety` | Permission rulesets + evaluation, approval service trait, command analysis, sandbox backends (Linux landlock/bubblewrap, macOS seatbelt-exec, Windows: documented best-effort) | none in pi (new) |
 | `epsilon-ext` | Extension host: process spawning, line-delimited JSON-RPC protocol, manifest validation, lifecycle supervision | `core/extensions` (in-process jiti) |
 | `epsilon-mcp` | MCP client via `rmcp`, tool bridging into the registry | none in pi core |
@@ -165,7 +165,7 @@ pub trait Tool: Send + Sync {
   sequential-degradation semantics; there is no edit-specific diff preview or
   mutation queue.
 - **Concurrency classification** (DSH): each built-in declares whether it is concurrency-safe
-  (read/grep/glob/ls/webfetch yes; write/edit/bash/todo/task no).
+  (read/grep/glob/ls yes; webfetch — planned, see G-M5 — would join the read group; write/edit/bash/todo/task no).
 
 ## 5. Safety model (two layers)
 

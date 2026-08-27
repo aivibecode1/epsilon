@@ -587,6 +587,7 @@ dependencies = [
  "epsilon-core",
  "epsilon-llm",
  "epsilon-tools",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

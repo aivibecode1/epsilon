@@ -223,6 +223,18 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "thinking effort: off..max (Ctrl+T cycles)",
     },
     SlashItem {
+        value: "/compact",
+        description: "compact context (summarize history)",
+    },
+    SlashItem {
+        value: "/timeline",
+        description: "list session branch entries",
+    },
+    SlashItem {
+        value: "/fork",
+        description: "fork session at current branch",
+    },
+    SlashItem {
         value: "/skills",
         description: "list discovered skills",
     },
@@ -265,6 +277,12 @@ pub enum Command {
     Model(String),
     /// Set thinking effort (level after `/think `; bare `/think` shows current).
     Think(Option<String>),
+    /// Compact the session context (manual trigger of the same compaction loop).
+    Compact,
+    /// List the active branch entries (timeline / branch inspection).
+    Timeline,
+    /// Fork the session at the current leaf into a new session file.
+    Fork,
     /// Show the command reference.
     Help,
     /// Clear the transcript pane.
@@ -299,6 +317,9 @@ pub fn parse_command(input: &str) -> Option<Command> {
         } else {
             Some(tail.to_string())
         })),
+        "compact" => Some(Command::Compact),
+        "timeline" | "branch" => Some(Command::Timeline),
+        "fork" => Some(Command::Fork),
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),

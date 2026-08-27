@@ -804,6 +804,124 @@ impl App {
                 }
             }
             crate::picker::Command::Quit => return true,
+            crate::picker::Command::Compact => {
+                // `UiState::running` mirrors the `AgentEvent::AgentStart/End` stream;
+                // `Agent` itself guards concurrent runs internally — the TUI decision
+                // is just about UX timing (queue vs spawn).
+                if self.ui.running() {
+                    // Queue manual compaction for the next drain point; the loop's
+                    // normal pressure/overflow triggers cover auto-compaction.
+                    self.ui.push_notice(
+                        "compact queued — will run after the current turn (loop also auto-compacts on pressure)",
+                    );
+                } else {
+                    // Idle session: trigger compaction immediately on the shared runtime.
+                    let a = Arc::clone(agent);
+                    self.ui.push_notice("compacting context…");
+                    tokio::spawn(async move {
+                        let mut produced = Vec::new();
+                        let _ = a.compact_now(&mut produced).await;
+                    });
+                }
+            }
+            crate::picker::Command::Timeline => {
+                let store = agent.store_handle_for_tests();
+                let guard = store.lock();
+                match guard {
+                    Ok(st) => {
+                        match st.branch_entries() {
+                            Ok(entries) if entries.is_empty() => {
+                                self.ui.push_notice("timeline: session is empty");
+                            }
+                            Ok(entries) => {
+                                self.ui.push_notice(format!(
+                                    "timeline — {} entr{} on the active branch:",
+                                    entries.len(),
+                                    if entries.len() == 1 { "y" } else { "ies" }
+                                ));
+                                for e in &entries {
+                                    let snippet = match &e.kind {
+                                    epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
+                                        let txt: String = match message {
+                                            epsilon_contracts::message::Message::User(u) => u
+                                                .content
+                                                .iter()
+                                                .filter_map(|c| match c {
+                                                    epsilon_contracts::content::UserContent::Text { text } => Some(text.as_str()),
+                                                    _ => None,
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join(" "),
+                                            epsilon_contracts::message::Message::Assistant(a) => a.text(),
+                                            epsilon_contracts::message::Message::ToolResult(t) => t
+                                                .content
+                                                .iter()
+                                                .filter_map(|c| match c {
+                                                    epsilon_contracts::content::ContentBlock::Text { text } => Some(text.as_str()),
+                                                    _ => None,
+                                                })
+                                                .collect::<String>(),
+                                            _ => String::new(),
+                                        };
+                                        let mut s: String = txt.chars().take(80).collect();
+                                        if txt.chars().count() > 80 {
+                                            s.push('…');
+                                        }
+                                        if s.trim().is_empty() { "(empty)".into() } else { s }
+                                    }
+                                    epsilon_contracts::session_entry::EntryKind::Compaction { summary, .. } => {
+                                        let mut s: String = summary.chars().take(80).collect();
+                                        if summary.chars().count() > 80 { s.push('…'); }
+                                        format!("[compaction] {s}")
+                                    }
+                                    epsilon_contracts::session_entry::EntryKind::TurnEnd { reason, .. } => {
+                                        format!("[turn_end {reason:?}]")
+                                    }
+                                    _ => "[other]".to_string(),
+                                };
+                                    self.ui
+                                        .push_notice(format!("#{seq} {snippet}", seq = e.seq));
+                                }
+                            }
+                            Err(e) => self.ui.push_notice(format!("timeline failed: {e}")),
+                        }
+                    }
+                    Err(_) => self.ui.push_notice("timeline: store unavailable"),
+                }
+            }
+            crate::picker::Command::Fork => {
+                let store = agent.store_handle_for_tests();
+                let (path, leaf) = match store.lock() {
+                    Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
+                    Err(_) => {
+                        self.ui.push_notice("fork: session store unavailable");
+                        return false;
+                    }
+                };
+                if leaf.is_none() {
+                    self.ui
+                        .push_notice("fork: nothing to fork — session is empty");
+                    return false;
+                }
+                let fork_path = {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("session");
+                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
+                    let fork_name =
+                        format!("{stem}-fork-{}.{}", epsilon_contracts::new_id("fork"), ext);
+                    path.with_file_name(fork_name)
+                };
+                match std::fs::copy(&path, &fork_path) {
+                    Ok(_) => self.ui.push_notice(format!(
+                        "forked session → {} (open with --session {})",
+                        fork_path.display(),
+                        fork_path.display()
+                    )),
+                    Err(e) => self.ui.push_notice(format!("fork failed: {e}")),
+                }
+            }
             crate::picker::Command::Unknown(word) => {
                 self.ui
                     .push_notice(format!("unknown command '/{word}' — /help lists commands"));
@@ -2974,12 +3092,14 @@ mod tests {
     #[tokio::test]
     async fn tab_completes_highlighted_candidate() {
         let (mut app, agent, (_f, _n)) = test_app();
-        for c in "/c".chars() {
+        // "/cle" still uniquely matches /clear after /compact was added (G-M1);
+        // the old "/c" fixture became ambiguous (/compact vs /clear).
+        for c in "/cle".chars() {
             handle_key(&mut app, &agent, key(KeyCode::Char(c)));
         }
         assert!(app.slash_open);
         assert!(!handle_key(&mut app, &agent, key(KeyCode::Tab)));
-        assert_eq!(app.input, "/clear", "Tab completed the only /c match");
+        assert_eq!(app.input, "/clear", "Tab completed the only /cle match");
         assert!(!app.slash_open);
     }
 

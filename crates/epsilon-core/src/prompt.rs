@@ -106,18 +106,47 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
     p
 }
 
-/// Load AGENTS.md-family files that exist directly in `workspace` (deeper discovery is a
-/// later milestone; v1 covers the root file, which is where this repo's own rules live).
+/// Load AGENTS.md-family files + persistent MEMORY.md that exist under `workspace`.
+///
+/// Hermes-style durable memory: `MEMORY.md` at the workspace root is the *project*
+/// memory tier (long-lived project facts), while `~/.config/epsilon/MEMORY.md` (the
+/// global tier) is injected first so workspace specifics override it. Both are
+/// optional; missing files are silently skipped so a fresh install has zero
+/// ceremony. Loaded entries join the CONTEXT tier as hash-tagged
+/// `<project_instructions>` blocks — same prefix-cache discipline as AGENTS.md.
 pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
-    const CANDIDATES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
+    const AGENTS_CANDIDATES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
+    const MEMORY_NAME: &str = "MEMORY.md";
     let mut out = Vec::new();
-    for name in CANDIDATES {
+
+    // Global memory comes FIRST so workspace can override it.
+    let global_memory = crate::config::global_dir()
+        .map(|d| d.join(MEMORY_NAME))
+        .filter(|p| p.is_file());
+    if let Some(path) = global_memory
+        && let Ok(content) = std::fs::read_to_string(&path)
+        && !content.trim().is_empty()
+    {
+        out.push((format!("~/.config/epsilon/{MEMORY_NAME}"), content));
+    }
+
+    // Workspace AGENTS.md / CLAUDE.md — first match wins per file-type convention.
+    for name in AGENTS_CANDIDATES {
         let path = workspace.join(name);
         if let Ok(content) = std::fs::read_to_string(&path) {
             out.push((name.to_string(), content));
-            break; // first match wins per file-type convention
+            break;
         }
     }
+
+    // Workspace MEMORY.md is additive (not mutually exclusive with AGENTS.md).
+    let ws_memory = workspace.join(MEMORY_NAME);
+    if let Ok(content) = std::fs::read_to_string(&ws_memory)
+        && !content.trim().is_empty()
+    {
+        out.push((MEMORY_NAME.to_string(), content));
+    }
+
     out
 }
 
@@ -274,5 +303,38 @@ mod tests {
         let loaded = load_project_instructions(dir.path());
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].0, "AGENTS.md");
+    }
+
+    #[test]
+    fn workspace_memory_is_additive_with_agents() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "be crisp").unwrap();
+        std::fs::write(dir.path().join("MEMORY.md"), "loves short answers").unwrap();
+        let loaded = load_project_instructions(dir.path());
+        // AGENTS.md first, then project MEMORY.md — both present.
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].0, "AGENTS.md");
+        assert_eq!(loaded[1].0, "MEMORY.md");
+        let all_names: Vec<_> = loaded.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(all_names.contains(&"MEMORY.md"));
+        // Byte-stable: MEMORY.md participates in the CONTEXT hash.
+        let tier = ContextTier {
+            instructions: loaded,
+            skills_catalog: None,
+        };
+        let out = build(
+            &Stable { tools: &[] },
+            &tier,
+            &Volatile {
+                cwd: dir.path(),
+                model_id: "m",
+                today: "t".into(),
+            },
+        );
+        assert!(
+            out.contains("loves short answers"),
+            "MEMORY.md must reach the prompt"
+        );
+        assert!(out.contains("hash=\""), "each entry hash-tagged");
     }
 }
