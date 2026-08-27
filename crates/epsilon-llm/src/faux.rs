@@ -126,7 +126,9 @@ impl StreamFn for FauxProvider {
             .lock()
             .ok()
             .and_then(|mut q| q.pop_front())
-            .unwrap_or_else(|| FauxStep::say(""));
+            .unwrap_or_else(|| FauxStep::say(
+                "Faux provider out of scripted steps — this is the offline demo (only has two turns). Run `epsilon auth login <provider>` and restart epsilon to talk to a real model.",
+            ));
         let events = build_events(&model.id.clone(), step);
         Box::new(FauxEventStream {
             pending: events.into(),

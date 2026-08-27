@@ -1020,6 +1020,13 @@ impl App {
         // is allowed, you just can't run until the key is there.
         let auth_ready = epsilon_llm::catalog::credentials_ready(&id);
         agent.set_model_id(&id);
+        // M32d: if we were on faux/offline and the new model is credentialed,
+        // go live immediately so the next prompt hits the real API (pi parity).
+        // Same hot-swap used by /login — apply_model is the other entry point
+        // (your "deepseek login → flash via /model still offline" shot).
+        if auth_ready {
+            let _ = agent.try_hot_swap_to_real();
+        }
         match epsilon_core::config::save_model_id(&id) {
             Ok(path) => {
                 self.model_id = id.clone();
@@ -1169,18 +1176,12 @@ pub async fn run(cfg: TuiConfig) -> i32 {
             return 1;
         }
     };
-    // M15: bracketed paste + mouse wheel (best-effort; some terminals decline).
-    let _ = execute!(
-        std::io::stdout(),
-        crossterm::event::EnableBracketedPaste,
-        crossterm::event::EnableMouseCapture
-    );
+    // Bracketed paste only — mouse capture stays OFF so drag-select copies
+    // (pi does this; opencode/Hermes too). Hold Shift to select still works
+    // on ConPTY, but we don't need to swallow motion just for wheel.
+    let _ = execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
     let code = drive(cfg, &mut terminal).await;
-    let _ = execute!(
-        std::io::stdout(),
-        crossterm::event::DisableMouseCapture,
-        crossterm::event::DisableBracketedPaste
-    );
+    let _ = execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
     if let Err(e) = ratatui::try_restore() {
         eprintln!("terminal restore failed: {e}");
     }
@@ -1290,7 +1291,9 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                             break;
                         }
                     }
-                    // M15: wheel scrolls the transcript (or navigates the picker).
+                    // Mouse wheel: Up/Down/Left/Right all forwarded by most
+                    // terminals even without EnableMouseCapture. Swallowing
+                    // Down/Up/Press/Release is what blocks drag-select.
                     TermEvent::Mouse(m) => match m.kind {
                         crossterm::event::MouseEventKind::ScrollUp => {
                             if app.picker_open {
@@ -1311,7 +1314,7 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                                     app.scroll_from_bottom.saturating_sub(3);
                             }
                         }
-                        _ => {}
+                        _ => {} // drag/select: let the terminal own it
                     },
                     // M16b: bracketed pastes become atomic `[paste #N]` markers.
                     TermEvent::Paste(text) => {
@@ -1414,7 +1417,7 @@ fn begin_auth_key_prompt(app: &mut App, provider: String) {
     ));
 }
 
-fn handle_auth_key(app: &mut App, key: KeyEvent) -> bool {
+fn handle_auth_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
             app.auth_prompt_open = false;
@@ -1461,6 +1464,17 @@ fn handle_auth_key(app: &mut App, key: KeyEvent) -> bool {
                 Ok(path) => {
                     app.ui
                         .push_notice(format!("saved key for '{provider}' → {}", path.display()));
+                    let live = agent.try_hot_swap_to_real();
+                    if live {
+                        app.ui.push_notice(format!(
+                            "now live on '{provider}' — next prompt hits the real API."
+                        ));
+                    } else {
+                        app.ui.push_notice(format!(
+                            "Restart epsilon to use '{provider}' — next prompt will hit the real API (was offline demo on '{m}').",
+                            m = app.model_id
+                        ));
+                    }
                     app.invalidate_picker();
                 }
                 Err(e) => {
@@ -1537,7 +1551,7 @@ fn handle_auth_key(app: &mut App, key: KeyEvent) -> bool {
 fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     // M32: masked API-key prompt takes all keys while open (Esc cancels, Enter saves).
     if app.auth_prompt_open {
-        return handle_auth_key(app, key);
+        return handle_auth_key(app, agent, key);
     }
     // M32b: provider picker for bare `/login` — filtered by `input`, Enter opens
     // the masked key prompt for the highlighted provider.
@@ -2679,10 +2693,22 @@ fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         cost_micro_usd: cost_micro,
     });
     // Model id anchors the far right (pi puts it there too).
+    // M32d: tag offline so the user sees why prompts still hit faux.
+    let is_faux = app.model_id.starts_with("faux");
     parts.push(crate::footer::FooterPart {
         text: epsilon_llm::catalog::display_label(&app.model_id).to_string(),
-        tone: crate::footer::Tone::Normal,
+        tone: if is_faux {
+            crate::footer::Tone::Warn
+        } else {
+            crate::footer::Tone::Normal
+        },
     });
+    if is_faux {
+        parts.push(crate::footer::FooterPart {
+            text: "offline".to_string(),
+            tone: crate::footer::Tone::Warn,
+        });
+    }
 
     let tone_color = |t: crate::footer::Tone| match t {
         crate::footer::Tone::Normal => Color::DarkGray,

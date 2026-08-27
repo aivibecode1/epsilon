@@ -20,7 +20,7 @@ pub mod testing;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use tokio::sync::broadcast;
 
@@ -210,7 +210,7 @@ impl std::error::Error for RunError {}
 /// The agent: owns the transcript, the queues, and the event bus.
 pub struct Agent {
     limits: LoopLimits,
-    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
+    stream_fn: RwLock<Arc<dyn epsilon_llm::StreamFn>>,
     tools: Arc<ToolRegistry>,
     gate: Arc<dyn PermissionGate>,
 
@@ -261,7 +261,7 @@ impl Agent {
         let followup_queue = PendingQueue::new(limits.followup_mode);
         Arc::new(Self {
             limits,
-            stream_fn,
+            stream_fn: RwLock::new(stream_fn),
             tools,
             gate,
             history: Mutex::new(Vec::new()),
@@ -287,6 +287,31 @@ impl Agent {
     pub fn set_model_id(&self, model_id: impl Into<String>) {
         if let Ok(mut slot) = self.model_id.lock() {
             *slot = model_id.into();
+        }
+    }
+
+    /// Hot-swap the provider stream without a restart (M32d).
+    ///
+    /// Wired from `crates/epsilon-tui` after `epsilon auth login` saves a key
+    /// so the *next* prompt hits the real API like pi/opencode. Real-only.
+    pub fn try_hot_swap_to_real(&self) -> bool {
+        #[cfg(feature = "real")]
+        {
+            let cur = self.model_id.lock().map(|s| s.clone()).unwrap_or_default();
+            if !cur.starts_with("faux") && epsilon_llm::catalog::credentials_ready(&cur) {
+                return false;
+            }
+            let real: Arc<dyn epsilon_llm::StreamFn> =
+                Arc::new(epsilon_llm::PanicGuard(epsilon_llm::DirectProvider::new()));
+            if let Ok(mut slot) = self.stream_fn.write() {
+                *slot = real;
+                return true;
+            }
+            false
+        }
+        #[cfg(not(feature = "real"))]
+        {
+            false
         }
     }
 
@@ -347,7 +372,12 @@ impl Agent {
             .lock()
             .ok()
             .and_then(|s| s.clone())
-            .unwrap_or_else(|| Arc::clone(&self.stream_fn))
+            .unwrap_or_else(|| {
+                self.stream_fn
+                    .read()
+                    .map(|g| Arc::clone(&*g))
+                    .unwrap_or_else(|e| Arc::clone(&*e.into_inner()))
+            })
     }
 
     /// Subscribe to the lifecycle event stream (TUI, server SSE, telemetry all consume this).
@@ -874,7 +904,12 @@ impl Agent {
         };
 
         let model = epsilon_llm::ModelRef::new(model_id);
-        let mut stream = self.stream_fn.stream(&model, ctx).await;
+        let stream_fn = self
+            .stream_fn
+            .read()
+            .map(|g| Arc::clone(&*g))
+            .unwrap_or_else(|e| Arc::clone(&*e.into_inner()));
+        let mut stream = stream_fn.stream(&model, ctx).await;
         let mut folder = StreamFolder::default();
 
         while let Some(ev) = stream.next().await {
