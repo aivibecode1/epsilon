@@ -14,6 +14,7 @@ epsilon-safety = { path = "../epsilon-safety" }
 serde_json = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+arboard = { workspace = true }
 pulldown-cmark = { workspace = true }
 unicode-width = { workspace = true }
 futures-util = { workspace = true }

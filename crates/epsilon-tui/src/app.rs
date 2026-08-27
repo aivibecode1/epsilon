@@ -1378,6 +1378,15 @@ fn auth_insert(app: &mut App, c: char) {
     app.auth_key_cursor += 1;
 }
 
+/// M32c: read the system clipboard (arboard). Used by the Ctrl+V fallback when
+/// the terminal does not deliver bracketed `TermEvent::Paste`. Best-effort:
+/// empty string on failure so the caller can show a hint.
+fn clipboard_text() -> String {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.get_text())
+        .unwrap_or_default()
+}
+
 /// M32: paste (bracketed or Ctrl+V) into the masked API-key buffer. Keys are
 /// single-line — newlines/spaces at the edges are trimmed so a trailing
 /// newline from the clipboard does not create an invisible mismatch.
@@ -1413,6 +1422,31 @@ fn handle_auth_key(app: &mut App, key: KeyEvent) -> bool {
             app.auth_key.clear();
             app.auth_key_cursor = 0;
             app.ui.push_notice("API key entry cancelled");
+            false
+        }
+        // Ctrl+V paste inside the masked prompt (fallback when bracketed paste
+        // is not available — e.g. conhost, legacy Windows console). Reads the
+        // system clipboard via arboard and inserts masked, like bracketed paste.
+        KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let text = clipboard_text();
+            if text.trim().is_empty() {
+                app.ui
+                    .push_notice("clipboard empty — copy a key first, then Ctrl+V");
+            } else {
+                handle_auth_paste(app, text);
+            }
+            false
+        }
+        // Shift+Insert is the other common paste chord on Windows/Linux
+        // terminals. Treat it the same as Ctrl+V.
+        KeyCode::Insert if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            let text = clipboard_text();
+            if text.trim().is_empty() {
+                app.ui
+                    .push_notice("clipboard empty — copy a key first, then Shift+Insert");
+            } else {
+                handle_auth_paste(app, text);
+            }
             false
         }
         KeyCode::Enter => {
@@ -1544,6 +1578,35 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
             KeyCode::Down => {
                 if !filtered.is_empty() {
                     app.auth_pick_index = (app.auth_pick_index + 1).min(filtered.len() - 1);
+                }
+            }
+            // Ctrl+V / Shift+Insert paste into the provider filter — when the
+            // terminal sends paste as a key chord instead of bracketed paste, let
+            // the user paste a provider id from the clipboard.
+            KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let text = clipboard_text();
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    for c in text.chars() {
+                        app.insert_char(c);
+                    }
+                    app.auth_pick_index = 0;
+                } else {
+                    app.ui
+                        .push_notice("clipboard empty — copy text first, then Ctrl+V");
+                }
+            }
+            KeyCode::Insert if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                let text = clipboard_text();
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    for c in text.chars() {
+                        app.insert_char(c);
+                    }
+                    app.auth_pick_index = 0;
+                } else {
+                    app.ui
+                        .push_notice("clipboard empty — copy text first, then Shift+Insert");
                 }
             }
             KeyCode::Backspace => {
@@ -2107,6 +2170,45 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
         }
         KeyCode::Char('y' | 'Y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.yank();
+            false
+        }
+        // Ctrl+V paste (M32c): when the terminal handles Ctrl+V as paste instead of
+        // sending bracketed TermEvent::Paste (conhost, cmd.exe, some WSL setups),
+        // read the system clipboard via arboard. Outside the auth prompt this
+        // becomes an editor paste marker so huge pastes don't flood the buffer.
+        KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let text = clipboard_text();
+            if text.trim().is_empty() {
+                app.ui
+                    .push_notice("clipboard empty — copy text first, then Ctrl+V");
+                return false;
+            }
+            // Reuse the bracketed-paste path shape: large/multi-line → marker,
+            // single short → literal. That path lives in drive/TermEvent::Paste;
+            // factor it here so ctrl+V and shift+insert behave identically without
+            // duplicating the 3-line marker/payload bookkeeping.
+            let marker = crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
+            if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {
+                app.paste_payloads.insert(app.next_paste_id, text.clone());
+                app.next_paste_id += 1;
+            }
+            app.insert_str(&marker);
+            false
+        }
+        // Shift+Insert — the other Windows paste chord (same clipboard path as Ctrl+V).
+        KeyCode::Insert if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            let text = clipboard_text();
+            if text.trim().is_empty() {
+                app.ui
+                    .push_notice("clipboard empty — copy text first, then Shift+Insert");
+                return false;
+            }
+            let marker = crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
+            if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {
+                app.paste_payloads.insert(app.next_paste_id, text.clone());
+                app.next_paste_id += 1;
+            }
+            app.insert_str(&marker);
             false
         }
         // M16b: Ctrl+J inserts a newline (the reliable multi-line combo — Ctrl+Enter
