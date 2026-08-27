@@ -3,6 +3,19 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+### M31 — Reference gap closure (G-M1..G-M5)
+- **Slash-navigable sessions**: `/compact` reclaims context on demand (complements 80%-threshold auto-compact), `/timeline` lists `branch_entries()` with lane and snippet and jumps via `navigate_to`, `/fork` copies JSONL to `*-fork-<id>.jsonl` preserving the tree.
+- **MEMORY.md tier**: global `~/.config/epsilon/MEMORY.md` plus workspace `MEMORY.md` injected into the CONTEXT prompt tier alongside `AGENTS.md`, hash-tagged for cache stability (Hermes pattern, hash-tested).
+- **Wildcard parity**: `wildcards.rs` now matches opencode `wildcard.ts` (`*` → `.*`, `?` → `.`, `\` → `/`, regex-metas escaped, `**` collapsed) via the `regex` crate, with backslash-normalized tests.
+- **webfetch deferred honestly**: rule already in `epsilon-safety` (`webfetch → Ask`), tool ships in the next milestone (plan 010); `design/epsilon-architecture.md` now says so instead of promising it.
+
+### M30 — Todo tool + checklist rendering; edit diff preview + TUI unified diff
+- **Todo tool** closes the agent-contract gap: the model keeps a typed checklist the TUI renders inline.
+- **Edit diff preview**: `details.diff` on tool results plus a TUI-expandable unified diff (opencode `diff.ts` pattern).
+
+### M29 — Steering queue badge + drain-on-abort restore
+- Steering queue visibility badge and drain-on-abort restore-to-editor polish for the TUI.
+
 ### M28 - Custom OpenAI-compatible providers
 - **`[provider_custom.<name>]` in the global config** declares an endpoint
   (`base_url`, optional `env_key`); `<name>/<model>` ids then stream to it on

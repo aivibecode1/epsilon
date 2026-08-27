@@ -226,6 +226,8 @@ guideline injection replaces it.
 **Best possible?** Yes; the open risk is tier assignment mistakes (something volatile leaking into
 STABLE poisons caches) - guarded by a lint-style unit test asserting volatility classes.
 
+**Amendment (M31).** CONTEXT tier extended with `MEMORY.md` (global `~/.config/epsilon/MEMORY.md` plus workspace `MEMORY.md`), additive with `AGENTS.md`, hash-tagged for cache stability (Hermes `memory_provider` pattern). Deferred `webfetch` stays rule-only until plan 010 ships; `wildcards.rs` upgraded to opencode `wildcard.ts` parity (`*`→`.*`, `?`→`.`, `\`→`/`, `**` collapsed) via `regex` crate.
+
 ---
 
 ## ADR-009: Extensions are isolated OS processes speaking NDJSON-RPC

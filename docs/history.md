@@ -44,6 +44,9 @@ acceptance criteria, and the decision-log index.
 | M26 | Per-favorite thinking levels (pi scoped-models): starring remembers the level, F2 applies it on cycle |
 | M27 | Weekly catalog-drift CI job (Monday regen vs live models.dev, PR when drifted); audit follow-up put F2 cycling under the trust gate |
 | M28 | Custom OpenAI-compatible providers (`[provider_custom.<name>]`, `<name>/<model>` ids): user-declared endpoints ride the existing wire routing with stored/env keys |
+| M29 | Steering queue badge + drain-on-abort restore to editor |
+| M30 | Todo tool + checklist rendering; edit diff preview + TUI expandable unified diff |
+| M31 | Reference gap closure: /compact, /timeline, /fork, MEMORY.md tier, wildcard parity, webfetch deferred honestly |
 
 Nothing is currently scheduled under "future"; new items enter the roadmap when
 someone names one.

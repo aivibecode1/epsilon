@@ -197,6 +197,20 @@ back, Alt+Y cycles through saved kills). Emacs behavior, ported in M16b.
 (`[paste #1 +40 lines]`) that expands to the real text only on submit, keeping the
 editor usable.
 
+**Compact** — `/compact` in the TUI. Asks the compaction engine to summarize older
+ranges now, instead of waiting for the 80% auto-trigger. Complements auto-compact, same shadow-view result.
+
+**Timeline** — `/timeline` (alias `/branch`) lists session branches as
+`branch_entries()` rows (seq, lane, kind, 80-char snippet). Selecting one jumps
+via `navigate_to`. Makes the JSONL tree visible without leaving the TUI.
+
+**Fork** — `/fork` copies the current session JSONL to `*-fork-<id>.jsonl`, preserving
+the tree, and notices the new path. Cheap branching for experiments.
+
+**MEMORY.md** — Durable memory file injected into the CONTEXT prompt tier
+alongside `AGENTS.md`. Global `~/.config/epsilon/MEMORY.md` plus workspace
+`MEMORY.md` when present, both hash-tagged so the prompt stays byte-stable.
+
 ## How we build
 
 **Brick** — One self-contained crate built and tested before the next one depends on

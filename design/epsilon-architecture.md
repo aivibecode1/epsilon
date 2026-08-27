@@ -290,6 +290,7 @@ Rules:
   OpenAI prompt_cache_key) — set directly by our own wire adapters (M17).
 - Skills catalog lists name/description only; body loads via the read tool on demand
   (progressive disclosure; Agent Skills spec compliance like pi/Hermes).
+- `MEMORY.md` files (global `~/.config/epsilon/MEMORY.md` plus workspace `MEMORY.md` when present) are injected as CONTEXT-tier blocks alongside `AGENTS.md`, additive and hash-tagged for cache stability (m31, Hermes pattern).
 
 ## 9. Providers (StreamFn port)
 
