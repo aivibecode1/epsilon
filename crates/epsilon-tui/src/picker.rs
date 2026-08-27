@@ -251,6 +251,14 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "command reference",
     },
     SlashItem {
+        value: "/login ",
+        description: "set API key for a provider (paste inside TUI)",
+    },
+    SlashItem {
+        value: "/logout ",
+        description: "remove stored key for a provider",
+    },
+    SlashItem {
         value: "/quit",
         description: "exit the session",
     },
@@ -291,6 +299,15 @@ pub enum Command {
     Skills,
     /// Search the session log (`/search <query>`); empty tail opens with guidance.
     Search(String),
+    /// Store a provider API key (`/login <provider> [key]`; empty key prompts).
+    Login {
+        /// Provider id as declared in the catalog (`anthropic`, `openai`, …).
+        provider: String,
+        /// Raw key text (empty → prompt, masked).
+        key: String,
+    },
+    /// Remove a stored provider key (`/logout <provider>`).
+    Logout(String),
     /// Exit the session.
     Quit,
     /// A `/word` we do not know — surfaced as an error, never sent to the model.
@@ -324,6 +341,30 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),
         "search" => Some(Command::Search(tail.to_string())),
+        "login" | "auth" => {
+            // `/login <provider> [key]` — key may be pasted; when omitted the
+            // TUI prompts with a masked overlay (opencode DialogPrompt parity).
+            let tail = tail.trim();
+            if tail.is_empty() {
+                // Bare `/login` without a provider is recoverable: let the UI
+                // guide the user rather than treating it as Unknown.
+                Some(Command::Login {
+                    provider: String::new(),
+                    key: String::new(),
+                })
+            } else if let Some((prov, key)) = tail.split_once(' ') {
+                Some(Command::Login {
+                    provider: prov.trim().to_string(),
+                    key: key.trim().to_string(),
+                })
+            } else {
+                Some(Command::Login {
+                    provider: tail.to_string(),
+                    key: String::new(),
+                })
+            }
+        }
+        "logout" => Some(Command::Logout(tail.to_string())),
         "quit" | "q" | "exit" => Some(Command::Quit),
         other => Some(Command::Unknown(other.to_string())),
     }

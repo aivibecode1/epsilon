@@ -158,6 +158,13 @@ pub(crate) struct App {
     stash: Option<(String, usize)>,
     /// Parity sweep: editor undo stack (Ctrl+Z), pi undo-stack.ts semantics.
     undo: crate::undo::UndoStack,
+    /// M32: masked API-key prompt overlay (`/login` without a key pasted).
+    /// Masked like opencode's DialogPrompt — rendering shows • per char while
+    /// the real key stays in `auth_pending.provider/auth_key`.
+    auth_prompt_open: bool,
+    auth_provider: String,
+    auth_key: String,
+    auth_key_cursor: usize,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
@@ -336,6 +343,10 @@ impl App {
             workspace_root,
             thinking: epsilon_contracts::ThinkingLevel::default(),
             steer_queue_len: 0,
+            auth_prompt_open: false,
+            auth_provider: String::new(),
+            auth_key: String::new(),
+            auth_key_cursor: 0,
         }
     }
 
@@ -926,6 +937,59 @@ impl App {
                 self.ui
                     .push_notice(format!("unknown command '/{word}' — /help lists commands"));
             }
+            crate::picker::Command::Login { provider, key } => {
+                let provider = provider.trim().to_string();
+                if provider.is_empty() {
+                    self.ui.push_notice(
+                        "usage: /login <provider> [key] — e.g. /login anthropic sk-ant-... (paste works; key is masked)",
+                    );
+                    return false;
+                }
+                if key.trim().is_empty() {
+                    // Masked prompt overlay like opencode's DialogPrompt placeholder="API key".
+                    self.auth_prompt_open = true;
+                    self.auth_provider = provider.clone();
+                    self.auth_key.clear();
+                    self.auth_key_cursor = 0;
+                    self.ui.push_notice(format!(
+                        "enter API key for '{provider}' — paste the key (masked), Enter saves to ~/.config/epsilon/auth.json, Esc cancels"
+                    ));
+                    return false;
+                }
+                match epsilon_llm::auth::save_credential(&provider, key.trim()) {
+                    Ok(path) => {
+                        self.ui.push_notice(format!(
+                            "saved key for '{provider}' → {}  (next request uses it)",
+                            path.display()
+                        ));
+                        self.invalidate_picker();
+                    }
+                    Err(e) => self
+                        .ui
+                        .push_notice(format!("not saved for '{provider}': {e}")),
+                }
+            }
+            crate::picker::Command::Logout(provider) => {
+                let provider = provider.trim().to_string();
+                if provider.is_empty() {
+                    self.ui
+                        .push_notice("usage: /logout <provider> — e.g. /logout anthropic");
+                    return false;
+                }
+                match epsilon_llm::auth::remove_credential(&provider) {
+                    Ok(true) => {
+                        self.ui
+                            .push_notice(format!("removed stored key for '{provider}'"));
+                        self.invalidate_picker();
+                    }
+                    Ok(false) => self
+                        .ui
+                        .push_notice(format!("no stored key for '{provider}' (nothing removed)")),
+                    Err(e) => self
+                        .ui
+                        .push_notice(format!("not removed for '{provider}': {e}")),
+                }
+            }
         }
         false
     }
@@ -936,19 +1000,27 @@ impl App {
             self.ui.push_notice(format!("model already {id}"));
             return;
         }
+        // Auth hint parity (pi/opencode show "needs auth" in the picker; Epsilon
+        // shows 🔑/· but never warns at apply time). Non-blocking — switching
+        // is allowed, you just can't run until the key is there.
+        let auth_ready = epsilon_llm::catalog::credentials_ready(&id);
         agent.set_model_id(&id);
         match epsilon_core::config::save_model_id(&id) {
             Ok(path) => {
                 self.model_id = id.clone();
-                self.ui.push_notice(format!(
-                    "model switched to {id} — saved to {}",
-                    path.display()
-                ));
+                let mut msg = format!("model switched to {id} — saved to {}", path.display());
+                if !auth_ready {
+                    msg.push_str("  (no key yet — /login <provider> to add one)");
+                }
+                self.ui.push_notice(msg);
             }
             Err(e) => {
                 self.model_id = id.clone();
-                self.ui
-                    .push_notice(format!("model switched to {id} (not saved: {e})"));
+                let mut msg = format!("model switched to {id} (not saved: {e})");
+                if !auth_ready {
+                    msg.push_str("  (no key yet — /login <provider>)");
+                }
+                self.ui.push_notice(msg);
             }
         }
         if epsilon_core::config::push_recent_model(&id).is_ok() {
@@ -1228,13 +1300,18 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                     },
                     // M16b: bracketed pastes become atomic `[paste #N]` markers.
                     TermEvent::Paste(text) => {
-                        let marker =
-                            crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
-                        if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {
-                            app.paste_payloads.insert(app.next_paste_id, text.clone());
-                            app.next_paste_id += 1;
+                        if app.auth_prompt_open {
+                            // Masked API-key paste: go straight into auth_key, not the editor.
+                            handle_auth_paste(&mut app, text);
+                        } else {
+                            let marker =
+                                crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
+                            if marker.starts_with(crate::kill_ring::MARKER_PREFIX) {
+                                app.paste_payloads.insert(app.next_paste_id, text.clone());
+                                app.next_paste_id += 1;
+                            }
+                            app.insert_str(&marker);
                         }
-                        app.insert_str(&marker);
                     }
                     _ => {}
                 }
@@ -1269,8 +1346,135 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     }
 }
 
+/// M32: insert one char into the masked API-key buffer at `auth_key_cursor`.
+fn auth_insert(app: &mut App, c: char) {
+    let byte = app
+        .auth_key
+        .char_indices()
+        .nth(app.auth_key_cursor)
+        .map(|(i, _)| i)
+        .unwrap_or(app.auth_key.len());
+    app.auth_key.insert(byte, c);
+    app.auth_key_cursor += 1;
+}
+
+/// M32: paste (bracketed or Ctrl+V) into the masked API-key buffer. Keys are
+/// single-line — newlines/spaces at the edges are trimmed so a trailing
+/// newline from the clipboard does not create an invisible mismatch.
+fn handle_auth_paste(app: &mut App, text: String) {
+    let cleaned = text.trim().replace(['\r', '\n'], "");
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() {
+        return;
+    }
+    for c in cleaned.chars() {
+        auth_insert(app, c);
+    }
+}
+
+/// M32: masked API-key prompt key handler — owns every key while open so the
+/// transcript editor does not see them. Esc cancels, Enter saves to
+/// `~/.config/epsilon/auth.json` via `epsilon_llm::auth`.
+fn handle_auth_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.auth_prompt_open = false;
+            app.auth_provider.clear();
+            app.auth_key.clear();
+            app.auth_key_cursor = 0;
+            app.ui.push_notice("API key entry cancelled");
+            false
+        }
+        KeyCode::Enter => {
+            let provider = app.auth_provider.clone();
+            let key_val = app.auth_key.trim().to_string();
+            if key_val.is_empty() {
+                app.ui
+                    .push_notice("empty key — paste a key or press Esc to cancel");
+                return false;
+            }
+            match epsilon_llm::auth::save_credential(&provider, &key_val) {
+                Ok(path) => {
+                    app.ui
+                        .push_notice(format!("saved key for '{provider}' → {}", path.display()));
+                    app.invalidate_picker();
+                }
+                Err(e) => {
+                    app.ui
+                        .push_notice(format!("not saved for '{provider}': {e}"));
+                }
+            }
+            app.auth_prompt_open = false;
+            app.auth_provider.clear();
+            app.auth_key.clear();
+            app.auth_key_cursor = 0;
+            false
+        }
+        KeyCode::Backspace => {
+            if app.auth_key_cursor > 0 {
+                let before: String = app.auth_key.chars().take(app.auth_key_cursor - 1).collect();
+                let after: String = app.auth_key.chars().skip(app.auth_key_cursor).collect();
+                app.auth_key = before + &after;
+                app.auth_key_cursor -= 1;
+            }
+            false
+        }
+        KeyCode::Delete => {
+            if app.auth_key_cursor < app.auth_key.chars().count() {
+                let before: String = app.auth_key.chars().take(app.auth_key_cursor).collect();
+                let after: String = app.auth_key.chars().skip(app.auth_key_cursor + 1).collect();
+                app.auth_key = before + &after;
+            }
+            false
+        }
+        KeyCode::Left => {
+            app.auth_key_cursor = app.auth_key_cursor.saturating_sub(1);
+            false
+        }
+        KeyCode::Right => {
+            app.auth_key_cursor = (app.auth_key_cursor + 1).min(app.auth_key.chars().count());
+            false
+        }
+        KeyCode::Home => {
+            app.auth_key_cursor = 0;
+            false
+        }
+        KeyCode::End => {
+            app.auth_key_cursor = app.auth_key.chars().count();
+            false
+        }
+        KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+U — kill to start (pi editor convention).
+            let after: String = app.auth_key.chars().skip(app.auth_key_cursor).collect();
+            app.auth_key = after;
+            app.auth_key_cursor = 0;
+            false
+        }
+        KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+W — kill word back.
+            let start = crate::editor_ops::word_left(&app.auth_key, app.auth_key_cursor);
+            let before: String = app.auth_key.chars().take(start).collect();
+            let after: String = app.auth_key.chars().skip(app.auth_key_cursor).collect();
+            app.auth_key = before + &after;
+            app.auth_key_cursor = start;
+            false
+        }
+        KeyCode::Char(c) => {
+            // Printable char typed directly (covers paste via key events on terminals
+            // without bracketed paste). Masked — not echoed.
+            auth_insert(app, c);
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Handle one key press; returns true when the app should quit.
 fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
+    // M32: masked API-key prompt takes all keys while open (Esc cancels, Enter saves).
+    if app.auth_prompt_open {
+        return handle_auth_key(app, key);
+    }
     // M30: mirror the steer queue length on every key event while running so
     // draw_status can show a count badge without needing the agent ref.
     if app.ui.running() {
@@ -1864,6 +2068,8 @@ fn hint_line(app: &App) -> Line<'static> {
     use crate::theme::Theme;
     let text = if app.pending_ask.is_some() {
         "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
+    } else if app.auth_prompt_open {
+        "API key prompt — Enter save · Esc cancel · paste works (masked)"
     } else if app.picker_open {
         "type filters · ↑/↓ move · Ctrl+F favorite ★ · Ctrl+G refresh · Enter apply · Esc close"
     } else if app.slash_open {
@@ -1902,6 +2108,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.pending_ask.is_some() {
         draw_dialog(f, app, f.area());
+    }
+    if app.auth_prompt_open {
+        draw_auth_prompt(f, app, f.area());
     }
     draw_slash_autocomplete(f, app, transcript_area);
 }
@@ -2453,6 +2662,67 @@ fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
 
     let para = Paragraph::new(body).block(block);
     f.render_widget(para, area);
+}
+
+/// M32: masked API-key prompt (opencode DialogPrompt parity). The real key
+/// lives in `app.auth_key` but rendering shows `•` per char so the secret
+/// never appears in the transcript or on screen.
+fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    let width = (outer.width * 3 / 5).max(48).min(outer.width);
+    let height = 8u16.min(outer.height.saturating_sub(2));
+    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
+    let y = outer.y + (outer.height.saturating_sub(height)) / 2;
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    f.render_widget(Clear, area);
+
+    let masked_len = app.auth_key.chars().count();
+    let masked: String = "•".repeat(masked_len);
+    // Caret in masked space: count chars left of cursor, clamp to width.
+    let inner_w = width.saturating_sub(4) as usize;
+    let cursor_col = app
+        .auth_key_cursor
+        .min(masked_len)
+        .min(inner_w.saturating_sub(1));
+
+    let title = format!(" API key for '{}' ", app.auth_provider);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let hint = if masked_len == 0 {
+        "paste your key (Ctrl+V / bracketed paste) — masked, Enter saves".to_string()
+    } else {
+        format!("{} chars — Enter save · Esc cancel", masked_len)
+    };
+    let body = vec![
+        Line::from(Span::styled(
+            "key is masked — paste works, typing works",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            masked.clone(),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+    ];
+    let para = Paragraph::new(body).block(block);
+    f.render_widget(para, area);
+    // Place the terminal cursor inside the masked field (if the field fits).
+    let cx = area.x + 2 + cursor_col as u16;
+    let cy = area.y + 2; // second line inside the box is the masked field
+    if cx < area.x + area.width - 1 && cy < area.y + area.height - 1 {
+        f.set_cursor_position((cx, cy));
+    }
 }
 
 #[cfg(test)]
