@@ -255,6 +255,14 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "set API key for a provider (paste inside TUI)",
     },
     SlashItem {
+        value: "/connect ",
+        description: "connect a provider — alias for /login",
+    },
+    SlashItem {
+        value: "/auth ",
+        description: "provider auth — alias for /login",
+    },
+    SlashItem {
         value: "/logout ",
         description: "remove stored key for a provider",
     },
@@ -341,7 +349,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),
         "search" => Some(Command::Search(tail.to_string())),
-        "login" | "auth" => {
+        "login" | "auth" | "connect" => {
             // `/login <provider> [key]` — key may be pasted; when omitted the
             // TUI prompts with a masked overlay (opencode DialogPrompt parity).
             let tail = tail.trim();
@@ -372,6 +380,35 @@ pub fn parse_command(input: &str) -> Option<Command> {
 
 // ---- M16c: two-stage picker (opencode dialog-provider → dialog-model) -----------
 
+/// Provider priority for display ordering (opencode `PROVIDER_PRIORITY` parity —
+/// popular providers surface first so first-run users see the obvious choices).
+const PROVIDER_PRIORITY: &[(&str, usize)] = &[
+    ("opencode", 0),
+    ("opencode-go", 1),
+    ("openai", 2),
+    ("github-copilot", 3),
+    ("anthropic", 4),
+    ("google", 5),
+];
+
+fn provider_priority(id: &str) -> usize {
+    PROVIDER_PRIORITY
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map(|(_, p)| *p)
+        .unwrap_or(99)
+}
+
+fn provider_description(id: &str) -> Option<&'static str> {
+    match id {
+        "opencode" => Some("(Recommended)"),
+        "anthropic" => Some("(API key)"),
+        "openai" => Some("(ChatGPT Plus/Pro or API key)"),
+        "opencode-go" => Some("Low cost subscription for everyone"),
+        _ => None,
+    }
+}
+
 /// One provider entry in stage 1 of the model picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderRow {
@@ -383,12 +420,15 @@ pub struct ProviderRow {
     pub auth_ready: bool,
     /// True when the ACTIVE model belongs to this provider.
     pub is_active: bool,
+    /// Short hint shown dim beside the id (opencode's description column).
+    pub description: Option<&'static str>,
+    /// Section heading this row belongs under (opencode "Popular" vs "Providers").
+    pub category: &'static str,
 }
 
-/// Stage-1 rows: one per distinct provider in the bundled catalog, ordered by
-/// (auth-ready desc, id asc) — ready providers first, alphabetical within groups.
-/// M28: declared custom providers are appended after the bundled ones so they
-/// are visible and descendable without typing an id.
+/// Stage-1 rows: one per distinct provider in the bundled catalog, ordered
+/// Popular-first then auth-ready then alphabetical (opencode's model-dialog
+/// section order). With M28 customs appended when they do not shadow a bundle.
 pub fn build_provider_rows(current: &str, customs: &[CustomProvider]) -> Vec<ProviderRow> {
     let mut rows: Vec<ProviderRow> = Vec::new();
     for info in catalog::curated() {
@@ -407,6 +447,12 @@ pub fn build_provider_rows(current: &str, customs: &[CustomProvider]) -> Vec<Pro
                 model_count: 1,
                 auth_ready: catalog::credentials_ready(info.id),
                 is_active: is_active_provider,
+                description: provider_description(info.provider),
+                category: if provider_priority(info.provider) < 99 {
+                    "Popular"
+                } else {
+                    "Providers"
+                },
             }),
         }
     }
@@ -423,9 +469,16 @@ pub fn build_provider_rows(current: &str, customs: &[CustomProvider]) -> Vec<Pro
             model_count: 0, // endpoint-declared; model names come from the server
             auth_ready: env_present || epsilon_llm::auth::load_credentials().contains_key(&c.name),
             is_active: current.starts_with(&format!("{}/", c.name)),
+            description: Some("Custom provider"),
+            category: "Providers",
         });
     }
-    rows.sort_by(|a, b| b.auth_ready.cmp(&a.auth_ready).then(a.id.cmp(&b.id)));
+    rows.sort_by(|a, b| {
+        provider_priority(&a.id)
+            .cmp(&provider_priority(&b.id))
+            .then(b.auth_ready.cmp(&a.auth_ready))
+            .then(a.id.cmp(&b.id))
+    });
     rows
 }
 
@@ -496,6 +549,11 @@ pub fn palette_entries() -> Vec<PaletteEntry> {
             title: "Models — switch model".into(),
             command: "/models".into(),
             binding: Some("Ctrl+M"),
+        },
+        PaletteEntry {
+            title: "Connect provider — set API key (paste, masked)".into(),
+            command: "/login ".into(),
+            binding: Some("/login"),
         },
         PaletteEntry {
             title: "Skills — list discovered skills".into(),

@@ -25,7 +25,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::state::UiState;
-use crate::theme::Theme;
 
 /// Async provider-listing hook injected by the CLI when built with `--features real`
 /// (M13; provider-name arg since M20): takes a PROVIDER name (`"anthropic"`,
@@ -165,6 +164,11 @@ pub(crate) struct App {
     auth_provider: String,
     auth_key: String,
     auth_key_cursor: usize,
+    /// M32b: bare `/login` provider picker (opencode DialogProvider parity).
+    /// When the user types `/login` without a provider, this picker opens so
+    /// discovery is one Enter, not memorizing ids. Filtered by `input`.
+    auth_pick_open: bool,
+    auth_pick_index: usize,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
@@ -347,6 +351,8 @@ impl App {
             auth_provider: String::new(),
             auth_key: String::new(),
             auth_key_cursor: 0,
+            auth_pick_open: false,
+            auth_pick_index: 0,
         }
     }
 
@@ -747,10 +753,12 @@ impl App {
             }
             crate::picker::Command::Help => {
                 for line in [
-                    "commands: /models · /model <id> · /think [level] · /skills · /search <query> · /clear · /quit · /help",
+                    "commands: /models · /model <id> · /think [level] · /skills · /search <query> · /clear · /login <provider> [key] · /logout <provider> · /help",
+                    "auth: /login anthropic sk-...  (paste inside TUI, masked) · /logout anthropic · keys saved to ~/.config/epsilon/auth.json",
+                    "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
                     "thinking: Ctrl+T cycles · current level in the status bar",
                     "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
-                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker",
+                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
                 ] {
                     self.ui.push_notice(line);
                 }
@@ -940,8 +948,15 @@ impl App {
             crate::picker::Command::Login { provider, key } => {
                 let provider = provider.trim().to_string();
                 if provider.is_empty() {
+                    // Bare `/login` — open the provider picker so the user
+                    // picks the target instead of having to type the id.
+                    // Mirrors opencode's DialogProvider select step.
+                    self.auth_pick_open = true;
+                    self.auth_pick_index = 0;
+                    self.input.clear();
+                    self.cursor_chars = 0;
                     self.ui.push_notice(
-                        "usage: /login <provider> [key] — e.g. /login anthropic sk-ant-... (paste works; key is masked)",
+                        "connect a provider — pick one (↑/↓ Enter), or type to filter",
                     );
                     return false;
                 }
@@ -1303,6 +1318,11 @@ async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
                         if app.auth_prompt_open {
                             // Masked API-key paste: go straight into auth_key, not the editor.
                             handle_auth_paste(&mut app, text);
+                        } else if app.auth_pick_open {
+                            // Typing pastes into the filter — useful when pasting a provider id.
+                            for c in text.trim().chars() {
+                                app.insert_char(c);
+                            }
                         } else {
                             let marker =
                                 crate::kill_ring::make_paste_marker(app.next_paste_id, &text);
@@ -1375,6 +1395,16 @@ fn handle_auth_paste(app: &mut App, text: String) {
 /// M32: masked API-key prompt key handler — owns every key while open so the
 /// transcript editor does not see them. Esc cancels, Enter saves to
 /// `~/.config/epsilon/auth.json` via `epsilon_llm::auth`.
+fn begin_auth_key_prompt(app: &mut App, provider: String) {
+    app.auth_prompt_open = true;
+    app.auth_provider = provider.clone();
+    app.auth_key.clear();
+    app.auth_key_cursor = 0;
+    app.ui.push_notice(format!(
+        "enter API key for '{provider}' — paste the key (masked), Enter saves to ~/.config/epsilon/auth.json, Esc cancels"
+    ));
+}
+
 fn handle_auth_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
@@ -1474,6 +1504,59 @@ fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     // M32: masked API-key prompt takes all keys while open (Esc cancels, Enter saves).
     if app.auth_prompt_open {
         return handle_auth_key(app, key);
+    }
+    // M32b: provider picker for bare `/login` — filtered by `input`, Enter opens
+    // the masked key prompt for the highlighted provider.
+    if app.auth_pick_open {
+        let rows = crate::picker::build_provider_rows(&app.model_id, &app.customs);
+        let query = app.input.trim().to_ascii_lowercase();
+        let filtered: Vec<_> = if query.is_empty() {
+            rows.iter().enumerate().collect()
+        } else {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, p)| p.id.to_ascii_lowercase().contains(&query))
+                .collect()
+        };
+        match key.code {
+            KeyCode::Esc => {
+                app.auth_pick_open = false;
+                app.auth_pick_index = 0;
+                app.input.clear();
+                app.cursor_chars = 0;
+            }
+            KeyCode::Enter => {
+                if let Some((_, prow)) = filtered.get(app.auth_pick_index) {
+                    let chosen = prow.id.clone();
+                    app.auth_pick_open = false;
+                    app.auth_pick_index = 0;
+                    app.input.clear();
+                    app.cursor_chars = 0;
+                    begin_auth_key_prompt(app, chosen);
+                }
+            }
+            KeyCode::Up => {
+                app.auth_pick_index = app
+                    .auth_pick_index
+                    .saturating_sub(1)
+                    .min(filtered.len().saturating_sub(1));
+            }
+            KeyCode::Down => {
+                if !filtered.is_empty() {
+                    app.auth_pick_index = (app.auth_pick_index + 1).min(filtered.len() - 1);
+                }
+            }
+            KeyCode::Backspace => {
+                app.backspace();
+                app.auth_pick_index = 0;
+            }
+            KeyCode::Char(c) => {
+                app.insert_char(c);
+                app.auth_pick_index = 0;
+            }
+            _ => {}
+        }
+        return false;
     }
     // M30: mirror the steer queue length on every key event while running so
     // draw_status can show a count badge without needing the agent ref.
@@ -2070,14 +2153,21 @@ fn hint_line(app: &App) -> Line<'static> {
         "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
     } else if app.auth_prompt_open {
         "API key prompt — Enter save · Esc cancel · paste works (masked)"
+    } else if app.auth_pick_open {
+        "pick a provider · type filters · ↑/↓ move · Enter pastes key (masked) · Esc cancel"
     } else if app.picker_open {
         "type filters · ↑/↓ move · Ctrl+F favorite ★ · Ctrl+G refresh · Enter apply · Esc close"
     } else if app.slash_open {
         "↑/↓ pick · Tab/Enter apply · Esc dismiss"
     } else if app.ui.running() {
         "Esc abort run · type to steer after this turn"
+    } else if !epsilon_llm::catalog::credentials_ready(&app.model_id) {
+        // M32 discovery: when the active model's provider has no key, surface
+        // the fix right in the hint bar so a first-run user never has to read
+        // /help to get past it. Mirrors opencode's \"connect\" banner.
+        "⚠ no API key for this model — /login (picker) · /login <provider> · Ctrl+P palette"
     } else {
-        "/help commands · /models picker (Ctrl+M) · Ctrl+X expand outputs · Esc quit"
+        "/help commands · /models picker (Ctrl+M) · Ctrl+P palette · /login connects · Esc quit"
     };
     Line::from(Span::styled(text.to_string(), Theme::system()))
 }
@@ -2111,6 +2201,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.auth_prompt_open {
         draw_auth_prompt(f, app, f.area());
+    }
+    if app.auth_pick_open {
+        draw_auth_picker(f, app, f.area());
     }
     draw_slash_autocomplete(f, app, transcript_area);
 }
@@ -2152,17 +2245,17 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(crate::theme::Theme::border_active())
         .title(Span::styled(
             format!(" models — filter: '{}' ", app.input),
-            Style::default().fg(Color::Cyan),
+            crate::theme::Theme::accent(),
         ));
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "no providers",
-            Style::default().fg(Color::DarkGray),
+            crate::theme::Theme::muted(),
         )));
     }
     // M15 viewport fix: pi's centered scroll window — render only the visible slice
@@ -2177,32 +2270,42 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         let selected = i == app.picker_index;
         let marker = if *is_active { "● " } else { "  " };
         let auth = if *auth_ready { "🔑" } else { "· " };
-        let style = if selected {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        };
         lines.push(Line::from(vec![
-            Span::styled(marker.to_string(), style),
+            Span::styled(
+                marker.to_string(),
+                if selected {
+                    crate::theme::Theme::accent()
+                } else {
+                    Style::default()
+                },
+            ),
             Span::styled(
                 format!("{auth} "),
-                Style::default().fg(if *auth_ready {
-                    Color::Green
+                if *auth_ready {
+                    if selected {
+                        crate::theme::Theme::selected_muted()
+                    } else {
+                        crate::theme::Theme::success()
+                    }
                 } else {
-                    Color::DarkGray
-                }),
+                    crate::theme::Theme::muted()
+                },
             ),
             Span::styled(
                 id.clone(),
-                style.add_modifier(if selected {
-                    ratatui::style::Modifier::REVERSED
+                if selected {
+                    crate::theme::Theme::selected()
                 } else {
-                    ratatui::style::Modifier::empty()
-                }),
+                    Style::default()
+                },
             ),
             Span::styled(
                 format!("  {count} models"),
-                Style::default().fg(Color::DarkGray),
+                if selected {
+                    crate::theme::Theme::selected_muted()
+                } else {
+                    crate::theme::Theme::muted()
+                },
             ),
         ]));
     }
@@ -2210,7 +2313,7 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "↑/↓ · Enter browse models · Esc close".to_string(),
-        Style::default().fg(Color::DarkGray),
+        crate::theme::Theme::muted(),
     )));
 
     let para = Paragraph::new(lines).block(block);
@@ -2240,17 +2343,17 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(crate::theme::Theme::border_active())
         .title(Span::styled(
             format!(" models — {provider}: filter '{}' ", app.input),
-            Style::default().fg(Color::Cyan),
+            crate::theme::Theme::accent(),
         ));
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "no matches — Backspace to widen, Esc closes",
-            Style::default().fg(Color::DarkGray),
+            crate::theme::Theme::muted(),
         )));
     }
     let capacity = area.height.saturating_sub(4).max(1) as usize;
@@ -2262,40 +2365,54 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         let auth = if row.auth_ready { "🔑" } else { "· " };
         // M23: ★ marks favorites (opencode's star column); Ctrl+F toggles.
         let star = if row.is_favorite { "★" } else { " " };
-        let style = if selected {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        };
         lines.push(Line::from(vec![
-            Span::styled(marker.to_string(), style),
+            Span::styled(
+                marker.to_string(),
+                if selected {
+                    crate::theme::Theme::accent()
+                } else {
+                    Style::default()
+                },
+            ),
             Span::styled(
                 format!("{auth} "),
-                Style::default().fg(if row.auth_ready {
-                    Color::Green
+                if row.auth_ready {
+                    if selected {
+                        crate::theme::Theme::selected_muted()
+                    } else {
+                        crate::theme::Theme::success()
+                    }
                 } else {
-                    Color::DarkGray
-                }),
+                    crate::theme::Theme::muted()
+                },
             ),
             Span::styled(
                 format!("{star} "),
-                Style::default().fg(if row.is_favorite {
-                    Color::Yellow
+                if row.is_favorite {
+                    if selected {
+                        crate::theme::Theme::selected_muted()
+                    } else {
+                        Style::default().fg(Color::Yellow)
+                    }
                 } else {
-                    Color::DarkGray
-                }),
+                    crate::theme::Theme::muted()
+                },
             ),
             Span::styled(
                 row.label.clone(),
-                style.add_modifier(if selected {
-                    ratatui::style::Modifier::REVERSED
+                if selected {
+                    crate::theme::Theme::selected()
                 } else {
-                    ratatui::style::Modifier::empty()
-                }),
+                    Style::default()
+                },
             ),
             Span::styled(
                 format!("  {}", row.id),
-                Style::default().fg(Color::DarkGray),
+                if selected {
+                    crate::theme::Theme::selected_muted()
+                } else {
+                    crate::theme::Theme::muted()
+                },
             ),
         ]));
     }
@@ -2303,7 +2420,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "type filters (fuzzy) · Enter apply · Backspace/Esc back",
-        Style::default().fg(Color::DarkGray),
+        crate::theme::Theme::muted(),
     )));
 
     let para = Paragraph::new(lines).block(block);
@@ -2342,6 +2459,8 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
         "guidance for denial — Enter sends, Esc cancels"
     } else if app.ui.running() {
         "input — typing during a run queues steering · Ctrl+J newline"
+    } else if !epsilon_llm::catalog::credentials_ready(&app.model_id) {
+        "input — ⚠ no key: /login <provider> pastes masked"
     } else {
         "input — Ctrl+J newline · Ctrl+Y yank · Ctrl+Z undo"
     };
@@ -2350,8 +2469,14 @@ fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         Color::Cyan
     };
+    let border_style = if !epsilon_llm::catalog::credentials_ready(&app.model_id) {
+        crate::theme::Theme::auth()
+    } else {
+        crate::theme::Theme::border()
+    };
     let frame_box = Block::default()
         .borders(Borders::ALL)
+        .border_style(border_style)
         .title(Span::styled(title, Style::default().fg(Color::DarkGray)));
     let inner_width = area.width.saturating_sub(2) as usize;
 
@@ -2513,17 +2638,17 @@ fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(crate::theme::Theme::border_active())
         .title(Span::styled(
             format!(" commands — filter: '{}' ", app.input),
-            Style::default().fg(Color::Cyan),
+            crate::theme::Theme::accent(),
         ));
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "no matching commands",
-            Style::default().fg(Color::DarkGray),
+            crate::theme::Theme::muted(),
         )));
     }
     let capacity = area.height.saturating_sub(4).max(1) as usize;
@@ -2534,9 +2659,7 @@ fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         let mut spans = vec![Span::styled(
             entry.title.clone(),
             if selected {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(ratatui::style::Modifier::REVERSED)
+                crate::theme::Theme::selected()
             } else {
                 Style::default()
             },
@@ -2544,7 +2667,11 @@ fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         if let Some(b) = entry.binding {
             spans.push(Span::styled(
                 format!("  [{b}]"),
-                Style::default().fg(Color::DarkGray),
+                if selected {
+                    crate::theme::Theme::selected_muted()
+                } else {
+                    crate::theme::Theme::muted()
+                },
             ));
         }
         lines.push(Line::from(spans));
@@ -2552,7 +2679,7 @@ fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "type to filter · ↑/↓ move · Enter run · Esc close",
-        Style::default().fg(Color::DarkGray),
+        crate::theme::Theme::muted(),
     )));
 
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -2586,18 +2713,18 @@ fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) 
             let mut spans = vec![Span::styled(
                 format!(" {} ", item.value),
                 if selected {
-                    Theme::accent().add_modifier(Modifier::REVERSED)
+                    crate::theme::Theme::selected()
                 } else {
-                    Theme::accent()
+                    crate::theme::Theme::accent()
                 },
             )];
             if !item.description.is_empty() {
                 spans.push(Span::styled(
                     format!(" {}", item.description),
                     if selected {
-                        Theme::system().add_modifier(Modifier::REVERSED)
+                        crate::theme::Theme::selected_muted()
                     } else {
-                        Theme::system()
+                        crate::theme::Theme::muted()
                     },
                 ));
             }
@@ -2606,11 +2733,11 @@ fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) 
         .collect();
     lines.push(Line::from(Span::styled(
         "↑/↓ pick · Tab/Enter apply · Esc dismiss".to_string(),
-        Theme::system(),
+        crate::theme::Theme::muted(),
     )));
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Theme::accent());
+        .border_style(crate::theme::Theme::border_active());
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -2629,12 +2756,10 @@ fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
+        .border_style(crate::theme::Theme::auth())
         .title(Span::styled(
             " permission required ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            crate::theme::Theme::auth().add_modifier(Modifier::BOLD),
         ));
 
     let body: Vec<Line<'static>> = if let Some(ask) = app.pending_ask.as_ref() {
@@ -2692,12 +2817,10 @@ fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let title = format!(" API key for '{}' ", app.auth_provider);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
+        .border_style(crate::theme::Theme::auth())
         .title(Span::styled(
             title,
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            crate::theme::Theme::auth().add_modifier(Modifier::BOLD),
         ));
     let hint = if masked_len == 0 {
         "paste your key (Ctrl+V / bracketed paste) — masked, Enter saves".to_string()
@@ -2707,13 +2830,10 @@ fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let body = vec![
         Line::from(Span::styled(
             "key is masked — paste works, typing works",
-            Style::default().fg(Color::DarkGray),
+            crate::theme::Theme::muted(),
         )),
-        Line::from(Span::styled(
-            masked.clone(),
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(masked.clone(), crate::theme::Theme::auth())),
+        Line::from(Span::styled(hint, crate::theme::Theme::muted())),
     ];
     let para = Paragraph::new(body).block(block);
     f.render_widget(para, area);
@@ -2723,6 +2843,98 @@ fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
     if cx < area.x + area.width - 1 && cy < area.y + area.height - 1 {
         f.set_cursor_position((cx, cy));
     }
+}
+
+/// M32b: provider picker for bare `/login` — opencode DialogProvider parity.
+///
+/// Renders the provider list filtered by the current `input`. Selecting one
+/// opens the masked API-key prompt; Esc closes. Filter + list reuse the
+/// existing `/models` provider rows, with auth badge and active mark so a
+/// first-run user can see at a glance what is wired up.
+fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    let rows = crate::picker::build_provider_rows(&app.model_id, &app.customs);
+    let query = app.input.trim().to_ascii_lowercase();
+    let filtered: Vec<_> = if query.is_empty() {
+        rows.iter().enumerate().collect()
+    } else {
+        rows.iter()
+            .enumerate()
+            .filter(|(_, p)| p.id.to_ascii_lowercase().contains(&query))
+            .collect()
+    };
+    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let height = 15u16.min(outer.height.saturating_sub(2));
+    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
+    let y = outer.y + 1;
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(crate::theme::Theme::border_active())
+        .title(Span::styled(
+            " connect — pick a provider ",
+            crate::theme::Theme::accent(),
+        ));
+    let capacity = area.height.saturating_sub(4).max(1) as usize;
+    let start = crate::scroll::scroll_start(filtered.len(), app.auth_pick_index, capacity);
+    let end = (start + capacity).min(filtered.len());
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if filtered.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("no match for '{}' — type another provider id", app.input),
+            crate::theme::Theme::muted(),
+        )));
+    }
+    for (i, row) in filtered.iter().enumerate().skip(start).take(end - start) {
+        let selected = i == app.auth_pick_index;
+        let prow = row.1;
+        let marker = if prow.is_active { "● " } else { "  " };
+        let auth = if prow.auth_ready { "🔑" } else { "· " };
+        let style = if selected {
+            crate::theme::Theme::accent()
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_string(), style),
+            Span::styled(
+                format!("{auth} "),
+                if prow.auth_ready {
+                    crate::theme::Theme::success()
+                } else {
+                    crate::theme::Theme::muted()
+                },
+            ),
+            Span::styled(
+                prow.id.clone(),
+                if selected {
+                    crate::theme::Theme::selected()
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::styled(
+                format!("  {} models", prow.model_count),
+                if selected {
+                    crate::theme::Theme::selected_muted()
+                } else {
+                    crate::theme::Theme::muted()
+                },
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "type filters · ↑/↓ move · Enter pastes key (masked) · Esc cancel",
+        crate::theme::Theme::muted(),
+    )));
+    let para = Paragraph::new(lines).block(block);
+    f.render_widget(para, area);
 }
 
 #[cfg(test)]
