@@ -2,7 +2,7 @@
 
 **Audience:** owner reviewing Phase 1 and engineers interpreting this audit.
 **Run:** 2026-09-16, Hermes; Windows, working tree over `e200815`.
-**Status:** in progress until the verification addendum and review checkpoint are complete.
+**Status:** Phase 1 review checkpoint. Independent source review and gate evidence are consolidated; Phase 2 has not started.
 
 ## Baseline, not a clean checkout
 
