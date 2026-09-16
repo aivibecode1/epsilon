@@ -1,7 +1,7 @@
 # 02 — Gap analysis and defect ledger
 
 **Audience:** engineers fixing reliability and safety, and the owner selecting scope.
-**Snapshot:** 2026-09-16 working tree over `e200815`. No fixes were applied in this phase.
+**Snapshot:** 2026-09-16 working tree over `e200815`. **Update 2026-09-17:** F00 was corrected and verified in Phase 3 batch A — see [05](05-verification-log.md#phase-3-batch-a--f00-verification-2026-09-17); the row below describes the pre-fix snapshot and stays for traceability.
 
 **Severity:** P0 = potential destructive loss or fundamental execution-boundary failure; P1 = blocking reliability/correctness; P2 = workflow or maintainability. Priority is not an exploitability rating.
 **Evidence:** E = executed here; S = source-verified; I = conditional consequence/inference. Unless marked E, a proposed regression below was **not run**. Estimates include tests for one experienced Rust engineer; see 04 for dependency order.
@@ -10,7 +10,7 @@
 
 | ID | Priority | Finding | Evidence | Effort / change risk |
 |---|---|---|---|---|
-| F00 | P1, prerequisite | Current verification baseline fails | E | 0.5–1 day / low |
+| F00 | P1, prerequisite | Current verification baseline fails — **fixed 2026-09-17, gates green** (05) | E | 0.5–1 day / low |
 | F01 | P0 | Editing a capped buffer overwrites the complete file | S, high confidence | 0.5–1 day / low |
 | F02 | P0 | Read observations are shared between agents | S, high | 2–4 days / medium |
 | F03 | P1 | SSE buffering depends on HTTP chunk boundaries; EOF can claim success | S, high | 3–5 days / medium |

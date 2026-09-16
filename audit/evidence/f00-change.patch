@@ -1,0 +1,47 @@
+--- a/crates/epsilon-tools/src/checkpoint.rs
++++ b/crates/epsilon-tools/src/checkpoint.rs
+@@ -309,10 +309,11 @@
+         let mut seen: BTreeSet<String> = BTreeSet::new();
+         let mut candidates: Vec<(String, u64)> = Vec::new();
+         for entry in &entries {
+-            if let Some(blob) = &entry.blob {
+-                if seen.insert(blob.clone()) && !keep.contains(blob) {
+-                    candidates.push((blob.clone(), entry.bytes));
+-                }
++            if let Some(blob) = &entry.blob
++                && seen.insert(blob.clone())
++                && !keep.contains(blob)
++            {
++                candidates.push((blob.clone(), entry.bytes));
+             }
+         }
+         for (blob, bytes) in candidates {
+@@ -337,7 +338,7 @@
+ /// Using a real digest would mean a new dependency for a benefit (collision resistance against a
+ /// deliberate adversary writing into the user's own workspace) that is not part of the threat model.
+ pub fn blob_name(bytes: &[u8]) -> String {
+-    use std::hash::{Hash as _, Hasher as _};
++    use std::hash::Hasher as _;
+
+     fn seeded(seed: u64, bytes: &[u8]) -> u64 {
+         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+@@ -467,8 +468,17 @@
+             std::fs::write(&file, format!("content number {round}\n")).unwrap();
+             store.record(dir.path(), &file, "write");
+         }
+-        let removed = store.evict_if_needed();
+-        assert!(!removed.is_empty(), "the ceiling must bite");
++        // record() already evicts. Observe its result before asking for another pass.
++        assert_eq!(store.stored_bytes(), 34, "only the two newest blobs fit");
++        for round in 0..6 {
++            let blob = blob_name(format!("content number {round}\n").as_bytes());
++            assert_eq!(
++                store.blob_path(&blob).exists(),
++                round >= 4,
++                "unexpected retention for round {round}"
++            );
++        }
++        assert!(store.evict_if_needed().is_empty(), "eviction is idempotent");
+         // The newest blob survives, because that is the one a revert would use.
+         let newest = store.paths().into_iter().next().unwrap();
+         let blob = newest.blob.expect("kept");

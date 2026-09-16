@@ -186,6 +186,39 @@ After confirming no Cargo/rustc/rustdoc processes were active, the subsequent
 cleanup removed **1,862 files, 773.9 MiB**. `target/` was removed; C: again reported
 **63G available, 87% used**. No source change or reinstall was made.
 
+## Phase 3 batch A — F00 verification (2026-09-17)
+
+Following the user-approved Phase 2 delivery and the explicit F00-first scope
+choice, the F00 changes were implemented and verified:
+
+- **Red first:** `cargo test -p epsilon-tools --lib checkpoint::tests::the_store_evicts_old_blobs_when_it_grows_past_its_ceiling -- --exact`
+  reproduced the failure (`the ceiling must bite`, exit 101) against the
+  pre-existing source; log preserved as `target/f00-red.log` during the round.
+- **Changes** (full diff in [`f00-change.patch`](evidence/f00-change.patch)):
+  corrected the eviction test to observe `record()`'s already-run eviction —
+  asserting the 40-byte cap retains exactly the two newest 17-byte blobs,
+  oldest-first removal, newest-checkpoint survival and idempotent second pass —
+  instead of demanding a non-empty redundant eviction; removed the genuinely
+  unused `Hash as _` import; collapsed the nested `if` in `evict_if_needed`
+  into a let-chain. No lint policy or behavior changed.
+- **Green:** the corrected test passed **50 consecutive executions** of the
+  same workspace binary (`target/f00-repeat.log`).
+- **Five gates:** `bash scripts/gate.sh f00` → `GATE PASS`, exits
+  fmt=0 clippy=0 test=0 demo=0 real-check=0 (`target/gate-f00.log`). The
+  workspace test run was fully green including the previously failing
+  checkpoint eviction test; earlier partial-run caveats in this file describe
+  the pre-F00 tree.
+- **Independent review:** a separate subagent verdict found both lint edits
+  semantically equivalent and the corrected test strengthened, pinning
+  oldest-first eviction and newest retention; no blocking issues.
+- **Scope limits:** no documentation/gate wording was edited in this batch;
+  F01 is not started; the intermittent auth-lock failure remains unexplained
+  (it did not recur under the gates) and stays tracked for baseline
+  qualification.
+
+Cleanup after this round follows the standing disk rule and is recorded in the
+next section.
+
 ## Next verification round
 
 After Phase 3 is authorized, correct F00 and run the complete gates once. The targeted failing command is:
