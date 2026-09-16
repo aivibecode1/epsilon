@@ -56,8 +56,10 @@ hundreds of files as part of this documentation slice.
 
 ## Verification
 
-Local-link existence checks passed for README, AGENTS and all seven product guides;
-`git diff --check` passed. A hash comparison of all files under `crates/` against the
+Local-link destination checks passed across 142 Markdown documents: root README and
+AGENTS, the docs tree, and top-level audit reports. No missing local destinations
+were found. Heading anchors, remote URLs and committed-checkout completeness were
+not certified by this check. `git diff --check` passed. A hash comparison of all files under `crates/` against the
 Phase 2 start snapshot found no changes. `target/` remained absent; no rebuild was
 needed for documentation-only edits. The Phase 1 gate failures remain open, not
 waived. Link existence in the working tree is not proof those targets are committed.
