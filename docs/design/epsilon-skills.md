@@ -1,5 +1,7 @@
 # Epsilon Skill Selection
 
+**Design proposal, not a verified bundle inventory.** For contributors considering skill packaging. The selections and budget below describe intended v1 behavior, not verified shipped skills or CI enforcement. Development skills under `.agents/skills/` are a separate surface. See [the port audit](../../audit/03-port-plan.md).
+
 Epsilon implements the Agent Skills spec (ADR-015): a skill is a `SKILL.md` directory whose
 frontmatter (name, description) enters the prompt catalog and whose body loads on demand via the
 `skill` tool / read tool. This document selects the skills bundled with or referenced by Epsilon
