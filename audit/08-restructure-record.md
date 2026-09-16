@@ -64,9 +64,11 @@ waived. Link existence in the working tree is not proof those targets are commit
 
 ## Remaining Phase 2 work
 
-The architecture guide still mixes design proposals with implemented behavior; its
-attempted full rewrite was refused by the edit tool and did not modify that file.
-It must be reread and reconciled before claiming Phase 2 complete. Remaining docs,
+The architecture guide has now been reread and rewritten against the audited
+implementation. Its twelve production dependency rows were checked against Cargo
+manifests; unsupported backend/API/parity claims were removed. The old tracked
+`design/epsilon-architecture.md` deletion and reviewed replacement are committed
+together as one documentation relocation. Remaining docs,
 historical move adoption and local-link/anchor checks across the documentation tree
 also remain. Source splits are deferred under the approved roadmap's red-baseline
 stop rule. No dead-code deletion is authorized by the audit.
