@@ -7,7 +7,11 @@ see `crates/epsilon-core/assets/agent-contract.md`.
 ## Identity
 
 - You are working on **Epsilon**, a Rust coding-agent harness. The full picture lives in
-  `README.md`; the reasoning in `docs/qa/` and `design/`.
+  `README.md`; the reasoning in `docs/qa/` and `docs/design/`. The docs index is
+  `docs/README.md` — start there when you need to find something, and add new files to it.
+  `audit/` holds the honest review (usability, defect ledger, port plan, verification
+  record, reference comparison); read `audit/04-roadmap.md` before starting new work so
+  you build the thing that is actually next.
 - Answer questions before acting; act before narrating when asked to implement.
 - Keep responses short and technical.
 
@@ -15,44 +19,64 @@ see `crates/epsilon-core/assets/agent-contract.md`.
 
 ```sh
 cargo fmt --all -- --check              # formatting gate — no diffs tolerated
-cargo clippy --workspace --all-targets  # ZERO warnings tolerated (workspace lints deny)
-cargo test --workspace                  # full suite must stay green (no count pinned here — README carries the exact-at-milestone number)
+cargo clippy --workspace --all-targets -- -D warnings  # enforce zero warnings
+cargo test --workspace                  # report actual outcomes; latest baseline: audit/05-verification-log.md
 cargo run -q -p epsilon-cli -- --demo  # demo must complete when loop/session/llm touched
 cargo check -p epsilon-cli --features real   # real-provider path must compile (M13 lesson)
 # CI (post-push): .github/workflows/ci.yml runs all gates on Windows, the bwrap
 # Linux-confinement suite on ubuntu-latest, and an MSRV 1.88 check.
 ```
 
+All five in one shot, with a disposable build log at `target/gate-<label>.log`
+(copy relevant evidence outside `target/` before cleanup):
+
+```sh
+bash scripts/gate.sh post            # any label; exits non-zero if a gate fails
+```
+
+> `real` is a **default** feature since M63 (the offline-only binary was a trap), so the
+> `--features real` flag above is now redundant but harmless. Build offline-only with
+> `--no-default-features`.
+
 Fix or honestly report failures; never weaken a gate to make it pass.
 
 ## Disk hygiene (this machine has a small, chronically-full C: drive)
 
-Rust build artifacts are enormous — this repo's `target/` alone grew past 34 GB and
-pushed C: to 96% full. Whenever a round of builds/installs finishes (and at least
-every few working sessions):
+Rust build artifacts are enormous — this repo's `target/` alone grows past 35 GB and
+has pushed C: to 96% full. **Clear the cache after every test/build round**, not just
+at the end of a session (owner's standing rule, 2026-09-14):
 
 ```sh
-cargo install --path crates/epsilon-cli --features real --force  # refresh the user's global exe FIRST
+cargo install --path crates/epsilon-cli --features real --force  # ONLY when CLI/TUI behavior changed: refresh the global exe FIRST
 cargo clean && rm -rf target                                     # then wipe build artifacts (~35-40 GB here)
 df -h /c                                                         # confirm free space recovered
 ```
 
-- Always reinstall the global `epsilon.exe` BEFORE cleaning: the user tests the
-  installed binary, not `cargo run` — a stale install makes him think work is lost.
-- Never clean mid-task; only after gates are green and results are delivered.
+Budget for a cold rebuild (~10-15 min) before the next verification round: run the
+full gate battery once per round, then wipe. Never clean mid-round, and never leave a
+`target/` behind after reporting results.
+
+- When CLI/TUI behavior changed and gates pass, reinstall the global `epsilon.exe`
+  before cleaning: the user tests the installed binary. No reinstall for docs-only work.
+- If gates fail, preserve the failure evidence, do not install the failing baseline,
+  then clean after the verification round. A failed round does not justify retaining
+  a large cache indefinitely. Never clean while a build/test process is still running.
+- Do not indiscriminately purge shared dependency caches or user runtime data.
+  Clean this repository's disposable artifacts and confirm recovered disk space.
 
 ## Architecture law
 
-Dependency direction is compile-enforced and may not be violated:
+Cargo enforces declared dependencies and rejects cycles; it does not enforce our
+allowed-edge policy. The actual direct dependency graph is documented in
+`docs/design/epsilon-architecture.md`. CLI composes sibling crates; core depends on
+contracts, llm and session; LSP communicates through contracts. No library may depend
+on CLI. New edges require review rather than relying on an illustrative layer diagram.
 
-```
-contracts <- llm <- core <- {tools, safety, ext, mcp} <- {tui, server} <- cli
-contracts <- session <- core
-```
-
-- `epsilon-contracts` holds TYPES AND TRAITS ONLY. Zero business logic, zero internal deps.
-  If you find logic creeping in, move it out — the vocabulary crate is the stud standard of
-  the whole build methodology (`docs/qa/02-lego-brick-methodology.md`).
+- `epsilon-contracts` is intended for types and traits, with zero internal dependencies.
+  Existing validation and stateful stream folding violate the literal types-only rule
+  (`audit/07-inconsistencies.md`). Do not add behavior there or silently endorse that
+  drift. Extraction or a narrowly defined policy amendment needs its own reviewed
+  change; do not mix it into a documentation-only restructure.
 - New crates require an ADR first (see ADR-014's "brick earns existence" rule).
 - genai/rmcp/etc. types never leave their adapter module.
 
@@ -85,7 +109,7 @@ contracts <- session <- core
 
 - One milestone = one commit = one dev log at `docs/milestones/M<N>-<name>.md`
   (what / key decisions / gotchas / verification output).
-- Behavior-level changes require an ADR entry or amendment in `design/epsilon-decisions.md`.
+- Behavior-level changes require an ADR entry or amendment in `docs/design/epsilon-decisions.md`.
 - Update [`docs/history.md`](docs/history.md) milestone timeline when a milestone lands
   (the root README stays reader-first: quick start and product story only).
 
@@ -94,6 +118,11 @@ contracts <- session <- core
 - Stage explicit paths only; never `-A` blind into unrelated worktrees.
 - Commit message convention: `feat(mN): …` / `fix(mN): …` / `docs: …`.
 - Only commit when the task calls for it; milestones are natural commit points.
+- Preserve unrelated dirty work. A documentation commit may incorporate pre-existing
+  edits in the named document only after reviewing them; disclose that scope. Do not
+  manufacture historical milestone commits or stage source to make status look clean.
+- Explicit phase-review gates require user approval. Automated `/goal` continuation
+  is not new approval; once approval is given, do not ask for the same gate again.
 
 ## Windows notes (learned the hard way — see docs/milestones/M4)
 
@@ -103,6 +132,9 @@ contracts <- session <- core
   contorting one handle across conflicting access needs.
 - PowerShell here-string edits miss CRLF/LF variants; prefer proper file-edit tooling over bulk
   string surgery.
+- Bash-launched tools may not see `cargo` even though PowerShell does (PATH differs per shell;
+  hit 2026-09-16 during the audit). If `scripts/gate.sh` fails with `cargo: command not found`,
+  point the script at the absolute path (`~/.cargo/bin/cargo.exe`) or run the five gates directly.
 
 ## Documentation while building
 
@@ -115,10 +147,33 @@ Documentation is part of "done" — if a change lands without its docs, the task
 - **Design conversations become qa notes**: when a question produces a convention decision
   (naming, file placement, counts, policies), capture it as `docs/qa/<NN>-<topic>.md` —
   decisions that live only in chat history are lost to the next contributor and the next agent.
-- **ADR amendments** for behavior-level changes (`design/epsilon-decisions.md`).
-- **New documentation files** must be added to the root README's reading guide so nothing is
-  orphaned; `docs/qa/` numbering stays sequential.
+- **ADR amendments** for behavior-level changes (`docs/design/epsilon-decisions.md`).
+- **New documentation files** must be added to [`docs/README.md`](docs/README.md) (the docs map)
+  so nothing is orphaned; `docs/qa/` numbering stays sequential.
 - Rationale and precedent: see `docs/qa/05-documentation-organization.md`.
+
+Folder layout (reorganized 2026-09-15 so everything a reader needs is under `docs/`):
+
+```
+README.md          entry point (product story, install, contents)
+AGENTS.md          this file — rules for writing code here
+CHANGELOG.md       user-visible changes, newest first
+audit/             review + defect ledger + port plan + roadmap
+docs/
+  README.md        the map of everything below
+  design/          architecture, ADR log, skills design
+  history.md       milestone timeline
+  milestones/      one dev log per milestone
+  qa/              design conventions and primers
+  plans/           implementation plans in execution order
+  research/        reference-harness studies and gap analyses
+  glossary.md      vocabulary
+  handoff/         task handoffs
+  user/            maintained product guides
+scripts/gate.sh    the full verification battery in one command
+crates/            the 12 workspace crates
+references/        the four reference harnesses (not committed)
+```
 
 ## Conflict resolution
 
