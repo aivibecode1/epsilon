@@ -48,7 +48,7 @@ The repository contains `.agents/skills`, not `.agent`. Relevant local skills we
 
 ## Disposition of the previous audit
 
-The top-level 01–05 reports are replaced, not adopted as a baseline. Earlier claimed execution logs were not rerun retroactively or retained as current proof. Reports under [references/](references/) are historical leads, not current evidence; 06 is the current comparison.
+The top-level 01–05 reports are replaced, not adopted as a baseline. Earlier claimed execution logs were not rerun retroactively or retained as current proof. Reports under the local, untracked `audit/references/` directory are historical leads, not current evidence; [06](06-reference-comparison.md) is the committed comparison.
 
 Corrections include:
 

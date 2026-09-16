@@ -97,4 +97,56 @@ review of the referenced untracked support files, and a changed/deferred-path
 report. Source splits remain deferred because the baseline is red. Unrelated
 source and historical milestone changes remain unstaged.
 
-**Status: Phase 2 in progress.** Not authorization to begin implementation.
+## Phase 2 review handoff
+
+**Status: documentation/support-file restructure complete; paused for review.**
+This is the documentation-first delivery allowed by roadmap section “Source
+organization” when the red baseline prevents confident source moves. It is not a
+claim that all original Phase 2 acceptance conditions or the overall goal are met.
+
+### Adopted scope
+
+- Root README, AGENTS and the user guides now own current setup, limitations and
+  contributor commands; docs/README is the navigation map.
+- Architecture, ADRs, plans and research use the recorded `docs/` locations.
+  Historical claims remain historical rather than being certified by relocation.
+- Final reviewed glossary/QA/handoff changes correct paths, contracts-layer
+  claims, README navigation policy and the superseded M16 handoff label. These
+  include pre-existing edits; no historical implementation commits are invented.
+- `52ec313` adopts the existing LICENSE and scripts/gate.sh unchanged. The MIT
+  declaration and Mohamed attribution match both HEAD and working-tree manifests.
+  The wrapper passed `bash -n`; its actual five-gate executions and failures are
+  already preserved in 05. Adoption does not mean the gates passed.
+
+### Deferred scope and reasons
+
+| Paths/work | Disposition |
+|---|---|
+| CLI/TUI/core module splits, dead-code removal | Deferred under the red-baseline stop rule; no source moves or confirmed-dead deletions made |
+| Existing `crates/`, Cargo manifests/lockfile, CHANGELOG and milestone/history edits | Remain the owner's dirty implementation baseline; require separate preservation/review, not a documentation commit |
+| `scripts/rpc_probe.py` | Remains untracked: disables sandbox at line 38, automatically approves at 93–101, and permits real-provider selection without a script; its success check at 148 does not require tool execution as its header claims. Not run or adopted |
+| `scripts/regen_catalog.py`, `.agents/skills/ratatui-tui/` | Remain outside this slice; no regeneration or skill installation performed |
+| `audit/references/` | Local untracked historical leads; index points to committed report 06 rather than linking an uncommitted directory |
+
+### Final verification and limitations
+
+A local checker scanned **143 Markdown documents** (root README/AGENTS, docs tree,
+and top-level audit reports), inspecting **152 local inline-link/reference-definition
+destinations** before this handoff was added. No missing destinations or unresolved
+heading fragments were found. Fenced examples were excluded. This is a local
+Markdown check, not a renderer, remote URL check, or proof of clean-checkout
+completeness. Untracked historical milestone targets still exist only in the
+working tree. No blanket claim that every Markdown syntax form was validated.
+
+Source hash comparison confirmed all 166 files under crates/ unchanged during
+this closing slice. Strict Clippy and checkpoint test
+failures remain open, as does the intermittent auth-lock failure. See 05 for
+partial test results and cleanup; no green baseline is claimed.
+
+### Decision required
+
+Review this documentation-first delivery and approve or revise the source-work
+deferral before Phase 3. Recommended next authorized implementation is roadmap A
+(F00 baseline/checkpoint correction and F01 file preservation), with the new
+intermittent auth failure included in baseline qualification. Preserve/review the
+existing dirty source baseline first. Automated goal continuation is not approval.

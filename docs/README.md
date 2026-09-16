@@ -19,7 +19,7 @@ claims are not proof that a capability works today.
 | [`../AGENTS.md`](../AGENTS.md) | the rules for anyone writing code here: gates, conventions, disk hygiene | before your first change |
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
 | [`qa/`](qa) | design conversations turned into notes: why Rust, the brick methodology, the harness primer, TUI keymaps, OAuth client ids, provider extension points, the repository layout | you need the convention behind a choice |
-| [`plans/`](plans) | implementation plans, in the order they were executed (with statuses) | you want to see how a change was scoped before it was made |
+| [`plans/README.md`](plans/README.md) | historical plans and their recorded statuses, not fresh authorization | you want to trace earlier scope |
 | [`../audit/`](../audit) | the dated assessment: usability review, defect ledger F00–F19, port plan, verification log, reference comparison, roadmap | you want to know what is broken or what to do next |
 
 ## Historical record
@@ -36,8 +36,8 @@ claims are not proof that a capability works today.
 ## Reading paths
 
 **New to coding agents?** [`qa/06-agent-harness-primer.md`](qa/06-agent-harness-primer.md) with
-[`glossary.md`](glossary.md) open beside it, then the `## Architecture` section of the root
-README.
+[`glossary.md`](glossary.md) open beside it, then the
+[architecture guide](design/epsilon-architecture.md).
 
 **New to the codebase?** Root README → [`design/epsilon-architecture.md`](design/epsilon-architecture.md)
 → the crate that owns what you are touching → its milestone log in `milestones/` → the tests in
@@ -61,6 +61,6 @@ then the milestone log that introduces it.
   not today. Current defects and verification evidence live in `../audit/`.
 
 Product reference material lives in `user/`. Existing moves, instruction corrections,
-verification limits and remaining Phase 2 work are recorded in
+verification limits and the Phase 2 review handoff are recorded in
 [the restructure record](../audit/08-restructure-record.md). Those moves predate this
 phase; the verification log is not their move map.

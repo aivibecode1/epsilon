@@ -15,7 +15,7 @@ Entries are grouped by theme. Within a group they are alphabetical.
 **Agent loop** — The cycle that makes an LLM useful: send the conversation to the
 model, stream back its reply, run any tool calls it asked for, append the results,
 and repeat until the model stops asking for tools. Epsilon's loop lives in
-`epsilon-core`. See [`design/epsilon-architecture.md`](../design/epsilon-architecture.md).
+`epsilon-core`. See [`docs/design/epsilon-architecture.md`](design/epsilon-architecture.md).
 
 **Two-level loop** — pi's loop shape, ported verbatim. The *inner* loop keeps running
 while tool calls remain or steering messages are queued. The *outer* loop drains
@@ -217,12 +217,14 @@ alongside `AGENTS.md`. Global `~/.config/epsilon/MEMORY.md` plus workspace
 it. The lego-brick methodology: contracts first, bricks second, integration last
 ([`docs/qa/02-lego-brick-methodology.md`](qa/02-lego-brick-methodology.md)).
 
-**Contracts crate** — `epsilon-contracts`: shared types and traits only. Zero logic,
-zero internal dependencies. Every other crate speaks its vocabulary, which is what
-makes boundaries compile-enforced rather than review-enforced.
+**Contracts crate** — `epsilon-contracts`: shared vocabulary with zero internal
+dependencies. Types/traits only is the intended boundary; existing validation and
+stream-folding behavior is recorded drift, not an approved expansion. Cargo checks
+declared dependencies; allowed-edge policy still requires review. See the
+[architecture guide](design/epsilon-architecture.md#workspace-and-dependency-graph).
 
 **ADR (architecture decision record)** — A numbered entry in
-[`design/epsilon-decisions.md`](../design/epsilon-decisions.md) recording a decision,
+[`docs/design/epsilon-decisions.md`](design/epsilon-decisions.md) recording a decision,
 its alternatives, and why it won. Behavior-level changes require one.
 
 **Dev log** — One markdown file per milestone under [`docs/milestones/`](milestones/):

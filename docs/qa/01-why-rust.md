@@ -13,7 +13,7 @@ Yes — but specifically because of *what Epsilon is*, not because Rust is fashi
 
 ## Where Rust pays off (evidence from the reference audit)
 
-The four reference harnesses were audited first (`reports/harness-analysis.md`); their weaknesses
+The four reference harnesses were audited first (`docs/research/harness-analysis.md`); their weaknesses
 show exactly where Rust helps:
 
 | Need | Evidence from references | Rust advantage |

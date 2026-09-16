@@ -10,12 +10,20 @@
 
 ## Decisions
 
-### Exactly ONE README.md — at the repository root
+### Exactly ONE product README.md — at the repository root
+
+> **Amended 2026-09-17:** navigation READMEs are allowed, including `docs/README.md` (the docs map, with
+> task-oriented reading paths) and product reference guides live in `docs/user/`. The
+> amendment: the root README remains the only *product entry point*; `docs/README.md` is
+> navigation for the documentation tree, not a competing product description; `user/` guides
+> hold current product facts so the root README stays short. The original decision below is
+> historical — including its "eleven crates" wording (twelve since M79).
 
 - `docs/README.md` was **deleted**: it answered "where do I start?" in competition with the
   root README. Its unique content (reading order per audience) lives in the root README's
   *How to read this repository* section.
-- **No per-crate READMEs.** The eleven crates are workspace-internal path dependencies, never
+- **No per-crate READMEs.** The eleven crates (twelve since M79's `epsilon-lsp`) are
+  workspace-internal path dependencies, never
   published individually; their documentation home is rustdoc (`lib.rs` headers) plus the crate
   table in the root README.
 - **Trigger condition for revisiting**: publishing a standalone crate (e.g. `epsilon-contracts`

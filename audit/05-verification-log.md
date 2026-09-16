@@ -172,6 +172,20 @@ After the process exited and evidence was saved, `cargo clean` removed **10,271
 files, 6.7 GiB**. `test ! -e target` succeeded; C: had **63G available, 87% used**.
 No installed binary refresh was required.
 
+### Additional real-feature reruns and cleanup
+
+The recovered foreground log records twenty exact invocations of
+`cargo test -p epsilon-llm --features real --lib auth::tests::concurrent_saves_keep_every_provider -- --exact --nocapture`,
+each with `ITERATION_EXIT=0` and 105 tests filtered out. The log is preserved
+[verbatim here](evidence/phase2-auth-real-reruns.txt). One further direct invocation
+returned exit 0, one passed and 105 filtered out. These are isolated passes, not a
+fix or a successful workspace run. The interrupted background attempt exited -15;
+it is not counted as test evidence.
+
+After confirming no Cargo/rustc/rustdoc processes were active, the subsequent
+cleanup removed **1,862 files, 773.9 MiB**. `target/` was removed; C: again reported
+**63G available, 87% used**. No source change or reinstall was made.
+
 ## Next verification round
 
 After Phase 3 is authorized, correct F00 and run the complete gates once. The targeted failing command is:

@@ -87,7 +87,7 @@ tools plug in without changing core code.
 
 ## Part 4 — Why base Epsilon on pi?
 
-We audited four production harnesses at source level (`reports/harness-analysis.md`)
+We audited four production harnesses at source level (`docs/research/harness-analysis.md`)
 and found each has one great strength:
 
 - **pi** has the cleanest agent loop and the cheapest operation (small stable prompts
@@ -97,8 +97,8 @@ and found each has one great strength:
 - **opencode** has the friendliest permission system and product polish.
 
 The plan: take pi's skeleton exactly, then bolt on the best part of each other system
-at clearly named places. The full reasoning lives in `reports/comparative-analysis.md`
-and the ADRs (`design/epsilon-decisions.md`). Nothing was copied blindly; every ported
+at clearly named places. The full reasoning lives in `docs/research/comparative-analysis.md`
+and the ADRs (`docs/design/epsilon-decisions.md`). Nothing was copied blindly; every ported
 idea cites its origin in comments and dev logs. Later milestones kept importing: the
 auth store and picker favorites come from opencode (M22, M23), and MCP health probes
 plus provider fallback chains come from Hermes (M24). The complete credit table with

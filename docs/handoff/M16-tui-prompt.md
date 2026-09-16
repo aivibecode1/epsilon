@@ -1,5 +1,9 @@
 # PROMPT — M16: TUI parity with pi/opencode (efficiency-first overhaul)
 
+> **ARCHIVED 2026-09-16**: this handoff was executed — M16a/M16b/M16c are delivered per
+> `docs/history.md`. Kept as a historical record of how the work was delegated; do not
+> execute this prompt again.
+
 Feed this entire document to the agent in a fresh session. Work inside
 `C:\Users\Hp\Desktop\My Agent Space\Epsilon`. Read AGENTS.md first; it governs.
 
