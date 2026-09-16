@@ -2,7 +2,7 @@
 
 > **Executor instructions**: Follow steps in order; run every verification command.
 > On STOP conditions, report back instead of improvising. Update your row in
-> `plans/README.md` when done.
+> `docs/plans/README.md` when done.
 >
 > **Drift check**: `git diff --stat 64e927f..HEAD -- crates/epsilon-llm/`
 > If provider files changed since `64e927f`, compare excerpts below against live code;

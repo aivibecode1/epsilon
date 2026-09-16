@@ -1,10 +1,14 @@
 # Plan 012: TUI @-file autocomplete + export + help polish
 
+> **REJECTED (2026-08-28): superseded by Plan 016** — the same scope shipped via
+> at_word_before/@-file + /export html/json; no separate polish pass was needed. The rest of
+> this file is a historical record and was never executed.
+
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and
 > report — do not improvise. When done, update the status row for this plan
-> in `plans/README.md` — unless a reviewer dispatched you and told you they
+> in `docs/plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
 > **Drift check (run first)**: `git diff --stat abd045a..HEAD -- crates/epsilon-tui crates/epsilon-tools`
@@ -39,7 +43,7 @@ Relevant files:
 - `crates/epsilon-tui/src/app.rs` — `App` state (`input`, `picker_open`, `slash_open`, `palette_open`, `branch_cache`, `workspace_root`), `handle_submit`, `run_command`, hint bar, input rendering
 - `crates/epsilon-tui/src/state.rs` — `UiState` transcript lines, `RenderPrefs`, `clear_lines` / `usage` helpers
 - `crates/epsilon-tools/src/lib.rs` — `GlobTool`/`ReadTool` already walk the workspace (reuse for file completion)
-- `design/epsilon-architecture.md` §11 — frontends; docs/qa/07-tui-keymap-audit.md — keymap
+- `docs/design/epsilon-architecture.md` §11 — frontends; docs/qa/07-tui-keymap-audit.md — keymap
 - `references/pi-0.84.2/packages/tui/src/components/editor.ts` — `@` file reference UX in the editor
 - `references/opencode-1.18.21/docs/cli/` — `export` command pattern
 
@@ -144,7 +148,7 @@ Machine-checkable. ALL must hold:
 - [ ] `cargo test -p epsilon-tui --lib` exits 0; new tests for at-file/export/help exist and pass
 - [ ] `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets` exit 0
 - [ ] No files outside the in-scope list modified (`git status`)
-- [ ] `plans/README.md` status row for 012 updated to DONE
+- [ ] `docs/plans/README.md` status row for 012 updated to DONE
 
 ## STOP conditions
 

@@ -4,10 +4,10 @@
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and
 > report — do not improvise. When done, update the status row for this plan
-> in `plans/README.md` — unless a reviewer dispatched you and told you they
+> in `docs/plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat abd045a..HEAD -- crates/epsilon-tools crates/epsilon-safety crates/epsilon-llm design/epsilon-architecture.md`
+> **Drift check (run first)**: `git diff --stat abd045a..HEAD -- crates/epsilon-tools crates/epsilon-safety crates/epsilon-llm docs/design/epsilon-architecture.md`
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -24,11 +24,11 @@
 
 ## Why this matters
 
-`design/epsilon-architecture.md` §4 lists `webfetch` as a built-in and
+`docs/design/epsilon-architecture.md` §4 lists `webfetch` as a built-in and
 `crates/epsilon-safety/src/engine.rs:124` already has
 `Rule::new("webfetch", "*", Action::Ask)` — but `crates/epsilon-tools/src/lib.rs:58`
 `register_builtins` registers only 8 tools (read/write/edit/bash/grep/glob/ls/todo)
-and `design/epsilon-architecture.md` was patched in m31 to call webfetch
+and `docs/design/epsilon-architecture.md` was patched in m31 to call webfetch
 "deferred". Every reference ships a fetch (opencode `webfetch.ts` + `webfetch.txt`,
 pi extensions, DSH `guard/timeout-policy`). Doc-code drift is a finding per
 the improve audit playbook (stated-but-undelivered). Closing it makes the
@@ -45,7 +45,7 @@ Relevant files, each with one line on its role:
 - `crates/epsilon-safety/src/wildcards.rs` — opencode-parity glob (m31 regex impl; `*`→`.*`, `?`→`.`, backslash→`/`)
 - `crates/epsilon-llm/src/http.rs` — existing `reqwest` usage, `HttpEventStream`, timeout/retry patterns; `Cargo.toml` already has `reqwest = { workspace = true }` via llm
 - `crates/epsilon-contracts/src/tool.rs` — `Tool` trait (`name/label/description/schema/execution/execute`), `ToolContext { session_id, cwd, spill_dir, token, on_update }`, `ExecutionMode::Parallel` vs `Sequential`
-- `design/epsilon-architecture.md` §4 — currently reads "webfetch — planned, see G-M5 — would join the read group" and "webfetch deferred (rule exists in epsilon-safety, ships next milestone)"
+- `docs/design/epsilon-architecture.md` §4 — currently reads "webfetch — planned, see G-M5 — would join the read group" and "webfetch deferred (rule exists in epsilon-safety, ships next milestone)"
 - `references/opencode-1.18.21/packages/core/src/tool/webfetch.ts` (reference, 240 lines head) + `packages/opencode/src/tool/webfetch.txt` (prompt) — opencode prompt + fetch logic to mirror
 
 Excerpts as of `abd045a`:
@@ -63,7 +63,7 @@ Rule::new("webfetch", "*", Action::Ask),
 ```
 
 ```rust
-// design/epsilon-architecture.md §4 (deferred wording)
+// docs/design/epsilon-architecture.md §4 (deferred wording)
 | epsilon-tools | Built-in tools: read, write, edit, bash, grep, glob, ls, todo, task(subagent) — webfetch deferred (rule exists in epsilon-safety, ships next milestone) |
 (read/grep/glob/ls yes; webfetch — planned, see G-M5 — would join the read group; write/edit/bash/todo/task no)
 ```
@@ -98,7 +98,7 @@ Repo conventions to honor:
 - `crates/epsilon-tools/src/lib.rs` (register it, export)
 - `crates/epsilon-tools/descriptions/webfetch.txt` (new: one-paragraph tool description for the model)
 - `crates/epsilon-tools/Cargo.toml` (only if a feature flag on reqwest needs enabling; prefer reusing workspace dep as-is)
-- `design/epsilon-architecture.md` §4 table + §4 concurrency note (flip deferred → shipped, keep one line)
+- `docs/design/epsilon-architecture.md` §4 table + §4 concurrency note (flip deferred → shipped, keep one line)
 - Tests co-located in `webfetch.rs` + a fixture test in `lib.rs` if needed
 
 **Out of scope** (do NOT touch, even though they look related):
@@ -155,12 +155,12 @@ Reuse `util::truncate_with_ellipsis` / spill helpers already in `util.rs` — do
 
 ### Step 3: Register the tool and flip the doc
 
-In `crates/epsilon-tools/src/lib.rs` add `mod webfetch;` and in `register_builtins` push `WebFetchTool` (same pattern as `ReadTool` etc.). Update `builtin_registry` test helper if it asserts count. In `design/epsilon-architecture.md` flip the two deferred lines:
+In `crates/epsilon-tools/src/lib.rs` add `mod webfetch;` and in `register_builtins` push `WebFetchTool` (same pattern as `ReadTool` etc.). Update `builtin_registry` test helper if it asserts count. In `docs/design/epsilon-architecture.md` flip the two deferred lines:
 
 - Table row → `read, write, edit, bash, grep, glob, ls, todo, task(subagent), webfetch`
 - Concurrency note → `(read/grep/glob/ls/webfetch yes; write/edit/bash/todo/task no)`
 
-**Verify**: `grep -n "webfetch" crates/epsilon-tools/src/lib.rs` shows registration; `grep -n "webfetch" design/epsilon-architecture.md` shows shipped wording, no "deferred".
+**Verify**: `grep -n "webfetch" crates/epsilon-tools/src/lib.rs` shows registration; `grep -n "webfetch" docs/design/epsilon-architecture.md` shows shipped wording, no "deferred".
 
 ### Step 4: Tests
 
@@ -190,11 +190,11 @@ Model after `crates/epsilon-tools/src/files.rs` tests and `crates/epsilon-safety
 
 Machine-checkable. ALL must hold:
 - [ ] `grep -rn "WebFetchTool" crates/epsilon-tools/src/lib.rs` returns a hit
-- [ ] `grep -rn "webfetch" design/epsilon-architecture.md` shows shipped wording, no "deferred" or "planned, see G-M5"
+- [ ] `grep -rn "webfetch" docs/design/epsilon-architecture.md` shows shipped wording, no "deferred" or "planned, see G-M5"
 - [ ] `cargo test -p epsilon-tools --lib` exits 0; new webfetch tests exist and pass
 - [ ] `cargo fmt --all -- --check` exits 0 and `cargo clippy --workspace --all-targets` exits 0
 - [ ] No files outside the in-scope list are modified (`git status`)
-- [ ] `plans/README.md` status row for 010 updated to DONE
+- [ ] `docs/plans/README.md` status row for 010 updated to DONE
 
 ## STOP conditions
 

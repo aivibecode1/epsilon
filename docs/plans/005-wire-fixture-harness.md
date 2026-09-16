@@ -43,7 +43,7 @@ new `crates/epsilon-llm/tests/wire_fixtures.rs` (feature-gated), CI job addition
      `x-goog-api-key` request shape asserted via captured request builder if
      feasible, else skip.
    - Cross-wire: multi-byte UTF-8 char split across two chunks (documents current
-     from_utf8_lossy behavior; see plans/006 for the fix).
+     from_utf8_lossy behavior; see docs/plans/006 for the fix).
 3. Add CI lane: `cargo test -p epsilon-llm --features real` on the windows-full job.
 
 ## Done criteria

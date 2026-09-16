@@ -4,7 +4,7 @@
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and
 > report — do not improvise. When done, update the status row for this plan
-> in `plans/README.md` — unless a reviewer dispatched you and told you they
+> in `docs/plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
 > **Drift check (run first)**: `git diff --stat abd045a..HEAD -- crates/epsilon-tui crates/epsilon-core crates/epsilon-session`
@@ -41,7 +41,7 @@ Relevant files, each with one line on its role:
 - `crates/epsilon-core/src/compact.rs` — compaction engine + `CompactionRequest`/`CompactionSummary`; `Agent::compact_now(&mut produced)` is the real compaction entry point
 - `crates/epsilon-session/src/store.rs` — `branch_entries() -> Vec<(Entry, BranchBounds)>`, `navigate_to(entry_id)`, `BranchSummary`; JSONL tree read path
 - `crates/epsilon-core/src/lib.rs` — `Agent` owns `SessionStore` (via interior handle for TUI/tests), exposes `store_handle_for_tests()` pattern
-- `design/epsilon-architecture.md` §6 — session tree; §7 compaction; §11 TUI frontends
+- `docs/design/epsilon-architecture.md` §6 — session tree; §7 compaction; §11 TUI frontends
 
 Excerpts as of `abd045a`:
 
@@ -82,7 +82,7 @@ Repo conventions to honor:
 ## Suggested executor toolkit
 
 - Skills: `improve` audit categories (correctness, UX) when diagnosing drift; `ponytail` laziest-solution heuristic when choosing between picker vs notice refactors.
-- Reference: `design/epsilon-architecture.md` §6-7, `docs/qa/07-tui-keymap-audit.md` for slash UX parity.
+- Reference: `docs/design/epsilon-architecture.md` §6-7, `docs/qa/07-tui-keymap-audit.md` for slash UX parity.
 
 ## Scope
 
@@ -167,7 +167,7 @@ Machine-checkable. ALL must hold:
 - [ ] `cargo test -p epsilon-tui --lib` exits 0; new tests for timeline/fork/compact exist and pass
 - [ ] `grep -rn "SLASH_ITEMS" crates/epsilon-tui/src/picker.rs` shows compact/timeline/fork with summaries
 - [ ] `git status` shows no files outside the in-scope list modified
-- [ ] `plans/README.md` status row for 009 updated to DONE
+- [ ] `docs/plans/README.md` status row for 009 updated to DONE
 
 ## STOP conditions
 

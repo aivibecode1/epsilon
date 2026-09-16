@@ -66,5 +66,5 @@ canonicalization via filesystem resolve (lexical only, per M6 documented posture
 
 ## Maintenance notes
 
-glob/ls filtering deferred deliberately — record in plans/README rejected-notes if
+glob/ls filtering deferred deliberately — record in docs/plans/README rejected-notes if
 you assess cost > benefit at this scale.
