@@ -75,5 +75,26 @@ historical move adoption and local-link/anchor checks across the documentation t
 also remain. Source splits are deferred under the approved roadmap's red-baseline
 stop rule. No dead-code deletion is authorized by the audit.
 
-**Status: Phase 2 in progress.** This is a completed documentation slice, not the
-Phase 2 review checkpoint and not authorization to begin implementation.
+## Follow-up: historical moves adopted; verification remains red
+
+The earlier move-map and verification sections describe their original slices.
+Subsequently, the reviewed design records were adopted in `8533f23`, historical
+plans in `a5f049f`, and research reports in `9427a0d`. Those commits incorporate
+pre-existing content and path changes; they do not certify historical parity or
+completion claims. Archive/status notices distinguish those claims from the audit.
+
+A later workspace test run failed at the auth concurrency test before reaching
+the known checkpoint failure. Ten isolated reruns of the same workspace-built
+binary passed; the cause is not established. Evidence and completed build cleanup
+are recorded in [05](05-verification-log.md#phase-2-follow-up-intermittent-auth-lock-failure).
+
+The announcements about implementing F10 or an auth-lock fix were not followed by
+source edits. No explicit implementation exception was approved. They must not be
+treated as authorization to bypass the Phase 3 review gate.
+
+Remaining Phase 2 work is bounded to final documentation reference/anchor review,
+review of the referenced untracked support files, and a changed/deferred-path
+report. Source splits remain deferred because the baseline is red. Unrelated
+source and historical milestone changes remain unstaged.
+
+**Status: Phase 2 in progress.** Not authorization to begin implementation.

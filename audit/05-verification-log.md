@@ -149,6 +149,29 @@ After saving evidence, `cargo clean` removed **14,628 files, 8.5 GiB**. Removal 
 A 166-file source/assets/manifest hash snapshot showed no changes during the checked
 interval. This does not retrospectively certify earlier uncommitted source changes.
 
+## Phase 2 follow-up: intermittent auth-lock failure
+
+A subsequent `cargo test --workspace` exited **101**, stopping earlier than the
+checkpoint failure: `auth::tests::concurrent_saves_keep_every_provider` failed at
+`auth.rs:1096` while acquiring `auth.lock` with Windows error 5 (Access is denied).
+The LLM binary reported **105 passed, 1 failed**. Aggregating the 22 completed
+summaries yielded **354 passed, 1 failed, 0 ignored**, a partial run only.
+
+Ten exact isolated reruns of the original workspace-built LLM executable all
+exited **0**. The failure remains unresolved; neither a Windows deletion race nor
+any other root cause has been established. The earlier package-only reruns used
+a different feature selection (71 tests versus 106); their shell-loop failure
+counter also lacked `pipefail` and is not reliable exit-code evidence.
+
+Selected original failure output and all ten directly captured rerun results are
+preserved in [the follow-up evidence](evidence/phase2-auth-followup.txt). No runtime
+fix or new regression test was applied. Existing checkpoint gate failures are not
+superseded by this earlier fail-fast stop. No full five-gate rerun is claimed.
+
+After the process exited and evidence was saved, `cargo clean` removed **10,271
+files, 6.7 GiB**. `test ! -e target` succeeded; C: had **63G available, 87% used**.
+No installed binary refresh was required.
+
 ## Next verification round
 
 After Phase 3 is authorized, correct F00 and run the complete gates once. The targeted failing command is:
