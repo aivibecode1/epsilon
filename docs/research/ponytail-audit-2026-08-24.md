@@ -1,5 +1,8 @@
 # ponytail-audit — Epsilon harness (2026-08-24)
 
+> Historical research, not current product status. See the [archive index](README.md)
+> and [verified audit](../../audit/README.md) before relying on completion or safety claims.
+
 Run per `ponytail-audit` skill: whole-repo scan for over-engineering only
 (correctness/security/performance explicitly out of scope — those went through the
 /improve pass). Method: every `#[allow(dead_code)]`, every `pub` item without a

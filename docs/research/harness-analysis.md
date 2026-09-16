@@ -1,5 +1,8 @@
 # Harness Analysis — Phase 1
 
+> Historical research, not current product status. See the [archive index](README.md)
+> and [verified audit](../../audit/README.md) before relying on completion or safety claims.
+
 Four reference harnesses were audited from source, not from READMEs. For each harness the
 architecture was traced through code: control flow followed from user input -> model call -> tool
 execution -> back, and every claim below is anchored to a specific file under `references/`.

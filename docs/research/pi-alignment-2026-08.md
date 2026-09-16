@@ -1,5 +1,8 @@
 # Pi Alignment Report — Structural Side-by-Side (2026-08)
 
+> Historical research, not current product status. See the [archive index](README.md)
+> and [verified audit](../../audit/README.md) before relying on completion or safety claims.
+
 Second alignment pass against pi-0.84.2 (first was the pre-build design audit). Method:
 every claim below was verified by reading both trees (`references/pi-0.84.2/packages/*`
 vs `crates/*`) during this pass — not carried forward from earlier notes.

@@ -1,9 +1,12 @@
 # Reference Research Pass 2 — Where opencode / DSH / Hermes Beat pi (2026-08)
 
+> Historical research, not current product status. See the [archive index](README.md)
+> and [verified audit](../../audit/README.md) before relying on completion or safety claims.
+
 Second deep pass over `references/` plus real community signal (Hacker News threads on
 pi and opencode, r/PiCodingAgent, DSH GitHub discussions, independent comparisons).
 Goal per project scope: find where the non-pi references genuinely outperform pi, and
-decide what Epsilon imports. Companion to `reports/pi-alignment-2026-08.md`.
+decide what Epsilon imports. Companion to `docs/research/pi-alignment-2026-08.md`.
 
 ## 1. Community signal (external, gathered this pass)
 
@@ -38,7 +41,7 @@ plugin toolsets in v1 (architecture §14) is externally validated.
 |---|---|---|---|
 | **Plan mode** | opencode `plan` agent | **SHIPPED this pass**: `--plan` flag + `plan_ruleset()` + startup banner | Highest-frequency community gap for pi; maps perfectly onto our existing ruleset engine (deny is monotonic, so plan mode is a real boundary); ~60 lines total |
 | Session search | pi itself (`search/scanning.ts`) | **SHIPPED this pass** (see alignment report G1) | Was a pi-parity gap, closed alongside |
-| Todos tool | pi exclusion / community DIY | Keep excluded (ADR-consistent): skills + session log cover the need; catalog budget rule (design/epsilon-skills.md) argues against always-on schema cost | Documented, revisit only with user demand |
+| Todos tool | pi exclusion / community DIY | Keep excluded (ADR-consistent): skills + session log cover the need; catalog budget rule (docs/design/epsilon-skills.md) argues against always-on schema cost | Documented, revisit only with user demand |
 | Background bash | pi "use tmux" stance | Defer — serve/rpc modes already enable remote orchestration; a background-bash tool needs an approval-story design first | Recorded as candidate future milestone |
 | Cache-friendly auto-compact messaging | community discussion | No code change needed: ADR-007 already isolates summary calls; ensure docs keep claiming this loudly (they do) | None |
 

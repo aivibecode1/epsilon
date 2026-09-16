@@ -1,5 +1,8 @@
 # Comparative Analysis — Phase 2
 
+> Historical research, not current product status. See the [archive index](README.md)
+> and [verified audit](../../audit/README.md) before relying on completion or safety claims.
+
 Side-by-side comparison of the four audited harnesses across the Phase 1 dimensions, followed by
 "who does what best" and the reuse shortlist feeding Epsilon's design. Evidence anchors refer to
 sections of `harness-analysis.md` and the source files cited there.
