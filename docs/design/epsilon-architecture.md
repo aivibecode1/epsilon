@@ -66,9 +66,10 @@ adapters, not evidence that arbitrary plugin execution is confined by BashTool.
 
 - `epsilon-safety/src/engine.rs:82–97`: matching denies take precedence; otherwise
   the later matching allow/ask rule determines the decision.
-- `epsilon-core/src/exec.rs:105–147`: path authorization is lexical and shell subjects
-  use the first command token. Plan-mode subcommand denies do not provide the
-  advertised read-only execution boundary; project rules are also replaced (F10).
+- Path identity remains lexical (F09). Core authorizes the original capability and
+  any derived external-path subject. Plan mode retains project rules and denies
+  native write/edit/bash/shell; it does not classify arbitrary plugin side effects.
+  [Permissions](../user/permissions.md) owns the current policy description.
 - `epsilon-safety/src/sandbox.rs`: Windows selects Job Objects; other platforms
   probe `bwrap` or report no available backend. Landlock and Seatbelt are not
   implemented backends in this tree.
@@ -78,10 +79,10 @@ adapters, not evidence that arbitrary plugin execution is confined by BashTool.
 - Process waits, cancellation and final pipe drains have inconsistent total-deadline
   ownership (F11). Display caps apply after unlimited parent output collection (F12).
 
-`epsilon-tools/src/mutation.rs` serializes writers by path. `read_log.rs` records
-observed state but incorrectly shares observations process-wide (F02). Exclusion
-should remain global; knowledge should belong to the observer. Resolved-object
-identity and authorization are separate hardening work (F09).
+`epsilon-tools/src/mutation.rs` serializes writers by path. `read_log.rs` scopes
+observations to each agent's opaque lifetime token and invalidates sibling knowledge
+after writes. Restore renews the token; retired observers are reclaimed. F02 repaired
+shared knowledge, not resolved-object identity or race-resistant containment (F09).
 
 ## Persistence, context and recovery
 

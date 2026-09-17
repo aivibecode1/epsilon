@@ -9,10 +9,10 @@ stdio RPC frontends. Its goal is to port pi-agent's coding workflows to Rust,
 while adopting useful execution, permissions and recovery mechanisms from
 DeepSeek Harness, Hermes Agent and opencode. **The port is incomplete.**
 
-> **Development status:** the audited working tree has known file-preservation,
-> persistence and transport defects. Strict Clippy and a checkpoint test fail.
-> Use disposable or backed-up workspaces, not valuable unattended workloads.
-> See the [audit](audit/README.md) and [verification record](audit/05-verification-log.md).
+> **Development status:** incomplete pi port, not production-ready. The latest
+> [Windows audit battery](audit/09-revalidation.md) passed, but source review found
+> unresolved persistence, transport and workflow defects. Use backed-up or disposable
+> workspaces. Passing regression tests is not proof of complete port fidelity.
 
 ## Contents
 
@@ -40,11 +40,10 @@ cd epsilon
 cargo run -q -p epsilon-cli -- --demo
 ```
 
-The demo is offline and scripted. The audited **working-tree** run completed with six
-messages and 300/150 input/output tokens. That proves the faux loop, not a real
-provider coding session. The checkout command uses the repository's configured
-origin; a fresh clone and install were not exercised in this phase. Substantial
-implementation changes remain uncommitted, so a fresh clone is not the audited tree.
+The demo is offline and scripted; it does not contact a model provider. It exercises
+the agent loop and intentional tool failure handling. A fresh network clone was not
+tested in the latest audit. Local uncommitted features are not available merely
+because this working tree passed its gates; see the audit for the exact baseline.
 
 To install a reviewed build:
 
@@ -53,8 +52,8 @@ cargo install --path crates/epsilon-cli --force
 epsilon --help
 ```
 
-Real-provider support is enabled by default. Do not install this failing baseline as
-a release. Setup details and platform limitations are in [Install](docs/user/install.md).
+Real-provider support is enabled by default. Install only a reviewed build, not an
+unreviewed local diff. Setup and platform limits are in [Install](docs/user/install.md).
 
 For supervised real-provider use after configuring your own credentials:
 
@@ -78,7 +77,7 @@ Common commands:
 | `epsilon -c` / `epsilon --resume <file>` | Continue a session; back up important transcripts first |
 | `epsilon --serve --port 8787` | HTTP/SSE frontend |
 | `epsilon --rpc` | Epsilon's NDJSON protocol, not pi RPC compatibility |
-| `epsilon --plan` | Deny native write/edit; **not a reliable read-only shell boundary** (F10) |
+| `epsilon --plan` | Deny native write/edit/bash/shell while retaining project rules; not a side-effect classifier for extensions |
 | `epsilon --help` | Implemented command inventory; known help-text overclaims are listed in the audit |
 
 In the TUI, Enter sends a prompt, Esc requests cancellation and `/help` lists
@@ -153,10 +152,10 @@ Keep relevant evidence outside `target/` before clearing build artifacts. Reinst
 the global CLI only after verified CLI/TUI changes; do not replace it with a failing
 build. Cleanup commands and failed-round handling are in AGENTS.md.
 
-The latest recorded run is **not green**: formatting/demo/real-check passed;
-Clippy and the checkpoint eviction test failed. No tests or gates were weakened.
-Tests use faux providers and local fixtures by default; live-provider checks are
-opt-in. Windows, Linux and MSRV CI definitions live in `.github/workflows/ci.yml`.
+The [current audit](audit/09-revalidation.md) names the tested tree, gate results,
+remaining defects and untested surfaces. Tests use faux providers and local fixtures
+by default; live-provider checks are opt-in. Windows, Linux and MSRV CI definitions
+live in `.github/workflows/ci.yml`; configured lanes are not evidence they ran locally.
 
 ## Documentation
 
@@ -168,7 +167,7 @@ opt-in. Windows, Linux and MSRV CI definitions live in `.github/workflows/ci.yml
 
 ## References and credits
 
-The bundled snapshots used for comparison are:
+The locally inspected reference snapshots (not included in a clone) are:
 
 | Reference | Areas studied |
 |---|---|

@@ -121,8 +121,10 @@ on CLI. New edges require review rather than relying on an illustrative layer di
 - Preserve unrelated dirty work. A documentation commit may incorporate pre-existing
   edits in the named document only after reviewing them; disclose that scope. Do not
   manufacture historical milestone commits or stage source to make status look clean.
-- Explicit phase-review gates require user approval. Automated `/goal` continuation
-  is not new approval; once approval is given, do not ask for the same gate again.
+- Honor the owner's current authorization. The autonomous audit/restructure/port task
+  explicitly authorizes successive implementation phases and small commits without
+  repeated approval; old audit checkpoint wording is historical. A new unrelated
+  task does not inherit permission to push, publish or use paid services.
 
 ## Windows notes (learned the hard way — see docs/milestones/M4)
 
@@ -175,7 +177,7 @@ Documentation is part of "done" — if a change lands without its docs, the task
   so nothing is orphaned; `docs/qa/` numbering stays sequential.
 - Rationale and precedent: see `docs/qa/05-documentation-organization.md`.
 
-Folder layout (reorganized 2026-09-15 so everything a reader needs is under `docs/`):
+Folder layout (maintained guides under `docs/`, assessment and recovery state separate):
 
 ```
 README.md          entry point (product story, install, contents)

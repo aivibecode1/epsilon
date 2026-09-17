@@ -1,5 +1,11 @@
 # 04 — Sequenced roadmap
 
+**Superseded execution order:** [09 — current port-first plan](09-revalidation.md).
+The owner now authorizes autonomous progression and small commits. The phase-stop
+language below records the earlier review contract, not a new approval requirement.
+Retain the findings/acceptance criteria; do not prioritize new reference features
+over completion of the pi port.
+
 **Audience:** the owner approving phases and engineers executing approved work.
 **Baseline:** 2026-09-16 working tree over `e200815`; findings F00–F19 are in [02](02-defect-ledger.md).
 

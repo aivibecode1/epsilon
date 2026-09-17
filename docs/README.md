@@ -56,6 +56,9 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [Fresh audit and port-first plan](../audit/09-revalidation.md): named baseline,
+  verified gate evidence, unresolved fidelity gaps and independent review reports.
+
 - [M83 — baseline integration](milestones/M83-baseline-integration.md): isolated
   candidate verification, explicit selection and preserved baseline risks.
 

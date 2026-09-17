@@ -45,10 +45,15 @@
 - One assistant commentary wrongly implied user narrowed task: corrected immediately;
   no such user steering occurred. Broad owner scope remains unchanged.
 
-## Next safe actions
-1. Finish battery accounting and cleanup; preserve actual totals and failure logs.
-2. Receive child reports, independently validate findings, complete audit/09 and map
-   links, commit reviewed audit/memory paths only (no inherited source integration).
-3. Reconcile AGENTS/roadmap approval wording to owner's autonomous authorization.
-4. Complete maintained docs restructure; then choose bounded port conformance slice
-   with RED/GREEN tests and independent review. No production-readiness claim yet.
+## Current phase / next safe actions
+- Audit committed as 13773b4 (no source changes). All reviews completed.
+- README, AGENTS, roadmap and architecture corrections prepared; retain layout.
+  These fix stale baseline/F02/F10 and supersede approval stops, not full doc rewrite.
+- Docs map includes pre-existing M84 references: stage only the new audit link, not
+  inherited milestone closure without review. Full historical-doc rewrite deferred.
+- Next bounded implementation: default followups one-at-a-time, with assembled
+  provider-request assertions and explicit All-mode preservation. Core lib/test
+  files initially clean. Test RED before production edit. Use isolated HEAD candidate
+  to avoid attributing broad inherited working-tree success to committed code.
+- Full gates, review, evidence/docs and cleanup required before code commit; no
+  production-readiness claim. No running builds or child agents at this checkpoint.
