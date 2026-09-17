@@ -1,0 +1,396 @@
+{
+  "head": "350c9ecabf5bbe28fb12f0ce86a01f9ed696e8bd",
+  "source_paths": [
+    {
+      "path": "Cargo.lock",
+      "git_blob": "7382248c8e177d2e2f282642b31ca60aca258144"
+    },
+    {
+      "path": "Cargo.toml",
+      "git_blob": "2f87758b6f6e3c1b807e65af7022bc5916844663"
+    },
+    {
+      "path": "crates/epsilon-cli/Cargo.toml",
+      "git_blob": "fe2f80fc515f9428a0179881eb8ce06e06e627a3"
+    },
+    {
+      "path": "crates/epsilon-cli/src/doctor.rs",
+      "git_blob": "c0a8e7d8983070b22c2f8523fa5a7f225d43f473"
+    },
+    {
+      "path": "crates/epsilon-cli/src/lib.rs",
+      "git_blob": "866d5d77e99fa77f93caa0167fcb0815bc5e66ec"
+    },
+    {
+      "path": "crates/epsilon-cli/src/runtime.rs",
+      "git_blob": "fde834a0c044b10302c09a5aba732f56a9cb9a4b"
+    },
+    {
+      "path": "crates/epsilon-cli/tests/doctor.rs",
+      "git_blob": "8158e95157e1960fb6ad2eeec51c153285bcb832"
+    },
+    {
+      "path": "crates/epsilon-contracts/src/agent_event.rs",
+      "git_blob": "46093f4bb8c733209df1753218be6598fb626b9d"
+    },
+    {
+      "path": "crates/epsilon-contracts/src/diagnostics.rs",
+      "git_blob": "851ab705b664ec66f632f580cac2932da692012d"
+    },
+    {
+      "path": "crates/epsilon-contracts/src/lib.rs",
+      "git_blob": "be50320b4a26adf39692ede85a86c70707560a22"
+    },
+    {
+      "path": "crates/epsilon-contracts/src/session_entry.rs",
+      "git_blob": "545fa1c1260ef2878188b36288c4ef284ed262aa"
+    },
+    {
+      "path": "crates/epsilon-core/src/agents.rs",
+      "git_blob": "ab2d7ba945af4db63d6540733f8bea1bc818361b"
+    },
+    {
+      "path": "crates/epsilon-core/src/cache_stats.rs",
+      "git_blob": "06428a77c020da5e8b6eadec7e11fa88a8beba98"
+    },
+    {
+      "path": "crates/epsilon-core/src/compact.rs",
+      "git_blob": "45f88b08a352b2f36a0850cf729ffe294feeb6fd"
+    },
+    {
+      "path": "crates/epsilon-core/src/guards.rs",
+      "git_blob": "bd1e78e7631d6283986c573056a56a2958f2c592"
+    },
+    {
+      "path": "crates/epsilon-core/src/paths.rs",
+      "git_blob": "c9661df67e31113aaebffeb478eb1d5b18f6b1a4"
+    },
+    {
+      "path": "crates/epsilon-core/src/prompt.rs",
+      "git_blob": "6db817335627f062a5a79821f56add6d4a39e004"
+    },
+    {
+      "path": "crates/epsilon-core/src/references.rs",
+      "git_blob": "3fb7eb8db84b648d1d6daf8bf5717c6e9ec3e710"
+    },
+    {
+      "path": "crates/epsilon-core/src/registry.rs",
+      "git_blob": "2ca69e58390a254659a6373a26a7b3b508c08573"
+    },
+    {
+      "path": "crates/epsilon-core/src/untrusted.rs",
+      "git_blob": "e8b4e9e1442fbd6f4f0ead3f61037b4242eadf5b"
+    },
+    {
+      "path": "crates/epsilon-core/src/verify.rs",
+      "git_blob": "64b38ebf0655e83462e4bbaf212e9db20ca89842"
+    },
+    {
+      "path": "crates/epsilon-core/tests/batch_planning.rs",
+      "git_blob": "b1323ea007b60375f3c8291945872afac6951a89"
+    },
+    {
+      "path": "crates/epsilon-core/tests/cache_attribution.rs",
+      "git_blob": "925c7756211e9377bc7bd206c02e597d3d915b46"
+    },
+    {
+      "path": "crates/epsilon-core/tests/compaction_scenarios.rs",
+      "git_blob": "31b558277d4a42ad454623a9c51dd5e04c4c83eb"
+    },
+    {
+      "path": "crates/epsilon-core/tests/context_shaping.rs",
+      "git_blob": "e1b03a508cddeed4449deafa638c884e813f9eda"
+    },
+    {
+      "path": "crates/epsilon-core/tests/guard_scenarios.rs",
+      "git_blob": "04e5f286e40ee722017238c882f8325d1badabf9"
+    },
+    {
+      "path": "crates/epsilon-core/tests/retry_path.rs",
+      "git_blob": "6e6ef8dbe96488c6e206098d6878afbd2bbc38da"
+    },
+    {
+      "path": "crates/epsilon-core/tests/sequence_repair.rs",
+      "git_blob": "d3319f3b4a2fadaaeaac637ae3da1ff6b02a59c0"
+    },
+    {
+      "path": "crates/epsilon-core/tests/subdirectory_hints.rs",
+      "git_blob": "f45de7ce08b7011912fb395f916fd87e3d90f7f0"
+    },
+    {
+      "path": "crates/epsilon-core/tests/task_scenarios.rs",
+      "git_blob": "cba13c6b046e0ed1152f7d295a43ae97f85d4c85"
+    },
+    {
+      "path": "crates/epsilon-core/tests/usage_anchor.rs",
+      "git_blob": "0e69a6db3c1e16e4ccf323b7a0b8052d87d1ee9f"
+    },
+    {
+      "path": "crates/epsilon-core/tests/verification_scenarios.rs",
+      "git_blob": "c4fa46fb37251153a81aecc20151de2ed5118f01"
+    },
+    {
+      "path": "crates/epsilon-ext/tests/host.rs",
+      "git_blob": "2a31241a221f2bb38a77d0e9ae679c78a31b25de"
+    },
+    {
+      "path": "crates/epsilon-llm/Cargo.toml",
+      "git_blob": "f64746ad319ff418c6bdbb2b40187a2b6c3b151a"
+    },
+    {
+      "path": "crates/epsilon-llm/src/auth.rs",
+      "git_blob": "fa908cada423d46f1c151330e052674a97f44ce7"
+    },
+    {
+      "path": "crates/epsilon-llm/src/catalog.rs",
+      "git_blob": "9868df1972820ef0b9c8020fc95877d2a7ad3411"
+    },
+    {
+      "path": "crates/epsilon-llm/src/catalog/catalog_data.rs",
+      "git_blob": "da8754f0304aac45399340d2ff932730076046ab"
+    },
+    {
+      "path": "crates/epsilon-llm/src/config_value.rs",
+      "git_blob": "cfc6f8e399dc4b94fca25725d5e7631a73f8ea1e"
+    },
+    {
+      "path": "crates/epsilon-llm/src/fallback.rs",
+      "git_blob": "22e9b9bfd1fdb4444e75b76b16fdea69ef1ca776"
+    },
+    {
+      "path": "crates/epsilon-llm/src/http.rs",
+      "git_blob": "78ca0977240cdc235211034e3d8a21cd2bc59cf1"
+    },
+    {
+      "path": "crates/epsilon-llm/src/lib.rs",
+      "git_blob": "1857382d234cee15731d01c70a6ddfeab1126879"
+    },
+    {
+      "path": "crates/epsilon-llm/src/oauth.rs",
+      "git_blob": "11efceb7e7dbdd8f40abafd9d4901154db1f92c0"
+    },
+    {
+      "path": "crates/epsilon-llm/src/oauth_login.rs",
+      "git_blob": "8c3df183f7dd1bc03ff428006091f73dcfa46ab6"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/anthropic.rs",
+      "git_blob": "3c5bd7d23c3ac98b9ee991283c319a2e2f489f9b"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/bedrock.rs",
+      "git_blob": "9c0f6681e62036d54c1c880411e82f2a27cf245b"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/github_copilot.rs",
+      "git_blob": "665e80b6d436cca826ee46c866ca27de43b0fa8b"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/google.rs",
+      "git_blob": "47214b85581549f56797fcf0de3da460f1ac62df"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/mistral.rs",
+      "git_blob": "e5efe581d3bcd68758d784458b1bcde70a08372f"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/mod.rs",
+      "git_blob": "579411270b389957c4165a89928c8e992540b8b6"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/openai_compat.rs",
+      "git_blob": "d00e69439b99b68cd52964a66e06585b450ee133"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/openai_responses.rs",
+      "git_blob": "48af6cb447d1ca770c008838baa43673697efce0"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/vertex.rs",
+      "git_blob": "f351894bad20dfdfb5c98fcdaf9d4d6b0c198b09"
+    },
+    {
+      "path": "crates/epsilon-llm/src/retry.rs",
+      "git_blob": "c963f5ec815a6b65c2a9f8f4fd4da333ddb57fbf"
+    },
+    {
+      "path": "crates/epsilon-llm/src/retry_stream.rs",
+      "git_blob": "3643cc2ee41ea73d74dd3b512ed224319dddc5b5"
+    },
+    {
+      "path": "crates/epsilon-llm/src/sanitize.rs",
+      "git_blob": "e1b6a6b07b54cf86395bdb01d717eb2baf47155e"
+    },
+    {
+      "path": "crates/epsilon-llm/tests/oauth_login.rs",
+      "git_blob": "544fc8dfe7e714ce12f6f3aedf18b11a580c3401"
+    },
+    {
+      "path": "crates/epsilon-llm/tests/wire_fixtures.rs",
+      "git_blob": "95f9ede77cd2bc14cc5a92b4579adda63448882e"
+    },
+    {
+      "path": "crates/epsilon-lsp/Cargo.toml",
+      "git_blob": "5ef663a5a62c51d1a5060fc15a37f6fdd12b1b73"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/bin/lsp_fixture_server.rs",
+      "git_blob": "042bb324a6a9fa91127b80dedf4b506f184a7a39"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/client.rs",
+      "git_blob": "1a732005eab9656720e53a71583a42011c6e046f"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/framing.rs",
+      "git_blob": "9eeefcf47be945056464edde6dc15ec74f8cd6a7"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/lib.rs",
+      "git_blob": "e020061b992a2b5eac92656315f6e720b950e592"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/report.rs",
+      "git_blob": "0eda6368b30565d12e44ccd7bf00b626ea3076ec"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/server.rs",
+      "git_blob": "9e77f9bd0123b315795560a96d191c24454f1228"
+    },
+    {
+      "path": "crates/epsilon-lsp/src/service.rs",
+      "git_blob": "b56f38ccd2ed12cddac4c58b08a856dbae1faf3b"
+    },
+    {
+      "path": "crates/epsilon-lsp/tests/end_to_end.rs",
+      "git_blob": "6dc3955d6fa7cc42bc77cef3312043150ca15a43"
+    },
+    {
+      "path": "crates/epsilon-mcp/src/lib.rs",
+      "git_blob": "3eff1d923e2996b72928208502f45a0030d87f25"
+    },
+    {
+      "path": "crates/epsilon-mcp/tests/stdio_connector.rs",
+      "git_blob": "a8d752eefd3df329dd74ba035047bada88b19d1a"
+    },
+    {
+      "path": "crates/epsilon-safety/src/env.rs",
+      "git_blob": "2e11135d2ed420e74cbfbef595e0a3fcfe7cc9aa"
+    },
+    {
+      "path": "crates/epsilon-safety/src/escalation.rs",
+      "git_blob": "74b55e5c63f5931e3e269fb0dbbfe19ce3aab1b2"
+    },
+    {
+      "path": "crates/epsilon-safety/src/lib.rs",
+      "git_blob": "83b078c3843d69aa2780bc8433da2869017fffcb"
+    },
+    {
+      "path": "crates/epsilon-safety/src/sandbox.rs",
+      "git_blob": "ef21bcf5659976d774428c182a51d036da0d8c28"
+    },
+    {
+      "path": "crates/epsilon-safety/src/sandbox/jobobject.rs",
+      "git_blob": "9b7446657f4342c49badca1886064ea02bbe2b83"
+    },
+    {
+      "path": "crates/epsilon-safety/tests/bwrap_unix.rs",
+      "git_blob": "ce945c435f2a3fd0d5760f087c8a39d96a07559d"
+    },
+    {
+      "path": "crates/epsilon-session/src/discover.rs",
+      "git_blob": "ef7f259bd385c689b0bbd3a30d221d71bc18daf2"
+    },
+    {
+      "path": "crates/epsilon-session/src/lease.rs",
+      "git_blob": "d22f187f12787df3b3f28a33c34a796164a3b565"
+    },
+    {
+      "path": "crates/epsilon-session/src/lib.rs",
+      "git_blob": "12121d1e3462be3cdd076f9b7127b1e5b4f2f16d"
+    },
+    {
+      "path": "crates/epsilon-session/src/repair.rs",
+      "git_blob": "e37469716d8bbacff6f0485b4fac33b896af4426"
+    },
+    {
+      "path": "crates/epsilon-session/src/store.rs",
+      "git_blob": "c899f9a6b0fa932935d79aca187f86d78c15fa01"
+    },
+    {
+      "path": "crates/epsilon-session/tests/session_store.rs",
+      "git_blob": "73f320aeed309db3c18512558236c0eabf6606e2"
+    },
+    {
+      "path": "crates/epsilon-tools/Cargo.toml",
+      "git_blob": "a2d79b0777aabf88cf746d6231e8db64e2f6265c"
+    },
+    {
+      "path": "crates/epsilon-tools/descriptions/find.txt",
+      "git_blob": "882f393fb3fe1da75f28d4c8cc0dfa5a91b28d7e"
+    },
+    {
+      "path": "crates/epsilon-tools/descriptions/grep.txt",
+      "git_blob": "9268ceff3abfad083b5a8ea372c249ac8cffa3ea"
+    },
+    {
+      "path": "crates/epsilon-tools/descriptions/task.txt",
+      "git_blob": "3461488da5025480f24951b2054e9437248ce2bb"
+    },
+    {
+      "path": "crates/epsilon-tools/descriptions/webfetch.txt",
+      "git_blob": "5e7f5d707c1b7f36eaebed1ce23d9bccf6338622"
+    },
+    {
+      "path": "crates/epsilon-tools/src/edit_match.rs",
+      "git_blob": "1463c1ff571b0978d8e086a33fdf9ee6cbed2340"
+    },
+    {
+      "path": "crates/epsilon-tools/src/find.rs",
+      "git_blob": "ee2349020faf0340a0a80bc8cd7fe0e26c19af4a"
+    },
+    {
+      "path": "crates/epsilon-tools/src/image.rs",
+      "git_blob": "b6b9e4164e2ceb299fe7e1d4d5912ddd61477c0b"
+    },
+    {
+      "path": "crates/epsilon-tools/src/lib.rs",
+      "git_blob": "72a56f75d0a2a1395c8eed1e09dbe9963f226417"
+    },
+    {
+      "path": "crates/epsilon-tools/src/mutation.rs",
+      "git_blob": "334a7f2cc3cff7b5dd2b6470e22031bb66f5b7b5"
+    },
+    {
+      "path": "crates/epsilon-tools/src/search.rs",
+      "git_blob": "a3f75ae7df0d20fc30423b497c8899098c0998aa"
+    },
+    {
+      "path": "crates/epsilon-tools/src/shell.rs",
+      "git_blob": "a892e38273fccc0a91b4bde8f9dc0b6458815067"
+    },
+    {
+      "path": "crates/epsilon-tools/src/task.rs",
+      "git_blob": "d1e460983c639da3fff7b42231e4f314820d4f37"
+    },
+    {
+      "path": "crates/epsilon-tools/src/todo.rs",
+      "git_blob": "da5ecde6862005ea759d87307e24441639cb8f86"
+    },
+    {
+      "path": "crates/epsilon-tools/src/webfetch.rs",
+      "git_blob": "952ef07802d00e43e0e3216829ffa177372c7c61"
+    },
+    {
+      "path": "crates/epsilon-tui/src/picker.rs",
+      "git_blob": "e8e30946be12c97b62d9e348b20c01b0c21d0952"
+    },
+    {
+      "path": "scripts/regen_catalog.py",
+      "git_blob": "f417915a4722664ca4c3692fd46985c944f6e369"
+    }
+  ],
+  "count": 97,
+  "all_match_candidate_after_line_ending_normalization": true,
+  "owner_bytes_unchanged": true
+}

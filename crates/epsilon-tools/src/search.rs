@@ -38,7 +38,7 @@ fn is_secret_class_file(rel: &Path) -> bool {
 /// Arguments for grep.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GrepArgs {
-    /// Rust-regex pattern.
+    /// Regex pattern — or a literal string when `literal` is set (pi parity).
     pub pattern: String,
     /// Directory or file to search (default: workspace root).
     #[serde(default)]
@@ -46,11 +46,30 @@ pub struct GrepArgs {
     /// Case-insensitive match.
     #[serde(default)]
     pub ignore_case: bool,
+    /// Treat the pattern as a literal string instead of a regex
+    /// (pi `literal` → ripgrep `--fixed-strings`).
+    #[serde(default)]
+    pub literal: bool,
+    /// Restrict searched files to a glob such as `*.rs` or `**/*.spec.ts`
+    /// (pi `glob` → ripgrep `--glob`). Bare names match at any depth.
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// Lines of context before/after each match, `path-line- text` for
+    /// context rows (pi `context`: `path:line:` for matches,
+    /// `path-line- ` for context).
+    #[serde(default)]
+    pub context: Option<usize>,
+    /// Maximum matches returned (default 100, pi `DEFAULT_LIMIT`).
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 pub const GREP_DESC: &str = include_str!("../descriptions/grep.txt");
 
-const MAX_MATCH_LINES: usize = 200;
+/// Default match cap (pi `DEFAULT_LIMIT`).
+pub const GREP_DEFAULT_LIMIT: usize = 100;
+/// Max chars per rendered match line (pi `GREP_MAX_LINE_LENGTH`).
+pub const GREP_MAX_LINE_LENGTH: usize = 500;
 
 /// Regex line search over the workspace walker (git/target/node_modules skipped).
 pub struct GrepTool {
@@ -80,9 +99,18 @@ impl Default for GrepTool {
 }
 
 #[async_trait]
+
 impl Tool for GrepTool {
     fn descriptor(&self) -> &ToolDescriptor {
         &self.descriptor
+    }
+
+    fn resource_key(
+        &self,
+        arguments: &serde_json::Value,
+        base: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        search_key(arguments, base)
     }
 
     async fn execute(
@@ -104,18 +132,54 @@ impl Tool for GrepTool {
             None => ctx.cwd.clone(),
         };
 
-        let re = RegexBuilder::new(&args.pattern)
-            .case_insensitive(args.ignore_case)
-            .build()
-            .map_err(|e| ToolFailure::msg(format!("bad regex: {e}")))?;
+        let re = if args.literal {
+            // pi `--fixed-strings`: the pattern is data, never syntax.
+            RegexBuilder::new(&regex::escape(&args.pattern))
+                .case_insensitive(args.ignore_case)
+                .build()
+        } else {
+            RegexBuilder::new(&args.pattern)
+                .case_insensitive(args.ignore_case)
+                .build()
+        }
+        .map_err(|e| ToolFailure::msg(format!("bad regex: {e}")))?;
 
-        let mut hits: Vec<String> = Vec::new();
+        // pi `glob` filter: reuse the glob tool's dialect (bare names match at
+        // any depth), compiled once per call.
+        let glob_re = match &args.glob {
+            Some(g) => {
+                let effective = if g.contains('/') || g.contains('\\') {
+                    g.clone()
+                } else {
+                    format!("**/{g}")
+                };
+                Some(
+                    RegexBuilder::new(&glob_to_regex(&effective))
+                        .build()
+                        .map_err(|e| ToolFailure::msg(format!("bad glob: {e}")))?,
+                )
+            }
+            None => None,
+        };
+
+        let max_matches = args.limit.unwrap_or(GREP_DEFAULT_LIMIT).max(1);
+        let context = args.context.unwrap_or(0);
+
+        // One entry per match or context row, in file order.
+        let mut rows: Vec<(String, usize, bool, String)> = Vec::new();
         let mut files_scanned = 0usize;
-        let mut truncated = false;
+        let mut limit_reached = false;
+        let mut lines_truncated = false;
         let mut skipped_secrets: Vec<String> = Vec::new();
         'outer: for rel in util::walk_files(&root) {
             let abs = root.join(&rel);
             if abs.is_dir() {
+                continue;
+            }
+            let rel_norm = rel.to_string_lossy().replace('\\', "/");
+            if let Some(g) = &glob_re
+                && !g.is_match(&rel_norm)
+            {
                 continue;
             }
             // Plan 004 (SECURITY-03): never print lines from secret-class files.
@@ -123,43 +187,118 @@ impl Tool for GrepTool {
             // same secrets line-by-line into the transcript ungated. `.env.example`
             // is public by design and stays searchable.
             if is_secret_class_file(&rel) {
-                skipped_secrets.push(rel.to_string_lossy().replace('\\', "/"));
+                skipped_secrets.push(rel_norm);
                 continue;
             }
             let Ok(text) = util::read_text_capped(&abs) else {
                 continue;
             };
             files_scanned += 1;
-            let rel_norm = rel.to_string_lossy().replace('\\', "/");
-            for (i, line) in text.lines().enumerate() {
+            // CRLF-normalized once per file so `context` windows and line text
+            // match pi's re-read path (`\r\n`/`\r` → `\n`).
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
                 if re.is_match(line) {
-                    hits.push(format!("{rel_norm}:{}: {}", i + 1, line.trim_end()));
-                    if hits.len() >= MAX_MATCH_LINES {
-                        truncated = true;
+                    let line_no = i + 1;
+                    let match_text = truncate_grep_line(line);
+                    if match_text.1 {
+                        lines_truncated = true;
+                    }
+                    rows.push((rel_norm.clone(), line_no, true, match_text.0));
+                    if rows.iter().filter(|r| r.2).count() >= max_matches {
+                        limit_reached = true;
                         break 'outer;
+                    }
+                    // Context rows join the same stream (excluded from the cap).
+                    if context > 0 {
+                        let lo = line_no.saturating_sub(context).max(1);
+                        let hi = (line_no + context).min(lines.len());
+                        // Before-rows (ascending), skipping the match itself.
+                        for c in lo..line_no {
+                            let (t, trunc) = truncate_grep_line(lines[c - 1]);
+                            lines_truncated |= trunc;
+                            rows.push((rel_norm.clone(), c, false, t));
+                        }
+                        for c in line_no + 1..=hi {
+                            let (t, trunc) = truncate_grep_line(lines[c - 1]);
+                            lines_truncated |= trunc;
+                            rows.push((rel_norm.clone(), c, false, t));
+                        }
                     }
                 }
             }
         }
 
         if !skipped_secrets.is_empty() {
-            hits.push(format!(
-                "[grep] skipped {} secret-class file(s): {}",
-                skipped_secrets.len(),
-                skipped_secrets.join(", ")
+            rows.push((
+                String::new(),
+                0,
+                false,
+                format!(
+                    "[grep] skipped {} secret-class file(s): {}",
+                    skipped_secrets.len(),
+                    skipped_secrets.join(", ")
+                ),
             ));
         }
 
-        if hits.is_empty() {
+        if rows.iter().all(|r| r.0.is_empty()) {
             return Ok(ToolOutput::text("no matches"));
         }
-        let mut out = hits.join("\n");
-        if truncated {
-            out.push_str(&format!("\n[stopped at {MAX_MATCH_LINES} matches]"));
+        let mut out_lines: Vec<String> = Vec::with_capacity(rows.len() + 2);
+        for (rel, no, is_match, text) in &rows {
+            if rel.is_empty() {
+                out_lines.push(text.clone());
+            } else if *is_match {
+                out_lines.push(format!("{rel}:{no}: {text}"));
+            } else {
+                out_lines.push(format!("{rel}-{no}- {text}"));
+            }
         }
-        out.push_str(&format!("\n[{files_scanned} files scanned]"));
-        Ok(ToolOutput::text(out))
+        let mut notices: Vec<String> = Vec::new();
+        if limit_reached {
+            notices.push(format!(
+                "{max_matches} matches limit reached. Use limit={} for more, or refine pattern",
+                max_matches * 2
+            ));
+        }
+        if lines_truncated {
+            notices.push(format!(
+                "Some lines truncated to {GREP_MAX_LINE_LENGTH} chars. Use read tool to see full lines"
+            ));
+        }
+        if !notices.is_empty() {
+            out_lines.push(String::new());
+            out_lines.push(format!("[{}]", notices.join(". ")));
+        }
+        out_lines.push(format!("[{files_scanned} files scanned]"));
+        let mut details = serde_json::json!({
+            "truncated": limit_reached,
+            "lines_truncated": lines_truncated,
+        });
+        if limit_reached {
+            details["match_limit_reached"] = serde_json::json!(max_matches);
+        }
+        Ok(ToolOutput {
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                out_lines.join("\n"),
+            )],
+            details,
+            usage: None,
+            terminate: false,
+        })
     }
+}
+
+/// Truncate one rendered grep line (pi `truncateLine`: 500 chars + suffix).
+pub fn truncate_grep_line(line: &str) -> (String, bool) {
+    // Grapheme-safe cut: char (not byte) boundary, so multi-byte text never splits.
+    let len = line.chars().count();
+    if len <= GREP_MAX_LINE_LENGTH {
+        return (line.to_string(), false);
+    }
+    let head: String = line.chars().take(GREP_MAX_LINE_LENGTH).collect();
+    (format!("{head}... [truncated]"), true)
 }
 
 // ---- glob -----------------------------------------------------------------------
@@ -206,7 +345,7 @@ impl Default for GlobTool {
 
 /// Translate our glob dialect to a regex string.
 /// `**/` allows zero or more directories; `**` spans separators; `*`/`?` do not.
-fn glob_to_regex(glob: &str) -> String {
+pub(crate) fn glob_to_regex(glob: &str) -> String {
     let mut re = String::from("^");
     let chars: Vec<char> = glob.chars().collect();
     let mut i = 0;
@@ -243,10 +382,28 @@ fn glob_to_regex(glob: &str) -> String {
     re
 }
 
+/// Planner key for the search tools (M72): the directory being searched, defaulting to the
+/// workspace root. A directory key conflicts with anything *inside* it — the planner compares
+/// keys by prefix, so a `grep` over `src/` will not run beside a `write` to `src/lib.rs`.
+fn search_key(arguments: &serde_json::Value, base: &std::path::Path) -> Option<std::path::PathBuf> {
+    match arguments.get("path").and_then(|v| v.as_str()) {
+        Some(raw) => Some(util::resolve_in_workspace(base, raw).0),
+        None => Some(base.to_path_buf()),
+    }
+}
+
 #[async_trait]
 impl Tool for GlobTool {
     fn descriptor(&self) -> &ToolDescriptor {
         &self.descriptor
+    }
+
+    fn resource_key(
+        &self,
+        arguments: &serde_json::Value,
+        base: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        search_key(arguments, base)
     }
 
     async fn execute(
@@ -340,6 +497,14 @@ impl Default for LsTool {
 impl Tool for LsTool {
     fn descriptor(&self) -> &ToolDescriptor {
         &self.descriptor
+    }
+
+    fn resource_key(
+        &self,
+        arguments: &serde_json::Value,
+        base: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        search_key(arguments, base)
     }
 
     async fn execute(

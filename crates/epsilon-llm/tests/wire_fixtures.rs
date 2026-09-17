@@ -37,8 +37,26 @@ fn custom_provider_id_routes_to_declared_endpoint() {
 
 fn ev(data: &str) -> SseEvent {
     SseEvent {
+        name: None,
         data: data.to_string(),
     }
+}
+
+/// The assembled message a completed stream hands over — the Done event carries it.
+fn done_message(
+    events: &[StreamEvent],
+    st: &HttpEventStream,
+) -> epsilon_contracts::message::AssistantMessage {
+    for e in events {
+        if let StreamEvent::Done { message } = e {
+            return message.clone();
+        }
+    }
+    panic!(
+        "no Done event for {:?}; the accumulator still holds a tool in flight: {}",
+        events,
+        st.has_open_or_closed_tools()
+    );
 }
 
 fn final_stop(events: &[StreamEvent]) -> StopReason {
@@ -268,4 +286,220 @@ fn google_thinking_config_with_level() {
         .request_body("gemini-3.7-flash", &thinking_ctx(ThinkingLevel::Off))
         .unwrap();
     assert!(off.get("generationConfig").is_none());
+}
+
+/// M60: the stall watchdog's salvage rules — what a silent stream leaves behind.
+/// Drives the accumulator exactly as `WireStream` does when its idle timer trips.
+#[test]
+fn stall_after_text_keeps_the_prose_and_flags_the_turn_failed() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    let payload = r#"{"choices":[{"delta":{"content":"half an answ"}}]}"#;
+    assert!(w.on_event(&ev(payload), &mut st).is_some());
+
+    let message = st.stall_message(120);
+    assert_eq!(message.text(), "half an answ", "the model's work is kept");
+    assert_eq!(message.stop_reason, StopReason::Error);
+    let detail = message.error_message.expect("stall explains itself");
+    assert!(
+        detail.contains("timed out") && detail.contains("120s"),
+        "{detail}"
+    );
+    // ...and the retry policy can act on it (the bug the first test round caught:
+    // "timed out" must classify as a network failure, not as `Other`).
+    assert_eq!(
+        epsilon_llm::classify(&detail),
+        epsilon_llm::FailureKind::Network
+    );
+}
+
+#[test]
+fn stall_with_a_tool_call_in_flight_never_returns_the_call() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    // Open a tool call and leave its arguments unfinished — the classic stall shape.
+    let payload = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"bash","arguments":"{\"command\":"}}]}}]}"#;
+    // `on_event` only returns the events *newly* produced for a batch — the wire
+    // emits Start lazily, so the contract here is the accumulator state, not the
+    // return value (same convention as the fixtures above).
+    let _ = w.on_event(&ev(payload), &mut st);
+    assert!(
+        st.has_open_or_closed_tools(),
+        "precondition: a tool call is in flight"
+    );
+
+    let message = st.stall_message(120);
+    assert_eq!(message.stop_reason, StopReason::Error);
+    assert!(
+        message.tool_calls().count() == 0,
+        "half-written arguments must never become an executed call"
+    );
+}
+
+// ---- M70: provider-facing sanitation at the wire boundary ---------------------------------
+
+/// Three calls in one message, all with the same id. Providers reject duplicates, and the result
+/// pairing becomes ambiguous — the second and third are renamed deterministically.
+#[test]
+fn duplicate_tool_call_ids_in_one_message_are_uniquified() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    let payload = r#"{"choices":[{"index":0,"delta":{"tool_calls":[
+        {"index":0,"id":"call_same","function":{"name":"bash","arguments":"{}"}},
+        {"index":1,"id":"call_same","function":{"name":"read","arguments":"{}"}},
+        {"index":2,"id":"call_same","function":{"name":"ls","arguments":"{}"}}
+    ]}}]}"#;
+    let _ = w.on_event(&ev(payload), &mut st);
+    let fin = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#;
+    let _ = w.on_event(&ev(fin), &mut st);
+    let events = w.on_event(&ev("[DONE]"), &mut st).unwrap();
+    let message = done_message(&events, &st);
+
+    let ids: Vec<String> = message
+        .tool_calls()
+        .map(|(id, _, _)| id.to_string())
+        .collect();
+    let unique: std::collections::HashSet<&String> = ids.iter().collect();
+    assert_eq!(ids.len(), 3, "all three calls survive: {ids:?}");
+    assert_eq!(unique.len(), 3, "and they are distinguishable: {ids:?}");
+    assert_eq!(ids[0], "call_same", "the first keeps its id");
+    assert_eq!(ids[1], "call_same#2", "the second is suffixed");
+    assert_eq!(ids[2], "call_same#3");
+}
+
+/// A model that emits a trailing comma: the arguments used to become `{}`, so the tool ran with
+/// nothing. They are now recovered, with the meaning the model wrote.
+#[test]
+fn malformed_arguments_are_repaired_rather_than_emptied() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    let payload = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read","arguments":"{\"path\": \"src/lib.rs\",}"}}]}}]}"#;
+    let _ = w.on_event(&ev(payload), &mut st);
+    let fin = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#;
+    let _ = w.on_event(&ev(fin), &mut st);
+    let events = w.on_event(&ev("[DONE]"), &mut st).unwrap();
+    let message = done_message(&events, &st);
+
+    let args: Vec<serde_json::Value> = message.tool_calls().map(|(_, _, a)| a.clone()).collect();
+    assert_eq!(args.len(), 1);
+    assert_eq!(
+        args[0]["path"], "src/lib.rs",
+        "the path the model wrote survives: {args:?}"
+    );
+}
+
+/// Arguments that cannot be read at all are handed on as written, so the tool's failure can quote
+/// them. Before M70 this became `{}` and the model was told it forgot a field.
+#[test]
+fn unreadable_arguments_are_preserved_for_the_failure_to_quote() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    let payload = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"bash","arguments":"{unquoted: keys}"}}]}}]}"#;
+    let _ = w.on_event(&ev(payload), &mut st);
+    let fin = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#;
+    let _ = w.on_event(&ev(fin), &mut st);
+    let events = w.on_event(&ev("[DONE]"), &mut st).unwrap();
+    let message = done_message(&events, &st);
+
+    let args: Vec<serde_json::Value> = message.tool_calls().map(|(_, _, a)| a.clone()).collect();
+    assert_eq!(
+        args[0].as_str(),
+        Some("{unquoted: keys}"),
+        "the payload is kept verbatim for the error message: {args:?}"
+    );
+}
+
+#[test]
+fn stall_with_no_output_is_a_plain_network_failure() {
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    let message = st.stall_message(90);
+    assert_eq!(message.stop_reason, StopReason::Error);
+    assert!(message.text().is_empty());
+    assert!(
+        message
+            .error_message
+            .as_deref()
+            .is_some_and(|m| m.contains("90s"))
+    );
+}
+
+/// M62: what the user already watched arrive survives the failure.
+#[test]
+fn an_error_frame_after_deltas_keeps_the_deltas() {
+    let w = OpenAiCompatWire {
+        base_url: "https://api.openai.com/v1".to_string(),
+        env_key: None,
+    };
+    let mut st = HttpEventStream::new("gpt-x", "openai", false);
+    let _ = w.on_event(
+        &ev(r#"{"choices":[{"index":0,"delta":{"content":"the answer so f"}}]}"#),
+        &mut st,
+    );
+    let batch = w
+        .on_event(&ev(r#"{"error":{"message":"upstream exploded"}}"#), &mut st)
+        .expect("the error frame terminates the stream");
+    let StreamEvent::Done { message } = batch.last().expect("a terminal event") else {
+        panic!("expected Done, got {batch:?}");
+    };
+    assert_eq!(
+        message.text(),
+        "the answer so f",
+        "visible output is never discarded by a later failure"
+    );
+    assert_eq!(message.stop_reason, StopReason::Error);
+    assert!(
+        message
+            .error_message
+            .as_deref()
+            .is_some_and(|m| m.contains("upstream exploded")),
+        "the failure still explains itself: {message:?}"
+    );
+}
+
+/// The same rule for the anthropic wire (its error frame is a typed event).
+#[test]
+fn an_anthropic_error_event_after_thinking_keeps_the_thinking() {
+    let w = AnthropicWire;
+    let mut st = HttpEventStream::new("claude-x", "anthropic", false);
+    let _ = w.on_event(
+        &ev(r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"weighing options"}}"#),
+        &mut st,
+    );
+    let batch = w
+        .on_event(
+            &ev(r#"{"type":"error","error":{"message":"overloaded"}}"#),
+            &mut st,
+        )
+        .expect("terminates");
+    let StreamEvent::Done { message } = batch.last().expect("terminal") else {
+        panic!("expected Done, got {batch:?}");
+    };
+    let thinking: String = message
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            epsilon_contracts::content::ContentBlock::Thinking { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        thinking.contains("weighing options"),
+        "salvaged thinking: {message:?}"
+    );
+    assert_eq!(message.stop_reason, StopReason::Error);
 }

@@ -1,0 +1,1 @@
+Find files by glob pattern. Returns matching file paths relative to search dir. Respects .gitignore. Output truncated to 1000 results or 64KB (whichever first).

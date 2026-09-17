@@ -37,9 +37,11 @@ async fn stdio_connector_discovers_and_calls_fixture_tools() {
     let sink: epsilon_contracts::tool::ToolUpdateSink = Arc::new(|_| {});
     let ctx = epsilon_contracts::tool::ToolContext {
         session_id: "stdio-test".into(),
+        observation_scope: std::sync::Arc::new(()),
         cwd: std::env::temp_dir(),
         spill_dir: std::env::temp_dir().join("eps-mcp-stdio"),
         token: Default::default(),
+        task_host: None,
     };
     let out = tool
         .execute(

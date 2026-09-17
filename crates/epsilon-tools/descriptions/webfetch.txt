@@ -1,0 +1,1 @@
+Fetch content from an HTTP or HTTPS URL and return it as text. Large results are previewed while the complete output is retained in managed storage (the locator is in details).

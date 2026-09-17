@@ -20,7 +20,7 @@ mod catalog_data;
 /// Which wire format + endpoint family a model speaks (catalog-driven routing,
 /// pi's `model.api` field). Catalog data by design: present in every build, but only
 /// `real` builds ever construct a transport from it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireApi {
     /// Anthropic Messages (`/v1/messages`, x-api-key).
     AnthropicMessages,
@@ -33,16 +33,85 @@ pub enum WireApi {
     },
     /// Google Generative Language (`:streamGenerateContent?alt=sse`).
     GoogleGenerativeAi,
+    /// OpenAI Responses (`/responses`, SSE `response.*` events). pi routes
+    /// this for the `openai`, `openai-codex`, and `azure-openai-responses`
+    /// providers; it is a free choice per catalog row here.
+    OpenAiResponses {
+        /// Provider base URL without trailing slash.
+        base_url: &'static str,
+        /// Auth env var name.
+        env_key: Option<&'static str>,
+    },
+    /// Mistral Conversations (`/v1/chat/completions`, Bearer auth,
+    /// OpenAI-shaped deltas plus Mistral's snake_case payload, 9-char tool
+    /// ids, family-routed reasoning, and cached-token usage keys).
+    MistralConversations {
+        /// Provider base URL without trailing slash.
+        base_url: &'static str,
+        /// Auth env var name.
+        env_key: Option<&'static str>,
+    },
+    /// GitHub Copilot subscription (`api.individual.githubcopilot.com`, or the
+    /// host the credential was minted for — the wire resolves `proxy-ep` from
+    /// the key). One host re-serves both dialects, so `anthropic` picks the
+    /// inner wire for the row: Claude rows speak Anthropic Messages, every
+    /// other family the OpenAI-compatible surface (pi `githubCopilotProvider`).
+    GitHubCopilot {
+        /// Default API base URL (the individual-host fallback).
+        base_url: &'static str,
+        /// Auth env var (`COPILOT_GITHUB_TOKEN`); a stored OAuth pair wins.
+        env_key: Option<&'static str>,
+        /// Whether this row's family rides Anthropic Messages.
+        anthropic: bool,
+    },
+    /// Google Vertex AI (`{location}-aiplatform.googleapis.com`,
+    /// `generateContent` body identical to [`WireApi::GoogleGenerativeAi`],
+    /// `Authorization: Bearer` from an API key or minted ADC token).
+    GoogleVertex,
+    /// Amazon Bedrock Converse Stream (`bedrock-runtime.{region}.…`,
+    /// Converse JSON over SigV4 or bearer auth, framed JSON events).
+    /// Region is the row's `env_key`-adjacent routing hint: the catalog
+    /// shorthand pins us-east-1 and the transport re-resolves per call
+    /// (ARN > env > model-id default — pi's precedence), so rows stay valid
+    /// when the caller overrides region by env/ARN.
+    BedrockConverse,
 }
 
 const ANTHROPIC_WIRE: WireApi = WireApi::AnthropicMessages;
 const GOOGLE_WIRE: WireApi = WireApi::GoogleGenerativeAi;
+const GOOGLE_VERTEX_WIRE: WireApi = WireApi::GoogleVertex;
+const BEDROCK_WIRE: WireApi = WireApi::BedrockConverse;
 const OLLAMA_WIRE: WireApi = openai_compat("http://localhost:11434/v1", None);
 const FAUX_WIRE: WireApi = OLLAMA_WIRE;
 
 /// OpenAI-compatible shorthand (pi's "same API, different endpoint/key" providers).
 const fn openai_compat(base_url: &'static str, env_key: Option<&'static str>) -> WireApi {
     WireApi::OpenAiCompletions { base_url, env_key }
+}
+
+/// OpenAI Responses shorthand (pi's `openai` / `openai-codex` providers).
+const fn openai_responses(base_url: &'static str, env_key: Option<&'static str>) -> WireApi {
+    WireApi::OpenAiResponses { base_url, env_key }
+}
+
+/// GitHub Copilot shorthand (pi's `github-copilot` provider). `anthropic`
+/// selects the family's inner wire — the generator emits it per model id.
+const fn github_copilot(
+    base_url: &'static str,
+    env_key: Option<&'static str>,
+    anthropic: bool,
+) -> WireApi {
+    WireApi::GitHubCopilot {
+        base_url,
+        env_key,
+        anthropic,
+    }
+}
+
+/// Mistral Conversations shorthand (pi's `mistral` provider,
+/// `https://api.mistral.ai` + `MISTRAL_API_KEY`).
+const fn mistral_conversations(base_url: &'static str, env_key: Option<&'static str>) -> WireApi {
+    WireApi::MistralConversations { base_url, env_key }
 }
 
 /// Static description of one model.
@@ -84,6 +153,152 @@ pub fn curated() -> &'static [ModelInfo] {
 /// Look up a model by exact catalog id.
 pub fn lookup_model(id: &str) -> Option<&'static ModelInfo> {
     MODELS.iter().find(|m| m.id == id)
+}
+
+/// How `resolve_model` found its answer (for diagnostics and picker display).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelMatchKind {
+    /// Exact catalog id (`claude-opus-4-6`).
+    Exact,
+    /// Canonical `provider/id` reference (`anthropic/claude-opus-4-6`;
+    /// case-insensitive, unambiguous — pi's canonical match).
+    ProviderQualified,
+    /// Case-insensitive exact id (pi matches ids case-insensitively).
+    CaseInsensitive,
+    /// Substring fallback: alias preferred over dated suffixed rows, then
+    /// highest-sorting id (pi's alias-over-dated rule).
+    Partial,
+}
+
+/// A resolved model reference: the catalog row plus how it matched.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedModel {
+    /// The catalog row to run.
+    pub info: &'static ModelInfo,
+    /// How the input matched.
+    pub kind: ModelMatchKind,
+}
+
+/// Resolve a user-supplied model reference to a catalog row
+/// (pi `model-resolver.ts`: exact → canonical `provider/id` → partial).
+///
+/// Matching rules, in order:
+/// 1. exact catalog id;
+/// 2. canonical `provider/id` (case-insensitive; ambiguous ⇒ `None`);
+/// 3. bare id case-insensitively (ambiguous across providers ⇒ `None`,
+///    mirroring pi's rejection of ambiguous bare matches);
+/// 4. case-insensitive substring over id + label, preferring alias rows
+///    (no `-YYYYMMDD` date suffix) over dated versions, then the
+///    highest-sorting id (pi's alias-over-dated rule).
+///
+/// `None` = no match OR an ambiguous match. Callers that need the reason
+/// (picker "did you mean?" vs CLI "unknown model") distinguish via
+/// [`resolve_model_candidates`]: empty = no match, multiple = ambiguous.
+pub fn resolve_model(reference: &str) -> Option<ResolvedModel> {
+    let trimmed = reference.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(info) = MODELS.iter().find(|m| m.id == trimmed) {
+        return Some(ResolvedModel {
+            info,
+            kind: ModelMatchKind::Exact,
+        });
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    // Canonical `provider/id` (+ bare-id fallback) must be UNAMBIGUOUS:
+    // collect every row matching either form and accept only a single hit.
+    let mut qualified: Vec<&'static ModelInfo> = Vec::new();
+    let mut bare: Vec<&'static ModelInfo> = Vec::new();
+    for m in MODELS {
+        if format!("{}/{}", m.provider, m.id).to_ascii_lowercase() == lowered {
+            qualified.push(m);
+        } else if m.id.to_ascii_lowercase() == lowered {
+            bare.push(m);
+        }
+    }
+    if qualified.len() == 1 {
+        return Some(ResolvedModel {
+            info: qualified[0],
+            kind: ModelMatchKind::ProviderQualified,
+        });
+    }
+    if qualified.is_empty() && bare.len() == 1 {
+        return Some(ResolvedModel {
+            info: bare[0],
+            kind: ModelMatchKind::CaseInsensitive,
+        });
+    }
+    if !qualified.is_empty() || !bare.is_empty() {
+        return None; // ambiguous — pi rejects these too
+    }
+    // Substring fallback over id + label.
+    let mut matches: Vec<&'static ModelInfo> = MODELS
+        .iter()
+        .filter(|m| {
+            m.id.to_ascii_lowercase().contains(&lowered)
+                || m.label.to_ascii_lowercase().contains(&lowered)
+        })
+        .collect();
+    if matches.is_empty() {
+        return None;
+    }
+    matches.sort_by(|a, b| {
+        alias_rank(b.id)
+            .cmp(&alias_rank(a.id))
+            .then_with(|| b.id.cmp(a.id))
+    });
+    Some(ResolvedModel {
+        info: matches[0],
+        kind: ModelMatchKind::Partial,
+    })
+}
+
+/// All rows matching `reference` under [`resolve_model`]'s rules (exact,
+/// canonical, bare, substring) — empty means "no match", several means
+/// "ambiguous". Picker diagnostics and CLI errors share this one source.
+pub fn resolve_model_candidates(reference: &str) -> Vec<&'static ModelInfo> {
+    let trimmed = reference.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if let Some(exact) = MODELS.iter().find(|m| m.id == trimmed) {
+        return vec![exact];
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    let out: Vec<&'static ModelInfo> = MODELS
+        .iter()
+        .filter(|m| {
+            format!("{}/{}", m.provider, m.id).to_ascii_lowercase() == lowered
+                || m.id.to_ascii_lowercase() == lowered
+        })
+        .collect();
+    if !out.is_empty() {
+        return out;
+    }
+    MODELS
+        .iter()
+        .filter(|m| {
+            m.id.to_ascii_lowercase().contains(&lowered)
+                || m.label.to_ascii_lowercase().contains(&lowered)
+        })
+        .collect()
+}
+
+/// Alias rows (no trailing `-YYYYMMDD` date suffix, pi's `isAlias`) sort
+/// above dated versions; `-latest` suffixed rows count as aliases too.
+fn alias_rank(id: &str) -> u8 {
+    if id.ends_with("-latest") || !has_date_suffix(id) {
+        1
+    } else {
+        0
+    }
+}
+
+fn has_date_suffix(id: &str) -> bool {
+    id.len() > 9
+        && id.as_bytes()[id.len() - 9] == b'-'
+        && id[id.len() - 8..].bytes().all(|b| b.is_ascii_digit())
 }
 
 // ---- custom OpenAI-compatible providers (M28; opencode `provider.options.baseURL`,
@@ -155,8 +370,122 @@ pub fn display_label(id: &str) -> &str {
 /// fallback — opencode's model).
 pub fn credentials_ready(model_id: &str) -> bool {
     match lookup_model(model_id) {
-        Some(info) => info.env_key.is_empty() || resolve_api_key(info.provider).is_some(),
+        Some(info) => row_credentials_ready(info),
         None => false,
+    }
+}
+
+/// [`credentials_ready`] for a row we already hold (no second lookup).
+///
+/// A row with an empty `env_key` is local (faux, ollama) and needs no credential.
+pub fn row_credentials_ready(info: &ModelInfo) -> bool {
+    info.env_key.is_empty() || resolve_api_key(info.provider).is_some()
+}
+
+/// Provider names that have a usable credential right now (stored or env),
+/// in catalog order, deduplicated.
+///
+/// Used for diagnostics — "you have keys for: deepseek, anthropic" is the line
+/// that turns "provider: faux" from a mystery into an instruction. Names only;
+/// never a key.
+///
+/// Resolves per *provider*, not per row: the credential store is a file read, and
+/// the catalog has hundreds of rows across a dozen providers.
+pub fn credentialed_providers() -> Vec<String> {
+    let mut seen: Vec<&'static str> = Vec::new();
+    for m in MODELS {
+        if m.env_key.is_empty() || seen.contains(&m.provider) {
+            continue;
+        }
+        seen.push(m.provider);
+    }
+    seen.into_iter()
+        .filter(|p| resolve_api_key(p).is_some())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A model the user can actually run right now: the first tool-calling row of the
+/// first provider that has credentials, in catalog order. `None` when no provider
+/// has a credential.
+///
+/// This exists to make the "no credentials for provider X" message actionable:
+/// naming the missing provider is only half an answer, and the user has no way to
+/// know which of their keys maps to a usable row.
+pub fn suggested_ready_model() -> Option<&'static ModelInfo> {
+    for provider in credentialed_providers() {
+        if let Some(row) = MODELS
+            .iter()
+            .find(|m| m.provider == provider && m.supports_tools)
+        {
+            return Some(row);
+        }
+    }
+    None
+}
+
+/// A credential-aware resolution result.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedModelForRun {
+    /// The row to run.
+    pub info: &'static ModelInfo,
+    /// How the user's input matched.
+    pub kind: ModelMatchKind,
+    /// The row a plain [`resolve_model`] would have picked, when this one
+    /// replaced it because only this one has credentials.
+    pub replaced: Option<&'static ModelInfo>,
+}
+
+/// Like [`resolve_model`], but when the input is a loose *reference* rather than an
+/// exact catalog id and the row it lands on cannot be called for lack of
+/// credentials, prefer a sibling row for the same reference that can be.
+///
+/// The failure this exists for: `--model deepseek-chat` resolves (by substring)
+/// to openrouter's `deepseek/deepseek-chat` row. A user with a stored `deepseek`
+/// key then got "provider: faux (offline scripted)" and a banner naming no
+/// provider — the model they asked for was a shell of its name, not a missing
+/// key. Picking the row whose provider the user actually holds is what they
+/// meant by typing it.
+///
+/// Exact ids are never overridden (typing `deepseek/deepseek-chat` is explicit),
+/// and an unresolvable reference still returns the original row so callers keep
+/// today's error path.
+pub fn resolve_model_for_run(reference: &str) -> Option<ResolvedModelForRun> {
+    resolve_model_for_run_with(reference, &|info| row_credentials_ready(info))
+}
+
+/// [`resolve_model_for_run`] with the readiness test injected, so the selection
+/// rule is testable without touching a real credential store or the process
+/// environment.
+pub fn resolve_model_for_run_with(
+    reference: &str,
+    ready: &dyn Fn(&ModelInfo) -> bool,
+) -> Option<ResolvedModelForRun> {
+    let base = resolve_model(reference)?;
+    if matches!(base.kind, ModelMatchKind::Exact) || ready(base.info) {
+        return Some(ResolvedModelForRun {
+            info: base.info,
+            kind: base.kind,
+            replaced: None,
+        });
+    }
+    let alternative = resolve_model_candidates(reference)
+        .into_iter()
+        .filter(|c| c.id != base.info.id && ready(c))
+        // Tool-calling rows first: this harness streams tool calls, so a
+        // credential-ready chat-only row is a worse answer than a tooled one.
+        .min_by_key(|c| (!c.supports_tools, c.id));
+    match alternative {
+        Some(alt) => Some(ResolvedModelForRun {
+            info: alt,
+            kind: base.kind,
+            replaced: Some(base.info),
+        }),
+        None => Some(ResolvedModelForRun {
+            info: base.info,
+            kind: base.kind,
+            replaced: None,
+        }),
     }
 }
 
@@ -190,16 +519,94 @@ pub fn resolve_api_key(provider: &str) -> Option<String> {
 
 /// The precedence core, with the store directory and env lookup injected so
 /// tests can pin stored-wins/env-fallback without touching `$HOME`.
+///
+/// A stored key is itself a config value (pi `AuthStorage::read`): literals
+/// pass through, `$ENV`/`${ENV}` templates resolve against the credential's
+/// `env` map then the process env, and `!commands` run cached. Unresolvable
+/// values fall through to the provider env var — and a stored command value is
+/// never executed here unless it is actually the stored key (pi's
+/// `isCommandConfigValue` skip: resolution happens only on read, not on list).
 fn resolve_api_key_in(
     dir: &std::path::Path,
     provider: &str,
     env_lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
-    if let Some(cred) = crate::auth::load_credentials_in(dir).get(provider) {
-        let k = cred.key.trim();
-        if !k.is_empty() {
-            return Some(k.to_string());
+    // OAuth credentials never resolve to an api key here: the wire takes the
+    // access token directly (pi `toAuth`), and its expiry is checked at the
+    // call site, not in key resolution.
+    //
+    // M51: `anthropic` consults the OAuth store BEFORE the api-key path (pi
+    // `anthropicApiKeyAuth::resolve`: stored key → `ANTHROPIC_AUTH_TOKEN` →
+    // `ANTHROPIC_OAUTH_TOKEN`/api key). A live OAuth access token IS the
+    // request key — the wire's `headers` switches on `is_oauth_token` to emit
+    // Bearer + Claude Code identity headers. Expired/Missing fall through to
+    // the normal path (the caller that needs OAuth freshness surfaces the
+    // telling error, not this resolver).
+    //
+    // M49: `amazon-bedrock` never resolves a BEARER token here either. pi's
+    // resolve tries (in order): stored key → `AWS_BEARER_TOKEN_BEDROCK` →
+    // profile → access-keys → ECS → web-identity, and the latter five carry
+    // NO secret — they select the SigV4 chain, whose material lives in env /
+    // files the SDK reads itself. Returning `Some` for them would send the
+    // literal string "AWS access keys" as a bearer token. Only a stored key
+    // (explicit bearer token) resolves; everything else falls to `None` and
+    // the transport signs SigV4 (or errors tellingly when nothing exists).
+    //
+    // Marker rule: the chain/profile login choices store the literal key
+    // `USE_AMBIENT_AWS_CHAIN` — it must NEVER resolve as a bearer token
+    // (sending it would be a confusing 403). Any other stored key resolves.
+    if provider == "amazon-bedrock" {
+        return match crate::auth::load_credentials_in(dir).get(provider) {
+            Some(crate::auth::StoredCredential::Api { key, env }) => {
+                let k = key.trim();
+                if k.is_empty()
+                    || k == "USE_AMBIENT_AWS_CHAIN"
+                    || crate::config_value::is_command_value(k)
+                {
+                    None
+                } else {
+                    crate::config_value::resolve_config_value(k, env.as_ref())
+                        .map(|r| r.trim().to_string())
+                        .filter(|r| !r.is_empty() && r != "USE_AMBIENT_AWS_CHAIN")
+                }
+            }
+            _ => None,
+        };
+    }
+    if let Some(crate::auth::StoredCredential::Api { key, env }) =
+        crate::auth::load_credentials_in(dir).get(provider)
+    {
+        let k = key.trim();
+        if !k.is_empty()
+            && !crate::config_value::is_command_value(k)
+            && let Some(resolved) = crate::config_value::resolve_config_value(k, env.as_ref())
+            && !resolved.trim().is_empty()
+        {
+            return Some(resolved.trim().to_string());
         }
+    }
+    // M51 (pi `anthropicApiKeyAuth::resolve`: stored key → ANTHROPIC_AUTH_TOKEN →
+    // ANTHROPIC_OAUTH_TOKEN/api key): a LIVE stored OAuth access token is the
+    // request key for `anthropic` — the wire's `headers` switches on
+    // `is_oauth_token` to emit Bearer + Claude Code identity headers.
+    // Expired/Missing fall through (the caller surfaces freshness, not this
+    // resolver).
+    //
+    // M52: `xai` joins it. pi `xaiOAuth.toAuth` returns `{apiKey: access}`,
+    // and api.x.ai accepts the SuperGrok/X-Premium access token as the Bearer
+    // key on the same OpenAI-compatible wire, so a stored pair logs in exactly
+    // like an API key (refresh row already exists in `oauth.rs`).
+    // `openrouter` needs no branch: its OAuth exchange mints a permanent API
+    // key and stores it through the Api path above.
+    // M55: `github-copilot` too — pi `githubCopilotOAuth.toAuth` returns the
+    // minted Copilot bearer, and that bearer (not the GitHub token) is what the
+    // proxy authenticates. An expired/missing pair falls through to
+    // `COPILOT_GITHUB_TOKEN`, which the wire sends as the bearer as-is.
+    if matches!(provider, "anthropic" | "xai" | "github-copilot")
+        && let crate::auth::OauthToken::Live(access) =
+            crate::auth::oauth_access_token_in(dir, provider)
+    {
+        return Some(access);
     }
     let env_key = lookup_model_first_env(provider)?;
     env_lookup(env_key).filter(|v| !v.is_empty())
@@ -348,6 +755,57 @@ mod tests {
     }
 
     #[test]
+    fn resolve_api_key_honors_key_indirection() {
+        // Pi `AuthStorage::read`: the stored key is itself a config value.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let none = |_: &str| None;
+
+        // `$VAR` template resolves against the credential env map.
+        let mut extra = std::collections::BTreeMap::new();
+        extra.insert(
+            "EPSILON_TEST_S14_VAULT".to_string(),
+            "vault-key".to_string(),
+        );
+        crate::auth::save_credential_full_in(
+            dir,
+            "anthropic",
+            "prefix-$EPSILON_TEST_S14_VAULT",
+            Some(extra),
+        )
+        .expect("save template key");
+        assert_eq!(
+            resolve_api_key_in(dir, "anthropic", &none),
+            Some("prefix-vault-key".into())
+        );
+
+        // Unresolvable template falls through to the provider env var.
+        crate::auth::save_credential_full_in(
+            dir,
+            "openai",
+            "$EPSILON_TEST_DEFINITELY_MISSING_S14",
+            None,
+        )
+        .expect("save dangling template");
+        assert_eq!(
+            resolve_api_key_in(dir, "openai", &|name| {
+                if name == "OPENAI_API_KEY" {
+                    Some("env-fallback".to_string())
+                } else {
+                    None
+                }
+            }),
+            Some("env-fallback".into())
+        );
+
+        // `!command` keys never execute on this path (pi's guard): they fall
+        // through instead of spawning a process from a read.
+        crate::auth::save_credential_full_in(dir, "google", "!echo must-not-run", None)
+            .expect("save command key");
+        assert_eq!(resolve_api_key_in(dir, "google", &none), None);
+    }
+
+    #[test]
     fn lookup_is_exact_match() {
         assert!(lookup_model("claude-sonnet-4-5").is_some());
         assert!(
@@ -355,6 +813,48 @@ mod tests {
             "no case-insensitive guessing"
         );
         assert!(lookup_model("gpt").is_none(), "no substring matching");
+    }
+
+    #[test]
+    fn resolve_model_follows_pi_match_order() {
+        // 1. exact id wins over every other interpretation.
+        let exact = resolve_model("claude-sonnet-4-5").expect("exact");
+        assert_eq!(exact.kind, ModelMatchKind::Exact);
+        assert_eq!(exact.info.id, "claude-sonnet-4-5");
+
+        // 2. canonical provider/id, case-insensitive.
+        let qualified = resolve_model("ANTHROPIC/claude-sonnet-4-5").expect("qualified");
+        assert_eq!(qualified.kind, ModelMatchKind::ProviderQualified);
+        assert_eq!(qualified.info.id, "claude-sonnet-4-5");
+
+        // 3. bare id case-insensitively when unambiguous.
+        let folded = resolve_model("Claude-Sonnet-4-5").expect("folded");
+        assert_eq!(folded.kind, ModelMatchKind::CaseInsensitive);
+        assert_eq!(folded.info.id, "claude-sonnet-4-5");
+
+        // 4. substring fallback prefers aliases over dated rows.
+        let partial = resolve_model("sonnet-4-5").expect("partial");
+        assert_eq!(partial.kind, ModelMatchKind::Partial);
+        assert!(
+            !has_date_suffix(partial.info.id),
+            "alias beats dated: {}",
+            partial.info.id
+        );
+
+        // No match, blank, and ambiguous all resolve to None…
+        assert!(resolve_model("no-such-model-xyz").is_none());
+        assert!(resolve_model("   ").is_none());
+        // …but candidates tell the caller WHY.
+        assert!(resolve_model_candidates("no-such-model-xyz").is_empty());
+        let ambiguous = resolve_model_candidates("claude");
+        assert!(
+            ambiguous.len() > 1,
+            "claude must be ambiguous, got {ambiguous:?}"
+        );
+        assert!(
+            resolve_model("claude").is_some(),
+            "partial still picks best"
+        );
     }
 
     #[test]
@@ -368,6 +868,8 @@ mod tests {
             "openai",
             "deepseek",
             "google",
+            "google-vertex",
+            "amazon-bedrock",
             "xai",
             "groq",
             "moonshot",
@@ -392,7 +894,7 @@ mod tests {
         for m in MODELS {
             assert!(!m.label.is_empty());
             assert!(m.context_window > 0);
-            let _ = m.wire; // Copy enum: presence is structural, no Option involved
+            let _ = &m.wire; // presence is structural, no Option involved
         }
     }
 
@@ -433,11 +935,14 @@ mod tests {
             "openai",
             "deepseek",
             "google",
+            "google-vertex",
+            "amazon-bedrock",
             "xai",
             "groq",
             "moonshot",
             "zai",
             "openrouter",
+            "mistral",
         ] {
             assert!(
                 paid_providers.contains(p),
@@ -448,7 +953,9 @@ mod tests {
 
     /// Current-generation sanity pins: regeneration must not regress to older eras.
     /// Updated whenever `scripts/regen_catalog.py` pulls a newer snapshot
-    /// (2026-08-24 snapshot: 383 rows across 9 direct-API providers).
+    /// (2026-08-24 snapshot: 383 rows across 9 direct-API providers, plus 7
+    /// hand-curated native mistral rows — M47, until the next refresh absorbs
+    /// the `mistral` registry).
     #[test]
     fn catalog_is_current_generation() {
         // Newest flagship of each direct-API family at regen time:
@@ -460,6 +967,11 @@ mod tests {
         assert!(lookup_model("kimi-k3").is_some());
         assert!(lookup_model("glm-5.2").is_some());
         assert!(lookup_model("deepseek-v4-pro").is_some());
+        assert!(lookup_model("mistral-large-latest").is_some());
+        assert!(lookup_model("vertex/gemini-2.5-flash").is_some());
+        // M55: bedrock ids are canonical now (region + version qualifiers
+        // stripped by the generator, absorbing M49's hand rows).
+        assert!(lookup_model("bedrock/anthropic.claude-sonnet-4-5").is_some());
         // Long-gone rows must stay gone...
         assert!(lookup_model("claude-sonnet-4").is_none(), "stale row");
         // ...but anything the registry still lists belongs in the snapshot, even
@@ -488,11 +1000,86 @@ mod tests {
 
     #[test]
     fn display_label_falls_back_to_id_for_custom_entries() {
-        // Label comes verbatim from the models.dev `name` field.
-        assert_eq!(display_label("deepseek-chat"), "DeepSeek Chat");
+        // Label comes verbatim from the models.dev `name` field. (Pin moved at
+        // the M55 refresh: the `deepseek` registry retired the bare
+        // `deepseek-chat` row — the alias survives only as openrouter's
+        // `deepseek/deepseek-chat` — so the verbatim case reads a row the
+        // registry still lists.)
+        assert_eq!(display_label("deepseek-v4-pro"), "DeepSeek V4 Pro");
+        assert_eq!(display_label("deepseek/deepseek-chat"), "DeepSeek Chat");
         assert_eq!(
             display_label("totally-custom-model"),
             "totally-custom-model"
         );
+    }
+
+    /// M63: the credential-aware resolution rule, tested with an injected
+    /// readiness predicate so it does not depend on this machine's keys.
+    fn deepseek_key_only(info: &ModelInfo) -> bool {
+        info.provider == "deepseek"
+    }
+
+    #[test]
+    fn a_loose_reference_prefers_the_provider_the_user_can_call() {
+        // `kimi-k2` substring-matches rows from moonshot, openrouter,
+        // amazon-bedrock and github-copilot. A user holding only a Moonshot key
+        // must land on a Moonshot row, and the substitution must be reported.
+        let resolved =
+            resolve_model_for_run_with("kimi-k2", &|i| i.provider == "moonshot").expect("resolves");
+        assert_eq!(resolved.info.provider, "moonshot");
+        match resolved.replaced {
+            Some(replaced) => assert_ne!(
+                replaced.provider, "moonshot",
+                "a substitution that changes nothing must not be reported"
+            ),
+            None => assert_eq!(
+                resolve_model("kimi-k2").map(|r| r.info.provider),
+                Some("moonshot"),
+                "no substitution reported means the literal match was already callable"
+            ),
+        }
+    }
+
+    #[test]
+    fn an_exact_catalog_id_is_never_overridden() {
+        // Typing the full id is an explicit choice, even when a sibling row for
+        // the same family would be callable.
+        let exact = "deepseek/deepseek-chat";
+        assert_eq!(
+            resolve_model(exact).map(|r| r.info.id),
+            Some(exact),
+            "fixture assumption: this id exists verbatim"
+        );
+        let resolved = resolve_model_for_run_with(exact, &deepseek_key_only).expect("resolves");
+        assert_eq!(resolved.info.id, exact, "exact ids win verbatim");
+        assert!(resolved.replaced.is_none());
+    }
+
+    #[test]
+    fn a_reference_with_no_callable_sibling_keeps_its_literal_match() {
+        // `deepseek-chat` exists only as OpenRouter rows. A stored DeepSeek key
+        // cannot call any of them, and quietly running a different DeepSeek model
+        // would be worse than saying so — so the literal match stands and the CLI
+        // explains which provider is missing and which keys the user does have.
+        let resolved =
+            resolve_model_for_run_with("deepseek-chat", &deepseek_key_only).expect("resolves");
+        assert_eq!(resolved.info.provider, "openrouter");
+        assert!(resolved.replaced.is_none());
+    }
+
+    #[test]
+    fn nothing_callable_keeps_the_literal_match_so_the_cli_can_explain() {
+        let resolved = resolve_model_for_run_with("deepseek-chat", &|_| false).expect("resolves");
+        assert_eq!(
+            resolved.info.id,
+            resolve_model("deepseek-chat").unwrap().info.id
+        );
+        assert!(resolved.replaced.is_none());
+    }
+
+    #[test]
+    fn a_ready_literal_match_is_left_alone() {
+        let resolved = resolve_model_for_run_with("deepseek-chat", &|_| true).expect("resolves");
+        assert!(resolved.replaced.is_none());
     }
 }

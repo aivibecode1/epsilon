@@ -187,3 +187,130 @@ async fn context_overflow_compacts_once_and_recovers() {
             ))
     );
 }
+
+#[test]
+fn for_model_resolves_catalog_windows() {
+    // Known ids seed a window; unknown ids (custom providers, ad-hoc test
+    // models) keep `None` so the fixed threshold keeps working.
+    let known = LoopLimits::for_model("claude-fable-5");
+    assert_eq!(known.context_window_tokens, Some(1_000_000));
+    assert_eq!(known.compaction_reserve_tokens, 16_384);
+    assert!(known.compaction_enabled);
+
+    let custom = LoopLimits::for_model("lmstudio/something-made-up");
+    assert_eq!(custom.context_window_tokens, None);
+}
+
+#[tokio::test]
+async fn disabled_compaction_never_fires() {
+    // Pi's `enabled` gate: a threshold that WOULD fire stays quiet.
+    let steps = vec![
+        big_echo_call("tc_1", 4000),
+        epsilon_llm::FauxStep::say("final answer"),
+    ];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 1, // fires on anything when enabled
+        compaction_enabled: false,
+        max_turns: 8,
+        ..Default::default()
+    };
+    let (agent, _store, _dir) = setup(steps, limits);
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user("long task")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+    let (started, finished) = drain_compactions(&mut rx);
+    assert_eq!((started, finished), (0, 0));
+    assert!(!has_summary_head(&agent));
+}
+
+#[tokio::test]
+async fn known_window_overrides_fixed_threshold() {
+    // Pi window-relative trigger: a huge fixed threshold must NOT suppress
+    // compaction once the live budget (window - reserve) is exceeded.
+    let steps = vec![
+        big_echo_call("tc_1", 4000),
+        big_echo_call("tc_2", 4000),
+        epsilon_llm::FauxStep::say("final answer"),
+    ];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 999_999, // would never fire on its own
+        compaction_tail_tokens: 300,
+        context_window_tokens: Some(2_000), // budget 2000 - 0 reserve
+        compaction_reserve_tokens: 0,
+        max_turns: 8,
+        ..Default::default()
+    };
+    let (agent, _store, _dir) = setup(steps, limits);
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user("long task")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+    let (started, finished) = drain_compactions(&mut rx);
+    assert!(
+        started >= 1 && started == finished,
+        "window budget must fire: s={started} f={finished}"
+    );
+}
+
+#[tokio::test]
+async fn model_hot_swap_refreshes_live_window() {
+    // `set_model_id` tracks hot-swaps: moving to a known id installs its
+    // window (threshold alone would have fired), moving to an unknown id
+    // clears back to the fixed threshold (no stale window survives).
+    let steps = vec![
+        big_echo_call("tc_1", 4000),
+        epsilon_llm::FauxStep::say("final answer"),
+    ];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 1, // fires on anything without a window
+        compaction_tail_tokens: 300,
+        max_turns: 8,
+        ..Default::default()
+    };
+    let (agent, _store, _dir) = setup(steps, limits);
+
+    // Known 1M-token model: live budget dwarfs the script, no compaction.
+    agent.set_model_id("claude-fable-5");
+    let mut rx = agent.subscribe();
+    let outcome = agent.run(user("long task")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+    assert_eq!(drain_compactions(&mut rx), (0, 0));
+
+    // Unknown id (custom provider): override clears, fixed threshold fires.
+    // A stale 1M window surviving the swap would suppress this compaction.
+    let (agent2, _store2, _dir2) = setup(
+        vec![
+            big_echo_call("tc_1", 4000),
+            epsilon_llm::FauxStep::say("final answer"),
+        ],
+        LoopLimits {
+            compaction_threshold_tokens: 1,
+            compaction_tail_tokens: 300,
+            context_window_tokens: Some(1_000_000), // stale if not cleared
+            max_turns: 8,
+            ..Default::default()
+        },
+    );
+    agent2.set_model_id("lmstudio/something-made-up");
+    let mut rx2 = agent2.subscribe();
+    let outcome2 = agent2.run(user("long task")).await.unwrap();
+    assert_eq!(
+        outcome2.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+    let (s2, f2) = drain_compactions(&mut rx2);
+    assert!(
+        s2 >= 1 && s2 == f2,
+        "cleared window must fire: s={s2} f={f2}"
+    );
+}

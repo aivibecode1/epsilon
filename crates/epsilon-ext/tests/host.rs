@@ -28,9 +28,11 @@ fn fixture_manifest(mode: &str) -> ExtManifest {
 fn tool_ctx(dir: &Path) -> ToolContext {
     ToolContext {
         session_id: "t".into(),
+        observation_scope: std::sync::Arc::new(()),
         cwd: dir.to_path_buf(),
         spill_dir: dir.join(".spill"),
         token: CancellationToken::new(),
+        task_host: None,
     }
 }
 

@@ -1,0 +1,553 @@
+{
+  "schema_version": 1,
+  "review": "contracts-core-session dependency-closure integration",
+  "head": "350c9ecabf5bbe28fb12f0ce86a01f9ed696e8bd",
+  "verdict": "conditional_baseline_allowlist; not a clean-checkout or security/release approval",
+  "summary": "Reviewed missing core modules, contracts/session companions and tests against HEAD. Allowlist is bounded to existing committed behavior and required downstream closure. Partial-file exclusions and cross-batch requirements must be honored; exact candidate has not been built.",
+  "authority": "User-approved forward-only baseline integration; this delegated task writes report only. No request for repeated owner approval. No changes to code/index/history or builds/tests performed.",
+  "reviewed_scope": {
+    "method": [
+      "Read AGENTS.md, requesting-code-review skill, audit/evidence/head-dependency-review.md, agents/memory index and closeout, roadmap and relevant defect ledger.",
+      "Read git HEAD blobs/call sites, tracked diffs, all nine new contracts/core/session modules and all ten untracked core integration test files; read corresponding inline tests.",
+      "Reviewed downstream ext fixture delta, CLI runtime/TUI Notice hunks, RPC/server reference-expansion diffs; traced config editor caller and doctor/discovery requirement without approving unrelated frontend files.",
+      "Checked unchanged contracts/core/session Cargo manifests and existing LLM retry exports/catalog fixture presence. No compiler or test execution; prior 794 passed result is inherited dirty-working-tree evidence only."
+    ],
+    "owned_roots": [
+      "crates/epsilon-contracts",
+      "crates/epsilon-core",
+      "crates/epsilon-session"
+    ],
+    "unchanged_dependency_roots": [
+      "crates/epsilon-core/src/lib.rs",
+      "crates/epsilon-core/src/exec.rs",
+      "crates/epsilon-contracts/src/tool.rs",
+      "crates/epsilon-cli/src/main.rs",
+      "crates/epsilon-tools/src/files.rs"
+    ],
+    "nonclaims": [
+      "Not an exhaustive compiler/type-check result.",
+      "Not approval of all dirty files, new frontend features, provider behavior or security hardening.",
+      "Not repair of pre-existing audited defects.",
+      "No new dependencies required by the owned three crate manifests."
+    ]
+  },
+  "allowlist": [
+    {
+      "path": "crates/epsilon-contracts/src/agent_event.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "Notice is emitted by HEAD core lib.rs:886,931,1209,1250 and matched by HEAD CLI main.rs:1981. Entire seven-line addition required."
+    },
+    {
+      "path": "crates/epsilon-contracts/src/lib.rs",
+      "selection": "hunk_only: add pub mod diagnostics;",
+      "kind": "source",
+      "reason": "HEAD tools files.rs imports epsilon_contracts::diagnostics; publish that module. Other root reexports are not necessary for inspected callers."
+    },
+    {
+      "path": "crates/epsilon-contracts/src/diagnostics.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "Required DiagnosticsProvider trait for HEAD tools files.rs; uses already-declared async-trait only. Entire new 22-line module."
+    },
+    {
+      "path": "crates/epsilon-contracts/src/session_entry.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "Header/version/SessionLine vocabulary and parse/effective_version helpers required by selected session store/discover. Retain inline header round-trip tests. No new dependency edge. Existing contracts behavior drift is not resolved by this integration."
+    },
+    {
+      "path": "crates/epsilon-core/src/agents.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD lib.rs declares agents and stores/discovers AgentDef; child task selection requires discovery, source/trust metadata and parsing; retain inline discovery/shadow tests."
+    },
+    {
+      "path": "crates/epsilon-core/src/cache_stats.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD lib.rs owns CacheStats and observes CacheRequest; full classification/report implementation plus inline tests needed. Catalog lookup_model and cost field already in HEAD."
+    },
+    {
+      "path": "crates/epsilon-core/src/guards.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD lib.rs owns ProgressGuard, invokes Progress, guidance and empty-turn predicates; full pure module and inline tests required."
+    },
+    {
+      "path": "crates/epsilon-core/src/paths.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD declares paths; references.rs calls resolve_in_workspace. Full lexical resolver needed; it is not a resolved-path security boundary."
+    },
+    {
+      "path": "crates/epsilon-core/src/references.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD CLI main.rs:1682 invokes user_message and HEAD core declares module. File/range/list expansion, message construction and inline tests form the existing implementation. Does not justify enabling additional HTTP/RPC entrypoints."
+    },
+    {
+      "path": "crates/epsilon-core/src/untrusted.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD exec.rs:745,752 invokes source classification and shape_untrusted; wrapper/elision helpers and inline tests needed. Unicode indexing concern recorded below."
+    },
+    {
+      "path": "crates/epsilon-core/src/verify.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD lib.rs:1040 creates VerificationLog and records settled tool calls. Entire evidence bookkeeping module and inline tests needed; retain existing F05 caveat."
+    },
+    {
+      "path": "crates/epsilon-core/src/compact.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD lib.rs:370,1367,1374,1434,1462-1488 requires UsageAnchor, anchored_tokens, legal_cut_point, FileLedger, three-argument summary_context and instruction/ledger summary helpers. All changed production blocks participate in that call chain; retain associated inline arithmetic/legal-cut/ledger/instruction tests and updated existing summary_context calls. MIN/MAX_TAIL_TOKENS already existed in HEAD."
+    },
+    {
+      "path": "crates/epsilon-core/src/prompt.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD lib.rs:1637-1664 initializes agent_brief and invokes subdirectory hints/stable fingerprint. Include field/rendering, fingerprint and bounded hint loader plus tests and fixture field initializers; all production additions are reached by committed callers."
+    },
+    {
+      "path": "crates/epsilon-core/src/registry.rs",
+      "selection": "hunk_only: subset method, cfg(test) Named fixture/imports and subset_keeps_only_known_names_and_shares_the_tool test; retain HEAD descriptors implementation",
+      "kind": "source",
+      "reason": "HEAD lib.rs:1883 requires subset plus its regression. Descriptor sorting is separable and not required for source closure."
+    },
+    {
+      "path": "crates/epsilon-session/src/store.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD CLI main.rs:1606-1609,1646-1647 uses open_in/migrated/persist_migration; HEAD core lib.rs:1952-1956 uses header/open_child_in. Constructor, header framing, migration, index and typed-error changes are intertwined throughout existing owner implementation. Entire file is the conservative baseline unit, NOT a claim each individual line is compiler-minimal or that F04/F07/F08 are fixed. Store acquires SessionLease, so lease implementation and discovery read-without-writer behavior must be integrated with it."
+    },
+    {
+      "path": "crates/epsilon-session/src/lease.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "Selected store activates the previously standalone lease. Heartbeat, stale-lock removal, lifecycle, refresh/path APIs and inline tests are the existing matching implementation; copying only acquire wiring changes long-lived-session semantics. Known advisory/race limitations remain."
+    },
+    {
+      "path": "crates/epsilon-session/src/repair.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "HEAD core lib.rs:597 and CLI main.rs:1657 call report.summary(); include RepairKind, describe/as_str, report Clone/kinds/summary and the existing typed repair marker together with session tests. This completes existing repair-report behavior, not an F07 persistence fix."
+    },
+    {
+      "path": "crates/epsilon-session/src/lib.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "Publish discover and SessionSummary/latest_session/list_sessions/summarize, plus LineDiagnosis for selected tests and composition. Existing store/lease exports retained."
+    },
+    {
+      "path": "crates/epsilon-session/src/discover.rs",
+      "selection": "whole_working_file",
+      "kind": "source",
+      "reason": "Required by missing doctor companion and session browser/runtime composition. Header reads, summary metadata, latest-session selection and inline tests must travel with header/lease store changes. Explicit cross-batch dependency: doctor.rs calls discover::latest_session at WT:392."
+    },
+    {
+      "path": "crates/epsilon-core/tests/batch_planning.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Characterizes already committed exec planner ordering/parallelism using inert recording tools; no new production behavior."
+    },
+    {
+      "path": "crates/epsilon-core/tests/cache_attribution.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Exercises selected CacheStats and prompt fingerprint through provider-shaped offline usage; catalog fixture rows exist in HEAD."
+    },
+    {
+      "path": "crates/epsilon-core/tests/context_shaping.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Exercises HEAD exec untrusted result wrapper and HEAD compaction instruction retention with inert tool/faux provider fixtures."
+    },
+    {
+      "path": "crates/epsilon-core/tests/guard_scenarios.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Exercises selected stuck/empty/repetition guards through committed loop and permissions, with existing testing helpers."
+    },
+    {
+      "path": "crates/epsilon-core/tests/retry_path.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Characterizes already committed retrying/notice loop. RetryNotice, Retrying, with_max_attempts and RETRY_MAX_ATTEMPTS already in HEAD; this test alone does not require dirty retry implementation."
+    },
+    {
+      "path": "crates/epsilon-core/tests/sequence_repair.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Characterizes already committed live interrupted-call repair/idempotence. Does not prove every result is unique or that provider request ordering is valid."
+    },
+    {
+      "path": "crates/epsilon-core/tests/subdirectory_hints.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Exercises selected prompt loader through recorded provider requests; real files only in temporary fixture directories."
+    },
+    {
+      "path": "crates/epsilon-core/tests/task_scenarios.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Covers existing child tasks/background/resume/model selection and durable child sessions; depends on selected agents/store and separately reviewed LLM resolve_model companion. Current tests do not close F18."
+    },
+    {
+      "path": "crates/epsilon-core/tests/usage_anchor.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Offline provider-shaped usage drives selected anchor logic; does not prove all-turn drift because final assertion measures last report."
+    },
+    {
+      "path": "crates/epsilon-core/tests/verification_scenarios.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Characterizes selected verification nudges using inert tools. Failing-bash fixture returns ToolFailure, not real nonzero shell ToolOutput, so it does not close F05."
+    },
+    {
+      "path": "crates/epsilon-core/tests/compaction_scenarios.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "All four new scenarios cover committed window-relative compaction/settings/hot swap; claude-fable-5 exists in HEAD catalog data. Keep original tests unchanged."
+    },
+    {
+      "path": "crates/epsilon-session/tests/session_store.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "Header/migration/child-parent/one-writer/repair and typed corruption companion tests plus imports. Retain current baseline assertions, but explicitly record that a_torn_tail_is_still_tolerated_whatever_its_shape codifies F08 and is not evidence that unsupported final entries are safe."
+    },
+    {
+      "path": "crates/epsilon-ext/tests/host.rs",
+      "selection": "whole_working_file",
+      "kind": "test",
+      "reason": "HEAD contracts tool.rs ToolContext already requires observation_scope and task_host; dirty fixture adds only those two required fields. Full two-field delta reviewed."
+    }
+  ],
+  "conditional_companions": [
+    {
+      "path": "crates/epsilon-core/src/config.rs",
+      "selection": "whole 21-line addition only IF separately approved TUI external-editor app slice is retained",
+      "reason": "load_config_string/load_config_string_in are called only by dirty TUI app.rs:140,626; not required by HEAD or owned core/session slice. Default exclude to avoid adding editor support transitively."
+    },
+    {
+      "path": "crates/epsilon-cli/src/runtime.rs",
+      "selection": "required Notice match arm only from this review; other runtime APIs reviewed by composition owner",
+      "reason": "event_type_tag exhaustive match requires AgentEvent::Notice => notice. Nearby latest_session_file rewrite is separate semantic change, not forced by this arm."
+    },
+    {
+      "path": "crates/epsilon-tui/src/state.rs",
+      "selection": "Notice match arm and retry_notices_land_in_the_transcript_and_the_status_line test; other hunks separately reviewed",
+      "reason": "New AgentEvent variant requires exhaustive UiState::apply completion. Hunk also contains salvaged-partial test; do not include that unrelated test merely by hunk adjacency."
+    },
+    {
+      "path": "crates/epsilon-llm/src/catalog.rs",
+      "selection": "resolve_model and ModelMatchKind plus their recursively required implementation/tests, selected by LLM owner",
+      "reason": "HEAD core lib.rs:2126-2127 model validation requires unpublished API; task tests require it too. lookup_model/pricing/retry notice APIs already exist."
+    }
+  ],
+  "excluded": [
+    {
+      "path": "crates/epsilon-contracts/src/stream.rs",
+      "selection": "all dirty TextDelta/ThinkingDelta collision folding changes",
+      "reason": "No missing symbols or structural caller dependency. Separate wire behavior change without new tests in this file; requires its own review, not source closure."
+    },
+    {
+      "path": "crates/epsilon-contracts/src/lib.rs",
+      "selection": "root reexports for session header vocabulary and tool hooks",
+      "reason": "Inspected production/tests use session_entry and tool qualified imports. Convenient public export expansion is not needed to repair these callers; preserve original EntryKind/SessionEntry and tool export list."
+    },
+    {
+      "path": "crates/epsilon-core/src/registry.rs",
+      "selection": "descriptors sorting/documentation and descriptor_order_is_a_function_of_the_tool_set_not_of_hash_seeds test",
+      "reason": "Separable stable-order/D-05 behavioral fix. stable_fingerprint accepts supplied order and compiles with HEAD descriptors; no missing API requires sort. Do not silently integrate audited quality fix as closure."
+    },
+    {
+      "path": "crates/epsilon-core/assets/agent-contract.md",
+      "selection": "all six added background/resume/model delegation guidance lines",
+      "reason": "Existing include_str target already in HEAD; prompt guidance is not needed for module/API resolution. Can be proposed as documented baseline semantics by parent separately, not required source closure."
+    },
+    {
+      "path": "crates/epsilon-core/src/config.rs",
+      "selection": "all dirty additions unless conditional editor companion explicitly accepted",
+      "reason": "Only new frontend editor functionality calls helpers."
+    },
+    {
+      "path": "crates/epsilon-cli/src/rpc_mode.rs",
+      "selection": "all dirty reference-expansion constructor/call-site changes",
+      "reason": "Existing HEAD RPC message constructor still works after references module is supplied. This expands feature exposure, not dependency closure."
+    },
+    {
+      "path": "crates/epsilon-server/src/lib.rs",
+      "selection": "all dirty reference-expansion/import changes",
+      "reason": "HEAD HTTP constructor remains valid; enabling attachments on HTTP is not necessary to satisfy HEAD CLI reference caller."
+    },
+    {
+      "path": "all paths not explicitly allowlisted or separately approved by another review batch",
+      "selection": "exclude by default",
+      "reason": "No blanket directory staging. Excludes local skills, audit archives/runtime data, catalog regeneration, unrelated docs and all other crate implementation hunks from this reviewer approval."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CORE-CLOSURE-01",
+      "severity": "blocker_for_standalone_slice",
+      "kind": "dependency",
+      "detail": "Adding seven core modules alone is insufficient: compact/prompt/subset/session/header/Notice APIs and diagnostics declaration are required. This allowlist resolves demonstrated owned API roots but requires LLM/catalog and frontend exhaustive-match completion.",
+      "evidence": [
+        "HEAD core lib.rs:370,1434,1462-1488,1637-1664,1883,1952-1956,2126-2127",
+        "HEAD CLI main.rs:1606-1609,1646-1657",
+        "HEAD tools files.rs:14"
+      ]
+    },
+    {
+      "id": "CORE-CLOSURE-02",
+      "severity": "blocker_for_full_workspace_tests",
+      "kind": "dependency",
+      "detail": "Existing HEAD ToolContext fields are missing in dirty ext test fixture. Include reviewed ext/tests/host.rs two-field delta; other crate fixtures belong to their reviewers.",
+      "evidence": [
+        "HEAD contracts tool.rs:304-318",
+        "WT ext/tests/host.rs:27-38"
+      ]
+    },
+    {
+      "id": "CORE-RISK-01",
+      "severity": "high",
+      "kind": "existing_owner_baseline_risk_not_remediated",
+      "detail": "Session final-entry truncation (F08), compaction projection/persistence (F04/F07), verification exit-status ordering (F05), lexical attachments containment (F09), cancellation salvage and resumed-child lifecycle (F17/F18) remain. Baseline integration must not claim these fixed or release-safe. No reproductions or fixes attempted.",
+      "evidence": [
+        "audit/02-defect-ledger.md:F04-F09,F17-F18",
+        "WT session store.rs:457-463,484-490,550-558",
+        "WT core verify.rs:133-175",
+        "WT core paths.rs:9-34"
+      ]
+    },
+    {
+      "id": "CORE-RISK-02",
+      "severity": "medium",
+      "kind": "new_static_logic_finding_requires_disposition",
+      "detail": "untrusted::neutralize_delimiters computes offsets in Unicode-lowercased text then indexes the original string. Unicode case mappings can change byte lengths, so offsets need not be valid original boundaries and may panic or select wrong bytes. Existing inline tests are ASCII-oriented. This is existing untracked owner implementation required by HEAD exec, not code introduced/fixed by this review. Parent should explicitly record as baseline debt or arrange a separately scoped correction before claiming security approval.",
+      "evidence": [
+        "WT core/untrusted.rs:63-77"
+      ]
+    },
+    {
+      "id": "CORE-RISK-03",
+      "severity": "medium",
+      "kind": "existing_owner_baseline_limitations",
+      "detail": "Reference max_bytes is applied after full file read and not on line-range output; discovery head limits count lines rather than bytes, and store reindex caches parsed entries even when not migrated. Do not equate these display bounds with bounded ingestion or lazy memory. These are not additional closure features to implement.",
+      "evidence": [
+        "WT core/references.rs:225-255,298-307",
+        "WT session/discover.rs:80-100,114-129",
+        "WT session/store.rs:401-405,539-542"
+      ]
+    },
+    {
+      "id": "CORE-RISK-04",
+      "severity": "medium",
+      "kind": "baseline_test_limitations",
+      "detail": "Session torn-tail test intentionally accepts a complete-JSON unsupported tail (F08). Verification tests substitute transport errors for process nonzero status (F05). Task tests do not cover resumed-running state (F18). Header timestamp function returns epoch milliseconds despite ISO-8601 documentation. Retain truthful baseline caveats; do not weaken tests or fold fixes into this integration.",
+      "evidence": [
+        "WT session/tests/session_store.rs:650-678",
+        "WT core/tests/verification_scenarios.rs:64-79",
+        "WT session/store.rs:775-786"
+      ]
+    }
+  ],
+  "integration_blockers": [
+    {
+      "id": "B1",
+      "detail": "Parent must combine separately reviewed LLM/catalog, tools/LSP and CLI/TUI composition closures; this slice is not independently buildable on HEAD. Notice exhaustive matches and ext fixture are concrete cross-crate requirements."
+    },
+    {
+      "id": "B2",
+      "detail": "Partial selections are mandatory: contracts lib and registry exclude unrelated exports/sorting, config excluded absent editor decision. Whole-file staging of these paths violates this proposed allowlist."
+    },
+    {
+      "id": "B3",
+      "detail": "No isolated allowlisted candidate has been compiled/tested. Prior 794-test WT run cannot certify a hunk-minimized candidate. Later parent validation must use exact candidate including real and offline features, required manifests/lockfile from other reviewers."
+    },
+    {
+      "id": "B4",
+      "detail": "Full security/quality approval is withheld because existing baseline defects remain and Unicode delimiter indexing risk was identified. For baseline-only integration, document explicit disposition rather than silently claiming passed=true; fixes are outside this delegated task."
+    }
+  ],
+  "verification": {
+    "performed": [
+      "read-only git status/rev-parse/log/diff/show and source inspections",
+      "static dependency/API tracing"
+    ],
+    "builds": 0,
+    "tests_run": 0,
+    "code_edits": 0,
+    "staging": false,
+    "commits": 0,
+    "index_was_empty_when_checked": true,
+    "prior_test_claim": "794 passed / 0 failed / 1 ignored belongs to prior dirty WT gate, not this review"
+  },
+  "report_path": "audit/evidence/integration-core-review.json",
+  "snapshots": [
+    {
+      "path": "crates/epsilon-contracts/src/agent_event.rs",
+      "working_sha256": "5bbac1fbd8d4f9cc4f2ca66ced231c76429e4cb1534d2d0823dcbc1360785103",
+      "head_blob": "a1f752b22aab6d90f12271c45dc7b77f74120c67"
+    },
+    {
+      "path": "crates/epsilon-contracts/src/lib.rs",
+      "working_sha256": "7c1c8f1b8d7bcf2ff5d24fecdf5b294e05199ed1247a9134b95c325e9ef98774",
+      "head_blob": "26cf9040d85d91c09b1de65200dfc65b5b559861"
+    },
+    {
+      "path": "crates/epsilon-contracts/src/diagnostics.rs",
+      "working_sha256": "6817276f9c047ae6769ce704fa05193ee495803d716ba219a7d636f379ef46d3",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-contracts/src/session_entry.rs",
+      "working_sha256": "4c794f47db180c0a1221fbc398c356f9c70507b291f87a646d069926e8c3043d",
+      "head_blob": "5dc2d9b8798103335c8b5f967b940a717a369bb9"
+    },
+    {
+      "path": "crates/epsilon-core/src/agents.rs",
+      "working_sha256": "9e94d1372eaaefd821fc5305285a1bbe4986039c212f19abc2679f7280b1ac31",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/cache_stats.rs",
+      "working_sha256": "d1f7ec770760d958bd7fb0bc5596f82b947dda4c68753cfc2329fcdd09aa82e8",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/guards.rs",
+      "working_sha256": "4548d56082145bd7bfc438a9e20417d8c5e974b1371361510d93cb6d053b2678",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/paths.rs",
+      "working_sha256": "63f9605c80e07a71fbe64c3ebfc572ad5dcbb0f11557e88f16ac90f821be9e32",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/references.rs",
+      "working_sha256": "a75285617d31f23eff71c28db297ad4ccf4d0f8df46c999df56135c3cd0bb94f",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/untrusted.rs",
+      "working_sha256": "174cc4d6c8d8d76b7adb61f8e88217406d47976e8933cedc8fd1480b52945857",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/verify.rs",
+      "working_sha256": "c0467ec6de7bba37a0817ca63291994e0f199e1e9be1a14e6b9b3127c855b9a9",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/src/compact.rs",
+      "working_sha256": "ca42cdaf56a7acbb3fb704e667c85acb195d1042f2af36a092443da7c0968ca7",
+      "head_blob": "deab138abc4b4f0a3e3758a0ee4ae9338ab6094b"
+    },
+    {
+      "path": "crates/epsilon-core/src/prompt.rs",
+      "working_sha256": "1e5efea2f8a4b8cd7791f40d79c7e1eefb7737768a734d62f7dba7fc77b5e057",
+      "head_blob": "f64ff758e93bd975fd5f2ddd608abba9a0d97c47"
+    },
+    {
+      "path": "crates/epsilon-core/src/registry.rs",
+      "working_sha256": "c50b341aabef9cb13a045772785e304b16605cb87a98a9777bdf1aec20b414cd",
+      "head_blob": "fb2510f09b2f89f8b9aff2598e161409b4741718"
+    },
+    {
+      "path": "crates/epsilon-session/src/store.rs",
+      "working_sha256": "25299ee874091422a3fd555a92c900d4522ee5abbcb272bde310a71b42361d9c",
+      "head_blob": "246dd3234c71f6395e1bf2a2790f0539cab07c95"
+    },
+    {
+      "path": "crates/epsilon-session/src/lease.rs",
+      "working_sha256": "bb3e5f74f9dc50cc47fb89a9e777e72663141f39810e4ca0370b19a12c9bb3f1",
+      "head_blob": "d1b143e40e15a10ab77152abca0284bcfdbbc95a"
+    },
+    {
+      "path": "crates/epsilon-session/src/repair.rs",
+      "working_sha256": "cce7239e47782bd146efb2d1a4ad6f4fe72eec478d1e4997fe71edf11650d7cf",
+      "head_blob": "e2455fa1dbb7766881e4691e0fe1ad3f489638b9"
+    },
+    {
+      "path": "crates/epsilon-session/src/lib.rs",
+      "working_sha256": "913db2f6fd1db1e63b76116529506aa4bcd2f3321319ca552b6b36c04cc1a075",
+      "head_blob": "e822a92e1ee8453f48435744a937fed04fec2e60"
+    },
+    {
+      "path": "crates/epsilon-session/src/discover.rs",
+      "working_sha256": "2676b7d5a27c5d8d72b504fc16a9e39163e74948f7153fd4f5c3000f8e5226ae",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/batch_planning.rs",
+      "working_sha256": "1dae30505e64c9653074d16284561783a9587d6470c9702de008529d3e0ab359",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/cache_attribution.rs",
+      "working_sha256": "e184f1ef304a7cc78752485fbb18f99aa0a9888dc2796e22e4a385351cd8a8b9",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/context_shaping.rs",
+      "working_sha256": "c89d132d781e42cc2564d58fea7dc7dd3e3a7f4f8f24079a483c23395831e4f4",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/guard_scenarios.rs",
+      "working_sha256": "c81a21902397eacae89b69a0a0202c301e624425d940e127f2e9cb08073e9a07",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/retry_path.rs",
+      "working_sha256": "01317462f0542996957ee488963c156eae5a41b8e6e0125b56dba966e35cf066",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/sequence_repair.rs",
+      "working_sha256": "57b8251746807c8f74367c72cfa4f888a57cc876a564b0b9780579b5867f3276",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/subdirectory_hints.rs",
+      "working_sha256": "be95121a953096481a9734e771c3675eba7fb0671cdaa721f7dec0f1a38c5a72",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/task_scenarios.rs",
+      "working_sha256": "82f956cda54dcf084a0c340fc76f208f888f2fba6d886163ab775a6f9553e88f",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/usage_anchor.rs",
+      "working_sha256": "4a2a3b49ac63c6b8d67b40ec9e7ecca9762027761d863ef75043442178c85b9a",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/verification_scenarios.rs",
+      "working_sha256": "a666da7540a6ae69f329d5f5e5960392b14e90e6bba407d9b5610b5af862d7fb",
+      "head_blob": null
+    },
+    {
+      "path": "crates/epsilon-core/tests/compaction_scenarios.rs",
+      "working_sha256": "debfe5b576feb45397cb2f66204ea716d43697dc38c63701603c968cd56852db",
+      "head_blob": "7846e8e70bfdba800fe57ef1c4926d4df5374fd5"
+    },
+    {
+      "path": "crates/epsilon-session/tests/session_store.rs",
+      "working_sha256": "50c5b26baecf07284d388375ba55b22578433230267413b116376f50b9ae9263",
+      "head_blob": "fd57937376ac22bdc8b4d3dc3ead022a8ec65ab9"
+    },
+    {
+      "path": "crates/epsilon-ext/tests/host.rs",
+      "working_sha256": "c086416dddc179e1b60cafd09669eb689a89934cd86045ca1dec19526cf2e096",
+      "head_blob": "665ad55f2d3847c06755019d40b4b666d888e76a"
+    }
+  ],
+  "allowlist_count": 32
+}

@@ -17,6 +17,17 @@ use serde_json::json;
 /// Unit struct implementing the Anthropic Messages wire (fixture/test visibility).
 pub struct AnthropicWire;
 
+/// Pinned Claude Code CLI version pi reports as `user-agent: claude-cli/<v>`
+/// on the OAuth branch (`anthropic-messages.ts: claudeCodeVersion`).
+pub const CLAUDE_CODE_VERSION: &str = "2.1.75";
+
+/// pi `isOAuthToken`: OAuth access tokens carry the `sk-ant-oat` infix;
+/// API keys never do. The flag selects the Bearer + Claude Code identity
+/// header set (and the body shape) in `headers` / `request_body`.
+pub fn is_oauth_token(key: &str) -> bool {
+    key.contains("sk-ant-oat")
+}
+
 impl ProviderWire for AnthropicWire {
     fn endpoint(&self, model: &str) -> String {
         let _ = model;
@@ -28,15 +39,35 @@ impl ProviderWire for AnthropicWire {
     }
 
     fn headers(&self, key: &str) -> Vec<(String, String)> {
-        vec![
-            ("x-api-key".to_string(), key.to_string()),
-            ("anthropic-version".to_string(), "2023-06-01".to_string()),
-        ]
+        if is_oauth_token(key) {
+            // pi `createClient` OAuth branch: Bearer auth + Claude Code
+            // identity headers (`authToken`, `claude-code-20250219` +
+            // `oauth-2025-04-20` betas, `user-agent: claude-cli/...`,
+            // `x-app: cli`). The access token arrives via `toAuth`.
+            vec![
+                ("authorization".to_string(), format!("Bearer {key}")),
+                (
+                    "anthropic-beta".to_string(),
+                    "claude-code-20250219,oauth-2025-04-20".to_string(),
+                ),
+                (
+                    "user-agent".to_string(),
+                    format!("claude-cli/{CLAUDE_CODE_VERSION}"),
+                ),
+                ("x-app".to_string(), "cli".to_string()),
+            ]
+        } else {
+            vec![
+                ("x-api-key".to_string(), key.to_string()),
+                ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ]
+        }
     }
 
     /// Request shape per pi's `buildParams`. System prompt is one cache-controlled
     /// text block (pi sets `cache_control` on the system block; the stable prefix
-    /// then hits the provider prompt cache).
+    /// then hits the provider prompt cache). On the OAuth branch pi PREPENDS the
+    /// Claude Code identity line before the caller prompt (same cache block).
     fn request_body(
         &self,
         model: &str,
@@ -164,6 +195,7 @@ impl ProviderWire for AnthropicWire {
                 match delta_type {
                     "text_delta" => {
                         let text = data.pointer("/delta/text").and_then(|v| v.as_str())?;
+                        st.append_text(text);
                         Some(vec![StreamEvent::TextDelta {
                             index: 0,
                             delta: text.to_string(),
@@ -171,6 +203,7 @@ impl ProviderWire for AnthropicWire {
                     }
                     "thinking_delta" => {
                         let text = data.pointer("/delta/thinking").and_then(|v| v.as_str())?;
+                        st.append_thinking(text);
                         Some(vec![StreamEvent::ThinkingDelta {
                             index: 0,
                             delta: text.to_string(),
@@ -217,11 +250,8 @@ impl ProviderWire for AnthropicWire {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown anthropic stream error")
                     .to_string();
-                Some(vec![StreamEvent::Done {
-                    message: crate::stream_fn::error_message(format!(
-                        "anthropic stream error: {detail}"
-                    )),
-                }])
+                let message = st.failure_message(format!("anthropic stream error: {detail}"));
+                Some(vec![StreamEvent::Done { message }])
             }
             "ping" => None,
             _ => None,
@@ -302,3 +332,8 @@ fn anthropic_effort(level: epsilon_contracts::ThinkingLevel) -> Option<&'static 
         T::XHigh => Some("xhigh"),
     }
 }
+
+/// Claude Code identity line pi PREPENDS to the system prompt on the OAuth
+/// branch (`buildParams`: `params.system` starts with this text, caller prompt
+/// follows in the same cache-controlled block).
+pub const OAUTH_SYSTEM_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";

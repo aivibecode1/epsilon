@@ -1,10 +1,14 @@
 //! The retry EXECUTOR: wraps any [`StreamFn`] with ADR-010's policy.
 //!
-//! Retry scope is deliberately narrow: only **pre-stream failures** (the first event is
-//! `Done{stop_reason: Error}`) are retried — once a stream has started producing, we
-//! pass it through untouched rather than risk duplicate partials. This covers the
-//! overwhelmingly common case (transport/setup failures surface before the first token)
-//! while keeping mid-stream semantics simple and honest.
+//! Retry scope: a failure is retried while **nothing user-visible has been emitted**.
+//! That covers pre-stream failures (the first event is `Done{stop_reason: Error}`) and
+//! live streams that die before their first delta — a stall watchdog tripping, a proxy
+//! cutting a quiet connection, a provider 500 sent as an SSE error frame. In both cases
+//! the retry is invisible: no partial was ever shown, so nothing can be duplicated.
+//!
+//! Once a delta has been forwarded we pass failures through untouched. Re-running the
+//! model after the user has watched half an answer would duplicate or contradict
+//! visible text, and silently discarding that text is worse than an honest error.
 //!
 //! Every scheduled wait fires the `on_retry` hook so callers can render a notice or
 //! append a durable ledger entry (ADR-010's keyed attempts; callers add turn/step
@@ -38,7 +42,7 @@ pub struct RetryNotice {
 }
 
 /// Observer invoked for every scheduled retry wait.
-type RetryHook = Box<dyn Fn(&RetryNotice) + Send + Sync>;
+type RetryHook = Arc<dyn Fn(&RetryNotice) + Send + Sync>;
 
 /// Wrap `inner` with up to `max_attempts` tries for retryable pre-stream failures.
 pub struct Retrying {
@@ -65,23 +69,37 @@ impl Retrying {
 
     /// Observe every scheduled wait (UI notice / durable ledger).
     pub fn with_on_retry(mut self, hook: impl Fn(&RetryNotice) + Send + Sync + 'static) -> Self {
-        self.on_retry = Some(Box::new(hook));
+        self.on_retry = Some(Arc::new(hook));
         self
     }
+}
 
-    fn error_detail(ev: &StreamEvent) -> Option<String> {
-        if let StreamEvent::Done { message } = ev
-            && message.stop_reason == StopReason::Error
-        {
-            return Some(
-                message
-                    .error_message
-                    .clone()
-                    .unwrap_or_else(|| "unknown provider error".into()),
-            );
-        }
-        None
+/// Extract the failure detail from a terminal error event (`None` = not a failure).
+fn error_detail(ev: &StreamEvent) -> Option<String> {
+    if let StreamEvent::Done { message } = ev
+        && message.stop_reason == StopReason::Error
+    {
+        return Some(
+            message
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "unknown provider error".into()),
+        );
     }
+    None
+}
+
+/// Whether an event is output the user could already have seen. `Start` is not:
+/// it only opens the message, so a fresh attempt may replace it (M60).
+fn is_visible_output(ev: &StreamEvent) -> bool {
+    matches!(
+        ev,
+        StreamEvent::TextDelta { .. }
+            | StreamEvent::ThinkingDelta { .. }
+            | StreamEvent::ToolCallStart { .. }
+            | StreamEvent::ToolCallArgumentsDelta { .. }
+            | StreamEvent::Done { .. }
+    )
 }
 
 #[async_trait]
@@ -93,27 +111,23 @@ impl StreamFn for Retrying {
             // Peek event #1: pre-stream failure or live stream?
             match stream.next().await {
                 Some(first) => {
-                    let retriable = Self::error_detail(&first)
+                    let retriable = error_detail(&first)
                         .filter(|d| should_retry(classify(d), attempt, self.max_attempts));
                     if let Some(detail) = retriable {
-                        let kind = classify(&detail);
-                        let delay = backoff_delay(attempt, None);
-                        if let Some(hook) = &self.on_retry {
-                            hook(&RetryNotice {
-                                model: model.id.clone(),
-                                kind,
-                                attempt,
-                                delay,
-                                detail: detail.clone(),
-                            });
-                        }
-                        tokio::time::sleep(delay).await;
+                        notice(&self.on_retry, model, &detail, attempt).await;
                         attempt += 1;
                         continue; // fresh attempt; the buffered failure is discarded
                     }
-                    return Box::new(PassthroughFirst {
+                    return Box::new(LiveStream {
+                        inner: Arc::clone(&self.inner),
+                        model: model.clone(),
+                        ctx: ctx.clone(),
+                        max_attempts: self.max_attempts,
+                        on_retry: self.on_retry.clone(),
+                        attempt,
                         first: Some(first),
-                        rest: stream,
+                        rest: Some(stream),
+                        emitted: false,
                     });
                 }
                 None => {
@@ -128,19 +142,85 @@ impl StreamFn for Retrying {
     }
 }
 
-/// Replays the peeked first event, then streams the remainder verbatim.
-struct PassthroughFirst {
+/// Fire the retry notice (if any) and wait the scheduled backoff.
+async fn notice(hook: &Option<RetryHook>, model: &ModelRef, detail: &str, attempt: u32) {
+    let kind = classify(detail);
+    let delay = backoff_delay(attempt, None);
+    if let Some(hook) = hook {
+        hook(&RetryNotice {
+            model: model.id.clone(),
+            kind,
+            attempt,
+            delay,
+            detail: detail.to_string(),
+        });
+    }
+    tokio::time::sleep(delay).await;
+}
+
+/// Replays the peeked first event, then streams the remainder — and, while nothing
+/// visible has been emitted, re-runs the whole call on a retryable failure (M60).
+struct LiveStream {
+    inner: Arc<dyn StreamFn>,
+    model: ModelRef,
+    ctx: LlmContext,
+    max_attempts: u32,
+    on_retry: Option<RetryHook>,
+    /// Attempt that produced the currently-live stream (zero-based).
+    attempt: u32,
+    /// Peeked-but-unreplayed event.
     first: Option<StreamEvent>,
-    rest: BoxEventStream,
+    /// The live attempt; `None` once it is exhausted or replaced.
+    rest: Option<BoxEventStream>,
+    /// A delta went out: a retry now would duplicate or contradict visible output.
+    emitted: bool,
+}
+
+impl LiveStream {
+    /// Re-run the call after a content-free failure, swallowing the fresh stream's
+    /// duplicate `Start` — the caller has already seen this call open.
+    async fn retry(&mut self, detail: &str) {
+        notice(&self.on_retry, &self.model, detail, self.attempt).await;
+        self.attempt += 1;
+        let mut fresh = self.inner.stream(&self.model, self.ctx.clone()).await;
+        match fresh.next().await {
+            Some(StreamEvent::Start { .. }) => {}
+            Some(ev) => self.first = Some(ev),
+            None => {
+                // The replacement stream is degenerate; let the caller see the end
+                // rather than looping without progress.
+                self.rest = None;
+                return;
+            }
+        }
+        self.rest = Some(fresh);
+    }
 }
 
 #[async_trait]
-impl EventStream for PassthroughFirst {
+impl EventStream for LiveStream {
     async fn next(&mut self) -> Option<StreamEvent> {
-        if let Some(first) = self.first.take() {
-            return Some(first);
+        loop {
+            if let Some(first) = self.first.take() {
+                self.emitted |= is_visible_output(&first);
+                return Some(first);
+            }
+            let stream = self.rest.as_mut()?;
+            match stream.next().await {
+                Some(ev) => {
+                    let retriable = error_detail(&ev).filter(|d| {
+                        !self.emitted && should_retry(classify(d), self.attempt, self.max_attempts)
+                    });
+                    if let Some(detail) = retriable {
+                        self.retry(&detail).await;
+                        continue;
+                    }
+                    self.emitted |= is_visible_output(&ev);
+                    return Some(ev);
+                }
+                None => self.rest = None,
+            }
         }
-        self.rest.next().await
     }
 }
 
@@ -292,6 +372,176 @@ mod tests {
         )
         .await;
         assert!(done.error_message.unwrap().contains("Unauthorized"));
+    }
+
+    /// Streams that open, then fail with a retryable error having emitted `deltas`
+    /// text deltas first (M60 fixtures).
+    struct OpensThenDies {
+        deltas: usize,
+        calls: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl StreamFn for OpensThenDies {
+        async fn stream(&self, m: &ModelRef, _c: LlmContext) -> BoxEventStream {
+            *self.calls.lock().unwrap() += 1;
+            let mut events = vec![StreamEvent::Start {
+                partial: empty_assistant(m.id.as_str()),
+            }];
+            for i in 0..self.deltas {
+                events.push(StreamEvent::TextDelta {
+                    index: 0,
+                    delta: format!("d{i}"),
+                });
+            }
+            events.push(StreamEvent::Done {
+                message: error_message("connection reset by peer"),
+            });
+            VecStream::from_events(events)
+        }
+    }
+
+    fn empty_assistant(model_id: &str) -> AssistantMessage {
+        AssistantMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: model_id.to_string(),
+            content: vec![],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: Usage::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_live_stream_that_dies_before_any_output_is_retried_transparently() {
+        // The stall-watchdog / mid-stream-reset case: the call opened, produced
+        // nothing, and failed. Nobody saw anything, so the retry is invisible —
+        // including exactly ONE Start in the caller's view.
+        let provider = Arc::new(OpensThenDies {
+            deltas: 0,
+            calls: Mutex::new(0),
+        });
+        let notices = Arc::new(Mutex::new(Vec::<RetryNotice>::new()));
+        let log = Arc::clone(&notices);
+        let mut s = Retrying::new(Arc::clone(&provider) as Arc<dyn StreamFn>)
+            .with_max_attempts(3)
+            .with_on_retry(move |n| log.lock().unwrap().push(n.clone()))
+            .stream(&model(), ctx())
+            .await;
+
+        let mut starts = 0;
+        let mut terminal = None;
+        while let Some(ev) = s.next().await {
+            match ev {
+                StreamEvent::Start { .. } => starts += 1,
+                StreamEvent::Done { message } => {
+                    terminal = Some(message);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(*provider.calls.lock().unwrap(), 3, "one per attempt");
+        assert_eq!(starts, 1, "the duplicate Start of a retry is swallowed");
+        assert_eq!(notices.lock().unwrap().len(), 2, "one notice per wait");
+        assert_eq!(notices.lock().unwrap()[0].kind, FailureKind::Network);
+        let done = terminal.expect("terminal event");
+        assert!(
+            done.error_message
+                .as_deref()
+                .is_some_and(|m| m.contains("reset")),
+            "exhausted attempts surface the real failure: {done:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_died_after_output_passes_the_failure_through() {
+        // Half an answer is already on screen: re-running would duplicate it.
+        let provider = Arc::new(OpensThenDies {
+            deltas: 2,
+            calls: Mutex::new(0),
+        });
+        let notices = Arc::new(Mutex::new(Vec::<RetryNotice>::new()));
+        let log = Arc::clone(&notices);
+        let mut s = Retrying::new(Arc::clone(&provider) as Arc<dyn StreamFn>)
+            .with_on_retry(move |n| log.lock().unwrap().push(n.clone()))
+            .stream(&model(), ctx())
+            .await;
+
+        let mut seen = Vec::new();
+        while let Some(ev) = s.next().await {
+            match ev {
+                StreamEvent::TextDelta { delta, .. } => seen.push(delta),
+                StreamEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(seen, vec!["d0", "d1"], "visible deltas arrive exactly once");
+        assert_eq!(
+            *provider.calls.lock().unwrap(),
+            1,
+            "never re-run after output"
+        );
+        assert!(notices.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_live_failure_recovered_on_the_next_attempt_streams_normally() {
+        // First call: opens, stalls, fails. Second: the real answer.
+        struct StallThenAnswer {
+            calls: Mutex<u32>,
+        }
+        #[async_trait]
+        impl StreamFn for StallThenAnswer {
+            async fn stream(&self, m: &ModelRef, _c: LlmContext) -> BoxEventStream {
+                let n = {
+                    let mut c = self.calls.lock().unwrap();
+                    *c += 1;
+                    *c
+                };
+                if n == 1 {
+                    return VecStream::from_events(vec![
+                        StreamEvent::Start {
+                            partial: empty_assistant(m.id.as_str()),
+                        },
+                        StreamEvent::Done {
+                            message: error_message("provider stream timed out: no data for 120s"),
+                        },
+                    ]);
+                }
+                let mut final_msg = empty_assistant(m.id.as_str());
+                final_msg.content = vec![ContentBlock::text("answer")];
+                VecStream::from_events(vec![
+                    StreamEvent::Start {
+                        partial: empty_assistant(m.id.as_str()),
+                    },
+                    StreamEvent::TextDelta {
+                        index: 0,
+                        delta: "answer".into(),
+                    },
+                    StreamEvent::Done { message: final_msg },
+                ])
+            }
+        }
+        let provider = Arc::new(StallThenAnswer {
+            calls: Mutex::new(0),
+        });
+        let done = collect_done(
+            Retrying::new(Arc::clone(&provider) as Arc<dyn StreamFn>)
+                .stream(&model(), ctx())
+                .await,
+        )
+        .await;
+        assert_eq!(done.text(), "answer");
+        assert_eq!(*provider.calls.lock().unwrap(), 2);
+        // The watchdog message classifies as a network failure — that classification
+        // is what lets the retry (and the model-level fallback) act on it.
+        assert_eq!(
+            classify("provider stream timed out: no data for 120s"),
+            FailureKind::Network
+        );
     }
 
     #[tokio::test]

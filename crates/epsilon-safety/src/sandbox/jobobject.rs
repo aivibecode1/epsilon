@@ -17,7 +17,9 @@ use std::time::Duration;
 use tokio::process::Command;
 use winapi::um::winnt::HANDLE;
 
-use super::{ConfinedCommand, ConfinedOutcome, ConfinementPolicy, Sandbox, SandboxError};
+use super::{
+    ConfinedCommand, ConfinedOutcome, ConfinementPolicy, Enforcement, Sandbox, SandboxError,
+};
 
 mod ffi {
     use std::mem::zeroed;
@@ -198,11 +200,31 @@ impl Sandbox for JobObjectSandbox {
         true
     }
 
+    /// Resources yes, content no: this is the Windows caveat as a value (M77, D-19).
+    ///
+    /// A job object bounds memory, process count and CPU, and it kills the whole tree on timeout
+    /// or on drop — but nothing in it restricts what those processes may read or write, so a
+    /// caller that needs a filesystem boundary must reject this backend rather than trust the
+    /// word "confined".
+    fn capabilities(&self) -> Enforcement {
+        Enforcement::from_missing(vec!["filesystem", "network"])
+    }
+
     async fn run(
         &self,
         cmd: ConfinedCommand,
         policy: &ConfinementPolicy,
+        on_output: Option<crate::sandbox::OutputSink>,
     ) -> Result<ConfinedOutcome, SandboxError> {
+        if cmd.mode == crate::escalation::SandboxMode::DangerFullAccess {
+            // No confinement is not a confinement: a caller that wants it must not call the
+            // sandbox at all. Failing closed keeps a caller bug loud.
+            return Err(SandboxError::Setup(
+                "danger-full-access is not a confined mode; run the command directly instead of \
+                 through a sandbox"
+                    .into(),
+            ));
+        }
         let job = ffi::create_job().map_err(SandboxError::Setup)?;
         ffi::apply_limits(ffi::raw(&job), policy).map_err(SandboxError::Setup)?;
 
@@ -211,6 +233,11 @@ impl Sandbox for JobObjectSandbox {
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
         command.kill_on_drop(true);
+        // DSH subprocess rule: a confined child still inherits our environment,
+        // so a credential-shaped variable would be visible to `env` inside the
+        // sandbox. Confinement limits where a process may go, not what it can
+        // read — the scrub is what stops a key reaching a tool result.
+        crate::env::scrub_secret_env(&mut command);
         let mut child = command
             .spawn()
             .map_err(|e| SandboxError::Spawn(format!("{}: {e}", cmd.program)))?;
@@ -224,27 +251,22 @@ impl Sandbox for JobObjectSandbox {
             .cast();
         ffi::assign(process_handle, ffi::raw(&job)).map_err(SandboxError::Setup)?;
 
-        // Drain pipes concurrently so a chatty child can never block on full buffers.
-        let mut stdout_pipe = child
+        // Drain pipes concurrently so a chatty child can never block on full buffers,
+        // forwarding each chunk to the live sink when one was supplied (pi streams
+        // partial tool output so a long build is visible while it runs).
+        let stdout_pipe = child
             .stdout
             .take()
             .ok_or_else(|| SandboxError::Setup("stdout pipe unavailable".into()))?;
-        let mut stderr_pipe = child
+        let stderr_pipe = child
             .stderr
             .take()
             .ok_or_else(|| SandboxError::Setup("stderr pipe unavailable".into()))?;
-        let stdout_task = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            stdout_pipe.read_to_end(&mut buf).await.ok();
-            buf
-        });
-        let stderr_task = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            stderr_pipe.read_to_end(&mut buf).await.ok();
-            buf
-        });
+        let (out_sink, err_sink) = (on_output.clone(), on_output);
+        let stdout_task =
+            tokio::spawn(async move { crate::sandbox::drain_pipe(stdout_pipe, out_sink).await });
+        let stderr_task =
+            tokio::spawn(async move { crate::sandbox::drain_pipe(stderr_pipe, err_sink).await });
 
         let seconds = policy.wall_timeout_secs.max(1);
         let wait = child.wait();
@@ -261,6 +283,7 @@ impl Sandbox for JobObjectSandbox {
                     stdout,
                     stderr,
                     backend: self.name(),
+                    enforcement: self.capabilities(),
                 })
             }
             Ok(Err(e)) => Err(SandboxError::Spawn(format!("wait failed: {e}"))),
@@ -290,6 +313,24 @@ mod tests {
                 command.into(),
             ],
             cwd: std::env::temp_dir(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn the_job_object_backend_refuses_danger_full_access() {
+        // It cannot express "no boundary": job objects only ever *add* limits.
+        let mut cmd = powershell("echo hi");
+        cmd.mode = crate::escalation::SandboxMode::DangerFullAccess;
+        let err = JobObjectSandbox::new()
+            .run(cmd, &short_policy(), None)
+            .await
+            .expect_err("must not run as if unconfined");
+        match err {
+            SandboxError::Setup(message) => {
+                assert!(message.contains("danger-full-access"), "{message}");
+            }
+            other => panic!("expected a setup refusal, got {other:?}"),
         }
     }
 
@@ -313,7 +354,7 @@ mod tests {
         // which lives inside the backend; the behavioral assertions below come from
         // the outcome itself).
         let outcome = sb
-            .run(powershell("Write-Output job-ok"), &short_policy())
+            .run(powershell("Write-Output job-ok"), &short_policy(), None)
             .await
             .expect("confined run succeeds");
         assert_eq!(outcome.backend, "windows-job-object");
@@ -345,7 +386,7 @@ mod tests {
             ..short_policy()
         };
         let err = sb
-            .run(powershell("Start-Sleep -Seconds 30"), &policy)
+            .run(powershell("Start-Sleep -Seconds 30"), &policy, None)
             .await
             .expect_err("sleeping command must time out");
         assert!(matches!(err, SandboxError::Timeout { seconds: 2 }), "{err}");

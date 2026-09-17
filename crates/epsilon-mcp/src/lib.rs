@@ -271,9 +271,11 @@ mod tests {
         let sink: epsilon_contracts::tool::ToolUpdateSink = Arc::new(|_| {});
         let ctx = ToolContext {
             session_id: "t".into(),
+            observation_scope: std::sync::Arc::new(()),
             cwd: std::env::temp_dir(),
             spill_dir: std::env::temp_dir().join("eps-mcp"),
             token: Default::default(),
+            task_host: None,
         };
         let invocation = || ToolInvocation {
             tool_call_id: "tc_probe".into(),
@@ -332,9 +334,11 @@ mod tests {
         let sink: epsilon_contracts::tool::ToolUpdateSink = Arc::new(|_| {});
         let ctx = ToolContext {
             session_id: "t".into(),
+            observation_scope: std::sync::Arc::new(()),
             cwd: std::env::temp_dir(),
             spill_dir: std::env::temp_dir().join("eps-mcp"),
             token: Default::default(),
+            task_host: None,
         };
         let out = tool
             .execute(

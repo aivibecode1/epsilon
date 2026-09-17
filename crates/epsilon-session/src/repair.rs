@@ -15,13 +15,74 @@ use epsilon_contracts::session_entry::{EntryKind, SessionEntry};
 
 use crate::store::SessionStore;
 
+/// The kinds of repair this harness can perform.
+///
+/// pi classifies a contradiction into twelve machine-readable reasons; this harness can only
+/// *produce* two shapes (a call without a result, a branch without its end marker), and a reason
+/// type for a state that cannot occur is a claim nobody can test. The enum exists so callers
+/// report the kind instead of a count — "3 tool results synthesized" and "the session ended
+/// mid-run" are different facts about what the user lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairKind {
+    /// A tool call whose result never landed: a synthetic error result was appended, marked as
+    /// `interrupted`.
+    DanglingToolCall,
+    /// The branch ended mid-run: a `TurnEnd{Aborted}` marker was appended.
+    MissingTurnEnd,
+}
+
+impl RepairKind {
+    /// Stable string for logs, notices and `details` — never translated.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RepairKind::DanglingToolCall => "dangling_tool_call",
+            RepairKind::MissingTurnEnd => "missing_turn_end",
+        }
+    }
+
+    /// One line a user can read, with the count for this kind.
+    pub fn describe(self, count: usize) -> String {
+        match self {
+            RepairKind::DanglingToolCall => format!(
+                "{count} tool call(s) had no result — synthesized an error result so the \
+                 transcript stays provider-valid"
+            ),
+            RepairKind::MissingTurnEnd => {
+                "the session ended mid-run — appended an aborted turn marker".to_string()
+            }
+        }
+    }
+}
+
 /// What a repair pass found and did.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RepairReport {
     /// Dangling tool calls that received synthetic error results.
     pub repaired_tool_calls: usize,
     /// A synthetic turn-end marker was appended.
     pub appended_turn_end: bool,
+}
+
+impl RepairReport {
+    /// The kinds this pass performed, with counts — empty when the session was intact.
+    pub fn kinds(&self) -> Vec<(RepairKind, usize)> {
+        let mut out = Vec::new();
+        if self.repaired_tool_calls > 0 {
+            out.push((RepairKind::DanglingToolCall, self.repaired_tool_calls));
+        }
+        if self.appended_turn_end {
+            out.push((RepairKind::MissingTurnEnd, 1));
+        }
+        out
+    }
+
+    /// One line per kind, for a notice or a `/session` listing.
+    pub fn summary(&self) -> Vec<String> {
+        self.kinds()
+            .into_iter()
+            .map(|(kind, n)| kind.describe(n))
+            .collect()
+    }
 }
 
 /// Scan the active branch; synthesize missing tool results / turn-end markers.
@@ -84,7 +145,12 @@ pub fn repair_on_open(store: &mut SessionStore) -> Result<RepairReport, crate::s
             content: vec![ContentBlock::text(format!(
                 "Tool '{tool_name}' was interrupted before it could run (process restart)."
             ))],
-            details: serde_json::json!({"interrupted": true}),
+            details: serde_json::json!({
+                "interrupted": true,
+                // Typed repair reason (M75): the entry says what was wrong, not just that
+                // something was. `interrupted` stays for frontends that already read it.
+                "repair": RepairKind::DanglingToolCall.as_str(),
+            }),
             usage: None,
             is_error: true,
         });

@@ -12,14 +12,29 @@ path = "src/main.rs"
 
 [features]
 # Real network providers via direct per-provider HTTP (M17 pi port; ADR-003 amendment).
-# Off by default; keys come from env only.
-real = ["epsilon-llm/real"]
+#
+# M63: ON by default. Off-by-default meant `cargo install epsilon-cli` produced a
+# binary that could not talk to a single real model — the first thing every new
+# user tries — while the docs only showed the `--features real` incantation for
+# people building from a clone. Keys still come from the environment or the
+# stored auth file; the feature only decides whether the network path exists.
+# Offline/air-gapped builds: `--no-default-features`.
+#
+# M52: forward to EVERY crate whose real path the binary depends on. Before
+# this, `--features real` lit only epsilon-llm's network layer, so
+# `epsilon-core::Agent::try_hot_swap_to_real` compiled to its `false` stub and
+# the TUI's "now live on X" hot-swap silently degraded to "restart epsilon"
+# (found while wiring OAuth login, which lands on that same path). The
+# `REAL_PATH_ENABLED` guard below makes the omission a build error.
+default = ["real"]
+real = ["epsilon-llm/real", "epsilon-core/real", "epsilon-tui/real"]
 
 [dependencies]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-llm = { path = "../epsilon-llm" }
 epsilon-core = { path = "../epsilon-core" }
 epsilon-tools = { path = "../epsilon-tools" }
+epsilon-lsp = { path = "../epsilon-lsp" }
 epsilon-safety = { path = "../epsilon-safety" }
 epsilon-session = { path = "../epsilon-session" }
 epsilon-tui = { path = "../epsilon-tui" }

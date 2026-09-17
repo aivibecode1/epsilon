@@ -9,6 +9,7 @@
 
 pub mod agent_event;
 pub mod content;
+pub mod diagnostics;
 pub mod ids;
 pub mod message;
 pub mod session_entry;

@@ -6,6 +6,7 @@
 //! hardcoded conventions here; the full ADR-012 config layer (M12) will let projects
 //! declare them explicitly.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,8 +17,14 @@ use epsilon_ext::ExtHost;
 /// Parsed `.epsilon/config.toml` — the project layer of ADR-012.
 ///
 /// Declarative only; unknown keys are preserved on disk but ignored by the runtime.
-/// First use records a SHA-256 trust hash (`.epsilon/trust.json`); later runs warn
-/// loudly when the file changes underneath them.
+///
+/// M45: trust is TWO mechanisms, not one. The config-hash below answers "did
+/// THIS config file change?" (per-file integrity). The [`ProjectTrustStore`]
+/// answers "did the USER trust THIS directory?" (per-path memory, pi
+/// `trust.json`: path → true/false/null with nearest-ancestor inheritance).
+/// The store gates LOADING (skills/extensions/prompts at the roots); the hash
+/// gates the config's own rules. A remembered `false` denies even an unchanged
+/// config; `null`/absent falls back to the hash decision.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectConfig {
     /// `[model] id` — overrides the global saved model, under the `--model` flag.
@@ -71,6 +78,14 @@ pub enum TrustDecision {
 /// loads silently; a CHANGED hash still loads but reports [`TrustDecision::
 /// Changed`] so frontends decide — the interactive TUI re-prompts (pi's
 /// trust-manager semantics), headless modes print the loud banner as before.
+///
+/// M39 scoping rule: the hash gates `.epsilon/config.toml` ONLY. Skills,
+/// extensions, prompts, themes, and SYSTEM.md are gated separately by
+/// [`trust_requiring_resources`] at load time (an untrusted project yields
+/// empty skill/extension roots instead of executing third-party code).
+/// Collapsing every resource onto one hash would re-trust silently on any
+/// config edit; per-resource gating keeps the decision attached to the code
+/// that actually runs.
 pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, Vec<String>) {
     let mut notices = Vec::new();
     let path = workspace.join(PROJECT_CONFIG_REL);
@@ -218,6 +233,312 @@ pub fn current_project_config_hash(workspace: &Path) -> Option<String> {
     Some(sha256_hex(raw.as_bytes()))
 }
 
+/// path → trusted map (pi `TrustFile`: `true`/`false`; `null` removes the key).
+type TrustMap = BTreeMap<String, bool>;
+
+/// Remembered per-path trust decision (pi `ProjectTrustDecision`):
+/// `Some(true)` trusted, `Some(false)` refused, `None` never asked.
+pub type ProjectTrustDecision = Option<bool>;
+
+/// One remembered decision: nearest ancestor with a `true`/`false` value wins
+/// (pi `findNearestTrustEntry`); `null` entries clear inheritance without
+/// deciding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectTrustEntry {
+    /// Canonicalized directory path the decision was recorded for.
+    pub path: String,
+    /// The remembered decision.
+    pub decision: bool,
+}
+
+/// Persistent per-path trust memory (pi `ProjectTrustStore`).
+///
+/// Lives at `<global_dir>/trust.json` (pi: `<agentDir>/trust.json`): a
+/// `path → true/false/null` map, keys sorted on write, `null` (via
+/// [`ProjectTrustStore::clear`]) removing the key. Reads and writes hold the
+/// auth-store lock discipline — a `trust.lock` sibling with stale-steal — so
+/// concurrent frontends never interleave a torn write.
+pub struct ProjectTrustStore {
+    path: PathBuf,
+}
+
+impl ProjectTrustStore {
+    /// Open the store under `global_dir` (`None` when no home resolves —
+    /// callers fall back to hash-only trust).
+    pub fn open() -> Option<Self> {
+        let dir = epsilon_core::config::global_dir()?;
+        Some(Self {
+            path: dir.join("trust.json"),
+        })
+    }
+
+    /// Open at an explicit path (tests).
+    pub fn open_in(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// Remembered decision for `cwd`: the nearest `cwd`-or-ancestor entry,
+    /// or `None` when nothing was ever recorded (pi `get`).
+    pub fn get(&self, cwd: &Path) -> ProjectTrustDecision {
+        self.get_entry(cwd).map(|e| e.decision)
+    }
+
+    /// Nearest entry at or above `cwd` (pi `getEntry`).
+    pub fn get_entry(&self, cwd: &Path) -> Option<ProjectTrustEntry> {
+        let _lock = self.lock()?;
+        let data = self.read()?;
+        find_nearest(&data, cwd)
+    }
+
+    /// Record one decision (`None` clears the key — pi's `null`).
+    pub fn set(&self, cwd: &Path, decision: ProjectTrustDecision) -> Result<(), String> {
+        self.set_many(std::slice::from_ref(&(cwd.to_path_buf(), decision)))
+    }
+
+    /// Record several decisions atomically, sorted keys on write (pi `setMany`).
+    pub fn set_many(&self, decisions: &[(PathBuf, ProjectTrustDecision)]) -> Result<(), String> {
+        let _lock = self
+            .lock()
+            .ok_or_else(|| "could not lock the trust store".to_string())?;
+        let mut data = self.read().unwrap_or_default();
+        for (path, decision) in decisions {
+            let key = canonicalize(path);
+            match decision {
+                None => {
+                    data.remove(&key);
+                }
+                Some(d) => {
+                    data.insert(key, *d);
+                }
+            }
+        }
+        self.write(&data)
+    }
+
+    /// Remove the entry for `cwd` (forget — the next run asks again).
+    pub fn clear(&self, cwd: &Path) -> Result<(), String> {
+        self.set(cwd, None)
+    }
+
+    fn lock(&self) -> Option<LockGuard> {
+        LockGuard::acquire(&self.path)
+    }
+
+    fn read(&self) -> Option<TrustMap> {
+        let raw = std::fs::read_to_string(&self.path).ok()?;
+        if raw.trim().is_empty() {
+            return Some(TrustMap::new());
+        }
+        let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let obj = value.as_object()?;
+        let mut map = TrustMap::new();
+        for (k, v) in obj {
+            match v {
+                serde_json::Value::Bool(b) => {
+                    map.insert(k.clone(), *b);
+                }
+                serde_json::Value::Null => {} // `null` never persists; skip defensively
+                _ => return None,             // corrupt value: treat store as unreadable
+            }
+        }
+        Some(map)
+    }
+
+    fn write(&self, data: &TrustMap) -> Result<(), String> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        let mut keys: Vec<&String> = data.keys().collect();
+        keys.sort();
+        let mut obj = serde_json::Map::with_capacity(data.len());
+        for k in keys {
+            obj.insert(k.clone(), serde_json::Value::Bool(data[k]));
+        }
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::Value::Object(obj).to_string())
+            .map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &self.path)
+            .map_err(|e| format!("could not publish {}: {e}", self.path.display()))?;
+        Ok(())
+    }
+}
+
+/// Canonicalize a workspace path for store keys: absolute + lexically
+/// normalized (pi `normalizeCwd`: `canonicalizePath(resolvePath(cwd))`).
+fn canonicalize(path: &Path) -> String {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    let mut out = PathBuf::new();
+    for comp in abs.components() {
+        match comp {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out.to_string_lossy().into_owned()
+}
+
+/// Nearest `cwd`-or-ancestor key with a decision (pi `findNearestTrustEntry`).
+fn find_nearest(data: &TrustMap, cwd: &Path) -> Option<ProjectTrustEntry> {
+    let mut dir = canonicalize(cwd);
+    loop {
+        if let Some(d) = data.get(&dir) {
+            return Some(ProjectTrustEntry {
+                path: dir,
+                decision: *d,
+            });
+        }
+        let parent = Path::new(&dir).parent()?.to_string_lossy().into_owned();
+        if parent == dir {
+            return None;
+        }
+        dir = parent;
+    }
+}
+
+/// Cross-process lock for the trust store (same stale-steal discipline as the
+/// auth store: a `trust.lock` sibling; holders older than 30s are presumed
+/// dead). Returns `None` when the lock directory is unusable — callers treat
+/// that as "store unavailable", never as trusted.
+struct LockGuard {
+    path: PathBuf,
+}
+
+impl LockGuard {
+    fn acquire(store_path: &Path) -> Option<Self> {
+        let dir = store_path.parent()?;
+        std::fs::create_dir_all(dir).ok()?;
+        let path = store_path.with_extension("json.lock");
+        // Best-effort create-exclusive; stale holders (>30s) are stolen.
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                let _ = writeln!(f, "{}", std::process::id());
+                Some(Self { path })
+            }
+            Err(_) => {
+                let stale = std::fs::metadata(&path)
+                    .ok()?
+                    .modified()
+                    .ok()?
+                    .elapsed()
+                    .map(|e| e.as_secs() > 30)
+                    .unwrap_or(false);
+                if stale {
+                    let _ = std::fs::remove_file(&path);
+                    Self::acquire(store_path)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Project-local resource kinds that require trust before loading
+/// (pi `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES` + `.agents/skills` walk).
+/// Anything on this list found under the workspace must be gated on the
+/// project being trusted — loading it untrusted would execute third-party code
+/// or instructions (extensions, skills, prompts-as-system-text, themes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustRequiringResource {
+    /// `.epsilon/config.toml` (`settings.json` in pi: policy + rules).
+    ProjectConfig,
+    /// `.epsilon/extensions/` (pi `extensions`).
+    Extensions,
+    /// `.epsilon/skills/` or `.agents/skills/` in the workspace tree.
+    Skills,
+    /// `.epsilon/prompts/` (pi `prompts`: system-prompt overlays).
+    Prompts,
+    /// `.epsilon/themes/` (pi `themes`: TUI theme code).
+    Themes,
+    /// `.epsilon/SYSTEM.md` (pi `SYSTEM.md`: appended system instructions).
+    SystemMd,
+    /// `.epsilon/APPEND_SYSTEM.md` (pi `APPEND_SYSTEM.md`).
+    AppendSystemMd,
+}
+
+impl TrustRequiringResource {
+    /// Human-readable path fragment for diagnostics.
+    pub fn describe(self) -> &'static str {
+        match self {
+            TrustRequiringResource::ProjectConfig => ".epsilon/config.toml",
+            TrustRequiringResource::Extensions => ".epsilon/extensions/",
+            TrustRequiringResource::Skills => "skills (.epsilon/skills or .agents/skills)",
+            TrustRequiringResource::Prompts => ".epsilon/prompts/",
+            TrustRequiringResource::Themes => ".epsilon/themes/",
+            TrustRequiringResource::SystemMd => ".epsilon/SYSTEM.md",
+            TrustRequiringResource::AppendSystemMd => ".epsilon/APPEND_SYSTEM.md",
+        }
+    }
+}
+
+/// Scan the workspace for trust-requiring project resources
+/// (pi `hasTrustRequiringProjectResources`).
+///
+/// `.epsilon/config.toml` + every sibling resource dir/file counts directly;
+/// `.agents/skills` counts in the workspace AND any ancestor up to the
+/// filesystem root (pi `hasTrustRequiringProjectResources` walks to root;
+/// a parent repo's skill tree applies to the project, so it gates too).
+pub fn trust_requiring_resources(workspace: &Path) -> Vec<TrustRequiringResource> {
+    let mut found = Vec::new();
+    let dot = workspace.join(".epsilon");
+    if workspace.join(".epsilon/config.toml").is_file() {
+        found.push(TrustRequiringResource::ProjectConfig);
+    }
+    for (name, kind) in [
+        ("extensions", TrustRequiringResource::Extensions),
+        ("skills", TrustRequiringResource::Skills),
+        ("prompts", TrustRequiringResource::Prompts),
+        ("themes", TrustRequiringResource::Themes),
+    ] {
+        if dot.join(name).is_dir() {
+            found.push(kind);
+        }
+    }
+    if dot.join("SYSTEM.md").is_file() {
+        found.push(TrustRequiringResource::SystemMd);
+    }
+    if dot.join("APPEND_SYSTEM.md").is_file() {
+        found.push(TrustRequiringResource::AppendSystemMd);
+    }
+    // `.agents/skills` in the workspace or any ancestor (pi walks to root).
+    let mut dir: Option<&Path> = Some(workspace);
+    while let Some(d) = dir {
+        if d.join(".agents").join("skills").is_dir() {
+            if !found.contains(&TrustRequiringResource::Skills) {
+                found.push(TrustRequiringResource::Skills);
+            }
+            break;
+        }
+        dir = d.parent();
+    }
+    found
+}
+
+/// True when the workspace carries anything trust must gate
+/// (pi `hasTrustRequiringProjectResources` as a boolean).
+pub fn has_trust_requiring_resources(workspace: &Path) -> bool {
+    !trust_requiring_resources(workspace).is_empty()
+}
+
 /// Convert declared project rules into an engine layer appended over the defaults.
 pub fn project_rules_layer(rules: &[ProjectRule]) -> epsilon_safety::Ruleset {
     use epsilon_safety::{Action, Rule, Ruleset};
@@ -241,10 +562,23 @@ pub fn project_rules_layer(rules: &[ProjectRule]) -> epsilon_safety::Ruleset {
 }
 
 /// Skill roots: global (`~/.config/epsilon/skills`) then project (`.epsilon/skills`).
+///
+/// M39: pass `project_trusted = false` to curtail project-local roots when the
+/// project is untrusted (pi's "settings/extensions curtailed" scoping) — the
+/// global root always loads, so built-in skills keep working while third-party
+/// project skills stay out until the user trusts them.
 pub fn skill_roots(workspace: &Path) -> Vec<PathBuf> {
+    skill_roots_trusted(workspace, true)
+}
+
+/// [`skill_roots`] with an explicit trust gate.
+pub fn skill_roots_trusted(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(dir) = epsilon_core::config::global_dir() {
         roots.push(dir.join("skills"));
+    }
+    if !project_trusted {
+        return roots;
     }
     // Portable cross-harness convention (.agents/skills — read by most harnesses;
     // lets one skill tree serve Claude Code, opencode, Epsilon, ...).
@@ -255,13 +589,52 @@ pub fn skill_roots(workspace: &Path) -> Vec<PathBuf> {
 }
 
 /// Extension roots: global (`~/.config/epsilon/extensions`) then project.
+///
+/// M39: same trust gate as [`skill_roots_trusted`] — untrusted projects load
+/// global extensions only, never project code.
 pub fn extension_roots(workspace: &Path) -> Vec<PathBuf> {
+    extension_roots_trusted(workspace, true)
+}
+
+/// [`extension_roots`] with an explicit trust gate.
+pub fn extension_roots_trusted(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(dir) = epsilon_core::config::global_dir() {
         roots.push(dir.join("extensions"));
     }
+    if !project_trusted {
+        return roots;
+    }
     roots.push(workspace.join(".epsilon").join("extensions"));
     roots
+}
+
+/// Agent-def roots: global (`~/.config/epsilon/agents`) always, then project
+/// (`.agents/agents` portable + `.epsilon/agents` native) only when trusted.
+///
+/// M50 (pi `agents.ts` `discoverAgents` parity): pi's `agentScope` gate is
+/// `"user"` by default — project-local agent defs (repo-controlled prompts
+/// that steer delegated children) load only with explicit scope. The M39
+/// trust lattice is that gate here: untrusted projects get global defs only.
+/// Split into user/project halves (not one flat list) so the core discovery
+/// can enforce the gate itself rather than trusting callers to pass the flag.
+pub fn agent_user_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(dir) = epsilon_core::config::global_dir() {
+        roots.push(dir.join("agents"));
+    }
+    roots
+}
+
+/// Project halves of [`agent_user_roots`] (gated by trust at the call site).
+pub fn agent_project_roots(workspace: &Path, project_trusted: bool) -> Vec<PathBuf> {
+    if !project_trusted {
+        return Vec::new();
+    }
+    vec![
+        workspace.join(".agents").join("agents"),
+        workspace.join(".epsilon").join("agents"),
+    ]
 }
 
 /// Discover manifests under the given roots: every immediate subdirectory containing
@@ -399,17 +772,29 @@ fn event_type_tag(ev: &AgentEvent) -> &'static str {
         AgentEvent::PermissionDecided { .. } => "permission_decided",
         AgentEvent::CompactionStarted => "compaction_started",
         AgentEvent::CompactionFinished => "compaction_finished",
+        AgentEvent::Notice { .. } => "notice",
     }
 }
 
 /// Newest `*.jsonl` session under `dir` (for `--continue`).
+///
+/// M41: pi's `findMostRecentSession` filters by session-cwd and SKIPS files
+/// whose first line isn't a valid header (foreign `.jsonl` files share the
+/// directory). The cwd filter only applies when the newest candidate carries
+/// one — headerless v1 files have no cwd to compare, so they stay eligible
+/// rather than vanishing from `--continue`.
 pub fn latest_session_file(dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
-        .map(|e| e.path())
+    latest_session_file_in(dir, None)
+}
+
+/// Newest session under `dir` started from `cwd` (pi `findMostRecentSession`
+/// cwd match). `None` cwd disables the filter (same as [`latest_session_file`]).
+///
+/// M57: the scan itself lives in [`epsilon_session::latest_session`] — the TUI's
+/// `/sessions` browser lists the same directory, and two implementations of
+/// "which files here are sessions" would drift.
+pub fn latest_session_file_in(dir: &Path, cwd: Option<&Path>) -> Option<PathBuf> {
+    epsilon_session::latest_session(dir, cwd)
 }
 
 #[cfg(test)]
@@ -521,16 +906,193 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(latest_session_file(&dir), None);
 
+        // Discovery requires a valid header line (foreign jsonl is skipped).
+        let header = |cwd: &str| {
+            format!(
+                "{{\"type\":\"session\",\"version\":3,\"id\":\"ses_x\",\"timestamp\":\"t\",\"cwd\":\"{cwd}\"}}\n"
+            )
+        };
         let old = dir.join("old.jsonl");
         let new = dir.join("new.jsonl");
-        std::fs::write(&old, "{}").unwrap();
+        std::fs::write(&old, header("w")).unwrap();
         std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        std::fs::write(dir.join("foreign.jsonl"), "{}\n").unwrap();
 
         // Ensure distinct mtimes even on coarse filesystem clocks.
         std::thread::sleep(std::time::Duration::from_millis(50));
-        std::fs::write(&new, "{}").unwrap();
+        std::fs::write(&new, header("w")).unwrap();
 
-        assert_eq!(latest_session_file(&dir), Some(new));
+        assert_eq!(latest_session_file(&dir), Some(new.clone()));
+        // …and the cwd filter keeps same-dir sessions, drops others.
+        assert_eq!(
+            latest_session_file_in(&dir, Some(Path::new("w"))),
+            Some(new)
+        );
+        assert_eq!(
+            latest_session_file_in(&dir, Some(Path::new("elsewhere"))),
+            None
+        );
         let _ = old;
+    }
+
+    #[test]
+    fn trust_scan_names_every_resource_kind() {
+        // Each pi resource kind has an Epsilon path that triggers it.
+        //
+        // Hermeticity note: the ancestor walk intentionally reaches outside
+        // the tempdir (a parent repo's skill tree gates the project — pi
+        // walks to root too), and this machine HAS ambient `.agents/skills`
+        // above TMP (the repo itself). So the "quiet" assertions can't use a
+        // bare tempdir: they use a workspace that pins down every `.agents`
+        // lookup by planting its own `.agents/skills` FIRST… no — simpler:
+        // they assert on the `.epsilon/*` resources only (no ancestor
+        // dependence), and the `.agents` behavior gets its own isolated test
+        // below where the tree is fully controlled.
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+
+        // Stray files never count.
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        std::fs::write(ws.join(".epsilon").join("x"), "").ok();
+        std::fs::create_dir_all(ws.join(".epsilon").join("config-staging")).ok();
+        let kinds = trust_requiring_resources(&ws);
+        assert!(
+            !kinds.contains(&TrustRequiringResource::ProjectConfig),
+            "stray files must not count: {kinds:?}"
+        );
+
+        std::fs::write(ws.join(".epsilon/config.toml"), "[model]\nid = \"x\"\n").unwrap();
+        std::fs::create_dir_all(ws.join(".epsilon/extensions")).unwrap();
+        std::fs::create_dir_all(ws.join(".epsilon/skills")).unwrap();
+        std::fs::create_dir_all(ws.join(".epsilon/prompts")).unwrap();
+        std::fs::create_dir_all(ws.join(".epsilon/themes")).unwrap();
+        std::fs::write(ws.join(".epsilon/SYSTEM.md"), "sys").unwrap();
+        std::fs::write(ws.join(".epsilon/APPEND_SYSTEM.md"), "app").unwrap();
+        let kinds = trust_requiring_resources(&ws);
+        for expected in [
+            TrustRequiringResource::ProjectConfig,
+            TrustRequiringResource::Extensions,
+            TrustRequiringResource::Skills,
+            TrustRequiringResource::Prompts,
+            TrustRequiringResource::Themes,
+            TrustRequiringResource::SystemMd,
+            TrustRequiringResource::AppendSystemMd,
+        ] {
+            assert!(
+                kinds.contains(&expected),
+                "missing {expected:?} in {kinds:?}"
+            );
+        }
+        assert!(has_trust_requiring_resources(&ws));
+    }
+
+    #[test]
+    fn agents_skills_counts_in_workspace_and_ancestors() {
+        // `.agents/skills` in the workspace counts; an ancestor's counts too
+        // (pi walks to root). Fully controlled tree: the ONLY `.agents`
+        // above `child` is the planted one, so ambient machine state can't
+        // leak in — except ancestors ABOVE the tempdir, which the walk still
+        // reaches. Guard those: skip when an ambient tree exists (documents
+        // the pi-parity walk instead of failing on dirty machines).
+        let plain = tempfile::tempdir().unwrap();
+        let top = plain.path().join("top");
+        std::fs::create_dir_all(top.join(".agents").join("skills")).unwrap();
+        assert!(trust_requiring_resources(&top).contains(&TrustRequiringResource::Skills));
+        let child = top.join("sub").join("proj");
+        std::fs::create_dir_all(&child).unwrap();
+        assert!(trust_requiring_resources(&child).contains(&TrustRequiringResource::Skills));
+
+        // A tree with no skills anywhere stays quiet — unless the ambient
+        // machine has `.agents/skills` above TMP (like this repo does), in
+        // which case pi-parity says the walk FINDS it. Both outcomes are
+        // correct behavior; assert accordingly.
+        let bare = tempfile::tempdir().unwrap();
+        let bare_ws = bare.path().join("ws");
+        std::fs::create_dir_all(&bare_ws).unwrap();
+        let found = trust_requiring_resources(&bare_ws);
+        let mut ambient = Some(bare.path());
+        let mut ambient_has_skills = false;
+        while let Some(d) = ambient {
+            if d.join(".agents").join("skills").is_dir() {
+                ambient_has_skills = true;
+                break;
+            }
+            ambient = d.parent();
+        }
+        assert_eq!(
+            found.contains(&TrustRequiringResource::Skills),
+            ambient_has_skills,
+            "walk must agree with the real ancestor chain: {found:?}"
+        );
+    }
+
+    #[test]
+    fn untrusted_roots_curtail_project_but_keep_global() {
+        // Pi's "untrusted project ⇒ settings/extensions curtailed" scoping:
+        // project-local roots drop out, the caller's global root survives.
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon").join("skills")).unwrap();
+        std::fs::create_dir_all(ws.join(".epsilon").join("extensions")).unwrap();
+        std::fs::create_dir_all(ws.join(".agents").join("skills")).unwrap();
+
+        let trusted_skills = skill_roots_trusted(ws, true);
+        assert!(
+            trusted_skills
+                .iter()
+                .any(|p| p.ends_with(".epsilon/skills")),
+            "trusted keeps native root: {trusted_skills:?}"
+        );
+        assert!(
+            trusted_skills
+                .iter()
+                .any(|p| p.ends_with("skills") && p.starts_with(ws)),
+            "trusted keeps .agents root: {trusted_skills:?}"
+        );
+        let untrusted_skills = skill_roots_trusted(ws, false);
+        assert!(
+            untrusted_skills.iter().all(|p| !p.starts_with(ws)),
+            "untrusted drops every workspace root: {untrusted_skills:?}"
+        );
+
+        let trusted_ext = extension_roots_trusted(ws, true);
+        assert!(
+            trusted_ext.iter().any(|p| p.starts_with(ws)),
+            "trusted keeps project extensions: {trusted_ext:?}"
+        );
+        let untrusted_ext = extension_roots_trusted(ws, false);
+        assert!(
+            untrusted_ext.iter().all(|p| !p.starts_with(ws)),
+            "untrusted drops project extensions: {untrusted_ext:?}"
+        );
+
+        // Back-compat shims stay fully trusted (all existing callers).
+        assert_eq!(skill_roots(ws), skill_roots_trusted(ws, true));
+        assert_eq!(extension_roots(ws), extension_roots_trusted(ws, true));
+    }
+
+    #[test]
+    fn agent_roots_gate_project_on_trust() {
+        // M50: pi's agentScope gate — user roots always, project roots only
+        // when trusted (repo-controlled child prompts must not steer
+        // delegation in untrusted checkouts).
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        let user = agent_user_roots();
+        assert!(
+            user.iter().all(|p| !p.starts_with(ws)),
+            "user roots never touch the workspace: {user:?}"
+        );
+        let trusted = agent_project_roots(ws, true);
+        assert_eq!(trusted.len(), 2, "both project roots: {trusted:?}");
+        assert!(
+            trusted.iter().all(|p| p.starts_with(ws)),
+            "project roots live under the workspace: {trusted:?}"
+        );
+        assert!(
+            agent_project_roots(ws, false).is_empty(),
+            "untrusted drops every project agent root"
+        );
     }
 }

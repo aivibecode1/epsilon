@@ -625,7 +625,8 @@ mod tests {
 
     #[test]
     fn filter_matches_id_label_or_provider_case_insensitively() {
-        for q in ["deepseek", "DEEPSEEK", "reasoner"] {
+        // The current catalog exposes v4.1 in the label, not the model ID.
+        for q in ["deepseek", "DEEPSEEK", "v4.1"] {
             let rows = build_rows(q, "", &[], &[]);
             assert!(
                 rows.iter().any(|r| r.provider == "deepseek"),
@@ -645,7 +646,7 @@ mod tests {
         let custom = rows.iter().find(|r| r.is_custom).expect("custom row");
         assert_eq!(custom.id, "my-fine-tune-v3");
         assert!(
-            build_rows("deepseek-chat", "", &[], &[])
+            build_rows("deepseek-v4-pro", "", &[], &[])
                 .iter()
                 .all(|r| !r.is_custom)
         );
@@ -661,7 +662,7 @@ mod tests {
                 "deepseek".to_string(),
                 vec![
                     "brand-new-model".to_string(),
-                    "deepseek-chat".to_string(), // known: deduped into the catalog section
+                    "deepseek-v4-pro".to_string(), // known: deduped into the catalog section
                 ],
             )],
         );
@@ -669,7 +670,7 @@ mod tests {
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].id, "brand-new-model");
         assert_eq!(live[0].provider, "deepseek", "grouped under its provider");
-        assert!(rows.iter().any(|r| r.id == "deepseek-chat" && !r.is_live));
+        assert!(rows.iter().any(|r| r.id == "deepseek-v4-pro" && !r.is_live));
     }
 
     /// M20: stage-2 merges live-listed ids for its provider on top of the
@@ -678,7 +679,7 @@ mod tests {
     fn stage2_merges_live_ids_for_its_provider_only() {
         let live = vec![(
             "deepseek".to_string(),
-            vec!["deepseek-chat".to_string(), "brand-new-model".to_string()],
+            vec!["deepseek-v4-pro".to_string(), "brand-new-model".to_string()],
         )];
         let rows = build_models_for_provider("deepseek", "", "", &live, &[]);
         assert!(
@@ -687,7 +688,7 @@ mod tests {
         );
         // Known id appears once, from the catalog (not duplicated as a live row).
         assert_eq!(
-            rows.iter().filter(|r| r.id == "deepseek-chat").count(),
+            rows.iter().filter(|r| r.id == "deepseek-v4-pro").count(),
             1,
             "no duplicate rows for known ids"
         );

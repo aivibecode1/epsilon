@@ -9,6 +9,7 @@ members = [
     "crates/epsilon-safety",
     "crates/epsilon-ext",
     "crates/epsilon-mcp",
+    "crates/epsilon-lsp",
     "crates/epsilon-tui",
     "crates/epsilon-server",
     "crates/epsilon-cli",
@@ -32,7 +33,9 @@ tokio-util = "=0.7.19"
 futures-util = "=0.3.31"
 # M17 (pi port): direct per-provider HTTP transport replaces genai. reqwest was already
 # in-tree via rmcp; pinned exact per ADR-016.
-reqwest = { version = "=0.13.4", default-features = false, features = ["json", "stream"] }
+# `rustls` enables TLS for https (default-tls) — without it every https request
+# fails with "no TLS backend" / network error (root cause of blank replies).
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
 tempfile = "=3.23.0"
 regex = "=1.13.1"
 schemars = { version = "=1.2.2", features = ["derive"] }
@@ -51,6 +54,14 @@ pulldown-cmark = "=0.13.4"
 # M16a: display-width math for the transcript wrap + footer (CJK/emoji columns).
 # Already in-tree transitively via ratatui-core's `>=0.2.0` requirement; pinned exact.
 unicode-width = "=0.2.2"
+# M43: image attachments (pi `harness/tools/image.ts` base64). Already in-tree
+# transitively (0.23.1 in Cargo.lock via rmcp/reqwest); pinned exact.
+base64 = "=0.23.1"
+# M52: OAuth login ceremonies need a CSPRNG for the PKCE code verifier
+# (RFC 7636 §4.1 requires cryptographic randomness) and for the `state`
+# parameter. std has no RNG; hand-rolling one would be worse. Already in-tree
+# transitively at this exact version (via tempfile/ring); pinned exact.
+getrandom = "=0.3.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -14,6 +14,9 @@ claims are not proof that a capability works today.
 
 ## Contributor documentation
 
+Agent recovery state lives in [`agents/memory/`](../agents/memory/README.md):
+curated open-work notes, evidence pointers and safe resumption steps, not product docs.
+
 | Folder / file | What lives there | Read it when |
 |---|---|---|
 | [`../AGENTS.md`](../AGENTS.md) | the rules for anyone writing code here: gates, conventions, disk hygiene | before your first change |
@@ -50,6 +53,16 @@ then the milestone log that introduces it.
 **Deciding what to build next?** [`../audit/02-defect-ledger.md`](../audit/02-defect-ledger.md),
 [`../audit/03-port-plan.md`](../audit/03-port-plan.md) and
 [`../audit/04-roadmap.md`](../audit/04-roadmap.md), then the relevant study in `research/`.
+
+## Current hardening work
+
+- [M83 — baseline integration](milestones/M83-baseline-integration.md): isolated
+  candidate verification, explicit selection and preserved baseline risks.
+
+- [M81 — observation ownership](milestones/M81-observation-ownership.md): F02 implementation,
+  test evidence and remaining verification/alias limits.
+- [M82 — plan-mode enforcement](milestones/M82-plan-mode-enforcement.md):
+  F10 implementation, red/green evidence and scope limits.
 
 ## Conventions
 

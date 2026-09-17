@@ -13,6 +13,9 @@ use std::sync::OnceLock;
 /// One decoded server-sent event.
 #[derive(Debug, Clone)]
 pub struct SseEvent {
+    /// `event:` field of the frame (`None` when the sender omits it — chat
+    /// completions style, where the data JSON carries its own shape).
+    pub name: Option<String>,
     /// `data:` payload with continuation lines joined by `\n`.
     pub data: String,
 }
@@ -21,6 +24,7 @@ pub struct SseEvent {
 #[derive(Default)]
 pub(crate) struct SseDecoder {
     data: Vec<String>,
+    name: Option<String>,
 }
 
 impl SseDecoder {
@@ -34,18 +38,25 @@ impl SseDecoder {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.is_empty() {
             if self.data.is_empty() {
+                self.name = None;
                 return None;
             }
             let ev = SseEvent {
+                name: self.name.take(),
                 data: self.data.join("\n"),
             };
             self.data.clear();
             return Some(ev);
         }
-        // Comments (leading ':') and `id:`/`retry:`/`event:` fields carry nothing we
-        // need: all three wires key frames off the data JSON's own `type`/shape
-        // (ponytail-audit #4 removed the unused event-field plumbing).
-        if let Some(rest) = line.strip_prefix("data:") {
+        // Comments (leading ':') and `id:`/`retry:` fields carry nothing we
+        // need. `event:` selects the Responses dispatch (chat completions
+        // frames omit it — the data JSON carries its own shape).
+        if let Some(rest) = line.strip_prefix("event:") {
+            let name = rest.strip_prefix(' ').unwrap_or(rest).to_string();
+            if !name.is_empty() {
+                self.name = Some(name);
+            }
+        } else if let Some(rest) = line.strip_prefix("data:") {
             self.data
                 .push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
         }

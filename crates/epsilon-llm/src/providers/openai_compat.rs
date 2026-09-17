@@ -56,13 +56,36 @@ impl ProviderWire for OpenAiCompatWire {
         if !ctx.system_prompt.is_empty() {
             messages.push(json!({"role": "system", "content": ctx.system_prompt}));
         }
-        // Pair assistant tool_calls with their results the way the wire expects:
-        // assistant turn carries `tool_calls`, each result is a `role: "tool"` turn.
+        // OpenAI's wire requires each assistant `tool_calls` to be immediately
+        // followed by its `role: "tool"` results — buffering all tools to the end
+        // (as an earlier draft did) makes every non-trivial history fail with
+        // `invalid_request_error: tool_calls must be followed by tool messages`.
         let mut pending_tool_results: Vec<&epsilon_contracts::message::ToolResultMessage> =
             Vec::new();
+        let flush_pending =
+            |messages: &mut Vec<serde_json::Value>,
+             pending: &mut Vec<&epsilon_contracts::message::ToolResultMessage>| {
+                for t in pending.drain(..) {
+                    let body: String = t
+                        .content
+                        .iter()
+                        .filter_map(|c| match c {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": t.tool_call_id,
+                        "content": body,
+                    }));
+                }
+            };
         for m in &ctx.messages {
             match m {
                 Message::User(u) => {
+                    flush_pending(&mut messages, &mut pending_tool_results);
                     let text = u
                         .content
                         .iter()
@@ -77,6 +100,7 @@ impl ProviderWire for OpenAiCompatWire {
                     messages.push(json!({"role": "user", "content": text}));
                 }
                 Message::Assistant(a) => {
+                    flush_pending(&mut messages, &mut pending_tool_results);
                     let calls: Vec<serde_json::Value> = a
                         .content
                         .iter()
@@ -118,24 +142,7 @@ impl ProviderWire for OpenAiCompatWire {
                 Message::Custom(_) => {}
             }
         }
-        // Flush buffered tool results as `role: "tool"` turns (they trail the
-        // assistant turn that requested the calls).
-        for t in pending_tool_results.drain(..) {
-            let body: String = t
-                .content
-                .iter()
-                .filter_map(|c| match c {
-                    ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": t.tool_call_id,
-                "content": body,
-            }));
-        }
+        flush_pending(&mut messages, &mut pending_tool_results);
 
         let mut body = json!({
             "model": model,
@@ -177,17 +184,17 @@ impl ProviderWire for OpenAiCompatWire {
         let v: serde_json::Value = serde_json::from_str(data).ok()?;
         // Non-chat payloads (some proxies emit errors as bare JSON).
         if let Some(err_msg) = v.pointer("/error/message").and_then(|x| x.as_str()) {
-            return Some(vec![StreamEvent::Done {
-                message: crate::stream_fn::error_message(format!(
-                    "provider stream error: {err_msg}"
-                )),
-            }]);
+            // M62: an error frame can arrive after real deltas — the accumulator
+            // decides whether anything survives (salvage discipline).
+            let message = st.failure_message(format!("provider stream error: {err_msg}"));
+            return Some(vec![StreamEvent::Done { message }]);
         }
         for choice in v.get("choices").and_then(|c| c.as_array())?.iter() {
             if let Some(delta) = choice.get("delta") {
                 if let Some(text) = delta.get("content").and_then(|t| t.as_str())
                     && !text.is_empty()
                 {
+                    st.append_text(text);
                     return Some(vec![StreamEvent::TextDelta {
                         index: 0,
                         delta: text.to_string(),
@@ -196,6 +203,7 @@ impl ProviderWire for OpenAiCompatWire {
                 if let Some(reasoning) = delta.get("reasoning_content").and_then(|t| t.as_str())
                     && !reasoning.is_empty()
                 {
+                    st.append_thinking(reasoning);
                     return Some(vec![StreamEvent::ThinkingDelta {
                         index: 0,
                         delta: reasoning.to_string(),
@@ -297,5 +305,104 @@ fn effort_str(level: epsilon_contracts::ThinkingLevel) -> &'static str {
         T::Medium => "medium",
         T::High => "high",
         T::XHigh | T::Max => "xhigh",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::LlmContext;
+    use epsilon_contracts::content::{ContentBlock, UserContent};
+    use epsilon_contracts::message::{Message, ToolResultMessage, UserMessage};
+    use epsilon_contracts::new_id;
+
+    fn user(text: &str) -> Message {
+        Message::User(UserMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text {
+                text: text.to_string(),
+            }],
+        })
+    }
+
+    fn assistant_tool_call(id: &str, name: &str) -> Message {
+        Message::Assistant(epsilon_contracts::message::AssistantMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            provider: "test".into(),
+            model_id: "test".into(),
+            content: vec![ContentBlock::ToolCall {
+                id: id.to_string(),
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+            }],
+            stop_reason: epsilon_contracts::message::StopReason::ToolUse,
+            error_message: None,
+            usage: Default::default(),
+        })
+    }
+
+    fn tool_result(id: &str, name: &str) -> Message {
+        Message::ToolResult(ToolResultMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: id.to_string(),
+            tool_name: name.to_string(),
+            content: vec![ContentBlock::text("ok")],
+            details: serde_json::json!({}),
+            usage: None,
+            is_error: false,
+        })
+    }
+
+    #[test]
+    fn request_body_interleaves_tool_results_immediately_after_their_assistant() {
+        // History with two tool turns: assistant(tool A) -> result A -> assistant(tool B) -> result B -> user.
+        // The OpenAI wire requires: assistant(A), tool(A), assistant(B), tool(B), user.
+        // An earlier draft buffered all tools to the end (user last, tools trailing)
+        // which DeepSeek rejects with `tool_calls must be followed by tool messages`.
+        let msgs = vec![
+            user("first question"),
+            assistant_tool_call("tc_1", "bash"),
+            tool_result("tc_1", "bash"),
+            assistant_tool_call("tc_2", "bash"),
+            tool_result("tc_2", "bash"),
+            user("say hi now"),
+        ];
+        let ctx = LlmContext {
+            system_prompt: "sys".to_string(),
+            messages: msgs,
+            tools: vec![],
+            thinking_level: epsilon_contracts::ThinkingLevel::Off,
+        };
+        let wire = OpenAiCompatWire {
+            base_url: "https://api.example.com/v1".to_string(),
+            env_key: Some("K".into()),
+        };
+        let body = wire.request_body("deepseek-chat", &ctx).expect("body");
+        let got: Vec<String> = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap().to_string())
+            .collect();
+        // system + user + assistant(tool) + tool + assistant(tool) + tool + user
+        assert_eq!(
+            got,
+            vec![
+                "system",
+                "user",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "user"
+            ],
+            "each tool must immediately follow its assistant (got {got:?})"
+        );
+        // And the tool ids ride in order.
+        assert_eq!(body["messages"][3]["tool_call_id"], "tc_1");
+        assert_eq!(body["messages"][5]["tool_call_id"], "tc_2");
     }
 }

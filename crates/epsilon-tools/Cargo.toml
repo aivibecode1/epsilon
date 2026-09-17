@@ -10,12 +10,15 @@ authors.workspace = true
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-core = { path = "../epsilon-core" }
 epsilon-safety = { path = "../epsilon-safety" }
+epsilon-lsp = { path = "../epsilon-lsp" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 regex = { workspace = true }
 schemars = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

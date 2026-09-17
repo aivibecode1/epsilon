@@ -394,4 +394,17 @@ Cleanup for this round removed both build trees (see the next section).
   intermittently Avira-dependent (owner action pending) and is documented
   separately; the suite itself is green on every completed run.
 
+## M83 — isolated dependency integration
+
+HEAD `350c9ec` failed the locked workspace check with 31 compiler error headers.
+The dirty working tree passed. A HEAD export plus 97 explicit reviewed paths
+(including partial selections) passed the complete five-gate battery: **740 passed,
+0 failed**, 54 summaries. Locked CLI real and offline-only checks also exited 0.
+Evidence: [final gate](evidence/gate-integration-candidate-final.log),
+[selection hashes](evidence/integration-final-selection.json), and
+[M83 scope/residuals](../docs/milestones/M83-baseline-integration.md).
+Earlier candidate tests failed on stale catalog fixtures; their logs are retained.
+This certifies the isolated candidate, not arbitrary dirty working-tree changes
+or Linux/MSRV/provider interoperability. No security or release approval implied.
+
 ## Next verification round

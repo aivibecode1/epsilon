@@ -59,6 +59,31 @@ PROVIDERS = {
     "moonshotai":  ("moonshot",   "MOONSHOT_API_KEY",    "https://api.moonshot.ai/v1"),
     "zai":         ("zai",        "ZAI_API_KEY",         "https://api.z.ai/api/paas/v4"),
     "openrouter":  ("openrouter", "OPENROUTER_API_KEY",  "https://openrouter.ai/api/v1"),
+    # M47: native Mistral rows (pi `mistralProvider`, baseUrl
+    # `https://api.mistral.ai`, `MISTRAL_API_KEY`). models.dev carries them
+    # under its `mistral` registry; without this entry the generator silently
+    # drops the whole family (that is why the snapshot has none today).
+    "mistral":     ("mistral",    "MISTRAL_API_KEY",     "https://api.mistral.ai"),
+    # M48: Vertex rows (pi `googleVertexProvider`, `google-vertex` registry).
+    # Only gemini-* tool-call rows ride the shared generateContent wire —
+    # pi skips the registry's Claude/OpenAI MaaS rows (different streaming
+    # path). `base` is unused for this family (location-scoped endpoints);
+    # wire + env come from the dedicated branch in `wire_expr`.
+    "google-vertex": ("google-vertex", "GOOGLE_CLOUD_API_KEY", None),
+    # M49: Bedrock rows (pi `amazonBedrockProvider`, `amazon-bedrock`
+    # registry). pi skips inference-profile-only ids + the two no-system /
+    # no-streaming-tool families; `base` is unused (region-scoped endpoints
+    # resolve per call) — wire + env from the dedicated branch.
+    "amazon-bedrock": ("amazon-bedrock", "AWS_BEARER_TOKEN_BEDROCK", None),
+    # M55: GitHub Copilot subscription rows (pi `githubCopilotProvider`). One
+    # host re-serves several families; the per-row wire comes from the
+    # dedicated branch in `wire_expr`. `base` is the individual-account default
+    # (the credential's `proxy-ep`/enterprise domain can move it per request).
+    "github-copilot": (
+        "github-copilot",
+        "COPILOT_GITHUB_TOKEN",
+        "https://api.individual.githubcopilot.com",
+    ),
 }
 
 DATED_SUFFIX = re.compile(r"-20\d{6}$")
@@ -135,6 +160,48 @@ def select_rows(registry):
             if not m.get("tool_call"):
                 skipped.append((fq, "no tool_call"))
                 continue
+            # M48: the google-vertex registry carries Claude/OpenAI MaaS rows
+            # that do NOT ride the generateContent path (pi filters to
+            # gemini-* for the same reason) — plus one preview pi excludes.
+            if prov == "google-vertex" and (
+                not mid.startswith("gemini-") or mid == "gemini-3.1-flash-lite-preview"
+            ):
+                skipped.append((fq, "non-gemini MaaS row"))
+                continue
+            # M49: pi skips Bedrock inference-profile-only ids (served via
+            # profiles, not direct ids) + the two families that can't ride
+            # Converse streaming tools (jamba: no streaming tool-use;
+            # mistral-7b-instruct: no system messages).
+            if prov == "amazon-bedrock" and (
+                mid == "anthropic.claude-opus-5"
+                or mid.startswith("ai21.jamba")
+                or mid.startswith("mistral.mistral-7b-instruct-v0")
+            ):
+                skipped.append((fq, "pi-excluded bedrock family"))
+                continue
+            # M55: copilot ids collide with the native providers' (`claude-opus-5`,
+            # `gpt-5.4`, …) and the first-provider-wins dedupe would drop every
+            # copilot row, so they carry the registry prefix the vertex/bedrock
+            # rows already use. `*-picker` ids are model-picker aliases (pi
+            # filters them through the account's `availableModelIds`), not
+            # servable ids.
+            if prov == "github-copilot" and mid.endswith("-picker"):
+                skipped.append((fq, "model-picker alias"))
+                continue
+            # M55 (absorbs M49's hand rows): the registry lists every Bedrock
+            # model region- AND version-qualified
+            # (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) — that is five
+            # near-identical rows per model, and the version tail slips dated
+            # snapshots past the `-YYYYMMDD$` rule. Our flat id space uses the
+            # canonical form (`anthropic.claude-sonnet-4-5`), and region routing
+            # comes from AWS_REGION/env/ARN (`BedrockWire::default_region_for`),
+            # never from the row id.
+            if prov == "amazon-bedrock":
+                mid = re.sub(r"^(?:us|eu|au|jp|ca|uk|global)\.", "", mid)
+                mid = re.sub(r"-20\d{6}(?:-v\d+:\d+)?$", "", mid)
+                if not mid or mid.endswith("-") or mid.endswith("."):
+                    skipped.append((fq, "unusable bedrock id"))
+                    continue
             if m.get("modalities", {}).get("output") != ["text"]:
                 skipped.append((fq, "non-text output"))
                 continue
@@ -146,14 +213,25 @@ def select_rows(registry):
             if ctx <= 0:
                 skipped.append((fq, f"context={ctx}"))
                 continue
-            if mid in seen_ids:
-                skipped.append((fq, f"dup of {seen_ids[mid]} row"))
+            # Provider-qualified ids (M48 vertex, M49 bedrock, M55 copilot):
+            # these registries re-serve ids the native providers already claim
+            # (`gemini-2.5-flash`, `gpt-5.4`, …) or ids that must stay unique in
+            # our flat id space, so each carries its registry prefix — the
+            # short form M48 chose for vertex (`vertex/`, not `google-vertex/`).
+            prefix = {
+                "google-vertex": "vertex",
+                "amazon-bedrock": "bedrock",
+                "github-copilot": "github-copilot",
+            }.get(prov)
+            row_id = f"{prefix}/{mid}" if prefix else mid
+            if row_id in seen_ids:
+                skipped.append((fq, f"dup of {seen_ids[row_id]} row"))
                 continue
-            seen_ids[mid] = prov
+            seen_ids[row_id] = prov
             cost = m.get("cost") or {}
             rows.append({
                 "prov": prov,
-                "id": mid,
+                "id": row_id,
                 "name": (m.get("name") or mid).replace("\\", "\\\\").replace('"', '\\"'),
                 "ctx": ctx,
                 "out": out,
@@ -175,11 +253,50 @@ ENV_BY_PROVIDER = {pid: env for (_reg, (pid, env, _base)) in PROVIDERS.items()}
 PROVIDER_BY_PID = {pid: reg for (reg, (pid, _env, _base)) in PROVIDERS.items()}
 
 
-def wire_expr(prov):
+def wire_expr(prov, mid):
+    # M55: Copilot serves `claude-*` over Anthropic Messages and everything
+    # else over the OpenAI-compatible surface. pi carries a per-model `api` in
+    # its generated model list; models.dev does not, so the family is derived
+    # from the id — the same grouping the proxy itself uses. Revisit with a
+    # live token if a model ever needs `/responses` instead.
+    if prov == "github-copilot":
+        base = PROVIDERS[PROVIDER_BY_PID[prov]][2]
+        # Emitted ids carry the registry prefix (`github-copilot/claude-opus-5`).
+        bare = mid.split("/", 1)[-1]
+        anthropic = "true" if bare.startswith("claude") else "false"
+        return (
+            f'super::github_copilot("{base}", '
+            f'Some("{ENV_BY_PROVIDER[prov]}"), {anthropic})'
+        )
     if prov == "anthropic":
         return "super::ANTHROPIC_WIRE"
     if prov == "google":
         return "super::GOOGLE_WIRE"
+    # M44: pi routes the `openai` provider over the Responses API
+    # (`openAIProvider` uses `openAIResponsesApi()`); every other compat
+    # provider stays on `/chat/completions`. The generator owns this so a
+    # refresh never silently reverts the rows.
+    if prov == "openai":
+        base = PROVIDERS[PROVIDER_BY_PID[prov]][2]
+        return f'super::openai_responses("{base}", Some("{ENV_BY_PROVIDER[prov]}"))'
+    # M47: pi routes the `mistral` provider over its own Conversations wire
+    # (`mistralProvider` uses `mistralConversationsApi()`): same endpoint
+    # shape as compat, plus Mistral's snake_case payload, 9-char tool ids,
+    # family-routed reasoning, and cached-token usage keys.
+    if prov == "mistral":
+        base = PROVIDERS[PROVIDER_BY_PID[prov]][2]
+        return f'super::mistral_conversations("{base}", Some("{ENV_BY_PROVIDER[prov]}"))'
+    # M48: Vertex shares the generateContent body with the API-key Google
+    # wire (same parts walk, same stop vocabulary) — only endpoint + auth
+    # differ, so rows point at the unit `GOOGLE_VERTEX_WIRE`.
+    if prov == "google-vertex":
+        return "super::GOOGLE_VERTEX_WIRE"
+    # M49: Bedrock Converse rows ride the unit `BEDROCK_WIRE` (region is
+    # per-call — ARN > env > model-id default — not per-row, so the
+    # generator needs no per-model endpoint logic; pi's `getBedrockBaseUrl`
+    # eu./default split lives in `default_region_for`).
+    if prov == "amazon-bedrock":
+        return "super::BEDROCK_WIRE"
     base = PROVIDERS[PROVIDER_BY_PID[prov]][2]
     return f'super::openai_compat("{base}", Some("{ENV_BY_PROVIDER[prov]}"))'
 
@@ -196,7 +313,7 @@ def emit_row(r):
         f"        output_cost_micro_per_mtok: {rust_int(r['pout'])},\n"
         "        supports_tools: true,\n"
         f"        env_key: \"{ENV_BY_PROVIDER[r['prov']]}\",\n"
-        f"        wire: {wire_expr(r['prov'])},\n"
+        f"        wire: {wire_expr(r['prov'], r['id'])},\n"
         "    },"
     )
 

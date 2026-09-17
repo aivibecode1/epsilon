@@ -163,9 +163,11 @@ mod tests {
     async fn run(args: serde_json::Value) -> Result<ToolOutput, ToolFailure> {
         let ctx = ToolContext {
             session_id: "t".into(),
+            observation_scope: std::sync::Arc::new(()),
             cwd: std::env::temp_dir(),
             spill_dir: std::env::temp_dir(),
             token: Default::default(),
+            task_host: None,
         };
         TodoTool::new()
             .execute(

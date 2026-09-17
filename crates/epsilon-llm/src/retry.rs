@@ -41,6 +41,10 @@ pub fn classify(detail: &str) -> FailureKind {
     {
         FailureKind::Auth
     } else if m.contains("timeout")
+        // M60: reqwest says "operation timed out" and the stream watchdog says
+        // "timed out" — both are network failures, and a classifier that only
+        // knows the noun would route the most common stall to `Other` (no retry).
+        || m.contains("timed out")
         || m.contains("connection")
         || m.contains("socket")
         || m.contains("reset")
@@ -121,6 +125,11 @@ mod tests {
         );
         assert_eq!(classify("Invalid API key provided"), FailureKind::Auth);
         assert_eq!(classify("connection reset by peer"), FailureKind::Network);
+        assert_eq!(
+            classify("provider stream timed out: no data for 120s"),
+            FailureKind::Network
+        );
+        assert_eq!(classify("operation timed out"), FailureKind::Network);
         assert_eq!(classify("503 Service Unavailable"), FailureKind::Server);
         assert_eq!(classify("something novel"), FailureKind::Other);
     }

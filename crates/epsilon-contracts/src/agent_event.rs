@@ -103,6 +103,13 @@ impl PermissionDecision {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// A transient, human-readable status line (provider retry, stall watchdog):
+    /// shown to the user, deliberately NOT part of the transcript — it describes
+    /// the transport, not the conversation (M60).
+    Notice {
+        /// One line of already-formatted text.
+        text: String,
+    },
     /// A run began.
     AgentStart,
     /// A run finished; carries every message produced by the run.

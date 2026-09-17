@@ -1,0 +1,658 @@
+{
+  "schema_version": 2,
+  "head": "350c9ecabf5bbe28fb12f0ce86a01f9ed696e8bd",
+  "review_kind": "static_dependency_closure_not_release_certification",
+  "verdict": "Connected LLM/CLI/manifests/test paths identified. Baseline source closure is conditionally acceptable with explicit residuals; broad TUI cannot be fully approved from this bounded review. No clean-checkout build or release-quality pass claimed.",
+  "passed": false,
+  "approval_context": "Owner already approved forward baseline integration. No further owner approval requested; parent completes independent scope review and isolated candidate gates.",
+  "constraints": [
+    "No build/test/install/provider request performed",
+    "No source edits, staging, commits, stash/reset or history rewrite",
+    "Only this repository evidence JSON created/updated",
+    "No credentials, .env or runtime config/session files read; credential handling reviewed as source only"
+  ],
+  "allowlist_semantics": "Allowlist identifies scope for reproducing already-existing owner baseline, not a clean-security/code-quality verdict. Preserve known defects as residuals rather than silently fixing them. Merge mandatory cross-review companions before constructing candidate. Conditional TUI entries are NOT full-file staging permission.",
+  "allowlist": [
+    {
+      "path": "Cargo.toml",
+      "reason": "Exact dependency declarations, reqwest TLS, and LSP workspace membership required by the selected existing baseline; unicode-segmentation portion is conditional on TUI editor slice.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "d48d161f66d9880951c698497b587042dd02b6a7135f14bf255a5da23c20f6a0",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "Cargo.lock",
+      "reason": "Matching workspace edges and TLS dependency closure; retain the complete resolver-produced graph only when all matching manifest slices are selected.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "67cf67feb44eebb86e2e903c472bb26d476fbb16c4a4ddfa67b3ad66f6b7f77c",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-cli/Cargo.toml",
+      "reason": "Forward real to core and TUI as well as llm; committed main references core REAL_PATH_ENABLED. Add doctor LSP edge. Default-real is approved baseline behavior, not necessary merely to repair explicit-real compilation.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "2bb27c2bc35a2d50f2022ff6032f74a085e19d99805325756bb0baf49b637981",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/Cargo.toml",
+      "reason": "sha2 signing and PKCE; base64/getrandom login; tokio test-util for paused device-poller tests.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "ce111b3e750b3292fbc8cac44edf1e9553096982b2ea562c05cd5c0e295f4a04",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tools/Cargo.toml",
+      "reason": "Direct base64 required by committed files.rs; reqwest webfetch and LSP edges require other reviewer companion source.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "07d4997ef510f6dc888c25988b84cb32f54b8c361cb0a8fe7461d648d477bd0b",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-lsp/Cargo.toml",
+      "reason": "New workspace member manifest, required by doctor and tools; source acceptance belongs to tools/LSP review.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "042ea57c39453b799fe8bb1c82507b8d6e46ecbf820fb7c87a2fcd25b6a1b22c",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-cli/src/lib.rs",
+      "reason": "Declare doctor used by committed main.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "3aa3b466a3a7a3e56f468e819e069e495826c37fe98727ce054e0952edc5e918",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-cli/src/doctor.rs",
+      "reason": "Committed main invokes Inputs/run; references catalog model resolution, runtime trust, session discovery, safety capabilities, LSP discovery and tool registry.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "365c18ea58067983b7a363ec9182325269c4dbeeacf565fec713d42cb2e34270",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-cli/tests/doctor.rs",
+      "reason": "Regression companion for actual command spellings, report facts, leases, and read-only sandbox argument; no tests executed here.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "d964f60282d0bd8fe0193ffcac1bfff7f5dc90bb7aaa489253216f35d539ae81",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-cli/src/runtime.rs",
+      "reason": "Committed main needs ProjectTrustStore, trusted skill/extension roots and agent roots; Notice exhaustive match and shared session discovery are companion integration.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "5e7870d51b815518bfdd02ab01f865bb1286da4d5c9ab2969c5d69a107816370",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-ext/tests/host.rs",
+      "reason": "Add observation_scope and task_host to ToolContext literals; these fields already exist in HEAD contracts.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "c086416dddc179e1b60cafd09669eb689a89934cd86045ca1dec19526cf2e096",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-mcp/src/lib.rs",
+      "reason": "Only unit-test ToolContext field completion; production MCP unchanged.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "79bdd2f9272764e13115397f6b4a1690685b9c650cac9f76492461dfc2972b10",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-mcp/tests/stdio_connector.rs",
+      "reason": "ToolContext field completion in stdio fixture.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "4b097cfca79b9e29bbfde9101edf63379479a31ae9c2d2804c5e40eff950626a",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/lib.rs",
+      "reason": "Declarations and reexports for auth enum/full-save API, model/config helpers, oauth, oauth_login and sanitize.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "dfe7a327d796f5b2e0c9e0b56a236d99759727abf169a787798e7fb046a9e762",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/auth.rs",
+      "reason": "Credential enum/full-save APIs consumed by committed main; provider extras, refresh helpers and SigV4 consumed by selected provider modules.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "17d98c7e372e7b003b2a2a29b37895f5db641d7606c8956c723aefd4a2403d01",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/catalog.rs",
+      "reason": "Committed main needs resolve_model_for_run, row_credentials_ready, credentialed_providers, suggested_ready_model and candidates; committed core needs resolve_model/ModelMatchKind.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "3a7ecce0d850da0440aa03b99a3e0ea1c0d18f3625a61e2e4d46df3adb10e416",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/catalog/catalog_data.rs",
+      "reason": "Provider-routing helpers/variants and catalog tests changed together; registry source freshness/pricing not externally certified.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "757d15ba0124b7c9f21d074a7703d2bfd82cea5e8ac39d33cbcbeca373f2353b",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/config_value.rs",
+      "reason": "Required by catalog credential template resolution and exports; command helpers are not called by catalog command-valued credential path.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "1f4bd7e01f158e547f2cb0d9a4f892fb82b72f5bd54922dd765d8d021d6d10b9",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/oauth.rs",
+      "reason": "Provider refresh helpers and login response skew/constants; real-only network exchange.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "26dce36cb48e13905347406519aa83d68dedc57bbbfb12f05ecc39ebff7cedfe",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/oauth_login.rs",
+      "reason": "Committed CLI login flow and LoginUi references, always-compiled pure helpers plus real-gated orchestrator.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "a3658b9f6c127461a8f95d90940a5f14b23f508a103d6ccde543d99ea3a0a8ad",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/http.rs",
+      "reason": "SseEvent.name/decoder event field required by Responses adapter and fixture literals.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "338fe24788d4a2eeba4e517e545c0e15856f29091f65cbc74f96d78d67878498",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/mod.rs",
+      "reason": "Wire registrations, credential preparation, accumulator and streaming companion APIs required by provider files.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "1d993cff36c2834d682bdc93cd1714585913f9c268f10c4879fb3d0f89a8e4bc",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/anthropic.rs",
+      "reason": "OAuth headers and shared accumulator append/failure hooks.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "77d058b8c65d9016e92a8b1c56983e197afc7606e18c94be438804f9afc6b61c",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/google.rs",
+      "reason": "Shared request/event/stop helpers used by Vertex; accumulator hooks and ordered tool-result flushing.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "0f6950e09da1d60623e029759eb24f1dff1b17a369c4e09521b40b2d44333a8b",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/openai_compat.rs",
+      "reason": "Shared Mistral/Copilot request framing and accumulator hooks; interleaved tool-result regression.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "832eaedd18951f0db1e0c270d923946292fc719c65fddf4e53b31f301d22f016",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/bedrock.rs",
+      "reason": "Registered BedrockConverseWire and catalog variant; source closure only, not a working native wire claim.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "e8315160b6cbf9feefa8dc5787f5b0c6593519f5cb60e9b8855d2f21ed31f668",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/github_copilot.rs",
+      "reason": "Registered account/family-routed wire; oauth/oauth_login also call mint/header/URL helpers.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "491602acfe75b72b196672289cf05f5ac002be52082e526366ab4eb41294501d",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/mistral.rs",
+      "reason": "Registered MistralConversationsWire shares compat builder and accumulator side-table.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "2255e5137dca10e576a19fa37c0ebd69618d68011501d19282c3d0032dbdfae3",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/openai_responses.rs",
+      "reason": "Registered Responses adapter consumes named SSE events, indexed argument snapshots and catalog output limits.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "ba1f2e50ea7ad424f675b6d634c54c5bd0a75fbe5feb29812693b0662836470a",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/providers/vertex.rs",
+      "reason": "Registered GoogleVertexWire requires google shared helpers and credential extras; ADC orchestration remains incomplete.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "6a23aedfc5f65a0c3f6e79aeebdb7f0379fa3e2bdd66e8a4f9596a350d5c0c6a",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/sanitize.rs",
+      "reason": "Shared accumulator calls parse_tool_arguments/unique_call_ids; tests accompany recoverable argument and ID behavior.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "cacb3c09c8163fb201800ad874459eb24af6c35f3ca6a04d861f0c42c55815a9",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/tests/oauth_login.rs",
+      "reason": "27 static test attributes: PKCE vector, callback/state handling, device polling using paused time, config IDs and parsing; offline/loopback tests.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "c3911058028294f307c2ee5045d75799c228ec00ed0aaed9573414c8493abfdf",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/tests/wire_fixtures.rs",
+      "reason": "SseEvent.name literal compatibility and partial-salvage/argument fixtures; not a production network-chunk fixture.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "d9ecbcca61ec14f66e050c1b1b0bf6c035c9031146ec1619c90fe400fbecbde3",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/retry.rs",
+      "reason": "Classify timed out watchdog text as Network with regressions, companion to stream watchdog baseline.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "b3c41aa9e32d14ab25431391715ebf1e27541d5db18b9d229cf14438cb152e03",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/retry_stream.rs",
+      "reason": "Retry content-free live failures and expose notices consistently with committed core hooks; residual retry first-event edge recorded below.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "10a789a382463a21bc03737452e5e1a3808db38bee8a913baa14d27e79ed35fe",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/src/fallback.rs",
+      "reason": "Test removes host-credential-free assumption while retaining chain length/bound; does not repair cached credentials/refresh F16.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "90c685c78022429cc4a1d53ca702fb8440d0d95017af3b853dfc899ea254d0da",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "scripts/regen_catalog.py",
+      "reason": "Generator changes are connected provenance for accepted catalog routing; otherwise regeneration would silently revert wire selection.",
+      "verdict": "include_for_baseline_closure_with_residuals",
+      "sha256": "0a2499410eb51892d4d5120c73dac139fb55c52ae1702dbf424587e3ebb7bad6",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    }
+  ],
+  "behavior_companions": [
+    {
+      "path": "crates/epsilon-cli/src/rpc_mode.rs",
+      "reason": "Reviewed complete diff: route prompt/steer/followup through core references::user_message. Not needed just for compilation; preserves shared M74 surface behavior.",
+      "verdict": "include_if_preserving_shared_frontend_baseline",
+      "sha256": "8c537852e1a4e75a58d1952a83eec69b0a34ad6962a05e68de6ea85f65fa8d91",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-server/src/lib.rs",
+      "reason": "Reviewed complete diff: core reference-aware constructor replaces local text-only constructor. Not an exhaustive-event compile repair.",
+      "verdict": "include_if_preserving_shared_frontend_baseline",
+      "sha256": "0b4bd1b5076b9b8615878204de04b995132346a7707b8f473f41b858e4f273ab",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-llm/tests/live_smoke.rs",
+      "reason": "Reviewed opt-in companion: real-gated and #[ignore]; no automatic paid calls. It passes by returning when no credential exists, so ignored test completion is not proof of provider validation.",
+      "verdict": "include_if_preserving_shared_frontend_baseline",
+      "sha256": "ba2dd6836a0e6e740b961a585782035f018291710512fa972d25aaf7d4823d82",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    }
+  ],
+  "conditional_allowlist": [
+    {
+      "path": "crates/epsilon-tui/src/app.rs",
+      "reason": "Broad 2900-line delta: OAuth, session switching, external editor, slash commands, reference completion and rendering. Dependency seams and selected tests reviewed, not every command/render/key path. No full-file staging approval from this bounded review.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "6eb4f052f1b987aed34df271f673c15c8d9a4cfe028cb6cf5dc80e87db92622a",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/picker.rs",
+      "reason": "Broad command/session/model picker delta; interfaces and test inventory reviewed. Paired with app and session discovery. Full command corpus not reviewed.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "fe8f65a936a48a5db20654dd4a8d07315d4bccd58d8dc11611852fd5e22eaaa1",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/state.rs",
+      "reason": "Hydration, failure markers, Notice, tool progress and image placeholders. Selected implementations/diff reviewed. Notice is behavioral, not compile-required: HEAD has wildcard match.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "123ebcf771831e1db16d761f5222bc31c4a77e3f1e4c2de7762b2a67aaa61c64",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/editor_ops.rs",
+      "reason": "Required if selecting WT app grapheme calls and @ completion. Public API/test inspection, not full grapheme implementation proof.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "269e6cf9a67fd1291a569b7f67ade5d0aefe5f551ba8adcdd04349d16ede9238",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/fuzzy.rs",
+      "reason": "Full diff reviewed; WT app calls new fuzzy_filter. Scoring retune travels with this selected consumer baseline, not mandatory for HEAD compilation.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "76d8e7d4eee790f9aaee396fed4de44ce00dd479a771bb94749079da54e44160",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/keybindings.rs",
+      "reason": "Full module reviewed; WT app calls KeybindingsManager. No HEAD module reference requires it independently.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "e22de6fb23130f56dbfc73e1f48593c1e87327f6b324f0aaef8f170154f231f0",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/trust_store.rs",
+      "reason": "Full module reviewed; WT app remembers path trust. Duplicated CLI algorithm with same corrupt-store behavior.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "5ce998102b24c9f78c4b5d726a249fc3a95b812a6b5fcad9de5edaf5f9af4c9c",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/src/lib.rs",
+      "reason": "HUNK ONLY if selecting WT TUI: keybindings and trust_store declarations. Exclude latex declaration with unrelated math slice.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "8e0e3989b322861ef90627f314336f28a6d939c169bae48a419c5d75345344c1",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    },
+    {
+      "path": "crates/epsilon-tui/Cargo.toml",
+      "reason": "epsilon-session for WT session picker, unicode-segmentation for WT editor. Neither dependency is needed by unchanged HEAD TUI.",
+      "verdict": "parent_review_required_before_full_file_selection",
+      "sha256": "d35c43e7098f22146e887089672aaf3cf42d57430163b9c857d7d7d70d97ecd4",
+      "selection": "full_file_except_explicit_hunk_restrictions"
+    }
+  ],
+  "excluded": [
+    {
+      "paths": [
+        "crates/epsilon-tui/src/latex.rs",
+        "crates/epsilon-tui/src/markdown.rs"
+      ],
+      "reason": "Math/LaTeX rendering is unrelated to missing credential/provider/runtime APIs. Keep these owner changes unselected and omit pub mod latex hunk from TUI lib if integrating other TUI modules."
+    },
+    {
+      "paths": [
+        ".gitignore",
+        "AGENTS.md",
+        "agents/memory/README.md",
+        "agents/memory/closeout.md",
+        ".agents/skills/ratatui-tui/",
+        "audit/references/",
+        "scripts/rpc_probe.py"
+      ],
+      "reason": "Policy/memory/local skills/archives/probe work has no source dependency edge to this slice; preserve in place. Parent may separately select current evidence/index documentation."
+    },
+    {
+      "paths": [
+        "docs/milestones/",
+        "docs/qa/",
+        "docs/user/",
+        "docs/README.md"
+      ],
+      "reason": "Do not blanket-add historical milestones or documentation edits. Relevant credential/provider/session provenance can be independently reviewed, but was not accepted as whole-directory scope here."
+    }
+  ],
+  "cross_review_required": [
+    {
+      "paths": [
+        "crates/epsilon-contracts/src/agent_event.rs",
+        "crates/epsilon-contracts/src/lib.rs",
+        "crates/epsilon-contracts/src/session_entry.rs",
+        "crates/epsilon-contracts/src/stream.rs",
+        "crates/epsilon-contracts/src/diagnostics.rs"
+      ],
+      "reason": "Notice, session headers, stream folding and diagnostics companions; owned by contracts/core review."
+    },
+    {
+      "paths": [
+        "crates/epsilon-session/src/lib.rs",
+        "crates/epsilon-session/src/discover.rs",
+        "crates/epsilon-session/src/store.rs",
+        "crates/epsilon-session/src/lease.rs",
+        "crates/epsilon-session/src/repair.rs",
+        "crates/epsilon-session/tests/session_store.rs"
+      ],
+      "reason": "runtime/doctor and optional TUI require shared discovery, open_in, lease and header support; not fully reviewed here."
+    },
+    {
+      "paths": [
+        "crates/epsilon-core/src/config.rs",
+        "crates/epsilon-core/src/agents.rs",
+        "crates/epsilon-core/src/references.rs",
+        "crates/epsilon-core/src/cache_stats.rs",
+        "crates/epsilon-core/src/guards.rs",
+        "crates/epsilon-core/src/paths.rs",
+        "crates/epsilon-core/src/untrusted.rs",
+        "crates/epsilon-core/src/verify.rs",
+        "crates/epsilon-core/src/compact.rs",
+        "crates/epsilon-core/src/prompt.rs",
+        "crates/epsilon-core/src/registry.rs"
+      ],
+      "reason": "Committed main/core and optional TUI consume these APIs; parent/core reviewer owns exact paths/tests and behavior closure."
+    },
+    {
+      "paths": [
+        "crates/epsilon-tools/src/lib.rs",
+        "crates/epsilon-lsp/src/lib.rs",
+        "crates/epsilon-safety/src/sandbox.rs"
+      ],
+      "reason": "doctor needs builtin registry, confinement capability and LSP discovery APIs. Full tools/safety/LSP module/assets/test closure belongs to other review, not implied whole-directory approval here."
+    }
+  ],
+  "dependency_verification": {
+    "method": "Parsed HEAD and WT Cargo.lock as TOML; inspected installed crate manifests/source under C:/Users/Hp/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f. Did not invoke Cargo.",
+    "checked": [
+      {
+        "crate": "reqwest",
+        "version": "0.13.4",
+        "result": "rustls is a real feature; default-tls aliases rustls. rustls enables aws-lc-rs, platform-verifier, hyper-rustls/tokio-rustls. json and stream also valid."
+      },
+      {
+        "crate": "getrandom",
+        "version": "0.3.4",
+        "result": "Installed manifest version matches pin; src/lib.rs exports fill used by PKCE."
+      },
+      {
+        "crate": "base64",
+        "version": "0.23.1",
+        "result": "Installed manifest matches pin; URL_SAFE_NO_PAD exists in general_purpose source."
+      },
+      {
+        "crate": "sha2",
+        "version": "0.11.0",
+        "result": "Existing exact workspace pin; installed source exports Digest and Sha256 for signing/PKCE."
+      },
+      {
+        "crate": "unicode-segmentation",
+        "version": "1.13.3",
+        "result": "Installed manifest matches new exact pin; optional TUI editor dependency, declared MSRV 1.85."
+      },
+      {
+        "crate": "tokio",
+        "version": "1.53.1",
+        "result": "test-util exists and enables rt/sync/time; rt-multi-thread exists; added paused-time test feature is valid."
+      }
+    ],
+    "feature_forwarding": "CLI real -> llm/real + core/real + tui/real; core real -> llm/real and existing TUI real -> core/real. Explicit-real HEAD missing core marker resolved by forwarding.",
+    "lockfile": {
+      "added_package_records": 59,
+      "removed_package_records": 0,
+      "changed_existing_records": 11,
+      "new_unreachable_records": [],
+      "unresolved_named_dependency_edges": 0,
+      "result": "59 additions are reachable from workspace records, 11 existing records changed. No existing package version/checksum replacements detected. This is static graph consistency, not feature/target resolution or lock regeneration."
+    },
+    "caveat": "If optional TUI manifests/dependency root pin are excluded, parent must reconcile the candidate lockfile accordingly; do not assert exact minimal lock without --locked isolated validation. Platform/MSRV/advisory qualification not run."
+  },
+  "catalog_review": {
+    "rows": 547,
+    "duplicate_ids": [],
+    "verification": "Mechanically counted 547 IDs and checked duplicates; inspected changed routing and generator diff. Not all 547 model IDs, prices, context limits or upstream support verified. Do not claim catalog rows imply supported live providers."
+  },
+  "known_preexisting_residuals": [
+    {
+      "id": "F03",
+      "paths": [
+        "crates/epsilon-llm/src/providers/mod.rs:776-958"
+      ],
+      "finding": "WireStream still returns after first event-producing frame and awaits a new chunk before draining remaining complete lines; EOF can synthesize success from content/tools without terminal evidence. Fixture helpers do not cover production chunk partitions.",
+      "classification": "Existing working-tree hardening residual, not introduced by forward integration."
+    },
+    {
+      "id": "F16",
+      "paths": [
+        "crates/epsilon-llm/src/providers/mod.rs:1161-1181",
+        "crates/epsilon-llm/src/auth.rs:623-662",
+        "crates/epsilon-llm/src/oauth.rs:79-87",
+        "crates/epsilon-llm/src/fallback.rs"
+      ],
+      "finding": "Refresh requires env client ID even for Copilot empty-ID flow, ignores config-only login ID, fallback caches credential path without same refresh preparation, and persistence can reject a proactively rotated pair based on old-token liveness alone.",
+      "classification": "Existing working-tree defect already recorded in ledger; not fixed by bringing companion code into Git."
+    },
+    {
+      "id": "F13",
+      "paths": [
+        "crates/epsilon-cli/src/rpc_mode.rs",
+        "crates/epsilon-server/src/lib.rs"
+      ],
+      "finding": "Reference-constructor diffs do not repair admission/acknowledgment races.",
+      "classification": "Existing frontend residual; no claim of concurrency correctness."
+    },
+    {
+      "id": "F09/F19",
+      "paths": [
+        "crates/epsilon-cli/src/runtime.rs",
+        "crates/epsilon-tui/src/trust_store.rs"
+      ],
+      "finding": "Trust keys are lexically normalized, not filesystem-resolved. Whole-app command/UI parity and other ledger findings remain open.",
+      "classification": "Known identity/product limitations, separate from source closure."
+    }
+  ],
+  "additional_static_findings": [
+    {
+      "id": "FR01",
+      "severity": "security_review_residual",
+      "paths": [
+        "crates/epsilon-llm/src/auth.rs:743-761"
+      ],
+      "finding": "write_auth_file creates/writes predictable auth.tmp before chmod(0600); comment says secret is never visible at default permissions, but creation is not owner-only. Fixed temporary pathname and stale-lock discipline also need hardening. Final-mode test cannot establish secure creation.",
+      "integration_effect": "Existing WT code, not a new integration edit. Prevents clean-security approval; do not exploit/reproduce. Parent records follow-up separately."
+    },
+    {
+      "id": "FR02",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-llm/src/providers/bedrock.rs:454-490",
+        "crates/epsilon-llm/src/providers/mod.rs:1185-1256"
+      ],
+      "finding": "bedrock_event_payloads has no production caller; selected transports always construct SSE WireStream although adapter states native Bedrock uses binary event-stream. Helper comments claim CRC validation but implementation only slices framing.",
+      "integration_effect": "Source closure does not make Bedrock a verified working protocol."
+    },
+    {
+      "id": "FR03",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-llm/src/providers/vertex.rs:43-101",
+        "crates/epsilon-llm/src/providers/mod.rs"
+      ],
+      "finding": "bearer_token/adc_jwt_input are helper/test surfaces with no production ADC exchange caller; headers send supplied key verbatim. ADC placeholder login path is not completed by adding this module.",
+      "integration_effect": "Do not advertise ADC as working; baseline integration is not implementation completion."
+    },
+    {
+      "id": "FR04",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-llm/src/providers/openai_responses.rs:101-139,220-245"
+      ],
+      "finding": "Decoder creates call_id|item_id. Replay sends whole paired ID as function_call.call_id but strips result call_id before |, causing inconsistent pairing on the next tool-result request. Existing one-response fixture does not cover replay.",
+      "integration_effect": "Provider correctness residual, not compile blocker; needs offline replay regression in later authorized hardening."
+    },
+    {
+      "id": "FR05",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-llm/src/config_value.rs:244-260"
+      ],
+      "finding": "Command helper .output() has no timeout/output bound despite module claim of 10 seconds. Catalog explicitly skips command-valued keys, so this is not proof of hot-path command execution.",
+      "integration_effect": "Do not claim timeout guarantees. Source-only finding, no command reproduction."
+    },
+    {
+      "id": "FR06",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-llm/src/retry_stream.rs:182-207"
+      ],
+      "finding": "After a live empty-output failure, retry buffers a fresh first Done(Error) and next() returns that first event without reapplying retry classification; remaining budget is bypassed for mixed live/pre-stream failures.",
+      "integration_effect": "Newly noticed existing-WT retry edge, not introduced by committing source closure."
+    },
+    {
+      "id": "FR07",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-cli/src/doctor.rs:342-356"
+      ],
+      "finding": "No-model branch checks credentialed_providers before it is populated; intended credentials-exist/no-model blocker cannot fire there.",
+      "integration_effect": "Doctor diagnostic logic residual; source resolution unaffected."
+    },
+    {
+      "id": "FR08",
+      "severity": "runtime_residual",
+      "paths": [
+        "crates/epsilon-cli/src/runtime.rs:303",
+        "crates/epsilon-tui/src/trust_store.rs:81"
+      ],
+      "finding": "Unreadable/corrupt trust data becomes empty on write, dropping prior denials. TUI test explicitly codifies healing a corrupt store. Read failure falls back to no remembered decision, not preservation of a denial.",
+      "integration_effect": "Existing baseline policy/data-preservation risk; no security-clean verdict."
+    },
+    {
+      "id": "FR09",
+      "severity": "coverage_gap",
+      "paths": [
+        "crates/epsilon-llm/src/oauth_login.rs:478-505"
+      ],
+      "finding": "Accepted callback stream does not explicitly set nonblocking/read timeout; loop checks read deadline only after WouldBlock/TimedOut. Cross-platform bounded-read behavior is not established by the Windows-inheritance comment.",
+      "integration_effect": "Needs defensive cross-platform validation later, not an exploit reproduction."
+    },
+    {
+      "id": "FR10",
+      "severity": "coverage_gap",
+      "paths": [
+        "crates/epsilon-llm/src/auth.rs:798-897"
+      ],
+      "finding": "sigv4_signing_matches_aws_reference_vector checks scope/hex length/determinism, not a pinned expected signature. Test name/comment overstates reference-vector evidence.",
+      "integration_effect": "No SigV4 interoperability certification."
+    }
+  ],
+  "test_review": {
+    "executed": false,
+    "reviewed": "Read actual fixture/test additions for credentials, model resolution, OAuth PKCE/callback/polling, wire salvage, retry, doctor and small ext/MCP literal fixes; TUI tests inventoried and selected command/session/OAuth/notice seams reviewed.",
+    "limits": [
+      "27 OAuth login tests are source inventory, not passing results",
+      "Live smoke is ignored; no paid provider request authorized or made",
+      "Fallback test now accepts host-dependent usable_count bounds; it is not hermetic credential-preparation coverage",
+      "Auth tests cover final Unix mode, corrupt-file refusal, concurrent saves and basic refresh composition, not secure tempfile creation or the F16 proactive threshold overlap",
+      "Wire fixtures exercise adapters/accumulator, not full network framing or multi-turn Responses call-ID replay",
+      "TUI whole app, latex implementation, all 547 catalog rows and complete provider test bodies were not exhaustively reviewed"
+    ],
+    "parent_gates": [
+      "Materialize exactly selected paths/hunks plus other reviewer companions in isolated candidate",
+      "Run repository gates and --locked dependency validation there, plus explicit offline-only and real feature lanes",
+      "Record exact candidate tree/hash and actual output; do not reuse prior dirty-tree gate success as proof",
+      "Check staged paths against merged explicit allowlist and preserve excluded owner work"
+    ]
+  },
+  "unreviewed": [
+    "Full app.rs/picker.rs TUI command and rendering delta; conditional list requires parent bounded completion or exclusion",
+    "Core/contracts/session/tools/safety/LSP source behavior beyond explicitly traced API edges belongs to other reviewers",
+    "All unrelated milestone/QA/user-documentation changes and reference archives",
+    "External provider protocol/version/pricing truth, Linux/macOS/runtime security, MSRV and dependency advisory results"
+  ],
+  "counts": {
+    "closure_allowlist_paths": 37,
+    "behavior_companion_paths": 3,
+    "conditional_tui_paths": 9
+  },
+  "index_state_at_last_check": "git diff --cached --name-only was empty",
+  "files_written": [
+    "audit/evidence/integration-frontends-review.json"
+  ]
+}

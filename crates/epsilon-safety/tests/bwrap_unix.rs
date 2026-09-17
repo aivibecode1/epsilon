@@ -41,8 +41,10 @@ async fn echo_runs_under_bubblewrap() {
                 program: "sh".into(),
                 args: vec!["-c".into(), "echo bwrap-ok".into()],
                 cwd: std::env::temp_dir(),
+                ..Default::default()
             },
             &policy(),
+            None,
         )
         .await
         .expect("confined sh -c echo");
@@ -82,8 +84,10 @@ async fn host_tmp_is_not_visible_inside_sandbox() {
                 program: "sh".into(),
                 args: vec!["-c".into(), script],
                 cwd: ws.clone(),
+                ..Default::default()
             },
             &policy(),
+            None,
         )
         .await
         .expect("probe run");
@@ -130,8 +134,10 @@ async fn root_readonly_workspace_writable() {
                         .into(),
                 ],
                 cwd: ws.clone(),
+            ..Default::default()
             },
             &policy(),
+            None,
         )
         .await
         .expect("isolation probe");
