@@ -56,6 +56,9 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M85 — follow-up default](milestones/M85-followup-default.md): one-at-a-time
+  default restored; explicit All preserved; verification and coverage limits.
+
 - [Fresh audit and port-first plan](../audit/09-revalidation.md): named baseline,
   verified gate evidence, unresolved fidelity gaps and independent review reports.
 

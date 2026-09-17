@@ -51,8 +51,8 @@ and provider collision handling. Do not treat that as an approved policy expansi
    durable replay protocol; RPC currently skips lagged broadcasts.
 
 Pi's two-level loop is the reference; bounded conflict-aware scheduling is an
-intentional difference. Follow-ups default to all-at-once in Rust versus one-at-a-time
-in the inspected pi. Tool hooks exist, but equivalent configurable next-turn/stop
+intentional difference. M85 aligns the follow-up default with pi's one-at-a-time
+mode; explicit all-at-once remains available. Tool hooks exist, but configurable next-turn/stop
 callbacks are not established, despite ADR-002's commitment. The
 [port matrix](../../audit/03-port-plan.md) distinguishes mechanisms from compatibility.
 

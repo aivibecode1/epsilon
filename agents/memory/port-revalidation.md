@@ -1,59 +1,48 @@
 # Autonomous audit and complete-port arc
 
 ## Authority and scope
-- Owner requests audit first (no source changes), documentation/layout restructure,
-  complete faithful pi port, THEN strongest general-reference improvements.
-- Explicit autonomous small commits authorized; no phase confirmation needed.
-  No push requested. Preserve inherited dirty work and never weaken gates.
-- Existing audit reports are unverified leads. New assessment: audit/09-revalidation.md.
-- .agent absent; repository skills are .agents/skills. Read AGENTS, relevant memory,
-  improve/ponytail-audit skills/playbook; loaded review, inspection and TDD skills.
+- Owner authorizes audit first, docs/layout reconciliation, complete faithful pi
+  port, then general reference improvements. Small autonomous commits, no push.
+- Preserve inherited dirty source/docs; do not invent historical commits.
+- .agent absent; repo skills live in .agents/skills. Read AGENTS and relevant skills.
+- Use absolute paths and explicit terminal workdir; relative writes previously
+  landed under a reference checkout while parallel agents were working.
 
-## Baseline and current work
-- HEAD 80b32eb; initial 38 modified, 70 untracked status entries; index empty.
-- Large inherited TUI/contracts/config/registry/RPC changes NOT approved/staged.
-- Prior F09 repeat log ends GATE PASS; first auth timeout retained. Static review
-  approves only find/search. Must verify candidate identity before any code commit.
-- Working-tree battery proc_1da7315fc904 COMPLETED: all five per-gate exits0,
-  final GATE PASS. Preserved audit/evidence/gate-revalidation-baseline.log.
-  Python aggregation: 55 summaries, 795 passed, 0 failed, 1 ignored.
-- Separate cargo test -p epsilon-contracts: 22 passed, including 3 stream tests.
-  No regression added or source edited. No install of unreviewed inherited baseline.
-- Cleanup completed exit0: 15,404 files / 9.2 GiB removed from external Cargo
-  target LocalAppData/Temp/epsilon-gate-f10b; repo target removed after log copy.
-  C: 60G free. No builds running. Do not purge shared dependency caches.
+## Verified baseline and boundaries
+- Initial HEAD 80b32eb, 38 modified / 70 untracked. Broad TUI/contracts/config/
+  registry/RPC changes remain unapproved and excluded from queue commits.
+- Dirty-tree battery: all five gates, 795 passed / 0 failed / 1 ignored.
+  Evidence audit/evidence/gate-revalidation-baseline.log. Not HEAD acceptance.
+- Baseline cleanup removed 9.2 GiB. Never purge shared dependency/runtime caches.
+- F09 find/search inherited slice: isolated repeat passed 741 tests; not committed.
+  See f09-path-policy.md; do not bundle its docs or evidence into M85 closeout.
 
-## Independent source reviews completed
-- delegation deleg_a2cc9e4f; no builds/commits/source edits authorized to children.
-- sa-0-c91d43fb core/queues/session/RPC -> revalidation-core-review.md.
-- sa-1-8f2324d6 TUI/tools/resources/extensions/providers -> revalidation-surface-review.md.
-- sa-2-81608c38 layout/docs and DSH/Hermes/opencode -> revalidation-structure-review.md.
-- All report paths under audit/evidence; validate source citations before synthesis.
-- All three reports received and read. Parent validated core failure paths,
-  attachment completion, plan rules and observer ownership. Other findings remain
-  independently source-reviewed, not runtime reproductions. Audit summary complete.
+## Completed audit and first correction
+- 13773b4: source-free fresh audit and three independent reference/source reviews.
+- bcc1233: narrow README/AGENTS/roadmap/architecture corrections, not full rewrite.
+- Keep conventional twelve-crate layout; no evidence for wholesale source moves.
+- Reviews: audit/evidence/revalidation-{core,surface,structure}-review.md.
+  Findings distinguish source inspection from runtime evidence; audit/09 is plan.
+- 3afafd3: default followups All -> OneAtATime, matching pi agent.ts:231-232.
+  RED expected 3 requests / actual 2; GREEN plus explicit All preservation 2/2.
+- Code commit preceded full gate completion (process error; no owner request to
+  skip gates). Subsequent isolated candidate matched both committed files.
+- Candidate bcc1233 + two queue files: all five gates exited 0, 742 passed / 0
+  failed / 0 ignored, 55 summaries. gate-queue-candidate.log is preserved.
+- Final independent review queue-final-review.json passed with no blocking errors.
+- proc_4dbf3a21f39f exited 0: cleanup removed 16,325 files / 9.4 GiB; repo,
+  candidate and external targets absent; C: 60G free. No build running.
+- No CLI/TUI source changed in this library slice; global binary not reinstalled.
+- Durable M85 scope/evidence/limits: docs/milestones/M85-followup-default.md.
 
-## Direct parent observations
-- pi agent.ts:231-232 defaults both queues one-at-a-time; core/lib.rs:195-196
-  defaults followups All. Runtime conformance not executed; no code changed.
-- README baseline/failure/F10 text stale; fix only after source/evidence reconciliation.
-- Inherited StreamFolder collision remapping (stream.rs) has no new tests in diff;
-  existing three tests do not establish remapping correctness. Inspection only.
-- A relative write unexpectedly resolved inside pi reference directory, likely cwd
-  interference. Moved new report to root audit and removed empty accidental dir.
-  Use ABSOLUTE file paths and explicit terminal workdir throughout parallel work.
-- One assistant commentary wrongly implied user narrowed task: corrected immediately;
-  no such user steering occurred. Broad owner scope remains unchanged.
-
-## Current phase / next safe actions
-- Audit committed as 13773b4 (no source changes). All reviews completed.
-- README, AGENTS, roadmap and architecture corrections prepared; retain layout.
-  These fix stale baseline/F02/F10 and supersede approval stops, not full doc rewrite.
-- Docs map includes pre-existing M84 references: stage only the new audit link, not
-  inherited milestone closure without review. Full historical-doc rewrite deferred.
-- Next bounded implementation: default followups one-at-a-time, with assembled
-  provider-request assertions and explicit All-mode preservation. Core lib/test
-  files initially clean. Test RED before production edit. Use isolated HEAD candidate
-  to avoid attributing broad inherited working-tree success to committed code.
-- Full gates, review, evidence/docs and cleanup required before code commit; no
-  production-readiness claim. No running builds or child agents at this checkpoint.
+## Next safe actions
+- M85 docs/evidence closeout accompanies this note; inherited M84 hunks in
+  docs map/history/ADR/verification log are excluded. Queue work note retired.
+- Audit initial phase is complete, not production readiness. Maintained-doc
+  rewrite incomplete; keep history as history rather than rewriting it as success.
+- Next port work: queue breadth (explicit modes/events/tool cycles) or compaction
+  correctness from core review; choose one reproducible behavior before editing.
+- Still open: callbacks, compaction/abort/session correctness, RPC admission,
+  attachment/TUI/provider/extension parity. General improvements deferred.
+- Gate before future code commits; use isolated HEAD candidates to avoid mixing
+  inherited source with the verified slice. Review once, act on blockers, converge.

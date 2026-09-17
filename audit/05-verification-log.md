@@ -411,4 +411,20 @@ M83 closeout: commit `b57c8bf`; locked candidate installation, installed demo
 and cleanup each returned 0. Removed 20,837 build files / 11.0 GiB; candidate
 and repo targets absent, 60G free. See [closeout](evidence/integration-closeout.txt).
 
+## M85 — follow-up queue default
+
+Isolated `bcc1233` plus the two queue files committed in `3afafd3`: all five
+gates exited 0 (fmt, strict Clippy, workspace tests, demo, real-feature check).
+**742 passed, 0 failed, 0 ignored**, 55 summaries; candidate files matched the
+committed files. This is not the broader dirty tree (795/0/1 baseline).
+Evidence: [gate](evidence/gate-queue-candidate.log),
+[RED](evidence/queue-conformance-red.log),
+[modes](evidence/queue-conformance-modes.log),
+[final review](evidence/queue-final-review.json).
+The code commit preceded gate completion; no history was rewritten.
+Cleanup exited 0: 16,325 files / 9.4 GiB removed, 60G free, repo/candidate/external
+targets absent. [Cleanup record](evidence/queue-cleanup.log).
+No CLI/TUI source changed; no reinstall. Only the default and explicit All are
+covered by these fixtures, not complete queue or pi parity.
+
 ## Next verification round

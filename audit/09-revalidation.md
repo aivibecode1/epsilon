@@ -54,6 +54,13 @@ built or executed. No credentials or paid provider calls are part of this audit.
 
 ### R01 — Default follow-up delivery differs from pi
 
+**M85 disposition:** `3afafd3` changes the default to one-at-a-time. The default
+regression failed with two requests instead of three, then passed; explicit All
+preservation also passed. Final static review approves this narrow fix. Full
+candidate gates and closeout are recorded in the M85 log; broader explicit-mode,
+event, tool-cycle and steering coverage remains open. The text below is the
+pre-fix observation, not a claim that the default is still wrong.
+
 Pi constructs both queues with `one-at-a-time` defaults at
 `references/pi-0.84.2/packages/agent/src/agent.ts:231-232`. Epsilon defaults steering
 to `OneAtATime` but follow-ups to `All` at `crates/epsilon-core/src/lib.rs:195-196`.
@@ -67,6 +74,8 @@ request histories against pi. Change the default unless a genuinely necessary
 Rust divergence is documented. Estimated effort: S/M; risk: medium, caller-visible.
 
 ### R02 — The README's baseline statement is stale
+
+**Disposition:** corrected in `bcc1233`; the following is the original finding.
 
 `README.md:12-14,156-159` still says strict Clippy and a checkpoint test fail.
 The preserved isolated F09 repeat ends in GATE PASS and the preceding integration

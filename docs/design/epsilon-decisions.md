@@ -47,6 +47,13 @@ be ported mechanically.
 should_stop_after_turn, prepare_next_turn, and event taxonomy semantically one-to-one. Improvements
 (bounded pool, doom-loop brake, sticky turn reasons) attach at defined seams.
 
+**M85 amendment — queue defaults.** Both steering and follow-up delivery default
+to `OneAtATime`, matching the locally inspected pi 0.84.2 constructor. Explicit
+`All` remains available for callers requiring batched delivery. The default and
+All-mode provider-context fixtures cover this narrow correction; they do not
+establish callback, event-order or full queue parity. The prepare/stop callbacks
+promised above remain an open commitment in the current audit.
+
 **Alternatives.** (a) Adopt DSH's phase-machine-over-event-log as the core; (b) opencode's Effect-
 style runner; (c) invent a new loop.
 
