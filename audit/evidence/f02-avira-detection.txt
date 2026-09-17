@@ -1,0 +1,6 @@
+Source: C:/ProgramData/Avira/Security/Logs/Elevated/Avira.Spotlight.Service_101.log
+Recorded: 2026-09-17 06:30:06.517 (during the failing workspace test link)
+
+2026-09-17 06:30:06.517 [INF] [4900] [4] [AntivirusPlugin] [MalwareDetectionsNotificationProvider] Malware detected event. DetecionItem: {"Id":null,"Name":"C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\target\\debug\\deps\\wire_fixtures-76eddb95e46e81ff.exe","Malware":"HEUR/APC.Misc","DetectionStatus":"None","$type":"DetectionItem"}
+
+Correlation: LNK1104 on the same path at ~06:30 and at 08:19 (wf-iso3); exact-name write probe denied; identical name linked and existed under CARGO_TARGET_DIR outside the repo; full workspace suite green there.

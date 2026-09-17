@@ -53,6 +53,20 @@ Clippy reports unused `Hash as _` at `crates/epsilon-tools/src/checkpoint.rs:340
 
 ## F02 — Track what each agent actually observed
 
+**Working-tree update:** observer ownership and sibling invalidation are implemented
+and statically reviewed in [M81](../docs/milestones/M81-observation-ownership.md).
+The three reviewer-identified acceptance gaps are now covered by tests: a failed
+sibling edit leaves the partial reader's full-overwrite refusal intact; single and
+batch edits invalidate sibling observations only for the changed path; and the CLI
+composition suite [observation_ownership.rs](../crates/epsilon-cli/tests/observation_ownership.rs)
+drives real parent/task-child and restored-history flows. Scoped core/tools
+verification passed 294 tests; selected new-test runs passed (see M81). Full workspace verification remains
+blocked by Windows wire_fixtures launch/link errors (root-caused as an Avira
+`HEUR/APC.Misc` quarantine of the freshly linked test executable — see
+[M81](../docs/milestones/M81-observation-ownership.md) and the verification log);
+F09 alias identity remains open. The implementation is not yet committed. The original
+source trace below describes the pre-fix snapshot, not the current working tree.
+
 **Evidence:** `crates/epsilon-tools/src/read_log.rs:90–92` is one process-global `PathBuf → Snapshot`; `:120–139` updates it after every read/write; `:153–179` verifies against whichever agent refreshed it last. Real mutations call it at `crates/epsilon-tools/src/files.rs:477–501`. Core supplies a non-distinguishing `"inline"` context ID at `crates/epsilon-core/src/exec.rs:661–669`.
 
 **Trace:** A reads → B writes through Epsilon → B refreshes global stamp → A's stale full overwrite compares against B's stamp and passes. A read by B can also satisfy A's never-read rule. This is a semantic error, not merely missing writer attribution.

@@ -312,9 +312,59 @@ do not install the failed workspace baseline.
 Cleanup removed 14,644 files (8.2 GiB). Both target/ and target-clean/ were
 confirmed absent; C: has 63 GiB available (87% used). No binary was installed.
 
-## Next verification round
+## F02 workspace verification — root cause: Avira heuristic block (2026-09-17)
 
-Resolve the Windows `wire_fixtures` linker/launch blocker using the foreground
-reproduction above before claiming a green workspace. F02 acceptance review is
-complete; F09 alias identity and the dirty-baseline implementation commit scope
-remain open.
+The Windows test-gate blocker from the earlier rounds is now root-caused with
+vendor evidence. Nothing in the repository was changed to obtain this result:
+no source, manifest, gate command, or security configuration. The isolation
+sequence (all logs preserved):
+
+- `cargo test --workspace --test wire_fixtures --no-run -j 1` reproduced LNK1104
+  again in the background ([wf-iso2](evidence/wf-iso2.log)) and after deleting
+  67 stale artifacts for that exact output name ([wf-iso3](evidence/wf-iso3.log)),
+  ruling out concurrency and leftover-file causes.
+- Write probes in the same `target/debug/deps` directory: creating
+  `wire_probe_test.exe`, `zz_probe_test.txt`, and
+  `builtin_tools-e7728fa5fff11c15-probe.exe` all succeeded; creating the exact
+  name `wire_fixtures-76eddb95e46e81ff.exe` was **denied**. The block is bound to
+  that directory plus that file name, not to the directory or to executables
+  generally.
+- The same workspace configuration with the same output executable linked and
+  ran with `CARGO_TARGET_DIR=$LOCALAPPDATA/Temp/wf-target`
+  ([wf-iso4-alt-targetdir](evidence/wf-iso4-alt-targetdir.log)), and the full
+  workspace suite there was green: **53 test-result summaries, 786 passed,
+  0 failed**, exit 0 ([wf-full-suite-alt](evidence/wf-full-suite-alt.log)).
+  Copying the successfully linked executable back into the repo's deps directory
+  under its own name was denied, confirming a path+name rule rather than a
+  content hash of a different build.
+- **Vendor evidence:** Avira's own log records the detection at 06:30:06 — during
+  the failing link — flagging exactly that executable as `HEUR/APC.Misc`
+  ([detection excerpt](evidence/f02-avira-detection.txt)). The earlier
+  "Defender disabled" finding was about Windows Defender; Avira Security
+  (registered and running) is the product that acted.
+
+**Conclusion:** the test gate's LNK1104 was an antivirus heuristic quarantine
+(`HEUR/APC.Misc`) of the freshly linked `wire_fixtures` test executable, not a
+Cargo, linker, or repository defect. The suite itself is green. Fixing the host
+policy — reviewing the detection in Avira's console, excluding this repository's
+`target/` directory from real-time scanning, or restoring the quarantined file —
+requires owner action and administrator rights; no security configuration was
+changed from this session and none should be by an agent. Until the rule is
+cleared, `cargo test --workspace` inside the repository remains blocked at the
+link step while the identical suite passes under an alternate target directory.
+`CARGO_TARGET_DIR` outside the repo is a diagnostic and interim workaround; the
+gate battery's own `target/`-based run stays honestly red until the owner clears
+the detection, and this log records that state instead of redefining the gate.
+
+- **Full battery under the workaround:** `CARGO_TARGET_DIR=$LOCALAPPDATA/Temp/wf-target
+  bash scripts/gate.sh f02-avira-workaround` → **GATE PASS**: fmt=0, clippy=0,
+  test=0, demo=0, real-check=0
+  ([complete output](evidence/gate-f02-avira-workaround.log)). With the blocked
+  path out of the picture, every gate including the workspace test suite passes.
+  This is a verified interim result with an unmodified `scripts/gate.sh`; the
+  in-repository `target/` gate remains red until the owner clears the Avira
+  detection.
+
+Cleanup for this round removed both build trees (see the next section).
+
+## Next verification round

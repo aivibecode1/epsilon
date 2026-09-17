@@ -135,6 +135,12 @@ on CLI. New edges require review rather than relying on an illustrative layer di
 - Bash-launched tools may not see `cargo` even though PowerShell does (PATH differs per shell;
   hit 2026-09-16 during the audit). If `scripts/gate.sh` fails with `cargo: command not found`,
   point the script at the absolute path (`~/.cargo/bin/cargo.exe`) or run the five gates directly.
+- Avira Security on this machine has flagged freshly linked test executables with
+  `HEUR/APC.Misc` and blocked the write (LNK1104), binding the block to the exact
+  output path (hit 2026-09-17, see audit/05-verification-log.md). Diagnose with
+  name probes in the same directory and `CARGO_TARGET_DIR` outside the repo;
+  clearing the detection or adding an exclusion is an owner decision requiring
+  administrator rights — never change security configuration from an agent session.
 
 ## Documentation while building
 
