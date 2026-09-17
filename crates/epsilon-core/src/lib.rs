@@ -7,13 +7,20 @@
 //! Everything the loop does is observable through [`AgentEvent`]s on the broadcast
 //! channel; frontends are reducers over that stream.
 
+pub mod agents;
+mod cache_stats;
 mod compact;
 pub mod config;
 mod exec;
 mod gate;
+mod guards;
+pub mod paths;
 pub mod prompt;
+pub mod references;
 mod registry;
 pub mod skills;
+mod untrusted;
+mod verify;
 
 #[doc(hidden)]
 pub mod testing;
@@ -27,6 +34,15 @@ use tokio::sync::broadcast;
 use epsilon_contracts::content::UserContent;
 use epsilon_contracts::session_entry::EntryKind;
 
+/// Compile-time marker: this build carries the real-provider path (M52).
+///
+/// `epsilon-cli` binds it under its own `real` feature, so a build that turns
+/// on the network layer without turning on this crate's real code (which
+/// would leave `Agent::try_hot_swap_to_real` stubbed while the CLI advertises
+/// real providers) fails to compile instead of degrading silently.
+#[cfg(feature = "real")]
+pub const REAL_PATH_ENABLED: () = ();
+
 /// Token estimate for one message (delegates to compact's heuristic).
 fn estimate_one(m: &Message) -> usize {
     crate::compact::estimate_messages(std::slice::from_ref(m))
@@ -39,7 +55,7 @@ fn clamp_tail_tokens(v: usize) -> usize {
     )
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -145,9 +161,30 @@ pub struct LoopLimits {
     /// Maximum assistant turns in ONE run (budget guard, Hermes-pattern).
     pub max_turns: usize,
     /// Compact when estimated tokens exceed this before a provider call.
+    /// Used only when the active model's context window is unknown; a known
+    /// window takes over as `window - reserve` (pi `shouldCompact`).
     pub compaction_threshold_tokens: usize,
     /// Recent-message budget protected from pruning/clamping during compaction.
     pub compaction_tail_tokens: usize,
+    /// Known context window of the active model in tokens. `None` (custom
+    /// providers, faux/test models) keeps the fixed-threshold behavior above.
+    /// Prefer [`LoopLimits::for_model`] over setting this by hand.
+    pub context_window_tokens: Option<usize>,
+    /// Tokens held back from a known window before compacting (pi `reserveTokens`).
+    pub compaction_reserve_tokens: usize,
+    /// Master switch for automatic compaction (pi's `enabled` gate). `compact_now`
+    /// and `/compact` still work when this is false.
+    pub compaction_enabled: bool,
+    /// Consecutive identical tool RESULTS before the stuck-run guard speaks up
+    /// (`guards::ProgressGuard`). The doom-loop brake counts identical *calls*; four different
+    /// commands that fail the same way are invisible to it. `0` disables the guard.
+    pub no_progress_threshold: usize,
+    /// Empty or degenerate final turns tolerated before the run is failed (Hermes
+    /// `empty_response_guard`). Each tolerated turn earns one nudge message.
+    pub empty_turn_retries: usize,
+    /// Stop-time nudges allowed when a run ends with edits no successful check has covered
+    /// (`crate::verify::VerificationLog`). `0` disables the nudge; the log still records.
+    pub verification_nudges: usize,
 }
 
 impl Default for LoopLimits {
@@ -160,7 +197,27 @@ impl Default for LoopLimits {
             max_turns: 64,
             compaction_threshold_tokens: 120_000,
             compaction_tail_tokens: 12_000,
+            context_window_tokens: None,
+            compaction_reserve_tokens: 16_384,
+            compaction_enabled: true,
+            no_progress_threshold: 3,
+            empty_turn_retries: 1,
+            verification_nudges: 2,
         }
+    }
+}
+
+impl LoopLimits {
+    /// Limits with the active model's context window resolved from the bundled
+    /// catalog, so the compaction trigger goes window-relative (pi
+    /// `shouldCompact`). Unknown ids (custom providers, faux/test models) keep
+    /// `context_window_tokens: None` — the fixed threshold keeps working.
+    pub fn for_model(model_id: &str) -> Self {
+        let mut limits = Self::default();
+        if let Some(info) = epsilon_llm::catalog::lookup_model(model_id) {
+            limits.context_window_tokens = Some(info.context_window as usize);
+        }
+        limits
     }
 }
 
@@ -177,6 +234,26 @@ pub struct RunOutcome {
 }
 
 /// Heuristic overflow classifier (DSH's CONTEXT_WINDOW_EXCEEDED, message-shaped).
+/// One-line description of a scheduled retry (M60) — the text a user reads when
+/// the harness pauses instead of failing. Pure, so the notice text is covered by
+/// tests without sleeping through a real backoff.
+pub fn retry_notice_text(n: &epsilon_llm::RetryNotice) -> String {
+    let kind = match n.kind {
+        epsilon_llm::FailureKind::RateLimit => " (rate limited)",
+        epsilon_llm::FailureKind::Server => " (server error)",
+        epsilon_llm::FailureKind::Network => " (network)",
+        _ => "",
+    };
+    format!(
+        "{} — retrying {} in {:.1}s (attempt {}){}",
+        n.detail,
+        n.model,
+        n.delay.as_secs_f64(),
+        n.attempt + 2,
+        kind
+    )
+}
+
 fn looks_like_context_overflow(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
     m.contains("context window")
@@ -213,8 +290,13 @@ pub struct Agent {
     stream_fn: RwLock<Arc<dyn epsilon_llm::StreamFn>>,
     tools: Arc<ToolRegistry>,
     gate: Arc<dyn PermissionGate>,
+    /// Interception hooks around tool execution (pi's `beforeToolCall` /
+    /// `afterToolCall`). Swappable after construction so extension hosts can
+    /// register without rebuilding the agent.
+    tool_hooks: RwLock<Arc<dyn epsilon_contracts::tool::ToolHooks>>,
 
     history: Mutex<Vec<Message>>,
+    observation_scope: Mutex<Arc<()>>,
     steering: Mutex<PendingQueue>,
     followups: Mutex<PendingQueue>,
 
@@ -230,6 +312,34 @@ pub struct Agent {
     session_store: Mutex<Option<Arc<Mutex<SessionStore>>>>,
     /// Set when an overflow-triggered compaction already retried this run.
     overflow_retried: AtomicBool,
+    /// Discovered agent-type defs for `task` routing (M50: pi `agents.ts` parity).
+    /// Interior-mutable so composition code can attach discoveries after Arc<Agent>.
+    agents: Mutex<Vec<crate::agents::AgentDef>>,
+    /// Delegation depth of this agent: 0 for the top-level session, +1 per
+    /// `task` hop. Children at the cap cannot delegate further (opencode
+    /// `subagent_depth` parity — unbounded nesting would recurse the loop).
+    /// Interior-mutable so `run_task` can stamp the child after construction.
+    task_depth: Mutex<usize>,
+    /// Role brief for delegated children (M50: agent-def system prompt).
+    /// Rendered FIRST in the CONTEXT tier so role survives cache discipline.
+    agent_brief: Mutex<String>,
+    /// What the last session resume had to repair (M75), so a frontend can tell the user what
+    /// their session was missing. `None` when the session opened clean or was never attached.
+    last_repair: Mutex<Option<epsilon_session::repair::RepairReport>>,
+    /// Directories a tool call has touched this process (M73), for subdirectory hints.
+    ///
+    /// A set, not a list: the hint it produces is the same whichever call discovered the
+    /// directory, and the prompt must not change shape because a call was retried.
+    touched_dirs: Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    /// M53: delegated tasks this session tracks, in dispatch order. Children
+    /// stay alive between calls, so `task_id` can resume one and the tool
+    /// layer can report status. Bounded by [`TASK_REGISTRY_CAP`].
+    tasks: Arc<Mutex<Vec<TaskEntry>>>,
+    /// M53: completion notices from background children. Senders live in the
+    /// detached run tasks; the receiving side drains into the steering queue
+    /// at every drain point (see the private `drain_steering`).
+    task_notices_tx: tokio::sync::mpsc::UnboundedSender<Message>,
+    task_notices_rx: Mutex<tokio::sync::mpsc::UnboundedReceiver<Message>>,
     /// Discovered skills (catalog in CONTEXT tier; bodies load on demand via skill tool).
     /// Interior-mutable so composition code can attach discoveries after Arc<Agent>.
     skills: Mutex<Vec<crate::skills::Skill>>,
@@ -241,10 +351,29 @@ pub struct Agent {
     model_id: Mutex<String>,
     /// Session thinking level (pi's session.thinkingLevel); rides every run.
     thinking_level: Mutex<epsilon_contracts::ThinkingLevel>,
+    /// Set when an abort arrives while no run is in flight (M54): a run that
+    /// starts *after* the stop request (a child between spawn and first poll)
+    /// must still honour it, so the flag is consumed at the next run's start.
+    abort_armed: std::sync::atomic::AtomicBool,
     /// Token for the ACTIVE run; cancelled by [`Agent::abort_current_run`]. Tools
     /// receive clones through their `ToolContext` so long-running work bails
     /// cooperatively (M12: closes the never-cancelled-token gap, ADR-010).
     run_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
+    /// Live context-window override, refreshed by [`Agent::set_model_id`] from the
+    /// catalog (hot-swaps included). Seeded from `limits.context_window_tokens`
+    /// at construction; the compaction trigger reads this, never `limits`.
+    model_window_tokens: Mutex<Option<usize>>,
+    /// What the provider billed for the last completed request, plus how much of
+    /// the history that request covered. Makes the compaction trigger a measurement
+    /// instead of a guess (pi `compaction.ts`); cleared whenever the history it
+    /// describes is rewritten.
+    usage_anchor: Mutex<Option<crate::compact::UsageAnchor>>,
+    /// Consecutive-identical-result tracker for the stuck-run guard (`crate::guards`).
+    /// Run-scoped like `doom_streaks`: a fresh run starts with a clean slate.
+    progress: Mutex<crate::guards::ProgressGuard>,
+    /// Cache-miss attribution across this agent's calls (`crate::cache_stats`). Session-scoped:
+    /// the prompt cache outlives a run, so the evidence for or against it does too.
+    cache: Mutex<crate::cache_stats::CacheStats>,
 }
 
 impl Agent {
@@ -257,14 +386,19 @@ impl Agent {
         workspace_root: std::path::PathBuf,
     ) -> Arc<Self> {
         let (events_tx, _) = broadcast::channel(1024);
+        // M53: background-task completion notices (see the `tasks` field docs).
+        let (task_notices_tx, task_notices_rx) = tokio::sync::mpsc::unbounded_channel();
         let steering_queue = PendingQueue::new(limits.steering_mode);
         let followup_queue = PendingQueue::new(limits.followup_mode);
+        let window = limits.context_window_tokens;
         Arc::new(Self {
             limits,
             stream_fn: RwLock::new(stream_fn),
             tools,
             gate,
+            tool_hooks: RwLock::new(Arc::new(epsilon_contracts::tool::NoopToolHooks)),
             history: Mutex::new(Vec::new()),
+            observation_scope: Mutex::new(Arc::new(())),
             steering: Mutex::new(steering_queue),
             followups: Mutex::new(followup_queue),
             events_tx,
@@ -273,20 +407,44 @@ impl Agent {
             workspace_root,
             session_store: Mutex::new(None),
             overflow_retried: AtomicBool::new(false),
+            agents: Mutex::new(Vec::new()),
+            task_depth: Mutex::new(0),
+            agent_brief: Mutex::new(String::new()),
+            touched_dirs: Mutex::new(Default::default()),
+            last_repair: Mutex::new(None),
+            tasks: Arc::new(Mutex::new(Vec::new())),
+            task_notices_tx: task_notices_tx.clone(),
+            task_notices_rx: Mutex::new(task_notices_rx),
             summarizer: Mutex::new(None),
             skills: Mutex::new(Vec::new()),
             model_id: Mutex::new("faux-1".into()),
             thinking_level: Mutex::new(epsilon_contracts::ThinkingLevel::Off),
+            abort_armed: std::sync::atomic::AtomicBool::new(false),
             run_token: Mutex::new(None),
+            model_window_tokens: Mutex::new(window),
+            usage_anchor: Mutex::new(None),
+            progress: Mutex::new(crate::guards::ProgressGuard::new()),
+            cache: Mutex::new(crate::cache_stats::CacheStats::default()),
         })
     }
 
     /// Override the model identifier (M10): providers route via the catalog's wire
     /// column and resolve auth from env vars at call time
     /// per family from standard env vars; the id also renders into the VOLATILE tier.
+    ///
+    /// Also refreshes the live context-window override from the catalog, so the
+    /// compaction trigger tracks hot-swaps (`/model`, `try_hot_swap_to_real`).
+    /// Unknown ids (custom providers) clear the override — the fixed threshold
+    /// keeps working, and no stale window survives a model change.
     pub fn set_model_id(&self, model_id: impl Into<String>) {
+        let model_id = model_id.into();
+        let window =
+            epsilon_llm::catalog::lookup_model(&model_id).map(|m| m.context_window as usize);
         if let Ok(mut slot) = self.model_id.lock() {
-            *slot = model_id.into();
+            *slot = model_id;
+        }
+        if let Ok(mut slot) = self.model_window_tokens.lock() {
+            *slot = window;
         }
     }
 
@@ -301,8 +459,7 @@ impl Agent {
             if !cur.starts_with("faux") && epsilon_llm::catalog::credentials_ready(&cur) {
                 return false;
             }
-            let real: Arc<dyn epsilon_llm::StreamFn> =
-                Arc::new(epsilon_llm::PanicGuard(epsilon_llm::DirectProvider::new()));
+            let real = self.retrying_real_stream();
             if let Ok(mut slot) = self.stream_fn.write() {
                 *slot = real;
                 return true;
@@ -335,6 +492,32 @@ impl Agent {
         }
     }
 
+    /// Attach discovered agent-type defs for `task` routing (M50 wiring).
+    pub fn set_agents(&self, agents: Vec<crate::agents::AgentDef>) {
+        if let Ok(mut slot) = self.agents.lock() {
+            *slot = agents;
+        }
+    }
+
+    /// Role brief prepended to the CONTEXT tier (M50: the agent-def body for
+    /// `task` children — pi's agent file body past frontmatter). Empty for
+    /// top-level sessions; set once on the child before its first run.
+    pub fn set_agent_brief(&self, brief: String) {
+        if let Ok(mut slot) = self.agent_brief.lock() {
+            *slot = brief;
+        }
+    }
+
+    fn agent_list(&self) -> Vec<crate::agents::AgentDef> {
+        self.agents.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    fn task_depth_slot(&self) -> Result<std::sync::MutexGuard<'_, usize>, String> {
+        self.task_depth
+            .lock()
+            .map_err(|_| "task depth poisoned".to_string())
+    }
+
     fn skill_list(&self) -> Vec<crate::skills::Skill> {
         self.skills.lock().map(|s| s.clone()).unwrap_or_default()
     }
@@ -350,14 +533,92 @@ impl Agent {
     /// live in the durable mirror); subsequent messages append normally. Call before
     /// the first `run()`.
     pub fn restore_history(&self, messages: Vec<Message>) {
+        *self
+            .observation_scope
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Arc::new(());
         if let Ok(mut h) = self.history.lock() {
             *h = messages;
         }
+        // Restored history did not come from a request this process made, so any
+        // anchor held for the previous transcript is meaningless here.
+        self.clear_usage_anchor();
     }
 
     /// Number of restored transcript entries (diagnostics after `restore_history`).
     pub fn restored_len(&self) -> usize {
         self.history.lock().map(|h| h.len()).unwrap_or(0)
+    }
+
+    /// Live in-TUI session switch (pi parity: `/resume` + `/import` without restart).
+    ///
+    /// Opens `path` as a [`SessionStore`], repairs dangling tool calls (same as CLI
+    /// `--resume`), derives the shadowed model view, restores it into runtime
+    /// history, and re-attaches the new store. The TUI then rehydrates the visible
+    /// transcript from [`Self::history`]. Ponytail: reuse existing repair + model_view.
+    pub fn live_resume(&self, path: &std::path::Path) -> Result<usize, String> {
+        // M61: the store owns a cross-process write lease, so re-resuming the
+        // session this process already holds would conflict with ourselves.
+        // Release first — and keep the old handle so a failed open (locked by
+        // ANOTHER process, or corrupt) leaves the current session attached.
+        let previous = self.store();
+        let already_holding = previous
+            .as_ref()
+            .is_some_and(|h| h.lock().map(|s| s.path() == path).unwrap_or(false));
+        // When we already hold this file the old store must be gone before the
+        // reopen — including the clone kept for the rollback path, which would
+        // otherwise keep the Arc (and its lease) alive through the open.
+        let restore_target = if already_holding {
+            self.detach_session_store();
+            // The rollback clone would keep the store — and its lease — alive
+            // through the reopen, so it must go too.
+            drop(previous);
+            None
+        } else {
+            previous
+        };
+        let opened = SessionStore::open(path);
+        let mut store = match opened {
+            Ok(store) => store,
+            Err(e) => {
+                if let Some(previous) = restore_target {
+                    self.attach_session_store(previous);
+                }
+                return Err(format!("open {}: {e}", path.display()));
+            }
+        };
+        // The attach below swaps in the new handle, dropping the previous
+        // store and with it the previous lease.
+        match epsilon_session::repair::repair_on_open(&mut store) {
+            Ok(report) => {
+                if !report.kinds().is_empty() {
+                    // The kinds, not just a count: "a call had no result" and "the session ended
+                    // mid-run" are different things to have lost (M75).
+                    for line in report.summary() {
+                        eprintln!("repaired {}: {line}", path.display());
+                    }
+                    if let Ok(mut slot) = self.last_repair.lock() {
+                        *slot = Some(report);
+                    }
+                }
+            }
+            Err(e) => return Err(format!("repair {}: {e}", path.display())),
+        }
+        let msgs: Vec<Message> = store
+            .model_view()
+            .map_err(|e| format!("read {}: {e}", path.display()))?
+            .into_iter()
+            .map(|v| v.into_message())
+            .collect();
+        let count = msgs.len();
+        self.restore_history(msgs);
+        self.attach_session_store(Arc::new(Mutex::new(store)));
+        Ok(count)
+    }
+
+    /// Whether a run is currently active (for in-TUI gate on live resume).
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
     }
 
     /// Provide a dedicated auxiliary provider for summarization calls.
@@ -416,6 +677,32 @@ impl Agent {
         }
     }
 
+    /// Drop the attached durable mirror, releasing its write lease (M61). The
+    /// agent keeps running — a caller that releases the store has decided this
+    /// transcript is no longer written by this process.
+    pub fn detach_session_store(&self) {
+        if let Ok(mut slot) = self.session_store.lock() {
+            *slot = None;
+        }
+    }
+
+    /// Register interception hooks around tool execution (extension hosts,
+    /// compaction summarizers, tests). Replaces the previous hooks.
+    pub fn set_tool_hooks(&self, hooks: Arc<dyn epsilon_contracts::tool::ToolHooks>) {
+        if let Ok(mut slot) = self.tool_hooks.write() {
+            *slot = hooks;
+        }
+    }
+
+    /// Current hooks (cloned `Arc`, cheap). The execution pipeline calls this
+    /// per tool call so a host can swap hooks mid-run.
+    pub(crate) fn tool_hooks(&self) -> Arc<dyn epsilon_contracts::tool::ToolHooks> {
+        self.tool_hooks
+            .read()
+            .map(|h| Arc::clone(&*h))
+            .unwrap_or_else(|_| Arc::new(epsilon_contracts::tool::NoopToolHooks))
+    }
+
     fn store(&self) -> Option<Arc<Mutex<SessionStore>>> {
         self.session_store.lock().ok().and_then(|s| s.clone())
     }
@@ -424,6 +711,23 @@ impl Agent {
     #[doc(hidden)]
     pub fn store_handle_for_tests(&self) -> Arc<Mutex<SessionStore>> {
         self.store().expect("no session store attached")
+    }
+
+    /// The attached durable mirror, when there is one.
+    ///
+    /// The non-panicking counterpart of [`Agent::store_handle_for_tests`], for frontends: an
+    /// agent with no session file (a plain `--tui` run, a `task` child before its store exists)
+    /// is a normal state, and a command like `/session` has to describe it rather than crash.
+    pub fn session_store(&self) -> Option<Arc<Mutex<SessionStore>>> {
+        self.store()
+    }
+
+    /// Path of the attached session file, when one is attached (M57: the TUI's
+    /// session browser marks the current file — it must not panic on an agent
+    /// built without a durable mirror).
+    pub fn session_path(&self) -> Option<std::path::PathBuf> {
+        let store = self.store()?;
+        store.lock().ok().map(|st| st.path().to_path_buf())
     }
 
     /// Search the attached session log (pi `search/scanning.ts` parity).
@@ -479,8 +783,111 @@ impl Agent {
         self.persist(m);
     }
 
+    /// What the session resume had to repair, if anything (M75): the *kinds*, so a frontend can
+    /// say what was missing rather than printing a bare count.
+    pub fn repair_report(&self) -> Option<epsilon_session::repair::RepairReport> {
+        self.last_repair.lock().ok().and_then(|r| r.clone())
+    }
+
+    /// The workspace this agent was built for: where relative paths resolve, and what the
+    /// `@`-reference expander confines to (M74). Frontends need it to build user messages
+    /// through the shared constructor rather than each rolling their own.
+    pub fn workspace_root(&self) -> &std::path::Path {
+        &self.workspace_root
+    }
+
+    /// Remember that a tool call acted on `path`, so its directory's instructions can be
+    /// loaded (M73). Cheap by construction: it records a directory and reads nothing — the
+    /// prompt asks [`prompt::load_subdirectory_hints`] at assembly time.
+    pub fn note_touched(&self, path: &std::path::Path) {
+        let Some(dir) = path.parent() else { return };
+        if !dir.starts_with(&self.workspace_root) || dir == self.workspace_root {
+            return; // outside the workspace, or the root — already loaded as project context
+        }
+        if let Ok(mut set) = self.touched_dirs.lock() {
+            set.insert(dir.to_path_buf());
+        }
+    }
+
+    /// Directories touched so far, sorted: the hint loader must not see a walk order.
+    fn touched_dirs(&self) -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = self
+            .touched_dirs
+            .lock()
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    /// Give every unanswered tool call a result that says what happened.
+    ///
+    /// A call with no result is not a cosmetic problem: providers validate tool-call pairing, so a
+    /// transcript that carries one is rejected outright, and the failure arrives on the *next*
+    /// request, far from its cause. The synthesized result is an error and says it was never
+    /// executed — a pretend success would be worse than the invalid transcript.
+    ///
+    /// Returns how many calls were closed.
+    fn close_dangling_tool_calls(&self) -> usize {
+        let mut pending: Vec<(String, String)> = Vec::new();
+        for m in self.history() {
+            match m {
+                Message::Assistant(a) => {
+                    for (id, name, _) in a.tool_calls() {
+                        pending.push((id.to_string(), name.to_string()));
+                    }
+                }
+                Message::ToolResult(t) => pending.retain(|(id, _)| id != &t.tool_call_id),
+                _ => {}
+            }
+        }
+        if pending.is_empty() {
+            return 0;
+        }
+        let closed = pending.len();
+        for (id, name) in pending {
+            let m = Message::ToolResult(epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: now_ms(),
+                tool_call_id: id,
+                tool_name: name,
+                content: vec![epsilon_contracts::content::ContentBlock::text(
+                    "[harness] this call was never executed: the previous run ended before its \
+                     result arrived. Re-issue it if the work is still needed.",
+                )],
+                details: serde_json::json!({"interrupted": true}),
+                usage: None,
+                is_error: true,
+            });
+            self.push_message(&m);
+        }
+        closed
+    }
+
     fn emit(&self, ev: AgentEvent) {
         let _ = self.events_tx.send(Arc::new(ev));
+    }
+
+    /// The real provider stream, wrapped in ADR-010's retry policy (M60).
+    ///
+    /// The policy existed — classification, backoff, a tested executor — but
+    /// nothing ever wrapped a production stream with it, so a transient 429/503
+    /// or a stalled socket failed the turn outright. Scheduled waits surface as
+    /// [`AgentEvent::Notice`] so the pause is explained instead of looking hung.
+    #[cfg(feature = "real")]
+    pub fn retrying_real_stream(&self) -> Arc<dyn epsilon_llm::StreamFn> {
+        let tx = self.events_tx.clone();
+        Arc::new(
+            epsilon_llm::Retrying::new(Arc::new(epsilon_llm::PanicGuard(
+                epsilon_llm::DirectProvider::new(),
+            )))
+            .with_max_attempts(epsilon_llm::RETRY_MAX_ATTEMPTS)
+            .with_on_retry(move |n| {
+                let _ = tx.send(Arc::new(AgentEvent::Notice {
+                    text: retry_notice_text(n),
+                }));
+            }),
+        )
     }
 
     /// Provider-visible conversion (pi's `convertToLlm` default): drop harness-only messages.
@@ -511,6 +918,20 @@ impl Agent {
         if let Ok(mut s) = self.doom_streaks.lock() {
             s.clear();
         }
+        if let Ok(mut g) = self.progress.lock() {
+            *g = crate::guards::ProgressGuard::new();
+        }
+
+        // An interrupted run leaves calls without results. Session repair handles that for a
+        // *reopened* file (`epsilon_session::repair::repair_on_open`); this is the same shape in a
+        // live process, where the next request would otherwise carry a tool call nothing answered
+        // — structurally invalid for strict wires, and a 400 rather than a puzzle to solve later.
+        let closed = self.close_dangling_tool_calls();
+        if closed > 0 {
+            self.emit(AgentEvent::Notice {
+                text: format!("closed {closed} tool call(s) left unanswered by the previous run"),
+            });
+        }
         // Overflow recovery (ADR-007 trigger 2) is once PER RUN, not per process:
         // reset the latch here or the first recovered overflow disables recovery for
         // every later run in a long-lived TUI/server session.
@@ -538,13 +959,49 @@ impl Agent {
     ///
     /// Returns false when no run is active. Idempotent.
     pub fn abort_current_run(&self) -> bool {
-        if let Ok(slot) = self.run_token.lock()
+        let cancelled = if let Ok(slot) = self.run_token.lock()
             && let Some(token) = slot.as_ref()
         {
             token.cancel();
-            return true;
+            true
+        } else {
+            // No run in flight: arm the flag so a run that is about to start
+            // (a just-spawned child, or a submit racing the abort) still stops.
+            self.abort_armed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            false
+        };
+        // M54: a delegated child is its own Agent with its own run token, so
+        // aborting the parent must reach the children too — otherwise a
+        // background subagent keeps spending tokens after the user pressed Esc.
+        self.abort_delegated_tasks();
+        cancelled
+    }
+
+    /// Ask every running delegated child to stop; returns how many were asked.
+    ///
+    /// Cascaded from [`Agent::abort_current_run`]; callable directly by a
+    /// frontend that wants to stop children without a parent run in flight.
+    /// Finished tasks are left alone (their output is the point).
+    pub fn abort_delegated_tasks(&self) -> usize {
+        let children: Vec<Arc<Agent>> = self
+            .tasks
+            .lock()
+            .map(|v| {
+                v.iter()
+                    .filter(|e| e.state == epsilon_contracts::tool::TaskState::Running)
+                    .map(|e| Arc::clone(&e.child))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut asked = 0;
+        for child in children {
+            // Cancels a live token or arms the child's pre-start flag — either
+            // way the child was told to stop.
+            child.abort_current_run();
+            asked += 1;
         }
-        false
+        asked
     }
 
     /// Clone of the active run's token for `ToolContext` distribution.
@@ -555,11 +1012,33 @@ impl Agent {
             .and_then(|slot| slot.as_ref().cloned())
     }
 
+    fn clone_task_host(self: &Arc<Self>) -> Arc<dyn epsilon_contracts::tool::TaskHost> {
+        Arc::clone(self) as Arc<dyn epsilon_contracts::tool::TaskHost>
+    }
+
     async fn run_inner(self: &Arc<Self>, _prompt: Message) -> Result<RunOutcome, RunError> {
+        // M54: an abort that arrived before this run started still ends it —
+        // consume the flag once, so it can never leak into a later run.
+        if self
+            .abort_armed
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(RunOutcome {
+                produced: Vec::new(),
+                reason: TurnEndReason::Aborted,
+                usage: Usage::default(),
+            });
+        }
         let mut produced: Vec<Message> = Vec::new();
         let mut usage_total = Usage::default();
         let mut reason = TurnEndReason::Completed;
         let mut turn_index: usize = 0;
+        // Turns that came back empty or degenerate, for the bounded-retry guard below.
+        let mut empty_turns: usize = 0;
+        // Verification evidence for THIS run (port plan item 5): edits and the checks that ran
+        // after them. Run-scoped: a fresh run is a fresh question.
+        let mut evidence = crate::verify::VerificationLog::new();
+        let mut verification_nudges = 0usize;
 
         // Prefilled steering covers "user typed while we were starting".
         let mut pending = self.drain_steering();
@@ -642,7 +1121,11 @@ impl Agent {
 
                 // ---- tool batch -----------------------------------------------------
                 let call_count = assistant.tool_calls().count();
+                // Kept for the empty-turn guard below: `assistant` is moved into the TurnEnd
+                // event further down.
+                let assistant_text = assistant.text();
                 let mut results: Vec<epsilon_contracts::message::ToolResultMessage> = Vec::new();
+                let mut stuck_at: Option<usize> = None;
                 has_more_tools = false;
 
                 if call_count > 0 {
@@ -655,6 +1138,51 @@ impl Agent {
                     reason = reason.merge_sticky(batch.reason);
                     has_more_tools = !batch.terminate;
                     results = batch.results;
+                }
+
+                // ---- stuck-run guard (port plan item 7) --------------------------------
+                // Each result is folded into the progress guard; when the model has received the
+                // same thing several times in a row the guidance rides along with the result it
+                // is about, which is the cheapest place to reach the model.
+                if let Ok(mut guard) = self.progress.lock() {
+                    let text = |r: &epsilon_contracts::message::ToolResultMessage| {
+                        r.content
+                            .iter()
+                            .filter_map(|c| match c {
+                                epsilon_contracts::content::ContentBlock::Text { text } => {
+                                    Some(text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
+                    for r in results.iter_mut() {
+                        let repeats = match guard.observe(r.is_error, &text(r)) {
+                            crate::guards::Progress::New => continue,
+                            crate::guards::Progress::Repeated { repeats } => repeats,
+                        };
+                        let threshold = self.limits.no_progress_threshold;
+                        if guard.stalled_at(threshold) {
+                            let hard = threshold > 0 && repeats >= threshold.saturating_mul(2);
+                            let note = crate::guards::stuck_guidance(repeats, hard);
+                            r.content
+                                .push(epsilon_contracts::content::ContentBlock::text(note));
+                            stuck_at = Some(repeats);
+                        }
+                    }
+                }
+
+                // ---- verification evidence (port plan item 5) ---------------------------
+                // Which files changed, and whether a check has passed since. The record is what
+                // the stop-time nudge reads, and what a reader of the session can audit.
+                for (call_id, tool_name, args) in assistant.tool_calls() {
+                    let ok = results
+                        .iter()
+                        .find(|r| r.tool_call_id == call_id)
+                        .map(|r| !r.is_error)
+                        .unwrap_or(false);
+                    evidence.observe(tool_name, args, ok, turn_index);
                 }
 
                 for r in &results {
@@ -677,8 +1205,58 @@ impl Agent {
                     tool_results: results,
                 });
                 turn_index += 1;
+                if let Some(repeats) = stuck_at {
+                    self.emit(AgentEvent::Notice {
+                        text: format!("stuck-run guard: {repeats} identical tool results in a row"),
+                    });
+                }
 
                 pending = self.drain_steering();
+
+                // ---- empty / degenerate turn (port plan item 7) ------------------------
+                // A run may end on a turn that said nothing at all, or on one that repeated a
+                // single line until it hit the token limit. Both look like success to the loop
+                // and like a stuck agent to the user. One nudge, then a clean failure.
+                if call_count == 0
+                    && let Some(why) = crate::guards::empty_turn_reason(&assistant_text, 0)
+                {
+                    empty_turns += 1;
+                    if empty_turns <= self.limits.empty_turn_retries {
+                        let nudge = crate::guards::nudge_for(&why, empty_turns);
+                        let m = Message::User(epsilon_contracts::message::UserMessage {
+                            id: epsilon_contracts::new_id("msg"),
+                            timestamp_ms: now_ms(),
+                            content: vec![UserContent::Text { text: nudge }],
+                        });
+                        // The next iteration's drain point puts it in history and `produced`,
+                        // so the nudge is part of the record rather than a whisper.
+                        pending.push(m);
+                        continue;
+                    }
+                    reason = reason.merge_sticky(TurnEndReason::Error(why.describe()));
+                    break 'outer;
+                }
+
+                // ---- stop-time verification nudge (port plan item 5) --------------------
+                // The run is about to end. If it changed files and nothing has passed since, say
+                // so once (twice at most) — the model decides, and the record stays in the
+                // transcript either way.
+                if call_count == 0
+                    && evidence.has_edits()
+                    && verification_nudges < self.limits.verification_nudges
+                    && let Some(nudge) = evidence.stop_nudge()
+                {
+                    verification_nudges += 1;
+                    self.emit(AgentEvent::Notice {
+                        text: format!("unverified edits: {}", evidence.unverified().join(", ")),
+                    });
+                    pending.push(Message::User(epsilon_contracts::message::UserMessage {
+                        id: epsilon_contracts::new_id("msg"),
+                        timestamp_ms: now_ms(),
+                        content: vec![UserContent::Text { text: nudge }],
+                    }));
+                    continue;
+                }
             }
 
             // The agent would stop here; honor queued follow-ups before exiting.
@@ -697,10 +1275,27 @@ impl Agent {
     }
 
     fn drain_steering(&self) -> Vec<Message> {
-        self.steering
+        let mut out = self
+            .steering
             .lock()
             .map(|mut q| q.drain())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // M53: a background child's completion notice rides the same drain
+        // point as user interjections, so a finishing subagent reaches the
+        // model at the next turn — or at the next run's start when the session
+        // is idle (run start prefills from this same queue).
+        if let Ok(mut rx) = self.task_notices_rx.lock() {
+            while let Ok(m) = rx.try_recv() {
+                // The model is not the only reader: a notice the user cannot
+                // see is a notice the user cannot trust, so it enters the
+                // transcript with the same event a normal message uses.
+                self.emit(AgentEvent::MessageEnd {
+                    message: Box::new(m.clone()),
+                });
+                out.push(m);
+            }
+        }
+        out
     }
 
     /// M30: drain ALL queued steering messages on abort (ignoring queue mode)
@@ -737,10 +1332,76 @@ impl Agent {
             .unwrap_or_default()
     }
 
-    /// Pressure trigger (ADR-007 #1): estimated context exceeds the threshold.
+    /// Pressure trigger (ADR-007 #1): estimated context exceeds the live budget.
+    ///
+    /// Pi parity (`shouldCompact`): the budget is window-relative —
+    /// `context_window - reserve` — whenever the active model's window is known,
+    /// gated on the `enabled` switch. Unknown windows fall back to the fixed
+    /// threshold, preserving the pre-M34 behavior for custom/faux models.
     fn compaction_due(&self) -> bool {
-        let tokens = crate::compact::estimate_messages(&self.history());
-        tokens > self.limits.compaction_threshold_tokens
+        if !self.limits.compaction_enabled {
+            return false;
+        }
+        let tokens = self.estimated_context_tokens();
+        let window = self.model_window_tokens.lock().ok().and_then(|slot| *slot);
+        let limit = window
+            .map(|w| w.saturating_sub(self.limits.compaction_reserve_tokens))
+            .unwrap_or(self.limits.compaction_threshold_tokens);
+        tokens > limit
+    }
+
+    /// Best estimate of how many tokens the next request will carry.
+    ///
+    /// Measured where a measurement exists: the provider reports the true prompt
+    /// size on every response, so the estimate is that number plus a heuristic
+    /// over whatever has been appended since (`compact::anchored_tokens`). Before
+    /// this, the trigger was a `chars / 4` guess over the whole transcript, which
+    /// over-counts prose and under-counts code and CJK by the same factor —
+    /// compacting early wastes a summary call and a cache miss, compacting late
+    /// overflows the window.
+    ///
+    /// Public because frontends show it: the footer's context percentage should
+    /// agree with the number the loop actually decides on.
+    pub fn estimated_context_tokens(&self) -> usize {
+        let anchor = self.usage_anchor.lock().ok().and_then(|slot| *slot);
+        crate::compact::anchored_tokens(&self.history(), anchor)
+    }
+
+    /// Record what the provider billed for the request that covered `covered`
+    /// messages (called after a completed turn; cleared when history is rewritten).
+    fn set_usage_anchor(&self, prompt_tokens: usize, covered: usize) {
+        if let Ok(mut slot) = self.usage_anchor.lock() {
+            *slot = Some(crate::compact::UsageAnchor {
+                prompt_tokens,
+                covered,
+            });
+        }
+    }
+
+    /// The cache-miss attribution report (`crate::cache_stats`), one line per fact.
+    ///
+    /// Public because it is a user-facing diagnostic: the footer's hit rate says *whether* the
+    /// prompt cache is paying off, and this says *why* when it is not.
+    pub fn cache_report(&self) -> Vec<String> {
+        self.cache
+            .lock()
+            .map(|stats| stats.report())
+            .unwrap_or_else(|_| vec!["cache: unavailable".to_string()])
+    }
+
+    /// How many consecutive tool results have been identical, when that is more than one
+    /// (`crate::guards::ProgressGuard` — the stuck-run brake reads this before each call).
+    pub fn progress_streak(&self) -> Option<usize> {
+        let guard = self.progress.lock().ok()?;
+        let streak = guard.streak();
+        (streak > 1).then_some(streak)
+    }
+
+    /// Drop the anchor: the history it describes no longer exists.
+    fn clear_usage_anchor(&self) {
+        if let Ok(mut slot) = self.usage_anchor.lock() {
+            *slot = None;
+        }
     }
 
     /// Run one full compaction pass: prune → summarize (isolated call, amend-mode when a
@@ -767,6 +1428,10 @@ impl Agent {
             }
             split = i;
         }
+        // ...and then to the nearest *legal* boundary. A tail that begins with a
+        // tool result has lost its call to the summary; providers reject that
+        // shape, so the turn would fail after the summary was already paid for.
+        let split = compact::legal_cut_point(&pruned_hist, split);
         let (middle, kept_tail): (&[Message], &[Message]) = if split >= pruned_hist.len() {
             (&[], &pruned_hist[..])
         } else {
@@ -789,8 +1454,17 @@ impl Agent {
             _ => None,
         });
 
+        // Ledger: everything the previous summary recorded, plus the files this
+        // pass is about to summarize away. Facts from the tool calls themselves,
+        // so the model keeps knowing what it already read and changed.
+        let mut ledger = prior
+            .as_deref()
+            .map(compact::FileLedger::from_summary)
+            .unwrap_or_default();
+        ledger.merge(&compact::FileLedger::scan(middle));
+
         // Isolated summarization call (fresh request; no tools).
-        let sctx = compact::summary_context(middle, prior.as_deref());
+        let sctx = compact::summary_context(middle, prior.as_deref(), &ledger);
         let model_id = self
             .model_id
             .lock()
@@ -807,7 +1481,11 @@ impl Agent {
                 }
             }
         };
-        let summary = compact::summary_text(&answer);
+        let summary = compact::summary_with_ledger(&compact::summary_text(&answer), &ledger);
+        // ...plus the user's own words from the range just summarized, verbatim: a paraphrase of
+        // an instruction is an instruction followed approximately (Hermes micro-compaction).
+        let summary =
+            compact::summary_with_instructions(&summary, &compact::user_instruction_block(middle));
 
         // New runtime history: summary-as-context-message + retained tail.
         let mut new_history = Vec::with_capacity(kept_tail.len() + 1);
@@ -820,7 +1498,7 @@ impl Agent {
         }));
         new_history.extend(kept_tail.iter().cloned());
 
-        let estimate_messages_before: usize = crate::compact::estimate_messages(&history);
+        let estimate_messages_before: usize = self.estimated_context_tokens();
         // Persist a compaction entry so the durable mirror's MODEL VIEW shadows the range.
         if let Some(store) = self.store()
             && let Ok(mut st) = store.lock()
@@ -838,6 +1516,9 @@ impl Agent {
             .history
             .lock()
             .map_err(|_| RunError::Internal("history poisoned".into()))? = new_history;
+        // The anchor described the transcript that was just replaced; the next
+        // request re-measures from scratch.
+        self.clear_usage_anchor();
         produced.push(Message::User(epsilon_contracts::message::UserMessage {
             id: epsilon_contracts::new_id("msg"),
             timestamp_ms: now_ms(),
@@ -847,6 +1528,67 @@ impl Agent {
         }));
         self.emit(AgentEvent::CompactionFinished);
         Ok(())
+    }
+
+    /// Synthesize the in-band abort message when cancellation wins mid-stream.
+    ///
+    /// The folded-so-far text/thinking is preserved (it really streamed);
+    /// tool-call fragments are dropped — they never executed, and keeping them
+    /// would fabricate dangling calls. The caller treats this like any failed
+    /// turn: `TurnEndReason::Aborted`, no tool batch, run ends.
+    /// Terminal message for a run that dies mid-stream — abort, transport
+    /// failure, or a stream that ends without a terminal frame (M62).
+    ///
+    /// Rule (mirrors `HttpEventStream::failure_message` on the wire side):
+    /// whatever the user already watched arrive stays, the turn is flagged with
+    /// the real stop reason, and tool calls whose arguments may be half-written
+    /// are dropped. Throwing away visible output is worse than an ugly
+    /// transcript — and a resumed session rebuilding context from the store
+    /// needs the partial reasoning, not a hole where it used to be.
+    fn failure_message(
+        &self,
+        partial: Option<&AssistantMessage>,
+        stop: StopReason,
+        detail: &str,
+    ) -> AssistantMessage {
+        use epsilon_contracts::content::ContentBlock;
+        let model_id = self
+            .model_id
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|_| "faux-1".into());
+        let (provider, content, usage) = match partial {
+            Some(p) => (
+                p.provider.clone(),
+                p.content
+                    .iter()
+                    .filter(|b| match b {
+                        ContentBlock::ToolCall { .. } => false,
+                        ContentBlock::Text { text } => !text.is_empty(),
+                        ContentBlock::Thinking { text } => !text.is_empty(),
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect(),
+                p.usage,
+            ),
+            None => ("unknown".into(), Vec::new(), Usage::default()),
+        };
+        AssistantMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: now_ms(),
+            provider,
+            model_id,
+            content,
+            stop_reason: stop,
+            error_message: Some(detail.to_string()),
+            usage,
+        }
+    }
+
+    /// [`Agent::failure_message`] for a user abort.
+    fn aborted_message(&self, partial: Option<&AssistantMessage>) -> AssistantMessage {
+        self.failure_message(partial, StopReason::Aborted, "aborted by user")
     }
 
     async fn stream_one_turn(
@@ -867,8 +1609,15 @@ impl Agent {
             }
             None => self.history(),
         };
+        // How much of the history this request covers: the anchor recorded from
+        // its usage describes exactly these messages, so the next pressure check
+        // only has to estimate what is appended after them.
+        let covered = history.len();
 
         // ---- three-tier system prompt (ADR-008) ------------------------------------
+        // The stable tier's fingerprint travels with this call: it is the bytes a provider's
+        // prompt cache is expected to keep, so a change in it explains a cache miss
+        // (`crate::cache_stats`) rather than leaving one unexplained.
         let tool_lines: Vec<prompt::ToolLine> = self
             .tools
             .descriptors()
@@ -886,7 +1635,22 @@ impl Agent {
         let system_prompt = prompt::build(
             &prompt::Stable { tools: &tool_lines },
             &prompt::ContextTier {
-                instructions: prompt::load_project_instructions(&self.workspace_root),
+                agent_brief: self
+                    .agent_brief
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default(),
+                instructions: {
+                    let mut instructions = prompt::load_project_instructions(&self.workspace_root);
+                    // Subdirectory hints (M73) ride in the same tier, after the root files:
+                    // they are just as project-sourced, and the closest directory is the one
+                    // that governs the file being edited.
+                    instructions.extend(prompt::load_subdirectory_hints(
+                        &self.workspace_root,
+                        &self.touched_dirs(),
+                    ));
+                    instructions
+                },
                 skills_catalog: Some(crate::skills::catalog(&self.skill_list())),
             },
             &prompt::Volatile {
@@ -895,6 +1659,9 @@ impl Agent {
                 today: today_string(),
             },
         );
+        // The stable tier is what the provider is expected to keep cached; its fingerprint is
+        // recorded with the call so an unexplained miss can be told from an explained one.
+        let stable_hash = prompt::stable_fingerprint(&prompt::Stable { tools: &tool_lines });
 
         let ctx = epsilon_llm::LlmContext {
             thinking_level: self.thinking_level(),
@@ -909,40 +1676,890 @@ impl Agent {
             .read()
             .map(|g| Arc::clone(&*g))
             .unwrap_or_else(|e| Arc::clone(&*e.into_inner()));
-        let mut stream = stream_fn.stream(&model, ctx).await;
+        // Abort reaches the provider stream, not just the tools (pi passes the
+        // AbortSignal to `streamFunction`): cancellation wins the select below,
+        // the provider stream is dropped, and the run ends in-band as Aborted.
+        let token = self.current_run_token();
+        // Both awaits below honor cancellation: stream creation (provider
+        // connect/TTFB hangs) and event polling. Whichever select wins first
+        // decides; `biased` prefers an already-cancelled token over a ready event.
+        let mut stream = tokio::select! {
+            biased;
+            _ = async {
+                match token {
+                    Some(ref t) => t.cancelled().await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                return Ok(self.aborted_message(None));
+            }
+            s = stream_fn.stream(&model, ctx) => s,
+        };
         let mut folder = StreamFolder::default();
 
-        while let Some(ev) = stream.next().await {
-            match ev {
-                StreamEvent::Done { message } => {
-                    *usage_total = usage_total.combine(message.usage);
-                    self.push_message(&Message::Assistant(message.clone()));
-                    self.emit(AgentEvent::MessageEnd {
-                        message: Box::new(Message::Assistant(message.clone())),
-                    });
-                    return Ok(message);
+        loop {
+            tokio::select! {
+                biased;
+                _ = async {
+                    match token {
+                        Some(ref t) => t.cancelled().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    return Ok(self.aborted_message(folder.partial()));
                 }
-                other => {
-                    // Fold for live partials; Done handled above.
-                    //
-                    // Broadcast discipline: argument-fragment deltas are pure transport
-                    // noise (hundreds per call on big payloads) — they'd overflow slow
-                    // subscribers' rings for zero UI value, so they fold WITHOUT being
-                    // broadcast. Visible content still streams live.
-                    if matches!(other, StreamEvent::ToolCallArgumentsDelta { .. }) {
-                        let _ = folder.apply(other);
-                    } else if folder.apply(other).is_some()
-                        && let Some(partial) = folder.partial()
-                    {
-                        self.emit(AgentEvent::MessageUpdate {
-                            message: Box::new(Message::Assistant(partial.clone())),
-                        });
+                ev = stream.next() => {
+                    match ev {
+                        Some(StreamEvent::Done { message }) => {
+                            *usage_total = usage_total.combine(message.usage);
+                            // Cache bookkeeping (port plan item 4): what this call cost the
+                            // prompt cache, and if it missed, why.
+                            if let Ok(mut cache) = self.cache.lock() {
+                                cache.observe(crate::cache_stats::CacheRequest {
+                                    model: model.id.clone(),
+                                    prefix_hash: stable_hash,
+                                    usage: message.usage,
+                                    at_ms: now_ms(),
+                                });
+                            }
+                            // Anchor the next pressure check to what the provider
+                            // actually billed for this request (pi usage anchor).
+                            // Cache traffic counts: those tokens were in the prompt.
+                            self.set_usage_anchor(
+                                (message.usage.input
+                                    + message.usage.cache_read
+                                    + message.usage.cache_write)
+                                    as usize,
+                                covered,
+                            );
+                            self.push_message(&Message::Assistant(message.clone()));
+                            self.emit(AgentEvent::MessageEnd {
+                                message: Box::new(Message::Assistant(message.clone())),
+                            });
+                            return Ok(message);
+                        }
+                        Some(other) => {
+                            // Fold for live partials; Done handled above.
+                            //
+                            // Broadcast discipline: argument-fragment deltas are pure transport
+                            // noise (hundreds per call on big payloads) — they'd overflow slow
+                            // subscribers' rings for zero UI value, so they fold WITHOUT being
+                            // broadcast. Visible content still streams live.
+                            if matches!(other, StreamEvent::ToolCallArgumentsDelta { .. }) {
+                                let _ = folder.apply(other);
+                            } else if folder.apply(other).is_some()
+                                && let Some(partial) = folder.partial()
+                            {
+                                self.emit(AgentEvent::MessageUpdate {
+                                    message: Box::new(Message::Assistant(partial.clone())),
+                                });
+                            }
+                        }
+                        // Stream ended with no Done and no abort. If anything was
+                        // decoded, that partial IS the turn's output: keep it and
+                        // flag the failure (M62). With nothing decoded there is
+                        // nothing to salvage, so this stays an internal error.
+                        None => {
+                            let partial = folder.partial().cloned();
+                            let has_content = partial.as_ref().is_some_and(|p| {
+                                !p.text().is_empty()
+                                    || p.content.iter().any(|b| {
+                                        matches!(
+                                            b,
+                                            epsilon_contracts::content::ContentBlock::Thinking { .. }
+                                        )
+                                    })
+                            });
+                            if !has_content {
+                                return Err(RunError::Internal(
+                                    "provider stream ended without Done".into(),
+                                ));
+                            }
+                            let message = self.failure_message(
+                                partial.as_ref(),
+                                StopReason::Error,
+                                "provider stream ended without a terminal frame — partial \\
+                                 output kept",
+                            );
+                            self.push_message(&Message::Assistant(message.clone()));
+                            self.emit(AgentEvent::MessageEnd {
+                                message: Box::new(Message::Assistant(message.clone())),
+                            });
+                            return Ok(message);
+                        }
                     }
                 }
             }
         }
-        Err(RunError::Internal(
-            "provider stream ended without Done".into(),
-        ))
+    }
+}
+
+/// One tracked delegated task (M53): the child stays alive between calls so a
+/// later `task` request can resume it, and the tool layer can report status.
+struct TaskEntry {
+    id: String,
+    description: String,
+    subagent_type: String,
+    /// Effective model for this child (M56) — see [`Agent::build_task_child`].
+    model: Option<String>,
+    state: epsilon_contracts::tool::TaskState,
+    output: String,
+    turns: u32,
+    usage: Option<epsilon_contracts::message::Usage>,
+    child: Arc<Agent>,
+}
+
+/// How many tasks the registry keeps before evicting the oldest finished one
+/// (a long session must not accumulate live children forever).
+const TASK_REGISTRY_CAP: usize = 16;
+
+impl Agent {
+    /// Build the child agent for a `task` delegation: agent-type routing
+    /// (def lookup, tool subset, model/thinking inheritance, skills, role
+    /// brief) plus the depth stamp that stops nested fan-out.
+    ///
+    /// M56: returns the effective model alongside the child. Precedence is
+    /// `def.model` (the operator's configuration) → `request_model` (the call's
+    /// own choice) → inherited parent model, matching opencode's
+    /// `next.model ?? parent` with the operator's config kept on top.
+    fn build_task_child(
+        &self,
+        subagent_type: &str,
+        request_model: Option<&str>,
+    ) -> Result<(Arc<Agent>, Option<String>), String> {
+        // Child agent shares the same provider/gate/workspace but has an
+        // isolated transcript (no steering/follow-up carry-over). Caps are
+        // modest so one delegated task cannot exhaust the parent's budget.
+        let limits = LoopLimits {
+            max_turns: 32,
+            ..Default::default()
+        };
+        // M50: agent-type routing (pi `agents.ts` + opencode `Agent.get`
+        // parity). `default` (or empty) means "no def matched": full registry,
+        // inherited model, no extra prompt — exactly the old behavior. A named
+        // type MUST resolve, or the failure names what's available instead of
+        // silently running the wrong configuration.
+        let agents = self.agent_list();
+        let def = if subagent_type.trim().is_empty() || subagent_type == "default" {
+            None
+        } else {
+            match agents.iter().find(|a| a.name == subagent_type) {
+                Some(d) => Some(d.clone()),
+                None => {
+                    let mut names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+                    names.sort_unstable();
+                    let available = if names.is_empty() {
+                        "none — no agent defs discovered".to_string()
+                    } else {
+                        names.join(", ")
+                    };
+                    return Err(format!(
+                        "unknown agent type: \"{subagent_type}\" is not a valid agent type. Available: {available}"
+                    ));
+                }
+            }
+        };
+        // M50: depth cap (opencode `subagent_depth` parity, default 1). A child
+        // at the cap runs with a registry whose `task` tool keeps working for
+        // display but whose host refuses — nested fan-out fails honestly
+        // instead of recursing the loop.
+        const MAX_TASK_DEPTH: usize = 1;
+        let depth = self.task_depth.lock().map(|s| *s).unwrap_or(0);
+        if depth >= MAX_TASK_DEPTH {
+            return Err(format!(
+                "subagent depth limit reached ({MAX_TASK_DEPTH}). Increase the limit to allow nested subagents."
+            ));
+        }
+        let stream_fn = self
+            .stream_fn
+            .read()
+            .map(|g| std::sync::Arc::clone(&*g))
+            .unwrap_or_else(|e| std::sync::Arc::clone(&*e.into_inner()));
+        let gate: std::sync::Arc<dyn crate::gate::PermissionGate> =
+            std::sync::Arc::clone(&self.gate);
+        // Tool subset: a def WITH a tools list sees only those tools (pi
+        // scout/planner/reviewer parity); no list (or no def) = full registry.
+        let tools = match def.as_ref().and_then(|d| d.tools.as_ref()) {
+            Some(names) => std::sync::Arc::new(self.tools.subset(names)),
+            None => std::sync::Arc::clone(&self.tools),
+        };
+        let child = Agent::new(limits, stream_fn, tools, gate, self.workspace_root.clone());
+        // Model: def override wins, then the call's request, else inherit (pi:
+        // omitted model inherits the dispatching session's model + thinking
+        // level). The resolved id is reported back so the tool result, the
+        // registry and `/tasks` all name the model that actually ran.
+        let model = if let Some(m) = def.as_ref().and_then(|d| d.model.as_ref()) {
+            child.set_model_id(m.clone());
+            Some(m.clone())
+        } else if let Some(requested) = request_model {
+            let resolved = Self::resolve_task_model(requested)?;
+            child.set_model_id(resolved.clone());
+            Some(resolved)
+        } else if let Ok(m) = self.model_id.lock() {
+            child.set_model_id(m.clone());
+            Some(m.clone()).filter(|s| !s.trim().is_empty())
+        } else {
+            None
+        };
+        child.set_thinking_level(self.thinking_level());
+        // Child discovers the same skill catalog (read-only share).
+        child.set_skills(self.skill_list());
+        // Child inherits agent defs (so ITS error messages name the same
+        // types) at one deeper depth.
+        child.set_agents(self.agent_list());
+        if let Ok(mut slot) = child.task_depth_slot() {
+            *slot = depth + 1;
+        }
+        // System prompt: the def body (pi: agent file body past frontmatter)
+        // becomes a CONTEXT-tier project instruction so the child knows its
+        // role while the task stays the user message. No def (or an empty
+        // body) = bare prompt, exactly the old behavior.
+        if let Some(body) = def.as_ref().and_then(|d| {
+            if d.system_prompt.trim().is_empty() {
+                None
+            } else {
+                Some(d.system_prompt.clone())
+            }
+        }) {
+            child.set_agent_brief(body);
+        }
+        Ok((child, model))
+    }
+
+    /// M58: give a child its own durable session file beside the parent's, so a
+    /// `task_id` survives a restart (the child's file is a session: header with
+    /// `parent_session`, a `task_meta` entry the rehydrator reads back).
+    ///
+    /// Returns the file path, or `None` when the parent has no store attached —
+    /// children then live in memory only, exactly the pre-M58 behavior (tests
+    /// and embedding callers keep working unchanged).
+    fn attach_child_session(
+        &self,
+        child: &Arc<Agent>,
+        task_id: &str,
+        description: &str,
+        subagent_type: &str,
+        model: Option<&str>,
+    ) -> Option<std::path::PathBuf> {
+        use epsilon_contracts::session_entry::EntryKind;
+        let parent = self.store()?;
+        let (dir, stem, parent_id) = {
+            let st = parent.lock().ok()?;
+            let path = st.path().to_path_buf();
+            (
+                path.parent()?.to_path_buf(),
+                path.file_stem()?.to_string_lossy().to_string(),
+                st.header().map(|h| h.id.clone()),
+            )
+        };
+        let file = dir.join(format!("{stem}-{task_id}.jsonl"));
+        let mut store = SessionStore::open_child_in(&file, &self.workspace_root, &parent_id?)
+            .map_err(|e| eprintln!("task '{task_id}': cannot open {}: {e}", file.display()))
+            .ok()?;
+        let _ = store.append(EntryKind::Custom {
+            custom_type: "task_meta".to_string(),
+            data: Some(serde_json::json!({
+                "task_id": task_id,
+                "description": description,
+                "subagent_type": subagent_type,
+                "model": model,
+            })),
+        });
+        child.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+        Some(file)
+    }
+
+    /// M58: rebuild a child from its persisted session file, for a `task_id`
+    /// that outlived the process that created it.
+    ///
+    /// `Ok(None)` means "no such child on disk" — the caller keeps its honest
+    /// unknown-id error. A file that exists but cannot be read is an error, not
+    /// a silent miss: the caller asked for a specific task.
+    fn rehydrate_task(
+        &self,
+        id: &str,
+    ) -> Result<Option<epsilon_contracts::tool::TaskSnapshot>, String> {
+        use epsilon_contracts::session_entry::EntryKind;
+        let Some(dir) = self
+            .session_path()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        else {
+            return Ok(None);
+        };
+        let file = std::fs::read_dir(&dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(&format!("-{id}.jsonl")))
+            });
+        let Some(file) = file else {
+            return Ok(None);
+        };
+
+        // Open + repair exactly like a live resume, so a crash mid-turn does
+        // not make a child unresumable.
+        let mut store =
+            SessionStore::open(&file).map_err(|e| format!("open {}: {e}", file.display()))?;
+        let _ = epsilon_session::repair::repair_on_open(&mut store);
+        let entries = store
+            .read_all()
+            .map_err(|e| format!("read {}: {e}", file.display()))?;
+
+        // Meta comes from the LAST `task_meta` entry (a resumed child rewrites
+        // nothing, so the first is usually it too).
+        let mut description = String::new();
+        let mut subagent_type = "default".to_string();
+        let mut model: Option<String> = None;
+        for e in &entries {
+            if let EntryKind::Custom {
+                custom_type,
+                data: Some(data),
+            } = &e.kind
+                && custom_type == "task_meta"
+            {
+                if let Some(d) = data.get("description").and_then(|v| v.as_str()) {
+                    description = d.to_string();
+                }
+                if let Some(t) = data.get("subagent_type").and_then(|v| v.as_str()) {
+                    subagent_type = t.to_string();
+                }
+                if let Some(m) = data.get("model").and_then(|v| v.as_str()) {
+                    model = Some(m.to_string());
+                }
+            }
+        }
+        if description.is_empty() {
+            description = id.to_string();
+        }
+
+        // Settled state from the last turn's ending, when the file has one.
+        let ended = entries.iter().rev().find_map(|e| match &e.kind {
+            EntryKind::TurnEnd { reason } => Some(reason.clone()),
+            _ => None,
+        });
+        let failed = matches!(
+            ended,
+            Some(TurnEndReason::Error(_))
+                | Some(TurnEndReason::Aborted)
+                | Some(TurnEndReason::BudgetExhausted)
+                | Some(TurnEndReason::Blocked)
+        );
+
+        let messages: Vec<Message> = store
+            .model_view()
+            .map_err(|e| format!("read {}: {e}", file.display()))?
+            .into_iter()
+            .map(|v| v.into_message())
+            .collect();
+        let turns = messages
+            .iter()
+            .filter(|m| matches!(m, Message::Assistant(_)))
+            .count() as u32;
+        let last_assistant = messages.iter().rev().find_map(|m| match m {
+            Message::Assistant(a) => Some(a),
+            _ => None,
+        });
+        let mut output = match ended {
+            Some(TurnEndReason::Error(ref e)) => {
+                format!("[restored from disk] run ended in error: {e}")
+            }
+            Some(TurnEndReason::Aborted) => "[restored from disk] run was aborted".to_string(),
+            _ => last_assistant
+                .map(|a| a.text())
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| format!("[restored from disk: {} message(s)]", messages.len())),
+        };
+        let usage = last_assistant.map(|a| a.usage);
+        let state = if failed {
+            epsilon_contracts::tool::TaskState::Failed
+        } else {
+            epsilon_contracts::tool::TaskState::Completed
+        };
+
+        // A stored model can have left the catalog since the child ran (models
+        // retire): restoring the transcript still matters more than honoring the
+        // old model, so fall back to inheritance and say so in the report.
+        let (child, effective_model) = match self.build_task_child(&subagent_type, model.as_deref())
+        {
+            Ok(built) => built,
+            Err(_retired) => {
+                let (child, inherited) = self.build_task_child(&subagent_type, None)?;
+                output.push_str(&format!(
+                    "\n[restored on the inherited model: {}]",
+                    inherited.as_deref().unwrap_or("(session default)")
+                ));
+                (child, inherited)
+            }
+        };
+        child.restore_history(messages);
+        child.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+        self.register_task_entry(TaskEntry {
+            id: id.to_string(),
+            description,
+            subagent_type,
+            model: effective_model,
+            state,
+            output,
+            turns,
+            usage,
+            child,
+        });
+        Ok(self.task_snapshot(id))
+    }
+
+    /// Resolve a per-delegation model id against the catalog.
+    ///
+    /// Deliberately stricter than `resolve_model`'s partial rule: a delegated
+    /// run must never silently swap models, so only exact, `provider/id`, and
+    /// case-insensitive matches are accepted — a partial match is *offered* as
+    /// a suggestion instead of used.
+    fn resolve_task_model(raw: &str) -> Result<String, String> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err("task: model must not be empty (omit it to inherit)".to_string());
+        }
+        match epsilon_llm::catalog::resolve_model(raw) {
+            Some(r) if r.kind != epsilon_llm::catalog::ModelMatchKind::Partial => {
+                Ok(r.info.id.to_string())
+            }
+            Some(r) => Err(format!(
+                "task: model \"{raw}\" only partially matches \"{}\", and a delegated run never swaps models on a guess — pass the full id if that is the one you meant",
+                r.info.id
+            )),
+            None => Err(format!(
+                "task: unknown model \"{raw}\" — use a catalog id (`epsilon --list-models`, or the /model picker)"
+            )),
+        }
+    }
+
+    /// Collapse a finished child run into the envelope text + turn count.
+    fn summarize_task_output(
+        subagent_type: &str,
+        description: &str,
+        model: Option<&str>,
+        produced: &[Message],
+    ) -> (String, u32) {
+        let turns = produced
+            .iter()
+            .filter(|m| matches!(m, epsilon_contracts::message::Message::Assistant(_)))
+            .count() as u32;
+        let mut parts: Vec<String> = Vec::new();
+        for m in produced {
+            match m {
+                epsilon_contracts::message::Message::Assistant(a) => {
+                    let t = a.text();
+                    if !t.trim().is_empty() {
+                        parts.push(t);
+                    }
+                }
+                epsilon_contracts::message::Message::ToolResult(r) => {
+                    let preview = r
+                        .content
+                        .iter()
+                        .filter_map(|c| match c {
+                            epsilon_contracts::content::ContentBlock::Text { text } => {
+                                Some(text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !preview.trim().is_empty() {
+                        parts.push(format!(
+                            "[{}] {}",
+                            r.tool_name,
+                            preview.chars().take(4000).collect::<String>()
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if parts.is_empty() {
+            let on_model = model.map(|m| format!(" on {m}")).unwrap_or_default();
+            parts.push(format!(
+                "[subagent {subagent_type}{on_model}: {description} — no textual output]"
+            ));
+        }
+        let text = parts.join("\n\n---\n\n");
+        (text, turns)
+    }
+
+    /// The user message a delegated prompt travels in.
+    fn task_user_message(prompt: &str) -> Message {
+        use epsilon_contracts::content::UserContent;
+        use epsilon_contracts::message::UserMessage;
+        epsilon_contracts::message::Message::User(UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: crate::now_ms(),
+            content: vec![UserContent::Text {
+                text: prompt.to_string(),
+            }],
+        })
+    }
+
+    /// The user-shaped notice the parent model sees when a background child
+    /// finishes (delivered through the steering drain point).
+    fn task_notice(
+        id: &str,
+        description: &str,
+        state: &str,
+        model: Option<&str>,
+        body: &str,
+    ) -> Message {
+        // M56: the notice names the model the child ran on — the parent (and
+        // the transcript) must be able to tell a scout on a cheap model from
+        // the session's own model without asking.
+        let on_model = model.map(|m| format!(" model=\"{m}\"")).unwrap_or_default();
+        let text = format!(
+            "<task id=\"{id}\" state=\"{state}\" description=\"{description}\"{on_model}>\n<task_result>\n{body}\n</task_result>\n</task>\n[background task {state} — resume it with task_id \"{id}\" if you need more]"
+        );
+        Self::task_user_message(&text)
+    }
+
+    /// Insert a new task, evicting the oldest finished entry at the cap.
+    fn register_task_entry(&self, entry: TaskEntry) {
+        if let Ok(mut v) = self.tasks.lock() {
+            if v.len() >= TASK_REGISTRY_CAP
+                && let Some(pos) = v
+                    .iter()
+                    .position(|e| e.state != epsilon_contracts::tool::TaskState::Running)
+            {
+                v.remove(pos);
+            }
+            v.push(entry);
+        }
+    }
+
+    /// Update one tracked task in place; unknown ids are ignored.
+    fn update_task_entry(&self, id: &str, f: impl FnOnce(&mut TaskEntry)) {
+        if let Ok(mut v) = self.tasks.lock()
+            && let Some(entry) = v.iter_mut().find(|e| e.id == id)
+        {
+            f(entry);
+        }
+    }
+
+    /// Snapshot one tracked task by id.
+    pub fn task_snapshot(&self, id: &str) -> Option<epsilon_contracts::tool::TaskSnapshot> {
+        let v = self.tasks.lock().ok()?;
+        v.iter().find(|e| e.id == id).map(Self::snapshot_of)
+    }
+
+    /// Every tracked task, in dispatch order (UI badges, tests).
+    pub fn task_snapshots(&self) -> Vec<epsilon_contracts::tool::TaskSnapshot> {
+        self.tasks
+            .lock()
+            .map(|v| v.iter().map(Self::snapshot_of).collect())
+            .unwrap_or_default()
+    }
+
+    /// Ids still tracked, in dispatch order (honest unknown-id errors).
+    pub fn task_ids(&self) -> Vec<String> {
+        self.tasks
+            .lock()
+            .map(|v| v.iter().map(|e| e.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    fn snapshot_of(entry: &TaskEntry) -> epsilon_contracts::tool::TaskSnapshot {
+        epsilon_contracts::tool::TaskSnapshot {
+            id: entry.id.clone(),
+            description: entry.description.clone(),
+            subagent_type: entry.subagent_type.clone(),
+            model: entry.model.clone(),
+            state: entry.state.clone(),
+            output: entry.output.clone(),
+            turns: entry.turns,
+            usage: entry.usage,
+        }
+    }
+
+    /// Run, resume, or report a delegated task (M53 wires `task`'s
+    /// `background` and `task_id` parameters here).
+    ///
+    /// - fresh + foreground: build a child, await it, return its envelope;
+    /// - fresh + background: register, spawn the run, return `Running` at once;
+    /// - `task_id` + prompt: continue the same child (its history is intact);
+    /// - `task_id` + empty prompt: status report, never a new run.
+    pub async fn delegate_task(
+        &self,
+        request: epsilon_contracts::tool::TaskRequest,
+    ) -> Result<epsilon_contracts::tool::TaskOutcome, String> {
+        let prompt = request.prompt.trim().to_string();
+        let request_model = request
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let resume = request
+            .resume
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(id) = resume {
+            // M58: a task from a previous run is not tracked in memory, but its
+            // session file is on disk — rehydrate instead of failing.
+            let snapshot = match self.task_snapshot(&id) {
+                Some(snapshot) => snapshot,
+                None => match self.rehydrate_task(&id)? {
+                    Some(snapshot) => snapshot,
+                    None => {
+                        let known = self.task_ids();
+                        return Err(if known.is_empty() {
+                            format!(
+                                "unknown task id '{id}' — no such task is tracked or on disk (ids come from a `task` call's result)"
+                            )
+                        } else {
+                            format!("unknown task id '{id}' — tracked: {}", known.join(", "))
+                        });
+                    }
+                },
+            };
+            if prompt.is_empty() {
+                return Ok(epsilon_contracts::tool::TaskOutcome::Running(snapshot));
+            }
+            if snapshot.state == epsilon_contracts::tool::TaskState::Running {
+                return Err(format!(
+                    "task '{id}' is still running — poll it with task_id and no prompt, or wait for its completion notice"
+                ));
+            }
+            let child = self
+                .tasks
+                .lock()
+                .ok()
+                .and_then(|v| v.iter().find(|e| e.id == id).map(|e| Arc::clone(&e.child)))
+                .ok_or_else(|| format!("task '{id}' is no longer tracked"))?;
+            if request.background {
+                self.spawn_task_run(
+                    id.clone(),
+                    snapshot.description.clone(),
+                    snapshot.subagent_type.clone(),
+                    snapshot.model.clone(),
+                    Arc::clone(&child),
+                    prompt,
+                );
+                let now = self
+                    .task_snapshot(&id)
+                    .ok_or_else(|| "task entry vanished while resuming".to_string())?;
+                return Ok(epsilon_contracts::tool::TaskOutcome::Running(now));
+            }
+            return self
+                .await_task_run(
+                    id,
+                    snapshot.subagent_type.clone(),
+                    snapshot.model.clone(),
+                    prompt,
+                    Arc::clone(&child),
+                )
+                .await;
+        }
+        let id = epsilon_contracts::new_id("task");
+        let description = request.description.clone();
+        let subagent_type = request.subagent_type.clone();
+        let (child, model) =
+            self.build_task_child(&request.subagent_type, request_model.as_deref())?;
+        // M58: persist the child as its own session file (before it runs, so a
+        // crash mid-turn still leaves a resumable task).
+        self.attach_child_session(&child, &id, &description, &subagent_type, model.as_deref());
+        self.register_task_entry(TaskEntry {
+            id: id.clone(),
+            description: description.clone(),
+            subagent_type: subagent_type.clone(),
+            model: model.clone(),
+            state: epsilon_contracts::tool::TaskState::Running,
+            output: String::new(),
+            turns: 0,
+            usage: None,
+            child: Arc::clone(&child),
+        });
+        if request.background {
+            self.spawn_task_run(
+                id.clone(),
+                description,
+                subagent_type,
+                model,
+                Arc::clone(&child),
+                prompt,
+            );
+            let now = self
+                .task_snapshot(&id)
+                .ok_or_else(|| "task entry vanished while starting".to_string())?;
+            return Ok(epsilon_contracts::tool::TaskOutcome::Running(now));
+        }
+        self.await_task_run(id, subagent_type, model, prompt, child)
+            .await
+    }
+
+    /// A child run that ended in an in-band provider failure (the never-fail
+    /// contract delivers those as an assistant message with a failure stop
+    /// reason, so `run()` still returns Ok).
+    fn task_run_failure(outcome: &RunOutcome) -> Option<String> {
+        // An armed abort returns before any message exists; the reason is the
+        // only evidence. Check it first, then the in-band failure message.
+        if outcome.reason == TurnEndReason::Aborted {
+            return Some("subagent run aborted".to_string());
+        }
+        let produced = &outcome.produced;
+        produced.iter().rev().find_map(|m| match m {
+            Message::Assistant(a) if a.stop_reason.is_failure() => Some(
+                if a.stop_reason == epsilon_contracts::message::StopReason::Aborted {
+                    "subagent run aborted".to_string()
+                } else {
+                    a.error_message
+                        .clone()
+                        .unwrap_or_else(|| format!("subagent stopped: {:?}", a.stop_reason))
+                },
+            ),
+            _ => None,
+        })
+    }
+
+    /// Foreground path: await the child, record it, envelope the result.
+    async fn await_task_run(
+        &self,
+        id: String,
+        subagent_type: String,
+        model: Option<String>,
+        prompt: String,
+        child: Arc<Agent>,
+    ) -> Result<epsilon_contracts::tool::TaskOutcome, String> {
+        let description = self
+            .task_snapshot(&id)
+            .map(|s| s.description)
+            .unwrap_or_default();
+        match child.run(Self::task_user_message(&prompt)).await {
+            Ok(outcome) => {
+                // In-band failures are still failures: a subagent that died on
+                // a provider error must not be reported as a completed task.
+                if let Some(reason) = Self::task_run_failure(&outcome) {
+                    let message = format!("subagent run failed: {reason}");
+                    self.update_task_entry(&id, |entry| {
+                        entry.state = epsilon_contracts::tool::TaskState::Failed;
+                        entry.output = message.clone();
+                    });
+                    return Err(message);
+                }
+                let (text, turns) = Self::summarize_task_output(
+                    &subagent_type,
+                    &description,
+                    model.as_deref(),
+                    &outcome.produced,
+                );
+                self.update_task_entry(&id, |e| {
+                    e.state = epsilon_contracts::tool::TaskState::Completed;
+                    e.output = text.clone();
+                    // Cumulative: a resumed child keeps counting its turns.
+                    e.turns += turns;
+                    e.usage = Some(outcome.usage);
+                });
+                Ok(epsilon_contracts::tool::TaskOutcome::Completed(
+                    epsilon_contracts::tool::TaskHostResult {
+                        text,
+                        usage: Some(outcome.usage),
+                        details: serde_json::json!({
+                            "task_id": id,
+                            "subagent_type": subagent_type,
+                            "model": model,
+                            "description": description,
+                            "state": "completed",
+                            "turns": turns,
+                            "produced": outcome.produced.len(),
+                            "reason": format!("{:?}", outcome.reason),
+                        }),
+                    },
+                ))
+            }
+            Err(e) => {
+                let message = format!("task host run failed: {e}");
+                self.update_task_entry(&id, |entry| {
+                    entry.state = epsilon_contracts::tool::TaskState::Failed;
+                    entry.output = message.clone();
+                });
+                Err(message)
+            }
+        }
+    }
+
+    /// Background path: detach the run, record its result, queue the notice.
+    fn spawn_task_run(
+        &self,
+        id: String,
+        description: String,
+        subagent_type: String,
+        model: Option<String>,
+        child: Arc<Agent>,
+        prompt: String,
+    ) {
+        let tasks = Arc::clone(&self.tasks);
+        let notices = self.task_notices_tx.clone();
+        let notice_id = id.clone();
+        tokio::spawn(async move {
+            let (state, text, turns, usage) =
+                match child.run(Agent::task_user_message(&prompt)).await {
+                    Ok(outcome) => match Agent::task_run_failure(&outcome) {
+                        Some(reason) => (
+                            "failed",
+                            format!("subagent run failed: {reason}"),
+                            0,
+                            Some(outcome.usage),
+                        ),
+                        None => {
+                            let (text, turns) = Agent::summarize_task_output(
+                                &subagent_type,
+                                &description,
+                                model.as_deref(),
+                                &outcome.produced,
+                            );
+                            ("completed", text, turns, Some(outcome.usage))
+                        }
+                    },
+                    Err(e) => ("failed", format!("task host run failed: {e}"), 0, None),
+                };
+            if let Ok(mut v) = tasks.lock()
+                && let Some(entry) = v.iter_mut().find(|e| e.id == id)
+            {
+                entry.state = if state == "completed" {
+                    epsilon_contracts::tool::TaskState::Completed
+                } else {
+                    epsilon_contracts::tool::TaskState::Failed
+                };
+                entry.output = text.clone();
+                entry.turns += turns;
+                entry.usage = usage;
+            }
+            let _ = notices.send(Agent::task_notice(
+                &notice_id,
+                &description,
+                state,
+                model.as_deref(),
+                &text,
+            ));
+        });
+    }
+}
+
+#[async_trait::async_trait]
+impl epsilon_contracts::tool::TaskHost for Agent {
+    async fn run_task(
+        &self,
+        request: epsilon_contracts::tool::TaskRequest,
+    ) -> Result<epsilon_contracts::tool::TaskOutcome, String> {
+        self.delegate_task(request).await
+    }
+
+    fn task_snapshot(&self, id: &str) -> Option<epsilon_contracts::tool::TaskSnapshot> {
+        Agent::task_snapshot(self, id)
+    }
+
+    fn task_ids(&self) -> Vec<String> {
+        Agent::task_ids(self)
     }
 }

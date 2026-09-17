@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 fn ctx_for(root: &Path) -> ToolContext {
     ToolContext {
         session_id: "test".into(),
+        observation_scope: std::sync::Arc::new(()),
         cwd: root.to_path_buf(),
         spill_dir: root.join(".spill"),
         token: CancellationToken::new(),
@@ -58,6 +59,203 @@ fn seeded_workspace() -> (tempfile::TempDir, ToolContext) {
     std::fs::write(root.join("README.md"), "# demo\nhello world\n").unwrap();
     let ctx = ctx_for(root);
     (dir, ctx)
+}
+
+#[tokio::test]
+async fn observations_are_not_inherited_from_another_agent() {
+    let (dir, mut a) = seeded_workspace();
+    a.session_id = "agent-a".into();
+    let mut b = ctx_for(dir.path());
+    b.session_id = a.session_id.clone(); // display names are not observation identities
+    let original = std::fs::read(dir.path().join("README.md")).unwrap();
+    run(
+        &ReadTool::new(),
+        &a,
+        serde_json::json!({"path": "README.md"}),
+    )
+    .await
+    .unwrap();
+    let result = run(
+        &WriteTool::new(),
+        &b,
+        serde_json::json!({"path": "README.md", "content": "unseen overwrite"}),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "another agent's read cannot authorize a write"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("README.md")).unwrap(),
+        original
+    );
+}
+
+#[tokio::test]
+async fn observations_stay_stale_after_a_sibling_write_until_reread() {
+    let (dir, a) = seeded_workspace();
+    let b = ctx_for(dir.path());
+    let path = dir.path().join("README.md");
+    for ctx in [&a, &b] {
+        run(
+            &ReadTool::new(),
+            ctx,
+            serde_json::json!({"path": "README.md"}),
+        )
+        .await
+        .unwrap();
+    }
+    let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let replacement = "# demo\nhello earth\n";
+    run(
+        &WriteTool::new(),
+        &b,
+        serde_json::json!({"path": "README.md", "content": replacement}),
+    )
+    .await
+    .unwrap();
+    // Deterministically emulate a same-length write on a coarse timestamp filesystem.
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    let result = run(
+        &EditTool::new(),
+        &a,
+        serde_json::json!({"path": "README.md", "old_string": "hello", "new_string": "bye"}),
+    )
+    .await;
+    assert!(result.unwrap_err().contains("changed on disk"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), replacement);
+    run(
+        &ReadTool::new(),
+        &a,
+        serde_json::json!({"path": "README.md"}),
+    )
+    .await
+    .unwrap();
+    run(
+        &WriteTool::new(),
+        &a,
+        serde_json::json!({"path": "README.md", "content": "after reread"}),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn observations_partial_reads_and_failed_edits_do_not_refresh_siblings() {
+    let (dir, a) = seeded_workspace();
+    let b = ctx_for(dir.path());
+    run(
+        &ReadTool::new(),
+        &a,
+        serde_json::json!({"path": "README.md", "limit": 1}),
+    )
+    .await
+    .unwrap();
+    run(
+        &ReadTool::new(),
+        &b,
+        serde_json::json!({"path": "README.md"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        run(
+            &WriteTool::new(),
+            &a,
+            serde_json::json!({"path": "README.md", "content": "blind"})
+        )
+        .await
+        .unwrap_err()
+        .contains("only read in part")
+    );
+    assert!(
+        run(
+            &EditTool::new(),
+            &b,
+            serde_json::json!({"path": "README.md", "old_string": "ABSENT", "new_string": "x"})
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        run(
+            &WriteTool::new(),
+            &a,
+            serde_json::json!({"path": "README.md", "content": "still blind"})
+        )
+        .await
+        .unwrap_err()
+        .contains("only read in part"),
+        "a failed sibling edit must not upgrade a partial observation"
+    );
+    run(
+        &EditTool::new(),
+        &a,
+        serde_json::json!({"path": "README.md", "old_string": "# demo", "new_string": "# title"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        std::fs::read_to_string(dir.path().join("README.md"))
+            .unwrap()
+            .starts_with("# title")
+    );
+}
+
+#[tokio::test]
+async fn observations_sibling_edits_invalidate_only_the_changed_path() {
+    for batch in [false, true] {
+        let (dir, a) = seeded_workspace();
+        let b = ctx_for(dir.path());
+        for ctx in [&a, &b] {
+            for path in ["README.md", "src/lib.rs"] {
+                run(&ReadTool::new(), ctx, serde_json::json!({"path": path}))
+                    .await
+                    .unwrap();
+            }
+        }
+        let path = dir.path().join("README.md");
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let args = if batch {
+            serde_json::json!({"path": "README.md", "edits": [
+                {"old_string": "demo", "new_string": "test"},
+                {"old_string": "world", "new_string": "earth"}
+            ]})
+        } else {
+            serde_json::json!({"path": "README.md", "old_string": "world", "new_string": "earth"})
+        };
+        run(&EditTool::new(), &b, args).await.unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        let after = std::fs::read(&path).unwrap();
+        assert!(
+            run(
+                &WriteTool::new(),
+                &a,
+                serde_json::json!({"path": "README.md", "content": "stale overwrite"})
+            )
+            .await
+            .unwrap_err()
+            .contains("changed on disk")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), after);
+        run(
+            &WriteTool::new(),
+            &a,
+            serde_json::json!({"path": "src/lib.rs", "content": "unrelated write"}),
+        )
+        .await
+        .unwrap();
+    }
 }
 
 #[tokio::test]

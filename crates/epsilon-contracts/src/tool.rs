@@ -14,8 +14,10 @@ use crate::message::Usage;
 /// Whether a tool may run concurrently with others in the same batch.
 ///
 /// Mirrors pi's per-tool `executionMode` + DSH's `isConcurrencySafe`, unified: tools declare
-/// once, the pool enforces. Any `Sequential` tool in a batch serializes the whole batch
-/// (barrier semantics), because partial ordering is harder to reason about than all-or-nothing.
+/// once, the pool enforces. A `Sequential` tool with **no** [`Tool::resource_key`] serializes the
+/// whole batch (its reach is unknown — a shell command can touch anything). A `Sequential` tool
+/// that names its resource only orders itself against calls that name the same one (M72), which
+/// is what lets two edits to two different files run at the same time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
@@ -43,6 +45,17 @@ pub struct ToolDescriptor {
     pub execution_mode: ExecutionMode,
 }
 
+/// A bounded rendering of a payload for an error message: enough to recognise, short enough that
+/// a malicious or broken payload cannot fill the transcript.
+fn bounded(text: &str) -> String {
+    const MAX: usize = 200;
+    if text.chars().count() <= MAX {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(MAX).collect();
+    format!("{head}… ({} chars total)", text.chars().count())
+}
+
 impl ToolDescriptor {
     /// Validate that `arguments` is structurally plausible against the declared schema.
     ///
@@ -51,7 +64,21 @@ impl ToolDescriptor {
     /// "validate before execute" is enforced by type, not convention.
     pub fn basic_validate(&self, arguments: &serde_json::Value) -> Result<(), String> {
         if !arguments.is_object() {
-            return Err("arguments must be a JSON object".to_string());
+            // M70: the old message said only what was expected. When a wire could not read the
+            // model's arguments it hands the raw text here (as a JSON string), and the model
+            // needs to see what it actually sent to fix it.
+            return Err(match arguments {
+                serde_json::Value::String(raw) => format!(
+                    "the tool arguments were not valid JSON — received: {}",
+                    bounded(raw)
+                ),
+                other => format!(
+                    "arguments must be a JSON object, got {}",
+                    serde_json::to_string(other)
+                        .map(|s| bounded(&s))
+                        .unwrap_or_else(|_| "an unprintable value".to_string())
+                ),
+            });
         }
         Ok(())
     }
@@ -66,17 +93,229 @@ pub struct ToolInvocation {
     pub args: serde_json::Value,
 }
 
+/// Result returned by an isolated [`TaskHost`] run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskHostResult {
+    /// Combined textual output of the subagent run.
+    pub text: String,
+    /// Aggregated token usage, if reported.
+    pub usage: Option<Usage>,
+    /// Structured details for UI (may be empty).
+    pub details: serde_json::Value,
+}
+
+/// Result returned from a [`ToolHooks::before_tool_call`] hook.
+///
+/// Returning `block: true` prevents the tool from executing; the loop emits an
+/// error tool result instead, with `reason` as its text (or a default blocked
+/// message when omitted). A blocked result can also set `terminate: true` to
+/// participate in the batch early-termination rule (ALL results must agree).
+#[derive(Debug, Clone, Default)]
+pub struct BeforeToolCallResult {
+    /// Prevent execution; emit an error result instead.
+    pub block: bool,
+    /// Text shown in the error result when blocked.
+    pub reason: Option<String>,
+    /// Early-termination hint when blocked.
+    pub terminate: bool,
+}
+
+/// Partial override returned from a [`ToolHooks::after_tool_call`] hook.
+///
+/// Merge is field-by-field (`None` keeps the executed value; no deep merge):
+/// `content` replaces the full content array, `details` the full details
+/// payload, `is_error` the error flag, `usage` the tool result usage,
+/// `terminate` the early-termination hint.
+#[derive(Debug, Clone, Default)]
+pub struct AfterToolCallResult {
+    /// Replace the full content array.
+    pub content: Option<Vec<ContentBlock>>,
+    /// Replace the full details payload.
+    pub details: Option<serde_json::Value>,
+    /// Replace the error flag.
+    pub is_error: Option<bool>,
+    /// Replace the tool result usage.
+    pub usage: Option<Usage>,
+    /// Replace the early-termination hint.
+    pub terminate: Option<bool>,
+}
+
+/// Context passed to [`ToolHooks::before_tool_call`].
+#[derive(Debug, Clone)]
+pub struct BeforeToolCallContext {
+    /// Provider-assigned invocation id.
+    pub tool_call_id: ToolCallId,
+    /// Registered tool name.
+    pub tool_name: String,
+    /// Validated tool arguments.
+    pub args: serde_json::Value,
+}
+
+/// Context passed to [`ToolHooks::after_tool_call`].
+#[derive(Debug, Clone)]
+pub struct AfterToolCallContext {
+    /// Provider-assigned invocation id.
+    pub tool_call_id: ToolCallId,
+    /// Registered tool name.
+    pub tool_name: String,
+    /// Validated tool arguments.
+    pub args: serde_json::Value,
+    /// The executed tool result before overrides.
+    pub result: crate::message::ToolResultMessage,
+    /// Whether the executed result is currently treated as an error.
+    pub is_error: bool,
+}
+
+/// Interception points around tool execution (pi's `beforeToolCall` /
+/// `afterToolCall` in `AgentLoopConfig`).
+///
+/// Hooks run INLINE in the execution pipeline: `before_tool_call` after
+/// argument validation (and after the permission gate — denied calls never
+/// reach hooks), `after_tool_call` after the tool settles but before the
+/// result commits to the batch. A failing `after_tool_call` replaces the
+/// result with an error result (pi parity); a failing/blocking path never
+/// panics the loop.
+///
+/// Object-safe + `Send + Sync` so hosts (extension runner, compaction
+/// summarizer, tests) can share one `Arc<dyn ToolHooks>` with the agent.
+#[async_trait]
+pub trait ToolHooks: Send + Sync {
+    /// Called before a tool executes. Return `block: true` to prevent
+    /// execution (an error result is emitted instead). `Err` also blocks,
+    /// with the message as the error text (pi surfaces hook errors as
+    /// error results, never loop panics).
+    async fn before_tool_call(
+        &self,
+        ctx: BeforeToolCallContext,
+    ) -> Result<BeforeToolCallResult, String> {
+        let _ = ctx;
+        Ok(BeforeToolCallResult::default())
+    }
+
+    /// Called after a tool settles. Return field overrides to merge into the
+    /// executed result (`None` = keep). `Err` replaces the result with an
+    /// error result carrying the message (pi parity).
+    async fn after_tool_call(
+        &self,
+        ctx: AfterToolCallContext,
+    ) -> Result<Option<AfterToolCallResult>, String> {
+        let _ = ctx;
+        Ok(None)
+    }
+}
+
+/// No-op hooks (default when no host registers any).
+#[derive(Debug, Default)]
+pub struct NoopToolHooks;
+
+#[async_trait]
+impl ToolHooks for NoopToolHooks {}
+
+/// One delegated `task` call (M53: wires the tool's `background` and
+/// `task_id` parameters to the child-agent registry).
+#[derive(Debug, Clone)]
+pub struct TaskRequest {
+    /// Work for the child. Empty (with `resume`) means "report status".
+    pub prompt: String,
+    /// Short label (pi/opencode `description`).
+    pub description: String,
+    /// Agent-type name; `default` means "no def matched".
+    pub subagent_type: String,
+    /// Return as soon as the child starts instead of awaiting it.
+    pub background: bool,
+    /// Address an existing task instead of starting a fresh child.
+    pub resume: Option<String>,
+    /// Model the child should run on (catalog id, e.g. `deepseek-flash` for a
+    /// cheap scout). `None` inherits, exactly like an omitted model on an
+    /// agent def (opencode `next.model ?? parent model`). Ignored when the
+    /// addressed agent type defines its own model — the operator's config
+    /// outranks a call — and on `resume`, which keeps the child's model.
+    pub model: Option<String>,
+}
+
+/// Lifecycle of one tracked task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskState {
+    /// The child is running right now.
+    Running,
+    /// The child finished; `output` holds its summary.
+    Completed,
+    /// The child failed; `output` holds the error.
+    Failed,
+}
+
+/// Read-only snapshot of a tracked task (status reports, UI badges).
+#[derive(Debug, Clone)]
+pub struct TaskSnapshot {
+    /// Task id (`task-…`) — the handle later calls use.
+    pub id: String,
+    /// Label from the dispatching call.
+    pub description: String,
+    /// Agent type the child runs as.
+    pub subagent_type: String,
+    /// Model the child actually runs on (agent-def override, then the call's
+    /// request, then the parent's inherited model) — reported so a delegation
+    /// never silently diverges from what was asked for.
+    pub model: Option<String>,
+    /// Current state.
+    pub state: TaskState,
+    /// Latest output: the summary once finished, the running note before that.
+    pub output: String,
+    /// Assistant turns the child has taken so far.
+    pub turns: u32,
+    /// Aggregated usage when the child has finished at least once.
+    pub usage: Option<Usage>,
+}
+
+/// What one `task` call produced.
+#[derive(Debug, Clone)]
+pub enum TaskOutcome {
+    /// The child finished within the call (foreground path).
+    Completed(TaskHostResult),
+    /// A child is running (or a status report was requested) — `id` addresses it.
+    Running(TaskSnapshot),
+}
+
+/// Host capable of running a delegated `task` in an isolated child agent.
+///
+/// Implemented by `epsilon-core::Agent` and injected via [`ToolContext::task_host`].
+/// The trait lives in the contracts crate so `epsilon-tools` can call it without
+/// depending on `epsilon-core` types (dependency inversion, no cycle).
+#[async_trait]
+pub trait TaskHost: Send + Sync {
+    /// Run, resume, or report a delegated task. Children stay alive between
+    /// calls, so a later request can continue one by id.
+    async fn run_task(&self, request: TaskRequest) -> Result<TaskOutcome, String>;
+
+    /// Snapshot a tracked task; `None` for an id this host does not know.
+    fn task_snapshot(&self, id: &str) -> Option<TaskSnapshot> {
+        let _ = id;
+        None
+    }
+
+    /// Ids still tracked (used to make unknown-id errors honest).
+    fn task_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
 /// Environment handed to every execution.
 #[derive(Clone)]
 pub struct ToolContext {
     /// Owning session id.
     pub session_id: String,
+    /// Opaque observation lifetime, shared by calls from one agent/session view.
+    /// New agents and restored transcripts must use a fresh allocation; clones share it.
+    pub observation_scope: Arc<()>,
     /// Working directory the agent operates in.
     pub cwd: PathBuf,
     /// Directory where oversized outputs spill (locator pattern, ADR from DSH).
     pub spill_dir: PathBuf,
     /// Cooperative cancellation; checked by long-running tools between steps.
     pub token: CancellationToken,
+    /// Optional isolated host for `task` delegation (injected by the loop; `None` in
+    /// unit tests and non-loop callers keeps the capture fallback).
+    pub task_host: Option<Arc<dyn TaskHost>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -86,6 +325,7 @@ impl std::fmt::Debug for ToolContext {
             .field("cwd", &self.cwd)
             .field("spill_dir", &self.spill_dir)
             .field("cancelled", &self.token.is_cancelled())
+            .field("has_task_host", &self.task_host.is_some())
             .finish()
     }
 }
@@ -159,6 +399,30 @@ pub trait Tool: Send + Sync {
     /// Static descriptor (name/schema/mode).
     fn descriptor(&self) -> &ToolDescriptor;
 
+    /// The single resource this call acts on, when it has exactly one.
+    ///
+    /// The batch planner uses this to decide what may run concurrently: two calls naming the same
+    /// resource are ordered by call order; calls naming different resources are independent,
+    /// provided neither is a whole-batch barrier. `None` means "unknown reach" — a shell command,
+    /// a subagent, a network fetch — and such a call keeps the conservative behaviour.
+    ///
+    /// `base` is the directory relative paths resolve against — the same `cwd` the tool will
+    /// receive when it executes, so the planner and the execution agree by construction.
+    ///
+    /// Return a *normalised absolute* path where possible: `/a/b` and `/a/./b` are the same file,
+    /// and a planner that cannot tell them apart serializes work that could have run in parallel.
+    /// Reads and writes are distinguished by [`ToolDescriptor::execution_mode`] — readers declare
+    /// `Parallel`, mutators `Sequential` — which is the same distinction the pool already
+    /// enforces, rather than a second vocabulary that could disagree with it.
+    fn resource_key(
+        &self,
+        arguments: &serde_json::Value,
+        base: &std::path::Path,
+    ) -> Option<PathBuf> {
+        let _ = (arguments, base);
+        None
+    }
+
     /// Execute one invocation. Implementations should:
     /// - poll `ctx.token` between work units and bail out promptly on cancellation;
     /// - emit `on_update` sparingly (the sink throttles, but formatting costs are real).
@@ -168,4 +432,113 @@ pub trait Tool: Send + Sync {
         ctx: ToolContext,
         on_update: ToolUpdateSink,
     ) -> Result<ToolOutput, ToolFailure>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn descriptor() -> ToolDescriptor {
+        ToolDescriptor {
+            name: "read".to_string(),
+            label: "Read".to_string(),
+            description: "Read a file".to_string(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: ExecutionMode::Parallel,
+        }
+    }
+
+    #[test]
+    fn an_object_passes_validation() {
+        assert!(
+            descriptor()
+                .basic_validate(&serde_json::json!({"path": "a.rs"}))
+                .is_ok()
+        );
+        assert!(descriptor().basic_validate(&serde_json::json!({})).is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_payload_is_quoted_back_to_the_model() {
+        // M70: a wire that could not read the model's arguments hands the raw text on as a
+        // string. The message used to say only "arguments must be a JSON object", which tells the
+        // model nothing about what it sent.
+        let err = descriptor()
+            .basic_validate(&serde_json::Value::String("{unquoted: keys}".to_string()))
+            .unwrap_err();
+        assert!(
+            err.contains("not valid JSON"),
+            "the failure names the real problem: {err}"
+        );
+        assert!(
+            err.contains("{unquoted: keys}"),
+            "and quotes what arrived: {err}"
+        );
+    }
+
+    #[test]
+    fn the_quoted_payload_is_bounded() {
+        let huge = "x".repeat(5_000);
+        let err = descriptor()
+            .basic_validate(&serde_json::Value::String(huge.clone()))
+            .unwrap_err();
+        assert!(
+            err.chars().count() < 400,
+            "a broken payload cannot fill the transcript: {} chars",
+            err.chars().count()
+        );
+        assert!(
+            err.contains("chars total"),
+            "and says how much there was: {err}"
+        );
+    }
+
+    /// A tool that declares nothing keeps the conservative scheduling path (M72).
+    struct Undeclared;
+    #[async_trait::async_trait]
+    impl Tool for Undeclared {
+        fn descriptor(&self) -> &ToolDescriptor {
+            static D: std::sync::OnceLock<ToolDescriptor> = std::sync::OnceLock::new();
+            D.get_or_init(|| ToolDescriptor {
+                name: "undeclared".into(),
+                label: "Undeclared".into(),
+                description: "declares nothing".into(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                execution_mode: ExecutionMode::Sequential,
+            })
+        }
+        async fn execute(
+            &self,
+            _call: ToolInvocation,
+            _ctx: ToolContext,
+            _on_update: ToolUpdateSink,
+        ) -> Result<ToolOutput, ToolFailure> {
+            Err(ToolFailure::msg("never executed"))
+        }
+    }
+
+    #[test]
+    fn a_tool_that_names_no_resource_is_a_barrier() {
+        let tool = Undeclared;
+        assert_eq!(
+            tool.resource_key(
+                &serde_json::json!({"path": "a.rs"}),
+                std::path::Path::new("/ws")
+            ),
+            None,
+            "the default must not let a tool be scheduled as if its reach were known"
+        );
+        // The mode is what tells the planner whether `None` means "reader, harmless" or
+        // "unknown reach, serialize everything".
+        assert_eq!(tool.descriptor().execution_mode, ExecutionMode::Sequential);
+    }
+
+    #[test]
+    fn other_shapes_still_say_what_was_expected() {
+        let err = descriptor()
+            .basic_validate(&serde_json::json!([1, 2, 3]))
+            .unwrap_err();
+        assert!(err.contains("JSON object"), "{err}");
+        assert!(err.contains("[1,2,3]"), "the value is shown: {err}");
+    }
 }

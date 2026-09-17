@@ -186,7 +186,7 @@ impl Tool for ReadTool {
         if body.is_empty() {
             body = "(empty or past end of file)".to_string();
         }
-        crate::read_log::record_read(&path, windowed, capped);
+        crate::read_log::record_read(&ctx.observation_scope, &path, windowed, capped);
         Ok(ToolOutput::text(body))
     }
 }
@@ -299,7 +299,7 @@ impl Tool for WriteTool {
                 // Refuse to overwrite something that changed since the model read it, or that
                 // the model never fully read (`read_log`). Runs inside the queue so no other
                 // harness writer can slip between the check and the write.
-                crate::read_log::verify(&path, true)
+                crate::read_log::verify(&ctx.observation_scope, &path, true)
                     .map_err(|s| ToolFailure::msg(s.diagnosis("write")))?;
                 // Checkpoint before the bytes move (M80): the state a revert would restore.
                 crate::checkpoint::CheckpointStore::open(&workspace)
@@ -311,7 +311,7 @@ impl Tool for WriteTool {
                 let existed = path.exists();
                 std::fs::write(&path, &content)
                     .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                crate::read_log::record_write(&path);
+                crate::read_log::record_write(&ctx.observation_scope, &path);
                 let mut text = format!(
                     "{} {} ({} bytes)",
                     if existed { "overwrote" } else { "created" },
@@ -474,7 +474,7 @@ impl Tool for EditTool {
                 // Same guard as `write`, with `full_overwrite: false` — an edit matches exact
                 // text the model saw, so a partially-read file is fine, but a file that moved
                 // under it is not (`read_log`).
-                crate::read_log::verify(&path, false)
+                crate::read_log::verify(&ctx.observation_scope, &path, false)
                     .map_err(|s| ToolFailure::msg(s.diagnosis("edit")))?;
                 let raw = util::read_text_for_edit(&path)?;
                 // One checkpoint per file per edit call, before the first byte changes (M80) —
@@ -498,7 +498,7 @@ impl Tool for EditTool {
                             let diff = crate::util::unified_diff(&raw, &updated);
                             std::fs::write(&path, &updated)
                                 .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                            crate::read_log::record_write(&path);
+                            crate::read_log::record_write(&ctx.observation_scope, &path);
                             let mut details = serde_json::json!({});
                             if !diff.is_empty() {
                                 details["diff"] = serde_json::Value::String(diff);
@@ -632,7 +632,7 @@ impl Tool for EditTool {
                 let diff = crate::util::unified_diff(&raw, &updated);
                 std::fs::write(&path, &updated)
                     .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                crate::read_log::record_write(&path);
+                crate::read_log::record_write(&ctx.observation_scope, &path);
                 let mut details = serde_json::json!({});
                 if !diff.is_empty() {
                     details["diff"] = serde_json::Value::String(diff);

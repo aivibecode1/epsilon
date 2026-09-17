@@ -1,0 +1,100 @@
+Selected executed output (Windows); full linker commands and configuration metadata omitted.
+
+f02-red.log
+test observations_are_not_inherited_from_another_agent ... FAILED
+another agent's read cannot authorize a write
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.01s
+error: test failed, to rerun pass `-p epsilon-tools --test builtin_tools`
+F02_RED_EXIT=101
+
+gate-f02.log
+===== fmt --check =====
+[exit=0 1s]
+===== clippy =====
+[exit=0 247s]
+===== test =====
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.60s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test observation_scope_is_stable_per_agent_and_renewed_on_restore ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.32s
+test result: ok. 106 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.51s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+error: test failed, to rerun pass `-p epsilon-llm --test wire_fixtures`
+Caused by:
+  could not execute process `C:\Users\Hp\Desktop\My Agent Space\Epsilon\target\debug\deps\wire_fixtures-76eddb95e46e81ff.exe` (never executed)
+Caused by:
+  Access is denied. (os error 5)
+[exit=101 306s]
+===== demo =====
+final reason: Completed
+[exit=0 126s]
+===== real-check =====
+[exit=0 20s]
+===== GATE FAIL =====
+
+f02-test-retry.log
+error: linking with `link.exe` failed: exit code: 1104
+  = note: LINK : fatal error LNK1104: cannot open file 'C:\Users\Hp\Desktop\My Agent Space\Epsilon\target\debug\deps\wire_fixtures-76eddb95e46e81ff.exe'
+error: could not compile `epsilon-llm` (test "wire_fixtures") due to 1 previous error
+TEST_RETRY_EXIT=101
+
+f02-test-recovery.log
+error: linking with `link.exe` failed: exit code: 1104
+  = note: LINK : fatal error LNK1104: cannot open file 'C:\Users\Hp\Desktop\My Agent Space\Epsilon\target\debug\deps\wire_fixtures-76eddb95e46e81ff.exe'
+error: could not compile `epsilon-llm` (test "wire_fixtures") due to 1 previous error
+TEST_RECOVERY_EXIT=101
+
+f02-scoped-tests.log
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test observation_scope_is_stable_per_agent_and_renewed_on_restore ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test read_log::tests::a_file_that_does_not_exist_yet_may_be_created ... ok
+test read_log::tests::a_file_that_changed_underneath_is_refused_with_both_sizes ... ok
+test read_log::tests::a_window_the_harness_imposed_does_not_block_a_rewrite_forever ... ok
+test read_log::tests::a_partial_read_cannot_justify_a_full_overwrite ... ok
+test read_log::tests::an_existing_file_nobody_read_is_not_overwritten_blind ... ok
+test read_log::tests::an_unchanged_file_may_be_written ... ok
+test read_log::tests::retired_observation_scopes_are_reclaimed_on_access ... ok
+test read_log::tests::edits_are_guarded_too ... ok
+test read_log::tests::our_own_write_does_not_look_like_someone_elses_change ... ok
+test result: ok. 77 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test observations_are_not_inherited_from_another_agent ... ok
+test observations_partial_reads_and_failed_edits_do_not_refresh_siblings ... ok
+test observations_stay_stale_after_a_sibling_write_until_reread ... ok
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.88s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+SCOPED_TEST_EXIT=0
+
+Scoped totals: [294, 0, 0] (passed, failed, ignored) across 17 summaries.
+Compile-only check -p epsilon-tools -p epsilon-core --lib: exit 0.

@@ -3,11 +3,377 @@
 All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
 
 ## [Unreleased]
+
+### Added
+- **Observation ownership (M81).** A read used to authorize a write for *any* agent in the session:
+  one shared read-log meant agent B could edit a file it never read because agent A had. Each agent
+  now owns an opaque observation token; task children and restored sessions get fresh ones, sibling
+  writes invalidate the cached observation even when mtime and length still match, and a failed edit
+  no longer refreshes what the next attempt is verified against. Weak references reclaim retired
+  scopes on the next log access.
+- **Language-server diagnostics on every edit (M79).** After `write` and `edit`, the harness asks the
+  language server for the file's language what the compiler thinks and appends a bounded block —
+  errors only, at most twenty, `ERROR [line:col] message` — to the tool's own output, so the model
+  fixes its own type errors in the same turn. Servers are user-installed (nothing is downloaded), one
+  process per project, reused across edits, and a server that refuses to start is never retried. No
+  server, no diagnostics, no error: the edit succeeds and nothing is said. `--lsp auto|off`;
+  `epsilon doctor` lists the servers it can find.
+- **Per-call sandbox modes (M78).** A call can now name its own boundary: `read-only` is always
+  allowed (asking for less needs no approval), and `--sandbox read-only` starts a whole session on
+  the read-only rung, where commands may look but not touch — the workspace mounts read-only where
+  the backend can do that. Asking for a *wider* mode is refused with the reason and the hint, and
+  `danger-full-access` is not available per call at all: it is reachable only through the session
+  switch a human flips. Both sandbox backends now refuse to be handed "no confinement" and call it a
+  boundary.
+- **Sandbox truthfulness (M77).** Every confined outcome now reports how completely the boundary
+  held (`enforcement: full | partial`, with the unconfined dimensions named), each backend declares
+  its own envelope, and `epsilon doctor` prints that declaration instead of a hardcoded string. A
+  bash result carries `details.verdict` (`success` / `exited:N` / `signalled`), which keeps "the
+  command exited non-zero" and "the sandbox refused" as separate answers — the mislabel that made
+  `rg` exiting 1 look like a confinement failure is now impossible by construction.
+
+
+### Added
+- **`epsilon doctor` (M76).** One command that answers "why is this not working": resolved model and
+  *how* it was resolved, where the credential comes from (never its value), the sandbox backend the
+  platform provides, the session file and its lease holder, project instructions and trust, the
+  built-in tool list, and the last failures from the newest session. Exits non-zero when a blocker
+  is found and names the command that fixes each one.
+
+
+### Added
+- **Typed corruption reasons (M75).** A session line this build cannot read is no longer reported as
+  corruption: an entry kind from a newer Epsilon (`UnknownEntryType`) is refused **by name**, while
+  real damage (`NotJson`), a second header and a v1-shape-in-a-current-file each say what they are.
+  Session repairs now report their kind (`RepairKind`) rather than a count, the synthesized entry
+  carries `details.repair`, and `/session` lists what a resumed session was missing.
+
+
+### Added
+- **`@`-references (M74).** `@file`, `@file:10-20`, `@file:10` and `@dir/` in a prompt now attach the
+  content the model needs instead of a path it has to chase. Works in every frontend — TUI, `-p`,
+  RPC and the HTTP server — through one constructor. Sensitive paths (`.env`, keys, credential
+  stores, VCS internals) and paths outside the workspace are refused with the reason shown in the
+  message; the user's own text is never edited, and a prompt with no references is unchanged.
+
+
+### Added
+- **Subdirectory instruction hints (M73).** Working in a subdirectory now pulls that directory's
+  `AGENTS.md`/`CLAUDE.md` — and its ancestors' — into the next request's context, labelled by path.
+  In a monorepo the crate's own conventions are followed instead of guessed at. Bounded and
+  deterministic: ≤5 levels up, the workspace root is not repeated, identical files are deduped by
+  content, ≤5 hints per prompt nearest-first, 4 KB each with the cut announced.
+
+
+### Added
+- **Path-aware tool batching (M72).** A batch no longer serializes just because it contains a
+  mutating tool: `write`/`edit`/`read`/`grep`/`glob`/`ls` declare the resource they act on, calls
+  to *different* files run at the same time, and calls to the *same* file keep the order the model
+  asked for. A `bash` or `task` call still serializes the batch — its reach is unknown. Blocked
+  calls (denied, invalid, unknown tool) no longer cost the batch its parallelism.
+
+
+### Added
+- **Edit matcher: three more fallback stages, and a refusal that bounds them (M71).** The chain
+  grew from three stages to six — escape-normalized (`\n` written as literal text),
+  trimmed-boundary (blank lines the file does not have), and block-anchor (openings and closings
+  remembered, the middle paraphrased) — ordered safest-first. The one variable-height stage is
+  bounded by opencode's rule: a match spanning `max(old+3, old*2)` lines or 500+ characters more
+  than `old_string` is refused with the numbers and guidance, and the file is left untouched.
+  Every loose match names the stage that matched, so the model can check the diff it gets back.
+
+
+### Added
+- **Tool-call argument repair (M70).** Arguments that are not valid JSON — a trailing comma, a
+  payload cut off by the output limit, a double-encoded string, single-quoted JSON — are recovered
+  instead of being silently replaced with `{}`. Arguments that cannot be read are handed on verbatim,
+  and the tool failure quotes them, so the model sees what it actually sent.
+- **Interrupted runs close their own calls (M70).** A tool call left unanswered by an aborted or
+  crashed run gets an error result saying it was never executed, before the next request is built.
+  Providers validate tool-call pairing; the 400 used to arrive one request after the mistake.
+- Duplicate tool-call ids within a message are renamed deterministically (`<id>#2`) — providers
+  reject them and the result pairing was ambiguous.
+
+### M69 — cache attribution (and a gate that fails on warnings)
+A cache-hit percentage cannot say why it dropped. Port-plan Tier 2 item 4, plus a `scripts/gate.sh`
+fix: the clippy step exited 0 with warnings, so one got past the gate.
+
+- **Every call is classified.** `Cold` (the first call of the process), `Served` (answered from
+  cache) or re-billed with a named cause: a model switch, a prompt prefix that stopped being
+  byte-stable, an idle gap longer than the TTL, or nothing the harness can see (it says so rather
+  than blaming a mechanism it did not observe). A provider that reports no cache traffic at all is
+  described as silent, never as wasteful.
+- **The waste is priced, and only what can be.** Re-billed tokens are billed at the model's list
+  input rate — exactly what they cost, from the bundled catalog. Cache reads and writes are
+  reported as tokens, not dollars, because their rates are provider-specific multipliers this crate
+  does not know; an unknown model gets no price at all.
+- **`/session` shows the breakdown**, next to the totals it already printed — including the cause
+  grouping, most expensive first.
+- **`prompt::stable_fingerprint`** hashes the STABLE tier alone (identity + tool lines), which is
+  the quantity ADR-008 promises to hold constant. The volatile tier changing is not a cache break,
+  and a test asserts both halves.
+- **The gate now runs clippy with `-D warnings`.** The previous gate reported PASS alongside a
+  `manual_is_multiple_of` warning in this very milestone's new code.
+
+### M68 — verification evidence and the stop-time nudge
+The contract asked the model to run the project's checks after editing, and nothing recorded
+whether it did. Port-plan Tier 2 item 5 / defect D-14.
+
+- **Edits and the checks that cover them are now recorded.** Every successful `write` / `edit` is
+  logged with the turn it happened in; every `bash` invocation that looks like a check
+  (`cargo test`, `npm run build`, `pytest`, `tsc --noEmit`, `make`, `cd x && cargo test`, …) is
+  logged with its exit status. A file is unverified when no *successful* check has run since it
+  was last changed — "I ran the tests" is not "the tests pass".
+- **A run that ends with unverified edits is told once.** At the stop point the harness injects one
+  message naming the changed files and what has not run, delivered as an ordinary message so it is
+  in the transcript and the session file. Twice at most (`verification_nudges`, default 2); the
+  run is never refused. A failing check changes the wording instead of clearing the edit, and a
+  `Notice` event carries the same state to a frontend.
+
+### M67 — stuck-run guards
+The brakes saw identical *calls*; a stuck run usually looks nothing like that. Port-plan Tier 2
+item 7.
+
+- **Identical results now count, whatever the calls were.** `rg`, `grep` and `find` failing the
+  same way three times is one piece of information, not three. Results are signatured (error-ness
+  plus a normalized head of the text), consecutive identical ones are counted, and the observation
+  rides along with the result the model reads — with the wording escalating at twice the
+  threshold ("report the blocker … or change strategy"). A stalled run also raises a
+  `no_progress` permission request before the next batch, once per batch, the same surface the
+  doom-loop brake uses. `no_progress_threshold` (default 3) configures it; `0` disables it.
+- **A run can no longer end on an empty turn and call it success.** A finished turn with no text
+  and no tool calls gets one nudge message; if the next turn is empty too, the run ends with an
+  error naming the cause. Degenerate repetition (one line taking half a long reply) takes the same
+  path. `empty_turn_retries` (default 1) sets how many nudges are allowed.
+
+### M66 — content provenance: a boundary the text cannot forge, and user words that survive
+Two seams where text is shaped before the model reads it. Port-plan Tier 2 item 8, plus the
+never-paraphrase-the-user invariant from the Hermes mining.
+
+- **External content arrives inside a boundary it cannot forge.** Text from `webfetch`, MCP
+  servers and extensions is enclosed in `<untrusted_tool_result tool="…">`, and every
+  case-variant of the delimiter inside the body is rewritten first — so a page cannot close the
+  boundary early or open a fake one. Local tools (`read`, `bash`, `grep`, …) are untouched:
+  workspace content is the user's own, and it arrives byte-for-byte.
+- **A truncated payload says so.** Providers truncate silently and leave markers that read as
+  prose (`"has_more": true`, `… more items`). When one appears in a long untrusted result, a note
+  follows the wrapper: the data may be incomplete. Before this, a model would summarize the
+  visible slice and report it as the whole dataset.
+- **The user's own words are never paraphrased into a summary.** Compaction now carries the user
+  turns from the summarized range into the new context verbatim, in a `<user_instructions>` block
+  beside the summary — and recovers that block from a previous summary, so instructions survive
+  successive compactions instead of evaporating on the second one. "Do NOT touch the parser"
+  stays "Do NOT touch the parser".
+
+### M65 — the stale-read guard
+`write` and `edit` could destroy work without ever noticing that the file had changed underneath
+the model — a `task` child, a background script or the user's own editor all write to the same
+files. Port-plan Tier 2 item 6 / defect D-15.
+
+- **A write is now checked against what was read.** Overwriting a file that exists but was never
+  read is refused; so is a write or edit to a file that changed since the last read (mtime or
+  size), and a wholesale overwrite of a file that was only read in part. Each refusal names the
+  path, what changed and the action that lifts it. A successful write records the state it
+  produced, so the harness's own change never looks like someone else's. The check runs inside
+  the per-path mutation queue, and the registry is shared by the parent and every `task` child —
+  which is exactly the case it exists for.
+- **The 256 KB read cap is no longer silent.** A large file used to look fully read while the
+  model had only seen its start. The read result now says how big the file is and that the rest
+  was not sent, and the same flag decides whether a later overwrite is legitimate — a cap the
+  model cannot lift is not a reason to refuse, or the guard would trap every file over the cap.
+- **The `write`/`edit` tool descriptions state the rule**, so it is predictable rather than
+  discovered.
+
+### M64 — the compaction trigger is measured, the tail is legal, and files are remembered
+The pressure trigger was a `chars / 4` guess over the whole transcript, the retained tail could
+start in the middle of a tool batch, and every summary forgot which files had been read or
+changed. Port-plan Tier 1 items 1–3, with mutation-checked tests.
+
+- **Context pressure is anchored to what the provider billed.** Every provider reports the true
+  prompt size on every response; the loop now remembers that number with the messages it
+  covered and estimates only what was appended since (`compact::anchored_tokens`, pi
+  `compaction.ts` parity). Before this, one `chars / 4` figure decided the call for prose
+  (over-counted, compacting early and paying for a summary nobody needed) and for code/CJK
+  (under-counted, overflowing the window). The anchor is dropped whenever the history it
+  describes is rewritten — a compaction or a session switch — so a stale number can never
+  describe a different transcript. `Agent::estimated_context_tokens()` exposes the same figure
+  the trigger decides on.
+- **A retained tail can no longer begin with an orphaned tool result.** The tail budget is
+  measured from the end of the transcript, which can land in the middle of a tool batch: the
+  result survives into the tail while its call is summarized away, and wires that validate
+  tool-call pairing reject the whole request — after the summary was paid for. The cut now
+  moves forward to the next turn boundary, or back when the batch runs to the end of the
+  transcript (a slightly larger tail beats an invalid one).
+- **Summaries remember which files were read and changed.** `FileLedger` reads that out of the
+  tool calls themselves — `read` → read, `write`/`edit` → modified — and rides in every summary
+  as a harness-maintained `<file_ledger>` block, accumulating across compactions. Before this,
+  the model re-opened files it had already seen after every compaction, because the summary it
+  was handed depended on the summarizer's recollection rather than on what actually happened.
+
+### M63 — the last mile: a harness someone else can actually use
+An audit of the built binary (not the code) found that the engine worked and the on-ramp did
+not. Everything below is a behaviour change with a regression test; `audit/` holds the review,
+the defect ledger, the port plan and the roadmap.
+
+- **`epsilon --help` exists.** It printed `unknown argument: --help` and exited 2 before. The
+  full reference (modes, flags, environment, files, examples) now ships inside the binary, which
+  matters most for people who installed it and have no README next to the exe.
+- **Headless failures report the real reason.** `-p` printed `no final assistant text produced`
+  for *every* non-clean ending and threw away the provider's own error. An expired key, a rate
+  limit, a context overflow and a mid-stream reset all looked like an empty answer. Now: the
+  reason goes to stderr, partial text is kept on stdout (M62's salvage rule, applied at the CLI),
+  exit stays non-zero.
+- **`real` is a default feature.** `cargo install epsilon-cli` used to produce a binary that
+  could not reach a single real model. Offline-only builds use `--no-default-features`.
+- **Model resolution prefers a provider you can call.** `--model deepseek-chat` resolves to an
+  OpenRouter row; a user holding only a DeepSeek key got a silent fallback to the offline faux
+  provider and a banner naming no provider. Now a callable sibling is preferred (and the
+  substitution is reported), and when nothing can run the message names the provider, its env
+  var, the login command, the providers you *do* have, and a model to try.
+- **Byte-stable prompts are actually byte-stable.** The tool list feeding the STABLE prompt tier
+  and every provider `tools` array came out of a `HashMap`, so two runs of one session sent
+  different bytes and provider prompt caching could never hit across invocations (ADR-008's
+  premise, silently false).
+- **Child processes no longer inherit your credentials.** Every spawned child drops
+  credential-shaped environment variables (`*KEY*`, `*SECRET*`, `*TOKEN*`, `*PASSWORD*`, …) on
+  all three spawn paths; `EPSILON_ENV_PASSTHROUGH` exempts specific names. One `env` in a tool
+  result used to put every key in the transcript, the session file and any export.
+- **Output truncation keeps the head as well as the tail**, with an exact
+  `[... N lines / M bytes omitted]` count — a long compiler log no longer loses its first error.
+  Spill files are written exclusively under a private (`0700`) root, and a spill that fails says
+  so instead of promising a locator that is not there.
+- **A running command is visible.** `Sandbox::run` accepts an output sink, both backends drain
+  pipes incrementally, and `bash` throttles chunks into `ToolExecutionUpdate` events (250 ms,
+  bounded tail) that the TUI shows in the status line. The complete output still returns with the
+  tool result. Previously the sink existed and nobody listened, so a ten-minute build showed a
+  static screen.
+- **Repository and docs**: added `LICENSE` (MIT was declared but the file was missing), removed
+  two build-probe artifacts from the repo root, rewrote the README as an entry point with a table
+  of contents, added `docs/README.md` as the documentation map, moved `design/`, `plans/` and
+  `reports/` under `docs/` (`docs/research/`), added `scripts/gate.sh` for the whole gate
+  battery in one command, and replaced the previous audit's unsupported claims with measured
+  ones.
+### M62 — a failure never discards visible output
+- A stream that dies mid-answer (transport reset, provider error frame, missing terminal frame,
+  stall) now **keeps the text and thinking already delivered**, flags the turn `Error` with the
+  reason, and drops tool calls whose arguments may be half-written — one salvage rule shared by the
+  wire accumulator (`HttpEventStream::failure_message`) and the loop (`Agent::failure_message`).
+- Previously the abort path salvaged and every failure path discarded, so a dropped connection could
+  erase an answer the user watched arrive — including from the durable session a resume reads back.
+### M61 — session write leases
+- **One writer per session file, enforced.** The store owns a cross-process lease (M61):
+  a second `epsilon` opening the same session is refused with the holder's pid instead of
+  silently interleaving appends.
+- The lease **heartbeats** (10 s) so a live holder is never mistaken for a crash leftover;
+  genuinely stale locks are now actually removed (the steal path had never deleted them).
+- `/sessions` marks leased rows `· in use`; re-resuming the session this process already holds works
+  (its own lease is released first), and a refused switch keeps the current session attached.
+### M60 — retries that run, and a stall watchdog
+- **The retry policy is now engaged** on both frontends (direct and fallback streams):
+  transient 429/5xx/network failures are retried with the ADR-010 backoff instead of failing the turn.
+- **Retry waits are visible**: `AgentEvent::Notice` → TUI status line + `⟳` transcript line, `[retry] …` on CLI stderr.
+- **Stall watchdog**: a live stream that produces no bytes for 120 s fails as a network error
+  (`EPSILON_STREAM_IDLE_SECS` to tune, 0 = off) instead of hanging the turn forever. Salvage keeps any prose
+  and never executes a tool call whose arguments may be half-written.
+- **Content-free mid-stream failures are retried** (a stream that dies before any visible delta is re-run
+  transparently, with the duplicate `Start` swallowed); failures after visible output still pass through.
+- `retry::classify` now recognises "timed out" (reqwest's own wording), not just "timeout".
+### M59 — external editor
+- **`/editor`** (also `Ctrl+O` / `Alt+E`) opens the current draft in your own editor:
+  `[editor] command` in the config, else `$VISUAL`, else `$EDITOR` — the TUI suspends,
+  the editor gets the terminal, and the result replaces the draft (one trailing newline trimmed).
+- A non-zero exit keeps the draft and says so; an unconfigured editor names both remedies
+  instead of doing nothing.
+- `epsilon_core::config::load_config_string("<table>", "<key>")` is the new generic config reader.
+### M58 — durable child sessions
+- **`task_id` survives a restart**: every delegated child now gets its own session file
+  (`<parent>-<task-id>.jsonl`, header `parent_session`, a `task_meta` entry written before the
+  first turn), so a resume named after the parent's process is gone rehydrates the child's
+  transcript, model, and type from disk and continues it.
+- **Honest state on restore**: the snapshot's state comes from the file's last `TurnEnd`
+  (`Failed` for error/abort/budget/blocked), output is labelled `[restored from disk]`, turns
+  accumulate across the restart, and a child whose model retired restores on the inherited one
+  with a note.
+- `/sessions` marks those rows `· task child` (M57 browser).
+- No store attached (tests, embedding callers) means children stay in memory exactly as before.
+### M57 — session discovery + the `/sessions` browser
+- **`/sessions`** (and bare `/resume`) opens a browser over the workspace's session files:
+  newest first, the attached session marked, each row `title · age · size · file`; typing filters,
+  Up/Down move, Enter resumes, Esc closes.
+- **Discovery moved to the session brick**: `epsilon_session::{list_sessions, latest_session,
+  summarize}` (bounded head/tail reads — listing cost is independent of session length) now back
+  both the browser and the CLI's `--continue` scan, so "which files here are sessions" has one answer.
+- **One switch path**: `/resume <path>`, `/import`, and the browser all call
+  `App::switch_session_file` (store swap + transcript rehydrate + session-name rehydration).
+### M56 — per-delegation model override
+- **`task` takes a `model`**: delegate a child onto a chosen catalog model (e.g.
+  `deepseek-flash`) — cheap scouts, mechanical sweeps — instead of always inheriting the
+  session's model. Precedence: the agent type's own model wins (operator config), then the
+  call's request, then inheritance.
+- **No silent substitution**: an unknown or partial-only model id is refused before any child
+  is built (a partial match is offered as a suggestion), and every report — tool envelope,
+  `details`, `/tasks`, and the background completion notice — names the model that actually ran.
+### M55 — GitHub Copilot: wire, catalog rows, device login
+- **`github-copilot` is a real provider now.** `CopilotWire` wraps the family wire
+  (`claude-*` → Anthropic Messages, everything else → OpenAI-compatible), sends the
+  bearer on both dialects, and resolves its host from the credential (`proxy-ep` →
+  `api.…`, else `copilot-api.<enterprise>`, else the individual default) — the reason
+  `ProviderWire` grew `endpoint_for(model, key)`.
+- **27 catalog rows** generated from models.dev's `github-copilot` registry (`github-copilot/…`
+  ids, 8 Claude rows on the Messages wire), with `-picker` aliases excluded.
+- **Login**: `epsilon auth login github-copilot --oauth` runs GitHub's device flow, then mints
+  the Copilot bearer from the GitHub token — nothing unminted is ever stored. Enterprise
+  hosts come from `[oauth.github-copilot] enterprise_domain` and ride the credential.
+- **Refresh**: a third style (`RefreshStyle::CopilotMint`) — GET with editor headers, no client
+  id, no body, no rotation; the stored GitHub token is re-spent until it is revoked.
+- **Drift absorbed** by the same refresh: bedrock ids are canonical (`bedrock/…`, region/version
+  qualifiers stripped — M49's hand rows are gone), and two catalog pins moved with the registry.
+### M54 — task abort cascade + `/tasks`
+- **Esc stops the children too**: aborting a run now cancels every delegated
+  child still working (`Agent::abort_delegated_tasks`), instead of leaving
+  background subagents spending tokens after you pressed stop. Aborted
+  children record *"subagent run aborted"* rather than an opaque stop reason.
+- **`/tasks`**: the TUI lists what the registry is holding — task id, state,
+  description, turns taken, first output line — or explains how tasks appear
+  when there are none.
+
+### M53 — `task` background runs + resumption
+- **Background subagents**: `task` accepts `background: true`, returns the task
+  id immediately, and delivers the child's result later as its own message —
+  the model keeps working while the child runs. The notice is emitted as a
+  normal message event, so the transcript shows what the model saw.
+- **Resumable children**: pass `task_id` to continue the *same* child (it
+  remembers its earlier turns; turn counts accumulate), or with no prompt to
+  get a status report — no more silent "started fresh".
+- **Honest failures**: a child that dies on a provider error lands in the
+  registry as `failed`, not as a completed task; unknown ids name what is
+  tracked. The registry is bounded (16 tasks, oldest finished evicted).
+
+### M52 — OAuth login ceremonies + real-feature forwarding fix
+- **Subscription login works**: `epsilon auth login anthropic --oauth` (Claude
+  Pro/Max), `openrouter --oauth` (PKCE → permanent key) and `xai --oauth`
+  (RFC 8628 device code, SuperGrok/X Premium) run the provider's own ceremony
+  and store the credential in `~/.config/epsilon/auth.json`, where the M51
+  refresh path keeps it alive. `--paste` for a browser on another machine.
+- **TUI parity**: `/login <provider> oauth` runs the ceremony on a worker
+  thread — browser round-trip, device code and paste overlay, Esc cancels.
+- **Client ids are yours**: `<PROVIDER>_OAUTH_CLIENT_ID` or
+  `[oauth.<provider>] client_id` in the global config; Epsilon never ships
+  another project's registration.
+- **Fix — `--features real` now means real**: the CLI's feature enabled only
+  `epsilon-llm/real`, so `epsilon-core`'s live provider hot-swap compiled to a
+  `false` stub in every installed build (M32d's `/login` "now live" path could
+  not work). All three crates forward now, and a compile-time guard turns a
+  future omission into a build error.
+
+> M32–M51 landed as commits `e200815` and the working tree; their summaries
+> live in [`docs/milestones/`](docs/milestones) (M33 forward).
+
 ### M31 — Reference gap closure (G-M1..G-M5)
 - **Slash-navigable sessions**: `/compact` reclaims context on demand (complements 80%-threshold auto-compact), `/timeline` lists `branch_entries()` with lane and snippet and jumps via `navigate_to`, `/fork` copies JSONL to `*-fork-<id>.jsonl` preserving the tree.
 - **MEMORY.md tier**: global `~/.config/epsilon/MEMORY.md` plus workspace `MEMORY.md` injected into the CONTEXT prompt tier alongside `AGENTS.md`, hash-tagged for cache stability (Hermes pattern, hash-tested).
 - **Wildcard parity**: `wildcards.rs` now matches opencode `wildcard.ts` (`*` → `.*`, `?` → `.`, `\` → `/`, regex-metas escaped, `**` collapsed) via the `regex` crate, with backslash-normalized tests.
-- **webfetch deferred honestly**: rule already in `epsilon-safety` (`webfetch → Ask`), tool ships in the next milestone (plan 010); `design/epsilon-architecture.md` now says so instead of promising it.
+- **webfetch deferred honestly**: rule already in `epsilon-safety` (`webfetch → Ask`), tool ships in the next milestone (plan 010); `docs/design/epsilon-architecture.md` now says so instead of promising it.
 
 ### M30 — Todo tool + checklist rendering; edit diff preview + TUI unified diff
 - **Todo tool** closes the agent-contract gap: the model keeps a typed checklist the TUI renders inline.
@@ -153,8 +519,8 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
 - **CLI composition cleanup** (plan 008): `RunParams`/`SharedRun` structs replace the
   11-param composition; single Diagnostics sink; reasoned targeted dead_code allow;
   unused manifest deps dropped; AGENTS.md stale test count fixed.
-- Suite: 220 tests passing. Plans live in `plans/` with the audit report at
-  `reports/re-audit-2026-08-24.md`.
+- Suite: 220 tests passing. Plans live in `docs/plans/` with the audit report at
+  `docs/research/re-audit-2026-08-24.md`.
 
 ### M18 - Alignment pass: docs audit, pi parity closure, plan mode
 - **Documentation audit**: M14 dev log backfilled from commit evidence
@@ -171,8 +537,8 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
   outright plus git commit/push commands; monotonic-deny makes the boundary hold
   against project rules; startup banner states the posture. Live-verified against
   the faux provider including a control run.
-- Reports: `reports/pi-alignment-2026-08.md` (layer-by-layer pi correspondence),
-  `reports/research-pass-2-2026-08.md` (community signal + import decisions).
+- Reports: `docs/research/pi-alignment-2026-08.md` (layer-by-layer pi correspondence),
+  `docs/research/research-pass-2-2026-08.md` (community signal + import decisions).
 
 ### M17 - pi-agent provider + TUI port (full attribution)
 - **Provider layer rewritten as a faithful pi port**: direct per-provider HTTP
