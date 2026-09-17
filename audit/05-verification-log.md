@@ -219,6 +219,35 @@ choice, the F00 changes were implemented and verified:
 Cleanup after this round follows the standing disk rule and is recorded in the
 next section.
 
+## Phase 3 batch A — F01 verification (2026-09-17)
+
+- **Red first:** with the pre-fix reader, the new regression
+  `edit_refuses_capped_source_without_losing_tail` failed exactly as the ledger
+  predicts: a 263,188-byte file became **262,144** bytes (the unread suffix was
+  discarded). Log preserved at [`f01-red.log`](evidence/f01-red.log).
+- **Fix** (diff in [`f01-change.patch`](evidence/f01-change.patch)):
+  `util::read_text_for_edit` reads at most `MAX_READ_BYTES + 1` bytes through a
+  probe, refuses anything over the 256 KiB limit, and requires valid UTF-8
+  (strict `String::from_utf8`, no lossy conversion); the display reader is
+  unchanged. `EditTool` now calls it before checkpoint creation, so both the
+  single and batch paths refuse unsafe sources before any mutation. The tool
+  description documents the 256 KiB/UTF-8 edit limit.
+- **Mutation check:** with the tests present and the old reader temporarily
+  restored, the three refusal tests failed (`unsafe input must be refused`) and
+  only the exact-limit success test passed — the suite genuinely distinguishes
+  the old and new readers.
+- **Five gates:** `bash scripts/gate.sh f01` → `GATE PASS`, exits
+  fmt=0 clippy=0 test=0 demo=0 real-check=0
+  ([`f01-gate.log`](evidence/f01-gate.log)). The F00 checkpoint test still passes
+  in the same run.
+- **Independent review:** a separate read-only subagent verdict found no
+  off-by-one, no logic errors, no security concerns; validation is shared by
+  single/replace_all/batch before checkpoint creation or writes.
+- **Scope limits:** the 256 KiB edit ceiling (bounded ingestion) is deliberate —
+  a bounded full-file edit reader for larger files is future work per the ledger's
+  minimum fix; the model-visible read cap was not widened. The concurrent
+  external-writer race (F02 territory) remains out of this batch's scope.
+
 ## Next verification round
 
 After Phase 3 is authorized, correct F00 and run the complete gates once. The targeted failing command is:

@@ -1,0 +1,170 @@
+--- a/crates/epsilon-tools/src/util.rs
++++ b/crates/epsilon-tools/src/util.rs
+@@ -166,6 +166,29 @@
+             out.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+         }
+     }
++}
++
++/// Read complete, valid UTF-8 for whole-file edit writeback, within the read byte limit.
++///
++/// Unlike display reads, edits must never use a truncated or lossily decoded buffer.
++/// Probe one extra byte on the opened handle instead of trusting path metadata.
++/// This bounds ingestion without widening the model-visible read cap.
++pub fn read_text_for_edit(path: &Path) -> Result<String, ToolFailure> {
++    let f = fs::File::open(path)
++        .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?;
++    let mut buf = Vec::new();
++    f.take(MAX_READ_BYTES as u64 + 1)
++        .read_to_end(&mut buf)
++        .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
++    if buf.len() > MAX_READ_BYTES {
++        return Err(ToolFailure::msg(format!(
++            "refused to edit: file exceeds the {MAX_READ_BYTES}-byte edit limit"
++        )));
++    }
++    if buf.iter().take(4096).any(|b| *b == 0) {
++        return Err(ToolFailure::msg("refused: file looks binary"));
++    }
++    String::from_utf8(buf).map_err(|_| ToolFailure::msg("refused to edit: file is not valid UTF-8"))
+ }
+
+ /// Read a file's bytes, refusing probable binaries (NUL in the first 4 KiB).
+--- a/crates/epsilon-tools/src/files.rs
++++ b/crates/epsilon-tools/src/files.rs
+@@ -476,10 +476,10 @@
+                 // under it is not (`read_log`).
+                 crate::read_log::verify(&path, false)
+                     .map_err(|s| ToolFailure::msg(s.diagnosis("edit")))?;
++                let raw = util::read_text_for_edit(&path)?;
+                 // One checkpoint per file per edit call, before the first byte changes (M80) —
+                 // both the single-edit and the batch path below run after this point.
+                 crate::checkpoint::CheckpointStore::open(&workspace).record(&workspace, &path, "edit");
+-                let raw = util::read_text_capped(&path)?;
+                 let eol = crate::edit_match::detect_eol(&raw);
+                 let content_lf = crate::edit_match::normalize_to_lf(&raw);
+
+--- a/crates/epsilon-tools/tests/builtin_tools.rs
++++ b/crates/epsilon-tools/tests/builtin_tools.rs
+@@ -58,6 +58,121 @@
+     std::fs::write(root.join("README.md"), "# demo\nhello world\n").unwrap();
+     let ctx = ctx_for(root);
+     (dir, ctx)
++}
++
++#[tokio::test]
++async fn edit_refuses_capped_source_without_losing_tail() {
++    let dir = tempfile::tempdir().unwrap();
++    let ctx = ctx_for(dir.path());
++    let path = dir.path().join("large.txt");
++    let mut original = vec![b'x'; util::MAX_READ_BYTES + 1024];
++    original[300..306].copy_from_slice(b"TARGET");
++    original.extend_from_slice(b"\nUNIQUE_UNREAD_TAIL\n");
++    std::fs::write(&path, &original).unwrap();
++    run(
++        &ReadTool::new(),
++        &ctx,
++        serde_json::json!({"path": "large.txt"}),
++    )
++    .await
++    .unwrap();
++
++    let result = run(
++        &EditTool::new(),
++        &ctx,
++        serde_json::json!({"path": "large.txt", "old_string": "TARGET", "new_string": "CHANGE"}),
++    )
++    .await;
++    assert_eq!(
++        std::fs::read(&path).unwrap().len(),
++        original.len(),
++        "an edit must never discard the unread suffix"
++    );
++    assert_eq!(std::fs::read(&path).unwrap(), original);
++    assert!(result.unwrap_err().contains("limit"));
++}
++
++async fn check_edit_source(original: Vec<u8>, refusal: Option<&str>) {
++    for mode in ["single", "replace_all", "batch"] {
++        let dir = tempfile::tempdir().unwrap();
++        let ctx = ctx_for(dir.path());
++        let path = dir.path().join("input.txt");
++        std::fs::write(&path, &original).unwrap();
++        run(
++            &ReadTool::new(),
++            &ctx,
++            serde_json::json!({"path": "input.txt"}),
++        )
++        .await
++        .unwrap();
++        let args = if mode == "batch" {
++            serde_json::json!({"path": "input.txt", "edits": [
++                {"old_string": "TARGET", "new_string": "CHANGE"},
++                {"old_string": "SECOND", "new_string": "RESULT"}
++            ]})
++        } else {
++            serde_json::json!({"path": "input.txt", "old_string": "TARGET",
++                "new_string": "CHANGE", "replace_all": mode == "replace_all"})
++        };
++        let result = run(&EditTool::new(), &ctx, args).await;
++        let actual = std::fs::read(&path).unwrap();
++        let mut expected = original.clone();
++        if let Some(reason) = refusal {
++            assert!(result.is_err(), "{mode}: unsafe input must be refused");
++            assert!(
++                result.unwrap_err().contains(reason),
++                "{mode}: refusal reason"
++            );
++            assert!(
++                !dir.path().join(".epsilon/checkpoints").exists(),
++                "{mode}: refused input must not produce a checkpoint"
++            );
++        } else {
++            result.unwrap();
++            expected[..6].copy_from_slice(b"CHANGE");
++            if mode == "batch" {
++                expected[7..13].copy_from_slice(b"RESULT");
++            }
++        }
++        assert_eq!(actual.len(), expected.len(), "{mode}: source length");
++        assert!(actual == expected, "{mode}: all unrelated bytes preserved");
++    }
++}
++
++fn edit_source_of_size(size: usize) -> Vec<u8> {
++    let mut bytes = b"TARGET SECOND\n".to_vec();
++    bytes.resize(size, b'x');
++    bytes
++}
++
++#[tokio::test]
++async fn edit_source_at_and_below_limit_is_complete() {
++    for size in [util::MAX_READ_BYTES - 1, util::MAX_READ_BYTES] {
++        let mut bytes = edit_source_of_size(size);
++        bytes[size - 2..].copy_from_slice("é".as_bytes());
++        check_edit_source(bytes, None).await;
++    }
++}
++
++#[tokio::test]
++async fn edit_source_one_byte_over_limit_is_refused() {
++    check_edit_source(edit_source_of_size(util::MAX_READ_BYTES + 1), Some("limit")).await;
++}
++
++#[tokio::test]
++async fn edit_source_multibyte_split_at_limit_is_refused() {
++    let mut bytes = edit_source_of_size(util::MAX_READ_BYTES - 1);
++    bytes.extend_from_slice("é".as_bytes());
++    check_edit_source(bytes, Some("limit")).await;
++}
++
++#[tokio::test]
++async fn edit_source_invalid_utf8_is_refused() {
++    for size in [100, util::MAX_READ_BYTES] {
++        let mut bytes = edit_source_of_size(size);
++        bytes[size - 1] = 0xff;
++        check_edit_source(bytes, Some("UTF-8")).await;
++    }
+ }
+
+ #[tokio::test]
