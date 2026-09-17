@@ -15,23 +15,119 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use epsilon_contracts::agent_event::AgentEvent;
-use epsilon_contracts::content::UserContent;
-use epsilon_contracts::message::{Message, StopReason, UserMessage};
-use epsilon_contracts::new_id;
+use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
+use epsilon_contracts::message::{Message, StopReason};
 use epsilon_core::{Agent, LoopLimits, ToolRegistry};
 use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
 use epsilon_mcp::McpServerConfig;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
 
+/// M52 guard: if this crate is built with `real` while `epsilon-core` is not,
+/// `Agent::try_hot_swap_to_real` silently degrades to "restart epsilon".
+/// Binding core's marker makes that combination a build error.
+#[cfg(feature = "real")]
+const _REAL_PATH_FORWARDED: () = epsilon_core::REAL_PATH_ENABLED;
+
 const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon -p \"task\"       headless run · epsilon --serve [--port N] · epsilon --rpc
   epsilon --demo          scripted offline demo · --list-models [provider]
+  epsilon doctor          why is this not working: model, credentials, sandbox, session, trust
   epsilon auth list       stored provider keys (~/.config/epsilon/auth.json)
   epsilon auth login <provider> [key]   save an API key (prompted if key omitted)
+  epsilon auth login <provider> --oauth [--paste]   subscription login (anthropic|openrouter|xai)
   epsilon auth logout <provider>        remove the stored key
   flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b]
-         --sandbox auto|off · --plan (read-only) · -c/--continue | --resume f · --version";
+         --sandbox auto|read-only|off · --plan · -c/--continue | --resume f · --version
+  epsilon --help          every flag, env var and file, in full";
+
+/// Full reference, printed by `epsilon --help` / `-h` (and by `epsilon help`).
+///
+/// Kept in one place so the shipped binary is its own documentation: a user who
+/// installed with `cargo install` has no README next to the exe, and the previous
+/// behaviour (`unknown argument: --help`) made the binary look broken.
+const HELP: &str = "\
+epsilon — a coding-agent harness in Rust.
+
+USAGE
+  epsilon [MODE] [FLAGS]
+
+MODES (pick one; the default is the interactive TUI)
+  (none)            interactive TUI over the current directory
+  -p, --print TASK  headless single prompt: reply text to stdout, diagnostics to
+                    stderr, exit 0 only when the model finished cleanly
+  --tui [TASK]      interactive TUI, optionally seeded with a first prompt
+  --serve [--port N] [TASK]
+                    HTTP + SSE server for editors and other frontends (OpenAPI at
+                    /openapi.json); default port 8787
+  --rpc             NDJSON request/response over stdio (one JSON object per line)
+  --demo            scripted offline run against the faux provider — proves the
+                    loop works with no key and no network
+  --list-models [PROVIDER]
+                    print the bundled model catalog (optionally one provider)
+  auth list | login <provider> [key] [--oauth [--paste]] | logout <provider>
+                    manage stored credentials
+  --tui-bench N     render benchmark for the transcript (N synthetic messages)
+
+FLAGS
+  -m, --model ID        model to run (catalog id, alias, or provider/model)
+  --provider faux|real  override auto-detection (default: real when a key is
+                        configured, otherwise the offline faux provider)
+  --fallback ID         retryable failures fall through to this model; repeatable
+  --workspace DIR       run as if started in DIR
+  --lsp auto|off        Language-server diagnostics on edited files (default auto:
+                        ask when a server for the language is installed)
+  --sandbox MODE        OS confinement for shell commands:
+                          auto       best backend, fail closed when none exists (default)
+                          read-only  commands may look, not touch (the workspace mounts
+                                     read-only where the backend can do it)
+                          off        no confinement at all — trusted automation only
+  --plan                read-only run: write/edit denied, git commit/push blocked
+  --yes                 unattended runs auto-APPROVE permission asks. Without it,
+                        unattended runs auto-deny.
+  -c, --continue        resume the newest session in this workspace
+  --resume FILE         resume a specific session file
+  --script FILE         faux-provider script for offline runs
+  --mcp NAME=CMD[:A,B]  attach an MCP server over stdio
+  -V, --version         print the version
+  -h, --help            this text
+
+ENVIRONMENT
+  <PROVIDER>_API_KEY    provider credential (ANTHROPIC_API_KEY, OPENAI_API_KEY,
+                        DEEPSEEK_API_KEY, GEMINI_API_KEY, XAI_API_KEY,
+                        OPENROUTER_API_KEY, MOONSHOT_API_KEY, ZAI_API_KEY,
+                        GROQ_API_KEY). Stored credentials win over env vars.
+  RUST_LOG              tracing filter for diagnostics
+  EPSILON_STREAM_IDLE_SECS
+                        seconds of stream silence before a turn fails as a network
+                        error (default 120, 0 disables)
+
+FILES
+  ~/.config/epsilon/config.toml   model, picker favorites, custom providers,
+                                  [oauth.<provider>] client ids, [editor] command
+  ~/.config/epsilon/auth.json     stored credentials (chmod 600 where supported)
+  ~/.config/epsilon/MEMORY.md     global memory injected into the prompt
+  ~/.config/epsilon/history       prompt history
+  .epsilon/sessions/*.jsonl       session transcripts for this workspace
+  .epsilon/config.toml            project config (trust-gated)
+  AGENTS.md, CLAUDE.md, MEMORY.md project instructions and memory, injected into
+                                  the prompt's CONTEXT tier
+  .epsilon/skills, .agents/skills, ~/.config/epsilon/skills
+                                  SKILL.md skill folders (progressive disclosure)
+
+EXAMPLES
+  epsilon                                  # start working in this repo
+  epsilon -p \"summarize the failing test\"   # one-shot, pipe-friendly
+  epsilon --model deepseek-v4-flash -p hi   # pick a model explicitly
+  epsilon auth login anthropic --oauth      # subscription login
+  epsilon -c -p \"keep going\"                # continue the newest session
+
+Exit codes: 0 success · 1 run or provider failure · 2 bad usage.";
+
+/// The full help text, without the trailing newline ceremony (kept as a helper so
+/// tests can assert on it).
+fn help_text() -> &'static str {
+    HELP
+}
 
 struct Args {
     mode: Mode,
@@ -40,6 +136,8 @@ struct Args {
     mcp_servers: Vec<McpServerConfig>,
     port: u16,
     confinement: epsilon_tools::Confinement,
+    /// M79: ask a language server about edited files (`--lsp auto|off`).
+    lsp: epsilon_tools::Lsp,
     /// Explicit --provider; None = auto-detect from env keys (M14).
     provider: Option<Provider>,
     /// `--model` override; None falls back to saved config then the catalog default.
@@ -87,6 +185,8 @@ enum Mode {
     ListModels(Option<String>),
     /// M22: opencode-style credential management (list/login/logout), then exit.
     Auth(AuthAction),
+    /// M76: diagnose the on-ramp — model, credentials, sandbox, session, trust — and exit.
+    Doctor,
     /// Hidden M16a benchmark: build n synthetic transcript messages, time real draws,
     /// print a report, exit. Not advertised in --help usage beyond this line.
     TuiBench(usize),
@@ -101,6 +201,12 @@ enum AuthAction {
     Login {
         provider: String,
         key: Option<String>,
+        /// M52: run the provider's OAuth ceremony (`--oauth`) instead of
+        /// storing a pasted API key.
+        oauth: bool,
+        /// M52: skip the loopback callback listener and ask for a pasted
+        /// redirect URL (browser on another machine / ssh).
+        paste: bool,
     },
     /// Remove a provider's stored key.
     Logout { provider: String },
@@ -108,6 +214,13 @@ enum AuthAction {
 
 fn parse_args() -> Args {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw
+        .iter()
+        .any(|a| a == "--help" || a == "-h" || a == "help")
+    {
+        println!("{}", help_text());
+        std::process::exit(0);
+    }
     if raw.iter().any(|a| a == "--version" || a == "-V") {
         println!("epsilon {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
@@ -122,8 +235,34 @@ fn parse_args() -> Args {
                     .get(2)
                     .cloned()
                     .unwrap_or_else(|| die("auth login requires a provider id (e.g. anthropic)"));
-                let key = raw.get(3).cloned();
-                Mode::Auth(AuthAction::Login { provider, key })
+                // M52: `--oauth` starts the subscription ceremony, `--paste`
+                // forces the manual-redirect path, a bare 4th token is the
+                // API key (M22 behavior, unchanged).
+                let mut oauth = false;
+                let mut paste = false;
+                let mut key: Option<String> = None;
+                for arg in raw.iter().skip(3) {
+                    match arg.as_str() {
+                        "--oauth" | "oauth" => oauth = true,
+                        "--paste" => paste = true,
+                        other if other.starts_with("--") => {
+                            die(&format!("unknown auth login flag '{other}'"))
+                        }
+                        other => {
+                            if key.is_none() {
+                                key = Some(other.to_string());
+                            } else {
+                                die(&format!("unexpected extra argument '{other}'"));
+                            }
+                        }
+                    }
+                }
+                Mode::Auth(AuthAction::Login {
+                    provider,
+                    key,
+                    oauth,
+                    paste,
+                })
             }
             Some("logout") => {
                 let provider = raw
@@ -141,6 +280,7 @@ fn parse_args() -> Args {
             mcp_servers: Vec::new(),
             port: 8787,
             confinement: epsilon_tools::Confinement::Auto,
+            lsp: epsilon_tools::Lsp::Auto,
             provider: None,
             model_id: None,
             fallbacks: Vec::new(),
@@ -155,6 +295,7 @@ fn parse_args() -> Args {
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
+    let mut lsp = epsilon_tools::Lsp::Auto;
     // --plan: read-only research run (opencode plan-agent parity).
     let mut plan_mode = false;
     // --yes: unattended runs approve gated asks (explicit opt-in; default is deny).
@@ -210,21 +351,37 @@ fn parse_args() -> Args {
                     .unwrap_or_else(|| die("--workspace requires a directory"));
                 workspace = Some(PathBuf::from(dir));
             }
+            "--lsp" => {
+                i += 1;
+                let mode = raw
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| die("--lsp requires auto|off"));
+                lsp = match mode.as_str() {
+                    "auto" => epsilon_tools::Lsp::Auto,
+                    "off" => epsilon_tools::Lsp::Off,
+                    other => die(&format!("unknown --lsp mode: {other} (want auto|off)")),
+                };
+            }
             "--sandbox" => {
                 i += 1;
                 let mode = raw
                     .get(i)
                     .cloned()
-                    .unwrap_or_else(|| die("--sandbox requires auto|off"));
+                    .unwrap_or_else(|| die("--sandbox requires auto|read-only|off"));
                 confinement = match mode.as_str() {
                     "auto" => epsilon_tools::Confinement::Auto,
+                    // The read-only rung of the mode ladder: commands may look, not touch.
+                    "read-only" | "readonly" => epsilon_tools::Confinement::ReadOnly,
                     "off" => {
                         eprintln!(
                             "WARNING: OS confinement disabled (--sandbox off); commands run unconfined"
                         );
                         epsilon_tools::Confinement::Off
                     }
-                    other => die(&format!("unknown --sandbox mode: {other} (want auto|off)")),
+                    other => die(&format!(
+                        "unknown --sandbox mode: {other} (want auto|read-only|off)"
+                    )),
                 };
             }
             "--provider" => {
@@ -252,6 +409,7 @@ fn parse_args() -> Args {
                     }),
                 );
             }
+            "--doctor" => mode = Mode::Doctor,
             "--demo" => mode = Mode::Demo,
             "--plan" => plan_mode = true,
             "--yes" => auto_approve = true,
@@ -294,6 +452,10 @@ fn parse_args() -> Args {
                     });
                 mcp_servers.push(parse_mcp_spec(&spec));
             }
+            // M76: the bare subcommand form (`epsilon doctor`), which is how the docs and the
+            // usage line spell it. It is a positional, so it must be recognised here — before the
+            // unknown-argument arm turns a documented command into a usage dump.
+            "doctor" if i == 0 => mode = Mode::Doctor,
             other => die(&format!("unknown argument: {other}\n{USAGE}")),
         }
         i += 1;
@@ -305,6 +467,7 @@ fn parse_args() -> Args {
         mcp_servers,
         port,
         confinement,
+        lsp,
         provider,
         model_id,
         fallbacks,
@@ -367,6 +530,12 @@ fn main() {
     if let Mode::Auth(action) = &args.mode {
         std::process::exit(auth_command(action));
     }
+    // M76: the diagnosis runs before the runtime exists. It needs no agent, no lease and no
+    // network — a diagnostic that first builds the machinery cannot diagnose the machinery
+    // (and building one prints the startup banner over the report).
+    if matches!(args.mode, Mode::Doctor) {
+        std::process::exit(doctor_mode(&args));
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -414,12 +583,48 @@ fn auth_command(action: &AuthAction) -> i32 {
             }
             println!("stored credentials (~/.config/epsilon/auth.json):");
             for (provider, cred) in &creds {
-                let k = cred.key.trim();
-                println!("  {provider:<14} {}", mask_key(k));
+                match cred {
+                    epsilon_llm::auth::StoredCredential::Api { key, .. } => {
+                        println!("  {provider:<14} {}", mask_key(key.trim()));
+                    }
+                    epsilon_llm::auth::StoredCredential::Oauth { expires, .. } => {
+                        println!("  {provider:<14} oauth (expires {expires})");
+                    }
+                }
             }
             0
         }
-        AuthAction::Login { provider, key } => {
+        AuthAction::Login {
+            provider,
+            key,
+            oauth,
+            paste,
+        } => {
+            let provider = provider.trim().to_string();
+            if *oauth {
+                // M52: subscription login (pi `auth/oauth/*.ts` login half).
+                return login_oauth(&provider, *paste);
+            }
+            if *paste {
+                eprintln!("--paste only applies to --oauth logins");
+                return 2;
+            }
+            // M48: `google-vertex` needs project + location alongside the key
+            // (pi's login prompts for all three). Stored in the credential's
+            // `env` map — the same place pi's `credential.env` keeps them —
+            // so `wire_for` picks them up without extra plumbing.
+            if provider == "google-vertex" {
+                return login_google_vertex(key);
+            }
+            // M49: `amazon-bedrock` offers bearer-token XOR the ambient AWS
+            // chain (pi's login select: bearer token / AWS profile /
+            // credential chain). A stored key = bearer token; profile/chain
+            // choices store a marker + env (the chain material itself stays
+            // in env/files, never copied into our store — pi's resolve
+            // detects it ambiently too).
+            if provider == "amazon-bedrock" {
+                return login_amazon_bedrock(key);
+            }
             let key = match key {
                 Some(k) => k.clone(),
                 None => {
@@ -492,6 +697,373 @@ fn read_secret_line() -> Option<String> {
         .map(|_| line.trim_end_matches(['\r', '\n']).to_string())
 }
 
+/// `epsilon auth login <provider> --oauth [--paste]` (M52).
+///
+/// Runs the provider's OAuth ceremony: PKCE providers open the browser and
+/// capture the redirect on a loopback listener (or a paste with `--paste`),
+/// device providers print a user code and poll. The resulting credential
+/// lands in `~/.config/epsilon/auth.json` through the same store the API-key
+/// path uses, so the next request picks it up with no restart.
+#[cfg(feature = "real")]
+fn login_oauth(provider: &str, paste_only: bool) -> i32 {
+    use epsilon_llm::oauth_login::{LoginSaved, login, oauth_providers};
+    if !oauth_providers().contains(&provider) {
+        eprintln!(
+            "provider '{provider}' has no OAuth login here — available: {}",
+            oauth_providers().join(", ")
+        );
+        eprintln!("API-key login still works: epsilon auth login {provider} <key>");
+        return 2;
+    }
+    println!(
+        "starting OAuth login for {provider}{} — client id from the environment or ~/.config/epsilon/config.toml",
+        if paste_only { " (paste mode)" } else { "" }
+    );
+    let mut ui = CliLoginUi {
+        stdin_rx: None,
+        announce_paste: true,
+        paste_only,
+    };
+    match login(provider, &mut ui, !paste_only) {
+        Ok(LoginSaved::Oauth {
+            provider,
+            path,
+            expires,
+        }) => {
+            println!(
+                "stored {provider} OAuth tokens (expires {expires}) in {}",
+                path.display()
+            );
+            println!("next request uses them — no restart needed");
+            0
+        }
+        Ok(LoginSaved::Key { provider, path }) => {
+            println!("stored {provider} key in {}", path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+/// Offline builds (no `real` feature) cannot reach a token endpoint; say so
+/// instead of pretending the flag exists.
+#[cfg(not(feature = "real"))]
+fn login_oauth(provider: &str, _paste_only: bool) -> i32 {
+    eprintln!(
+        "OAuth login for '{provider}' needs the real-provider build:\n  \
+         cargo install --path crates/epsilon-cli --features real --force"
+    );
+    2
+}
+
+/// Terminal implementation of the login surface: prints progress, shows the
+/// device code, and races the loopback callback against a pasted redirect.
+#[cfg(feature = "real")]
+struct CliLoginUi {
+    stdin_rx: Option<std::sync::mpsc::Receiver<String>>,
+    announce_paste: bool,
+    paste_only: bool,
+}
+
+#[cfg(feature = "real")]
+impl CliLoginUi {
+    /// Start (once) a reader thread so a paste can arrive while the callback
+    /// listener is armed — pi's dual-input path.
+    fn stdin_lines(&mut self) -> &std::sync::mpsc::Receiver<String> {
+        if self.stdin_rx.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let stdin = std::io::stdin();
+                for line in stdin.lock().lines() {
+                    match line {
+                        Ok(line) => {
+                            if tx.send(line.trim().to_string()).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+            });
+            self.stdin_rx = Some(rx);
+        }
+        self.stdin_rx.as_ref().expect("just created")
+    }
+}
+
+#[cfg(feature = "real")]
+impl epsilon_llm::oauth_login::LoginUi for CliLoginUi {
+    fn notify(&mut self, message: &str) {
+        println!("{message}");
+    }
+
+    fn device_code(&mut self, prompt: &epsilon_llm::oauth_login::DevicePrompt) {
+        println!();
+        println!("  1. open {}", prompt.verification_uri);
+        println!("  2. enter the code: {}", prompt.user_code);
+        println!();
+    }
+
+    fn wait_for_code(
+        &mut self,
+        callback: Option<&epsilon_llm::oauth_login::CallbackListener>,
+    ) -> Option<String> {
+        if self.paste_only || callback.is_none() {
+            println!("paste the authorization code (or the full redirect URL) and press Enter:");
+            return self.stdin_lines().recv().ok();
+        }
+        let callback = callback.expect("checked");
+        if self.announce_paste {
+            self.announce_paste = false;
+            println!(
+                "waiting for the browser callback — if your browser is on another machine,\n\
+                 paste the redirect URL from its address bar here and press Enter instead"
+            );
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+        loop {
+            if let Some(line) = self.stdin_lines().try_recv().ok().filter(|l| !l.is_empty()) {
+                return Some(line);
+            }
+            match callback.try_recv() {
+                Some(Ok(code)) => {
+                    println!("received the redirect from the browser");
+                    return Some(code.code);
+                }
+                Some(Err(e)) => {
+                    eprintln!("{e}");
+                    return None;
+                }
+                None => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                eprintln!("login timed out — nothing stored");
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+    }
+}
+
+/// `epsilon auth login google-vertex [key]`: pi's Vertex login asks for the
+/// auth choice first (API key vs ADC/service-account), then project +
+/// location. Non-interactive use passes the key argv and the two env vars;
+/// interactive use is prompted for each. The key may be empty (ADC path) —
+/// but then `GOOGLE_APPLICATION_CREDENTIALS` (or the ADC default path) plus
+/// project + location must resolve, or login refuses to store a dead entry.
+fn login_google_vertex(key_arg: &Option<String>) -> i32 {
+    use std::collections::BTreeMap;
+    fn prompt_line(label: &str) -> String {
+        eprint!("{label}: ");
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line).unwrap_or(0);
+        line.trim().to_string()
+    }
+    let key = key_arg.clone().unwrap_or_default();
+    let key = if key.trim().is_empty() {
+        eprint!("Google Cloud API key (empty = use Application Default Credentials): ");
+        read_secret_line().unwrap_or_default()
+    } else {
+        key
+    };
+    let project = std::env::var("GOOGLE_CLOUD_PROJECT")
+        .or_else(|_| std::env::var("GCLOUD_PROJECT"))
+        .map(|v| v.trim().to_string())
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| prompt_line("Google Cloud project ID"));
+    if project.is_empty() {
+        eprintln!("no project entered; nothing stored");
+        return 2;
+    }
+    let location = std::env::var("GOOGLE_CLOUD_LOCATION")
+        .map(|v| v.trim().to_string())
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| prompt_line("Google Cloud location (e.g. us-central1)"));
+    if location.is_empty() {
+        eprintln!("no location entered; nothing stored");
+        return 2;
+    }
+    let credentials_file = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+        .map(|v| v.trim().to_string())
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            if is_vertex_placeholder_key(&key) {
+                prompt_line(
+                    "Service-account file [empty = default ADC path ~/.config/gcloud/application_default_credentials.json]",
+                )
+            } else {
+                String::new()
+            }
+        });
+    if is_vertex_placeholder_key(&key) && credentials_file.is_empty() && !default_adc_file_exists()
+    {
+        eprintln!(
+            "no API key and no ADC file found — run `gcloud auth application-default login`, pass a key, or set GOOGLE_APPLICATION_CREDENTIALS"
+        );
+        return 2;
+    }
+    let mut env = BTreeMap::new();
+    env.insert("GOOGLE_CLOUD_PROJECT".to_string(), project);
+    env.insert("GOOGLE_CLOUD_LOCATION".to_string(), location);
+    if !credentials_file.is_empty() {
+        env.insert(
+            "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
+            credentials_file,
+        );
+    }
+    match epsilon_llm::auth::save_credential_full("google-vertex", key.trim(), Some(env)) {
+        Ok(path) => {
+            println!("stored google-vertex credentials in {}", path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+/// Placeholder keys pi treats as "no real key, use ADC instead" (pi
+/// `resolveApiKey` + `isPlaceholderApiKey`, mirrored from the Vertex wire so
+/// the login path compiles without the `real`-gated provider module).
+fn is_vertex_placeholder_key(key: &str) -> bool {
+    let k = key.trim();
+    k.is_empty()
+        || k == "gcp-vertex-credentials"
+        || (k.starts_with('<') && k.ends_with('>') && k.len() >= 2)
+}
+
+/// Whether the default ADC file exists (pi `VERTEX_ADC_PATH`).
+fn default_adc_file_exists() -> bool {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(|h| {
+            std::path::Path::new(&h)
+                .join(".config/gcloud/application_default_credentials.json")
+                .exists()
+        })
+        .unwrap_or(false)
+}
+
+/// `epsilon auth login amazon-bedrock [key]`: pi's Bedrock login is a
+/// three-way select (bearer token / AWS profile / existing credential
+/// chain). Non-interactive use passes the bearer token argv (or nothing for
+/// chain); interactive use picks 1/2/3. Profile names store into the
+/// credential `env` map (`AWS_PROFILE` — pi's stored-env shape); chain
+/// choice stores an empty-key marker so `credentials_ready` consults the
+/// ambient chain instead of failing on "no key".
+fn login_amazon_bedrock(key_arg: &Option<String>) -> i32 {
+    use std::collections::BTreeMap;
+    if let Some(k) = key_arg.as_ref().filter(|k| !k.trim().is_empty()) {
+        return match epsilon_llm::auth::save_credential("amazon-bedrock", k.trim()) {
+            Ok(path) => {
+                println!("stored amazon-bedrock bearer token in {}", path.display());
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        };
+    }
+    eprintln!("Select Amazon Bedrock authentication method:");
+    eprintln!("  1) Bearer token (bedrock:CallWithBearerToken)");
+    eprintln!("  2) AWS profile (reads ~/.aws/credentials)");
+    eprintln!("  3) Existing AWS credential chain (env / ECS / instance role)");
+    eprint!("choice [1/2/3]: ");
+    let mut line = String::new();
+    std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line).unwrap_or(0);
+    match line.trim() {
+        "1" => {
+            eprint!("Bedrock bearer token (visible while typing): ");
+            match read_secret_line() {
+                Some(k) if !k.trim().is_empty() => {
+                    match epsilon_llm::auth::save_credential("amazon-bedrock", k.trim()) {
+                        Ok(path) => {
+                            println!("stored amazon-bedrock bearer token in {}", path.display());
+                            0
+                        }
+                        Err(e) => {
+                            eprintln!("{e}");
+                            1
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("no token entered; nothing stored");
+                    2
+                }
+            }
+        }
+        "2" => {
+            eprint!("AWS profile name: ");
+            let mut profile = String::new();
+            std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut profile).unwrap_or(0);
+            let profile = profile.trim().to_string();
+            if profile.is_empty() {
+                eprintln!("no profile entered; nothing stored");
+                return 2;
+            }
+            let mut env = BTreeMap::new();
+            env.insert("AWS_PROFILE".to_string(), profile.clone());
+            // Empty key + profile env: `resolve_api_key` yields None (no
+            // bearer), the transport reads AWS_PROFILE itself (pi parity).
+            // `save_credential_full` refuses empty keys, so write the marker
+            // entry directly through the `_in` API with a placeholder the
+            // resolver treats as absent.
+            match epsilon_llm::auth::save_credential_full(
+                "amazon-bedrock",
+                "USE_AMBIENT_AWS_CHAIN",
+                Some(env),
+            ) {
+                Ok(path) => {
+                    println!(
+                        "stored amazon-bedrock profile ({profile}) in {}",
+                        path.display()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        "3" => {
+            eprintln!(
+                "Configure AWS credentials in your environment, then press Enter to continue."
+            );
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line).unwrap_or(0);
+            match epsilon_llm::auth::save_credential_full(
+                "amazon-bedrock",
+                "USE_AMBIENT_AWS_CHAIN",
+                None,
+            ) {
+                Ok(path) => {
+                    println!("stored amazon-bedrock chain marker in {}", path.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        _ => {
+            eprintln!("unknown method; nothing stored");
+            2
+        }
+    }
+}
+
 async fn dispatch(args: Args) -> i32 {
     let workspace = args
         .workspace
@@ -519,6 +1091,27 @@ async fn dispatch(args: Args) -> i32 {
     // policy (still load); the TUI re-prompts interactively via startup_notices.
     let (project, trust, project_notices) = epsilon_cli::runtime::load_project_config(&workspace);
     let mut startup_notices = project_notices;
+    // M45: remembered per-path trust (pi `trust.json`) composes with the hash:
+    // an explicit `false` denies even an unchanged config; `true` trusts even
+    // a changed one (the user already answered); `None`/unreadable falls back
+    // to the hash decision. "No memory" is never a decision.
+    let remembered: Option<bool> =
+        epsilon_cli::runtime::ProjectTrustStore::open().and_then(|s| s.get(&workspace));
+    let trusted_now = match remembered {
+        Some(false) => false,
+        Some(true) => true,
+        None => !matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. }),
+    };
+    // M39: untrusted projects curtail skills/extensions/prompts at the roots —
+    // the config hash gates config.toml, but third-party CODE never loads
+    // without trust (pi's project-trust scoping).
+    if !trusted_now {
+        startup_notices.push(
+            "project skills/extensions curtailed until trusted \
+             (global skills still loaded)"
+                .to_string(),
+        );
+    }
     let trust_review_pending = matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. });
     if trust_review_pending {
         startup_notices.extend([
@@ -536,11 +1129,92 @@ async fn dispatch(args: Args) -> i32 {
     // ready), run REAL; only when nothing is configured do we fall back to the offline
     // faux provider, with a banner saying exactly how to go real. pi/opencode parity:
     // a fresh user with one env var gets a working agent with zero flags.
-    let candidate_model = args
+    //
+    // M40: the raw flag/config/env candidate is a *reference*, not an id — it
+    // goes through pi's match order (exact → provider/id → case-insensitive →
+    // partial) so `--model opus`, `anthropic/claude-opus-4-6`, or a bare alias
+    // all land on a catalog row. Custom `<name>/...` ids bypass the catalog
+    // (M28) but are still accepted. Unknown references die with candidates.
+    let candidate_raw = args
         .model_id
         .clone()
         .or_else(|| project.model_id.clone())
         .or_else(epsilon_core::config::load_model_id);
+    let candidate_model: Option<String> = match candidate_raw.as_deref() {
+        None => None,
+        Some(raw) => {
+            use epsilon_llm::catalog::resolve_model_for_run;
+            if let Some(resolved) = resolve_model_for_run(raw) {
+                if !matches!(resolved.kind, epsilon_llm::catalog::ModelMatchKind::Exact) {
+                    diag.push(format!(
+                        "model {:?} matched catalog entry {:?}",
+                        raw, resolved.info.id
+                    ));
+                }
+                // M63: never let a name collide with a capability. When the row
+                // the reference landed on has no credentials but a sibling row
+                // for the same reference does, the harness runs the one the user
+                // can actually call — and says so, because silently running a
+                // different model would be worse than saying it.
+                if let Some(replaced) = resolved.replaced {
+                    diag.push(format!(
+                        "{} has no credentials — using {:?} ({}) instead",
+                        replaced.id, resolved.info.id, resolved.info.provider
+                    ));
+                } else if !epsilon_llm::catalog::row_credentials_ready(resolved.info)
+                    && !resolved.info.env_key.is_empty()
+                {
+                    // The requested model cannot run: name the provider, the env
+                    // var, the login command, and which providers DO have keys.
+                    diag.push(format!(
+                        "no credentials for provider {:?} — set {} or run: \
+                         epsilon auth login {}",
+                        resolved.info.provider, resolved.info.env_key, resolved.info.provider
+                    ));
+                    let ready = epsilon_llm::catalog::credentialed_providers();
+                    if !ready.is_empty() {
+                        diag.push(format!(
+                            "providers with stored credentials: {} (pick one with --model)",
+                            ready.join(", ")
+                        ));
+                    }
+                    // Naming the missing provider is only half an answer; give the
+                    // user a model they can run right now.
+                    if let Some(suggestion) = epsilon_llm::catalog::suggested_ready_model() {
+                        diag.push(format!(
+                            "try: --model {} ({})",
+                            suggestion.id, suggestion.provider
+                        ));
+                    }
+                }
+                Some(resolved.info.id.to_string())
+            } else if raw.split_once('/').is_some_and(|(prefix, _)| {
+                epsilon_llm::custom::load_custom_providers()
+                    .iter()
+                    .any(|c| {
+                        epsilon_llm::custom::lookup_custom(std::slice::from_ref(c), raw).is_some()
+                            || c.name.eq_ignore_ascii_case(prefix)
+                    })
+            }) {
+                Some(raw.to_string())
+            } else {
+                let candidates = epsilon_llm::catalog::resolve_model_candidates(raw);
+                if candidates.is_empty() {
+                    die(&format!(
+                        "unknown model {raw:?} (not in catalog, no custom provider prefix matches)"
+                    ));
+                }
+                die(&format!(
+                    "ambiguous model {raw:?} — matches: {}",
+                    candidates
+                        .iter()
+                        .map(|m| m.id)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    };
 
     let auto_real = |candidate: &Option<String>| -> Option<(String, String)> {
         if let Some(m) = candidate
@@ -638,13 +1312,27 @@ async fn dispatch(args: Args) -> i32 {
             ));
             // DIRECTION-03: with --fallback, wrap in the chain provider
             // (primary first, candidates after; per-turn primary restoration).
+            // M60: the retry policy is engaged here (it was implemented but never
+            // wrapped around a production stream, so transient failures were fatal).
+            // Waits go to stderr: stdout stays exactly the transcript for `-p`.
+            let retrying = |inner: Arc<dyn epsilon_llm::StreamFn>| {
+                Arc::new(
+                    epsilon_llm::Retrying::new(inner)
+                        .with_max_attempts(epsilon_llm::RETRY_MAX_ATTEMPTS)
+                        .with_on_retry(|n| {
+                            eprintln!("[retry] {}", epsilon_core::retry_notice_text(n))
+                        }),
+                )
+            };
             if args.fallbacks.is_empty() {
-                Arc::new(PanicGuard(epsilon_llm::DirectProvider::new()))
+                retrying(Arc::new(PanicGuard(epsilon_llm::DirectProvider::new())))
             } else {
                 diag.push(format!("fallbacks: {}", args.fallbacks.join(" -> ")));
-                Arc::new(PanicGuard(epsilon_llm::fallback::FallbackProvider::new(
-                    std::iter::once(model_id.as_str())
-                        .chain(args.fallbacks.iter().map(String::as_str)),
+                retrying(Arc::new(PanicGuard(
+                    epsilon_llm::fallback::FallbackProvider::new(
+                        std::iter::once(model_id.as_str())
+                            .chain(args.fallbacks.iter().map(String::as_str)),
+                    ),
                 )))
             }
         }
@@ -669,16 +1357,20 @@ async fn dispatch(args: Args) -> i32 {
         stream_fn,
         mcp_servers: args.mcp_servers.clone(),
         confinement: args.confinement.clone(),
+        lsp: args.lsp,
         model_id,
         resume: args.resume.clone(),
         project,
+        project_trusted: trusted_now,
         plan_mode: args.plan_mode,
         startup_notices,
         trust_review_pending,
     };
     match &args.mode {
         Mode::Auth(_) => unreachable!("auth subcommands exit inside main() before dispatch"),
+        Mode::Doctor => unreachable!("--doctor exits inside main() before the runtime is built"),
         Mode::Demo => demo_mode().await,
+
         Mode::Print(task) => print_mode(&shared, args.auto_approve, task.clone()).await,
         Mode::Tui(initial) => tui_mode(&shared, initial.clone()).await,
         Mode::Serve(initial) => serve_mode(&shared, initial.clone(), args.port).await,
@@ -723,9 +1415,11 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
         mcp_servers: &shared.mcp_servers,
         session_file: ".epsilon/sessions/rpc.jsonl",
         confinement: &shared.confinement,
+        lsp: shared.lsp,
         model_id: &shared.model_id,
         resume: &shared.resume,
         project: &shared.project,
+        project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
     })
     .await
@@ -798,9 +1492,13 @@ struct SharedRun {
     stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     mcp_servers: Vec<McpServerConfig>,
     confinement: epsilon_tools::Confinement,
+    lsp: epsilon_tools::Lsp,
     model_id: String,
     resume: Resume,
     project: epsilon_cli::runtime::ProjectConfig,
+    /// M39: config-hash trust at startup (`Changed` ⇒ false). Modes pass it
+    /// into the trusted root variants so project code never loads untrusted.
+    project_trusted: bool,
     plan_mode: bool,
     /// Project-config notices + trust banner (M22 / DIRECTION-01).
     startup_notices: Vec<String>,
@@ -819,9 +1517,13 @@ struct RunParams<'a> {
     /// Session JSONL path, relative to the workspace (e.g. ".epsilon/sessions/tui.jsonl").
     session_file: &'a str,
     confinement: &'a epsilon_tools::Confinement,
+    lsp: epsilon_tools::Lsp,
     model_id: &'a str,
     resume: &'a Resume,
     project: &'a epsilon_cli::runtime::ProjectConfig,
+    /// M39: config-hash trust from dispatch (`Changed` ⇒ false). Gates the
+    /// trusted root variants so project code never loads untrusted.
+    project_trusted: bool,
     plan_mode: bool,
 }
 
@@ -833,13 +1535,16 @@ async fn build_runtime(
         mcp_servers,
         session_file,
         confinement,
+        lsp,
         model_id,
         resume,
         project,
+        project_trusted,
         plan_mode,
     }: RunParams<'_>,
 ) -> Result<Arc<Agent>, String> {
-    let mut registry = epsilon_tools::builtin_registry(confinement);
+    // M79: the product path opts into language-server diagnostics; library callers do not.
+    let mut registry = epsilon_tools::builtin_registry_with(confinement, lsp);
     let mut all_mcp: Vec<McpServerConfig> = mcp_servers.to_vec();
     all_mcp.extend(project.mcp_servers.iter().cloned());
     for cfg in &all_mcp {
@@ -848,7 +1553,11 @@ async fn build_runtime(
     }
 
     // Skills (M8 brick, wired M11): conventional roots feed the CONTEXT-tier catalog.
-    let skills = epsilon_core::skills::discover(&epsilon_cli::runtime::skill_roots(workspace));
+    // M39: untrusted projects see global roots only.
+    let skills = epsilon_core::skills::discover(&epsilon_cli::runtime::skill_roots_trusted(
+        workspace,
+        project_trusted,
+    ));
     if !skills.is_empty() {
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         eprintln!("skills: {}", names.join(", "));
@@ -856,8 +1565,10 @@ async fn build_runtime(
 
     // Extensions (M8/M9a bricks, wired M11): conventional roots PLUS project-declared
     // dirs resolved against the workspace's .epsilon/ (ADR-012 project layer, M12).
-    let mut ext_roots = epsilon_cli::runtime::extension_roots(workspace);
-    if !project.extension_dirs.is_empty() {
+    // M39: project-declared dirs join ONLY when trusted — an untrusted config
+    // must not smuggle extension code in through its own declarations.
+    let mut ext_roots = epsilon_cli::runtime::extension_roots_trusted(workspace, project_trusted);
+    if project_trusted && !project.extension_dirs.is_empty() {
         let base = workspace.join(".epsilon");
         ext_roots.extend(project.extension_dirs.iter().map(|d| base.join(d)));
     }
@@ -872,7 +1583,11 @@ async fn build_runtime(
     // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
     // makes that boundary hold regardless of project rules or approvals.
     let base_engine = if plan_mode {
-        epsilon_safety::PermissionEngine::layered(vec![epsilon_safety::plan_ruleset()])
+        let mut layers = vec![epsilon_safety::plan_ruleset()];
+        if !project.rules.is_empty() {
+            layers.push(epsilon_cli::runtime::project_rules_layer(&project.rules));
+        }
+        epsilon_safety::PermissionEngine::layered(layers)
     } else if project.rules.is_empty() {
         epsilon_safety::PermissionEngine::with_defaults()
     } else {
@@ -882,16 +1597,35 @@ async fn build_runtime(
     };
     let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
     let agent = Agent::new(
-        LoopLimits::default(),
+        LoopLimits::for_model(model_id),
         stream_fn,
         Arc::new(registry),
         gate,
         workspace.to_path_buf(),
     );
-    let store = epsilon_session::SessionStore::open(workspace.join(session_file))
+    let mut store = epsilon_session::SessionStore::open_in(workspace.join(session_file), workspace)
         .map_err(|e| format!("open session store: {e}"))?;
+    if store.migrated() {
+        match store.persist_migration() {
+            Ok(()) => eprintln!("migrated session store to current version"),
+            Err(e) => eprintln!("migration warning (continuing): {e}"),
+        }
+    }
     agent.set_model_id(model_id);
     agent.set_skills(skills);
+    // Agent defs (M50: pi `agents.ts` parity) — user roots always, project
+    // roots only when trusted (same gate as skills). The `task` tool routes
+    // `subagent_type` through these; unknown named types fail naming the list.
+    let agents = epsilon_core::agents::discover_agents(
+        &epsilon_cli::runtime::agent_user_roots(),
+        &epsilon_cli::runtime::agent_project_roots(workspace, project_trusted),
+        project_trusted,
+    );
+    if !agents.is_empty() {
+        let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+        eprintln!("agents: {}", names.join(", "));
+    }
+    agent.set_agents(agents);
     agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
     epsilon_cli::runtime::spawn_event_forwarder(agent.subscribe(), ext_hosts);
 
@@ -907,17 +1641,23 @@ async fn build_runtime(
     if let Some(rp) = resume_path {
         let mut restored = epsilon_session::SessionStore::open(&rp)
             .map_err(|e| format!("open {}: {e}", rp.display()))?;
+        // M41: a resumed file may predate headers — migrate before repair reads
+        // it, so the repair pass sees healed entries, never legacy shapes.
+        if restored.migrated() {
+            match restored.persist_migration() {
+                Ok(()) => eprintln!("migrated {} to current version", rp.display()),
+                Err(e) => eprintln!("migration warning (continuing): {e}"),
+            }
+        }
         // ponytail-audit follow-up: repair is now WIRED, not test-only — a crashed
         // prior run leaves dangling tool calls on the active branch; synthesize
         // tombstones before the model view so the resumed context stays provider-valid.
         match epsilon_session::repair::repair_on_open(&mut restored) {
-            Ok(report) if report.repaired_tool_calls > 0 || report.appended_turn_end => eprintln!(
-                "repaired {}: {} tool results synthesized, turn_end: {}",
-                rp.display(),
-                report.repaired_tool_calls,
-                report.appended_turn_end
-            ),
-            Ok(_) => {}
+            Ok(report) => {
+                for line in report.summary() {
+                    eprintln!("repaired {}: {line}", rp.display());
+                }
+            }
             Err(e) => eprintln!("repair warning (continuing): {e}"),
         }
         let msgs: Vec<Message> = restored
@@ -933,15 +1673,13 @@ async fn build_runtime(
     Ok(agent)
 }
 
-fn user_message(text: String) -> Message {
-    Message::User(UserMessage {
-        id: new_id("msg"),
-        timestamp_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-        content: vec![UserContent::Text { text }],
-    })
+/// Build the user message for `text`, resolving any `@` references into attachments (M74).
+///
+/// Every frontend goes through `epsilon_core::references::user_message`, so `@file` behaves the
+/// same in `-p`, the RPC loop and the TUI — a feature that works in one of them only is a feature
+/// the others are missing.
+fn user_message(workspace: &std::path::Path, text: String) -> Message {
+    epsilon_core::references::user_message(workspace, &text)
 }
 
 /// Headless single-prompt run; prints only the FINAL assistant text (pi behavior).
@@ -961,9 +1699,11 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         mcp_servers: &shared.mcp_servers,
         session_file: ".epsilon/sessions/cli.jsonl",
         confinement: &shared.confinement,
+        lsp: shared.lsp,
         model_id: &shared.model_id,
         resume: &shared.resume,
         project: &shared.project,
+        project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
     })
     .await
@@ -974,25 +1714,78 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
             return 1;
         }
     };
-    match agent.run(user_message(task)).await {
+    match agent.run(user_message(&shared.workspace, task)).await {
         Ok(outcome) => {
-            for m in outcome.produced.iter().rev() {
-                if let Message::Assistant(a) = m
-                    && a.stop_reason == StopReason::EndTurn
-                    && !a.text().is_empty()
-                {
-                    println!("{}", a.text());
-                    return 0;
+            // Salvage rule (M62) applied to the CLI: a run that failed after the
+            // model had already said something still prints that something — what
+            // the user watched arrive is never thrown away — and the failure is
+            // reported on stderr with its real reason. Before this, `-p` printed
+            // "no final assistant text produced" for *any* non-EndTurn ending, so
+            // a 401/429/context-overflow looked like an empty response with no
+            // explanation anywhere (M63).
+            let (text, diagnostic) = print_outcome(&outcome);
+            if let Some(text) = text {
+                println!("{text}");
+            }
+            match diagnostic {
+                None => 0,
+                Some(d) => {
+                    eprintln!("{d}");
+                    1
                 }
             }
-            eprintln!("no final assistant text produced");
-            1
         }
         Err(e) => {
             eprintln!("run failed: {e}");
             1
         }
     }
+}
+
+/// What a finished run should show a headless caller: the reply text to print on
+/// stdout (if any) and a diagnostic for stderr (if the run did not finish cleanly).
+///
+/// Pure — no printing — so the salvage/report rule is unit-testable without a
+/// terminal. Two cases matter:
+///
+/// - clean `EndTurn` with text: text out, no diagnostic, exit 0;
+/// - anything else: whatever text the model managed to deliver is still returned
+///   (M62's "never discard visible output" rule), plus one line naming the real
+///   stop reason and the provider's own message when there is one.
+fn print_outcome(outcome: &epsilon_core::RunOutcome) -> (Option<String>, Option<String>) {
+    let last_assistant = outcome.produced.iter().rev().find_map(|m| match m {
+        Message::Assistant(a) => Some(a),
+        _ => None,
+    });
+    let text = last_assistant
+        .map(|a| a.text())
+        .filter(|t| !t.trim().is_empty());
+    let stop = last_assistant.map(|a| a.stop_reason.clone());
+    let clean = matches!(stop, Some(StopReason::EndTurn));
+    if clean && text.is_some() {
+        return (text, None);
+    }
+    let detail = last_assistant
+        .and_then(|a| a.error_message.clone())
+        .filter(|s| !s.trim().is_empty());
+    let reason = match (&outcome.reason, &stop) {
+        (_, Some(StopReason::Aborted)) => "aborted by user".to_string(),
+        (TurnEndReason::Error(e), _) if !e.is_empty() => e.clone(),
+        (TurnEndReason::MaxTokens, _) => "the model hit its output-token limit".to_string(),
+        (TurnEndReason::BudgetExhausted, _) => {
+            "the turn budget ran out before the task finished".to_string()
+        }
+        (TurnEndReason::Blocked, _) => "a permission rule blocked this run".to_string(),
+        (other, _) => format!("{other:?}"),
+    };
+    let diagnostic = match detail {
+        Some(d) => format!("run failed: {d}"),
+        None if text.is_none() => {
+            format!("run produced no reply and did not finish cleanly: {reason}")
+        }
+        None => format!("run did not finish cleanly: {reason} — the reply above may be partial"),
+    };
+    (text, Some(diagnostic))
 }
 
 /// Interactive ratatui frontend (M9b).
@@ -1006,9 +1799,11 @@ async fn tui_mode(shared: &SharedRun, initial_task: Option<String>) -> i32 {
         mcp_servers: &shared.mcp_servers,
         session_file: ".epsilon/sessions/tui.jsonl",
         confinement: &shared.confinement,
+        lsp: shared.lsp,
         model_id: &shared.model_id,
         resume: &shared.resume,
         project: &shared.project,
+        project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
     })
     .await;
@@ -1042,9 +1837,11 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         mcp_servers: &shared.mcp_servers,
         session_file: ".epsilon/sessions/serve.jsonl",
         confinement: &shared.confinement,
+        lsp: shared.lsp,
         model_id: &shared.model_id,
         resume: &shared.resume,
         project: &shared.project,
+        project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
     })
     .await
@@ -1056,10 +1853,13 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         }
     };
     if let Some(task) = initial_task {
+        // Resolved here, not inside the task: `@` references read the workspace, and the
+        // reference to `shared` cannot outlive the function.
+        let message = user_message(&shared.workspace, task);
         tokio::spawn({
             let agent = Arc::clone(&agent);
             async move {
-                let _ = agent.run(user_message(task)).await;
+                let _ = agent.run(message).await;
             }
         });
     }
@@ -1095,6 +1895,26 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
 }
 
 /// The classic scripted demo (M5), kept as the zero-argument experience.
+/// `epsilon doctor`: print the diagnosis and exit with its verdict (M76).
+///
+/// Deliberately builds no runtime and takes no lease: a diagnosis that needs the machinery to work
+/// cannot diagnose the machinery. `--doctor` is handled before `SharedRun` construction for the
+/// same reason.
+fn doctor_mode(args: &Args) -> i32 {
+    let workspace = args
+        .workspace
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let inputs = epsilon_cli::doctor::Inputs {
+        workspace: &workspace,
+        model_arg: args.model_id.as_deref(),
+        confinement: &args.confinement,
+        mcp_server_count: args.mcp_servers.len(),
+        real_feature: cfg!(feature = "real"),
+    };
+    epsilon_cli::doctor::run(&inputs)
+}
+
 async fn demo_mode() -> i32 {
     let script = vec![
         FauxStep::ToolCalls {
@@ -1130,7 +1950,7 @@ async fn demo_mode() -> i32 {
     );
     let mut rx = agent.subscribe();
 
-    let prompt = user_message("fix the flaky auth tests".into());
+    let prompt = user_message(&std::env::temp_dir(), "fix the flaky auth tests".into());
     let run_task = tokio::spawn(async move { agent.run(prompt).await });
 
     while let Ok(ev) = rx.recv().await {
@@ -1158,6 +1978,7 @@ async fn demo_mode() -> i32 {
 fn render_demo_event(ev: &Arc<AgentEvent>) {
     match &**ev {
         AgentEvent::AgentStart => println!("\n=== run start ==="),
+        AgentEvent::Notice { text } => eprintln!("[retry] {text}"),
         AgentEvent::TurnStart { turn_index } => println!("-- turn {turn_index} --"),
         AgentEvent::MessageEnd { message } => match &**message {
             Message::Assistant(a) => {
@@ -1188,6 +2009,95 @@ fn render_demo_event(ev: &Arc<AgentEvent>) {
         },
         AgentEvent::AgentEnd { .. } => println!("=== run end ==="),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn plan_mode_preserves_project_read_deny() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("private.txt"), "private fixture").unwrap();
+        std::fs::write(workspace.path().join("public.txt"), "public fixture").unwrap();
+        std::fs::create_dir(workspace.path().join(".epsilon")).unwrap();
+        std::fs::write(
+            workspace.path().join(".epsilon/config.toml"),
+            r#"
+[[rules]]
+capability = "read"
+pattern = "*private.txt"
+action = "deny"
+
+[[rules]]
+capability = "write"
+pattern = "*"
+action = "allow"
+"#,
+        )
+        .unwrap();
+        let (project, trust, _) = epsilon_cli::runtime::load_project_config(workspace.path());
+        assert_eq!(trust, epsilon_cli::runtime::TrustDecision::Trusted);
+        assert_eq!(project.rules.len(), 2);
+        let agent = build_runtime(RunParams {
+            workspace: workspace.path(),
+            stream_fn: Arc::new(FauxProvider::new(vec![
+                FauxStep::call(
+                    "private",
+                    "read",
+                    serde_json::json!({"path": "private.txt"}),
+                ),
+                FauxStep::call("public", "read", serde_json::json!({"path": "public.txt"})),
+                FauxStep::call(
+                    "mutation",
+                    "write",
+                    serde_json::json!({"path": "new.txt", "content": "not written"}),
+                ),
+                FauxStep::say("done"),
+            ])),
+            approvals: Arc::new(epsilon_safety::AutoApprove),
+            mcp_servers: &[],
+            session_file: ".epsilon/session.jsonl",
+            confinement: &epsilon_tools::Confinement::Off,
+            lsp: epsilon_tools::Lsp::Off,
+            model_id: "test-1",
+            resume: &Resume::No,
+            project: &project,
+            project_trusted: true,
+            plan_mode: true,
+        })
+        .await
+        .unwrap();
+        let outcome = agent
+            .run(user_message(workspace.path(), "inspect the files".into()))
+            .await
+            .unwrap();
+        let result = |id: &str| {
+            outcome
+                .produced
+                .iter()
+                .find_map(|message| match message {
+                    Message::ToolResult(result) if result.tool_call_id == id => Some(result),
+                    _ => None,
+                })
+                .expect("scripted tool call must produce a result")
+        };
+        let private = result("private");
+        assert!(
+            private.is_error,
+            "plan mode must preserve the project's read deny: {private:?}"
+        );
+        assert!(format!("{private:?}").contains("Permission denied"));
+        assert!(
+            !result("public").is_error,
+            "ordinary plan reads remain allowed"
+        );
+        assert!(
+            result("mutation").is_error,
+            "project allow cannot override plan deny"
+        );
+        assert!(!workspace.path().join("new.txt").exists());
     }
 }
 
@@ -1228,5 +2138,150 @@ mod mask_tests {
         assert_eq!(masked.chars().count(), 5); // … + last 4 chars
 
         assert_eq!(mask_key("ééé"), "****"); // 4 or fewer chars: hidden fully
+    }
+}
+
+/// M63: the headless reporting rule. These tests exist because the old code path
+/// silently printed "no final assistant text produced" for every non-EndTurn
+/// ending — a provider 401, a 429 that exhausted retries, or a context overflow
+/// all looked like an empty answer with no explanation.
+#[cfg(test)]
+mod print_outcome_tests {
+    use super::*;
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::message::{AssistantMessage, Usage};
+    use epsilon_contracts::new_id;
+    use epsilon_core::RunOutcome;
+
+    fn assistant(stop: StopReason, text: &str, err: Option<&str>) -> Message {
+        let content = if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![ContentBlock::text(text)]
+        };
+        Message::Assistant(AssistantMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            provider: "test".into(),
+            model_id: "test-1".into(),
+            content,
+            stop_reason: stop,
+            error_message: err.map(str::to_string),
+            usage: Usage::default(),
+        })
+    }
+
+    fn outcome(produced: Vec<Message>, reason: TurnEndReason) -> RunOutcome {
+        RunOutcome {
+            produced,
+            reason,
+            usage: Usage::default(),
+        }
+    }
+
+    #[test]
+    fn clean_end_turn_prints_the_reply_and_reports_nothing() {
+        let out = outcome(
+            vec![assistant(StopReason::EndTurn, "done", None)],
+            TurnEndReason::Completed,
+        );
+        let (text, diag) = print_outcome(&out);
+        assert_eq!(text.as_deref(), Some("done"));
+        assert!(diag.is_none(), "a clean run must not print a diagnostic");
+    }
+
+    #[test]
+    fn provider_error_surfaces_the_provider_message_not_a_generic_line() {
+        // The exact shape a real 401 produces: Error stop reason, no text, the
+        // provider's own words in error_message.
+        let out = outcome(
+            vec![assistant(
+                StopReason::Error,
+                "",
+                Some("HTTP 401 Unauthorized: invalid api key"),
+            )],
+            TurnEndReason::Error("HTTP 401 Unauthorized: invalid api key".into()),
+        );
+        let (text, diag) = print_outcome(&out);
+        assert!(text.is_none());
+        let diag = diag.expect("a failed run must explain itself");
+        assert!(
+            diag.contains("401") && diag.contains("invalid api key"),
+            "the provider's own message must reach the user: {diag}"
+        );
+    }
+
+    #[test]
+    fn partial_text_is_kept_and_flagged_not_thrown_away() {
+        // M62 salvage: text arrived, then the stream died. Print what streamed,
+        // say so on stderr, exit non-zero.
+        let out = outcome(
+            vec![assistant(
+                StopReason::Error,
+                "here is what I found so far",
+                Some("network reset mid-stream"),
+            )],
+            TurnEndReason::Error("network reset mid-stream".into()),
+        );
+        let (text, diag) = print_outcome(&out);
+        assert_eq!(text.as_deref(), Some("here is what I found so far"));
+        assert!(diag.unwrap().contains("network reset"));
+    }
+
+    #[test]
+    fn abort_reports_aborted_and_empty_turn_explains_itself() {
+        let out = outcome(
+            vec![assistant(StopReason::Aborted, "", None)],
+            TurnEndReason::Aborted,
+        );
+        let (text, diag) = print_outcome(&out);
+        assert!(text.is_none());
+        assert!(diag.unwrap().contains("aborted by user"));
+    }
+
+    #[test]
+    fn budget_and_token_limits_name_their_cause() {
+        let out = outcome(vec![], TurnEndReason::BudgetExhausted);
+        assert!(
+            print_outcome(&out)
+                .1
+                .unwrap()
+                .contains("turn budget ran out")
+        );
+        let out = outcome(vec![], TurnEndReason::MaxTokens);
+        assert!(
+            print_outcome(&out)
+                .1
+                .unwrap()
+                .contains("output-token limit")
+        );
+    }
+
+    #[test]
+    fn help_text_documents_every_mode_the_parser_accepts() {
+        // The parser accepts these; the help must not drift behind it.
+        let h = help_text();
+        for flag in [
+            "--print",
+            "--serve",
+            "--rpc",
+            "--demo",
+            "--list-models",
+            "--model",
+            "--provider",
+            "--fallback",
+            "--workspace",
+            "--sandbox",
+            "--plan",
+            "--yes",
+            "--continue",
+            "--resume",
+            "--script",
+            "--mcp",
+            "--version",
+            "--help",
+        ] {
+            assert!(h.contains(flag), "help is missing {flag}");
+        }
     }
 }

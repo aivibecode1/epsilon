@@ -1,0 +1,95 @@
+   Compiling epsilon-safety v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-safety)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.72s
+     Running unittests src\lib.rs (target\debug\deps\epsilon_safety-3a6eef7ae1a51adc.exe)
+
+running 44 tests
+test engine::tests::later_layers_override_allows ... ok
+test channel_ui::tests::resolve_unknown_or_double_ids_report_false ... ok
+test channel_ui::tests::ask_parks_and_next_ask_replies_in_fifo_order ... ok
+test channel_ui::tests::dropped_ask_denies_fail_closed ... ok
+test engine::tests::unknown_capabilities_ask_by_default ... ok
+test env::tests::a_helper_path_is_not_a_secret_and_is_left_alone ... ok
+test env::tests::credential_shaped_names_are_flagged ... ok
+test env::tests::git_identity_is_exempt_despite_matching_auth ... ok
+test env::tests::ordinary_plumbing_survives ... ok
+test engine::tests::deny_is_monotonic_across_layers ... ok
+test env::tests::the_marker_set_covers_what_providers_actually_use ... ok
+test escalation::tests::an_unknown_mode_is_never_silently_the_default_or_the_widest ... ok
+test escalation::tests::a_justification_must_be_a_sentence_and_a_mode_must_be_known ... ok
+test escalation::tests::narrowing_is_never_an_escalation ... ok
+test escalation::tests::the_audit_reason_and_the_model_facing_text_say_what_happened ... ok
+test escalation::tests::the_ladder_strictly_widens_and_never_wraps ... ok
+test escalation::tests::the_paired_arguments_must_travel_together ... ok
+test escalation::tests::the_table_agrees_with_the_declared_order ... ok
+test gate::tests::bash_defaults_to_ask_and_deny_carries_no_access ... ok
+test engine::tests::plan_mode_blocks_commit_and_push_commands ... ok
+test gate::tests::deny_with_guidance_passes_through ... ok
+test engine::tests::plan_mode_denies_mutations_even_when_project_reallows ... ok
+test sandbox::jobobject::tests::the_job_object_backend_refuses_danger_full_access ... ok
+test engine::tests::last_match_wins_within_a_layer ... ok
+test gate::tests::allows_reads_silently_without_ui ... ok
+test sandbox::tests::a_backend_refuses_to_pretend_that_danger_full_access_is_a_boundary ... ok
+test sandbox::tests::bwrap_argv_builder_is_platform_independent ... ok
+test sandbox::tests::default_policy_caps_are_sane ... ok
+test gate::tests::memory_promotion_cannot_override_a_fresh_deny ... ok
+test sandbox::tests::null_sandbox_is_never_available_and_fails_closed ... ok
+test sandbox::tests::read_only_mounts_the_workspace_read_only ... ok
+test sandbox::tests::the_job_object_backend_does_not_claim_to_confine_content ... ok
+test sandbox::tests::the_null_backend_confines_nothing_and_says_so ... ok
+test sandbox::tests::whatever_backend_this_platform_picks_states_a_coherent_envelope ... ok
+test wildcards::tests::empty_patterns ... ok
+test gate::tests::env_read_asks_then_remembered_always_session ... ok
+test wildcards::tests::question_mark_and_exact ... ok
+test wildcards::tests::backslash_normalization_and_regex_meta_escape ... ok
+test wildcards::tests::opencode_wildcard_parity_spot_checks ... ok
+test wildcards::tests::stars_match_within_and_across_segments ... ok
+test sandbox::jobobject::tests::timeout_kills_tree_and_reports_timeout_error ... ok
+test sandbox::jobobject::tests::confined_command_runs_with_limits_applied ... ok
+test env::tests::a_spawned_child_does_not_see_this_process_credentials ... ok
+test sandbox::jobobject::tests::grandchildren_die_with_the_job ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.54s
+
+     Running tests\additive_authorization.rs (target\debug\deps\additive_authorization-7b63d42face27f7c.exe)
+
+running 5 tests
+test additive_project_subject_deny_survives_external_allow ... ok
+test additive_in_workspace_calls_keep_one_normalized_authorization ... ok
+test additive_external_deny_still_blocks_allowed_tool ... ok
+test additive_approvals_have_separate_session_keys ... ok
+test additive_plan_denies_original_capabilities_before_external_approval ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests\bwrap_unix.rs (target\debug\deps\bwrap_unix-3e1d79871d9d6a15.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\loop_with_rules.rs (target\debug\deps\loop_with_rules-44ed89266a02d77a.exe)
+
+running 5 tests
+test plan_mode_denies_bash_even_when_project_allows_it ... ok
+test external_write_asks_then_tool_refuses_anyway ... ok
+test denied_external_write_blocks_with_guidance_before_execution ... ok
+test env_read_ask_flow_end_to_end ... ok
+test custom_ruleset_allows_bash_without_asking ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.60s
+
+     Running tests\plan_shell.rs (target\debug\deps\plan_shell-76de9553fc424c0d.exe)
+
+running 1 test
+test plan_shell_calls_never_reach_execution_despite_project_allow_and_auto_approval ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+   Doc-tests epsilon_safety
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+EXIT=0

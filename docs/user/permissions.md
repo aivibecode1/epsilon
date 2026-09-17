@@ -18,10 +18,18 @@ target. Paths outside the workspace are gated as `external_dir` regardless of th
 Headless behavior: `-p` / `--serve` runs **auto-deny** `ask` rules. `--yes` flips that to
 auto-approve — an explicit opt-in for trusted automation.
 
-`--plan` denies native `write`/`edit`, but **is not a reliable read-only execution
-boundary**. The shell subcommand deny patterns do not match the extracted command
-subject, and project rules are replaced rather than composed (F10). Do not approve
-shell work assuming this flag prevents mutations.
+`--plan` adds deny rules for the native `write`, `edit`, `bash` and `shell`
+capabilities while retaining project `[[rules]]`. Reads and search remain subject
+to secret-file, external-path and project permissions. Internal session bookkeeping
+still writes, and these rules do not classify the side effects of arbitrary
+extension or MCP tools.
+
+**Post-fix state:** the original tool capability is now always authorized before
+any path-derived `external_dir` authorization, and either denial short-circuits
+(`crates/epsilon-core/src/exec.rs:337-391`). A path-ish argument can no longer
+mask a plan deny on `bash`/`shell`. Remaining limits: plan mode does not
+classify the side effects of arbitrary extension/MCP tools, and out-of-workspace
+subjects keep their raw spelling (known prompt-dedup limitation, no bypass).
 
 ## Layer 2 — OS confinement for shell commands
 
@@ -38,9 +46,9 @@ Honest limits (evidence in [`../../audit/02-defect-ledger.md`](../../audit/02-de
 
 - Windows Job Object confinement is **partial** relative to bwrap: it bounds process
   resources and process ownership, but does not restrict filesystem or network access.
-  A read-only mode label is not an OS-enforced Windows write restriction. M78 added
-  explicit mode pairing so narrowing cannot be widened silently — details in
-  [`../milestones/M78-sandbox-modes.md`](../milestones/M78-sandbox-modes.md).
+  A read-only mode label is not an OS-enforced Windows write restriction. See
+  [the architecture guide](../design/epsilon-architecture.md#tools-and-execution-boundaries)
+  for the implemented boundaries.
 - Path containment for the file tools is lexical; symlink/alias traversal is a **known open
   defect (F09)**, not a guaranteed boundary. Treat workspace trust accordingly.
 - macOS has no confinement backend: with `--sandbox auto` on macOS, shell commands fail

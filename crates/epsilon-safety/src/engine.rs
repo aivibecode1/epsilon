@@ -140,8 +140,10 @@ pub fn plan_ruleset() -> Ruleset {
         rules: vec![
             Rule::new("write", "*", Action::Deny),
             Rule::new("edit", "*", Action::Deny),
-            Rule::new("bash", "git commit*", Action::Deny),
-            Rule::new("bash", "git push*", Action::Deny),
+            // Command heads cannot establish read-only shell behavior. Refuse
+            // shell execution instead of classifying arbitrary command strings.
+            Rule::new("bash", "*", Action::Deny),
+            Rule::new("shell", "*", Action::Deny),
         ],
     }
 }
@@ -224,7 +226,8 @@ mod tests {
             engine.evaluate("bash", "git push origin main"),
             Action::Deny
         );
-        // Ordinary shell still follows default ask posture (not silently allowed).
-        assert_eq!(engine.evaluate("bash", "cargo test"), Action::Ask);
+        // Even apparently read-only commands are refused: there is no portable
+        // read-only shell boundary inferred from command strings.
+        assert_eq!(engine.evaluate("bash", "cargo test"), Action::Deny);
     }
 }

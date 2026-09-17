@@ -5,6 +5,14 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
 ## [Unreleased]
 
 ### Added
+- **Plan-mode enforcement (M82).** `--plan` denied `git commit*` patterns that core never matched
+  (preflight authorizes the command head only) and *replaced* project rules, so a project read-deny
+  evaporated and bash ran unimpeded. The plan ruleset now denies `bash` and `shell` outright —
+  string prefixes cannot establish a read-only shell boundary — `--plan` layers the plan ruleset
+  over project rules instead of replacing them, and authorization is additive end to end: the
+  original tool capability is checked first, a path-derived external-path subject can only add a
+  constraint, and either denial short-circuits, so a `dir:` argument can no longer mask a plan deny
+  on shell.
 - **Observation ownership (M81).** A read used to authorize a write for *any* agent in the session:
   one shared read-log meant agent B could edit a file it never read because agent A had. Each agent
   now owns an opaque observation token; task children and restored sessions get fresh ones, sibling

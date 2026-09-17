@@ -1,0 +1,183 @@
+   Compiling memchr v2.8.3
+   Compiling windows-sys v0.61.2
+   Compiling serde_core v1.0.228
+   Compiling bitflags v2.13.1
+   Compiling futures-channel v0.3.34
+   Compiling serde v1.0.228
+   Compiling futures-io v0.3.34
+   Compiling tracing-attributes v0.1.31
+   Compiling serde_json v1.0.151
+   Compiling allocator-api2 v0.2.21
+   Compiling equivalent v1.0.2
+   Compiling futures-util v0.3.31
+   Compiling tracing v0.1.44
+   Compiling mio v1.2.2
+   Compiling socket2 v0.6.5
+   Compiling foldhash v0.2.0
+   Compiling form_urlencoded v1.2.2
+   Compiling httpdate v1.0.3
+   Compiling ident_case v1.0.1
+   Compiling strsim v0.11.1
+   Compiling hashbrown v0.17.1
+   Compiling thiserror v2.0.20
+   Compiling tokio v1.53.1
+   Compiling darling_core v0.24.1
+   Compiling unicode-segmentation v1.13.3
+   Compiling windows-sys v0.60.2
+   Compiling thiserror-impl v2.0.20
+   Compiling darling_macro v0.24.1
+   Compiling tokio-util v0.7.19
+   Compiling hyper v1.11.0
+   Compiling tower v0.5.3
+   Compiling winapi v0.3.9
+   Compiling rustversion v1.0.23
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+   Compiling hyper-util v0.1.20
+   Compiling autocfg v1.5.1
+   Compiling ryu v1.0.23
+   Compiling num-traits v0.2.19
+   Compiling darling v0.24.1
+   Compiling tokio-rustls v0.26.4
+   Compiling url v2.5.8
+   Compiling unicode-width v0.2.2
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling tower-http v0.6.11
+   Compiling windows-interface v0.59.3
+   Compiling windows-implement v0.60.2
+   Compiling windows-result v0.4.1
+   Compiling windows-strings v0.5.1
+   Compiling heck v0.5.0
+   Compiling either v1.18.0
+   Compiling toml v1.1.4+spec-1.1.0
+   Compiling castaway v0.2.4
+   Compiling strum_macros v0.28.0
+   Compiling itertools v0.14.0
+   Compiling reqwest v0.13.4
+   Compiling windows-core v0.62.2
+   Compiling hashbrown v0.16.1
+   Compiling static_assertions v1.1.0
+   Compiling crc32fast v1.5.1
+   Compiling instability v0.3.13
+   Compiling parking_lot_core v0.9.12
+   Compiling simd-adler32 v0.3.10
+   Compiling kasuari v0.4.12
+   Compiling unicode-truncate v2.0.1
+   Compiling strum v0.28.0
+   Compiling compact_str v0.9.1
+   Compiling epsilon-llm v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-llm)
+   Compiling epsilon-session v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-session)
+   Compiling convert_case v0.10.0
+   Compiling lru v0.18.2
+   Compiling aho-corasick v1.1.5
+   Compiling indoc v2.0.7
+   Compiling critical-section v1.2.0
+   Compiling scopeguard v1.2.0
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling derive_more-impl v2.1.1
+   Compiling regex-automata v0.4.18
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+   Compiling lock_api v0.4.14
+   Compiling ratatui-core v0.1.2
+   Compiling windows-threading v0.2.1
+   Compiling litrs v1.0.0
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling parking_lot v0.12.5
+   Compiling flate2 v1.1.9
+   Compiling document-features v0.2.12
+   Compiling time v0.3.55
+   Compiling regex v1.13.1
+   Compiling windows-future v0.3.2
+   Compiling derive_more v2.1.1
+   Compiling windows-numerics v0.3.1
+   Compiling windows-collections v0.3.2
+   Compiling fdeflate v0.3.7
+   Compiling crossterm_winapi v0.9.1
+   Compiling futures-executor v0.3.31
+   Compiling line-clipping v0.3.8
+   Compiling pxfm v0.1.30
+   Compiling windows v0.62.2
+   Compiling png v0.18.1
+   Compiling ratatui-widgets v0.3.2
+   Compiling futures v0.3.31
+   Compiling epsilon-safety v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-safety)
+   Compiling crossterm v0.29.0
+   Compiling indexmap v2.14.0
+   Compiling byteorder-lite v0.1.0
+   Compiling rmcp v3.1.4
+   Compiling error-code v3.4.0
+   Compiling mime v0.3.17
+   Compiling moxcms v0.8.1
+   Compiling pulldown-cmark v0.13.4
+   Compiling bytemuck v1.25.2
+   Compiling rmcp-macros v3.1.4
+   Compiling axum-core v0.5.6
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling process-wrap v9.1.0
+   Compiling schemars v1.2.2
+   Compiling clipboard-win v5.4.1
+   Compiling chrono v0.4.45
+   Compiling image v0.25.10
+   Compiling getopts v0.2.24
+   Compiling epsilon-lsp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-lsp)
+   Compiling serde_urlencoded v0.7.1
+   Compiling tokio-stream v0.1.19
+   Compiling serde_path_to_error v0.1.20
+   Compiling matchit v0.8.4
+   Compiling pastey v0.2.3
+   Compiling pulldown-cmark-escape v0.11.0
+   Compiling unicase v2.9.0
+   Compiling axum v0.8.9
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+   Compiling arboard v3.6.1
+   Compiling ratatui v0.30.2
+   Compiling tempfile v3.23.0
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+   Compiling epsilon-ext v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-ext)
+   Compiling epsilon-server v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-server)
+   Compiling epsilon-mcp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-mcp)
+   Compiling epsilon-cli v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 13s
+     Running unittests src\main.rs (target\debug\deps\epsilon-c5e90202e46caa0e.exe)
+
+running 1 test
+
+thread 'runtime_tests::plan_mode_preserves_project_read_deny' (13260) panicked at crates\epsilon-cli\src\main.rs:2037:9:
+["trusting project config C:\\Users\\Hp\\AppData\\Local\\Temp\\.tmp6SFUqZ\\.epsilon/config.toml (hash recorded)"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test runtime_tests::plan_mode_preserves_project_read_deny ... FAILED
+
+failures:
+
+failures:
+    runtime_tests::plan_mode_preserves_project_read_deny
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p epsilon-cli --bin epsilon`
+   Compiling epsilon-cli v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.28s
+     Running unittests src\main.rs (target\debug\deps\epsilon-c5e90202e46caa0e.exe)
+
+running 1 test
+
+thread 'runtime_tests::plan_mode_preserves_project_read_deny' (2448) panicked at crates\epsilon-cli\src\main.rs:2079:9:
+plan mode must preserve the project's read deny: ToolResultMessage { id: "msg_1a0ae77dcd57", timestamp_ms: 1789633486037, tool_call_id: "private", tool_name: "read", content: [Text { text: "    1| private fixture" }], details: Object {"terminate": Bool(false)}, usage: None, is_error: false }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test runtime_tests::plan_mode_preserves_project_read_deny ... FAILED
+
+failures:
+
+failures:
+    runtime_tests::plan_mode_preserves_project_read_deny
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.05s
+
+error: test failed, to rerun pass `-p epsilon-cli --bin epsilon`

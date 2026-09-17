@@ -367,4 +367,31 @@ the detection, and this log records that state instead of redefining the gate.
 
 Cleanup for this round removed both build trees (see the next section).
 
+## 2026-09-17 — F10 final authorization round (`f10-final2`)
+
+- **Round scope:** full five-gate battery on the tree containing the F10
+  additive-authorization fix (`crates/epsilon-core/src/exec.rs:337-391`: original
+  tool capability authorized first, derived `external_dir` additive, either
+  denial short-circuits). Run under the documented Avira workaround
+  (`CARGO_TARGET_DIR=$LOCALAPPDATA/Temp/wf-target`) after the in-repo rerun
+  ([`gate-f10-final-authorization.log`](evidence/gate-f10-final-authorization.log))
+  hit the known intermittent `wire_fixtures` LNK1104 ("Access is denied",
+  os error 5) — same signature as 2026-09-17 earlier, intermittent as seen before
+  in `f10-composed`.
+- **Result:** **GATE PASS** — fmt=0, clippy=0, test=0, demo=0, real-check=0
+  ([complete output](evidence/gate-f10-final2.log)). Workspace suite: **55
+  summaries, 794 passed / 0 failed / 1 ignored** (up from 786: +5
+  `additive_authorization`, +2 `plan_shell`, +1 regression in epsilon-cli).
+  This is the first full battery over the final F10 authorization code.
+- **Independent review:** approve, no blockers
+  ([`f10-review-approve.json`](evidence/f10-review-approve.json)) — original-tool
+  deny can no longer be masked by path-derived authorization; subject matching
+  and separate session keys confirmed with file:line citations; two minor
+  non-blocking notes (coverage breadth for absolute out-of-workspace paths;
+  raw-spelling prompt-dedup) recorded as F09-adjacent, not F10 blockers.
+- **Commit gate satisfied:** this round was the outstanding precondition in the
+  defect ledger; F10 and F02 may now land. In-repo `target/` gate status remains
+  intermittently Avira-dependent (owner action pending) and is documented
+  separately; the suite itself is green on every completed run.
+
 ## Next verification round

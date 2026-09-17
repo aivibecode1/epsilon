@@ -1,0 +1,113 @@
+diff --git "a/C:\\Users\\Hp\\AppData\\Local/Temp/f10-cli-main-before.rs" b/crates/epsilon-cli/src/main.rs
+index 5d4937e..78eaa77 100644
+--- "a/C:\\Users\\Hp\\AppData\\Local/Temp/f10-cli-main-before.rs"
++++ b/crates/epsilon-cli/src/main.rs
+@@ -1583,7 +1583,11 @@ async fn build_runtime(
+     // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
+     // makes that boundary hold regardless of project rules or approvals.
+     let base_engine = if plan_mode {
+-        epsilon_safety::PermissionEngine::layered(vec![epsilon_safety::plan_ruleset()])
++        let mut layers = vec![epsilon_safety::plan_ruleset()];
++        if !project.rules.is_empty() {
++            layers.push(epsilon_cli::runtime::project_rules_layer(&project.rules));
++        }
++        epsilon_safety::PermissionEngine::layered(layers)
+     } else if project.rules.is_empty() {
+         epsilon_safety::PermissionEngine::with_defaults()
+     } else {
+@@ -2008,6 +2012,95 @@ fn render_demo_event(ev: &Arc<AgentEvent>) {
+     }
+ }
+
++#[cfg(test)]
++mod runtime_tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn plan_mode_preserves_project_read_deny() {
++        let workspace = tempfile::tempdir().unwrap();
++        std::fs::write(workspace.path().join("private.txt"), "private fixture").unwrap();
++        std::fs::write(workspace.path().join("public.txt"), "public fixture").unwrap();
++        std::fs::create_dir(workspace.path().join(".epsilon")).unwrap();
++        std::fs::write(
++            workspace.path().join(".epsilon/config.toml"),
++            r#"
++[[rules]]
++capability = "read"
++pattern = "*private.txt"
++action = "deny"
++
++[[rules]]
++capability = "write"
++pattern = "*"
++action = "allow"
++"#,
++        )
++        .unwrap();
++        let (project, trust, _) = epsilon_cli::runtime::load_project_config(workspace.path());
++        assert_eq!(trust, epsilon_cli::runtime::TrustDecision::Trusted);
++        assert_eq!(project.rules.len(), 2);
++        let agent = build_runtime(RunParams {
++            workspace: workspace.path(),
++            stream_fn: Arc::new(FauxProvider::new(vec![
++                FauxStep::call(
++                    "private",
++                    "read",
++                    serde_json::json!({"path": "private.txt"}),
++                ),
++                FauxStep::call("public", "read", serde_json::json!({"path": "public.txt"})),
++                FauxStep::call(
++                    "mutation",
++                    "write",
++                    serde_json::json!({"path": "new.txt", "content": "not written"}),
++                ),
++                FauxStep::say("done"),
++            ])),
++            approvals: Arc::new(epsilon_safety::AutoApprove),
++            mcp_servers: &[],
++            session_file: ".epsilon/session.jsonl",
++            confinement: &epsilon_tools::Confinement::Off,
++            lsp: epsilon_tools::Lsp::Off,
++            model_id: "test-1",
++            resume: &Resume::No,
++            project: &project,
++            project_trusted: true,
++            plan_mode: true,
++        })
++        .await
++        .unwrap();
++        let outcome = agent
++            .run(user_message(workspace.path(), "inspect the files".into()))
++            .await
++            .unwrap();
++        let result = |id: &str| {
++            outcome
++                .produced
++                .iter()
++                .find_map(|message| match message {
++                    Message::ToolResult(result) if result.tool_call_id == id => Some(result),
++                    _ => None,
++                })
++                .expect("scripted tool call must produce a result")
++        };
++        let private = result("private");
++        assert!(
++            private.is_error,
++            "plan mode must preserve the project's read deny: {private:?}"
++        );
++        assert!(format!("{private:?}").contains("Permission denied"));
++        assert!(
++            !result("public").is_error,
++            "ordinary plan reads remain allowed"
++        );
++        assert!(
++            result("mutation").is_error,
++            "project allow cannot override plan deny"
++        );
++        assert!(!workspace.path().join("new.txt").exists());
++    }
++}
++
+ #[cfg(test)]
+ mod mask_tests {
+     use super::*;

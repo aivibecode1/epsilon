@@ -141,6 +141,23 @@ Windows Job Objects restrict resources, not file or network access; bubblewrap's
 
 ## F10 — Plan restrictions must survive actual subject extraction and layering
 
+**Working-tree update: implemented, reviewed approve; commit awaits the post-fix
+verification round.** The plan ruleset now contains
+wildcard `bash`/`shell` denies, CLI composition retains project rules (ADR-006
+stacking), and additive authorization guarantees the original tool capability is
+checked first — a derived `external_dir` subject can add a constraint but never
+replace or mask an original denial (`crates/epsilon-core/src/exec.rs:337-391`).
+Evidence for the implementation: red/green regressions
+[`f10-red.log`](evidence/f10-red.log), [`f10-green.log`](evidence/f10-green.log),
+[`f10-cli-red.log`](evidence/f10-cli-red.log), [`f10-cli-green.log`](evidence/f10-cli-green.log),
+narrow delta [`f10-cli-change.patch`](evidence/f10-cli-change.patch), full battery
+[`gate-f10-composed.log`](evidence/gate-f10-composed.log) — GATE PASS (pre-additive-fix
+tree). Independent read-only review: **approve, no blockers**
+([`f10-review-approve.json`](evidence/f10-review-approve.json)). The post-fix
+rerun `f10-final2` verdict is recorded in `audit/05-verification-log.md`; both F10
+and F02 land in the same commit series.
+Original source trace below describes the pre-fix snapshot.
+
 **Evidence:** plan rules match `git commit*`/`git push*` (`crates/epsilon-safety/src/engine.rs:137–145`), but core authorizes only the first shell word (`crates/epsilon-core/src/exec.rs:141–147`). CLI chooses plan rules **instead of** project rules (`crates/epsilon-cli/src/main.rs:1581–1593`).
 
 **Impact:** subcommand denies cannot match; a broad shell approval can allow actions advertised as forbidden. Project-specific deny rules disappear in this mode. Disabling native write/edit alone is not a read-only shell boundary.

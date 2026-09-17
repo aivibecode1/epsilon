@@ -157,6 +157,19 @@ async fn denied_external_write_blocks_with_guidance_before_execution() {
     assert!(!outside_path.exists());
 }
 
+#[test]
+fn plan_mode_denies_bash_even_when_project_allows_it() {
+    let engine = PermissionEngine::layered(vec![
+        epsilon_safety::plan_ruleset(),
+        epsilon_safety::Ruleset {
+            name: "project".into(),
+            rules: vec![Rule::new("bash", "*", epsilon_safety::Action::Allow)],
+        },
+    ]);
+    // Core preflight supplies the command head, not "git commit ...".
+    assert_eq!(engine.evaluate("bash", "git"), epsilon_safety::Action::Deny);
+}
+
 #[tokio::test]
 async fn custom_ruleset_allows_bash_without_asking() {
     let dir = tempfile::tempdir().unwrap();

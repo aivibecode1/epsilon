@@ -914,7 +914,27 @@ each alters what a user sees.
   summary's own carried block is recovered and merged, so instructions survive successive
   compactions instead of evaporating on the second one. Companion to M64's `<file_ledger>`: the
   summary message now holds the model's prose followed by the harness's facts.
-- **ADR-005 amendment (M65) — a mutation is verified against what was read.** Permission gates
+- **ADR-006 amendment (F10, 2026-09-17) — plan mode composes layers and refuses shell.**
+  Plan mode layers project `[[rules]]` UNDER the plan ruleset instead of replacing them:
+  project denies survive a research run, and the engine's monotonic deny keeps plan
+  boundaries intact no matter what any later layer allows. `plan_ruleset()` denies
+  `bash`/`shell` outright rather than matching subcommand patterns (`git commit*`), because
+  core preflight authorizes only the command head — string prefixes cannot establish a
+  read-only shell boundary, so plan mode offers no shell execution at all.
+
+- **ADR-005 amendment (M81 / F02) — observations belong to an agent/session view.**
+  Supersedes M65's shared-read rationale below. Each Agent owns an allocation-backed
+  `Arc<()>` token carried in ToolContext. Context clones retain that token; new agents
+  (including task children) and restored history receive fresh tokens. The string session
+  label is not an observation identity. Tools retain only weak token ownership and reclaim
+  retired scopes on the next log access. A successful native write/edit invalidates sibling
+  observations for the same lexical path, even when mtime/length match; only the writer's
+  snapshot is refreshed. Failed mutations do not refresh it. The per-path mutation queue
+  remains shared. No stateful behavior is added to contracts: it carries the passive token.
+  This does not close alias identity (F09), external-writer races, or read/stat races.
+  Host callers must retain a token across their own tool calls, not allocate one per call.
+
+- **ADR-005 amendment (M65, observer sharing superseded by M81) — a mutation is verified against what was read.** Permission gates
   decide *whether* a call may run and confinement decides *where* it may reach; neither notices
   that the file changed between the model's read and its write, which is how a `task` child's
   work (or the user's own editor) gets silently replaced. `epsilon-tools/src/read_log.rs` keeps

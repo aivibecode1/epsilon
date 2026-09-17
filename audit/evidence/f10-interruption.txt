@@ -1,0 +1,16 @@
+F10 shell-policy slice: interrupted verification
+
+The engine regression failed before the fix (Allow versus Deny).
+The targeted loop_with_rules and plan_shell targets then passed; see f10-green.log.
+The five-gate run stopped during Clippy: only fmt exit 0 is recorded.
+Process handle proc_a5fed94da565 was unavailable on recovery. No cargo, rustc, link or clippy-driver process was found.
+Independent review deleg_1c547f52 returned an owner-exited error, not a verdict.
+No full gate pass or independent approval is claimed. Changes remain uncommitted.
+The CLI project-rule composition portion was implemented later by a delegated task:
+plan mode now layers project rules under the plan layer
+(crates/epsilon-cli/src/main.rs, runtime_tests::plan_mode_preserves_project_read_deny).
+Independent re-run in the parent session confirmed 10/10 bin tests pass.
+Shell-refusal slice: engine denies bash/shell *; plan_shell + loop_with_rules green.
+Outstanding F10 acceptance: Windows/Linux alias tests belong to F09-style path identity, not this slice;
+full gate battery and independent review of the combined F10 diff remain before commit.
+See f10-cli-red.log, f10-cli-green.log, f10-cli-change.patch.
