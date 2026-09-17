@@ -193,7 +193,10 @@ impl Default for LoopLimits {
             max_parallel_tool_calls: 8,
             doom_loop_threshold: 3,
             steering_mode: QueueMode::OneAtATime,
-            followup_mode: QueueMode::All,
+            // pi agent.ts:231-232 constructs both queues `one-at-a-time`; a queued
+            // follow-up waits for the stop boundary created by the previous one so
+            // its request sees that reply (pi parity). Explicit `All` batches them.
+            followup_mode: QueueMode::OneAtATime,
             max_turns: 64,
             compaction_threshold_tokens: 120_000,
             compaction_tail_tokens: 12_000,
