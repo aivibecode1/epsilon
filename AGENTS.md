@@ -142,6 +142,21 @@ on CLI. New edges require review rather than relying on an illustrative layer di
   clearing the detection or adding an exclusion is an owner decision requiring
   administrator rights — never change security configuration from an agent session.
 
+## Agent memory (`agents/memory/`)
+
+Long agent conversations get compressed; this folder is the deliberate,
+intelligent form of that compression — hand-curated working state that survives
+context loss, checked into the codebase where the work happens.
+
+- **Read before working**: load `agents/memory/README.md` and any file matching
+  your task; trust code, gates, and `git log` over these notes when they disagree.
+- **Update in the same turn** a work item's status, decisions, evidence paths,
+  or next steps change — never end a turn on stale memory.
+- **One file per active work item**, topic-slug named, under ~80 lines.
+- **Delete on completion**: once a work item is committed and documented in
+  `docs/milestones/`, remove its file — git history is the durable record;
+  this folder holds open work only. No secrets, no product docs.
+
 ## Documentation while building
 
 Documentation is part of "done" — if a change lands without its docs, the task is not finished:
@@ -179,6 +194,7 @@ docs/
 scripts/gate.sh    the full verification battery in one command
 crates/            the 12 workspace crates
 references/        the four reference harnesses (not committed)
+agents/            agent working memory (open work state) + local agent skills
 ```
 
 ## Conflict resolution
