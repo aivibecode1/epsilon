@@ -1,0 +1,27 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests\wire_fixtures.rs (target\debug\deps\wire_fixtures-9a8d829101e5539b.exe)
+
+running 18 tests
+test custom_provider_id_routes_to_declared_endpoint ... ok
+test anthropic_default_stop_still_ends_turn_cleanly ... ok
+test anthropic_adaptive_thinking_and_effort_when_enabled ... ok
+test an_anthropic_error_event_after_thinking_keeps_the_thinking ... ok
+test anthropic_message_delta_stop_reason_drives_message_stop ... ok
+test an_error_frame_after_deltas_keeps_the_deltas ... ok
+test gemini_chunk_with_text_and_function_call_emits_both ... ok
+test duplicate_tool_call_ids_in_one_message_are_uniquified ... ok
+test google_thinking_config_with_level ... ok
+test malformed_arguments_are_repaired_rather_than_emptied ... ok
+test multi_byte_char_split_across_chunks_survives ... ok
+test openai_compat_reasoning_effort_by_family ... ok
+test openai_content_filter_maps_to_error ... ok
+test openai_length_finish_maps_to_max_tokens_even_with_tool_calls ... ok
+test stall_after_text_keeps_the_prose_and_flags_the_turn_failed ... ok
+test stall_with_a_tool_call_in_flight_never_returns_the_call ... ok
+test stall_with_no_output_is_a_plain_network_failure ... ok
+test unreadable_arguments_are_preserved_for_the_failure_to_quote ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+EXIT=0

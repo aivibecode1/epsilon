@@ -248,12 +248,73 @@ next section.
   minimum fix; the model-visible read cap was not widened. The concurrent
   external-writer race (F02 territory) remains out of this batch's scope.
 
+## Phase 3 batch B — F02 acceptance follow-up (2026-09-17)
+
+The three review gaps now have filesystem acceptance coverage: failed sibling edits
+preserve partial-read overwrite refusal; successful single/batch edits invalidate
+only the changed path; real Agent task children and restored history do not inherit
+write authority. No production guard changes were needed in this follow-up.
+
+- Clean-target isolated cross-agent regression: **1 passed**, exit 0
+  ([output](evidence/f02-isolated-clean.log)).
+- `cargo test -p epsilon-tools --test builtin_tools -- --nocapture`:
+  **36 passed, 0 failed**, exit 0.
+- `cargo test -p epsilon-cli --test observation_ownership`:
+  **2 passed, 0 failed**, exit 0; the parent/child test also passed an exact rerun.
+- `bash scripts/gate.sh f02-final`: **GATE FAIL** — fmt=0, clippy=0,
+  test=101, demo=0, real-check=0. The test gate failed linking epsilon-llm's
+  `wire_fixtures` executable with LNK1104. The clean rebuild did not resolve this
+  Windows failure. Its cause is unconfirmed; no security control was disabled.
+  [Complete gate output](evidence/gate-f02-final.log) is preserved outside target.
+- Independent [acceptance-test follow-up review](evidence/f02-acceptance-review.txt)
+  approved with caveats and confirmed all three gaps closed. The tests exercise
+  sequential parent/child scheduling, not concurrent execution. F02 changes remain
+  uncommitted; F09 alias identity is separate unfinished work.
+
+## F02 Windows linker isolation (2026-09-17)
+
+No production source, manifest, security setting or gate command was changed.
+
+- The first `cargo test -p epsilon-llm --tests --no-run` passed, but omitted
+  `real`: `tests/wire_fixtures.rs:5` excludes the suite in that configuration.
+  That result is **not** evidence that the failing suite works
+  ([initial diagnostic](evidence/wf-diag.log)).
+- `cargo test -p epsilon-llm --features real --test wire_fixtures --no-run`
+  passed; the same command without `--no-run`, with `-- --nocapture`, executed
+  **18 passed, 0 failed**, exit 0. Cargo produced
+  `wire_fixtures-9a8d829101e5539b.exe`
+  ([build](evidence/wf-real-diag.log), [run](evidence/wf-real-run.log)).
+- The unchanged full gates still failed: fmt=0, clippy=0, test=101, demo=0,
+  real-check=0. The workspace build attempted
+  `wire_fixtures-76eddb95e46e81ff.exe` and failed with LNK1104
+  ([gate output](evidence/gate-f02-workspace-diagnostic.log)).
+- A bounded foreground reproduction, `cargo test --workspace --test wire_fixtures
+  --no-run -j 1`, failed with that same LNK1104, exit 101
+  ([isolated output](evidence/wf-workspace-isolated.log)). This retains workspace
+  feature resolution, compiles only the selected test target, and does not need
+  concurrent Cargo jobs to reproduce. Cargo generates the executable suffix;
+  gate.sh does not contain an expected hash.
+- Read-only OS checks found no running wire_fixtures process. After the gate,
+  Get-Item and a read-only File.Open found the failing output executable absent.
+  Defender reported AV=False/RTP=False; Get-MpPreference failed with 0x800106ba.
+  SecurityCenter2 listed Avira Security, Windows Defender and Advanced SystemCare
+  Ultimate. Registration does not establish which product, if any, interfered.
+  No lock owner was identified, no process was killed, and no exclusion was added.
+
+**Conclusion:** the package-only real-feature suite works, but the workspace
+configuration still cannot link its test executable. The cause remains unknown;
+this is not an assertion failure and does not justify a speculative Rust patch.
+Further broad rebuilds are paused. Host-level file-access tracing or security-product
+history at the failing link operation is the next diagnostic, not another clean
+rebuild or a renamed test binary. Keep earlier failures as historical evidence;
+do not install the failed workspace baseline.
+
+Cleanup removed 14,644 files (8.2 GiB). Both target/ and target-clean/ were
+confirmed absent; C: has 63 GiB available (87% used). No binary was installed.
+
 ## Next verification round
 
-After Phase 3 is authorized, correct F00 and run the complete gates once. The targeted failing command is:
-
-```sh
-cargo test -p epsilon-tools --lib checkpoint::tests::the_store_evicts_old_blobs_when_it_grows_past_its_ceiling
-```
-
-Record the new baseline, changed files and actual results separately; do not rewrite the failed results above as if this audit started green.
+Resolve the Windows `wire_fixtures` linker/launch blocker using the foreground
+reproduction above before claiming a green workspace. F02 acceptance review is
+complete; F09 alias identity and the dirty-baseline implementation commit scope
+remain open.

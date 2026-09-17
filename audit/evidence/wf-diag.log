@@ -1,0 +1,56 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.228
+   Compiling windows-link v0.2.1
+   Compiling typenum v1.20.1
+   Compiling pin-project-lite v0.2.17
+   Compiling zmij v1.0.23
+   Compiling windows-sys v0.61.2
+   Compiling cfg-if v1.0.4
+   Compiling getrandom v0.3.4
+   Compiling futures-core v0.3.34
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.228
+   Compiling hybrid-array v0.4.14
+   Compiling mio v1.2.2
+   Compiling bytes v1.12.1
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling const-oid v0.10.2
+   Compiling futures-sink v0.3.34
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling winnow v1.0.4
+   Compiling serde_spanned v1.1.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling futures-task v0.3.34
+   Compiling slab v0.4.12
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling cpufeatures v0.3.0
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling pin-utils v0.1.0
+   Compiling base64 v0.23.1
+   Compiling fastrand v2.5.0
+   Compiling digest v0.11.3
+   Compiling toml v1.1.4+spec-1.1.0
+   Compiling sha2 v0.11.0
+   Compiling once_cell v1.21.4
+   Compiling tempfile v3.23.0
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.228
+   Compiling futures-macro v0.3.31
+   Compiling async-trait v0.1.89
+   Compiling tokio v1.53.1
+   Compiling futures-util v0.3.31
+   Compiling tokio-util v0.7.19
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+   Compiling epsilon-llm v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-llm)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 56s
+  Executable unittests src\lib.rs (target\debug\deps\epsilon_llm-161948ef58669580.exe)
+  Executable tests\live_smoke.rs (target\debug\deps\live_smoke-cf4cc8027b25f03e.exe)
+  Executable tests\oauth_login.rs (target\debug\deps\oauth_login-dd8720dd099deeac.exe)
+  Executable tests\wire_fixtures.rs (target\debug\deps\wire_fixtures-8885ad62b5e1309f.exe)
+EXIT=0
