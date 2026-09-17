@@ -1,4 +1,16 @@
-# Epsilon audit — Phase 1
+# Epsilon audit
+
+**Current assessment:** [09 — source revalidation and port-first plan](09-revalidation.md),
+2026-09-17, working tree over `80b32eb`: five gates passed, 795 tests passed,
+0 failed, 1 ignored. Known correctness and port gaps remain. The owner now
+authorizes autonomous audit, restructure and implementation commits; no push
+or paid provider calls are implied.
+
+## Historical Phase 1 assessment
+
+The remaining sections describe the 2026-09-16 review and its then-current
+authorization. Its red baseline and mandatory review stops are historical, not
+today's status or instructions.
 
 **Audience:** the owner reviewing scope, and engineers implementing the approved roadmap.
 **Date:** 2026-09-16. **Baseline:** working tree over `e200815`, not the committed tree alone.
