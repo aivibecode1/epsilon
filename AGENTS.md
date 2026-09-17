@@ -153,9 +153,11 @@ context loss, checked into the codebase where the work happens.
 - **Update in the same turn** a work item's status, decisions, evidence paths,
   or next steps change — never end a turn on stale memory.
 - **One file per active work item**, topic-slug named, under ~80 lines.
-- **Delete on completion**: once a work item is committed and documented in
-  `docs/milestones/`, remove its file — git history is the durable record;
-  this folder holds open work only. No secrets, no product docs.
+- **Checkpoint before compaction**: record verified facts, assumptions, decisions,
+  evidence paths, running process IDs, dirty-work boundaries and the next safe action.
+- **Retire after closeout**: remove the working note only after documentation,
+  verification, required installation and cleanup finish. Committing code alone
+  is not closeout. No secrets or transcript dumps.
 
 ## Documentation while building
 

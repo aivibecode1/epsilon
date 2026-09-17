@@ -407,4 +407,8 @@ Earlier candidate tests failed on stale catalog fixtures; their logs are retaine
 This certifies the isolated candidate, not arbitrary dirty working-tree changes
 or Linux/MSRV/provider interoperability. No security or release approval implied.
 
+M83 closeout: commit `b57c8bf`; locked candidate installation, installed demo
+and cleanup each returned 0. Removed 20,837 build files / 11.0 GiB; candidate
+and repo targets absent, 60G free. See [closeout](evidence/integration-closeout.txt).
+
 ## Next verification round

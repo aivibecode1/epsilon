@@ -39,6 +39,14 @@ CLI checks both exit 0. The smaller count than the 794-test working tree reflect
 excluded owner changes/tests, not deleted candidate tests. Windows was exercised;
 Linux and MSRV qualification remain pending.
 
+## Closeout
+
+Committed as `b57c8bf`. Installation from the verified candidate with `--locked`
+passed; the installed binary demo passed. Cleanup removed 20,837 files / 11.0 GiB.
+Both candidate and repository target directories are absent; C: had 60G free.
+Evidence: `audit/evidence/integration-{install,installed-demo,cleanup}.log` and
+`audit/evidence/integration-closeout.txt`. No push or history rewrite occurred.
+
 ## Residuals and review disposition
 
 The reviews approve dependency selection conditionally, not security or release

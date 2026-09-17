@@ -1,0 +1,24 @@
+model "deepseek-chat" matched catalog entry "deepseek/deepseek-chat-v3.1"
+no credentials for provider "openrouter" — set OPENROUTER_API_KEY or run: epsilon auth login openrouter
+providers with stored credentials: deepseek (pick one with --model)
+try: --model deepseek-flash (deepseek)
+provider: faux (offline scripted)
+go real:  epsilon auth login <provider>   (or set the provider's API key env var)
+
+=== run start ===
+-- turn 0 --
+assistant> I'll inspect the two files, then write the fix.
+tool-call> echo
+tool-call> echo
+tool-result[echo]> reading src/auth.rs
+tool-result[echo]> reading tests/auth.rs
+-- turn 1 --
+tool-call> fail
+tool-result[fail]> ERROR: intentional failure
+-- turn 2 --
+assistant> One check failed; here is the summary of what I found.
+=== run end ===
+
+final reason: Completed
+messages produced: 6
+tokens in/out: 300/150
