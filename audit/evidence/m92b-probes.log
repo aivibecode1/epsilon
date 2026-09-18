@@ -1,0 +1,30 @@
+=== P-A: id echo removed (expect ids_echo + unknown_op/id tests to FAIL) ===
+test rpc_mode::tests::abort_during_an_admitted_run_reports_true_and_ends_it ... FAILED
+test rpc_mode::tests::ids_echo_per_request_in_arrival_order ... FAILED
+test rpc_mode::tests::unknown_op_reports_failure_with_the_echoed_id ... FAILED
+test result: FAILED. 26 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+=== P-B: legacy ok key removed (expect the legacy-key tests to FAIL) ===
+test rpc_mode::tests::get_state_values_equal_the_live_agents ... FAILED
+test rpc_mode::tests::legacy_requests_still_work_without_ids ... FAILED
+test rpc_mode::tests::replies_are_single_lines_and_keep_the_legacy_keys ... FAILED
+test result: FAILED. 26 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+=== P-C: state field falsified (expect get_state test to FAIL) ===
+test rpc_mode::tests::get_state_values_equal_the_live_agents ... FAILED
+test result: FAILED. 26 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+=== P-D: silent lag restored (documented limit probe - a green suite CONFIRMS the limit) ===
+test rpc_mode::tests::lagged_notice_matches_the_http_frame_shape ... ok
+test result: FAILED. 26 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+=== P-E: xhigh alias removed (expect the two alias tests to FAIL) ===
+test message::tests::thinking_level_accepts_pis_xhigh_spelling_on_input_only ... FAILED
+---- message::tests::thinking_level_accepts_pis_xhigh_spelling_on_input_only stdout ----
+thread 'message::tests::thinking_level_accepts_pis_xhigh_spelling_on_input_only' (19836) panicked at crates\epsilon-contracts\src\message.rs:342:67:
+    message::tests::thinking_level_accepts_pis_xhigh_spelling_on_input_only
+test rpc_mode::tests::set_thinking_level_accepts_pis_xhigh_spelling ... FAILED
+test result: FAILED. 26 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+=== P-F: scratch route added (expect the drift test to FAIL) ===
+test openapi::tests::spec_paths_match_router ... FAILED
+---- openapi::tests::spec_paths_match_router stdout ----
+thread 'openapi::tests::spec_paths_match_router' (8480) panicked at crates\epsilon-server\src\openapi.rs:184:9:
+ right: ["/abort", "/approvals", "/approvals/{request_id}", "/events", "/followup", "/healthz", "/openapi.json", "/prompt", "/scratch-probe", "/state", "/steer"]
+    openapi::tests::spec_paths_match_router
+test result: FAILED. 14 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.46s

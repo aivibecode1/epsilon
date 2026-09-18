@@ -435,6 +435,31 @@ only difference) and the serve API serves a hand-maintained OpenAPI 3.1 document
 Codegen (utoipa) deliberately skipped while the surface is seven routes; revisit on
 growth.
 
+**Amendment (M92, correlated replies + abort/state on both wire surfaces).** The rpc line
+protocol now speaks pi's reply envelope — `type:'response'`, `command`, the request's `id`
+echoed on that request's reply, `success`, and `data` on success / `error` on failure — while
+keeping the first wire's `ok`/`error` keys, so both generations of client read the same frame
+with no translation layer (`crates/epsilon-cli/src/rpc_mode.rs`). Correlation replaces the
+old arrival-order convention, which is what makes pi's own client able to consume frames at
+all (it resolves only `type:'response'` frames with a matching `id`,
+`rpc-client.ts:508-522,540-590`); pi's `type` tag is accepted as an alias for `op`, and a
+frame carrying both is read as `op`. New ops: `abort`, `get_state`, `set_thinking_level`.
+A dropped broadcast is no longer silent: rpc emits a `lagged` frame carrying the same
+`{dropped:n}` object serve's SSE event does, and the reply/notice builders are unit-tested
+(pi has no counterpart for the line protocol's dropped-event notice; serve's own shape is the
+convention this ADR already fixed). serve gains `POST /abort` and `GET /state`, backed by the
+same core calls, with `request_id` optional on prompt and abort bodies and echoed in the
+202/409 JSON; both surfaces read ONE payload struct (`SessionState` in `epsilon-contracts`,
+types only) so they cannot disagree about shape, while serve keeps HTTP statuses rather than
+importing rpc's single string channel. The OpenAPI drift test covers both new paths (this ADR
+requires spec == routes). Interop is envelope-level only: pi's command names and payload
+dialects (`task`/`text`, `followup`, camel-case state keys) are not adopted, and the deferred
+op families answer `unknown op: <name>` with the echoed id instead of pretending. The one
+vocabulary difference that IS bridged: pi's thinking-level spelling `xhigh` is accepted as an
+input alias for epsilon's canonical `x_high` (the spelling session files already persist);
+outbound state keeps the canonical spelling, so a client reading `x_high` and sending back
+`xhigh` is the supported loop.
+
 ---
 
 ## ADR-012: Configuration TOML, declarative only, project trust

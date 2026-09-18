@@ -56,6 +56,12 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M92 — RPC protocol breadth](milestones/M92-rpc-protocol-breadth.md): the RPC-02 slice —
+  correlated replies in pi's envelope while keeping the first wire's `ok`/`error` keys, an
+  extracted testable dispatch path, `abort`/`get_state`/`set_thinking_level` ops, a lagged frame
+  matching serve mode's, `Agent::model_id`, and `POST /abort` + `GET /state` over the shared
+  `SessionState` struct with `request_id` echo and OpenAPI registration; verification pending.
+
 - [M91 — review hardening](milestones/M91-review-hardening.md): the follow-ups the M89/M90
   reviews recorded as owed — session-reader guards against hand-corruption (a parent cycle and a
   `seq`/line-order mismatch, neither of which may hang or panic), the three missing CORE-02 loop

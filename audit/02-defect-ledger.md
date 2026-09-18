@@ -212,14 +212,33 @@ decided — the spawned run is raced against its own first event, so a rejected 
 receives the real `AlreadyRunning` reason instead of a false `started`
 (`crates/epsilon-cli/src/rpc_mode.rs`). A post-admission failure is logged instead of
 discarded. Executed regression: `a_second_prompt_is_rejected_while_a_run_is_admitted`.
-**Still open:** HTTP/serve-mode admission (F18/server), correlation IDs and abort/state
-operations (RPC-02), dropped-event reporting.
+**M87 closed the reply contract on both surfaces:** RPC answers from the run's own decision
+(the race described above, with the advisory busy helper deleted), and serve's reservation is
+atomic — `fetch_add` on the run counter *is* the decision, so two overlapping requests cannot
+both pass a check-then-act, and the slot is released by a `Drop` guard inside the run task
+(`docs/milestones/M87-rpc-admission.md`).
 
-**Evidence:** RPC busy helper always returns false, starts a detached task and discards `run()` result (`crates/epsilon-cli/src/rpc_mode.rs:77–85,117–120`). HTTP checks then increments separately (`crates/epsilon-server/src/lib.rs:238–253`). Core rejecting concurrent runs does not retroactively correct a successful admission response.
+**M92 closed the protocol-breadth half (RPC + serve):** replies now carry pi's
+`type:'response'` envelope with the request's `id` echoed on that request's reply (pi's `type`
+tag is accepted as an alias for `op`), while keeping the first wire's `ok`/`error` keys so an
+existing client needs no translation; a dropped broadcast becomes an explicit frame on RPC
+instead of a silent skip, matching serve's SSE `lagged` shape; and both surfaces expose
+`abort` and `state` (`POST /abort`, `GET /state`) backed by the same core calls and one shared
+payload struct (`SessionState`, `epsilon-contracts`). `Agent::model_id` became public for that
+payload. Deferred op families fail explicitly as `unknown op: <name>` with the echoed id.
 
-**Impact:** callers can receive `started`/202 for rejected work and wait for events that never identify their failure. RPC also silently skips lagged broadcasts (`rpc_mode.rs:65`), has no correlation ID and no abort operation (`:16–35`).
+**Still open:** pi-faithful command names and payload dialects beyond the envelope (`message`
+vs `task`/`text`, `follow_up` vs `followup`, snake- vs camel-case state keys); the
+model-switching ops (`set_model`/`cycle_model`/`available_models` — needs the TUI's
+id+hot-swap+persist sequence as one seam); queue modes (no core setter); compaction over the
+wire; and RPC's `run()` loop and event pump are not end-to-end tested (it owns stdin/stdout —
+the lagged frame's bytes are pinned by a unit test, the wiring is inspection-only).
 
-**Acceptance:** competing requests have exactly one accepted run, the other gets an attributable busy error; reserve/release admission even on failure. Add cancellation and explicit dropped-event/recovery semantics before treating RPC as a dependable editor API. A mere racy `is_running()` replacement is insufficient.
+**Evidence (historical — the pre-M87 shape this was written against):** RPC busy helper always returned false, starts a detached task and discards `run()` result (`crates/epsilon-cli/src/rpc_mode.rs:77–85,117–120`); HTTP checks then increments separately (`crates/epsilon-server/src/lib.rs:238–253`). Core rejecting concurrent runs does not retroactively correct a successful admission response.
+
+**Impact (closed for admission, correlation and abort):** callers could receive `started`/202 for rejected work and wait for events that never identified their failure; RPC also silently skipped lagged broadcasts, had no correlation ID and no abort operation. What remains is the unclosed vocabulary gap and the untested pump listed above — not an acknowledgment problem.
+
+**Acceptance:** competing requests have exactly one accepted run, the other gets an attributable busy error; reserve/release admission even on failure — **delivered** (M86 RPC half, M87 both surfaces). Cancellation and explicit dropped-event/recovery semantics before treating RPC as a dependable editor API — **delivered** (M92 `abort` + the `lagged` frame, both surfaces). The surviving item is the untested RPC pump and the vocabulary gap in *Still open* above.
 
 ## F14 — Make LSP feedback bounded and tied to the current document
 

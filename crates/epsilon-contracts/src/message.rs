@@ -26,6 +26,13 @@ pub enum ThinkingLevel {
     /// High effort.
     High,
     /// Extra-high (Anthropic `xhigh`, OpenAI `xhigh`).
+    ///
+    /// The canonical serde id is the snake_case `x_high` (serialization, and the
+    /// spelling session files persist); pi's one-word `xhigh`
+    /// (`pi/packages/agent/src/types.ts:300`) is accepted as an input alias only, so a
+    /// pi-shaped RPC frame deserializes while stored sessions and both `get_state`
+    /// surfaces keep emitting `x_high`.
+    #[serde(alias = "xhigh")]
     XHigh,
     /// Maximum the provider allows.
     Max,
@@ -323,6 +330,24 @@ mod tests {
         for l in ThinkingLevel::ALL {
             assert_eq!(l.enabled(), l != ThinkingLevel::Off);
         }
+    }
+
+    /// Wire-fidelity pin (review B1): pi spells the extra-high level `xhigh`
+    /// (`pi/packages/agent/src/types.ts:300`) while our serde id is the snake_case
+    /// `x_high`, the spelling session persistence already stores. Both spellings
+    /// deserialize; serialization stays `x_high` — the alias is input-only.
+    #[test]
+    fn thinking_level_accepts_pis_xhigh_spelling_on_input_only() {
+        let canonical: ThinkingLevel = serde_json::from_str("\"x_high\"").expect("canonical id");
+        let pi: ThinkingLevel = serde_json::from_str("\"xhigh\"").expect("pi's alias");
+        assert_eq!(canonical, ThinkingLevel::XHigh);
+        assert_eq!(pi, ThinkingLevel::XHigh);
+
+        // Persistence unchanged: XHigh always serializes as the canonical id.
+        assert_eq!(
+            serde_json::to_string(&ThinkingLevel::XHigh).expect("serialize"),
+            "\"x_high\""
+        );
     }
 
     fn assistant(stop: StopReason) -> AssistantMessage {

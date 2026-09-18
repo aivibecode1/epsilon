@@ -519,6 +519,12 @@ impl Agent {
         }
     }
 
+    /// The model identifier the next request will carry (frontends render it; the RPC
+    /// and HTTP `get_state` surfaces report it). Set through [`Agent::set_model_id`].
+    pub fn model_id(&self) -> String {
+        self.model_id.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
     /// Hot-swap the provider stream without a restart (M32d).
     ///
     /// Wired from `crates/epsilon-tui` after `epsilon auth login` saves a key

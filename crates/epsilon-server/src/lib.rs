@@ -19,8 +19,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 mod openapi;
-use axum::routing::{get, post};
+use axum::routing::{MethodRouter, get, post};
 use axum::{Router, http::StatusCode, response::IntoResponse};
+use epsilon_contracts::LaggedNotice;
 use epsilon_contracts::message::Message;
 use epsilon_core::Agent;
 use epsilon_safety::ChannelApprovalUi;
@@ -93,6 +94,53 @@ impl ServeState {
 pub struct PromptBody {
     /// The task text; becomes the user message.
     pub task: String,
+    /// Optional correlation id, echoed on the 202/409 reply (RPC-02). Same contract as
+    /// pi's RPC client, which correlates replies by id rather than arrival order.
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+/// Request body of `POST /abort` (the body is optional: it carries only the correlation id).
+#[derive(Debug, Deserialize)]
+pub struct AbortBody {
+    /// Optional correlation id, echoed on the 202/409 reply (RPC-02).
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+/// Body shared by the 202/409 answers of `POST /prompt` and `POST /abort`.
+///
+/// `detail` carries the text these routes answered with before their bodies became JSON,
+/// so a client reading the body as prose still finds its sentence; `request_id` is present
+/// exactly when the request supplied one.
+fn outcome_body(
+    outcome_key: &str,
+    outcome: bool,
+    detail: &str,
+    request_id: Option<String>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({ outcome_key: outcome, "detail": detail });
+    if let Some(request_id) = request_id {
+        body["request_id"] = serde_json::Value::String(request_id);
+    }
+    body
+}
+
+/// Read the live session state — the same payload the stdio RPC's `get_state` replies with.
+///
+/// Built field by field because the shared struct lives in `epsilon-contracts`, which
+/// stays behaviour-free (no constructor can take an `Agent` there) and because
+/// `epsilon-server` must not depend on `epsilon-cli`, where the RPC surface lives.
+fn session_state(agent: &Agent) -> epsilon_contracts::SessionState {
+    epsilon_contracts::SessionState {
+        model: agent.model_id(),
+        thinking_level: agent.thinking_level(),
+        is_streaming: agent.is_running(),
+        message_count: agent.history().len(),
+        pending_message_count: agent.steer_queue_len(),
+        session_file: agent.session_path().map(|p| p.display().to_string()),
+        estimated_context_tokens: agent.estimated_context_tokens(),
+    }
 }
 
 /// Request body of `POST /steer` and `POST /followup`.
@@ -106,29 +154,48 @@ fn empty_body_error() -> StatusCode {
     StatusCode::UNPROCESSABLE_ENTITY
 }
 
-/// Build the application router.
+/// The routes this service exposes — the single source of truth [`router`] mounts.
 ///
-/// Routes:
+/// `router()` folds exactly this table, and the OpenAPI drift test
+/// (`openapi::tests::spec_paths_match_router`) compares the document's path set against
+/// this same table — so a route added on either side alone fails the test instead of
+/// drifting silently. Routes:
 /// - `GET  /healthz`            liveness
+/// - `GET  /openapi.json`       this document (exempt from the bearer token)
 /// - `POST /prompt`             start a run (`409` when one is already active)
 /// - `POST /steer`              queue mid-run interjection
 /// - `POST /followup`           queue post-run follow-up
+/// - `POST /abort`              cancel the active run (`409` when none is running)
+/// - `GET  /state`              live session state (shared RPC/HTTP payload)
 /// - `GET  /events`             SSE stream of every [`AgentEvent`] as JSON data frames
 /// - `GET  /approvals`          pending permission asks, oldest first
 /// - `POST /approvals/{id}`     answer one ask with a [`PermissionDecision`]
-pub fn router(state: ServeState) -> Router {
-    Router::new()
-        .route(
+fn route_table() -> Vec<(&'static str, MethodRouter<ServeState>)> {
+    vec![
+        (
             "/healthz",
             get(|| async { Json(serde_json::json!({"ok": true})) }),
-        )
-        .route("/openapi.json", get(|| async { Json(openapi::spec()) }))
-        .route("/prompt", post(prompt))
-        .route("/steer", post(steer))
-        .route("/followup", post(followup))
-        .route("/events", get(events))
-        .route("/approvals", get(list_approvals))
-        .route("/approvals/{request_id}", post(resolve_approval))
+        ),
+        ("/openapi.json", get(|| async { Json(openapi::spec()) })),
+        ("/prompt", post(prompt)),
+        ("/steer", post(steer)),
+        ("/followup", post(followup)),
+        ("/abort", post(abort)),
+        ("/state", get(get_state)),
+        ("/events", get(events)),
+        ("/approvals", get(list_approvals)),
+        ("/approvals/{request_id}", post(resolve_approval)),
+    ]
+}
+
+/// Build the application router from [`route_table`] — the only place routes are
+/// registered.
+pub fn router(state: ServeState) -> Router {
+    route_table()
+        .into_iter()
+        .fold(Router::new(), |router, (path, methods)| {
+            router.route(path, methods)
+        })
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_and_host_guard,
@@ -234,18 +301,23 @@ impl Drop for RunSlot {
     }
 }
 
-async fn prompt(State(st): State<ServeState>, body: Option<Json<PromptBody>>) -> impl IntoResponse {
-    let Some(Json(PromptBody { task })) = body else {
+async fn prompt(
+    State(st): State<ServeState>,
+    body: Option<Json<PromptBody>>,
+) -> axum::response::Response {
+    let Some(Json(PromptBody { task, request_id })) = body else {
         return (
             empty_body_error(),
             "body must be {\"task\": \"…\"}".to_string(),
-        );
+        )
+            .into_response();
     };
     if task.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             "task must not be empty".to_string(),
-        );
+        )
+            .into_response();
     }
     // Single-run invariant, reserved ATOMICALLY before any reply (F13's HTTP half).
     // The previous check-then-act told the loser of an overlapping pair 202 Accepted
@@ -255,8 +327,14 @@ async fn prompt(State(st): State<ServeState>, body: Option<Json<PromptBody>>) ->
         st.run_depth.fetch_sub(1, Ordering::SeqCst);
         return (
             StatusCode::CONFLICT,
-            "another run is already active".to_string(),
-        );
+            Json(outcome_body(
+                "started",
+                false,
+                "another run is already active",
+                request_id,
+            )),
+        )
+            .into_response();
     }
     // The guard is built immediately after the reservation, before anything else can
     // fail or panic: from here on the slot is always released.
@@ -270,7 +348,37 @@ async fn prompt(State(st): State<ServeState>, body: Option<Json<PromptBody>>) ->
             eprintln!("serve: admitted run failed: {e}");
         }
     });
-    (StatusCode::ACCEPTED, "run started".to_string())
+    (
+        StatusCode::ACCEPTED,
+        Json(outcome_body("started", true, "run started", request_id)),
+    )
+        .into_response()
+}
+
+/// `POST /abort` (RPC-02): cancel the active run through the same core call the stdio
+/// surface uses.
+///
+/// 202 when a run was active and its token was cancelled; 409 when none was — HTTP keeps
+/// its status vocabulary rather than importing RPC's in-band string/boolean channel. The
+/// body reports core's own answer (`aborted`) and echoes `request_id` when supplied.
+async fn abort(State(st): State<ServeState>, body: Option<Json<AbortBody>>) -> impl IntoResponse {
+    let request_id = body.and_then(|Json(AbortBody { request_id })| request_id);
+    let aborted = st.agent.abort_current_run();
+    let (status, detail) = if aborted {
+        (StatusCode::ACCEPTED, "abort requested")
+    } else {
+        (StatusCode::CONFLICT, "no run is active")
+    };
+    (
+        status,
+        Json(outcome_body("aborted", aborted, detail, request_id)),
+    )
+}
+
+/// `GET /state` (RPC-02): the live session state, the same payload the stdio RPC's
+/// `get_state` replies with (one shared struct, `epsilon-contracts`).
+async fn get_state(State(st): State<ServeState>) -> Json<epsilon_contracts::SessionState> {
+    Json(session_state(&st.agent))
 }
 
 async fn steer(State(st): State<ServeState>, body: Option<Json<TextBody>>) -> impl IntoResponse {
@@ -314,6 +422,15 @@ async fn resolve_approval(
     }
 }
 
+/// The data payload of the SSE `lagged` event: the shared [`LaggedNotice`] serialized.
+///
+/// Both wire surfaces build the notice from the same contract struct (the stdio RPC
+/// nests this object under its `lagged` frame key), so the two cannot drift apart.
+fn lagged_data(dropped: u64) -> String {
+    serde_json::to_string(&LaggedNotice { dropped })
+        .unwrap_or_else(|e| format!(r#"{{"serialize_error":"{e}"}}"#))
+}
+
 async fn events(
     State(st): State<ServeState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -328,9 +445,7 @@ async fn events(
                 Some((Ok(Event::default().data(data)), rx))
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => Some((
-                Ok(Event::default()
-                    .event("lagged")
-                    .data(format!(r#"{{"dropped":{n}}}"#))),
+                Ok(Event::default().event("lagged").data(lagged_data(n))),
                 rx,
             )),
             Err(tokio::sync::broadcast::error::RecvError::Closed) => None,
@@ -356,6 +471,28 @@ mod tests {
         let agent = Agent::new(
             epsilon_core::LoopLimits::default(),
             Arc::new(PanicGuard(FauxProvider::new(steps))),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            gate,
+            std::env::temp_dir(),
+        );
+        let state = ServeState::new(agent, approvals);
+        let app = router(state.clone());
+        (state, app)
+    }
+
+    /// Like [`test_agent`], but every provider call pauses `delay_ms` first, so a run
+    /// stays active while a second request arrives (same pattern as the F13 overlap test).
+    fn test_agent_delayed(steps: Vec<FauxStep>, delay_ms: u64) -> (ServeState, Router) {
+        let approvals = Arc::new(ChannelApprovalUi::new());
+        let gate = Arc::new(RulesetGate::new(
+            Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
+        ));
+        let agent = Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(PanicGuard(epsilon_core::testing::SlowProvider::new(
+                FauxProvider::new(steps),
+                delay_ms,
+            ))),
             Arc::new(epsilon_core::ToolRegistry::new()),
             gate,
             std::env::temp_dir(),
@@ -536,6 +673,176 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert_eq!(state.active_runs(), 0, "admission must be released");
+    }
+
+    /// RPC-02: `POST /abort` cancels an active run through the same core call the stdio
+    /// surface makes, and the slot is released when the cancelled run's task ends.
+    #[tokio::test]
+    async fn abort_ends_a_slow_run_and_echoes_the_request_id() {
+        let (st, app) = test_agent_delayed(vec![FauxStep::say("slow")], 400);
+        // Subscribe before prompting so the run's own start event is what this test
+        // waits on: the 202 is the reservation, taken a moment before the run task is
+        // first polled, and an abort in that gap is (honestly) a no-run answer.
+        let mut events = st.agent.subscribe();
+
+        let (status, body) = json_response(
+            app.clone(),
+            "POST",
+            "/prompt",
+            Some(r#"{"task": "go", "request_id": "req_1"}"#.into()),
+        )
+        .await;
+        assert_eq!(status, 202);
+        assert!(
+            body.contains("\"request_id\":\"req_1\""),
+            "the 202 body must echo the correlation id: {body}"
+        );
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut started = false;
+        while !started {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(Ok(ev)) => {
+                    started =
+                        matches!(&*ev, epsilon_contracts::agent_event::AgentEvent::AgentStart);
+                }
+                Ok(Err(e)) => panic!("event stream failed before the run started: {e}"),
+                Err(_) => break,
+            }
+        }
+        assert!(started, "the run never started");
+
+        let (status, body) = json_response(
+            app.clone(),
+            "POST",
+            "/abort",
+            Some(r#"{"request_id": "req_2"}"#.into()),
+        )
+        .await;
+        assert_eq!(status, 202, "{body}");
+        assert!(body.contains("\"aborted\":true"), "{body}");
+        assert!(body.contains("\"request_id\":\"req_2\""), "{body}");
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while st.active_runs() > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            st.active_runs(),
+            0,
+            "the aborted run's slot must be released"
+        );
+    }
+
+    /// RPC-02: `/abort` with nothing running says so, keeping HTTP's status vocabulary
+    /// (the stdio surface reports core's `false` in-band instead — same core call).
+    #[tokio::test]
+    async fn abort_with_no_run_reports_conflict() {
+        let (st, app) = test_agent(vec![FauxStep::say("hi")]);
+        let (status, body) = json_response(app.clone(), "POST", "/abort", None).await;
+        assert_eq!(status, 409, "{body}");
+        assert!(body.contains("\"aborted\":false"), "{body}");
+        assert!(body.contains("no run is active"), "{body}");
+        assert_eq!(st.active_runs(), 0);
+
+        // A 409 whose request carried a `request_id` echoes it — the correlation half of
+        // the 409 contract, exercised with a body (the request above sends none).
+        let (status, body) = json_response(
+            app,
+            "POST",
+            "/abort",
+            Some(r#"{"request_id": "req_9"}"#.into()),
+        )
+        .await;
+        assert_eq!(status, 409, "{body}");
+        assert!(body.contains("\"aborted\":false"), "{body}");
+        assert!(body.contains("\"request_id\":\"req_9\""), "{body}");
+    }
+
+    /// RPC-02: serve's `lagged` event data is the shared `LaggedNotice` serialized. Both
+    /// surfaces build it from that contract type; the bytes are pinned here (the object
+    /// the stdio surface nests under its `lagged` frame key).
+    #[test]
+    fn lagged_event_data_is_the_shared_notice() {
+        assert_eq!(lagged_data(7), r#"{"dropped":7}"#);
+    }
+
+    /// RPC-02: the loser of an admission race receives its own `request_id` back on the
+    /// 409, so a client can correlate the refusal (pi's contract).
+    #[tokio::test]
+    async fn conflicting_prompt_echoes_its_request_id() {
+        let (st, app) = test_agent_delayed(vec![FauxStep::say("slow")], 400);
+
+        let (status, body) = json_response(
+            app.clone(),
+            "POST",
+            "/prompt",
+            Some(r#"{"task": "one", "request_id": "req_1"}"#.into()),
+        )
+        .await;
+        assert_eq!(status, 202, "{body}");
+        assert!(body.contains("\"started\":true"), "{body}");
+
+        let (status, body) = json_response(
+            app.clone(),
+            "POST",
+            "/prompt",
+            Some(r#"{"task": "two", "request_id": "req_2"}"#.into()),
+        )
+        .await;
+        assert_eq!(status, 409, "{body}");
+        assert!(body.contains("\"request_id\":\"req_2\""), "{body}");
+        assert!(body.contains("another run is already active"), "{body}");
+
+        st.agent.abort_current_run();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while st.active_runs() > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(st.active_runs(), 0);
+    }
+
+    /// RPC-02: `GET /state` answers the shared `SessionState` payload, live from the
+    /// agent, over the real router.
+    #[tokio::test]
+    async fn state_reports_the_shared_payload() {
+        let (st, app) = test_agent(vec![FauxStep::say("hi")]);
+        st.agent.set_model_id("m92-serve-model");
+        st.agent
+            .set_thinking_level(epsilon_contracts::ThinkingLevel::Low);
+
+        let (status, body) = json_response(app, "GET", "/state", None).await;
+        assert_eq!(status, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["model"], "m92-serve-model");
+        assert_eq!(v["thinking_level"], "low");
+        assert_eq!(v["is_streaming"], false);
+        assert_eq!(
+            v["message_count"].as_u64().unwrap() as usize,
+            st.agent.history().len()
+        );
+        assert_eq!(v["pending_message_count"], 0);
+        assert_eq!(v["session_file"], serde_json::Value::Null);
+        assert_eq!(
+            v["estimated_context_tokens"].as_u64().unwrap() as usize,
+            st.agent.estimated_context_tokens()
+        );
+
+        // The shape is the shared struct's, exactly.
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "estimated_context_tokens",
+                "is_streaming",
+                "message_count",
+                "model",
+                "pending_message_count",
+                "session_file",
+                "thinking_level",
+            ]
+        );
     }
 
     #[tokio::test]

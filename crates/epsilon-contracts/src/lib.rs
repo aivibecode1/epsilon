@@ -11,8 +11,10 @@ pub mod agent_event;
 pub mod content;
 pub mod diagnostics;
 pub mod ids;
+pub mod lagged_notice;
 pub mod message;
 pub mod session_entry;
+pub mod session_state;
 pub mod stream;
 pub mod tool;
 pub mod turn;
@@ -20,10 +22,12 @@ pub mod turn;
 pub use agent_event::{AgentEvent, PermissionDecision, PermissionRequest, TurnEndReason};
 pub use content::{ContentBlock, ImageRef, UserContent};
 pub use ids::{MessageId, SessionId, ToolCallId, new_id};
+pub use lagged_notice::LaggedNotice;
 pub use message::{
     AssistantMessage, CustomMessage, Message, StopReason, ThinkingLevel, ToolResultMessage, Usage,
 };
 pub use session_entry::{EntryKind, SessionEntry};
+pub use session_state::SessionState;
 pub use stream::StreamEvent;
 pub use tool::{
     ExecutionMode, Tool, ToolContext, ToolDescriptor, ToolFailure, ToolInvocation, ToolOutput,
