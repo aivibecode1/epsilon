@@ -95,6 +95,33 @@
 - SESSION-01b (the TUI surface) is queued and blocked on the TUI work item's uncommitted
   changes landing first.
 
+## M91 / review hardening (2026-09-18)
+- fe386d1: the M89/M90 review follow-ups — the store's parent-chain walks stop on a repeat
+  (`branch_to` refuses a cycle with the existing `InvalidData` kind, no new error kind) and a
+  `seq` that disagrees with line order is a chain break rather than an out-of-bounds panic, so a
+  hand-corrupted file stays usable; the three M89-owed regression tests (drain-point mirror with
+  an installed replacement, overflow discard, mid-run attach *and* detach invalidation); the
+  usage-anchor re-base refused with a reasoned account (needs `compact.rs`'s anchor shape plus
+  provenance/lifetime discipline) plus the review's related precision gap (attach/detach bump the
+  epoch but leave the anchor) folded into the same open follow-up.
+- Battery `m91a` (candidate = HEAD `ff7e8cc` + three code files + the doc, byte-verified): all
+  five gates exit 0, **772 passed / 0 failed / 0 ignored across 55 summaries** — delta
+  reconciled per binary (`loop_scenarios` 28→32, `session_store` 25→27 = exactly the six new
+  tests). Evidence: `gate-m91a.log` (sha256 `711e93f6…`), `m91-probes.log` (sha256 `05cc3915…`,
+  four negative-control probes on a disposable copy), `m91-review.md` (review + dispositions),
+  `m91-cleanup.log`.
+- Independent review: all six items confirmed; **one real documentation-only blocker fixed** —
+  the earlier "nothing in-tree consumes this" claim was false (`repair_on_open` on every live
+  resume and active-branch search both walk the chain, so a corrupt file now resumes silently
+  shorter); the milestone now states that consequence and queues making repair report a chain
+  that stopped early. The probe also showed the overflow pop is defensive, not observable, and
+  the record says so instead of "pinned jointly".
+- Cleanup: 7.8G round target + both copies + the child's log dirs removed; C: 59G free. No
+  reinstall: every changed API keeps its signature, so the installed CLI is unchanged.
+- New queue from this review (in next-hardening.md): `pop_last`/`migrated_entries` bookkeeping,
+  the silent chain break's visibility, B2's store-side pop, the duplicate-ids doc trigger, and a
+  hash instead of a length in the cycle test.
+
 ## Next safe actions
 - Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in
