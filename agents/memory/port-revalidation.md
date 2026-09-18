@@ -74,6 +74,27 @@
   `epsilon_llm::ModelRef`; re-base the usage anchor for replacement-built requests; tests for
   the drain-point mirror, the overflow-discard pop and the attach/detach epoch bump.
 
+## M90 / SESSION-01a session-tree store (2026-09-18)
+- e663bd3: pi's session-tree store operations — `branch_with_summary` with pi's two call shapes
+  made one-to-one (`Some(id)` targets that entry; `None` is pi's `null`, a new root recording
+  `fromId = "root"`), `reset_leaf` with "no leaf" as a real state, `BranchSummary` projected once
+  on the active branch (empty summaries skipped, as pi's truthiness rule does), and
+  `fork_branch_at` — a new file with fresh id, `parent_session` path link, selected ancestry
+  only, gapless renumbered `seq`, source byte-identical, an `Err` leaving nothing behind.
+- Battery `m90b` (candidate = HEAD `52195d5` + five files, byte-verified): all five gates exit 0,
+  **766 passed / 0 failed / 0 ignored across 55 summaries**. No pre-fix RED is possible (the
+  APIs did not exist); the negative control was executed by this milestone's author (projection
+  and fork probes fail as designed) — records: `audit/evidence/m90-review.md`,
+  `m90-final-probes.log`, `m90-negative-control-detail.log`, `gate-m90b.log`.
+- Independent review: all four claims confirmed; two documentation-only blockers fixed
+  pre-commit; ten findings — six fixed (empty-summary divergence, failure-path debris, five
+  test-hardening items), four documented (the one non-pi-equivalent projection, pi's fork
+  deferrals, two pre-existing reader-robustness gaps — both queued in next-hardening.md).
+- Cleanup: the 8.8G round target and every candidate removed; C: 59G free. No reinstall:
+  nothing in-tree calls the new APIs yet.
+- SESSION-01b (the TUI surface) is queued and blocked on the TUI work item's uncommitted
+  changes landing first.
+
 ## Next safe actions
 - Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in

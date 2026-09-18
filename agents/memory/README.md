@@ -39,8 +39,7 @@ not themselves trigger runtime compression.
 | [tui-enhancement.md](tui-enhancement.md) | Owner-priority TUI composer and viewport | composer gates green; routing regression green; latest workspace native build failed; cleaned; isolation pending |
 | [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
-| [session-tree.md](session-tree.md) | SESSION-01 session tree / fork / branch | brief received (deleg_41da778d); SESSION-01a implementation delegated; TUI half queued |
-| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit committed 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3 |
 
 
 

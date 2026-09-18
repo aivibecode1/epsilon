@@ -37,9 +37,12 @@
   after a committed compaction) and pinned by a negative control; battery m89e: 759 passed /
   0 failed, all five gates exit 0. Earlier the same day: M86 compaction correctness (36a226c),
   M87 admission (35da3d7), M88 mid-batch abort (31b1794), M84 find scheduling (d0ac16b).
-- Next port work, in order (owner: port first): SESSION-01 tree/fork workflows, RPC-02
-  protocol breadth (correlation ids, abort/state/model ops, dropped events), then F09
-  resolved containment (alias-consistent identity, defensive only).
+- Next port work, in order (owner: port first): **SESSION-01b** (the TUI surface only — `/tree`
+  listing every entry with a leaf marker, Enter's user-message→parent rule with editor-text
+  restore, `/fork` through `fork_branch_at` + `switch_session_file` → `live_resume`; the store
+  foundation landed in M90), RPC-02 protocol breadth (correlation ids, abort/state/model ops,
+  dropped events), then F09 resolved containment (alias-consistent identity, defensive only).
+  SESSION-01b is blocked on the TUI work item's uncommitted changes landing first.
 - Recorded follow-ups from M89 (in the milestone limits, do not silently drop): unify
   `TurnModel` with `epsilon_llm::ModelRef`; re-base (not clear) the usage anchor for
   replacement-built requests; regression tests for the drain-point mirror, the overflow-discard
