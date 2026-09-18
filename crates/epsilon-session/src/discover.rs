@@ -44,7 +44,8 @@ pub struct SessionSummary {
     /// First user message text, clipped to one line — the usual "what was this
     /// session about" handle when no name was set.
     pub first_message: Option<String>,
-    /// Forked-from session id when the header carries one.
+    /// Session this file descends from: a forked branch carries the source file
+    /// path, a delegated child its parent's session id (M58).
     pub parent_session: Option<String>,
     /// Another process is writing this session right now (M61): its lease file
     /// exists and is fresh. The picker marks these `· in use` so a refused

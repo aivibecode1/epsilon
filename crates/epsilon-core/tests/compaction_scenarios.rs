@@ -4,12 +4,13 @@
 use std::sync::{Arc, Mutex};
 
 use epsilon_contracts::agent_event::AgentEvent;
-use epsilon_contracts::content::UserContent;
+use epsilon_contracts::content::{ContentBlock, UserContent};
 use epsilon_contracts::message::{Message, UserMessage};
+use epsilon_contracts::session_entry::EntryKind;
 use epsilon_core::testing::{EchoTool, SlowProvider};
 use epsilon_core::{AutoAllow, LoopLimits, ToolRegistry};
 use epsilon_llm::{FauxProvider, FauxStep, PanicGuard};
-use epsilon_session::SessionStore;
+use epsilon_session::{ModelViewEntry, SessionStore};
 
 fn user(text: &str) -> Message {
     Message::User(UserMessage {
@@ -503,4 +504,233 @@ async fn abort_during_summarization_ends_the_run_aborted_and_commits_nothing() {
         e.kind,
         epsilon_contracts::session_entry::EntryKind::Compaction { .. }
     )));
+}
+
+// ---- SESSION-01a / F04 alternate-branch: the provider view follows the ACTIVE branch ----------
+
+/// Provider-bound rendering of a transcript: one string per message, as a request carries it.
+fn rendered(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .map(|m| match m {
+            Message::User(u) => u
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    UserContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Assistant(a) => a.text(),
+            Message::ToolResult(t) => t
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Custom(_) => String::new(),
+        })
+        .collect()
+}
+
+/// What a request built from this view would carry.
+fn view_texts(view: &[ModelViewEntry]) -> Vec<String> {
+    rendered(
+        &view
+            .iter()
+            .cloned()
+            .map(|v| v.into_message())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// An agent over an EXISTING session file with a request log attached: the reopened leg
+/// needs the provider-bound view, which only a real request can show.
+fn agent_over_session(
+    path: &std::path::Path,
+    workspace: &std::path::Path,
+) -> (
+    Arc<epsilon_core::Agent>,
+    Arc<Mutex<Vec<epsilon_llm::LlmContext>>>,
+) {
+    let store = SessionStore::open_in(path, workspace).unwrap();
+    let provider = FauxProvider::new(vec![FauxStep::say("branch B answer")]);
+    let requests = provider.recorded_requests_handle();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(PanicGuard(SlowProvider::new(provider, 20))),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        workspace.to_path_buf(),
+    );
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+    (agent, requests)
+}
+
+/// The ledger's missing F04 alternate-branch variant (`audit/02-defect-ledger.md:97-98`):
+/// a compaction on one branch must not leak into its sibling's provider view, a branch
+/// summary attached at the navigation target appears exactly once on the NEW branch, and
+/// reopening the file reproduces that same view — on a real request, built by the loop
+/// from the reopened store.
+#[tokio::test]
+async fn a_sibling_branch_sees_its_own_summary_and_not_the_other_branchs_compaction() {
+    // Branch A runs and compacts on its own lane (same pressure config as above).
+    let steps = vec![
+        big_echo_call("tc_1", 4000),
+        FauxStep::say("branch A answer"),
+    ];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 1500,
+        compaction_tail_tokens: 300,
+        max_turns: 8,
+        ..Default::default()
+    };
+    let (agent, store, dir) = setup(steps, limits);
+
+    let outcome = agent.run(user("shared start")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+
+    let path = store.lock().unwrap().path().to_path_buf();
+    let root_id = {
+        let st = store.lock().unwrap();
+        let all = st.read_all().unwrap();
+        assert!(
+            all.iter()
+                .any(|e| matches!(e.kind, EntryKind::Compaction { .. })),
+            "branch A must have compacted for this scenario"
+        );
+        assert!(
+            view_texts(&st.model_view().unwrap())
+                .iter()
+                .any(|t| t.contains("<compaction_summary>")),
+            "branch A's view carries the compaction"
+        );
+        all.into_iter()
+            .find(|e| {
+                matches!(
+                    &e.kind,
+                    EntryKind::Message {
+                        message: Message::User(_),
+                        ..
+                    }
+                )
+            })
+            .expect("the prompt entry")
+            .id
+    };
+
+    // Branch B: summarize the abandoned lane, then continue on the new one.
+    let tip_id = {
+        let mut st = store.lock().unwrap();
+        let summary = st
+            .branch_with_summary(Some(&root_id), "explored branch A", None)
+            .unwrap();
+        assert_eq!(
+            st.leaf_id().as_deref(),
+            Some(summary.id.as_str()),
+            "the summary is the new leaf"
+        );
+        st.append(EntryKind::Message {
+            message: user("branch B work"),
+            api_request_sha256: None,
+        })
+        .unwrap()
+        .id
+    };
+    let intended = vec![
+        "shared start".to_string(),
+        "<branch_summary>\nexplored branch A\n</branch_summary>".to_string(),
+        "branch B work".to_string(),
+    ];
+    {
+        let st = store.lock().unwrap();
+        assert_eq!(
+            view_texts(&st.model_view().unwrap()),
+            intended,
+            "the live view follows the ACTIVE branch only"
+        );
+    }
+
+    // Reopen the file (one writer per session: both handles go first).
+    drop(store);
+    drop(agent);
+    let mut reopened = SessionStore::open(&path).unwrap();
+    assert_eq!(
+        view_texts(&reopened.model_view().unwrap()),
+        intended,
+        "reopening must reproduce the branch view"
+    );
+    assert_eq!(
+        reopened.leaf_id().as_deref(),
+        Some(tip_id.as_str()),
+        "the branch tip is the file's last line"
+    );
+    // Either sibling can be selected: navigating to the abandoned branch shows ITS
+    // view — its compaction, and no branch summary — and back again restores B.
+    let compaction_id = reopened
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .find(|e| matches!(e.kind, EntryKind::Compaction { .. }))
+        .expect("branch A's compaction entry")
+        .id;
+    reopened.navigate_to(&compaction_id).unwrap();
+    let a_view = view_texts(&reopened.model_view().unwrap());
+    assert!(
+        a_view.iter().any(|t| t.contains("<compaction_summary>")),
+        "the abandoned branch's own view still carries its compaction: {a_view:?}"
+    );
+    assert!(
+        !a_view.iter().any(|t| t.starts_with("<branch_summary>")),
+        "the sibling's branch summary is not on this path: {a_view:?}"
+    );
+    reopened.navigate_to(&tip_id).unwrap();
+    assert_eq!(
+        view_texts(&reopened.model_view().unwrap()),
+        intended,
+        "navigating back restores the sibling's view"
+    );
+    drop(reopened);
+
+    // The provider view: a real request, built by the loop from the reopened store.
+    let (agent2, requests) = agent_over_session(&path, dir.path());
+    let outcome = agent2.run(user("continue on B")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+
+    let first = requests
+        .lock()
+        .unwrap()
+        .first()
+        .cloned()
+        .expect("the first request");
+    let mut expected = intended.clone();
+    expected.push("continue on B".to_string());
+    let seen = rendered(&first.messages);
+    assert_eq!(
+        seen, expected,
+        "the provider view equals the intended projection"
+    );
+    assert_eq!(
+        seen.iter()
+            .filter(|t| t.starts_with("<branch_summary>"))
+            .count(),
+        1,
+        "the branch summary appears exactly once"
+    );
+    assert!(
+        !seen.iter().any(|t| t.contains("<compaction_summary>")),
+        "branch A's compaction must not leak into the sibling: {seen:?}"
+    );
 }

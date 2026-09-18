@@ -56,6 +56,11 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M90 — session tree](milestones/M90-session-tree.md): the store half of pi's session-tree
+  workflows — branch summaries with pi's exact target shapes, explicit no-leaf root navigation,
+  `BranchSummary` projected on the active branch, and a fork that writes only the selected
+  ancestry with fresh identity; the TUI surface is queued as SESSION-01b.
+
 - [M89 — turn hooks](milestones/M89-turn-hooks.md): pi's `AgentLoopConfig` seams
   (`transform_context`, `convert_to_llm`, `prepare_next_turn`, `should_stop_after_turn`) exist
   as `TurnHooks`; a stop ends the run without draining queues, and a replacement context tracks

@@ -53,7 +53,10 @@ pub struct SessionHeader {
     /// Working directory the session started in (empty on v1 files).
     #[serde(default)]
     pub cwd: String,
-    /// Id of the session this one was forked from, if any.
+    /// Session this file descends from, when it records one. A forked branch stores
+    /// the source file **path** (pi keeps `previousSessionFile` so the parent file can
+    /// be located again); a delegated child session stores the parent's session id
+    /// (M58). Both remain plain strings so v1/v2 files and both uses stay readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session: Option<String>,
 }

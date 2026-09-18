@@ -44,6 +44,12 @@
   `TurnModel` with `epsilon_llm::ModelRef`; re-base (not clear) the usage anchor for
   replacement-built requests; regression tests for the drain-point mirror, the overflow-discard
   pop, and the attach/detach epoch bump.
+- Queued from M90's review (milestone limits carry the reasoning): harden the session reader
+  against hand-corruption — `branch_entries`/`branch_to` need a cycle guard (pi's walk is
+  equally unbounded) and `branch_entries` indexes by `seq`, so a file whose `seq` values do not
+  match line order can panic; and decide whether a branch summary should survive a later
+  compaction the way pi's entry-level window keeps it (today it is dropped with the replaced
+  messages, recorded as the one non-pi-equivalent projection).
 - Then the audit/04-roadmap.md general-improvement phases; the port must have no open
   fidelity items first.
 - Canonicalization is not race-resistant access. Windows/Linux differences must

@@ -136,6 +136,7 @@ If the red baseline prevents confidence in a source move, stop that move and del
 - Keep the existing checkpoint store; type skipped/captured/created outcomes, propagate ledger failures, validate stored paths and detect later-user-edit conflicts.
 - Add preview/confirm restore with turn/call provenance; never restore a skipped capture as deletion.
 - Specify actual new/fork/all-tree navigation and branch-summary replay across TUI/RPC rather than UI-only state changes.
+- **M90 closed the store half** (branch summaries with pi's target shapes, no-leaf root navigation, fork with fresh identity and selected ancestry, alternate-branch projection tested — `docs/milestones/M90-session-tree.md`); the TUI/RPC surface remains (see the F19 note in `02-defect-ledger.md`).
 
 **Exit:** undo preserves unrelated later work, newest checkpoints survive eviction, interrupted capture is honest; session switch/fork/reopen identity is tested. **Stop** if recovery requires capturing arbitrary shell changes: whole-workspace snapshot design is additional scope, not implied by per-file checkpoints.
 

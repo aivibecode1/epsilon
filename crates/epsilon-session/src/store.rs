@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use epsilon_contracts::agent_event::TurnEndReason;
-use epsilon_contracts::message::{Message, UserMessage};
+use epsilon_contracts::message::{Message, Usage, UserMessage};
 use epsilon_contracts::session_entry::{
     CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind, SessionLine,
 };
@@ -22,6 +22,19 @@ pub enum ModelViewEntry {
         /// Summary body text.
         text: String,
         /// Seq of the compaction entry that produced it.
+        seq: u64,
+    },
+    /// A synthetic branch-summary message emitted by an [`EntryKind::BranchSummary`]
+    /// entry on the active branch (pi's `branchSummary` role,
+    /// `session-manager.ts:401-403`): the context of the path this conversation
+    /// came back from.
+    BranchSummary {
+        /// Summary body text.
+        text: String,
+        /// Id of the entry the abandoned branch started from (pi's `fromId`;
+        /// `root` when the summary is itself a new root).
+        from_id: String,
+        /// Seq of the branch-summary entry that produced it.
         seq: u64,
     },
 }
@@ -143,6 +156,37 @@ struct EntryLocation {
     id_hash: u64,
 }
 
+/// The active branch tip (pi's `leafId`), with its "no leaf" state made explicit.
+///
+/// `leaf_id` answering `None` used to be indistinguishable from a failed lookup,
+/// so the one navigation pi has that is *not* an id — `resetLeaf`, "put the leaf
+/// back before the first entry so the next append starts a new root" — could not
+/// be expressed at all. The two states below are the whole vocabulary: the next
+/// append chains onto [`Leaf::At`]'s id, or starts a root when there is no leaf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Leaf {
+    /// The active branch ends at this entry (seq kept alongside for O(1) reads).
+    At {
+        /// Id of the leaf entry.
+        id: String,
+        /// Its file sequence number.
+        seq: u64,
+    },
+    /// No active leaf: a session with no entries yet, or one whose leaf was reset
+    /// ([`SessionStore::reset_leaf`]). Either way the next append is a new root.
+    None,
+}
+
+impl Leaf {
+    /// Id of the leaf entry, when there is one.
+    fn id(&self) -> Option<&str> {
+        match self {
+            Leaf::At { id, .. } => Some(id),
+            Leaf::None => None,
+        }
+    }
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -171,8 +215,9 @@ pub struct SessionStore {
     file: File,
     /// seq -> location of the entry's line.
     index: Vec<EntryLocation>,
-    /// Parsed leaf entry (id + seq); `None` for an empty session.
-    leaf: Option<(String, u64)>,
+    /// Active branch tip (pi's `leafId`); [`Leaf::None`] means "the next append is
+    /// a root" — an empty session, or a leaf deliberately reset (pi `resetLeaf`).
+    leaf: Leaf,
     next_seq: u64,
     /// Header read at open (or synthesized for old headerless files).
     /// `None` only for a brand-new empty file with no entries yet.
@@ -263,7 +308,7 @@ impl SessionStore {
             path,
             file,
             index: Vec::new(),
-            leaf: None,
+            leaf: Leaf::None,
             next_seq: 0,
             header: None,
             migrated: false,
@@ -402,7 +447,7 @@ impl SessionStore {
         let mut raw = String::new();
         (&self.file).read_to_string(&mut raw)?;
         self.index.clear();
-        self.leaf = None;
+        self.leaf = Leaf::None;
         self.next_seq = 0;
         self.header = None;
         self.migrated = false;
@@ -533,7 +578,10 @@ impl SessionStore {
                 len: *len,
                 id_hash: hash_id(&entry.id),
             });
-            self.leaf = Some((entry.id.clone(), entry.seq));
+            self.leaf = Leaf::At {
+                id: entry.id.clone(),
+                seq: entry.seq,
+            };
             self.next_seq = entry.seq + 1;
         }
         // Migrated entries live in memory only until persisted; their indexed
@@ -604,7 +652,7 @@ impl SessionStore {
         let entry = SessionEntry {
             id: epsilon_contracts::new_id("ent"),
             seq: self.next_seq,
-            parent_id: self.leaf.as_ref().map(|(id, _)| id.clone()),
+            parent_id: self.leaf.id().map(str::to_string),
             timestamp_ms: now_ms(),
             kind,
         };
@@ -619,14 +667,19 @@ impl SessionStore {
             len: line.len(),
             id_hash: hash_id(&entry.id),
         });
-        self.leaf = Some((entry.id.clone(), entry.seq));
+        self.leaf = Leaf::At {
+            id: entry.id.clone(),
+            seq: entry.seq,
+        };
         self.next_seq += 1;
         Ok(entry)
     }
 
-    /// Current leaf entry id (the tip of the active branch).
+    /// Current leaf entry id (the tip of the active branch), or `None` when there
+    /// is no leaf — an empty session, or one whose leaf was reset
+    /// ([`SessionStore::reset_leaf`]): the next append starts a new root.
     pub fn leaf_id(&self) -> Option<String> {
-        self.leaf.as_ref().map(|(id, _)| id.clone())
+        self.leaf.id().map(str::to_string)
     }
 
     /// Walk back from the leaf collecting the active branch (oldest first).
@@ -664,11 +717,14 @@ impl SessionStore {
         self.index.pop();
         self.next_seq = last_seq;
         self.leaf = match self.index.last() {
-            Some(_) => {
-                let prev = self.read_entry(last_seq - 1)?;
-                prev.map(|e| (e.id.clone(), e.seq))
-            }
-            None => None,
+            Some(_) => match self.read_entry(last_seq - 1)? {
+                Some(prev) => Leaf::At {
+                    id: prev.id,
+                    seq: prev.seq,
+                },
+                None => Leaf::None,
+            },
+            None => Leaf::None,
         };
         // Truncate the physical file to drop the popped line.
         let good_end = self
@@ -694,32 +750,282 @@ impl SessionStore {
         Ok(out)
     }
 
-    /// Navigate: make `entry` the new leaf (pi's tree navigation). Everything after it stays
-    /// in the file (human log intact) but leaves the active branch.
-    pub fn navigate_to(&mut self, entry_id: &str) -> Result<(), StoreError> {
-        // find the entry anywhere
+    /// Read one entry's identity (`id`, `seq`) by id, or `None` when the file holds
+    /// no such entry. The hash index narrows the search; the parsed id confirms it,
+    /// so a hash collision can never navigate to the wrong entry.
+    fn entry_identity(&self, entry_id: &str) -> Result<Option<(String, u64)>, StoreError> {
         let target_hash = hash_id(entry_id);
-        for s in 0..self.index.len() {
-            if self.index[s].id_hash == target_hash {
+        for (s, loc) in self.index.iter().enumerate() {
+            if loc.id_hash == target_hash {
                 let entry = self.read_entry(s as u64)?.expect("indexed entry exists");
-                self.leaf = Some((entry.id.clone(), entry.seq));
-                return Ok(());
+                if entry.id == entry_id {
+                    return Ok(Some((entry.id, entry.seq)));
+                }
             }
         }
-        Err(StoreError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("no such entry: {entry_id}"),
-        )))
+        Ok(None)
     }
 
-    /// The model-visible view of the active branch: message entries plus synthetic summary
-    /// messages emitted by compaction entries; shadowed ranges are skipped entirely.
+    /// Navigate: make `entry` the new leaf (pi's tree navigation). Everything after it stays
+    /// in the file (human log intact) but leaves the active branch.
+    ///
+    /// Navigating to the position *before the first entry* — re-editing the first
+    /// user message, pi's `resetLeaf` — is not an id and has no entry to name:
+    /// use [`SessionStore::reset_leaf`] for that.
+    pub fn navigate_to(&mut self, entry_id: &str) -> Result<(), StoreError> {
+        match self.entry_identity(entry_id)? {
+            Some((id, seq)) => {
+                self.leaf = Leaf::At { id, seq };
+                Ok(())
+            }
+            None => Err(StoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no such entry: {entry_id}"),
+            ))),
+        }
+    }
+
+    /// Reset the leaf to before the first entry (pi `resetLeaf`,
+    /// `session-manager.ts:1372-1374`): the next append starts a new ROOT
+    /// (`parent_id = None`) instead of chaining onto the old tip.
+    ///
+    /// This is the navigation `/tree` needs when the selected entry is the first
+    /// user message: its parent is "the beginning of the session", which is a
+    /// position rather than an id. Only the active branch moves — every existing
+    /// entry stays in the file untouched (ADR-006) — and reopening the file
+    /// restores the leaf from its last line exactly as before (a reset is
+    /// in-memory state, like pi's, until the next append lands).
+    pub fn reset_leaf(&mut self) {
+        self.leaf = Leaf::None;
+    }
+
+    /// Branch from `branch_from` and attach a summary of the abandoned path
+    /// (pi `branchWithSummary`, `session-manager.ts:1381-1405`).
+    ///
+    /// pi's two call shapes map one-to-one. `Some(id)` is
+    /// `branchWithSummary(id, …)`: the leaf moves to that entry (validated first)
+    /// and the summary is appended as its child. `None` is
+    /// `branchWithSummary(null, …)`: the summary is a new ROOT — whatever leaf
+    /// existed is abandoned and the entry records pi's `fromId = "root"`. A caller
+    /// that wants the summary at the current leaf passes it explicitly
+    /// (`store.branch_with_summary(store.leaf_id().as_deref(), …)`), which is what
+    /// pi's callers do with the leaf id.
+    ///
+    /// The abandoned siblings stay in the file untouched (append-only, ADR-006).
+    /// An unknown target is refused before any state moves: a failed navigation
+    /// must not leave the leaf pointing somewhere the caller did not ask for.
+    /// Returns the appended entry.
+    pub fn branch_with_summary(
+        &mut self,
+        branch_from: Option<&str>,
+        summary: impl Into<String>,
+        usage: Option<Usage>,
+    ) -> Result<SessionEntry, StoreError> {
+        match branch_from {
+            Some(target) => {
+                let Some((id, seq)) = self.entry_identity(target)? else {
+                    return Err(StoreError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("no such entry: {target}"),
+                    )));
+                };
+                self.leaf = Leaf::At { id, seq };
+            }
+            // pi `branchWithSummary(null, …)`: attach at the root, abandoning the leaf.
+            None => self.leaf = Leaf::None,
+        }
+        let from_id = self
+            .leaf
+            .id()
+            .map(str::to_string)
+            .unwrap_or_else(|| "root".to_string());
+        self.append(EntryKind::BranchSummary {
+            from_id,
+            summary: summary.into(),
+            usage,
+        })
+    }
+
+    /// The path from root to `leaf_id`, oldest first, validated.
+    ///
+    /// Unlike [`SessionStore::branch_entries`] (which walks the active leaf and
+    /// tolerates a chain that ends early), a fork must be exact: an unknown id is
+    /// `NotFound`, and an ancestry that does not reach a root is `InvalidData`,
+    /// because a partial path written out as a session file would be a silent lie
+    /// about what the branch contains.
+    fn branch_to(&self, leaf_id: &str) -> std::io::Result<Vec<SessionEntry>> {
+        let all = self.read_all().map_err(std::io::Error::other)?;
+        let by_id: std::collections::HashMap<&str, &SessionEntry> =
+            all.iter().map(|e| (e.id.as_str(), e)).collect();
+        let mut chain_rev: Vec<SessionEntry> = Vec::new();
+        let mut cursor = Some(leaf_id.to_string());
+        while let Some(id) = cursor {
+            let Some(entry) = by_id.get(id.as_str()).copied() else {
+                break;
+            };
+            cursor = entry.parent_id.clone();
+            chain_rev.push(entry.clone());
+        }
+        if chain_rev.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no such entry: {leaf_id}"),
+            ));
+        }
+        if let Some(missing) = chain_rev
+            .last()
+            .and_then(|e| e.parent_id.as_deref())
+            .filter(|p| !by_id.contains_key(p))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("entry {leaf_id} does not reach a root: parent {missing} is missing"),
+            ));
+        }
+        chain_rev.reverse();
+        Ok(chain_rev)
+    }
+
+    /// Fork the session at `leaf_id`: write a NEW session file holding only the
+    /// path from root to that entry (pi `createBranchedSession`,
+    /// `session-manager.ts:1412-1491`), and return its path.
+    ///
+    /// The new file gets a fresh `ses_` id and a current-version header carrying
+    /// the source's `cwd` and a `parent_session` link to the SOURCE FILE PATH (pi
+    /// records the file the fork came from). Entries keep their `id`, `parent_id`,
+    /// timestamp and payload; `seq` is renumbered gaplessly in path order, because
+    /// `seq` is the file index and a gap would be read as a missing line. The
+    /// source is a pure read: it is byte-identical when this returns, and every
+    /// entry that is not on the selected path stays there (ADR-006 — forking
+    /// copies a path, it never prunes history).
+    ///
+    /// The destination is written and then opened through the store's own open path
+    /// (store.rs:273-275), so the fork is verified readable — and a torn tail would
+    /// be repaired — before the path is handed back; an unusable destination is
+    /// refused, never truncated. Failure paths clean up after themselves: a failed
+    /// write or rename removes its temporary file, and a destination that fails its own
+    /// verification pass is removed (its lease released first) — so an `Err` means
+    /// nothing this call created is left behind, and anything that existed before the
+    /// call is never touched.
+    pub fn fork_branch_at(
+        &self,
+        leaf_id: &str,
+        dest_dir: impl AsRef<Path>,
+    ) -> std::io::Result<PathBuf> {
+        let entries = self.branch_to(leaf_id)?;
+        let cwd = self
+            .header
+            .as_ref()
+            .map(|h| h.cwd.clone())
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+        let dest_dir = dest_dir.as_ref();
+        std::fs::create_dir_all(dest_dir)?;
+        let timestamp = iso_now();
+        let header = SessionHeader {
+            kind: SessionHeaderKind::Session,
+            version: Some(CURRENT_SESSION_VERSION),
+            id: epsilon_contracts::new_id("ses"),
+            timestamp: timestamp.clone(),
+            cwd: cwd.clone(),
+            parent_session: Some(self.path.to_string_lossy().into_owned()),
+        };
+        let dest = dest_dir.join(format!(
+            "{}_{}.jsonl",
+            timestamp.replace([':', '.'], "-"),
+            header.id
+        ));
+        // Best-effort "do not clobber" guard, NOT a guarantee: the name carries a fresh
+        // timestamp plus a fresh `ses_` id, so a collision needs the same millisecond
+        // AND the same random id — and this check is inherently TOCTOU anyway. The
+        // atomic step is the rename below; on Windows that replaces an existing file
+        // rather than refusing, so this pre-check is courtesy, not protection.
+        if dest.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "refusing to overwrite an existing session file: {}",
+                    dest.display()
+                ),
+            ));
+        }
+
+        // Assemble the body in path order, `seq` renumbered gaplessly 0..n-1.
+        let expected = entries.len() as u64;
+        let mut body = String::new();
+        body.push_str(&serde_json::to_string(&header).map_err(std::io::Error::other)?);
+        body.push('\n');
+        for (seq, mut entry) in entries.into_iter().enumerate() {
+            entry.seq = seq as u64;
+            body.push_str(&serde_json::to_string(&entry).map_err(std::io::Error::other)?);
+            body.push('\n');
+        }
+        // Write-then-rename (the migration discipline): the fork appears whole.
+        let tmp = dest.with_extension("jsonl.forking");
+        if let Err(e) = std::fs::write(&tmp, &body) {
+            // A failed write can leave a partial temp file; it is this call's own
+            // scratch, so it must not survive the error.
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, &dest) {
+            // The destination was never created (the rename is the step that would
+            // have created it), so only the temp file is ours to remove.
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+
+        // Open it through the store's own path — the same reindex + torn-tail
+        // repair every session file gets — and require the index to hold exactly
+        // the entries written. A destination that fails either check is one this
+        // call created moments ago: remove it, so `Err` reads as "nothing was
+        // written" instead of leaving an unusable session on disk. Anything that
+        // existed before this call is never touched (the pre-check refused it).
+        let check = match SessionStore::open_in(&dest, Path::new(&cwd)) {
+            Ok(check) => check,
+            Err(e) => {
+                let _ = std::fs::remove_file(&dest);
+                return Err(std::io::Error::other(e));
+            }
+        };
+        let verified = check.len();
+        drop(check); // release the lease (it removes its own lock file)
+        if verified != expected {
+            let _ = std::fs::remove_file(&dest);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "forked session {} reindexed to {verified} entries, expected {expected}",
+                    dest.display()
+                ),
+            ));
+        }
+        Ok(dest)
+    }
+
+    /// The model-visible view of the active branch: message entries plus the synthetic
+    /// summaries (compaction, branch summary) that belong to it; shadowed ranges are
+    /// skipped entirely.
     ///
     /// A later compaction *replaces* the projection an earlier one built rather than
     /// appending to it: pi's `session-manager.ts:418-453` selects the latest compaction
     /// on the active path and builds context from it plus its retained entries. Without
     /// the replacement the superseded summary and its tail would ride along in every
     /// provider request while runtime history already held only the newer pair.
+    ///
+    /// A branch summary is projected where it sits on the path, exactly once, and only
+    /// while its entry is on the ACTIVE branch (pi `session-manager.ts:401-403`):
+    /// attached at the navigation target, it describes the path this conversation came
+    /// back from, and the abandoned sibling it summarized contributes nothing. Like a
+    /// message it waits in the buffer, so a later compaction that summarizes it away
+    /// drops it — by then its material rides inside that compaction's retained window.
+    /// An EMPTY summary text is not projected at all (pi's truthiness guard,
+    /// `session-manager.ts:401`); the entry itself still lands in the file.
     pub fn model_view(&self) -> Result<Vec<ModelViewEntry>, StoreError> {
         let branch = self.branch_entries()?;
         let mut out = Vec::new();
@@ -732,6 +1038,21 @@ impl SessionStore {
                 EntryKind::Message { message, .. } => {
                     if message.is_llm_visible() {
                         pending.push(ModelViewEntry::Message(message.clone()));
+                    }
+                }
+                EntryKind::BranchSummary {
+                    from_id, summary, ..
+                } => {
+                    // pi's projection is truthiness-guarded (`session-manager.ts:401`:
+                    // `entry.type === "branch_summary" && entry.summary`): an empty
+                    // summary contributes no message at all. Only the empty string is
+                    // falsy in that check — a whitespace summary still projects.
+                    if !summary.is_empty() {
+                        pending.push(ModelViewEntry::BranchSummary {
+                            text: summary.clone(),
+                            from_id: from_id.clone(),
+                            seq: e.seq,
+                        });
                     }
                 }
                 EntryKind::Compaction {
@@ -767,19 +1088,31 @@ impl SessionStore {
 }
 
 impl ModelViewEntry {
-    /// Convert to provider-visible messages (summary becomes a user-role context message).
+    /// Convert to provider-visible messages (a summary becomes a user-role context message).
+    ///
+    /// The two summary kinds carry different tags so a host — or a human reading a
+    /// request dump — can tell "the history before this point was compacted" from
+    /// "this conversation came back from another branch", the distinction pi keeps
+    /// with separate message roles (`messages.ts:100-120`).
     pub fn into_message(self) -> Message {
         match self {
             ModelViewEntry::Message(m) => m,
-            ModelViewEntry::Summary { text, .. } => Message::User(UserMessage {
-                id: epsilon_contracts::new_id("msg"),
-                timestamp_ms: 0,
-                content: vec![epsilon_contracts::content::UserContent::Text {
-                    text: format!("<compaction_summary>\n{text}\n</compaction_summary>"),
-                }],
-            }),
+            ModelViewEntry::Summary { text, .. } => summary_message("compaction_summary", text),
+            ModelViewEntry::BranchSummary { text, .. } => summary_message("branch_summary", text),
         }
     }
+}
+
+/// One synthetic summary message, wrapped the way the projection has always wrapped
+/// a compaction summary (`<compaction_summary>`), with `tag` naming its source.
+fn summary_message(tag: &str, text: String) -> Message {
+    Message::User(UserMessage {
+        id: epsilon_contracts::new_id("msg"),
+        timestamp_ms: 0,
+        content: vec![epsilon_contracts::content::UserContent::Text {
+            text: format!("<{tag}>\n{text}\n</{tag}>"),
+        }],
+    })
 }
 
 /// ISO-8601 UTC timestamp for new headers (pi's `new Date().toISOString()`).

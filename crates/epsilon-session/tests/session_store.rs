@@ -7,7 +7,9 @@ use epsilon_contracts::message::{
     AssistantMessage, Message, StopReason, ToolResultMessage, Usage, UserMessage,
 };
 use epsilon_contracts::new_id;
-use epsilon_contracts::session_entry::{CURRENT_SESSION_VERSION, EntryKind};
+use epsilon_contracts::session_entry::{
+    CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind,
+};
 use epsilon_session::repair::{RepairKind, repair_on_open};
 use epsilon_session::{LineDiagnosis, ModelViewEntry, SessionLease, SessionStore, StoreError};
 
@@ -750,4 +752,644 @@ fn a_torn_tail_is_still_tolerated_whatever_its_shape() {
             "the intact entries survive"
         );
     }
+}
+
+// ---- SESSION-01a: the session tree — branch summaries, no-leaf navigation, fork ---------------
+
+fn assistant_msg(text: &str) -> Message {
+    Message::Assistant(AssistantMessage {
+        id: new_id("msg"),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![ContentBlock::text(text)],
+        stop_reason: StopReason::EndTurn,
+        error_message: None,
+        usage: Usage::default(),
+    })
+}
+
+/// The provider-bound rendering of a view: what a request built from it would carry.
+fn view_texts(view: &[ModelViewEntry]) -> Vec<String> {
+    view.iter()
+        .cloned()
+        .map(|v| match v.into_message() {
+            Message::User(u) => u
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    UserContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Assistant(a) => a.text(),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+/// A hand-built message entry: the store generates these, but a hand-written source
+/// file needs exact ids, parent links and timestamps that the copy can be checked
+/// against.
+fn message_entry(
+    id: &str,
+    seq: u64,
+    parent_id: Option<&str>,
+    timestamp_ms: u64,
+    message: Message,
+) -> SessionEntry {
+    SessionEntry {
+        id: id.to_string(),
+        seq,
+        parent_id: parent_id.map(str::to_string),
+        timestamp_ms,
+        kind: EntryKind::Message {
+            message,
+            api_request_sha256: None,
+        },
+    }
+}
+
+/// Write a session file by hand — a header plus entries, as JSONL — so a test can
+/// build file states the store cannot produce itself (a foreign cwd, a parent link
+/// that names nothing).
+fn write_session_file(path: &std::path::Path, header: &SessionHeader, entries: &[SessionEntry]) {
+    let mut body = serde_json::to_string(header).expect("header json");
+    body.push('\n');
+    for entry in entries {
+        body.push_str(&serde_json::to_string(entry).expect("entry json"));
+        body.push('\n');
+    }
+    std::fs::write(path, body).expect("write session file");
+}
+
+#[test]
+fn a_branch_summary_lands_once_on_the_new_branch_and_never_on_the_abandoned_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open(&path).unwrap();
+
+    let root = store
+        .append(EntryKind::Message {
+            message: user_msg("keep me"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let abandoned_a = store
+        .append(EntryKind::Message {
+            message: user_msg("abandoned-a"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let abandoned_b = store
+        .append(EntryKind::Message {
+            message: assistant_msg("abandoned-b"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    // An unknown target is refused before anything moves: a failed navigation must
+    // not leave the leaf somewhere the caller did not ask for.
+    let leaf_before = store.leaf_id();
+    let err = store
+        .branch_with_summary(Some("ent_no_such_entry"), "nope", None)
+        .unwrap_err();
+    assert!(err.to_string().contains("no such entry"), "{err}");
+    assert_eq!(
+        store.leaf_id(),
+        leaf_before,
+        "the leaf must not move on a refusal"
+    );
+
+    // Branch from the root, summarizing the path being left behind.
+    let summary = store
+        .branch_with_summary(Some(&root.id), "explored the abandoned path", None)
+        .unwrap();
+    assert_eq!(
+        summary.parent_id.as_deref(),
+        Some(root.id.as_str()),
+        "the summary is the target's child"
+    );
+    assert_eq!(
+        summary.seq, 3,
+        "appended at the next file slot: root/abandoned-a/abandoned-b hold seqs 0..2"
+    );
+    assert_eq!(
+        store.leaf_id().as_deref(),
+        Some(summary.id.as_str()),
+        "and the new leaf"
+    );
+    match &summary.kind {
+        EntryKind::BranchSummary {
+            from_id,
+            summary: text,
+            usage,
+        } => {
+            assert_eq!(from_id.as_str(), root.id.as_str());
+            assert_eq!(text, "explored the abandoned path");
+            assert!(usage.is_none());
+        }
+        other => panic!("expected a branch summary, got {other:?}"),
+    }
+    assert_eq!(
+        store.read_all().unwrap().len(),
+        4,
+        "append-only: the abandoned siblings stay in the file"
+    );
+
+    // The active branch is root + summary; the abandoned lane is off-branch.
+    let branch = store.branch_entries().unwrap();
+    assert_eq!(
+        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec![root.id.clone(), summary.id.clone()]
+    );
+    let view = view_texts(&store.model_view().unwrap());
+    assert_eq!(
+        view,
+        vec![
+            "keep me".to_string(),
+            "<branch_summary>\nexplored the abandoned path\n</branch_summary>".to_string()
+        ],
+        "the summary is projected where it sits on the new branch"
+    );
+    let projected_seq = store
+        .model_view()
+        .unwrap()
+        .into_iter()
+        .find_map(|v| match v {
+            ModelViewEntry::BranchSummary { seq, .. } => Some(seq),
+            _ => None,
+        })
+        .expect("the branch summary is projected");
+    assert_eq!(
+        projected_seq, summary.seq,
+        "the projection carries the entry's own seq"
+    );
+    assert!(
+        !view
+            .iter()
+            .any(|t| t.contains("abandoned-a") || t.contains("abandoned-b")),
+        "the abandoned sibling is absent: {view:?}"
+    );
+
+    // Reopen: the file replays the same tree, the same leaf, and the same projection.
+    drop(store);
+    let reopened = SessionStore::open(&path).unwrap();
+    assert_eq!(reopened.leaf_id().as_deref(), Some(summary.id.as_str()));
+    let reopened_view = reopened.model_view().unwrap();
+    assert_eq!(
+        view_texts(&reopened_view),
+        view,
+        "reopening must reproduce the projection"
+    );
+    assert_eq!(
+        reopened_view
+            .iter()
+            .filter(|v| matches!(v, ModelViewEntry::BranchSummary { .. }))
+            .count(),
+        1,
+        "exactly once — the entry is not replayed twice from the file"
+    );
+    let _ = (abandoned_a, abandoned_b);
+}
+
+#[test]
+fn an_empty_branch_summary_is_appended_but_not_projected() {
+    // pi's projection is truthiness-guarded (`session-manager.ts:401`:
+    // `entry.type === "branch_summary" && entry.summary`): a branch summary with an
+    // empty text contributes no message. The entry itself is still appended — the file
+    // is the human log, and a branch move nobody can see would be a worse lie than a
+    // summary nobody reads.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    let leaf = store
+        .append(EntryKind::Message {
+            message: user_msg("keep me"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    let empty = store.branch_with_summary(Some(&leaf.id), "", None).unwrap();
+    assert_eq!(
+        store.read_all().unwrap().len(),
+        2,
+        "the entry is appended like any other"
+    );
+    assert_eq!(
+        store.branch_entries().unwrap().len(),
+        2,
+        "and it is on the active branch"
+    );
+    assert_eq!(
+        store.leaf_id().as_deref(),
+        Some(empty.id.as_str()),
+        "the leaf advances onto it"
+    );
+    let view = store.model_view().unwrap();
+    assert!(
+        !view
+            .iter()
+            .any(|v| matches!(v, ModelViewEntry::BranchSummary { .. })),
+        "an empty summary projects nothing: {view:?}"
+    );
+    assert_eq!(view_texts(&view), vec!["keep me".to_string()]);
+
+    // The guard is exactly `is_empty`: whitespace is truthy in pi's check, so a
+    // whitespace-only summary projects like any other text.
+    let spaced = store
+        .branch_with_summary(Some(&empty.id), "   ", None)
+        .unwrap();
+    let projected = store
+        .model_view()
+        .unwrap()
+        .into_iter()
+        .filter_map(|v| match v {
+            ModelViewEntry::BranchSummary { seq, .. } => Some(seq),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        projected,
+        vec![spaced.seq],
+        "only the whitespace summary projects; the empty one stays out"
+    );
+}
+
+#[test]
+fn branch_with_summary_maps_pis_target_shapes_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+
+    let a = store
+        .append(EntryKind::Message {
+            message: user_msg("a"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let b = store
+        .append(EntryKind::Message {
+            message: user_msg("b"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    // `Some(id)` is pi's `branchWithSummary(id, …)`: the leaf MOVES to that entry and
+    // the summary hangs off it. Target a non-tip entry: passing the tip (as this test
+    // first did) makes the move a no-op, so the assertion could not see it happen.
+    assert_eq!(store.leaf_id().as_deref(), Some(b.id.as_str()));
+    let at_a = store
+        .branch_with_summary(Some(&a.id), "summarized the abandoned tail", None)
+        .unwrap();
+    assert_eq!(
+        at_a.parent_id.as_deref(),
+        Some(a.id.as_str()),
+        "the summary is the TARGET's child, not the old tip's"
+    );
+    assert_eq!(store.leaf_id().as_deref(), Some(at_a.id.as_str()));
+    assert_eq!(
+        store
+            .branch_entries()
+            .unwrap()
+            .iter()
+            .map(|e| e.id.clone())
+            .collect::<Vec<_>>(),
+        vec![a.id.clone(), at_a.id.clone()],
+        "the old tip is abandoned with the branch that led to it"
+    );
+    assert_eq!(
+        view_texts(&store.model_view().unwrap()),
+        vec![
+            "a".to_string(),
+            "<branch_summary>\nsummarized the abandoned tail\n</branch_summary>".to_string()
+        ],
+        "the view follows the moved leaf; the old tip's message is gone"
+    );
+
+    // `None` is pi's `branchWithSummary(null, …)`: the summary is itself a new ROOT and
+    // records `fromId = "root"`; the leaf it replaces is abandoned, not re-used.
+    let from_root = store
+        .branch_with_summary(None, "branch from before the start", None)
+        .unwrap();
+    assert_eq!(
+        from_root.parent_id, None,
+        "a summary appended with no target starts a new root"
+    );
+    match &from_root.kind {
+        EntryKind::BranchSummary { from_id, .. } => assert_eq!(from_id, "root"),
+        other => panic!("expected a branch summary, got {other:?}"),
+    }
+    assert_eq!(store.leaf_id().as_deref(), Some(from_root.id.as_str()));
+    assert_eq!(
+        view_texts(&store.model_view().unwrap()),
+        vec!["<branch_summary>\nbranch from before the start\n</branch_summary>".to_string()],
+        "the new root is the whole active lane; the abandoned path is not on it"
+    );
+}
+
+#[test]
+fn resetting_the_leaf_makes_the_next_append_a_new_root_and_reopens_faithfully() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open(&path).unwrap();
+
+    let first = store
+        .append(EntryKind::Message {
+            message: user_msg("first try"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let reply = store
+        .append(EntryKind::Message {
+            message: assistant_msg("answered"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    // `/tree` re-edit of the FIRST user message: the target is its parent, which for
+    // a root message is "before the session" — a position, not an id (pi `resetLeaf`).
+    assert_eq!(first.parent_id, None);
+    store.navigate_to(&first.id).unwrap();
+    assert_eq!(store.branch_entries().unwrap().len(), 1);
+    store.reset_leaf();
+    assert_eq!(
+        store.leaf_id(),
+        None,
+        "no leaf is a state, not a failed lookup"
+    );
+    assert!(
+        store.branch_entries().unwrap().is_empty(),
+        "no active branch until something is appended"
+    );
+    assert_eq!(
+        store.read_all().unwrap().len(),
+        2,
+        "the reset itself writes nothing"
+    );
+
+    // The reset is in-memory state, not a file write — pi does not persist `leafId`
+    // either, and the file is never rewritten (ADR-006). Reopening WITHOUT appending
+    // restores the leaf from the file's last line: the old tip, exactly where a crash
+    // inside this window would reopen.
+    drop(store);
+    let reopened_before_append = SessionStore::open(&path).unwrap();
+    assert_eq!(
+        reopened_before_append.leaf_id().as_deref(),
+        Some(reply.id.as_str()),
+        "the reset never reached the file"
+    );
+    assert_eq!(
+        reopened_before_append.branch_entries().unwrap().len(),
+        2,
+        "so the old branch is the active one again"
+    );
+    drop(reopened_before_append);
+
+    // Continue from the same reset position: the next append starts a new root.
+    let mut store = SessionStore::open(&path).unwrap();
+    store.reset_leaf();
+
+    // The next append is a new root at the next file slot — not a rewrite of history.
+    let retry = store
+        .append(EntryKind::Message {
+            message: user_msg("re-edited first try"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    assert_eq!(retry.parent_id, None, "the reset leaf starts a new root");
+    assert_eq!(
+        retry.seq, 2,
+        "seq continues: nothing is renumbered or dropped"
+    );
+    assert_eq!(
+        store.read_all().unwrap().len(),
+        3,
+        "the abandoned lane stays in the human log"
+    );
+    let branch = store.branch_entries().unwrap();
+    assert_eq!(
+        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec![retry.id.clone()]
+    );
+    assert_eq!(
+        view_texts(&store.model_view().unwrap()),
+        vec!["re-edited first try".to_string()]
+    );
+
+    // Reopening is faithful to the FILE: its last line is the new root, so that is
+    // the leaf — the same rule pi's `_buildIndex` applies when it loads a session.
+    drop(store);
+    let reopened = SessionStore::open(&path).unwrap();
+    assert_eq!(reopened.len(), 3);
+    assert_eq!(reopened.leaf_id().as_deref(), Some(retry.id.as_str()));
+    assert_eq!(
+        view_texts(&reopened.model_view().unwrap()),
+        vec!["re-edited first try".to_string()]
+    );
+    let _ = (first, reply);
+}
+
+#[test]
+fn fork_branch_at_writes_only_the_selected_ancestry_with_fresh_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_path = dir.path().join("session.jsonl");
+    // The SOURCE is written by hand. Its header carries a cwd DISTINCT from every
+    // directory this test opens a store in — otherwise the cwd assertion below cannot
+    // tell "the fork copied the source's cwd" from "the fork used its own argument" —
+    // and its ids, parent links, payloads and timestamps are hand-set, so the copy can
+    // be checked against exact values instead of freshly generated ones.
+    let source_cwd = dir.path().join("the-source-workdir");
+    let src_id = "ses_source_identity".to_string();
+    let source = vec![
+        message_entry("ent_a", 0, None, 1_000, user_msg("a")),
+        message_entry("ent_b", 1, Some("ent_a"), 2_000, user_msg("b")), // abandoned sibling
+        message_entry("ent_c", 2, Some("ent_a"), 3_000, user_msg("c")),
+        message_entry("ent_d", 3, Some("ent_c"), 4_000, assistant_msg("d")),
+    ];
+    write_session_file(
+        &src_path,
+        &SessionHeader {
+            kind: SessionHeaderKind::Session,
+            version: Some(CURRENT_SESSION_VERSION),
+            id: src_id.clone(),
+            timestamp: "2026-09-18T00-00-00-000Z".into(),
+            cwd: source_cwd.to_string_lossy().into_owned(),
+            parent_session: None,
+        },
+        &source,
+    );
+
+    let store = SessionStore::open_in(&src_path, dir.path()).unwrap();
+    // An existing header is kept verbatim, so the hand-written cwd survives the open.
+    assert_eq!(
+        store.header().map(|h| h.cwd.clone()),
+        Some(source_cwd.to_string_lossy().into_owned()),
+        "the hand-written source cwd must survive the open"
+    );
+    assert_eq!(
+        store.leaf_id().as_deref(),
+        Some("ent_d"),
+        "opening a file replays its tree: the last line is the leaf"
+    );
+    let source_before = std::fs::read(&src_path).unwrap();
+
+    let dest_dir = dir.path().join("forks");
+    let dest = store.fork_branch_at("ent_d", &dest_dir).unwrap();
+    assert!(
+        dest.starts_with(&dest_dir),
+        "the fork lands in the requested directory: {dest:?}"
+    );
+
+    // A session of its own: fresh id, current version, a parent link to the file.
+    let forked = SessionStore::open_in(&dest, dir.path()).unwrap();
+    let header = forked.header().unwrap();
+    assert_eq!(header.version, Some(CURRENT_SESSION_VERSION));
+    assert_ne!(header.id, src_id, "fresh session identity");
+    assert_eq!(
+        header.parent_session.as_deref(),
+        Some(src_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        header.cwd,
+        source_cwd.to_string_lossy(),
+        "the fork carries the SOURCE's cwd, not the directory it was opened in"
+    );
+    assert_ne!(
+        header.cwd,
+        dir.path().to_string_lossy(),
+        "…and the two differ, so the assertion above is not degenerate"
+    );
+
+    // Only the selected ancestry, ids preserved, `seq` renumbered gaplessly.
+    let entries = forked.read_all().unwrap();
+    assert_eq!(
+        entries.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec![
+            "ent_a".to_string(),
+            "ent_c".to_string(),
+            "ent_d".to_string()
+        ]
+    );
+    assert_eq!(
+        entries.iter().map(|e| e.seq).collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "seq is the file index: gapless in path order"
+    );
+    assert_eq!(entries[0].parent_id, None);
+    assert_eq!(entries[1].parent_id.as_deref(), Some("ent_a"));
+    assert_eq!(entries[2].parent_id.as_deref(), Some("ent_c"));
+    assert!(
+        !entries.iter().any(|e| e.id == "ent_b"),
+        "the abandoned sibling is not copied"
+    );
+    // The doc promises "every id, parent_id, timestamp and payload preserved": `seq`
+    // is the file index and is renumbered, but the rest must be verbatim — a fork
+    // that re-stamped timestamps or rebuilt payloads would be a different history.
+    for (forked_entry, source_entry) in entries.iter().zip([&source[0], &source[2], &source[3]]) {
+        assert_eq!(
+            forked_entry.timestamp_ms, source_entry.timestamp_ms,
+            "timestamp of {}",
+            forked_entry.id
+        );
+        assert_eq!(
+            serde_json::to_value(&forked_entry.kind).unwrap(),
+            serde_json::to_value(&source_entry.kind).unwrap(),
+            "payload of {}",
+            forked_entry.id
+        );
+    }
+    assert_eq!(forked.leaf_id().as_deref(), Some("ent_d"));
+    assert_eq!(
+        view_texts(&forked.model_view().unwrap()),
+        vec!["a".to_string(), "c".to_string(), "d".to_string()]
+    );
+    drop(forked);
+
+    // The source is a pure read: byte-identical, still holding the whole tree.
+    assert_eq!(
+        std::fs::read(&src_path).unwrap(),
+        source_before,
+        "forking must not touch the source"
+    );
+    assert_eq!(store.read_all().unwrap().len(), 4);
+
+    // Subsequent writes go to the NEW session.
+    let mut child = SessionStore::open_in(&dest, dir.path()).unwrap();
+    child
+        .append(EntryKind::Message {
+            message: user_msg("e"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    assert_eq!(child.len(), 4);
+    drop(child);
+    assert_eq!(
+        std::fs::read(&src_path).unwrap(),
+        source_before,
+        "…and the source still never changes"
+    );
+
+    // An unknown leaf is refused; a destination that cannot hold a session is
+    // refused untouched (the refuse-don't-truncate rule).
+    assert!(
+        store
+            .fork_branch_at("ent_no_such_entry", &dest_dir)
+            .is_err()
+    );
+    let occupied = dir.path().join("occupied");
+    std::fs::write(&occupied, "not a directory").unwrap();
+    assert!(store.fork_branch_at("ent_d", &occupied).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&occupied).unwrap(),
+        "not a directory"
+    );
+}
+
+#[test]
+fn fork_refuses_an_ancestry_that_does_not_reach_a_root() {
+    // `branch_to` refuses an ancestry that does not reach a root with `InvalidData`
+    // (store.rs): a partial path written out as a session file would be a silent lie
+    // about what the branch contains. The file is written by hand because the store
+    // cannot append an entry whose parent names nothing (ids, not positions).
+    let dir = tempfile::tempdir().unwrap();
+    let src_path = dir.path().join("dangling.jsonl");
+    write_session_file(
+        &src_path,
+        &SessionHeader {
+            kind: SessionHeaderKind::Session,
+            version: Some(CURRENT_SESSION_VERSION),
+            id: "ses_dangling".into(),
+            timestamp: "1".into(),
+            cwd: dir.path().to_string_lossy().into_owned(),
+            parent_session: None,
+        },
+        &[
+            message_entry("ent_root", 0, None, 10, user_msg("root")),
+            // The chain ends on a parent that is not in the file: `ent_missing`.
+            message_entry("ent_orphan", 1, Some("ent_missing"), 20, user_msg("orphan")),
+        ],
+    );
+
+    let store = SessionStore::open_in(&src_path, dir.path()).unwrap();
+    let dest_dir = dir.path().join("forks");
+    let err = store.fork_branch_at("ent_orphan", &dest_dir).unwrap_err();
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::InvalidData,
+        "a broken ancestry is InvalidData, not a generic io failure: {err}"
+    );
+    assert!(
+        err.to_string().contains("does not reach a root"),
+        "and the message names what is wrong: {err}"
+    );
+    // Refused before any side effect: the destination directory was never created.
+    assert!(
+        !dest_dir.exists(),
+        "the refusal happens before anything is written"
+    );
+    assert_eq!(
+        store.read_all().unwrap().len(),
+        2,
+        "the source is untouched"
+    );
 }
