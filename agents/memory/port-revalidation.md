@@ -122,6 +122,35 @@
   the silent chain break's visibility, B2's store-side pop, the duplicate-ids doc trigger, and a
   hash instead of a length in the cycle test.
 
+## M92 / RPC-02 protocol breadth (2026-09-18)
+- a238ce5: pi-shaped reply envelope (id echoed per request; `type` read as an alias for `op`)
+  with the first wire's `ok`/`error` keys kept, so both client generations read one frame;
+  dispatch extracted from the stdin/stdout loop into a testable `dispatch_line`; ops `abort`,
+  `get_state`, `set_thinking_level`; a dropped broadcast is an explicit `lagged` frame sharing
+  one `LaggedNotice` type with serve's SSE event; serve gains `POST /abort` + `GET /state`
+  behind one `SessionState` (types-only, in `epsilon-contracts`); deferred op families answer
+  `unknown op: <name>` with the echoed id.
+- Two independent reviews: round 1 found two real blockers (the false "pi's seven levels
+  verbatim" claim — `x_high` vs pi's `xhigh`; the fake "spec == routes" guarantee) plus nine
+  findings; both fixed, and the focused re-review closed them with no blockers and reproduced
+  the four-line contracts `lib.rs` footprint. Round-2 residuals F1/F3 fixed in the milestone,
+  F2 closed by probe F, F4/F5 recorded — `audit/evidence/m92-review.md`.
+- Battery `m92b` (candidate = HEAD `10422ab` + eight slice files + the doc, byte-verified;
+  contracts `lib.rs` staged by object hash = HEAD + 4 lines): all five gates exit 0,
+  **791 passed / 0 failed / 0 ignored across 55 summaries**, delta +19 reconciled per binary
+  (`epsilon_cli` +12, `epsilon_contracts` +1, `epsilon_server` +6). Evidence:
+  `gate-m92b.log` (sha256 `8f25c46d…`), `m92b-probes.log` (sha256 `c05e857b…`, six probes —
+  the id echo, legacy key, a state field, the `xhigh` alias and a scratch route each fail their
+  own test; the pump's `Lagged` arm stays green when reverted, confirming that documented
+  limit), `m92-cleanup.log`.
+- Cleanup: 11 G round target + both candidates + the child's logs removed; C: 58 G free. No
+  reinstall: the new ops are additive and the stdio surface's only in-tree caller does not
+  parse replies.
+- Still open (documented in the milestone's Limits + ADR-011): pi's command names and payload
+  dialects beyond the envelope, the model-switch ops, queue modes, compaction over the wire,
+  the untested `run()`/pump wiring, the `ThinkingLevel::ALL`-derived OpenAPI enum residual, and
+  `pending_message_count`'s steering-only meaning.
+
 ## Next safe actions
 - Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in

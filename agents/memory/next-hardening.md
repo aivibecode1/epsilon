@@ -22,6 +22,17 @@
   To stop a battery, take the WINPID of the MSYS wrapper from `ps -W` and run
   `MSYS_NO_PATHCONV=1 taskkill /F /PID <WINPID>`; the process tool's kill can time out
   and leave cargo running.
+- MSYS `sha256sum` prefixes a `\` to paths that contain backslashes, so comparing
+  `sha256sum "$a" | cut -c1-16` against `sha256sum "$b" | cut -c1-16` gives a false
+  MISMATCH whenever one side came from `$LOCALAPPDATA` (which expands with backslashes).
+  Byte-verified comparison therefore hashes through forward-slash paths and strips the
+  escape: `sha256sum "$f" | tr -d '\\' | cut -c1-16`. (Cost 2026-09-18: the M92 candidate
+  assembly aborted on a spurious mismatch — the bytes were identical.)
+- PowerShell process sweeps (`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine
+  -match "pattern" }`) **match the sweeping process itself** when the pattern appears in its
+  own command line — it killed its own shell and the report was lost. Split the literal
+  (`-match ("rpc0"+"2")`) or filter on `Name` as well, and restrict the sweep to the process
+  names you mean (`cargo.exe`/`rustc.exe`).
 - Avira can pin a *specific* test-artifact path — seen 2026-09-18 on
   `epsilon-shared-target/debug/deps/wire_fixtures-76eddb95e46e81ff.exe`: linking then
   fails with `LNK1104` although no file exists, and the denial survives `rm`. Do not
