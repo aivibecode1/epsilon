@@ -9,8 +9,10 @@ see `crates/epsilon-core/assets/agent-contract.md`.
 - You are working on **Epsilon**, a Rust coding-agent harness. The full picture lives in
   `README.md`; the reasoning in `docs/qa/` and `docs/design/`. The docs index is
   `docs/README.md` — start there when you need to find something, and add new files to it.
-  `audit/` holds the honest review (usability, defect ledger, port plan, verification
-  record, reference comparison); read `audit/04-roadmap.md` before starting new work so
+  `audit/` holds the review (usability, defect ledger, port plan, verification record,
+  reference comparison); `audit/09-revalidation.md` re-validates the earlier allegations
+  against the code and names the verified baseline, so treat pre-revalidation claims as
+  history until that file confirms them. Read `audit/04-roadmap.md` before starting new work so
   you build the thing that is actually next.
 - Answer questions before acting; act before narrating when asked to implement.
 - Keep responses short and technical.
@@ -108,7 +110,10 @@ on CLI. New edges require review rather than relying on an illustrative layer di
   Existing validation and stateful stream folding violate the literal types-only rule
   (`audit/07-inconsistencies.md`). Do not add behavior there or silently endorse that
   drift. Extraction or a narrowly defined policy amendment needs its own reviewed
-  change; do not mix it into a documentation-only restructure.
+  change; do not mix it into a documentation-only restructure. The one recorded exception:
+  stateless, dependency-free *defaults on seam traits* (`ToolHooks`, `TurnHooks`) under
+  ADR-014's M89 amendment — pure functions of their arguments, overridable contract, no
+  state, no dependency. Everything else still needs its own narrowly defined amendment.
 - New crates require an ADR first (see ADR-014's "brick earns existence" rule).
 - genai/rmcp/etc. types never leave their adapter module.
 
@@ -142,6 +147,13 @@ on CLI. New edges require review rather than relying on an illustrative layer di
 - One milestone = one commit = one dev log at `docs/milestones/M<N>-<name>.md`
   (what / key decisions / gotchas / verification output).
 - Behavior-level changes require an ADR entry or amendment in `docs/design/epsilon-decisions.md`.
+- Non-trivial slices get an **independent read-only review** (delegate it; the reviewer must not
+  build or edit). Record its findings and dispositions in `audit/evidence/<slice>-review.md`,
+  fix blockers before the commit, and carry every residual into the milestone's `Limits` — a
+  review whose findings vanish is a review that did not happen.
+- State in the milestone whether the global `epsilon.exe` needed a reinstall and why: a slice
+  nothing in-tree can reach needs none, a CLI-visible one does (the owner tests the installed
+  binary).
 - Update [`docs/history.md`](docs/history.md) milestone timeline when a milestone lands
   (the root README stays reader-first: quick start and product story only).
 
@@ -149,6 +161,9 @@ on CLI. New edges require review rather than relying on an illustrative layer di
 
 - Stage explicit paths only; never `-A` blind into unrelated worktrees.
 - Commit message convention: `feat(mN): …` / `fix(mN): …` / `docs: …`.
+- A commit's message names its evidence: the battery label and the `audit/evidence/…` files the
+  claim rests on, so any assertion can be traced to a log. The message is the audit trail, not
+  a summary of effort.
 - Only commit when the task calls for it; milestones are natural commit points.
 - Preserve unrelated dirty work. A documentation commit may incorporate pre-existing
   edits in the named document only after reviewing them; disclose that scope. Do not
