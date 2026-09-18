@@ -1,0 +1,14 @@
+# M89 cleanup — 2026-09-18
+# Removed:
+#   $LOCALAPPDATA/Temp/epsilon-core02-target   10.0G  (the round's target dir)
+#   epsilon-m89e-candidate                       7 MB  (final candidate)
+#   epsilon-m89d-candidate                       7 MB  (pre-epoch-fix candidate)
+#   epsilon-m89d-negctl / -negctl2               7 MB each (negative-control copies)
+#   epsilon-m89-candidate                     (emptied; the directory itself refused
+#                                              removal with "Device or resource busy" —
+#                                              a lingering handle, 1 MB, no sources left;
+#                                              deletable once the handle is released)
+# C: 49G -> 59G free. No in-repo target/ exists: every build in this round ran with an
+# external CARGO_TARGET_DIR, and the repository was never built inside itself.
+# Kept on purpose: the preserved integration snapshot
+# (epsilon-integration-preserved-350c9ec) and the uncommitted TUI work item's candidates.

@@ -32,13 +32,18 @@
 - Evidence out of `target/` before cleanup; clean after each round, never mid-round.
 
 ## Next
-- Committed and closed 2026-09-18: **F20 mid-batch abort** (M88, 31b1794), **F04/F06/F17
-  compaction correctness** (M86, 36a226c), **F13 admission, RPC + serve** (M87, 35da3d7).
-  Round evidence: gate-m86-88f (751 passed / 0 failed, all five gates), red-round.log,
-  m86-88-review.md. The global epsilon.exe was reinstalled from c4711a2 and its demo ran.
-- Next port work, in order (owner: port first): CORE-02 callbacks, SESSION-01 tree/fork
-  workflows, RPC-02 protocol breadth (correlation ids, abort/state/model ops, dropped
-  events), then F09 resolved containment (alias-consistent identity, defensive only).
+- Committed and closed 2026-09-18: **M89 / CORE-02 turn hooks** (7e23e6e) - pi's four
+  `AgentLoopConfig` seams; two review-blockers fixed (frozen replacement, stale replacement
+  after a committed compaction) and pinned by a negative control; battery m89e: 759 passed /
+  0 failed, all five gates exit 0. Earlier the same day: M86 compaction correctness (36a226c),
+  M87 admission (35da3d7), M88 mid-batch abort (31b1794), M84 find scheduling (d0ac16b).
+- Next port work, in order (owner: port first): SESSION-01 tree/fork workflows, RPC-02
+  protocol breadth (correlation ids, abort/state/model ops, dropped events), then F09
+  resolved containment (alias-consistent identity, defensive only).
+- Recorded follow-ups from M89 (in the milestone limits, do not silently drop): unify
+  `TurnModel` with `epsilon_llm::ModelRef`; re-base (not clear) the usage anchor for
+  replacement-built requests; regression tests for the drain-point mirror, the overflow-discard
+  pop, and the attach/detach epoch bump.
 - Then the audit/04-roadmap.md general-improvement phases; the port must have no open
   fidelity items first.
 - Canonicalization is not race-resistant access. Windows/Linux differences must

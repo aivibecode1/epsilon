@@ -53,6 +53,27 @@
 - CLI behaviour changed, so the global epsilon.exe is reinstalled from this commit before
   the round closes (proc_9dd1df275fb6); install evidence then the memory closeout.
 
+## M89 / CORE-02 turn hooks (2026-09-18)
+- 7e23e6e: pi's four `AgentLoopConfig` seams as `epsilon_contracts::turn::TurnHooks` (async,
+  exactly like `ToolHooks`; defaults reproduce the pre-slice loop). ADR-002 and ADR-014 carry
+  the amendments; the milestone records the pi deltas and residuals.
+- Two blockers found by the first independent review are fixed and pinned: a **frozen
+  replacement** (the loop now mirrors the turn's own assistant message, tool results, steering
+  and nudges into an installed replacement — pi pushes onto `currentContext.messages`) and a
+  **stale replacement after a committed mid-run compaction** (a history epoch is checked before
+  each request; store attach/detach also bumps it, and the run's model/thinking snapshot
+  survives). Hook panics are contained at the poll boundary.
+- Battery `m89e` (candidate = HEAD `df5d3be` + the four slice files, byte-verified): all five
+  gates exit 0, **759 passed / 0 failed / 0 ignored across 55 summaries**. No pre-fix RED is
+  possible (the seams do not exist before the slice); a negative control reverts each fix in a
+  disposable copy and the named tests fail as designed. Records: `audit/evidence/m89-review.md`,
+  `m89-negative-control.log`, `gate-m89e.log`, `gate-m89a-attempt1.log`.
+- Cleanup removed the 10G round target and every candidate; C: 59G free. No reinstall: no
+  in-tree frontend installs turn hooks, so the shipped CLI is unchanged.
+- Recorded follow-ups (M89 limits + next-hardening.md): unify `TurnModel` with
+  `epsilon_llm::ModelRef`; re-base the usage anchor for replacement-built requests; tests for
+  the drain-point mirror, the overflow-discard pop and the attach/detach epoch bump.
+
 ## Next safe actions
 - Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in
