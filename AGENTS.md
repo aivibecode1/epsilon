@@ -40,6 +40,38 @@ bash scripts/gate.sh post            # any label; exits non-zero if a gate fails
 
 Fix or honestly report failures; never weaken a gate to make it pass.
 
+## Verification rounds on this machine (hard-won rules)
+
+One build owner at a time: a gate round, a delegated build and a `cargo install` must never
+share the machine. Run long work with `CARGO_BUILD_JOBS=1` and `CARGO_TARGET_DIR` on an external
+path — every gate failure at parallel jobs on this box has been `0xc0000142` compiler-startup
+contention, and single-job builds with an external target have passed every round since.
+
+- **Every battery attempt gets its own label.** `scripts/gate.sh` truncates
+  `target/gate-<label>.log` on start, so re-using a label destroys the failed attempt's evidence.
+- **Evidence must cover the shipped bytes.** Freeze a candidate (HEAD archive + exactly the
+  changed files, byte-verified by hash), run the gates against that, and stop an in-flight
+  battery when a fix round changes the code — a log for bytes that are no longer in the commit
+  proves nothing.
+- **When a slice cannot have a pre-fix RED** (its API did not exist before it), run a *negative
+  control* instead: revert one fix inside a disposable copy of the candidate and show that the
+  test naming that property fails for the reason it names. Restore, verify byte-identity, then
+  relaunch. Record the probe output as evidence.
+- **Shared files carrying another work item's uncommitted changes are staged by line, not by
+  file:** `git hash-object -w <your built version>` then `git update-index --cacheinfo`, and diff
+  the staged blob against HEAD to prove only your lines are in the commit.
+- **Stopping a battery:** find the MSYS wrapper's WINPID with `ps -W`, then
+  `MSYS_NO_PATHCONV=1 taskkill /F /T /PID <WINPID>`. The process tool's kill can time out and
+  leave cargo running, and `kill -0` is unreliable on MSYS — verify by the gate log no longer
+  growing.
+- **Avira can pin one test-artifact path** (`LNK1104` or `Access is denied` on a file that does
+  not exist, surviving `rm`). Never change security configuration from an agent session; rebuild
+  the test profile under fresh metadata instead (`CARGO_PROFILE_TEST_DEBUG=1` gives every test
+  executable a new name) and disclose the knob in the verification log.
+- Milestone docs carry a `## Verification` section that reads **PENDING** until a battery has
+  actually run; fill it from the log, reconcile per-binary test-count deltas, and keep the
+  limits honest about what was never executed.
+
 ## Disk hygiene (this machine has a small, chronically-full C: drive)
 
 Rust build artifacts are enormous — this repo's `target/` alone grows past 35 GB and
