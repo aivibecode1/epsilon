@@ -1,0 +1,12 @@
+# Round-B cleanup (M86/M87/M88) — 2026-09-18
+# Removed:
+#   C:/Users/Hp/AppData/Local/Temp/epsilon-shared-target  15G  (round's shared target dir)
+#   C:/Users/Hp/AppData/Local/Temp/epsilon-m86-green    7.0M  (GREEN candidate)
+#   C:/Users/Hp/AppData/Local/Temp/epsilon-m86-red      6.4M  (RED candidate)
+#   C:/Users/Hp/AppData/Local/Temp/epsilon-f09-compiler-probe 2.2G (earlier-session probe)
+# Kept on purpose: the preserved integration snapshot
+#   (epsilon-integration-preserved-350c9ec) and the uncommitted TUI work item's
+#   candidates (epsilon-tui-m86-candidate, epsilon-modal-isolated) — another work
+#   item's state is not this round's to purge.
+# C: 42G -> 59G free. No in-repo target/ exists (the workspace was never built inside
+# the repository during this round); every build ran with an external CARGO_TARGET_DIR.

@@ -10,6 +10,27 @@
   audit/evidence/integration-*-review.json. No release/security certification.
 - The earlier 794-test result describes broader uncommitted owner work, not HEAD.
 
+## Operating notes (this machine)
+- One build owner; batteries run with `CARGO_BUILD_JOBS=1` and an external
+  `CARGO_TARGET_DIR` (every failure at parallel jobs was 0xc0000142 compiler startup;
+  single-job + external has passed every round since).
+- **Give every battery attempt its own label** (`gate-m86-88b`, never reuse): the wrapper
+  truncates `target/gate-<label>.log` on start, so reusing a label destroys the failed
+  attempt's evidence. (Learned 2026-09-18 — an attempt-1 log was lost that way; the rule
+  belongs in AGENTS.md but that write needs owner approval.)
+- `kill -0` is unreliable on MSYS for liveness — use the process tool or log growth.
+  To stop a battery, take the WINPID of the MSYS wrapper from `ps -W` and run
+  `MSYS_NO_PATHCONV=1 taskkill /F /PID <WINPID>`; the process tool's kill can time out
+  and leave cargo running.
+- Avira can pin a *specific* test-artifact path — seen 2026-09-18 on
+  `epsilon-shared-target/debug/deps/wire_fixtures-76eddb95e46e81ff.exe`: linking then
+  fails with `LNK1104` although no file exists, and the denial survives `rm`. Do not
+  change security configuration from an agent session. Workarounds that keep the gate
+  intact: let cargo relink under different metadata (e.g. a different feature set), or
+  build the test profile with `CARGO_PROFILE_TEST_DEBUG=1` so every test exe gets a fresh
+  name; disclose the knob in the verification log when used.
+- Evidence out of `target/` before cleanup; clean after each round, never mid-round.
+
 ## Next
 - Queued fidelity slices, in order (owner: port first): **F20 mid-batch abort**
   (implemented 2026-09-18, unverified, rides in round B — see ledger for the rule),

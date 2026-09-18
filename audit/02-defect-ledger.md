@@ -89,6 +89,14 @@ Hermes retains per-task observations (`references/hermes-agent-2026.8.19/tools/f
 
 ## F04 — Make durable compaction replace superseded model context
 
+**M86 bounded progress:** `model_view` now *replaces* the projection an earlier
+compaction built (`crates/epsilon-session/src/store.rs`), so the latest summary + its
+retained tail + later messages are the whole request view (pi `session-manager.ts:418-453`).
+Executed regression: `a_second_compaction_replaces_the_superseded_projection`
+(`crates/epsilon-session/tests/session_store.rs`) — two compactions, first summary/tail
+absent, human log intact. **Still open:** end-to-end two-compaction provider-context
+comparison through a live loop and alternate-branch/reopen variants.
+
 **Evidence:** `crates/epsilon-session/src/store.rs:717–748` appends every summary/tail to `out` and clears only `pending`; `crates/epsilon-core/src/lib.rs:1484–1512` replaces runtime history with the new summary/tail. Provider calls prefer the store view (`:1592–1604`).
 
 **Trace:** C1 gives S1/T1; C2 replaces memory with S2/T2 but persisted projection gives S1/T1/S2/T2. Retained material can duplicate: older summaries and tails remain even though newly pending messages are still shadowed. This is a projection error, not physical duplication of the historical log. Resume restores the divergent projection.
@@ -104,6 +112,15 @@ Hermes retains per-task observations (`references/hermes-agent-2026.8.19/tools/f
 **Acceptance:** real-shaped `Ok` result with nonzero/null exit remains unverified; zero exit after the mutation may count. Check-before-edit must not count. Unknown outcomes remain unknown. Carry execution order and conservative check scope; do not redefine every ordinary nonzero shell exit as a transport failure.
 
 ## F06 — Commit summaries only on success, with cancellation
+
+**M86 bounded progress:** `compact_now` returns `CompactionOutcome` and commits only on a
+non-failure stop reason, nonempty text, and a successful durable append
+(`crates/epsilon-core/src/lib.rs`, `crates/epsilon-core/src/compact.rs`); the template
+placeholder fallback is gone. Execution is cancellation-aware at connect and while polling.
+Executed regressions (faux summarizer): provider-error attempt reports a Notice and commits
+nothing; empty text is refused; abort during summarization ends the run `Aborted` with no
+entry (`crates/epsilon-core/tests/compaction_scenarios.rs`). **Still open:** explicit
+early-EOF and append-failure regression tests; live summarizer cancellation timing.
 
 **Evidence:** `crates/epsilon-core/src/lib.rs:1468–1478` accepts any summarizer `Done` and does not select on cancellation. `crates/epsilon-core/src/compact.rs:241–248` substitutes a template for empty text. The replacement commits at `lib.rs:1497–1512`.
 
@@ -230,6 +247,16 @@ operations (RPC-02), dropped-event reporting.
 
 ## F17 — Persist cancellation salvage like ordinary completion
 
+**M86 bounded progress:** the two local cancellation arms in `stream_one_turn` now push the
+synthetic terminal message into runtime history, the durable mirror, and emit `MessageEnd`
+— the same lifecycle the Done and EOF-salvage paths already used
+(`crates/epsilon-core/src/lib.rs`). Executed regression:
+`abort_mid_stream_commits_the_terminal_message_to_history_and_store`
+(`crates/epsilon-core/tests/loop_scenarios.rs`) asserts one terminal message with the partial
+text in history, in the store, in the reopened model view, and exactly one `MessageEnd`.
+**Still open:** durable-append failure during that commit (F07), and a live
+provider-Done-races-cancel timing run (the biased select prefers cancellation; unexecuted).
+
 **Evidence:** cancellation returns locally synthesized assistant messages directly (`crates/epsilon-core/src/lib.rs:1680–1703`); provider `Done` uses `push_message` and `MessageEnd` (`:1729–1733`).
 
 **Impact:** partial prose can survive in `RunOutcome` while absent from both in-memory history and the durable transcript. Ordinary raw-EOF salvage does push history and emit `MessageEnd` (`lib.rs:1772–1782`); the finding is specific to locally synthesized cancellation. The inspected abort regression checks returned output, not reopened history.
@@ -254,6 +281,25 @@ operations (RPC-02), dropped-event reporting.
 - App orchestration is concentrated in a 6,404-line source file; split only stable ownership seams after characterization, not arbitrary line counts.
 
 **Acceptance:** one current status source; explicit compatibility/platform matrix; README → setup → first run → permission handling → resume/recovery walkthrough checked on a fresh profile. Preserve history as history, not current guarantees.
+
+## F20 — Abort must stop starting new calls inside the running batch
+
+**M88 fix (in round B, pending verification):** `run_one` now checks the run token before
+starting a call — the single choke point shared by the barrier and segment plans — so a
+cancelled run refuses the rest of the batch with an error result ("not executed: the run was
+cancelled before it started", `details.aborted`), still in call order, while in-flight calls
+settle. Executed regression: `abort_mid_batch_refuses_calls_that_have_not_started`.
+
+**Evidence (pre-fix source trace):** `crates/epsilon-core/src/exec.rs` scheduled every
+prepared call unconditionally in both plans — the barrier loop (`:553-562`) and the per-group
+task loop (`:579-596`) called `run_one` with no cancellation check; `run_one` (`:623-737`)
+handed the run token to the tool through `ToolContext` (`:683-684`) but never consulted it
+before executing. The loop's abort checkpoint ran only at the next turn
+(`crates/epsilon-core/src/lib.rs:1076-1079`).
+
+**Reference semantics:** pi breaks a sequential batch after the in-flight call settles and stops scheduling parallel calls once the signal aborts; every remaining call becomes an error result ("Operation aborted") and all results are still emitted in order (`references/pi-0.84.2/packages/agent/src/agent-loop.ts:478-480,516-553,629-635`).
+
+**Impact:** after Esc, the rest of the active batch still started and executed. A write or shell command the user just cancelled could still run; only tools that personally honour the token stopped early. The transcript stayed valid (every call receives a result), which is why this never surfaced as a wire error or a dangling-call repair.
 
 ## Deliberate differences, not implementation bugs
 

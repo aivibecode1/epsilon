@@ -461,3 +461,71 @@ Cleanup exited 0: 16,325 files / 9.4 GiB removed, 60G free, repo/candidate/exter
 targets absent. [Cleanup record](evidence/queue-cleanup.log).
 No CLI/TUI source changed; no reinstall. Only the default and explicit All are
 covered by these fixtures, not complete queue or pi parity.
+
+## M86/M87/M88 — compaction correctness, admission, mid-batch abort
+
+Candidates (byte-verified against the working tree; one external shared target dir,
+`CARGO_BUILD_JOBS=1`):
+- RED: `epsilon-m86-red` = `d9c1810` + the new tests only (+ the `SlowTool` fixture, which
+  is a fixture rather than a fix, + a serve characterization probe). Log
+  [red-round.log](evidence/red-round.log), sha256 103b5307….
+- GREEN: `epsilon-m86-green` = `d0ac16b` + exactly the ten changed files.
+
+RED results (executed against the pre-fix code):
+- `a_second_compaction_replaces_the_superseded_projection` — FAILED (view kept the
+  superseded summary).
+- `failed_summarization_does_not_commit_and_is_reported_once`,
+  `empty_summary_text_is_refused_rather_than_padded`,
+  `abort_during_summarization_ends_the_run_aborted_and_commits_nothing` — all FAILED.
+- `abort_mid_stream_commits_the_terminal_message_to_history_and_store` — FAILED (the
+  aborted message was absent from history and the store).
+- `abort_mid_batch_refuses_calls_that_have_not_started` — FAILED with
+  `left: 2, right: 1`: both batch calls executed after the abort.
+- Serve admission: the characterization probe asserting that the pre-fix handler accepts
+  an overlapping prompt **failed** — the old pre-check does refuse a *sequential* overlap;
+  the pre-fix defect is the check-then-act window only, which a deterministic single-thread
+  test cannot exhibit. Recorded as such; the committed regression pins the corrected
+  contract and the atomicity is structural (`fetch_add` is the decision).
+- RPC admission: no executed RED — the test and the fix live in the same file, so the
+  pre-fix tree cannot carry the test unchanged; the pre-fix behavior is the source-visible
+  always-false helper (`rpc_mode.rs`, pre-fix `:117-120`).
+
+GREEN (attempt 6, `gate-m86-88f`, executed on `epsilon-m86-green` — ten files byte-verified
+against the working tree *after* the review fixes): **all five gates exit 0 — 751 passed,
+0 failed, 0 ignored across 55 summaries** (fmt 1s, clippy 1s, test 751s, demo 7s,
+real-check 1s). Preserved log [gate-m86-88f.log](evidence/gate-m86-88f.log), sha256
+`1ccc939e…`. The eight new tests are green, including `wire_fixtures`' 18 feature-gated
+tests and both admission regressions; C: held 45G free through the round. Independent
+review (read-only, no builds): no blockers — findings and dispositions in
+[m86-88-review.md](evidence/m86-88-review.md).
+
+### Attempt history (one label per attempt)
+
+| Attempt | Outcome |
+|---|---|
+| `gate-m86-88` (1) | fmt exit 1 (nine style-edition-2024 diffs), then clippy exit 101 (`E0716`: temporary `Arc<dyn StreamFn>` in `compact_now`'s select). Log lost — the relaunch reused the label; both defects are recorded below. |
+| `gate-m86-88b` (2) | stopped to apply the RED-instruction fixes; no verdict. |
+| `gate-m86-88c` (3) | clippy exit 101 — `error[E0004]`: the new `admit_prompt` outer match did not cover `Step::Again`. Fixed with an explicit non-panicking arm. |
+| `gate-m86-88d` (4) | fmt/clippy/demo/real-check exit 0; test exit 101 — `wire_fixtures` could not be executed (`Access is denied`, os error 5); its artifact was then absent while `.pdb`/`.lib` survived, and the remaining suites never ran. |
+| `gate-m86-88e` (5) | test exit 101 at the same binary: `LINK : fatal error LNK1104: cannot open file '…\wire_fixtures-76eddb95e46e81ff.exe'` although no such file exists — a path-pinned AV denial that survives `rm`. A relink under different metadata produced a new artifact name that linked and ran (0 tests, because that build dropped the feature-gated file — a reminder that `wire_fixtures` is `cfg(feature = "real")`). |
+| `gate-m86-88f` (6, PASS) | test profile built with `CARGO_PROFILE_TEST_DEBUG=1` so every test binary linked under a fresh name, dodging the pinned path without touching the gate definition. Disclosed: debuginfo level does not affect assertions or counts; `wire_fixtures` ran 18/18. |
+
+No security configuration was changed (owner territory per AGENTS.md); the workaround is
+build metadata only.
+
+### Gate-caught defects in this round (fixed before the final candidate)
+
+- **Attempt 1 (`gate-m86-88`, overwritten by the relaunch — same label):** `fmt --check`
+  exit 1 with nine formatting diffs across the changed files (style-edition-2024 line
+  breaking; `cargo fmt --all` applied, workspace otherwise clean), then clippy exit 101:
+  `error[E0716]: temporary value dropped while borrowed` at `crates/epsilon-core/src/lib.rs`
+  — `self.summarizer_stream().stream(&model, sctx)` inside `tokio::select!` called
+  `.stream()` on a temporary `Arc<dyn StreamFn>` that the returned stream still borrowed.
+  Fixed by binding the `Arc` to a local first, the same shape `stream_one_turn` uses.
+  Lesson applied: each battery attempt gets its own label from now on (AGENTS.md), so a
+  failed attempt's log is never overwritten.
+- **During RED:** `abort_mid_batch_refuses_calls_that_have_not_started` did not compile at
+  first — `registry.register(Arc::clone(&slow))` inferred `Arc::clone`'s parameter from the
+  expected `Arc<dyn Tool>` and failed the coercion. Fixed with a typed binding
+  (`let tool: Arc<dyn Tool> = slow.clone();`). The RED run found it; round B would otherwise
+  have failed to build.

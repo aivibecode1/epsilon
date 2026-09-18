@@ -56,6 +56,16 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M88 — mid-batch abort](milestones/M88-mid-batch-abort.md): a cancelled run refuses
+  batched calls it has not started; one checkpoint covers both batch plans.
+
+- [M87 — admission that reflects reality](milestones/M87-rpc-admission.md): RPC and HTTP
+  prompts answer with what actually happened (real rejection, atomic run slot, logged
+  in-band refusals).
+
+- [M86 — compaction correctness](milestones/M86-compaction-correctness.md): the durable
+  projection replaces the superseded one, and summaries commit only when usable.
+
 - [M85 — follow-up default](milestones/M85-followup-default.md): one-at-a-time
   default restored; explicit All preserved; verification and coverage limits.
 

@@ -38,10 +38,8 @@ not themselves trigger runtime compression.
 |------|-----------|--------|
 | [tui-enhancement.md](tui-enhancement.md) | Owner-priority TUI composer and viewport | composer gates green; routing regression green; latest workspace native build failed; cleaned; isolation pending |
 | [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
-| [f09-path-policy.md](f09-path-policy.md) | F09 consistent filesystem identity | find reviewed; current-HEAD build failed at compiler startup; cleaned; uncommitted; containment open |
-| [compaction-correctness.md](compaction-correctness.md) | M86 CORE-03/04/05 compaction slice | code + tests written; round-A gate running; unverified |
-| [rpc-admission.md](rpc-admission.md) | M87 RPC prompt admission (F13 RPC half) | code + test written; ships in round-B candidate; unverified |
-| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit committed 13773b4; narrow docs corrections bcc1233; reviews complete |
+| [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit committed 13773b4; M84 d0ac16b; M86-M88 committed 36a226c/35da3d7/31b1794; install refresh pending |
 
 
 

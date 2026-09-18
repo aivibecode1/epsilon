@@ -234,6 +234,27 @@ correctness and opencode best-for-template; taking both is strictly better than 
 **Best possible?** Yes modulo tuning constants (thresholds configurable; defaults from the most-
 tested sources: opencode clamp values, DSH pressure check placement).
 
+**M86 amendment — acceptance, cancellation and projection replacement.** A pass now commits
+only after three checks: the summarization turn ended with a non-failure stop reason (pi
+`compaction.ts:670-685` rejects `stopReason === "error"` before the append); the answer carried
+nonempty text (the old template fallback could replace useful context with a placeholder —
+Epsilon's own reliability rule, *not* claimed pi parity: pi's inspected helper has no nonempty
+check); and the durable entry appended successfully *before* runtime history is replaced (a
+store-backed run reads its provider view from the store, so committing one view only would
+leave runtime history and the request view disagreeing). The summarization call is
+cancellation-aware at connect and while polling, with a final check immediately before the
+commit (pi `agent-session.ts:1854-1881` checks its signal before appending). A
+pressure-triggered failure emits a `Notice` naming the reason and suppresses further pressure
+attempts for the rest of the run — each retry is a paid provider call — while overflow
+recovery reports the reason and ends the run honestly. `model_view` now *replaces* the
+projection an earlier compaction built instead of appending to it (pi
+`session-manager.ts:418-453` selects the latest compaction on the active path and builds
+context from it plus its retained entries): superseded summaries and their tails no longer
+ride along in every subsequent request. Aborted turns commit their synthetic terminal message
+to runtime history, the durable mirror and a `MessageEnd` event exactly like a completed turn
+(pi persists assistant message-end events, `agent-session.ts:639-656`) — the visible partial
+answer survives a resume instead of existing only in `RunOutcome.produced`.
+
 ---
 
 ## ADR-008: Three-tier byte-stable prompt assembly
