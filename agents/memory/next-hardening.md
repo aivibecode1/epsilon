@@ -32,13 +32,15 @@
 - Evidence out of `target/` before cleanup; clean after each round, never mid-round.
 
 ## Next
-- Queued fidelity slices, in order (owner: port first): **F20 mid-batch abort**
-  (implemented 2026-09-18, unverified, rides in round B — see ledger for the rule),
-  then CORE-02 callbacks, then SESSION-01 tree/fork workflows, then RPC-02 protocol
-  breadth, then F09 resolved containment. Serve-mode admission (F13 HTTP half) is a
-  small follow-up: `run_depth` can become the atomic reservation.
-- Continue approved Phase 3 per audit/04-roadmap.md: F09 path identity is the
-  remaining Batch B item. Read ledger/source first; use inert defensive tests.
+- Committed and closed 2026-09-18: **F20 mid-batch abort** (M88, 31b1794), **F04/F06/F17
+  compaction correctness** (M86, 36a226c), **F13 admission, RPC + serve** (M87, 35da3d7).
+  Round evidence: gate-m86-88f (751 passed / 0 failed, all five gates), red-round.log,
+  m86-88-review.md. The global epsilon.exe was reinstalled from c4711a2 and its demo ran.
+- Next port work, in order (owner: port first): CORE-02 callbacks, SESSION-01 tree/fork
+  workflows, RPC-02 protocol breadth (correlation ids, abort/state/model ops, dropped
+  events), then F09 resolved containment (alias-consistent identity, defensive only).
+- Then the audit/04-roadmap.md general-improvement phases; the port must have no open
+  fidelity items first.
 - Canonicalization is not race-resistant access. Windows/Linux differences must
   remain explicit. No exploit reproductions or paid API calls needed.
 - Review newly recorded M83 residuals in context; do not silently drop them.

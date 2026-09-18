@@ -35,15 +35,34 @@
 - No CLI/TUI source changed in this library slice; global binary not reinstalled.
 - Durable M85 scope/evidence/limits: docs/milestones/M85-followup-default.md.
 
+## M86-M88 round (2026-09-18)
+- 36a226c (M86 compaction correctness), 35da3d7 (M87 admission reflects reality),
+  31b1794 (M88 mid-batch abort), c4711a2 (round docs/evidence/memory).
+- One round-B candidate, ten files byte-verified against the working tree; RED executed
+  for six tests against the pre-fix code; GREEN battery gate-m86-88f: all five gates
+  exit 0, 751 passed / 0 failed / 0 ignored across 55 summaries.
+- Independent review (deleg_32066967): no blockers; four minor findings fixed (doc order,
+  biased select, guard ordering, poisoned-history rollback) and three documented with
+  reasons. Record: audit/evidence/m86-88-review.md.
+- Attempts 1-5 failed first, each for a real reason now recorded: nine fmt diffs, E0716
+  (temporary Arc in compact_now's select), E0004 (non-exhaustive match in admit_prompt),
+  then a path-pinned AV denial on wire_fixtures (LNK1104 on a nonexistent file). Attempt
+  6 passed with CARGO_PROFILE_TEST_DEBUG=1 (fresh test-artifact names) - disclosed in the
+  verification log; no security configuration was touched.
+- Cleanup removed the 15G shared target and both candidates; C: 59G free.
+- CLI behaviour changed, so the global epsilon.exe is reinstalled from this commit before
+  the round closes (proc_9dd1df275fb6); install evidence then the memory closeout.
+
 ## Next safe actions
 - Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in
   docs map/history/ADR/verification log are excluded. Queue work note retired.
 - Audit initial phase is complete, not production readiness. Maintained-doc
   rewrite incomplete; keep history as history rather than rewriting it as success.
-- Next port work: queue breadth (explicit modes/events/tool cycles) or compaction
-  correctness from core review; choose one reproducible behavior before editing.
-- Still open: callbacks, compaction/abort/session correctness, RPC admission,
-  attachment/TUI/provider/extension parity. General improvements deferred.
+- Next port work (owner: port first): CORE-02 callbacks, SESSION-01 tree/fork workflows,
+  RPC-02 protocol breadth (F13 remainder), then F09 resolved containment
+  (alias-consistent identity, defensive only).
+- General reference improvements remain deferred until the port has no open fidelity
+  items (audit/04-roadmap.md Phases 3-4).
 - Gate before future code commits; use isolated HEAD candidates to avoid mixing
   inherited source with the verified slice. Review once, act on blockers, converge.

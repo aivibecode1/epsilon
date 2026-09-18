@@ -1,0 +1,24 @@
+# Install refresh (M86-M88) — 2026-09-18
+# The global binary was replaced because CLI behaviour changed this round (RPC admission
+# replies, compaction commit rules, mid-batch abort refusal). The repository was at
+# c4711a2 with all ten touched files clean at HEAD.
+#
+# Before: C:/Users/Hp/.cargo/bin/epsilon.exe  19,210,752 bytes  Sep 17 17:09
+#         (an install built from
+#          C:/Users/Hp/AppData/Local/Temp/epsilon-integration-parent-candidate-350c9ec,
+#          i.e. the binary the owner had been testing was a candidate install, not HEAD.)
+#
+# Command: cargo install --path crates/epsilon-cli --features real --force
+#          CARGO_TARGET_DIR = $LOCALAPPDATA/Temp/epsilon-install-target
+#          CARGO_BUILD_JOBS = 1
+# Result:  Finished `release` profile [optimized] target(s) in 28m 00s
+#          Replacing C:\Users\Hp\.cargo\bin\epsilon.exe
+#          Replaced package `epsilon-cli v0.1.0 (...epsilon-integration-parent-candidate-350c9ec)`
+#          with `epsilon-cli v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon)`.
+# After:   C:/Users/Hp/.cargo/bin/epsilon.exe  19,975,680 bytes  Sep 18 05:32
+#
+# Installed-binary check: `epsilon --demo` ran to completion on the freshly installed
+# binary — "final reason: Completed / messages produced: 6 / tokens in/out: 300/150".
+#
+# Cleanup: the install target dir (814 MB) was removed after the install; no in-repo
+# target/ exists; C: 59G free. The 28m release build is the only cost this step carries.
