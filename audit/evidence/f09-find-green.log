@@ -1,0 +1,94 @@
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-find-candidate\crates\epsilon-tools)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.95s
+     Running unittests src\lib.rs (target\debug\deps\epsilon_tools-eccb2d724e384a10.exe)
+
+running 1 test
+test find::tests::resource_key_covers_default_and_explicit_search_directories ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 77 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
+     Running unittests src\lib.rs (target\debug\deps\epsilon_tools-eccb2d724e384a10.exe)
+
+running 78 tests
+test checkpoint::tests::blob_names_are_stable_and_content_dependent ... ok
+test checkpoint::tests::a_path_outside_the_workspace_is_skipped_rather_than_stored ... ok
+test edit_match::tests::a_loose_match_over_a_huge_span_is_refused_not_applied ... ok
+test edit_match::tests::a_fixed_width_stage_reports_no_span_numbers_because_there_are_none ... ok
+test checkpoint::tests::a_file_that_did_not_exist_is_restored_by_removing_it ... ok
+test edit_match::tests::a_two_line_anchor_pair_is_not_enough_to_guess ... ok
+test edit_match::tests::ambiguity_still_wins_over_a_looser_stage ... ok
+test checkpoint::tests::a_recorded_file_can_be_restored_byte_for_byte ... ok
+test edit_match::tests::a_paraphrased_middle_matches_on_its_anchors ... ok
+test checkpoint::tests::an_oversized_file_is_skipped_with_a_reason_that_reaches_the_ledger ... ok
+test edit_match::tests::blank_lines_around_the_block_are_ignored ... ok
+test edit_match::tests::eol_detection_and_restore_round_trip ... ok
+test edit_match::tests::ambiguous_exact_reports_count_even_when_loose_stage_unique ... ok
+test edit_match::tests::anchors_that_are_only_superficially_alike_do_not_match ... ok
+test edit_match::tests::genuinely_different_text_is_not_found ... ok
+test edit_match::tests::escaped_newlines_in_the_arguments_match_real_newlines ... ok
+test edit_match::tests::replace_all_applies_to_variable_height_spans ... ok
+test edit_match::tests::exact_match_on_lf_files_is_unchanged_behavior ... ok
+test edit_match::tests::replace_all_hits_every_occurrence ... ok
+test edit_match::tests::similarity_and_distance_are_what_they_claim ... ok
+test edit_match::tests::the_guard_boundary_is_inclusive_of_opencodes_rule ... ok
+test edit_match::tests::trailing_whitespace_differences_still_match ... ok
+test checkpoint::tests::the_ledger_is_monotonic_and_lists_the_newest_state_per_path ... ok
+test edit_match::tests::window_splice_preserves_trailing_newline ... ok
+test edit_match::tests::wrong_indentation_still_matches_flexibly ... ok
+test edit_match::tests::the_refusal_covers_the_character_rule_as_well_as_the_line_rule ... ok
+test image::tests::detects_jpeg_gif_webp_bmp_and_rejects_other ... ok
+test image::tests::detects_still_png_rejects_animated ... ok
+test find::tests::resource_key_covers_default_and_explicit_search_directories ... ok
+test read_log::tests::a_file_that_changed_underneath_is_refused_with_both_sizes ... ok
+test read_log::tests::a_file_that_does_not_exist_yet_may_be_created ... ok
+test checkpoint::tests::identical_content_is_stored_once ... ok
+test read_log::tests::a_partial_read_cannot_justify_a_full_overwrite ... ok
+test find::tests::respects_limit ... ok
+test find::tests::bare_pattern_matches_at_any_depth ... ok
+test read_log::tests::a_window_the_harness_imposed_does_not_block_a_rewrite_forever ... ok
+test read_log::tests::retired_observation_scopes_are_reclaimed_on_access ... ok
+test read_log::tests::an_unchanged_file_may_be_written ... ok
+test read_log::tests::an_existing_file_nobody_read_is_not_overwritten_blind ... ok
+test shell::verdict_tests::a_non_zero_exit_is_a_command_outcome_never_a_confinement_one ... ok
+test shell::verdict_tests::the_enforcement_vocabulary_cannot_be_empty_partial ... ok
+test shell::verdict_tests::zero_and_signals_are_their_own_answers ... ok
+test read_log::tests::edits_are_guarded_too ... ok
+test read_log::tests::our_own_write_does_not_look_like_someone_elses_change ... ok
+test task::tests::background_true_starts_the_child_and_reports_running ... ok
+test task::tests::defaults_subagent_type_to_default ... ok
+test task::tests::isolated_host_failure_surfaces_naming_type ... ok
+test task::tests::isolated_host_receives_subagent_type_verbatim ... ok
+test task::tests::model_parameter_reaches_the_host_and_the_result_names_it ... ok
+test task::tests::rejects_empty_description_and_prompt ... ok
+test task::tests::model_is_optional_and_advertised_in_the_schema ... ok
+test task::tests::renders_envelope_with_description_and_prompt ... ok
+test task::tests::resume_with_a_prompt_forwards_the_task_id ... ok
+test task::tests::task_id_alone_is_a_status_probe_not_a_new_run ... ok
+test task::tests::unknown_task_id_error_reaches_the_model ... ok
+test todo::tests::empty_list_is_a_valid_clear_signal ... ok
+test util::diff_tests::pure_deletion ... ok
+test todo::tests::renders_checklist_with_counts_and_details ... ok
+test util::diff_tests::identical_inputs_produce_no_output ... ok
+test util::diff_tests::pure_insertion ... ok
+test util::diff_tests::simple_replacement ... ok
+test todo::tests::rejects_empty_content_and_oversized_lists ... ok
+test util::tests::lexical_traversal_is_contained ... ok
+test search::tests::glob_translation_covers_dialect ... ok
+test util::tests::a_failed_spill_is_reported_instead_of_promised ... ok
+test util::tests::keeps_the_head_and_the_tail_of_a_long_log ... ok
+test util::tests::every_retained_window_is_char_boundary_safe ... ok
+test webfetch::tests::max_chars_truncation_shape ... ok
+test webfetch::tests::accepts_http_and_https ... ok
+test webfetch::tests::rejects_non_http_scheme ... ok
+test webfetch::tests::status_error_formats_snippet ... ok
+test util::tests::truncate_spills_and_notes_locator ... ok
+test util::tests::spill_files_are_created_exclusively_under_a_private_dir ... ok
+test checkpoint::tests::the_store_evicts_old_blobs_when_it_grows_past_its_ceiling ... ok
+test util::tests::walker_skips_ignored_dirs_but_keeps_hidden_files ... ok
+test webfetch::tests::spill_helper_reused ... ok
+test mutation::tests::serializes_same_path ... ok
+test mutation::tests::different_paths_run_concurrently ... ok
+
+test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+

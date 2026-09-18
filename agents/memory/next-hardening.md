@@ -11,6 +11,11 @@
 - The earlier 794-test result describes broader uncommitted owner work, not HEAD.
 
 ## Next
+- Queued fidelity slices, in order (owner: port first): **F20 mid-batch abort**
+  (implemented 2026-09-18, unverified, rides in round B — see ledger for the rule),
+  then CORE-02 callbacks, then SESSION-01 tree/fork workflows, then RPC-02 protocol
+  breadth, then F09 resolved containment. Serve-mode admission (F13 HTTP half) is a
+  small follow-up: `run_depth` can become the atomic reservation.
 - Continue approved Phase 3 per audit/04-roadmap.md: F09 path identity is the
   remaining Batch B item. Read ledger/source first; use inert defensive tests.
 - Canonicalization is not race-resistant access. Windows/Linux differences must

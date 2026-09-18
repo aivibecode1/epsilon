@@ -62,6 +62,9 @@ then the milestone log that introduces it.
 - [Fresh audit and port-first plan](../audit/09-revalidation.md): named baseline,
   verified gate evidence, unresolved fidelity gaps and independent review reports.
 
+- [M84 — find directory resource](milestones/M84-find-directory-resource.md):
+  narrow scheduling correction; F09 containment remains open.
+
 - [M83 — baseline integration](milestones/M83-baseline-integration.md): isolated
   candidate verification, explicit selection and preserved baseline risks.
 

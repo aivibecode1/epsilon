@@ -1,0 +1,529 @@
+
+===== fmt --check =====
+[exit=0 2s]
+
+===== clippy =====
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+    Checking windows-link v0.2.1
+    Checking futures-core v0.3.34
+    Checking itoa v1.0.18
+    Checking pin-project-lite v0.2.17
+    Checking memchr v2.8.3
+    Checking bytes v1.12.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+    Checking windows-sys v0.61.2
+   Compiling serde_core v1.0.228
+    Checking futures-sink v0.3.34
+    Checking mio v1.2.2
+    Checking socket2 v0.6.5
+   Compiling tokio-macros v2.7.2
+    Checking cfg-if v1.0.4
+    Checking tokio v1.53.1
+   Compiling zmij v1.0.23
+    Checking once_cell v1.21.4
+   Compiling serde v1.0.228
+   Compiling serde_derive v1.0.228
+   Compiling serde_json v1.0.151
+    Checking tokio-util v0.7.19
+   Compiling synstructure v0.13.2
+   Compiling getrandom v0.4.3
+   Compiling zerofrom-derive v0.1.7
+   Compiling async-trait v0.1.89
+    Checking zerofrom v0.1.8
+   Compiling yoke-derive v0.8.2
+    Checking stable_deref_trait v1.2.1
+    Checking smallvec v1.15.2
+    Checking epsilon-contracts v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-contracts)
+    Checking yoke v0.8.3
+   Compiling jobserver v0.1.35
+   Compiling find-msvc-tools v0.1.11
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.4
+   Compiling zerovec-derive v0.11.6
+    Checking bitflags v2.13.1
+   Compiling cmake v0.1.58
+    Checking futures-channel v0.3.34
+   Compiling displaydoc v0.2.7
+   Compiling dunce v1.0.5
+   Compiling getrandom v0.3.4
+   Compiling fs_extra v1.3.0
+    Checking log v0.4.34
+   Compiling aws-lc-sys v0.44.0
+    Checking zerovec v0.11.8
+   Compiling futures-macro v0.3.31
+    Checking futures-io v0.3.34
+    Checking futures-task v0.3.34
+    Checking pin-utils v0.1.0
+    Checking slab v0.4.12
+    Checking futures-util v0.3.31
+    Checking tracing-core v0.1.36
+   Compiling tracing-attributes v0.1.31
+    Checking tracing v0.1.44
+    Checking tinystr v0.8.4
+    Checking http v1.5.0
+    Checking writeable v0.6.4
+   Compiling aws-lc-rs v1.18.0
+    Checking litemap v0.8.3
+    Checking icu_locale_core v2.1.1
+    Checking http-body v1.1.0
+    Checking potential_utf v0.1.6
+    Checking zerotrie v0.2.5
+    Checking zeroize v1.9.0
+   Compiling icu_properties_data v2.1.2
+   Compiling icu_normalizer_data v2.1.1
+    Checking percent-encoding v2.3.2
+    Checking icu_provider v2.1.1
+    Checking icu_collections v2.1.1
+    Checking tower-service v0.3.3
+   Compiling windows_x86_64_msvc v0.53.1
+   Compiling httparse v1.10.1
+    Checking rustls-pki-types v1.15.1
+    Checking try-lock v0.2.5
+   Compiling libc v0.2.189
+   Compiling rustls v0.23.43
+    Checking untrusted v0.9.0
+    Checking rustls-webpki v0.103.15
+    Checking want v0.3.1
+    Checking icu_normalizer v2.1.1
+    Checking icu_properties v2.1.2
+    Checking form_urlencoded v1.2.2
+    Checking sync_wrapper v1.0.2
+    Checking atomic-waker v1.1.2
+    Checking typenum v1.20.1
+    Checking subtle v2.6.1
+    Checking httpdate v1.0.3
+    Checking tower-layer v0.3.3
+    Checking hyper v1.11.0
+    Checking hybrid-array v0.4.14
+    Checking idna_adapter v1.2.1
+    Checking windows-targets v0.53.5
+    Checking base64 v0.22.1
+    Checking utf8_iter v1.0.4
+    Checking ipnet v2.12.1
+    Checking hyper-util v0.1.20
+    Checking idna v1.1.0
+    Checking windows-sys v0.60.2
+    Checking tower v0.5.3
+    Checking http-body-util v0.1.5
+    Checking tokio-rustls v0.26.4
+    Checking url v2.5.8
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+    Checking winnow v1.0.4
+    Checking toml_parser v1.1.3+spec-1.1.0
+    Checking digest v0.11.3
+    Checking tower-http v0.6.11
+    Checking hyper-rustls v0.27.9
+    Checking toml_datetime v1.1.1+spec-1.1.0
+    Checking serde_spanned v1.1.1
+    Checking toml_writer v1.1.2+spec-1.1.0
+    Checking cpufeatures v0.3.0
+    Checking base64 v0.23.1
+    Checking sha2 v0.11.0
+    Checking rustls-platform-verifier v0.7.0
+    Checking reqwest v0.13.4
+    Checking toml v1.1.4+spec-1.1.0
+    Checking fastrand v2.5.0
+    Checking tempfile v3.23.0
+    Checking epsilon-session v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-session)
+    Checking epsilon-llm v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-llm)
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+    Checking epsilon-core v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-core)
+    Checking equivalent v1.0.2
+   Compiling ref-cast v1.0.27
+    Checking foldhash v0.2.0
+   Compiling winapi v0.3.9
+    Checking allocator-api2 v0.2.21
+   Compiling ref-cast-impl v1.0.27
+   Compiling serde_derive_internals v0.30.0
+   Compiling schemars_derive v1.2.2
+    Checking chrono v0.4.45
+   Compiling ident_case v1.0.1
+   Compiling strsim v0.11.1
+    Checking dyn-clone v1.0.20
+   Compiling darling_core v0.24.1
+    Checking hashbrown v0.17.1
+   Compiling thiserror v2.0.20
+   Compiling darling_macro v0.24.1
+   Compiling thiserror-impl v2.0.20
+    Checking aho-corasick v1.1.5
+    Checking regex-syntax v0.8.11
+    Checking schemars v1.2.2
+    Checking regex-automata v0.4.18
+   Compiling darling v0.24.1
+    Checking regex v1.13.1
+    Checking epsilon-lsp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-lsp)
+    Checking epsilon-safety v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-safety)
+   Compiling windows-implement v0.60.2
+   Compiling windows-interface v0.59.3
+    Checking windows-result v0.4.1
+    Checking windows-strings v0.5.1
+    Checking ryu v1.0.23
+    Checking windows-core v0.62.2
+   Compiling rustversion v1.0.23
+    Checking unicode-width v0.2.2
+    Checking windows-threading v0.2.1
+    Checking either v1.18.0
+   Compiling heck v0.5.0
+   Compiling strum_macros v0.28.0
+    Checking castaway v0.2.4
+    Checking itertools v0.14.0
+    Checking windows-future v0.3.2
+    Checking windows-collections v0.3.2
+    Checking windows-numerics v0.3.1
+    Checking epsilon-tools v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-tools)
+    Checking hashbrown v0.16.1
+    Checking futures-executor v0.3.31
+    Checking static_assertions v1.1.0
+   Compiling crc32fast v1.5.1
+   Compiling parking_lot_core v0.9.12
+    Checking simd-adler32 v0.3.10
+    Checking unicode-segmentation v1.13.3
+   Compiling instability v0.3.13
+   Compiling convert_case v0.10.0
+    Checking unicode-truncate v2.0.1
+    Checking compact_str v0.9.1
+    Checking futures v0.3.31
+    Checking kasuari v0.4.12
+    Checking windows v0.62.2
+    Checking strum v0.28.0
+    Checking lru v0.18.2
+    Checking indexmap v2.14.0
+    Checking critical-section v1.2.0
+    Checking scopeguard v1.2.0
+   Compiling indoc v2.0.7
+   Compiling rmcp v3.1.4
+    Checking adler2 v2.0.1
+    Checking miniz_oxide v0.8.9
+    Checking ratatui-core v0.1.2
+    Checking lock_api v0.4.14
+    Checking process-wrap v9.1.0
+    Checking uuid v1.25.0
+   Compiling rmcp-macros v3.1.4
+   Compiling derive_more-impl v2.1.1
+    Checking tokio-stream v0.1.19
+   Compiling litrs v1.0.0
+    Checking powerfmt v0.2.0
+    Checking num-conv v0.2.2
+    Checking time-core v0.1.9
+   Compiling pastey v0.2.3
+    Checking deranged v0.5.8
+    Checking time v0.3.55
+   Compiling document-features v0.2.12
+    Checking derive_more v2.1.1
+    Checking parking_lot v0.12.5
+    Checking flate2 v1.1.9
+    Checking fdeflate v0.3.7
+    Checking crossterm_winapi v0.9.1
+    Checking line-clipping v0.3.8
+    Checking pxfm v0.1.30
+    Checking moxcms v0.8.1
+    Checking ratatui-widgets v0.3.2
+    Checking crossterm v0.29.0
+    Checking png v0.18.1
+    Checking epsilon-ext v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-ext)
+    Checking bytemuck v1.25.2
+   Compiling pulldown-cmark v0.13.4
+    Checking byteorder-lite v0.1.0
+    Checking error-code v3.4.0
+    Checking mime v0.3.17
+    Checking image v0.25.10
+    Checking axum-core v0.5.6
+    Checking clipboard-win v5.4.1
+    Checking ratatui-crossterm v0.1.2
+    Checking epsilon-mcp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-mcp)
+    Checking ratatui-macros v0.7.2
+    Checking getopts v0.2.24
+    Checking serde_urlencoded v0.7.1
+    Checking serde_path_to_error v0.1.20
+    Checking unicase v2.9.0
+    Checking pulldown-cmark-escape v0.11.0
+    Checking matchit v0.8.4
+    Checking axum v0.8.9
+    Checking ratatui v0.30.2
+    Checking arboard v3.6.1
+    Checking epsilon-tui v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-tui)
+    Checking epsilon-server v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-server)
+    Checking epsilon-cli v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12m 32s
+[exit=0 752s]
+
+===== test =====
+   Compiling windows-link v0.2.1
+   Compiling cfg-if v1.0.4
+   Compiling itoa v1.0.18
+   Compiling futures-core v0.3.34
+   Compiling pin-project-lite v0.2.17
+   Compiling memchr v2.8.3
+   Compiling bytes v1.12.1
+   Compiling windows-sys v0.61.2
+   Compiling serde_core v1.0.228
+   Compiling futures-sink v0.3.34
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.2
+   Compiling zmij v1.0.23
+   Compiling once_cell v1.21.4
+   Compiling tokio v1.53.1
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.151
+   Compiling zerofrom v0.1.8
+   Compiling getrandom v0.4.3
+   Compiling smallvec v1.15.2
+   Compiling stable_deref_trait v1.2.1
+   Compiling yoke v0.8.3
+   Compiling jobserver v0.1.35
+   Compiling cc v1.4.4
+   Compiling tokio-util v0.7.19
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-contracts)
+   Compiling getrandom v0.3.4
+   Compiling bitflags v2.13.1
+   Compiling zerovec v0.11.8
+   Compiling cmake v0.1.58
+   Compiling futures-channel v0.3.34
+   Compiling log v0.4.34
+   Compiling aws-lc-sys v0.44.0
+   Compiling futures-io v0.3.34
+   Compiling pin-utils v0.1.0
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.34
+   Compiling futures-util v0.3.31
+   Compiling tracing-core v0.1.36
+   Compiling tracing v0.1.44
+   Compiling tinystr v0.8.4
+   Compiling http v1.5.0
+   Compiling litemap v0.8.3
+   Compiling writeable v0.6.4
+   Compiling icu_locale_core v2.1.1
+   Compiling http-body v1.1.0
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling zeroize v1.9.0
+   Compiling percent-encoding v2.3.2
+   Compiling icu_collections v2.1.1
+   Compiling icu_provider v2.1.1
+   Compiling tower-service v0.3.3
+   Compiling icu_properties_data v2.1.2
+   Compiling icu_normalizer_data v2.1.1
+   Compiling rustls-pki-types v1.15.1
+   Compiling try-lock v0.2.5
+   Compiling untrusted v0.9.0
+   Compiling want v0.3.1
+   Compiling icu_normalizer v2.1.1
+   Compiling icu_properties v2.1.2
+   Compiling windows_x86_64_msvc v0.53.1
+   Compiling httparse v1.10.1
+   Compiling form_urlencoded v1.2.2
+   Compiling sync_wrapper v1.0.2
+   Compiling atomic-waker v1.1.2
+   Compiling tower-layer v0.3.3
+   Compiling subtle v2.6.1
+   Compiling httpdate v1.0.3
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.14
+   Compiling hyper v1.11.0
+   Compiling windows-targets v0.53.5
+   Compiling idna_adapter v1.2.1
+   Compiling libc v0.2.189
+   Compiling base64 v0.22.1
+   Compiling utf8_iter v1.0.4
+   Compiling ipnet v2.12.1
+   Compiling hyper-util v0.1.20
+   Compiling idna v1.1.0
+   Compiling windows-sys v0.60.2
+   Compiling tower v0.5.3
+   Compiling http-body-util v0.1.5
+   Compiling url v2.5.8
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling const-oid v0.10.2
+   Compiling winnow v1.0.4
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling digest v0.11.3
+   Compiling tower-http v0.6.11
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling cpufeatures v0.3.0
+   Compiling base64 v0.23.1
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling toml v1.1.4+spec-1.1.0
+   Compiling sha2 v0.11.0
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.23.0
+   Compiling epsilon-session v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-session)
+   Compiling num-traits v0.2.19
+   Compiling ref-cast v1.0.27
+   Compiling winapi v0.3.9
+   Compiling chrono v0.4.45
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling dyn-clone v1.0.20
+   Compiling equivalent v1.0.2
+   Compiling schemars v1.2.2
+   Compiling aho-corasick v1.1.5
+   Compiling regex-syntax v0.8.11
+   Compiling regex-automata v0.4.18
+   Compiling hashbrown v0.17.1
+   Compiling regex v1.13.1
+   Compiling epsilon-lsp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-lsp)
+   Compiling thiserror v2.0.20
+   Compiling ryu v1.0.23
+   Compiling windows-strings v0.5.1
+   Compiling windows-result v0.4.1
+   Compiling unicode-segmentation v1.13.3
+   Compiling windows-core v0.62.2
+   Compiling unicode-width v0.2.2
+   Compiling windows-threading v0.2.1
+   Compiling either v1.18.0
+   Compiling itertools v0.14.0
+   Compiling aws-lc-rs v1.18.0
+   Compiling rustls v0.23.43
+   Compiling windows-future v0.3.2
+   Compiling castaway v0.2.4
+   Compiling windows-numerics v0.3.1
+   Compiling windows-collections v0.3.2
+   Compiling rustls-webpki v0.103.15
+   Compiling hashbrown v0.16.1
+   Compiling futures-executor v0.3.31
+   Compiling simd-adler32 v0.3.10
+   Compiling static_assertions v1.1.0
+   Compiling compact_str v0.9.1
+   Compiling tokio-rustls v0.26.4
+   Compiling hyper-rustls v0.27.9
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling reqwest v0.13.4
+   Compiling epsilon-llm v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-llm)
+   Compiling futures v0.3.31
+   Compiling kasuari v0.4.12
+   Compiling windows v0.62.2
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-core)
+   Compiling epsilon-safety v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-safety)
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-tools)
+   Compiling strum v0.28.0
+   Compiling unicode-truncate v2.0.1
+   Compiling convert_case v0.10.0
+   Compiling indexmap v2.14.0
+   Compiling lru v0.18.2
+   Compiling adler2 v2.0.1
+   Compiling critical-section v1.2.0
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling ratatui-core v0.1.2
+   Compiling miniz_oxide v0.8.9
+   Compiling process-wrap v9.1.0
+   Compiling derive_more-impl v2.1.1
+   Compiling uuid v1.25.0
+   Compiling rmcp-macros v3.1.4
+   Compiling parking_lot_core v0.9.12
+   Compiling crc32fast v1.5.1
+   Compiling tokio-stream v0.1.19
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling deranged v0.5.8
+   Compiling powerfmt v0.2.0
+   Compiling rmcp v3.1.4
+   Compiling time v0.3.55
+   Compiling flate2 v1.1.9
+   Compiling parking_lot v0.12.5
+   Compiling derive_more v2.1.1
+   Compiling fdeflate v0.3.7
+   Compiling crossterm_winapi v0.9.1
+   Compiling line-clipping v0.3.8
+   Compiling pxfm v0.1.30
+   Compiling moxcms v0.8.1
+   Compiling ratatui-widgets v0.3.2
+   Compiling crossterm v0.29.0
+   Compiling png v0.18.1
+   Compiling epsilon-ext v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-ext)
+   Compiling byteorder-lite v0.1.0
+   Compiling mime v0.3.17
+   Compiling bytemuck v1.25.2
+   Compiling error-code v3.4.0
+   Compiling clipboard-win v5.4.1
+   Compiling image v0.25.10
+   Compiling axum-core v0.5.6
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ratatui-macros v0.7.2
+   Compiling epsilon-mcp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-mcp)
+   Compiling getopts v0.2.24
+   Compiling serde_urlencoded v0.7.1
+   Compiling serde_path_to_error v0.1.20
+   Compiling unicase v2.9.0
+   Compiling matchit v0.8.4
+   Compiling pulldown-cmark-escape v0.11.0
+   Compiling pulldown-cmark v0.13.4
+   Compiling axum v0.8.9
+   Compiling ratatui v0.30.2
+   Compiling arboard v3.6.1
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-tui)
+   Compiling epsilon-server v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-server)
+   Compiling epsilon-cli v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-cli)
+error: could not compile `epsilon-cli` (lib)
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Hp\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name epsilon_cli --edition=2024 'crates\epsilon-cli\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --forbid=unsafe_code --warn=missing_docs '--warn=clippy::all' --cfg 'feature="default"' --cfg 'feature="real"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default", "real"))' -C metadata=d8398f90b8963b05 -C extra-filename=-0d00062adf2bacb0 --out-dir 'C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps' -C 'incremental=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\incremental' -L 'dependency=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps' --extern 'epsilon_contracts=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_contracts-a92d2b8964ecf0dd.rmeta' --extern 'epsilon_core=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_core-58e72aaf0fc6d394.rmeta' --extern 'epsilon_ext=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_ext-e828c927157fe9cb.rmeta' --extern 'epsilon_llm=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_llm-d78032a93179c199.rmeta' --extern 'epsilon_lsp=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_lsp-11b6c0d577900920.rmeta' --extern 'epsilon_mcp=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_mcp-4925129ae978a688.rmeta' --extern 'epsilon_safety=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_safety-20b84509fd1e0288.rmeta' --extern 'epsilon_server=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_server-093d46aaabacba6a.rmeta' --extern 'epsilon_session=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_session-9d143332a2c0313c.rmeta' --extern 'epsilon_tools=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_tools-ade740f94505c79a.rmeta' --extern 'epsilon_tui=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libepsilon_tui-696d16eb7c9a4cb9.rmeta' --extern 'futures_util=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libfutures_util-47126fd20c444884.rmeta' --extern 'serde=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libserde-59beac4b97b45d70.rmeta' --extern 'serde_json=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libserde_json-ba3300dcf75ea231.rmeta' --extern 'sha2=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libsha2-8af8a91334e7993a.rmeta' --extern 'tempfile=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libtempfile-690bef1d606a0ddf.rmeta' --extern 'tokio=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libtokio-16fe10fe06b04950.rmeta' --extern 'toml=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\deps\libtoml-b9ae404f53c48879.rmeta' -L 'native=C:/Users/Hp/AppData/Local/Temp/epsilon-f09-closeout-target\debug\build\aws-lc-sys-29aa26fc11e588fe\out' -L 'native=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Users\Hp\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows_x86_64_msvc-0.53.1\lib'` (exit code: 0xc0000142, STATUS_DLL_INIT_FAILED)
+warning: build failed, waiting for other jobs to finish...
+[exit=101 247s]
+
+===== demo =====
+model "deepseek-chat" matched catalog entry "deepseek/deepseek-chat-v3.1"
+no credentials for provider "openrouter" — set OPENROUTER_API_KEY or run: epsilon auth login openrouter
+providers with stored credentials: deepseek (pick one with --model)
+try: --model deepseek-flash (deepseek)
+provider: faux (offline scripted)
+go real:  epsilon auth login <provider>   (or set the provider's API key env var)
+
+=== run start ===
+-- turn 0 --
+assistant> I'll inspect the two files, then write the fix.
+tool-call> echo
+tool-call> echo
+tool-result[echo]> reading src/auth.rs
+tool-result[echo]> reading tests/auth.rs
+-- turn 1 --
+tool-call> fail
+tool-result[fail]> ERROR: intentional failure
+-- turn 2 --
+assistant> One check failed; here is the summary of what I found.
+=== run end ===
+
+final reason: Completed
+messages produced: 6
+tokens in/out: 300/150
+[exit=0 88s]
+
+===== real-check =====
+    Checking tokio v1.53.1
+    Checking schemars v1.2.2
+    Checking tokio-util v0.7.19
+    Checking hyper v1.11.0
+    Checking epsilon-contracts v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-contracts)
+    Checking hyper-util v0.1.20
+    Checking tower v0.5.3
+    Checking tokio-rustls v0.26.4
+    Checking tower-http v0.6.11
+    Checking hyper-rustls v0.27.9
+    Checking epsilon-session v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-session)
+    Checking reqwest v0.13.4
+    Checking epsilon-lsp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-lsp)
+    Checking tokio-stream v0.1.19
+    Checking epsilon-llm v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-llm)
+    Checking process-wrap v9.1.0
+    Checking rmcp v3.1.4
+    Checking epsilon-core v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-core)
+    Checking epsilon-safety v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-safety)
+    Checking epsilon-tools v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-tools)
+    Checking axum v0.8.9
+    Checking epsilon-mcp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-mcp)
+    Checking epsilon-tui v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-tui)
+    Checking epsilon-ext v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-ext)
+    Checking epsilon-server v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-server)
+    Checking epsilon-cli v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-f09-closeout\crates\epsilon-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 22.74s
+[exit=0 23s]
+
+===== GATE FAIL =====

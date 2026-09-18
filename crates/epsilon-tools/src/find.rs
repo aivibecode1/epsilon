@@ -63,6 +63,14 @@ impl Tool for FindTool {
         &self.descriptor
     }
 
+    fn resource_key(
+        &self,
+        arguments: &serde_json::Value,
+        base: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        crate::search::search_key(arguments, base)
+    }
+
     async fn execute(
         &self,
         call: ToolInvocation,
@@ -151,6 +159,25 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn resource_key_covers_default_and_explicit_search_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let tool = FindTool::new();
+        assert_eq!(
+            tool.resource_key(&serde_json::json!({"pattern": "*.rs"}), root),
+            Some(root.to_path_buf())
+        );
+        for path in ["src", "./src", "nested/../src"] {
+            let key = tool
+                .resource_key(&serde_json::json!({"pattern": "*.rs", "path": path}), root)
+                .expect("find must declare its search directory");
+            assert_eq!(key, root.join("src"));
+            assert!(root.join("src/lib.rs").starts_with(&key));
+            assert!(!root.join("tests/main.rs").starts_with(&key));
+        }
     }
 
     #[tokio::test]

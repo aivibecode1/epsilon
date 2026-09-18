@@ -385,7 +385,10 @@ pub(crate) fn glob_to_regex(glob: &str) -> String {
 /// Planner key for the search tools (M72): the directory being searched, defaulting to the
 /// workspace root. A directory key conflicts with anything *inside* it — the planner compares
 /// keys by prefix, so a `grep` over `src/` will not run beside a `write` to `src/lib.rs`.
-fn search_key(arguments: &serde_json::Value, base: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn search_key(
+    arguments: &serde_json::Value,
+    base: &std::path::Path,
+) -> Option<std::path::PathBuf> {
     match arguments.get("path").and_then(|v| v.as_str()) {
         Some(raw) => Some(util::resolve_in_workspace(base, raw).0),
         None => Some(base.to_path_buf()),

@@ -131,6 +131,12 @@ Hermes retains per-task observations (`references/hermes-agent-2026.8.19/tools/f
 
 ## F09 — State and enforce the real filesystem boundary
 
+**M84 bounded progress:** `find` now declares its lexical search-directory key,
+sharing existing search-tool scheduling. Red/green regression and isolated
+five-gate repeat passed (741 tests); initial auth-lock failure retained.
+[F09 seam map](evidence/f09-path-policy-map.md) identifies remaining consumers.
+**F09 containment is still open**; no alias or replacement-race guarantee added.
+
 **Evidence:** lexical normalization at `crates/epsilon-core/src/exec.rs:105–139`; native edit opens/writes host paths at `crates/epsilon-tools/src/files.rs:461–499`; walker follows directories at `crates/epsilon-tools/src/util.rs:144–166`. `crates/epsilon-core/src/paths.rs:9–34` delegates symlink escape to a lower layer that native tools do not use.
 
 **Impact:** a workspace symlink/reparse point can name an outside object while the gate sees an inside path. Alias spellings can defeat resource identity. Shell sandboxing does not surround native tool filesystem calls. This was historically deferred, but the stated product confinement guarantee exceeds the implementation.
@@ -181,6 +187,14 @@ Original source trace below describes the pre-fix snapshot.
 **Acceptance:** bounded signature read for images, explicit attachment limit, streamed HTTP byte budget, bounded head/tail capture plus capped spill. Test oversized individual chunks, missing Content-Length, spill failure and multibyte clipping. Tell the model when full output cannot be retained; never advertise a nonexistent complete spill.
 
 ## F13 — Acknowledge runs only after atomic admission
+
+**M86 bounded progress (RPC half):** `admit_prompt` answers with what the run itself
+decided — the spawned run is raced against its own first event, so a rejected request
+receives the real `AlreadyRunning` reason instead of a false `started`
+(`crates/epsilon-cli/src/rpc_mode.rs`). A post-admission failure is logged instead of
+discarded. Executed regression: `a_second_prompt_is_rejected_while_a_run_is_admitted`.
+**Still open:** HTTP/serve-mode admission (F18/server), correlation IDs and abort/state
+operations (RPC-02), dropped-event reporting.
 
 **Evidence:** RPC busy helper always returns false, starts a detached task and discards `run()` result (`crates/epsilon-cli/src/rpc_mode.rs:77–85,117–120`). HTTP checks then increments separately (`crates/epsilon-server/src/lib.rs:238–253`). Core rejecting concurrent runs does not retroactively correct a successful admission response.
 

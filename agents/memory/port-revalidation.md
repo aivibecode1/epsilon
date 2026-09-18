@@ -36,6 +36,7 @@
 - Durable M85 scope/evidence/limits: docs/milestones/M85-followup-default.md.
 
 ## Next safe actions
+- Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in
   docs map/history/ADR/verification log are excluded. Queue work note retired.
 - Audit initial phase is complete, not production readiness. Maintained-doc

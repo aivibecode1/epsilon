@@ -36,4 +36,12 @@ not themselves trigger runtime compression.
 
 | File | Work item | Status |
 |------|-----------|--------|
-| [next-hardening.md](next-hardening.md) | Resume after verified baseline integration | F09 next; preserve remaining owner work |
+| [tui-enhancement.md](tui-enhancement.md) | Owner-priority TUI composer and viewport | composer gates green; routing regression green; latest workspace native build failed; cleaned; isolation pending |
+| [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
+| [f09-path-policy.md](f09-path-policy.md) | F09 consistent filesystem identity | find reviewed; current-HEAD build failed at compiler startup; cleaned; uncommitted; containment open |
+| [compaction-correctness.md](compaction-correctness.md) | M86 CORE-03/04/05 compaction slice | code + tests written; round-A gate running; unverified |
+| [rpc-admission.md](rpc-admission.md) | M87 RPC prompt admission (F13 RPC half) | code + test written; ships in round-B candidate; unverified |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit committed 13773b4; narrow docs corrections bcc1233; reviews complete |
+
+
+

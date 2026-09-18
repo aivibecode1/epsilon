@@ -411,6 +411,41 @@ M83 closeout: commit `b57c8bf`; locked candidate installation, installed demo
 and cleanup each returned 0. Removed 20,837 build files / 11.0 GiB; candidate
 and repo targets absent, 60G free. See [closeout](evidence/integration-closeout.txt).
 
+## M84 — find directory resource
+
+Isolated `80b32eb` plus find/search changes: initial tools regression failed
+(None instead of directory key), then passed; all 78 tools library tests passed.
+First battery failed unchanged auth concurrency code (temporary auth.lock timeout);
+other gates passed. One unchanged repeat passed all five gates: **741 passed,
+0 failed, 0 ignored**, 54 summaries, including the auth test. No auth fix, ignored
+test, reduced coverage or proven root cause. Independent review approved code.
+Evidence: [first battery](evidence/gate-f09-find.log),
+[repeat](evidence/gate-f09-find-repeat.log), [review](evidence/f09-find-review.json).
+Cleanup returned 0, removed 14,923 files / 8.8 GiB; candidate target absent,
+60G free. No CLI/TUI source changed, so no global reinstall for this library slice.
+
+### Current-HEAD closeout attempt — 2026-09-18
+
+The isolated `d9c1810` archive plus only find.rs/search.rs did **not** pass.
+With `CARGO_BUILD_JOBS=2`, formatting, strict Clippy, demo and real check exited 0;
+workspace tests exited 101 while starting rustc for epsilon-cli, reporting
+`0xc0000142 (STATUS_DLL_INIT_FAILED)`. This is a compiler-startup failure, not
+an executed test assertion. Limiting concurrency to two did not eliminate it;
+its host-level cause is not established. No dependencies or gates were disabled.
+The process tracker reports termination, but the preserved script log includes
+all five gate outcomes and ends `GATE FAIL`; do not infer success from the tracker.
+
+Afterward no cargo/rustc processes remained. Cleanup removed 9,732 files / 4.7 GiB;
+60 GiB free. A direct `rustc -vV` probe succeeded with 1.97.1, demonstrating that
+startup does not fail consistently; it does not certify builds. The source fix
+is independently approved but **still uncommitted and uninstalled**. The older
+741-test pass remains evidence for its named older candidate only.
+
+Evidence: [current gate](evidence/gate-f09-closeout.log),
+[cleanup](evidence/f09-closeout-cleanup.log).
+Next action: diagnose intermittent compiler startup without another broad cold
+rebuild; do not alter security settings or call this a proven antivirus block.
+
 ## M85 — follow-up queue default
 
 Isolated `bcc1233` plus the two queue files committed in `3afafd3`: all five
@@ -426,5 +461,3 @@ Cleanup exited 0: 16,325 files / 9.4 GiB removed, 60G free, repo/candidate/exter
 targets absent. [Cleanup record](evidence/queue-cleanup.log).
 No CLI/TUI source changed; no reinstall. Only the default and explicit All are
 covered by these fixtures, not complete queue or pi parity.
-
-## Next verification round

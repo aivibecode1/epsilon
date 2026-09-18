@@ -1043,6 +1043,10 @@ each alters what a user sees.
   same-file call beside the first). A `Sequential` tool that declares no resource — `bash`,
   `task` — keeps the old barrier, because its reach is unknown. The mode supplies the read/write
   role rather than a second vocabulary that could disagree with it.
+- **ADR-002 amendment (M84) — find declares directory reach.** `find` reuses the
+  search tools' directory resource key so the existing planner orders it against
+  descendant writes while allowing reader concurrency. This remains lexical
+  scheduling, not resolved-path containment or F09 closure.
 - **ADR-004 amendment (M71) — the edit matcher's loose end is guarded, and the guard has a
   floor.** `epsilon-tools/src/edit_match.rs` grew from three stages to six (escape-normalized,
   trimmed-boundary, block-anchor) and now refuses the one failure mode a loose stage can
