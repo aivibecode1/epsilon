@@ -2,6 +2,10 @@
 /target
 **/*.rs.bk
 
+# Scratch space for local probes (throwaway scripts, temp workspaces)
+/.tmp-*
+/tmp-*
+
 # Epsilon runtime state (never commit session data or spills)
 /.epsilon/
 epsilon.local.toml
