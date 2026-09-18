@@ -283,6 +283,39 @@ fn looks_like_context_overflow(msg: &str) -> bool {
         || m.contains("context_window_exceeded")
 }
 
+/// Run a turn-hook call to completion, containing a panic the way the provider seam's
+/// `PanicGuard` contains a panicking stream (CORE-02).
+///
+/// The trait contract says a hook must not panic, but the loop cannot depend on a host
+/// keeping it: an unwind out of `run_inner` would skip the cleanup that resets `running`,
+/// after which every later run returns `RunError::AlreadyRunning`. On a panic the caller
+/// gets `fallback` — the seam's no-op default (the input messages, `None`, `false`).
+///
+/// Written against std only (no `futures-util` dependency in this crate): `pin!` + `poll_fn`
+/// put the panic boundary exactly around `poll`, so a hook that unwinds mid-await is caught
+/// too, and a panicked future is never polled again.
+async fn contain_hook<T>(fut: impl std::future::Future<Output = T>, fallback: T) -> T {
+    let mut fut = std::pin::pin!(fut);
+    let mut panicked = false;
+    let out = std::future::poll_fn(|cx| {
+        if panicked {
+            // The future panicked in an earlier poll: it must not be polled again, so the
+            // containment settles on the fallback immediately.
+            return std::task::Poll::Ready(None);
+        }
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fut.as_mut().poll(cx))) {
+            Ok(std::task::Poll::Ready(v)) => std::task::Poll::Ready(Some(v)),
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Err(_) => {
+                panicked = true;
+                std::task::Poll::Ready(None)
+            }
+        }
+    })
+    .await;
+    out.unwrap_or(fallback)
+}
+
 /// Errors a run can surface to its caller.
 #[derive(Debug)]
 pub enum RunError {
@@ -313,9 +346,21 @@ pub struct Agent {
     /// `afterToolCall`). Swappable after construction so extension hosts can
     /// register without rebuilding the agent.
     tool_hooks: RwLock<Arc<dyn epsilon_contracts::tool::ToolHooks>>,
+    /// Turn-boundary hooks (pi's `transformContext` / `convertToLlm` /
+    /// `prepareNextTurn` / `shouldStopAfterTurn`). Swappable after construction
+    /// so extension hosts can register without rebuilding the agent.
+    turn_hooks: RwLock<Arc<dyn epsilon_contracts::turn::TurnHooks>>,
 
     history: Mutex<Vec<Message>>,
     observation_scope: Mutex<Arc<()>>,
+    /// Bumped whenever runtime history is replaced wholesale: a committed compaction
+    /// (mid-run pressure or overflow recovery) or a restored transcript. A run-scoped
+    /// `prepare_next_turn` replacement records the epoch it was installed at; when the
+    /// two differ its base no longer exists, so the replacement is dropped and the next
+    /// request rebuilds from the current source (CORE-02 — a stale replacement would
+    /// stop reading the store's shadowed view and re-send a request a compaction just
+    /// invalidated).
+    history_epoch: std::sync::atomic::AtomicU64,
     steering: Mutex<PendingQueue>,
     followups: Mutex<PendingQueue>,
 
@@ -420,8 +465,10 @@ impl Agent {
             tools,
             gate,
             tool_hooks: RwLock::new(Arc::new(epsilon_contracts::tool::NoopToolHooks)),
+            turn_hooks: RwLock::new(Arc::new(epsilon_contracts::turn::NoopTurnHooks)),
             history: Mutex::new(Vec::new()),
             observation_scope: Mutex::new(Arc::new(())),
+            history_epoch: std::sync::atomic::AtomicU64::new(0),
             steering: Mutex::new(steering_queue),
             followups: Mutex::new(followup_queue),
             events_tx,
@@ -567,6 +614,8 @@ impl Agent {
         // Restored history did not come from a request this process made, so any
         // anchor held for the previous transcript is meaningless here.
         self.clear_usage_anchor();
+        // ...and so is any run-scoped replacement built on top of it (CORE-02).
+        self.bump_history_epoch();
     }
 
     /// Number of restored transcript entries (diagnostics after `restore_history`).
@@ -699,6 +748,11 @@ impl Agent {
         if let Ok(mut slot) = self.session_store.lock() {
             *slot = Some(store);
         }
+        // The provider view's source just changed (CORE-02): a run-scoped replacement
+        // built against the previous source must not outlive it, or the rest of the run
+        // would keep reading a pre-swap view — the same class of staleness a committed
+        // compaction creates, handled by the epoch check before each request.
+        self.bump_history_epoch();
     }
 
     /// Drop the attached durable mirror, releasing its write lease (M61). The
@@ -708,6 +762,8 @@ impl Agent {
         if let Ok(mut slot) = self.session_store.lock() {
             *slot = None;
         }
+        // Same reason as `attach_session_store`: the request path's source changes here.
+        self.bump_history_epoch();
     }
 
     /// Register interception hooks around tool execution (extension hosts,
@@ -725,6 +781,25 @@ impl Agent {
             .read()
             .map(|h| Arc::clone(&*h))
             .unwrap_or_else(|_| Arc::new(epsilon_contracts::tool::NoopToolHooks))
+    }
+
+    /// Register turn-boundary hooks (pi's `AgentLoopConfig`: `transformContext`,
+    /// `convertToLlm`, `prepareNextTurn`, `shouldStopAfterTurn`). Replaces the
+    /// previous hooks. Unregistered seams stay at their no-op defaults, so the loop
+    /// behaves exactly as it did before this hook point existed.
+    pub fn set_turn_hooks(&self, hooks: Arc<dyn epsilon_contracts::turn::TurnHooks>) {
+        if let Ok(mut slot) = self.turn_hooks.write() {
+            *slot = hooks;
+        }
+    }
+
+    /// Current turn hooks (cloned `Arc`, cheap). The loop reads this once per
+    /// turn boundary and once per request build, so a host can swap hooks mid-run.
+    pub(crate) fn turn_hooks(&self) -> Arc<dyn epsilon_contracts::turn::TurnHooks> {
+        self.turn_hooks
+            .read()
+            .map(|h| Arc::clone(&*h))
+            .unwrap_or_else(|_| Arc::new(epsilon_contracts::turn::NoopTurnHooks))
     }
 
     fn store(&self) -> Option<Arc<Mutex<SessionStore>>> {
@@ -914,13 +989,45 @@ impl Agent {
         )
     }
 
-    /// Provider-visible conversion (pi's `convertToLlm` default): drop harness-only messages.
-    fn convert_to_llm(messages: &[Message]) -> Vec<Message> {
-        messages
-            .iter()
-            .filter(|m| m.is_llm_visible())
-            .cloned()
-            .collect()
+    /// The run's context view, shared by the turn hooks and the request builder
+    /// (CORE-02): the durable mirror's shadowed model view when one is attached,
+    /// else runtime history. A `prepare_next_turn` hook sees exactly the messages
+    /// the next provider request would start from.
+    ///
+    /// Fallible on purpose, and the ONE read both callers share: a poisoned store lock or a
+    /// failed `model_view()` is `RunError::Internal` for the request path, and for the hook
+    /// seam it means "no view this turn" — a hook must not be handed a view the request
+    /// would refuse. Two implementations of this read (one lenient, one strict) is exactly
+    /// how the two could ever disagree.
+    ///
+    /// Read-only by construction: the store lock is held for the read and nothing
+    /// here can write it (ADR-007 — hooks never touch the write path).
+    fn try_context_view(&self) -> Result<Vec<Message>, RunError> {
+        match self.store() {
+            Some(store) => {
+                let st = store
+                    .lock()
+                    .map_err(|_| RunError::Internal("store poisoned".into()))?;
+                Ok(st
+                    .model_view()
+                    .map_err(|e| RunError::Internal(format!("session view: {e}")))?
+                    .into_iter()
+                    .map(|v| v.into_message())
+                    .collect())
+            }
+            None => Ok(self.history()),
+        }
+    }
+
+    /// pi's `currentContext.messages.push` for Epsilon's run-scoped replacement context
+    /// (CORE-02, `agent-loop.ts:186,219`): every message the loop adds to runtime history
+    /// during a run — drained steering and nudges, the turn's assistant message, its tool
+    /// results — lands in the replacement too, so the provider sees the run's own output
+    /// instead of the frozen install-time snapshot. No-op while no replacement is active.
+    fn append_to_turn_context(turn_context: &mut Option<Vec<Message>>, m: &Message) {
+        if let Some(ctx) = turn_context.as_mut() {
+            ctx.push(m.clone());
+        }
     }
 
     /// Run one prompt to completion.
@@ -1065,6 +1172,20 @@ impl Agent {
         let mut evidence = crate::verify::VerificationLog::new();
         let mut verification_nudges = 0usize;
 
+        // CORE-02 run-scoped hook state, mirroring pi's mutable `currentContext` /
+        // `config` locals (`agent-loop.ts:163-164`): a `prepareNextTurn` snapshot applies
+        // to the REST of this run only — the session's model, thinking level and
+        // transcript are never rewritten by a hook.
+        //
+        // `turn_context` is pi's `currentContext.messages`: while it is active every message
+        // the loop adds to the transcript is appended to it too, so it tracks the run instead
+        // of freezing at its install-time snapshot. `turn_context_epoch` is the history epoch
+        // the replacement was built from — a committed compaction makes it stale (blocker 2).
+        let mut turn_context: Option<Vec<Message>> = None;
+        let mut turn_context_epoch: u64 = self.history_epoch();
+        let mut run_model: Option<String> = None;
+        let mut run_thinking: Option<epsilon_contracts::ThinkingLevel> = None;
+
         // Prefilled steering covers "user typed while we were starting".
         let mut pending = self.drain_steering();
 
@@ -1092,7 +1213,8 @@ impl Agent {
                 // Drain point: inject queued messages before the next model call.
                 for m in pending.drain(..) {
                     self.push_message(&m);
-                    produced.push(m.clone());
+                    Agent::append_to_turn_context(&mut turn_context, &m);
+                    produced.push(m);
                 }
 
                 // ---- compaction pressure check (ADR-007 trigger 1) ----------------
@@ -1116,10 +1238,30 @@ impl Agent {
                     }
                 }
 
+                // CORE-02 (blocker 2): a replacement is only valid while the history it was
+                // built from is still the run's base. A committed compaction just replaced
+                // that history (and restored it from the summary), so the run-scoped
+                // replacement is stale: requests built from it would stop reading the store's
+                // shadowed model view (the M86/ADR-007 invariant) and an overflow retry would
+                // re-send the very request the compaction fixed. Drop it and rebuild from the
+                // current source; the per-run model/thinking overrides are snapshot state, not
+                // transcript state, and survive (pi keeps `config.model`/`reasoning` too).
+                if turn_context.is_some() && self.history_epoch() != turn_context_epoch {
+                    turn_context = None;
+                }
+
                 self.emit(AgentEvent::TurnStart { turn_index });
 
                 // ---- one provider turn --------------------------------------------
-                let assistant = match self.stream_one_turn(&mut usage_total).await {
+                let assistant = match self
+                    .stream_one_turn(
+                        &mut usage_total,
+                        turn_context.as_deref(),
+                        run_model.as_deref(),
+                        run_thinking,
+                    )
+                    .await
+                {
                     Ok(a) => a,
                     Err(e) => {
                         // Error path: same requeue discipline as abort/budget.
@@ -1129,6 +1271,14 @@ impl Agent {
                 };
                 let m = Message::Assistant(assistant.clone());
                 produced.push(m);
+                // pi pushes the assistant message into the run's context the moment the
+                // stream finishes (`streamAssistantResponse` → `context.messages.push`), so a
+                // replacement installed on an earlier turn gets its own output back — without
+                // this the provider would receive the same frozen request forever.
+                Agent::append_to_turn_context(
+                    &mut turn_context,
+                    &Message::Assistant(assistant.clone()),
+                );
 
                 // ---- overflow recovery (ADR-007 trigger #2): compact once, retry ----
                 if assistant.stop_reason == StopReason::Error
@@ -1138,9 +1288,14 @@ impl Agent {
                         .is_some_and(looks_like_context_overflow)
                     && !self.overflow_retried.swap(true, Ordering::SeqCst)
                 {
-                    // Discard the failed attempt, shrink, and retry this turn.
+                    // Discard the failed attempt, shrink, and retry this turn. The replacement
+                    // must drop it too, or runtime history and the run's context would
+                    // disagree by one message.
                     self.pop_last_message();
                     produced.pop();
+                    if let Some(ctx) = turn_context.as_mut() {
+                        ctx.pop();
+                    }
                     match self.compact_now(&mut produced).await? {
                         CompactionOutcome::Committed => continue,
                         // Recovery could not summarize: retrying the same oversized
@@ -1248,18 +1403,98 @@ impl Agent {
                         message: Box::new(m.clone()),
                     });
                     self.push_message(&m);
+                    // ...and the run's context carries them like any transcript message (pi
+                    // appends each result to `currentContext.messages` as it completes), so a
+                    // replacement installed earlier keeps tracking the turn's output.
+                    Agent::append_to_turn_context(&mut turn_context, &m);
                     produced.push(m);
                     self.emit(AgentEvent::MessageEnd {
                         message: Box::new(Message::ToolResult(r.clone())),
                     });
                 }
 
+                // CORE-02: the hook context carries the same messages the transcript just
+                // recorded, so a replacement context can be built from the turn's output.
+                let turn_message = Message::Assistant(assistant);
+                let tool_messages: Vec<Message> =
+                    results.iter().cloned().map(Message::ToolResult).collect();
                 self.emit(AgentEvent::TurnEnd {
                     turn_index,
-                    message: Box::new(Message::Assistant(assistant)),
+                    message: Box::new(turn_message.clone()),
                     tool_results: results,
                 });
                 turn_index += 1;
+
+                // ---- turn hooks (CORE-02; pi `prepareNextTurn` / `shouldStopAfterTurn`) ----
+                // Order follows pi `agent-loop.ts:224-257` exactly: `prepare_next_turn` runs
+                // right after `turn_end`, its snapshot replaces the run's context/model/
+                // thinking, and `should_stop_after_turn` — evaluated on the REPLACED context,
+                // as pi does — runs BEFORE any queue polling. A true stop ends the run here:
+                // no steering drain, no follow-up drain (those wait for the next run), no
+                // stuck-run notice, and `agent_end` is emitted by `run()` as for any exit.
+                // Read-only: neither hook can see the store lock or write history (ADR-007).
+                //
+                // The context a hook sees is the run's replacement when it holds one, else ONE
+                // shared read with the request builder (`try_context_view`). No replacement and
+                // no readable view (poisoned lock, failed model view) means the seams are
+                // skipped for this turn: a hook must not be handed a view the request would
+                // refuse, and the request below raises that failure as its own `RunError`.
+                let hooks = self.turn_hooks();
+                let owned_view: Option<Vec<Message>> = match turn_context {
+                    Some(_) => None,
+                    None => self.try_context_view().ok(),
+                };
+                let prepared = match turn_context.as_deref().or(owned_view.as_deref()) {
+                    Some(seen) => {
+                        contain_hook(
+                            hooks.prepare_next_turn(&epsilon_contracts::turn::NextTurnContext {
+                                message: &turn_message,
+                                tool_results: &tool_messages,
+                                context: seen,
+                                new_messages: &produced,
+                            }),
+                            None,
+                        )
+                        .await
+                    }
+                    None => None,
+                };
+                if let Some(update) = prepared {
+                    if let Some(ctx) = update.context {
+                        turn_context = Some(ctx);
+                        // The replacement is derived from the history as it is NOW; a later
+                        // wholesale replacement of that history makes it stale (blocker 2).
+                        turn_context_epoch = self.history_epoch();
+                    }
+                    if let Some(model) = update.model {
+                        run_model = Some(model.id);
+                    }
+                    if update.thinking.is_some() {
+                        run_thinking = update.thinking;
+                    }
+                }
+                // pi evaluates the stop decision on the REPLACED context (`agent-loop.ts:248-253`
+                // passes `currentContext`, which the snapshot above may have swapped).
+                let stop = match turn_context.as_deref().or(owned_view.as_deref()) {
+                    Some(seen) => {
+                        contain_hook(
+                            hooks.should_stop_after_turn(
+                                &epsilon_contracts::turn::NextTurnContext {
+                                    message: &turn_message,
+                                    tool_results: &tool_messages,
+                                    context: seen,
+                                    new_messages: &produced,
+                                },
+                            ),
+                            false,
+                        )
+                        .await
+                    }
+                    None => false,
+                };
+                if stop {
+                    break 'outer;
+                }
                 if let Some(repeats) = stuck_at {
                     self.emit(AgentEvent::Notice {
                         text: format!("stuck-run guard: {repeats} identical tool results in a row"),
@@ -1457,6 +1692,19 @@ impl Agent {
         if let Ok(mut slot) = self.usage_anchor.lock() {
             *slot = None;
         }
+    }
+
+    /// Bumped by every wholesale replacement of runtime history (`compact_now` on commit,
+    /// `restore_history`). A run's `prepare_next_turn` replacement is only valid while the
+    /// history it was derived from is still the run's base — see the field docs.
+    fn bump_history_epoch(&self) {
+        self.history_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Current epoch of runtime history (see [`Agent::bump_history_epoch`]).
+    fn history_epoch(&self) -> u64 {
+        self.history_epoch.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Run one full compaction pass: prune → summarize (isolated call, amend-mode when a
@@ -1663,6 +1911,11 @@ impl Agent {
         // The anchor described the transcript that was just replaced; the next
         // request re-measures from scratch.
         self.clear_usage_anchor();
+        // CORE-02: the history a mid-run `prepare_next_turn` replacement was built on
+        // no longer exists. Bumping the epoch invalidates it, so the next request rebuilds
+        // from the current source — the store's shadowed view when one is attached — and
+        // an overflow retry cannot re-send the request the compaction just fixed.
+        self.bump_history_epoch();
         produced.push(Message::User(epsilon_contracts::message::UserMessage {
             id: epsilon_contracts::new_id("msg"),
             timestamp_ms: now_ms(),
@@ -1735,27 +1988,38 @@ impl Agent {
         self.failure_message(partial, StopReason::Aborted, "aborted by user")
     }
 
+    /// One provider turn, built from the run's current context.
+    ///
+    /// `turn_context` is a `prepare_next_turn` replacement when a hook installed one (it
+    /// wins over every other source — pi replaces `currentContext` wholesale);
+    /// `model_override` / `thinking_override` are that snapshot's per-run model and
+    /// thinking level. All three are `None` for a run without turn hooks, which is the
+    /// pre-CORE-02 behaviour exactly.
     async fn stream_one_turn(
         self: &Arc<Self>,
         usage_total: &mut Usage,
+        turn_context: Option<&[Message]>,
+        model_override: Option<&str>,
+        thinking_override: Option<epsilon_contracts::ThinkingLevel>,
     ) -> Result<AssistantMessage, RunError> {
-        // Provider-visible view: store shadowed view when attached, else runtime history.
-        let history: Vec<Message> = match self.store() {
-            Some(store) => {
-                let st = store
-                    .lock()
-                    .map_err(|_| RunError::Internal("store poisoned".into()))?;
-                st.model_view()
-                    .map_err(|e| RunError::Internal(format!("session view: {e}")))?
-                    .into_iter()
-                    .map(|v| v.into_message())
-                    .collect()
-            }
-            None => self.history(),
+        // Provider-visible view: a hook replacement first, then the store's shadowed view
+        // when attached, else runtime history. One shared read with the hook seam
+        // (`try_context_view`), so a hook can never be handed a view this request would
+        // refuse — and the two can never disagree about what the provider-bound context is.
+        let from_replacement = turn_context.is_some();
+        let history: Vec<Message> = match turn_context {
+            Some(ctx) => ctx.to_vec(),
+            None => self.try_context_view()?,
         };
         // How much of the history this request covers: the anchor recorded from
         // its usage describes exactly these messages, so the next pressure check
         // only has to estimate what is appended after them.
+        //
+        // A replacement is NOT runtime history: `covered` indexes the front of the
+        // transcript (`crate::compact::anchored_tokens` slices `history[covered..]` of
+        // runtime history), so a replacement's length would mis-index the anchor and
+        // trigger needless paid compactions. Requests built from a replacement therefore
+        // carry no anchor — dropped below, where the usage arrives.
         let covered = history.len();
 
         // ---- three-tier system prompt (ADR-008) ------------------------------------
@@ -1771,11 +2035,16 @@ impl Agent {
                 snippet: d.description.lines().next().unwrap_or("").to_string(),
             })
             .collect();
-        let model_id = self
-            .model_id
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_else(|_| "faux-1".into());
+        // A `prepare_next_turn` model override wins for the rest of this run; otherwise the
+        // session's model id (same lifecycle rule pi applies to `config.model`).
+        let model_id = match model_override {
+            Some(id) => id.to_string(),
+            None => self
+                .model_id
+                .lock()
+                .map(|s| s.clone())
+                .unwrap_or_else(|_| "faux-1".into()),
+        };
         let system_prompt = prompt::build(
             &prompt::Stable { tools: &tool_lines },
             &prompt::ContextTier {
@@ -1807,10 +2076,27 @@ impl Agent {
         // recorded with the call so an unexplained miss can be told from an explained one.
         let stable_hash = prompt::stable_fingerprint(&prompt::Stable { tools: &tool_lines });
 
+        // CORE-02 request boundary (pi `agent-loop.ts:288-295`): transform the run's context
+        // first, then convert to provider-visible messages. Both are pure reads — the store
+        // is never written and runtime history is untouched (ADR-007) — and both are
+        // contained: a hook that panics falls back to the seam's no-op default (identity for
+        // the transform, the harness-visibility filter for the conversion), exactly as if no
+        // host had registered one.
+        let hooks = self.turn_hooks();
+        let transformed = contain_hook(hooks.transform_context(&history), history.clone()).await;
+        let messages = contain_hook(
+            hooks.convert_to_llm(&transformed),
+            transformed
+                .iter()
+                .filter(|m| m.is_llm_visible())
+                .cloned()
+                .collect::<Vec<Message>>(),
+        )
+        .await;
         let ctx = epsilon_llm::LlmContext {
-            thinking_level: self.thinking_level(),
+            thinking_level: thinking_override.unwrap_or_else(|| self.thinking_level()),
             system_prompt,
-            messages: Self::convert_to_llm(&history),
+            messages,
             tools: self.tools.descriptors(),
         };
 
@@ -1886,13 +2172,21 @@ impl Agent {
                             // Anchor the next pressure check to what the provider
                             // actually billed for this request (pi usage anchor).
                             // Cache traffic counts: those tokens were in the prompt.
-                            self.set_usage_anchor(
-                                (message.usage.input
-                                    + message.usage.cache_read
-                                    + message.usage.cache_write)
-                                    as usize,
-                                covered,
-                            );
+                            // A request built from a replacement drops the anchor instead
+                            // (see `covered` above): its count indexes a transcript that is
+                            // not the one `anchored_tokens` re-reads, so keeping it would
+                            // mis-size the next pressure decision.
+                            if from_replacement {
+                                self.clear_usage_anchor();
+                            } else {
+                                self.set_usage_anchor(
+                                    (message.usage.input
+                                        + message.usage.cache_read
+                                        + message.usage.cache_write)
+                                        as usize,
+                                    covered,
+                                );
+                            }
                             self.push_message(&Message::Assistant(message.clone()));
                             self.emit(AgentEvent::MessageEnd {
                                 message: Box::new(Message::Assistant(message.clone())),

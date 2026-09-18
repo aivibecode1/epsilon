@@ -54,6 +54,24 @@ All-mode provider-context fixtures cover this narrow correction; they do not
 establish callback, event-order or full queue parity. The prepare/stop callbacks
 promised above remain an open commitment in the current audit.
 
+**M89 amendment — the callbacks exist.** The four seams this ADR promised are now
+implemented as `epsilon_contracts::turn::TurnHooks` (M89,
+[docs/milestones/M89-turn-hooks.md](../../docs/milestones/M89-turn-hooks.md)): the loop calls
+`prepare_next_turn` immediately after `TurnEnd` and `should_stop_after_turn` on the replaced
+context, both before any queue polling; a stop ends the run without draining steering or
+follow-ups and without the stuck-run notice (pi `agent-loop.ts:224–257`); a returned
+snapshot replaces the run's context, model and thinking for its remaining provider requests
+and never the session's state; `transform_context` then `convert_to_llm` run when the
+provider request is built and write nothing (ADR-007); everything the loop appends to the
+transcript during the run rides along into a replacement, and a committed mid-run compaction
+invalidates it. The seam is **async** (`#[async_trait]`, matching `ToolHooks` — pi's callbacks
+may return a Promise) and a panicking hook is contained at the call site instead of unwinding
+the run. Recorded deltas from pi: a snapshot replaces the message context only (pi's
+`AgentContext` can also swap `systemPrompt`/`tools`), `new_messages` excludes the run's own
+prompt (pi's starts with the prompts), and hooks cannot observe run cancellation (no token is
+passed). Queues, `LoopLimits` and the event taxonomy are untouched: a hook can stop a run,
+not reinterpret a queue (M85 amendment stands).
+
 **Alternatives.** (a) Adopt DSH's phase-machine-over-event-log as the core; (b) opencode's Effect-
 style runner; (c) invent a new loop.
 
@@ -517,6 +535,16 @@ DSH's sprawl, and each boundary already has multiple consumers on paper.
 
 Supersedes the original "9 crates" version of this ADR (types-in-core). The original honest
 answer ("crate boundaries revisited if compile times suffer") stands.
+
+**M89 amendment — seam defaults in contracts (narrow).** `contracts` hosts stateless,
+dependency-free *defaults* on seam traits: `ToolHooks` (tool interception) and now `TurnHooks`
+(pi's `AgentLoopConfig`), whose `convert_to_llm` default is the harness-visibility filter the
+loop used to inline. This is the narrowly defined policy amendment the architecture law asks
+for rather than silent drift: each default is a pure function of its arguments, holds no
+state, adds no dependency, and is documented as an overridable contract — a host that
+implements the trait replaces it outright. Validation and stateful folding stay outside the
+charter (`audit/07-inconsistencies.md`); nothing else in `contracts` gains behaviour without
+its own amendment.
 
 **Best possible?** Yes for this scope. The one risk of a vocabulary crate is churn: changing a
 stud-shape rebuilds every attached brick. Mitigated by the freeze policy in ADR-017.

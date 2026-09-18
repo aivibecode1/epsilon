@@ -1185,3 +1185,747 @@ async fn a_stream_that_ends_without_a_terminal_frame_keeps_its_partial_text() {
     });
     assert!(in_history, "the partial joined the transcript");
 }
+
+// CORE-02: turn hooks (pi's `AgentLoopConfig` — `transformContext`, `convertToLlm`,
+// `prepareNextTurn`, `shouldStopAfterTurn`).
+//
+// One configurable recorder drives every seam the slice promises: a replacement context +
+// model + thinking after a tool turn (run-scoped, transcript untouched, and kept in sync
+// with the turn's own output), a graceful stop that drains no queue, a transform whose
+// output reaches the request while the visibility filter still runs after it, and a hook
+// that panics (contained at the seam, the way a panicking provider is).
+struct RecordingTurnHooks {
+    /// Snapshot `prepare_next_turn` hands back (all three fields at once).
+    update: Mutex<Option<epsilon_contracts::turn::TurnUpdate>>,
+    /// `true` hands [`RecordingTurnHooks::update`] back on the FIRST call only — a host that
+    /// swaps the run's view once and then keeps whatever the loop holds. The tests that need
+    /// to tell "the snapshot was applied to the next turn" from "the snapshot is re-installed
+    /// on every turn" set it.
+    apply_once: bool,
+    /// What `should_stop_after_turn` answers.
+    stop: Mutex<bool>,
+    /// Messages `transform_context` appends to every context.
+    inject: Vec<Message>,
+    /// Context length seen by each hook call, in call order (prepare then stop per turn).
+    seen_context_len: Mutex<Vec<usize>>,
+    /// Contexts `prepare_next_turn` was handed, in call order: a test can assert WHAT the
+    /// loop passed the hook (the run's own output, the replacement, both), not just how much.
+    seen_prepare_contexts: Mutex<Vec<Vec<Message>>>,
+    /// `prepare_next_turn` call count (one per completed turn).
+    prepared: Mutex<usize>,
+    /// `should_stop_after_turn` call count.
+    stopped: Mutex<usize>,
+}
+
+impl RecordingTurnHooks {
+    fn new() -> Self {
+        Self {
+            update: Mutex::new(None),
+            apply_once: false,
+            stop: Mutex::new(false),
+            inject: Vec::new(),
+            seen_context_len: Mutex::new(Vec::new()),
+            seen_prepare_contexts: Mutex::new(Vec::new()),
+            prepared: Mutex::new(0),
+            stopped: Mutex::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl epsilon_contracts::turn::TurnHooks for RecordingTurnHooks {
+    async fn transform_context(&self, messages: &[Message]) -> Vec<Message> {
+        let mut out = messages.to_vec();
+        out.extend(self.inject.iter().cloned());
+        out
+    }
+
+    async fn prepare_next_turn(
+        &self,
+        ctx: &epsilon_contracts::turn::NextTurnContext<'_>,
+    ) -> Option<epsilon_contracts::turn::TurnUpdate> {
+        // Call order is per-turn evidence: one call per completed turn, and each call sees
+        // the context the loop holds at that moment.
+        let call = {
+            let mut n = self.prepared.lock().unwrap();
+            *n += 1;
+            *n
+        };
+        self.seen_context_len
+            .lock()
+            .unwrap()
+            .push(ctx.context.len());
+        self.seen_prepare_contexts
+            .lock()
+            .unwrap()
+            .push(ctx.context.to_vec());
+        assert!(
+            matches!(ctx.message, Message::Assistant(_)),
+            "the hook sees the turn's own assistant message"
+        );
+        if self.apply_once && call > 1 {
+            return None;
+        }
+        self.update.lock().unwrap().clone()
+    }
+
+    async fn should_stop_after_turn(
+        &self,
+        ctx: &epsilon_contracts::turn::NextTurnContext<'_>,
+    ) -> bool {
+        *self.stopped.lock().unwrap() += 1;
+        self.seen_context_len
+            .lock()
+            .unwrap()
+            .push(ctx.context.len());
+        *self.stop.lock().unwrap()
+    }
+}
+
+/// A tool that queues a steering message the moment it executes (CORE-02 test 2): the
+/// interjection lands mid-turn, exactly where a user typing during a turn would leave it.
+/// The agent handle is late-bound because the registry is built before the agent exists.
+struct SteerDuringTurn {
+    descriptor: epsilon_contracts::tool::ToolDescriptor,
+    agent: Arc<Mutex<Option<Arc<epsilon_core::Agent>>>>,
+    text: String,
+}
+
+#[async_trait]
+impl epsilon_contracts::tool::Tool for SteerDuringTurn {
+    fn descriptor(&self) -> &epsilon_contracts::tool::ToolDescriptor {
+        &self.descriptor
+    }
+    async fn execute(
+        &self,
+        _call: epsilon_contracts::tool::ToolInvocation,
+        _ctx: epsilon_contracts::tool::ToolContext,
+        _sink: epsilon_contracts::tool::ToolUpdateSink,
+    ) -> Result<epsilon_contracts::tool::ToolOutput, epsilon_contracts::tool::ToolFailure> {
+        if let Some(agent) = self.agent.lock().unwrap().as_ref() {
+            agent.steer(user_msg(&self.text));
+        }
+        Ok(epsilon_contracts::tool::ToolOutput::text("queued"))
+    }
+}
+
+/// Hooks that break the contract and panic on every seam (CORE-02 containment test).
+struct PanickingTurnHooks;
+
+#[async_trait]
+impl epsilon_contracts::turn::TurnHooks for PanickingTurnHooks {
+    async fn transform_context(&self, _messages: &[Message]) -> Vec<Message> {
+        panic!("transform_context must never unwind through the run")
+    }
+
+    async fn convert_to_llm(&self, _messages: &[Message]) -> Vec<Message> {
+        panic!("convert_to_llm must never unwind through the run")
+    }
+
+    async fn prepare_next_turn(
+        &self,
+        _ctx: &epsilon_contracts::turn::NextTurnContext<'_>,
+    ) -> Option<epsilon_contracts::turn::TurnUpdate> {
+        panic!("prepare_next_turn must never unwind through the run")
+    }
+
+    async fn should_stop_after_turn(
+        &self,
+        _ctx: &epsilon_contracts::turn::NextTurnContext<'_>,
+    ) -> bool {
+        panic!("should_stop_after_turn must never unwind through the run")
+    }
+}
+
+/// Text of a message, for the request-level assertions below.
+fn message_text(m: &Message) -> String {
+    match m {
+        Message::User(u) => u
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                UserContent::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Message::Assistant(a) => a.text().to_string(),
+        _ => String::new(),
+    }
+}
+
+/// One recorded request's messages as text (request-level assertions read better this way).
+fn request_texts(ctx: &epsilon_llm::LlmContext) -> Vec<String> {
+    ctx.messages.iter().map(message_text).collect()
+}
+
+/// CORE-02 (a): a `prepare_next_turn` snapshot replaces context, model and thinking for
+/// the REST of the run — the second provider request carries all three, while runtime
+/// history (the transcript) is untouched and a later run starts from session state again.
+#[tokio::test]
+async fn prepare_next_turn_replaces_context_model_and_thinking_for_the_run_only() {
+    let provider = FauxProvider::new(vec![
+        echo_call("tc_1", "first"),
+        epsilon_llm::FauxStep::say("after the replacement"),
+        epsilon_llm::FauxStep::say("second run"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+
+    let replacement = user_msg("replacement context only");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![replacement.clone()]),
+        model: Some(epsilon_contracts::turn::TurnModel::new("faux-2")),
+        thinking: Some(epsilon_contracts::ThinkingLevel::High),
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    assert_eq!(
+        *hooks.prepared.lock().unwrap(),
+        2,
+        "one prepare per completed turn"
+    );
+
+    {
+        let requests = recorded.lock().unwrap();
+        assert_eq!(requests.len(), 2, "one provider request per turn");
+        // Request #1 is the untouched run context and the session defaults.
+        assert_eq!(requests[0].messages.len(), 1);
+        assert_eq!(message_text(&requests[0].messages[0]), "go");
+        assert_eq!(
+            requests[0].thinking_level,
+            epsilon_contracts::ThinkingLevel::Off
+        );
+        // Request #2 carries the replacement context, the new thinking level and the new model
+        // (the model also renders in the VOLATILE prompt tier, so the request proves it).
+        assert_eq!(requests[1].messages, vec![replacement.clone()]);
+        assert_eq!(
+            requests[1].thinking_level,
+            epsilon_contracts::ThinkingLevel::High
+        );
+        assert!(
+            requests[1].system_prompt.contains("model: faux-2"),
+            "the request must carry the replaced model: {}",
+            requests[1].system_prompt
+        );
+    }
+
+    // The update is run-scoped: the transcript kept every real message and none of the
+    // replacement.
+    let history = agent.history();
+    assert_eq!(
+        history.len(),
+        4,
+        "prompt + assistant + tool result + assistant"
+    );
+    assert!(
+        !history.contains(&replacement),
+        "a replacement context must never be written into runtime history"
+    );
+    let assistant_models: Vec<&str> = outcome
+        .produced
+        .iter()
+        .filter_map(|m| match m {
+            Message::Assistant(a) => Some(a.model_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        assistant_models,
+        ["faux-1", "faux-2"],
+        "the replaced model produced the second turn"
+    );
+
+    // pi keeps the run's context in sync with the run's own output
+    // (`currentContext.messages.push`), so from the second turn on each call sees the
+    // replacement PLUS what the loop appended to it. These four numbers are that contract:
+    // prepare@turn0 sees the run context (prompt + assistant + tool result); stop@turn0
+    // already sees the one-message replacement (pi evaluates the stop on the replaced
+    // context); prepare/stop@turn1 see the replacement plus the assistant message turn 1
+    // produced. A frozen replacement — the shipped bug — reads [3, 1, 1, 1] here.
+    assert_eq!(
+        *hooks.seen_context_len.lock().unwrap(),
+        vec![3, 1, 2, 2],
+        "prepare sees the run context, stop the replaced one, and the replacement keeps \
+         tracking the turn's output"
+    );
+
+    // A SECOND run is where a leak into session state would show: the per-run model, thinking
+    // level and replacement must all be gone, so the new run's request uses the session model
+    // and thinking level — and its assistant message is stamped with the session model.
+    let second = agent.run(user_msg("second run")).await.unwrap();
+    assert_eq!(second.reason, TurnEndReason::Completed);
+    let requests = recorded.lock().unwrap();
+    assert_eq!(requests.len(), 3, "run two makes exactly one request");
+    assert_eq!(requests[2].thinking_level, agent.thinking_level());
+    assert_eq!(
+        requests[2].thinking_level,
+        epsilon_contracts::ThinkingLevel::Off
+    );
+    assert!(
+        requests[2].system_prompt.contains("model: faux-1"),
+        "run two must run on the session model again: {}",
+        requests[2].system_prompt
+    );
+    assert!(
+        second
+            .produced
+            .iter()
+            .any(|m| matches!(m, Message::Assistant(a) if a.model_id == "faux-1")),
+        "the second run's turn was produced by the session model"
+    );
+    assert!(
+        !agent.history().contains(&replacement),
+        "the replacement stayed out of the transcript across runs"
+    );
+}
+
+/// CORE-02 (b): `should_stop_after_turn` ends the run before any queue is polled — neither a
+/// steering message queued DURING the turn nor a follow-up queued before it is drained; both
+/// are still there for the next run.
+#[tokio::test]
+async fn should_stop_after_turn_ends_the_run_without_draining_queues() {
+    let provider = FauxProvider::new(vec![
+        epsilon_llm::FauxStep::call("tc_1", "steer", serde_json::json!({})),
+        epsilon_llm::FauxStep::say("run two"),
+        epsilon_llm::FauxStep::say("follow-up answer"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    // The registry is built before the agent, so the steering tool reaches the agent through
+    // a slot the test fills afterwards.
+    let slot: Arc<Mutex<Option<Arc<epsilon_core::Agent>>>> = Arc::new(Mutex::new(None));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(SteerDuringTurn {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "steer".into(),
+            label: "Steer".into(),
+            description: "Inert fixture: queues a steering message while the turn runs".into(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Sequential,
+        },
+        agent: slot.clone(),
+        text: "typed while the turn ran".into(),
+    }));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    *slot.lock().unwrap() = Some(agent.clone());
+
+    let hooks = Arc::new(RecordingTurnHooks::new());
+    *hooks.stop.lock().unwrap() = true;
+    agent.set_turn_hooks(hooks.clone());
+
+    // Work waiting for the moment the agent would otherwise stop.
+    agent.follow_up(user_msg("queued follow-up"));
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    assert_eq!(*hooks.stopped.lock().unwrap(), 1);
+    {
+        let requests = recorded.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "the stop must prevent another provider request"
+        );
+        assert!(
+            !request_texts(&requests[0])
+                .iter()
+                .any(|t| t == "typed while the turn ran"),
+            "an undrained interjection never reached the provider"
+        );
+    }
+    // The steering message was queued while the turn ran: the stop ends the run before the
+    // drain point, so it is still waiting — and so is the follow-up.
+    assert_eq!(
+        agent.steer_queue_len(),
+        1,
+        "the stop must not drain the steering queue"
+    );
+    let history = agent.history();
+    assert_eq!(
+        history.len(),
+        3,
+        "prompt + assistant + tool result and nothing else"
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|m| message_text(m) == "typed while the turn ran"),
+        "an undrained interjection stays out of the transcript"
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|m| message_text(m) == "queued follow-up"),
+        "the queued follow-up never runs once the hook stops the run"
+    );
+
+    // Both queues belong to the NEXT run: a run starts by prefilling steering, and it drains
+    // follow-ups when it reaches the stop boundary run one never reached.
+    *hooks.stop.lock().unwrap() = false;
+    let second = agent.run(user_msg("second run")).await.unwrap();
+    assert_eq!(second.reason, TurnEndReason::Completed);
+    let requests = recorded.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "run two: its own turn, then the follow-up it kept"
+    );
+    assert!(
+        request_texts(&requests[1])
+            .iter()
+            .any(|t| t == "typed while the turn ran"),
+        "the interjection the stop refused to drain is delivered at the next run's start"
+    );
+    assert!(
+        request_texts(&requests[2])
+            .iter()
+            .any(|t| t == "queued follow-up"),
+        "the follow-up queued before run one still runs in run two"
+    );
+    assert_eq!(agent.steer_queue_len(), 0, "run two delivered the queue");
+}
+
+/// CORE-02 (c): `transform_context` runs at the request boundary and its output reaches
+/// the provider, while the default conversion still filters harness-only messages after it —
+/// and nothing a hook produced enters runtime history (hooks are readers, ADR-007).
+#[tokio::test]
+async fn transform_context_output_reaches_the_request_and_conversion_still_filters() {
+    let provider = FauxProvider::new(vec![epsilon_llm::FauxStep::say("done")]);
+    let recorded = provider.recorded_requests_handle();
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    let hooks = Arc::new(RecordingTurnHooks {
+        inject: vec![
+            user_msg("injected by transform_context"),
+            Message::Custom(epsilon_contracts::message::CustomMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                custom_type: "ui_only".into(),
+                payload: serde_json::json!({"note": "harness-only"}),
+            }),
+        ],
+        ..RecordingTurnHooks::new()
+    });
+    agent.set_turn_hooks(hooks);
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+
+    let requests = recorded.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let texts = request_texts(&requests[0]);
+    assert!(
+        texts.iter().any(|t| t == "go"),
+        "the run's own context still reaches the request"
+    );
+    assert!(
+        texts.iter().any(|t| t == "injected by transform_context"),
+        "transform_context output must reach the provider: {texts:?}"
+    );
+    assert!(
+        !requests[0]
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::Custom(_))),
+        "convert_to_llm still runs after transform_context: {texts:?}"
+    );
+    drop(requests);
+
+    // Hooks are readers: neither injected message may have entered the transcript. The
+    // harness-only one is the sharp end — writing it would poison every later request.
+    let history = agent.history();
+    assert_eq!(history.len(), 2, "prompt + the assistant answer");
+    assert!(
+        !history
+            .iter()
+            .any(|m| message_text(m) == "injected by transform_context"),
+        "transform output is request-scoped, never history"
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|m| matches!(m, Message::Custom(c) if c.custom_type == "ui_only")),
+        "a harness-only message a hook injected must never enter history (ADR-007)"
+    );
+}
+
+/// CORE-02 (d): while a replacement is active the run keeps it in sync with the transcript —
+/// the request AFTER a tool-calling turn carries that turn's assistant message and tool
+/// result (pi appends to `currentContext.messages`), so a replacement never freezes and the
+/// provider gets its own output back.
+#[tokio::test]
+async fn replacement_context_tracks_the_run_transcript() {
+    let provider = FauxProvider::new(vec![
+        echo_call("tc_1", "first"),
+        echo_call("tc_2", "second"),
+        epsilon_llm::FauxStep::say("done"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+
+    let replacement = user_msg("replacement context only");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![replacement.clone()]),
+        model: None,
+        thinking: None,
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+
+    let requests = recorded.lock().unwrap();
+    assert_eq!(requests.len(), 3, "two tool turns and the answer");
+    // Request #2 is the snapshot, wholesale (pi replaces `currentContext`).
+    assert_eq!(requests[1].messages, vec![replacement.clone()]);
+
+    // Request #3 follows a TOOL-CALLING turn that ran on the replacement. pi appends the
+    // turn's assistant message and every tool result to the run's context, so this request
+    // must carry them: a replacement that never tracks the transcript would send the same
+    // `[replacement]` again, and the model would never see what it just did.
+    assert_eq!(
+        requests[2].messages.len(),
+        3,
+        "replacement + the turn's assistant message + its tool result: {:?}",
+        request_texts(&requests[2])
+    );
+    assert_eq!(requests[2].messages[0], replacement);
+    assert!(
+        matches!(&requests[2].messages[1], Message::Assistant(a)
+            if a.tool_calls().any(|(id, name, _)| id == "tc_2" && name == "echo")),
+        "the turn's assistant message must be in the request after it"
+    );
+    assert!(
+        matches!(&requests[2].messages[2], Message::ToolResult(t)
+            if t.tool_call_id == "tc_2" && !t.is_error),
+        "the turn's tool result must be in the request after it"
+    );
+
+    // The hook's own view proves the same thing from the other side: call 1 saw the original
+    // run context, and call 2 saw exactly what the loop held after turn two — the replacement
+    // plus that turn's message and result. One prepare per turn, no re-installations.
+    let prepare_contexts = hooks.seen_prepare_contexts.lock().unwrap();
+    assert_eq!(prepare_contexts.len(), 3, "one prepare per completed turn");
+    assert_eq!(
+        prepare_contexts[0].len(),
+        3,
+        "turn 1 saw prompt + assistant + result"
+    );
+    assert_eq!(
+        prepare_contexts[1].len(),
+        3,
+        "turn 2 saw the appended replacement"
+    );
+    assert_eq!(prepare_contexts[1][0], replacement);
+    assert_eq!(
+        prepare_contexts[1][1], requests[2].messages[1],
+        "what the hook saw at turn two is what the next request carried"
+    );
+    assert_eq!(
+        *hooks.seen_context_len.lock().unwrap(),
+        vec![3, 1, 3, 3, 4, 4],
+        "prepare/stop per turn: run context, replacement, replacement+turn, ...+answer"
+    );
+}
+
+/// CORE-02 (e): a committed mid-run compaction invalidates the run's replacement — the
+/// request after it rebuilds from the current source. Without that a store-backed run stops
+/// reading its provider view from the store (the M86/ADR-007 invariant the loop's own
+/// compaction path relies on) and re-sends a request the compaction just fixed.
+#[tokio::test]
+async fn mid_run_compaction_invalidates_the_replacement_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = epsilon_session::SessionStore::open(dir.path().join("session.jsonl")).unwrap();
+
+    let provider = FauxProvider::new(vec![
+        epsilon_llm::FauxStep::call(
+            "tc_1",
+            "echo",
+            serde_json::json!({ "text": "x".repeat(4000) }),
+        ),
+        epsilon_llm::FauxStep::say("after the compaction"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits {
+            // The first turn's arguments + result (~2000 estimated tokens) trip this; the
+            // bare prompt does not.
+            compaction_threshold_tokens: 1500,
+            compaction_tail_tokens: 300,
+            max_turns: 8,
+            ..Default::default()
+        },
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    agent.set_summarizer(Arc::new(epsilon_llm::PanicGuard(SlowProvider::new(
+        FauxProvider::new(vec![epsilon_llm::FauxStep::say(
+            "## Objective\nsummarized state",
+        )]),
+        5,
+    ))));
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+    let store = agent.store_handle_for_tests();
+
+    let frozen = user_msg("frozen replacement");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![frozen.clone()]),
+        model: None,
+        thinking: None,
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("long task")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    assert_eq!(
+        *hooks.prepared.lock().unwrap(),
+        2,
+        "the replacement was installed before the compaction, so it was live when it fired"
+    );
+
+    // The compaction really committed mid-run...
+    assert!(
+        store
+            .lock()
+            .unwrap()
+            .read_all()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(
+                e.kind,
+                epsilon_contracts::session_entry::EntryKind::Compaction { .. }
+            )),
+        "the pressure trigger must have committed a compaction"
+    );
+    assert!(
+        matches!(agent.history().first(), Some(Message::User(u))
+            if u.content.iter().any(|c| matches!(
+                c, UserContent::Text { text } if text.starts_with("<compaction_summary>")))),
+        "runtime history must begin with the summary"
+    );
+
+    // ...and the request AFTER it is not the frozen replacement: it carries the summary,
+    // i.e. it was rebuilt from the current provider view (the store's shadowed model view).
+    let requests = recorded.lock().unwrap();
+    assert_eq!(requests.len(), 2, "one request per turn");
+    assert_eq!(
+        requests[0].messages.len(),
+        1,
+        "the first request is the bare prompt"
+    );
+    assert_ne!(
+        requests[1].messages,
+        vec![frozen.clone()],
+        "a committed compaction must invalidate the run's replacement"
+    );
+    let texts = request_texts(&requests[1]);
+    assert!(
+        texts.iter().any(|t| t.contains("<compaction_summary>")),
+        "the request after the compaction carries the summary: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t == "frozen replacement"),
+        "the stale snapshot must not reach the provider: {texts:?}"
+    );
+}
+
+/// CORE-02 (f): a hook that breaks the contract and panics is contained at the seam — the
+/// run's outcome is the no-hook outcome, and the next run is not refused. Without containment
+/// the unwind skips `run`'s cleanup, leaves `running` set, and every later run returns
+/// `RunError::AlreadyRunning` (the same failure mode `PanicGuard` prevents for providers).
+#[tokio::test]
+async fn panicking_turn_hooks_are_contained_and_the_next_run_still_starts() {
+    let provider = FauxProvider::new(vec![
+        epsilon_llm::FauxStep::say("first"),
+        epsilon_llm::FauxStep::say("second"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.set_turn_hooks(Arc::new(PanickingTurnHooks));
+
+    let first = agent
+        .run(user_msg("go"))
+        .await
+        .expect("a panicking hook must not fail the run");
+    assert_eq!(first.reason, TurnEndReason::Completed);
+    assert_eq!(message_text(&first.produced[0]), "first");
+
+    // The second run is the real check: it only starts if the first one reset `running`.
+    let second = agent
+        .run(user_msg("again"))
+        .await
+        .expect("a panicking hook must not leave the agent un-runnable");
+    assert_eq!(second.reason, TurnEndReason::Completed);
+    assert_eq!(message_text(&second.produced[0]), "second");
+    assert!(
+        !agent.is_running(),
+        "a contained panic must not leave a live run"
+    );
+
+    // Each seam fell back to its no-op default: the transform ran as identity (the run's own
+    // context reached the provider), the conversion still filtered, prepare kept the context
+    // and stop answered false (both runs reached the provider).
+    let requests = recorded.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "no hook effect may stop or re-route the run"
+    );
+    assert_eq!(request_texts(&requests[0]), vec!["go".to_string()]);
+    assert_eq!(
+        requests[0].thinking_level,
+        epsilon_contracts::ThinkingLevel::Off,
+        "a panicking hook must not change the run's model or thinking level"
+    );
+}

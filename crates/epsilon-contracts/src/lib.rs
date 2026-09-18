@@ -15,6 +15,7 @@ pub mod message;
 pub mod session_entry;
 pub mod stream;
 pub mod tool;
+pub mod turn;
 
 pub use agent_event::{AgentEvent, PermissionDecision, PermissionRequest, TurnEndReason};
 pub use content::{ContentBlock, ImageRef, UserContent};
@@ -28,3 +29,4 @@ pub use tool::{
     ExecutionMode, Tool, ToolContext, ToolDescriptor, ToolFailure, ToolInvocation, ToolOutput,
     ToolPartial, ToolUpdateSink,
 };
+pub use turn::{NextTurnContext, NoopTurnHooks, TurnHooks, TurnModel, TurnUpdate};

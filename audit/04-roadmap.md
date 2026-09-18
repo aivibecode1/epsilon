@@ -154,7 +154,7 @@ If the red baseline prevents confidence in a source move, stop that move and del
 
 ## Full pi parity after the reliable release
 
-The workstreams and estimates in [03](03-port-plan.md) remain open: SDK callbacks, broader RPC, local resource/templates/settings, package management, isolated extension SDK, missing provider protocols and image/theme coverage. They are not deleted from the original goal just because hardening is higher priority.
+The workstreams and estimates in [03](03-port-plan.md) remain open: broader RPC, local resource/templates/settings, package management, isolated extension SDK, missing provider protocols and image/theme coverage. SDK callbacks (CORE-02) are closed as seams by [M89](../docs/milestones/M89-turn-hooks.md). They are not deleted from the original goal just because hardening is higher priority.
 
 **Planning envelope:** roughly **8–14 engineer-weeks** for a credible supervised Windows/Linux release, subject to platform and persistence discoveries; full pi behavioral parity is an additional multi-month program. This replaces the earlier unsupported “days, not months” assessment. Re-estimate after A–D, where the highest uncertainty is concentrated.
 

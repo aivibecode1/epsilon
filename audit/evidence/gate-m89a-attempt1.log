@@ -1,0 +1,60 @@
+
+===== fmt --check =====
+Diff in \\?\C:\Users\Hp\AppData\Local\Temp\epsilon-m89-candidate\crates\epsilon-contracts\src\lib.rs:25:
+ };
+ pub use session_entry::{EntryKind, SessionEntry};
+ pub use stream::StreamEvent;
+[31m-pub use turn::{NextTurnContext, NoopTurnHooks, TurnHooks, TurnModel, TurnUpdate};
+[0m pub use tool::{
+     ExecutionMode, Tool, ToolContext, ToolDescriptor, ToolFailure, ToolInvocation, ToolOutput,
+     ToolPartial, ToolUpdateSink,
+Diff in \\?\C:\Users\Hp\AppData\Local\Temp\epsilon-m89-candidate\crates\epsilon-contracts\src\lib.rs:32:
+ };
+[32m+pub use turn::{NextTurnContext, NoopTurnHooks, TurnHooks, TurnModel, TurnUpdate};
+[0m 
+[exit=1 2s]
+
+===== clippy =====
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+    Checking memchr v2.8.3
+    Checking windows-sys v0.61.2
+   Compiling serde_core v1.0.228
+    Checking mio v1.2.2
+    Checking socket2 v0.6.5
+   Compiling tokio-macros v2.7.2
+    Checking tokio v1.53.1
+   Compiling serde v1.0.228
+    Checking once_cell v1.21.4
+   Compiling serde_derive v1.0.228
+[exit=1 108s]
+
+===== test =====
+   Compiling windows-link v0.2.1
+   Compiling cfg-if v1.0.4
+   Compiling itoa v1.0.18
+   Compiling futures-core v0.3.34
+   Compiling pin-project-lite v0.2.17
+   Compiling bytes v1.12.1
+   Compiling memchr v2.8.3
+   Compiling windows-sys v0.61.2
+   Compiling serde_core v1.0.228
+   Compiling futures-sink v0.3.34
+   Compiling mio v1.2.2
+   Compiling socket2 v0.6.5
+   Compiling tokio v1.53.1
+   Compiling zmij v1.0.23
+   Compiling serde v1.0.228
+   Compiling once_cell v1.21.4
+   Compiling serde_json v1.0.151
+   Compiling tokio-util v0.7.19
+error: could not compile `tokio-util` (lib)
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Hp\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name tokio_util --edition=2021 'C:\Users\Hp\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-util-0.7.19\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=1 --warn=unexpected_cfgs --check-cfg 'cfg(fuzzing)' --check-cfg 'cfg(loom)' --check-cfg 'cfg(mio_unsupported_force_poll_poll)' --check-cfg 'cfg(tokio_allow_from_blocking_fd)' --check-cfg 'cfg(tokio_internal_mt_counters)' --check-cfg 'cfg(tokio_no_parking_lot)' --check-cfg 'cfg(tokio_no_tuning_tests)' --check-cfg 'cfg(tokio_unstable)' --check-cfg 'cfg(target_os, values("cygwin"))' --cfg 'feature="codec"' --cfg 'feature="default"' --cfg 'feature="io"' --cfg 'feature="libc"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("__docs_rs", "codec", "compat", "default", "full", "futures-io", "futures-util", "hashbrown", "io", "io-util", "join-map", "libc", "net", "rt", "slab", "time", "tracing"))' -C metadata=5c38a8389d9cfd61 -C extra-filename=-8e460a76bb13ebfa --out-dir 'C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps' -L 'dependency=C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps' --extern 'bytes=C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps\libbytes-704d12fce5d0a236.rmeta' --extern 'futures_core=C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps\libfutures_core-04430594cf9a584d.rmeta' --extern 'futures_sink=C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps\libfutures_sink-778d3bd5a6a4109f.rmeta' --extern 'pin_project_lite=C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps\libpin_project_lite-f696c834fd58c9b9.rmeta' --extern 'tokio=C:\Users\Hp\AppData\Local/Temp/epsilon-core02-target\debug\deps\libtokio-8ade1e84abc1ec41.rmeta' --cap-lints allow` (exit code: 0xc0000142, STATUS_DLL_INIT_FAILED)
+[exit=101 44s]
+
+===== demo =====
+[exit=1 37s]
+
+===== real-check =====

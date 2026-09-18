@@ -109,7 +109,7 @@ independent-review source confidence, not parent reproduction or runtime proof.
 | 2 | Queue-default parity and explicit-mode conformance | CORE-01; assembled provider-context sequence, then full gates |
 | 3 | Durable compaction, cancellation and append-error handling | CORE-03/04/05; exact before/after/reopened contexts and terminal events; F07 remains separately open |
 | 4 | Atomic admission and correlated RPC/session operations | RPC-01/02 and SESSION-01; deterministic overlapping requests and fork/branch/reopen scenarios |
-| 5 | Next-turn/context callbacks | CORE-02; callback ordering, cancellation and unchanged durable history |
+| 5 | Next-turn/context callbacks | CORE-02; callback ordering, cancellation and unchanged durable history. **Closed as seams by M89** (`docs/milestones/M89-turn-hooks.md`): ordering matches pi (prepare → stop, both before queue polling), a stop drains nothing, and a replacement context never touches the store. Recorded deltas: hooks are synchronous and cannot observe cancellation. |
 | 6 | Existing tool/editor seams | SURFACE-01/04/05/08; select-to-submit attachments, clear/exit, pages beyond byte prefix, typed image/text preservation |
 | 7 | Local resources, skills, templates and settings | SURFACE-02/03; discovery/precedence diagnostics and startup/reload equivalence |
 | 8 | Provider, extension and package capabilities | SURFACE-06/07 and remaining resource scope; operation inventories and local transport fixtures, explicit live-evidence blockers |

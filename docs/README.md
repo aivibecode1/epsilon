@@ -56,6 +56,11 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M89 — turn hooks](milestones/M89-turn-hooks.md): pi's `AgentLoopConfig` seams
+  (`transform_context`, `convert_to_llm`, `prepare_next_turn`, `should_stop_after_turn`) exist
+  as `TurnHooks`; a stop ends the run without draining queues, and a replacement context tracks
+  the transcript and yields to a committed compaction.
+
 - [M88 — mid-batch abort](milestones/M88-mid-batch-abort.md): a cancelled run refuses
   batched calls it has not started; one checkpoint covers both batch plans.
 

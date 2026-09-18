@@ -1,0 +1,31 @@
+# M89 negative control — do the new tests actually pin the fixes? (2026-09-18)
+#
+# Candidate: epsilon-m89d-candidate (HEAD df5d3be + the four slice files). Each probe ran in a
+# disposable COPY of the candidate with exactly one fix neutralised; the pristine candidate was
+# never modified.
+#
+# PROBE A — `append_to_turn_context` body replaced by `let _ = (turn_context, m);`
+#   cargo test -p epsilon-core --test loop_scenarios replacement_context_tracks_the_run_transcript
+#   -> failures:
+#        replacement_context_tracks_the_run_transcript
+#      test result: FAILED. 0 passed; 1 failed; 0 ignored; 27 filtered out
+#
+# PROBE B — epoch invalidation disabled (`if false && turn_context.is_some() && ...`)
+#   cargo test -p epsilon-core --test loop_scenarios mid_run_compaction_invalidates_the_replacement_context
+#   -> assertion `left != right` failed: a committed compaction must invalidate the run's replacement
+#        left:  [User(UserMessage { id: "msg_1a0b2b33ee51", timestamp_ms: 0,
+#                content: [Text { text: "frozen replacement" }] })]
+#        right: [same]
+#      test result: FAILED. 0 passed; 1 failed; 0 ignored; 27 filtered out
+#
+# Both probes failed for the reason the tests name, so the two blocker fixes are pinned.
+#
+# The implementing agent ran a broader control of the same kind (all fixes reverted: four tests
+# failed, e.g. `left: [3, 1, 1, 1] right: [3, 1, 2, 2]` in the tracking test and
+# `mid_run_compaction_…: a committed compaction must invalidate the run's replacement`), then
+# restored crates/epsilon-core/src/lib.rs byte-identically — verified by sha256
+# 66bd8f0402b8d986… on the restored file before this round's battery was started.
+#
+# Why there is no pre-fix RED for this milestone: the seams do not exist before this slice, so
+# the new tests cannot compile against the pre-fix tree. Reverting a fix inside a copy of the
+# candidate is the equivalent evidence, and it is the form the review asked for.
