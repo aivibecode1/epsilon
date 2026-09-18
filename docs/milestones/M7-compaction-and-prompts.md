@@ -14,8 +14,14 @@ Date: 2026-08-23 · Status: complete
 **`epsilon-core/src/compact.rs`** (ADR-007):
 - Token estimator (chars/4 heuristic; images = flat 512) — stable and monotone, good enough
   for threshold math.
+  *Superseded at the trigger in M64:* the pressure check now anchors to the prompt size the
+  provider reported for the last request and estimates only the messages appended since
+  (`anchored_tokens`); the char heuristic remains as the fallback for a first request or a
+  provider that reports nothing. See [`M64-measured-pressure.md`](M64-measured-pressure.md).
 - Trigger #1 **pressure**: before each provider turn, `estimate_messages(history) > threshold`
   → compact. Configurable via `LoopLimits.compaction_threshold_tokens/_tail_tokens`.
+  *M64:* the figure on the left is now the anchored estimate, and the retained tail is moved to
+  a legal turn boundary before anything is summarized (`legal_cut_point`).
 - Procedure: model-free prune of old non-error tool results (tombstoned, provider-shape-safe)
   → protected tail clamp [2k,15k] → strict-template summary request with clipped tool outputs
   → **amend-mode** when a prior `<compaction_summary>` exists in the compacted range.

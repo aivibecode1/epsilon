@@ -35,7 +35,7 @@ epsilon --model lmstudio/qwen2.5-7b-instruct -p "hi"
 client_id = "…"
 ```
 
-See [`auth.md`](auth.md) and [`../qa/08-oauth-login-client-ids.md`](../qa/08-oauth-login-client-ids.md).
+See [`auth.md`](auth.md) for client-id resolution and refresh limitations.
 
 ## Editor
 

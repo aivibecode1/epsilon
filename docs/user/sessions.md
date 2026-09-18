@@ -43,8 +43,8 @@ Repair runs when a session opens:
 - Many malformed or incompatible entries receive typed refusal, but unusable final
   entries and a final second header can be mistaken for torn writes and truncated
   (F08). A header followed by a torn first entry can lose its header during repair.
-  The original intended behavior is recorded in:
-  [`../milestones/M75-typed-corruption.md`](../milestones/M75-typed-corruption.md).
+  See F08 in [the defect ledger](../../audit/02-defect-ledger.md) for the
+  source evidence and required preservation guarantees.
 
 Practical guidance:
 

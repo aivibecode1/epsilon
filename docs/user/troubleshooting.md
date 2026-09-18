@@ -22,7 +22,7 @@ sandbox backend, session store, and project trust — without starting a run.
 | Command refuses to run | sandbox fail-closed: no confinement backend on this platform (macOS has none); `--sandbox` modes in [`permissions.md`](permissions.md) |
 | Permission denied unexpectedly | matching denies override later allows — check project `.epsilon/config.toml` and trust state (`/trust`) |
 | "session is held by another process" | the write lease names the holder; close that instance; do not manually remove a live holder's lock |
-| Session file "damaged" / "newer format" | typed refusal, not corruption: see [`sessions.md`](sessions.md) and [`../milestones/M75-typed-corruption.md`](../milestones/M75-typed-corruption.md) |
+| Session file "damaged" / "newer format" | typed refusal, not corruption: see [`sessions.md`](sessions.md) for the limits of refusal and repair |
 | OAuth login fails to open a browser | use `--paste`; client-id notes in [`auth.md`](auth.md) |
 | Diagnostics nowhere | headless modes print replies to stdout and diagnostics to stderr; do not assume `RUST_LOG` enables application tracing |
 

@@ -38,8 +38,9 @@ epsilon auth login github-copilot --oauth   # GitHub Copilot subscription
   client_id = "…"
   ```
 
-  Details and provider-by-provider notes:
-  [`../qa/08-oauth-login-client-ids.md`](../qa/08-oauth-login-client-ids.md).
+  Consult the selected flow's error for its environment variable and TOML section.
+  Historical client-id notes remain in the uncommitted implementation baseline;
+  they are not a prerequisite for this guide.
 
 - Refresh is implemented but not reliable across all paths: configuration-only IDs,
   Copilot preparation, proactive rotation and cached fallback credentials have open

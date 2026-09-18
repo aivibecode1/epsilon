@@ -38,6 +38,7 @@ Everything else is modifier-guarded. Full inventory as of this audit:
 | Ctrl+Y | yank (paste from ring) | CONTROL |
 | Ctrl+Z / Ctrl+. | undo / redo | CONTROL |
 | Ctrl+X | expand/collapse tool outputs | CONTROL (since M29; was bare `x`, the bug) |
+| Ctrl+O / Alt+E | external editor (`app.editor.external`, M59) | CONTROL / ALT (configurable; pi's own ctrl+g is taken here by the live refresh) |
 | Alt+B/F | word left/right atomic | ALT |
 | Alt+Backspace | kill word backward | ALT |
 | Alt+Left | word left atomic | ALT |
