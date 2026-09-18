@@ -1,0 +1,159 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling windows-link v0.2.1
+   Compiling itoa v1.0.18
+   Compiling serde_core v1.0.228
+   Compiling bitflags v2.13.1
+   Compiling unicode-segmentation v1.13.3
+   Compiling memchr v2.8.3
+   Compiling futures-core v0.3.34
+   Compiling windows-sys v0.61.2
+   Compiling equivalent v1.0.2
+   Compiling allocator-api2 v0.2.21
+   Compiling rustversion v1.0.23
+   Compiling foldhash v0.2.0
+   Compiling strsim v0.11.1
+   Compiling ident_case v1.0.1
+   Compiling pin-project-lite v0.2.17
+   Compiling unicode-width v0.2.2
+   Compiling zmij v1.0.23
+   Compiling typenum v1.20.1
+   Compiling thiserror v2.0.20
+   Compiling mio v1.2.2
+   Compiling heck v0.5.0
+   Compiling serde_json v1.0.151
+   Compiling winapi v0.3.9
+   Compiling hybrid-array v0.4.14
+   Compiling either v1.18.0
+   Compiling serde v1.0.228
+   Compiling bytes v1.12.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling itertools v0.14.0
+   Compiling castaway v0.2.4
+   Compiling darling_core v0.24.1
+   Compiling tokio-macros v2.7.2
+   Compiling thiserror-impl v2.0.20
+   Compiling serde_derive v1.0.228
+   Compiling strum_macros v0.28.0
+   Compiling hashbrown v0.17.1
+   Compiling hashbrown v0.16.1
+   Compiling tokio v1.53.1
+   Compiling instability v0.3.13
+   Compiling ryu v1.0.23
+   Compiling futures-sink v0.3.34
+   Compiling getrandom v0.3.4
+   Compiling crc32fast v1.5.1
+   Compiling static_assertions v1.1.0
+   Compiling simd-adler32 v0.3.10
+   Compiling parking_lot_core v0.9.12
+   Compiling autocfg v1.5.1
+   Compiling compact_str v0.9.1
+   Compiling num-traits v0.2.19
+   Compiling strum v0.28.0
+   Compiling darling_macro v0.24.1
+   Compiling kasuari v0.4.12
+   Compiling tokio-util v0.7.19
+   Compiling darling v0.24.1
+   Compiling lru v0.18.2
+   Compiling unicode-truncate v2.0.1
+   Compiling async-trait v0.1.89
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling convert_case v0.10.0
+   Compiling windows_x86_64_msvc v0.53.1
+   Compiling adler2 v2.0.1
+   Compiling winnow v1.0.4
+   Compiling scopeguard v1.2.0
+   Compiling const-oid v0.10.2
+   Compiling critical-section v1.2.0
+   Compiling smallvec v1.15.2
+   Compiling indoc v2.0.7
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+   Compiling digest v0.11.3
+   Compiling ratatui-core v0.1.2
+   Compiling lock_api v0.4.14
+   Compiling miniz_oxide v0.8.9
+   Compiling derive_more-impl v2.1.1
+   Compiling futures-macro v0.3.31
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling powerfmt v0.2.0
+   Compiling num-conv v0.2.2
+   Compiling cpufeatures v0.3.0
+   Compiling deranged v0.5.8
+   Compiling slab v0.4.12
+   Compiling time-core v0.1.9
+   Compiling litrs v1.0.0
+   Compiling pin-utils v0.1.0
+   Compiling futures-task v0.3.34
+   Compiling toml v1.1.4+spec-1.1.0
+   Compiling sha2 v0.11.0
+   Compiling flate2 v1.1.9
+   Compiling document-features v0.2.12
+   Compiling futures-util v0.3.31
+   Compiling derive_more v2.1.1
+   Compiling crossterm_winapi v0.9.1
+   Compiling time v0.3.55
+   Compiling parking_lot v0.12.5
+   Compiling fdeflate v0.3.7
+   Compiling aho-corasick v1.1.5
+   Compiling line-clipping v0.3.8
+   Compiling pxfm v0.1.30
+   Compiling regex-syntax v0.8.11
+   Compiling base64 v0.23.1
+   Compiling png v0.18.1
+   Compiling windows-targets v0.53.5
+   Compiling epsilon-session v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-session)
+   Compiling regex-automata v0.4.18
+   Compiling moxcms v0.8.1
+   Compiling bytemuck v1.25.2
+   Compiling ratatui-widgets v0.3.2
+   Compiling byteorder-lite v0.1.0
+   Compiling pulldown-cmark v0.13.4
+   Compiling error-code v3.4.0
+   Compiling clipboard-win v5.4.1
+   Compiling regex v1.13.1
+   Compiling windows-sys v0.60.2
+   Compiling image v0.25.10
+   Compiling crossterm v0.29.0
+   Compiling getopts v0.2.24
+   Compiling fastrand v2.5.0
+   Compiling once_cell v1.21.4
+   Compiling unicase v2.9.0
+   Compiling log v0.4.34
+   Compiling ratatui-crossterm v0.1.2
+   Compiling pulldown-cmark-escape v0.11.0
+   Compiling epsilon-llm v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-llm)
+   Compiling tempfile v3.23.0
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+   Compiling arboard v3.6.1
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling epsilon-safety v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-safety)
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 06s
+     Running unittests src\lib.rs (C:/Users/Hp/AppData/Local/Temp/epsilon-tui-enhance-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 1 test
+test app::composer_viewport_tests::editing_start_of_long_draft_keeps_caret_line_visible ... FAILED
+
+failures:
+
+---- app::composer_viewport_tests::editing_start_of_long_draft_keeps_caret_line_visible stdout ----
+
+thread 'app::composer_viewport_tests::editing_start_of_long_draft_keeps_caret_line_visible' (10820) panicked at crates\epsilon-tui\src\app.rs:4394:9:
+caret line hidden: │fourth                                                    │
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    app::composer_viewport_tests::editing_start_of_long_draft_keeps_caret_line_visible
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 151 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p epsilon-tui --lib`
