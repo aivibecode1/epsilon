@@ -1,0 +1,437 @@
+# M93 implementer focused round — working tree, NOT a frozen candidate
+# date: 2026-09-18T17:50:46+03:00; host: DESKTOP-I138TH7; rustc 1.97.1 (8bab26f4f 2026-07-14); cargo 1.97.1 (c980f4866 2026-06-30)
+# CARGO_TARGET_DIR=C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target CARGO_BUILD_JOBS=1
+# sha256 lib.rs: d8a7c28e23572aff52e850891a27b164cbd904825301b4da217e1da9a21c8600
+# sha256 task_scenarios.rs: 6810fe015db620a2c002d719233af9b6091f8f86d72ce51bf7f0681b016f030c
+
+== cargo fmt --all -- --check ==
+exit=0
+
+== cargo clippy -p epsilon-core -p epsilon-contracts -p epsilon-tools --all-targets -- -D warnings ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.48s
+exit=0
+
+== cargo test -p epsilon-core ==
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 44.87s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\epsilon_core-6d8b3a61112d7ce1.exe)
+
+running 108 tests
+test cache_stats::tests::a_model_switch_is_attributed_to_the_switch ... ok
+test cache_stats::tests::an_empty_session_says_so ... ok
+test cache_stats::tests::a_prefix_that_stopped_being_stable_is_attributed_to_the_prefix ... ok
+test cache_stats::tests::an_idle_gap_is_attributed_by_elapsed_time ... ok
+test cache_stats::tests::a_provider_that_says_nothing_about_caching_is_not_accused_of_misses ... ok
+test cache_stats::tests::re_billed_tokens_are_priced_at_the_models_input_rate ... ok
+test cache_stats::tests::same_model_same_prefix_no_gap_is_reported_as_the_providers_doing ... ok
+test cache_stats::tests::the_first_call_is_cold_and_the_warm_one_is_served ... ok
+test cache_stats::tests::an_unknown_model_is_not_priced_at_all ... ok
+test cache_stats::tests::the_report_groups_the_waste_by_cause_most_expensive_first ... ok
+test cache_stats::tests::token_and_cost_formatting_stay_readable ... ok
+test compact::anchor_and_cut_tests::a_history_of_only_tool_results_is_left_alone ... ok
+test compact::anchor_and_cut_tests::a_batch_running_to_the_end_grows_the_tail_instead_of_orphaning_it ... ok
+test compact::anchor_and_cut_tests::a_tail_never_starts_with_an_orphaned_tool_result ... ok
+test compact::anchor_and_cut_tests::anchor_replaces_the_heuristic_for_the_prefix_it_covers ... ok
+test compact::anchor_and_cut_tests::anchor_is_ignored_when_it_cannot_describe_this_history ... ok
+test compact::instruction_block_tests::a_previous_summary_is_not_mistaken_for_something_the_user_said ... ok
+test agents::tests::describe_task_lists_sorted_or_empty ... ok
+test compact::instruction_block_tests::the_cap_drops_the_oldest_turns_and_says_how_many ... ok
+test compact::instruction_block_tests::nothing_to_keep_means_nothing_is_added ... ok
+test compact::instruction_block_tests::the_users_own_words_survive_compaction_verbatim ... ok
+test compact::ledger_tests::a_ledger_rides_into_the_next_summary_and_comes_back_out ... ok
+test compact::ledger_tests::a_long_ledger_is_capped_and_says_how_much_it_hid ... ok
+test compact::ledger_tests::successive_compactions_accumulate_instead_of_restarting ... ok
+test agents::tests::tools_list_spelling_and_project_shadow ... ok
+test compact::ledger_tests::the_ledger_comes_from_the_tool_calls_themselves ... ok
+test compact::ledger_tests::the_summary_request_shows_the_ledger_but_forbids_copying_it ... ok
+test compact::plan002_tests::clipping_multi_byte_tool_output_does_not_panic ... ok
+test compact::plan002_tests::summary_context_amend_mode_includes_prior_summary_marker ... ok
+test compact::plan002_tests::summary_context_clips_multi_byte_without_panicking ... ok
+test agents::tests::discovers_parses_and_sorts ... ok
+test config::tests::precedence_documented_flag_over_saved_over_default ... ok
+test config::tests::empty_id_refuses_to_persist_and_non_table_section_errors ... ok
+test config::tests::malformed_or_keyless_files_load_as_none ... ok
+test compact::anchor_and_cut_tests::an_adjusted_cut_never_loses_a_tool_result_its_call ... ok
+test config::tests::prompt_history_tolerates_corrupt_lines_and_multiline_entries ... ok
+test exec::tests::a_directory_key_conflicts_with_what_is_inside_it ... ok
+test config::tests::favorites_toggle_round_trip_and_survive_recents_writes ... ok
+test exec::tests::a_reader_and_a_writer_of_one_file_share_a_group ... ok
+test config::tests::favorite_thinking_set_clear_and_survive_other_writes ... ok
+test exec::tests::a_shell_command_still_stops_the_whole_batch ... ok
+test exec::tests::an_empty_batch_plans_to_nothing ... ok
+test exec::tests::two_readers_of_one_file_do_not_wait_for_each_other ... ok
+test exec::tests::edits_to_different_files_are_independent_and_share_no_group ... ok
+test exec::tests::blocked_calls_neither_serialize_nor_conflict ... ok
+test exec::tests::two_writes_to_one_file_stay_in_call_order ... ok
+test config::tests::save_then_load_round_trips_and_preserves_unknown_keys ... ok
+test guards::tests::a_different_result_resets_the_streak ... ok
+test guards::tests::a_zero_threshold_never_reports_a_stall ... ok
+test guards::tests::an_empty_turn_is_empty_but_a_silent_tool_call_is_not ... ok
+test guards::tests::a_reply_that_repeats_one_line_is_degenerate ... ok
+test guards::tests::an_error_and_a_success_with_the_same_text_are_not_the_same_result ... ok
+test guards::tests::different_commands_with_the_same_failure_are_detected_as_stuck ... ok
+test guards::tests::guidance_says_what_was_observed_and_never_that_the_tool_failed ... ok
+test guards::tests::the_nudge_tells_the_model_what_was_wrong ... ok
+test guards::tests::the_signature_ignores_noise_past_the_head ... ok
+test prompt::tests::byte_stable_for_identical_inputs ... ok
+test prompt::tests::context_changes_do_not_disturb_stable_prefix_length ... ok
+test prompt::tests::identity_embeds_agent_contract_and_tiers_are_ordered ... ok
+test prompt::tests::instruction_hash_detects_content_change ... ok
+test prompt::tests::a_huge_hint_is_cut_and_says_so ... ok
+test prompt::tests::a_touched_subdirectory_contributes_its_instructions ... ok
+test prompt::tests::project_loader_first_match_wins ... ok
+test prompt::tests::hints_are_read_from_the_touched_directory_and_its_ancestors_only ... ok
+test prompt::tests::nothing_is_loaded_before_anything_is_touched ... ok
+test config::tests::recents_dedup_cap_and_roundtrip ... ok
+test prompt::tests::the_stable_fingerprint_moves_only_when_the_stable_tier_does ... ok
+test config::tests::favorites_cap_at_max_with_loud_error ... ok
+test prompt::tests::the_order_does_not_depend_on_the_order_directories_were_touched ... ok
+test prompt::tests::workspace_memory_is_additive_with_agents ... ok
+test references::tests::a_binary_file_is_described_not_attached ... ok
+test prompt::tests::the_same_file_in_two_places_is_one_block ... ok
+test references::tests::a_file_reference_attaches_its_content ... ok
+test references::tests::a_line_range_is_sliced_and_counted ... ok
+test references::tests::a_directory_reference_lists_entries_sorted_and_hides_sensitive_ones ... ok
+test references::tests::a_huge_file_is_cut_and_says_so ... ok
+test compact::anchor_and_cut_tests::no_generated_transcript_can_produce_an_illegal_tail ... ok
+test prompt::tests::the_walk_stops_after_a_few_levels ... ok
+test prompt::tests::the_nearest_directories_win_when_there_are_too_many ... ok
+test references::tests::a_plain_prompt_produces_exactly_one_text_block ... ok
+test references::tests::a_missing_file_is_reported_rather_than_silently_dropped ... ok
+test references::tests::email_addresses_are_not_references ... ok
+test references::tests::escaping_the_workspace_is_refused ... ok
+test registry::tests::descriptor_order_is_a_function_of_the_tool_set_not_of_hash_seeds ... ok
+test registry::tests::subset_keeps_only_known_names_and_shares_the_tool ... ok
+test references::tests::text_without_references_produces_nothing_to_render ... ok
+test references::tests::the_message_keeps_the_users_words_and_adds_the_attachment ... ok
+test skills::tests::frontmatter_edge_cases ... ok
+test references::tests::preview_and_range_parsing_agree ... ok
+test untrusted::tests::a_long_result_that_reports_more_upstream_says_so ... ok
+test untrusted::tests::a_short_result_is_left_exactly_as_it_was ... ok
+test untrusted::tests::content_cannot_close_or_forge_the_boundary_in_any_case ... ok
+test untrusted::tests::external_text_arrives_inside_a_boundary_that_names_its_source ... ok
+test untrusted::tests::the_named_sources_are_untrusted_and_local_tools_are_not ... ok
+test untrusted::tests::the_notice_needs_both_a_marker_and_length ... ok
+test references::tests::the_reference_count_is_capped ... ok
+test verify::tests::a_failed_or_refused_mutation_is_not_an_edit ... ok
+test verify::tests::a_failing_check_does_not_count_as_verification ... ok
+test verify::tests::a_successful_check_after_the_edit_clears_it ... ok
+test verify::tests::an_edit_after_a_passing_check_needs_its_own_check ... ok
+test verify::tests::an_edit_with_no_check_is_unverified ... ok
+test skills::tests::catalog_lists_name_and_description_only ... ok
+test verify::tests::read_only_work_is_never_nudged ... ok
+test verify::tests::the_nudge_lists_at_most_three_paths_and_counts_the_rest ... ok
+test verify::tests::the_runners_that_count_as_checks_and_the_ones_that_do_not ... ok
+test references::tests::sensitive_paths_are_refused_with_a_reason_the_user_can_see ... ok
+test skills::tests::discovers_validates_and_shadows_by_priority_root_order ... ok
+test config::tests::prompt_history_appends_dedups_caps_and_survives_reopen ... ok
+
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+     Running tests\batch_planning.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\batch_planning-ff21c852f70cbdcc.exe)
+
+running 3 tests
+test edits_to_different_files_run_at_the_same_time ... ok
+test edits_to_the_same_file_run_one_after_the_other ... ok
+test a_shell_call_keeps_the_whole_batch_serialized ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests\cache_attribution.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\cache_attribution-430c2f7a8b576266.exe)
+
+running 4 tests
+test a_warm_session_reports_hits_and_no_waste ... ok
+test a_model_switch_is_named_as_the_cause ... ok
+test a_cache_that_stops_being_used_is_attributed_and_priced ... ok
+test a_provider_that_never_mentions_caching_is_not_reported_as_wasteful ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\compaction_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\compaction_scenarios-a27c3992e5d6b3ab.exe)
+
+running 10 tests
+test for_model_resolves_catalog_windows ... ok
+test disabled_compaction_never_fires ... ok
+test empty_summary_text_is_refused_rather_than_padded ... ok
+test context_overflow_compacts_once_and_recovers ... ok
+test failed_summarization_does_not_commit_and_is_reported_once ... ok
+test a_sibling_branch_sees_its_own_summary_and_not_the_other_branchs_compaction ... ok
+test known_window_overrides_fixed_threshold ... ok
+test model_hot_swap_refreshes_live_window ... ok
+test pressure_triggers_compaction_and_persists_entry ... ok
+test abort_during_summarization_ends_the_run_aborted_and_commits_nothing ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests\context_shaping.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\context_shaping-1e0d0770803cab59.exe)
+
+running 4 tests
+test a_truncated_fetch_says_it_is_incomplete ... ok
+test an_mcp_result_reaches_the_model_inside_a_boundary_the_content_cannot_forge ... ok
+test a_local_tool_result_is_handed_over_untouched ... ok
+test a_compaction_keeps_the_users_own_words ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\guard_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\guard_scenarios-b02e042a4bd45a7a.exe)
+
+running 4 tests
+test a_degenerate_reply_is_caught_too ... ok
+test a_run_that_says_nothing_is_nudged_then_failed ... ok
+test a_successful_run_never_sees_the_guard ... ok
+test different_commands_with_the_same_failure_trip_the_stuck_run_guard ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\loop_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\loop_scenarios-2babf5c096a54e4a.exe)
+
+running 32 tests
+test a_stream_that_ends_without_a_terminal_frame_keeps_its_partial_text ... ok
+test a_drain_point_message_reaches_an_installed_replacement ... ok
+test after_hook_rewrites_result_content ... ok
+test an_overflow_retry_discards_the_failed_attempt_from_transcript_and_replacement ... ok
+test before_hook_block_vetoes_one_call_only ... ok
+test attaching_a_store_mid_run_invalidates_the_replacement ... ok
+test doom_loop_brake_denies_repetition ... ok
+test failing_tool_becomes_error_result ... ok
+test detaching_the_store_mid_run_invalidates_the_replacement ... ok
+test happy_multi_tool_flow_completes ... ok
+test hooks_observe_block_and_rewrite_tool_calls ... ok
+test panicking_turn_hooks_are_contained_and_the_next_run_still_starts ... ok
+test observation_scope_is_stable_per_agent_and_renewed_on_restore ... ok
+test prepare_next_turn_replaces_context_model_and_thinking_for_the_run_only ... ok
+test replacement_context_tracks_the_run_transcript ... ok
+test resuming_a_session_another_writer_holds_is_refused_with_a_clear_reason ... ok
+test should_stop_after_turn_ends_the_run_without_draining_queues ... ok
+test steering_prefill_drains_before_second_call ... ok
+test task_def_routes_tools_prompt_and_model ... ok
+test re_resuming_the_current_session_is_allowed_and_a_locked_switch_keeps_it ... ok
+test task_delegates_to_isolated_child_via_host ... ok
+test task_depth_cap_refuses_nested_delegation ... ok
+test task_unknown_type_names_available_agents ... ok
+test transform_context_output_reaches_the_request_and_conversion_still_filters ... ok
+test truncated_calls_fail_and_reason_is_sticky_max_tokens ... ok
+test unknown_tool_yields_error_result_not_crash ... ok
+test mid_run_compaction_invalidates_the_replacement_context ... ok
+test abort_mid_stream_preserves_partial_text ... ok
+test abort_during_stream_creation_ends_run_aborted ... ok
+test abort_mid_stream_commits_the_terminal_message_to_history_and_store ... ok
+test concurrent_runs_are_rejected ... ok
+test abort_mid_batch_refuses_calls_that_have_not_started ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running tests\queue_conformance.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\queue_conformance-7cea909d704ba89c.exe)
+
+running 2 tests
+test explicit_all_followups_share_one_stop_boundary ... ok
+test default_followups_wait_for_separate_stop_boundaries ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\retry_path.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\retry_path-3dfd771bd8857ad9.exe)
+
+running 3 tests
+test the_notice_text_names_what_happened_and_what_it_costs ... ok
+test an_auth_failure_is_never_retried_even_inside_the_loop ... ok
+test a_transient_provider_failure_no_longer_fails_the_turn ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests\sequence_repair.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\sequence_repair-6a3a0615a9c7adcd.exe)
+
+running 3 tests
+test a_healthy_transcript_is_left_alone ... ok
+test a_run_that_starts_on_a_dangling_call_closes_it_before_the_next_request ... ok
+test a_second_run_does_not_close_the_same_calls_twice ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\subdirectory_hints.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\subdirectory_hints-9c7e709d341d15e5.exe)
+
+running 4 tests
+test a_run_that_touches_nothing_never_mentions_a_hint ... ok
+test a_directory_outside_the_workspace_contributes_nothing ... ok
+test working_in_a_subdirectory_puts_its_instructions_in_the_next_request ... ok
+test a_second_turn_in_the_same_directory_does_not_duplicate_the_hint ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\task_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\task_scenarios-410d6628563478e9.exe)
+
+running 20 tests
+test a_child_persists_its_own_session_file_beside_the_parent ... ok
+test a_task_id_resumes_after_the_process_that_created_it_is_gone ... ok
+test agent_def_model_outranks_the_request ... ok
+test aborting_the_parent_stops_running_children ... ok
+test a_panicking_resumed_run_lands_failed_not_running ... ok
+test child_failures_land_in_the_registry_as_failed ... ok
+test request_model_is_honoured_and_reported ... ok
+test resume_continues_the_same_child_and_accumulates_turns ... ok
+test status_probe_reports_without_running_anything ... ok
+test background_task_runs_detached_and_its_notice_reaches_the_parent ... ok
+test unknown_and_partial_models_are_refused_before_any_run ... ok
+test unknown_ids_still_fail_honestly_when_nothing_is_on_disk ... ok
+test unknown_task_id_is_refused_with_the_tracked_ids ... ok
+test the_background_notice_names_the_model ... ok
+test a_resumed_running_child_survives_registry_eviction ... ok
+test a_resumed_run_that_fails_lands_failed_not_running ... ok
+test a_resumed_background_child_is_running_before_the_dispatch_returns ... ok
+test resuming_a_running_background_task_is_refused_until_it_settles ... ok
+test a_second_resume_of_a_running_resumed_child_is_refused_without_forging_failure ... ok
+test aborting_the_parent_reaches_a_resumed_running_child ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+
+     Running tests\usage_anchor.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\usage_anchor-e7d7f997df79fadf.exe)
+
+running 4 tests
+test a_provider_that_reports_no_usage_falls_back_to_the_heuristic ... ok
+test a_dense_session_is_compacted_when_the_provider_says_so ... ok
+test the_estimate_tracks_the_provider_within_ten_percent ... ok
+test a_prose_like_session_is_not_compacted_early ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\verification_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\verification_scenarios-46c55ac6356258c3.exe)
+
+running 5 tests
+test read_only_work_is_never_nudged ... ok
+test a_passing_check_after_the_edit_ends_the_run_without_a_nudge ... ok
+test the_nudge_gets_two_chances_and_then_stops ... ok
+test an_edit_that_stops_without_a_check_is_nudged ... ok
+test a_check_that_did_not_pass_is_not_verification ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests epsilon_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+exit=0
+
+== cargo test -p epsilon-core --test task_scenarios ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running tests\task_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93-target\debug\deps\task_scenarios-410d6628563478e9.exe)
+
+running 20 tests
+test a_child_persists_its_own_session_file_beside_the_parent ... ok
+test a_task_id_resumes_after_the_process_that_created_it_is_gone ... ok
+test agent_def_model_outranks_the_request ... ok
+test a_panicking_resumed_run_lands_failed_not_running ... ok
+test child_failures_land_in_the_registry_as_failed ... ok
+test request_model_is_honoured_and_reported ... ok
+test resume_continues_the_same_child_and_accumulates_turns ... ok
+test aborting_the_parent_stops_running_children ... ok
+test background_task_runs_detached_and_its_notice_reaches_the_parent ... ok
+test status_probe_reports_without_running_anything ... ok
+test unknown_and_partial_models_are_refused_before_any_run ... ok
+test unknown_ids_still_fail_honestly_when_nothing_is_on_disk ... ok
+test unknown_task_id_is_refused_with_the_tracked_ids ... ok
+test the_background_notice_names_the_model ... ok
+test a_resumed_running_child_survives_registry_eviction ... ok
+test a_resumed_run_that_fails_lands_failed_not_running ... ok
+test a_resumed_background_child_is_running_before_the_dispatch_returns ... ok
+test resuming_a_running_background_task_is_refused_until_it_settles ... ok
+test a_second_resume_of_a_running_resumed_child_is_refused_without_forging_failure ... ok
+test aborting_the_parent_reaches_a_resumed_running_child ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+exit=0
+
+# round complete 2026-09-18T17:57:24+03:00
+
+# =============================================================================
+# ROUND 2 (REVIEW ROUND) — supersedes every result above. Round-1 numbers were
+# taken at lib.rs d8a7c28e…, bytes that no longer exist (the review round added
+# the foreground containment and a seventh test). These are the numbers that
+# stand as M93's working-tree evidence.
+# date: 2026-09-18T19:17:12; host: DESKTOP-I138TH7; rustc 1.97.1 (8bab26f4f 2026-07-14); cargo 1.97.1
+# sha256 lib.rs             f07892600a86925e22113812b38cc2aae977f616b72ef7cb56ae49c15821fbe2
+# sha256 task_scenarios.rs  791934d5d2e3131cb490dacd2f8b1871bf559434b5ef94f2e7aaa7466f90ba86
+#
+# CARGO_TARGET_DIRS USED (epsilon-m93-target became unusable mid-round):
+#  - epsilon-m93-target: Avira quarantined the freshly linked debug lib-test exe
+#    (HEUR/APC.Misc, detection logged 18:32:22 on
+#    ...\epsilon-m93-target\debug\deps\epsilon_core-6d8b3a61112d7ce1.exe) and then
+#    refused writes to that path (LNK1104 / "Access is denied").
+#  - epsilon-m93b-target: fmt, clippy, --test task_scenarios, the negative
+#    controls, and the per-target suite fallback below.
+#  - epsilon-m93c-target: the single-command run below (CARGO_PROFILE_TEST_DEBUG=0).
+# The same false positive hit the new dir too (18:54:08, same exe content) and the
+# renamed relink (18:57:10, ...\m93-logs\libtests-r2-…exe) — the verdict follows the
+# DEBUG-BUILT BINARY's content, not the path: an identical relink without debuginfo
+# runs (lib target 108/108), and task_scenarios is untouched by the heuristic.
+# Full raw logs: audit/evidence/m93-round2-verify.log and audit/evidence/m93-round2-command.log.
+
+== cargo fmt --all -- --check ==   (epsilon-m93b-target)
+fmt exit=0
+
+== cargo clippy -p epsilon-core -p epsilon-contracts -p epsilon-tools --all-targets -- -D warnings ==   (epsilon-m93b-target)
+clippy exit=0
+
+== cargo test -p epsilon-core — CARGO_PROFILE_TEST_DEBUG=0 (epsilon-m93c-target) ==
+# The exact single command; the env knob only rebuilds the test profile without
+# debug info (the AV-quarantined content is the debug build). Result:
+== round-2 attempt B: single-command suite, CARGO_PROFILE_TEST_DEBUG=0 (AV false-positives the debug-built lib-test exe as HEUR/APC.Misc; the debuginfo-less build of the same target runs green) ==
+== cargo test -p epsilon-core ==
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\epsilon_core-4f78af04085fbdbc.exe)
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+     Running tests\batch_planning.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\batch_planning-101cbfd4db220176.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+     Running tests\cache_attribution.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\cache_attribution-5b285d1fca8c882a.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\compaction_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\compaction_scenarios-1ae20a0d778b2954.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+     Running tests\context_shaping.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\context_shaping-c07e2206e54f70f2.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\guard_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\guard_scenarios-70de6410c1edcfb4.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\loop_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\loop_scenarios-8d3a3b76759b1505.exe)
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+     Running tests\queue_conformance.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\queue_conformance-48538d5d144f1da8.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\retry_path.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\retry_path-6ac7a71d39418337.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s
+     Running tests\sequence_repair.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\sequence_repair-35e3b798ae4e912c.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\subdirectory_hints.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\subdirectory_hints-ae69fe3bf013a2ee.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\task_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\task_scenarios-303fdf4e24481ed3.exe)
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+     Running tests\usage_anchor.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\usage_anchor-079f684c489c4e2a.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests\verification_scenarios.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m93c-target\debug\deps\verification_scenarios-c4e0302dafb43228.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+   Doc-tests epsilon_core
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+
+== cargo test -p epsilon-core — default profile, per-target fallback (epsilon-m93b-target) ==
+# The default-profile run of the composite command cannot complete on this machine
+# (the lib-test exe is quarantined at link/execute). Coverage was reproduced per
+# target under the default profile:
+#   lib target (108):  cargo rustc -p epsilon-core --lib --profile test -- -o <path> -C debuginfo=0
+#                      -> ./libtests-nodbg-a65a5d66f67f0e87.exe
+#                      test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured
+#   integration (99):
+#     cargo test -p epsilon-core --test batch_planning --test cache_attribution \
+#       --test compaction_scenarios --test context_shaping --test guard_scenarios \
+#       --test loop_scenarios --test queue_conformance --test retry_path \
+#       --test sequence_repair --test subdirectory_hints --test task_scenarios \
+#       --test usage_anchor --test verification_scenarios
+#     exit=0 — 3+4+10+4+4+32+2+3+3+4+21+4+5 = 99 passed; 0 failed; 0 ignored
+#   (108 + 99 + 0 doc-tests = 207 = round-1's 206 + the one new test.)
+
+== cargo test -p epsilon-core --test task_scenarios ==   (epsilon-m93b-target)
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+exit=0
+
+# Negative controls (round 2): see audit/evidence/m93-probes.log — 6 claim-dependent
+# reds under probe A, both panic tests red under probe B, byte-identical restores
+# verified (sha256 f0789260…, zero probe markers).
+#
+# round 2 complete 2026-09-18T19:17:12

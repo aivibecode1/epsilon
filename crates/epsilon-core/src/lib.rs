@@ -291,29 +291,60 @@ fn looks_like_context_overflow(msg: &str) -> bool {
 /// after which every later run returns `RunError::AlreadyRunning`. On a panic the caller
 /// gets `fallback` — the seam's no-op default (the input messages, `None`, `false`).
 ///
-/// Written against std only (no `futures-util` dependency in this crate): `pin!` + `poll_fn`
-/// put the panic boundary exactly around `poll`, so a hook that unwinds mid-await is caught
-/// too, and a panicked future is never polled again.
 async fn contain_hook<T>(fut: impl std::future::Future<Output = T>, fallback: T) -> T {
+    contain_panic(fut, move |_| fallback).await
+}
+
+/// [`contain_hook`]'s payload-aware form (M93): the same containment, but the panic's own
+/// text reaches the fallback, so a contained failure can report what happened.
+///
+/// Used by both task bodies (detached and foreground), where the fallback is the terminal
+/// `Failed` record F18 requires: an entry left `Running` after its run unwound would be a
+/// lie, and a silently contained panic would not be a report.
+///
+/// Written against std only (no `futures-util` dependency in this crate): `pin!` + `poll_fn`
+/// put the panic boundary exactly around `poll`, so a future that unwinds mid-await is caught
+/// too, and a panicked future is never polled again.
+async fn contain_panic<T>(
+    fut: impl std::future::Future<Output = T>,
+    on_panic: impl FnOnce(String) -> T,
+) -> T {
     let mut fut = std::pin::pin!(fut);
-    let mut panicked = false;
+    let mut panic: Option<Box<dyn std::any::Any + Send>> = None;
     let out = std::future::poll_fn(|cx| {
-        if panicked {
+        if panic.is_some() {
             // The future panicked in an earlier poll: it must not be polled again, so the
-            // containment settles on the fallback immediately.
+            // containment settles immediately.
             return std::task::Poll::Ready(None);
         }
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fut.as_mut().poll(cx))) {
             Ok(std::task::Poll::Ready(v)) => std::task::Poll::Ready(Some(v)),
             Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
-            Err(_) => {
-                panicked = true;
+            Err(payload) => {
+                panic = Some(payload);
                 std::task::Poll::Ready(None)
             }
         }
     })
     .await;
-    out.unwrap_or(fallback)
+    match out {
+        Some(v) => v,
+        // A missing payload means the containment never saw a panic; `default` keeps this
+        // branch panic-free as well.
+        None => on_panic(panic.as_deref().map(panic_text).unwrap_or_default()),
+    }
+}
+
+/// Printable form of a panic payload without assuming its type (the provider seam's
+/// `PanicGuard` uses the same rule).
+fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "opaque panic payload".to_string()
+    }
 }
 
 /// Errors a run can surface to its caller.
@@ -2741,6 +2772,35 @@ impl Agent {
         }
     }
 
+    /// M93/F18: claim a tracked task for a new run, in ONE lock hold.
+    ///
+    /// The check-then-set this replaced was two acquisitions: two racing resumes both read
+    /// the settled snapshot, both saw a non-running state — before either had written
+    /// anything — and both started a leg on the same child. Doing the find, the refusal and
+    /// the state change under a single hold makes the claim atomic, so exactly one caller
+    /// can win; the losers get the same honesty a status probe would.
+    ///
+    /// Errors describe the two states a caller can meet, and leave the entry untouched: an
+    /// id that is no longer tracked (evicted, or never registered) and a child already
+    /// running. Callers invoke this after their last fallible lookup, so a failure can never
+    /// leave a phantom `Running` behind.
+    fn claim_task_running(&self, id: &str) -> Result<(), String> {
+        let mut v = self
+            .tasks
+            .lock()
+            .map_err(|_| "task registry lock poisoned".to_string())?;
+        let Some(entry) = v.iter_mut().find(|e| e.id == id) else {
+            return Err(format!("task '{id}' is no longer tracked"));
+        };
+        if entry.state == epsilon_contracts::tool::TaskState::Running {
+            return Err(format!(
+                "task '{id}' is still running — poll it with task_id and no prompt, or wait for its completion notice"
+            ));
+        }
+        entry.state = epsilon_contracts::tool::TaskState::Running;
+        Ok(())
+    }
+
     /// Run, resume, or report a delegated task (M53 wires `task`'s
     /// `background` and `task_id` parameters here).
     ///
@@ -2787,17 +2847,16 @@ impl Agent {
             if prompt.is_empty() {
                 return Ok(epsilon_contracts::tool::TaskOutcome::Running(snapshot));
             }
-            if snapshot.state == epsilon_contracts::tool::TaskState::Running {
-                return Err(format!(
-                    "task '{id}' is still running — poll it with task_id and no prompt, or wait for its completion notice"
-                ));
-            }
             let child = self
                 .tasks
                 .lock()
                 .ok()
                 .and_then(|v| v.iter().find(|e| e.id == id).map(|e| Arc::clone(&e.child)))
                 .ok_or_else(|| format!("task '{id}' is no longer tracked"))?;
+            // M93/F18: the claim IS the refusal — one lock hold, after the last fallible
+            // lookup, so a second resume is turned away while the first leg is in flight and
+            // a failed lookup never leaves a phantom `Running` behind.
+            self.claim_task_running(&id)?;
             if request.background {
                 self.spawn_task_run(
                     id.clone(),
@@ -2884,6 +2943,12 @@ impl Agent {
     }
 
     /// Foreground path: await the child, record it, envelope the result.
+    ///
+    /// M93/F18: the claim — or the fresh register — writes `Running` before this body runs,
+    /// so exactly like the detached body it must always end in a terminal record. The
+    /// fallible work is contained the way `contain_panic` contains the detached body, so a
+    /// panic here lands the entry `Failed` naming the panic instead of stranding the
+    /// just-claimed entry `Running` forever.
     async fn await_task_run(
         &self,
         id: String,
@@ -2896,57 +2961,73 @@ impl Agent {
             .task_snapshot(&id)
             .map(|s| s.description)
             .unwrap_or_default();
-        match child.run(Self::task_user_message(&prompt)).await {
-            Ok(outcome) => {
-                // In-band failures are still failures: a subagent that died on
-                // a provider error must not be reported as a completed task.
-                if let Some(reason) = Self::task_run_failure(&outcome) {
-                    let message = format!("subagent run failed: {reason}");
-                    self.update_task_entry(&id, |entry| {
-                        entry.state = epsilon_contracts::tool::TaskState::Failed;
-                        entry.output = message.clone();
-                    });
-                    return Err(message);
+        let panic_id = id.clone();
+        contain_panic(
+            async {
+                match child.run(Self::task_user_message(&prompt)).await {
+                    Ok(outcome) => {
+                        // In-band failures are still failures: a subagent that died on
+                        // a provider error must not be reported as a completed task.
+                        if let Some(reason) = Self::task_run_failure(&outcome) {
+                            let message = format!("subagent run failed: {reason}");
+                            self.update_task_entry(&id, |entry| {
+                                entry.state = epsilon_contracts::tool::TaskState::Failed;
+                                entry.output = message.clone();
+                            });
+                            return Err(message);
+                        }
+                        let (text, turns) = Self::summarize_task_output(
+                            &subagent_type,
+                            &description,
+                            model.as_deref(),
+                            &outcome.produced,
+                        );
+                        self.update_task_entry(&id, |e| {
+                            e.state = epsilon_contracts::tool::TaskState::Completed;
+                            e.output = text.clone();
+                            // Cumulative: a resumed child keeps counting its turns.
+                            e.turns += turns;
+                            e.usage = Some(outcome.usage);
+                        });
+                        Ok(epsilon_contracts::tool::TaskOutcome::Completed(
+                            epsilon_contracts::tool::TaskHostResult {
+                                text,
+                                usage: Some(outcome.usage),
+                                details: serde_json::json!({
+                                    "task_id": id,
+                                    "subagent_type": subagent_type,
+                                    "model": model,
+                                    "description": description,
+                                    "state": "completed",
+                                    "turns": turns,
+                                    "produced": outcome.produced.len(),
+                                    "reason": format!("{:?}", outcome.reason),
+                                }),
+                            },
+                        ))
+                    }
+                    Err(e) => {
+                        let message = format!("task host run failed: {e}");
+                        self.update_task_entry(&id, |entry| {
+                            entry.state = epsilon_contracts::tool::TaskState::Failed;
+                            entry.output = message.clone();
+                        });
+                        Err(message)
+                    }
                 }
-                let (text, turns) = Self::summarize_task_output(
-                    &subagent_type,
-                    &description,
-                    model.as_deref(),
-                    &outcome.produced,
-                );
-                self.update_task_entry(&id, |e| {
-                    e.state = epsilon_contracts::tool::TaskState::Completed;
-                    e.output = text.clone();
-                    // Cumulative: a resumed child keeps counting its turns.
-                    e.turns += turns;
-                    e.usage = Some(outcome.usage);
-                });
-                Ok(epsilon_contracts::tool::TaskOutcome::Completed(
-                    epsilon_contracts::tool::TaskHostResult {
-                        text,
-                        usage: Some(outcome.usage),
-                        details: serde_json::json!({
-                            "task_id": id,
-                            "subagent_type": subagent_type,
-                            "model": model,
-                            "description": description,
-                            "state": "completed",
-                            "turns": turns,
-                            "produced": outcome.produced.len(),
-                            "reason": format!("{:?}", outcome.reason),
-                        }),
-                    },
-                ))
-            }
-            Err(e) => {
-                let message = format!("task host run failed: {e}");
-                self.update_task_entry(&id, |entry| {
+            },
+            move |panic| {
+                // The claim is now paired: the foreground leg lands the same truthful record
+                // the detached body's panic arm writes.
+                let message = format!("subagent run failed: the run panicked ({panic})");
+                self.update_task_entry(&panic_id, |entry| {
                     entry.state = epsilon_contracts::tool::TaskState::Failed;
                     entry.output = message.clone();
                 });
                 Err(message)
-            }
-        }
+            },
+        )
+        .await
     }
 
     /// Background path: detach the run, record its result, queue the notice.
@@ -2963,30 +3044,52 @@ impl Agent {
         let notices = self.task_notices_tx.clone();
         let notice_id = id.clone();
         tokio::spawn(async move {
-            let (state, text, turns, usage) =
-                match child.run(Agent::task_user_message(&prompt)).await {
-                    Ok(outcome) => match Agent::task_run_failure(&outcome) {
-                        Some(reason) => (
-                            "failed",
-                            format!("subagent run failed: {reason}"),
-                            0,
-                            Some(outcome.usage),
-                        ),
-                        None => {
-                            let (text, turns) = Agent::summarize_task_output(
-                                &subagent_type,
-                                &description,
-                                model.as_deref(),
-                                &outcome.produced,
-                            );
-                            ("completed", text, turns, Some(outcome.usage))
-                        }
-                    },
-                    Err(e) => ("failed", format!("task host run failed: {e}"), 0, None),
-                };
-            if let Ok(mut v) = tasks.lock()
-                && let Some(entry) = v.iter_mut().find(|e| e.id == id)
-            {
+            // M93/F18: from the resume claim (and the fresh register) onward the entry says
+            // `Running`, so this body must always end with a terminal record — including when
+            // the run itself unwinds. The fallible work is contained exactly like a
+            // panicking turn hook (`contain_panic`, the std-only `poll_fn` + `catch_unwind`
+            // boundary), so a panic lands as a failed record naming the panic instead of
+            // leaving the task `Running` forever.
+            let (state, text, turns, usage) = contain_panic(
+                async {
+                    match child.run(Agent::task_user_message(&prompt)).await {
+                        Ok(outcome) => match Agent::task_run_failure(&outcome) {
+                            Some(reason) => (
+                                "failed",
+                                format!("subagent run failed: {reason}"),
+                                0,
+                                Some(outcome.usage),
+                            ),
+                            None => {
+                                let (text, turns) = Agent::summarize_task_output(
+                                    &subagent_type,
+                                    &description,
+                                    model.as_deref(),
+                                    &outcome.produced,
+                                );
+                                ("completed", text, turns, Some(outcome.usage))
+                            }
+                        },
+                        Err(e) => ("failed", format!("task host run failed: {e}"), 0, None),
+                    }
+                },
+                |panic| {
+                    (
+                        "failed",
+                        format!("subagent run failed: the run panicked ({panic})"),
+                        0,
+                        None,
+                    )
+                },
+            )
+            .await;
+            // The registry must learn the outcome even when some unrelated panic poisoned the
+            // lock: a `Running` entry whose run is over is exactly the lie this milestone
+            // removes, so this write recovers the guard instead of silently skipping.
+            let mut v = tasks
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = v.iter_mut().find(|e| e.id == id) {
                 entry.state = if state == "completed" {
                     epsilon_contracts::tool::TaskState::Completed
                 } else {

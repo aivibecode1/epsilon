@@ -28,7 +28,7 @@
 | F15 | P0 before exposing restore | Checkpoint restoration conflates skipped capture with creation | S, high; frontend reach not established | 3–6 days / high |
 | F16 | P1 | OAuth refresh orchestration differs from login/fallback paths | S, high for control flow | 3–6 days / high |
 | F17 | P1 | Locally aborted partial replies are not durably committed | S, high | 1–2 days / low |
-| F18 | P1 | Resumed child task is not marked running before dispatch | S, high | 1–2 days / low |
+| F18 | P1 | Resumed child task is not marked running before dispatch — **fixed 2026-09-18 (M93); frozen-candidate battery owed** (see the F18 section) | S, high | 1–2 days / low |
 | F19 | P2 | Product/docs/parity claims exceed actual workflows | S plus E baseline | 3–5 days docs; workflow work separate / low |
 
 ## F00 — Restore the baseline without weakening its assertions
@@ -286,11 +286,67 @@ provider-Done-races-cancel timing run (the biased select prefers cancellation; u
 
 ## F18 — Reset task state when resuming
 
-**Evidence:** resumed child lookup checks prior state but does not set `Running` (`crates/epsilon-core/src/lib.rs:2320–2356`); background dispatch writes final state later (`:2495–2530`). Abort selects running tasks (`:980–995`); eviction can select non-running entries (`:2219–2229`).
+**M93 fix (2026-09-18), verification owed:** the resume branch now claims the entry in **one
+lock hold** — `Agent::claim_task_running` (`crates/epsilon-core/src/lib.rs:2787-2802`) finds the
+entry (honest "no longer tracked"), refuses a child that is already `Running` with the message
+the old guard used, and sets `Running` — called after the child lookup, the last fallible step,
+before the background/foreground split (`:2850-2860`). The second-resume refusal, the abort
+cascade's reach and the entry's unevictability fall out of that state change; the racy
+read-then-check guard it replaced is gone, and `register_task_entry`'s selector is unchanged
+(and, because the claim writes `Running` before the split, the selector now genuinely protects a
+running child). Both run bodies are contained the way the hook seam contains a panicking hook
+(`contain_panic`, `:308-338`, the std-only `pin!`/`poll_fn` + `catch_unwind` boundary): the
+detached spawn body, so an unwinding run writes a `failed` record naming the panic instead of
+leaving the entry `Running`, and — added by the review round — the foreground body
+(`await_task_run`, `:2952-3031`), whose panic arm writes the same terminal record and returns
+the error, so a foreground panic cannot strand the just-claimed entry `Running` forever. The
+detached body's terminal write recovers a poisoned registry lock instead of skipping the write
+(`spawn_task_run`, `:3034-3110`). Regressions in `crates/epsilon-core/tests/task_scenarios.rs`:
+claim visible before the dispatch returns, a second resume refused without a forged failure
+notice, abort reaching the resumed child, the child surviving registry eviction, a failing leg
+landing `Failed` (and a failed rehydrate registering nothing), plus one panic test per contained
+body (background and foreground). Milestone log: `docs/milestones/M93-task-state-on-resume.md`.
+The frozen-candidate battery is owed.
 
-**Impact:** a resumed child appears settled while running, can evade cancellation tracking or become eligible for eviction. Core may still reject concurrent execution, but the registry misreports it.
+**Evidence (citations corrected 2026-09-18 — the recorded ranges were anchored to revision
+`3afafd3` and had drifted +135 at the abort site and +448…+458 in the task region):** the resume
+branch never wrote `Running` (recorded `:2320-2356` → HEAD `:2768-2824` before this fix); its
+guard (`HEAD :2790-2793`) compared a snapshot read two calls earlier, so two racing resumes could
+both pass it and nothing ever set the state. The background arm spawned the leg (`:2802-2809`)
+and returned `TaskOutcome::Running(now)` at `:2813` carrying the OLD terminal state. Abort
+selected children with `e.state == TaskState::Running` (recorded `:995` → HEAD `:1130`).
+Eviction took the first non-running entry (recorded `:2229` → HEAD `:2687-2698`, selector
+`:2692`). The spawn body's final state write was `:2953-3007` (recorded `:2495-2530`).
 
-**Acceptance:** controlled slow-provider resumed child appears running before dispatch acknowledgment, refuses second resume, receives parent abort and remains unevictable until settled. Failed launch restores a truthful terminal state.
+**Impact (refined):**
+- **Eviction means an untracked running task, not duplicate execution.** A resumed child's entry
+  was eligible for eviction while its child ran (nothing ever wrote `Running`); once evicted, the
+  running child was tracked nowhere — a later resume or status probe of that id finds nothing
+  tracked and `rehydrate_task` (HEAD `:2439-2573`) tries to open the child's file through
+  `SessionStore::open` (HEAD `:2467-2468`), which the running child's M61 lease refuses
+  (`crates/epsilon-session/src/store.rs:292-299`): the probe fails with the lease error rather
+  than an honest "still running", and the abort cascade cannot reach the child. Only after the
+  first leg ends (lease released) can the id rebind as a fresh child — identity loss. The review
+  round corrected this bullet's original "rebuilds a SECOND child … two live children, two
+  writers on one file" reading: the second open is refused, so the damage class is the untracked
+  window. M93 closes it by making the claim real: pre-fix the entry kept its old settled state
+  and the eviction selector (HEAD `:2692`) could take it; post-fix the entry is `Running` while
+  the child runs, and the selector (`:2723`) skips `Running` entries, so eviction cannot take it.
+- **The background arm forged failures.** Resuming a still-running child in the background
+  swallowed the child's own `RunError::AlreadyRunning`: dispatch returned `Ok(Running(now))` with
+  the entry flipped to `Failed`, and a `state="failed"` notice was queued for a run that was
+  still in flight — the parent model was told a task had failed while it kept running.
+- **"Core may still reject concurrent execution" was a false comfort — but not because a
+  duplicate ran.** Core refuses a second run only on the *same* child agent (`Agent::run`'s
+  `running` swap — an in-agent guard, not a boundary), so that guard is no help here; what
+  actually refuses the duplicate-rehydrate path is the session layer: the child's file is opened
+  through the M61 store lease, and the running child's store holds it, so the rehydrate fails
+  before a second child exists. The damage class is therefore the untracked window (above), not
+  duplicate execution, concurrent writers, or a misreported status field.
+
+**Acceptance:** controlled slow-provider resumed child appears running before dispatch
+acknowledgment, refuses second resume, receives parent abort and remains unevictable until
+settled. Failed launch restores a truthful terminal state.
 
 ## F19 — Reconcile product workflows and documentation
 
@@ -305,11 +361,13 @@ provider-Done-races-cancel timing run (the biased select prefers cancellation; u
 
 ## F20 — Abort must stop starting new calls inside the running batch
 
-**M88 fix (in round B, pending verification):** `run_one` now checks the run token before
-starting a call — the single choke point shared by the barrier and segment plans — so a
-cancelled run refuses the rest of the batch with an error result ("not executed: the run was
-cancelled before it started", `details.aborted`), still in call order, while in-flight calls
-settle. Executed regression: `abort_mid_batch_refuses_calls_that_have_not_started`.
+**M88 fix (verified — battery `gate-m86-88f`: 751 passed / 0 failed / 0 ignored across 55
+summaries, `audit/05-verification-log.md`; committed as `31b1794`):** `run_one` now checks the
+run token before starting a call — the single choke point shared by the barrier and segment
+plans — so a cancelled run refuses the rest of the batch with an error result ("not executed: the
+run was cancelled before it started", `details.aborted`), still in call order, while in-flight
+calls settle. Executed regression: `abort_mid_batch_refuses_calls_that_have_not_started`
+(its pre-fix RED — both batch calls executed after the abort — is in the same log).
 
 **Evidence (pre-fix source trace):** `crates/epsilon-core/src/exec.rs` scheduled every
 prepared call unconditionally in both plans — the barrier loop (`:553-562`) and the per-group

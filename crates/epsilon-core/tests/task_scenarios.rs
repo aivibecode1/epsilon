@@ -655,3 +655,532 @@ async fn unknown_ids_still_fail_honestly_when_nothing_is_on_disk() {
     assert!(err.contains("unknown task id"), "{err}");
     assert!(err.contains("on disk"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// M93 / F18: a resumed child is running before the dispatch returns — and every
+// way out of a leg (completion, in-band failure, panic, no child at all) leaves
+// the registry in a state that is true.
+// ---------------------------------------------------------------------------
+
+/// An agent whose provider stalls `delay_ms` before every stream open (M93's
+/// timing tests are deterministic: the stall is the assertion window, never a
+/// sleep-and-hope) and, when a path is given, whose transcript is durable — the
+/// M58 rehydrate paths need a session file to read children from.
+fn slow_agent(
+    steps: Vec<FauxStep>,
+    delay_ms: u64,
+    session_file: Option<&std::path::Path>,
+) -> Arc<epsilon_core::Agent> {
+    use epsilon_core::testing::SlowProvider;
+
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(SlowProvider::new(FauxProvider::new(steps), delay_ms)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    if let Some(path) = session_file {
+        let store = epsilon_session::SessionStore::open_in(path, &std::env::temp_dir())
+            .expect("parent store");
+        agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+    }
+    agent
+}
+
+/// The task id a Completed delegation reported in its result details.
+fn task_id_of(outcome: &TaskOutcome) -> String {
+    match outcome {
+        TaskOutcome::Completed(res) => res
+            .details
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .expect("id exposed in details")
+            .to_string(),
+        other => panic!("expected Completed, got {other:?}"),
+    }
+}
+
+/// Seed a child session file that a status probe rehydrates into a settled
+/// entry — no provider call, no stall to race. The registry-cap filler.
+fn seed_child_file(dir: &std::path::Path, id: &str, subagent_type: &str) {
+    let file = dir.join(format!("tui-{id}.jsonl"));
+    let mut store = epsilon_session::SessionStore::open_child_in(&file, dir, "parent-filler")
+        .expect("seed child file");
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Custom {
+            custom_type: "task_meta".to_string(),
+            data: Some(serde_json::json!({
+                "task_id": id,
+                "description": "settled filler",
+                "subagent_type": subagent_type,
+                "model": null,
+            })),
+        })
+        .expect("meta entry");
+    // The store drops here: its M61 write lease must be gone before a probe
+    // reopens the file.
+}
+
+#[tokio::test]
+async fn a_resumed_background_child_is_running_before_the_dispatch_returns() {
+    // Leg one completes inline, leaving the entry in a terminal state...
+    let agent = slow_agent(
+        vec![FauxStep::say("leg one"), FauxStep::say("leg two")],
+        200,
+        None,
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let first = host
+        .run_task(req("first leg", "two-leg task", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    // ...and the background resume must announce `Running` before the leg has
+    // run a step. The registry is all a later call can see, and reporting the
+    // previous leg's `Completed` while a new leg is in flight is the defect.
+    let resumed = host
+        .run_task(req("second leg", "two-leg task", true, Some(&id)))
+        .await
+        .expect("resume");
+    match resumed {
+        TaskOutcome::Running(snapshot) => {
+            assert_eq!(snapshot.id, id);
+            assert_eq!(
+                snapshot.state,
+                TaskState::Running,
+                "the dispatch must report the claim, not the old terminal state"
+            );
+        }
+        other => panic!("expected Running, got {other:?}"),
+    }
+    let running = agent
+        .task_snapshots()
+        .into_iter()
+        .filter(|s| s.state == TaskState::Running)
+        .count();
+    assert_eq!(running, 1, "exactly the resumed child is running");
+
+    // The detached leg still lands its own outcome.
+    let settled = await_settled(&agent, &id).await;
+    assert_eq!(settled.state, TaskState::Completed);
+    assert!(settled.output.contains("leg two"), "{}", settled.output);
+}
+
+#[tokio::test]
+async fn a_second_resume_of_a_running_resumed_child_is_refused_without_forging_failure() {
+    let agent = slow_agent(
+        vec![
+            FauxStep::say("leg one"),
+            FauxStep::say("leg two"),
+            FauxStep::say("parent ack"),
+        ],
+        300,
+        None,
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let first = host
+        .run_task(req("first leg", "shared child", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    let resumed = host
+        .run_task(req("second leg", "shared child", true, Some(&id)))
+        .await
+        .expect("resume");
+    assert!(
+        matches!(&resumed, TaskOutcome::Running(s) if s.state == TaskState::Running),
+        "the resumed leg claims the entry: {resumed:?}"
+    );
+
+    // A second resume lands while that leg is in flight. It must be refused by
+    // the claim itself — never accepted and then written `Failed` by the
+    // duplicate leg's own `AlreadyRunning` error, which told the parent model
+    // that a task still in flight had failed.
+    let refusal = host
+        .run_task(req("third leg", "shared child", true, Some(&id)))
+        .await
+        .expect_err("a second resume while the leg is in flight must be refused");
+    assert!(refusal.contains("still running"), "{refusal}");
+    let held = agent.task_snapshot(&id).expect("still tracked");
+    assert_eq!(
+        held.state,
+        TaskState::Running,
+        "the refusal must leave the claim untouched"
+    );
+
+    // The in-flight leg finishes normally; the notice the parent model receives
+    // is its completion, and nothing queued a failure for it.
+    let settled = await_settled(&agent, &id).await;
+    assert_eq!(settled.state, TaskState::Completed);
+    assert!(settled.output.contains("leg two"), "{}", settled.output);
+
+    let run = agent.run(user_msg("carry on")).await.expect("parent run");
+    let notices: Vec<String> = run
+        .produced
+        .iter()
+        .filter_map(|m| match m {
+            Message::User(u) => Some(
+                u.content
+                    .iter()
+                    .filter_map(|c| match c {
+                        UserContent::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(""),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notices.iter().any(|n| n.contains("state=\"completed\"")),
+        "leg two's completion notice must reach the parent: {notices:?}"
+    );
+    assert!(
+        !notices.iter().any(|n| n.contains("state=\"failed\"")),
+        "no failure may be forged for a task that never failed: {notices:?}"
+    );
+}
+
+#[tokio::test]
+async fn aborting_the_parent_reaches_a_resumed_running_child() {
+    // One stall per leg; the resumed leg's stall is aborted long before it
+    // elapses (M34's abort-during-stream path, not a waited-out timeout).
+    let agent = slow_agent(
+        vec![FauxStep::say("leg one"), FauxStep::say("never seen")],
+        1_000,
+        None,
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let first = host
+        .run_task(req("first leg", "resumable", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    let resumed = host
+        .run_task(req("second leg", "resumable", true, Some(&id)))
+        .await
+        .expect("resume");
+    assert!(matches!(&resumed, TaskOutcome::Running(s) if s.state == TaskState::Running));
+
+    // The cascade's selector must see the resumed child...
+    assert_eq!(
+        agent.abort_delegated_tasks(),
+        1,
+        "a resumed running child must be reachable by the abort cascade"
+    );
+    // ...and a parent-level abort (no parent run is active, so it reports false
+    // for the parent) leaves the child failed-aborted, never `Running`.
+    assert!(
+        !agent.abort_current_run(),
+        "the return value describes the parent, which has no run in flight"
+    );
+    let settled = await_settled(&agent, &id).await;
+    assert_eq!(settled.state, TaskState::Failed);
+    assert!(
+        settled.output.contains("aborted"),
+        "the reason says aborted: {}",
+        settled.output
+    );
+}
+
+#[tokio::test]
+async fn a_resumed_running_child_survives_registry_eviction() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent_file = tmp.path().join("tui.jsonl");
+    let agent = slow_agent(
+        vec![FauxStep::say("leg one"), FauxStep::say("leg two")],
+        200,
+        Some(&parent_file),
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+
+    // Entry #1: a settled leg, then a background resume that is in flight when
+    // the registry reaches its cap.
+    let first = host
+        .run_task(req("first leg", "cap child", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    // Seed the fillers first so only the probes — file reads, no provider
+    // calls — have to fit inside the resumed leg's stall. Sizes match
+    // `TASK_REGISTRY_CAP` (16, private to epsilon-core): entry #1 plus fifteen
+    // probes fill the registry; the sixteenth probe is the eviction trigger.
+    let fillers: Vec<String> = (0..16).map(|i| format!("task-fill-{i:02}")).collect();
+    for fill in &fillers {
+        seed_child_file(tmp.path(), fill, "default");
+    }
+
+    let resumed = host
+        .run_task(req("second leg", "cap child", true, Some(&id)))
+        .await
+        .expect("resume");
+    assert!(matches!(&resumed, TaskOutcome::Running(s) if s.state == TaskState::Running));
+
+    for fill in &fillers[..15] {
+        let probe = host
+            .run_task(req_with("", "settled filler", false, Some(fill), None))
+            .await
+            .expect("probe");
+        assert!(
+            matches!(&probe, TaskOutcome::Running(s) if s.state == TaskState::Completed),
+            "a seeded filler rehydrates settled: {probe:?}"
+        );
+    }
+    assert_eq!(agent.task_ids().len(), 16, "the registry is at its cap");
+
+    // The 17th registration evicts the oldest *settled* entry — not the child
+    // first in dispatch order, whose eviction would leave the running child
+    // untracked: a later resume or probe of that id fails on the still-held M61
+    // store lease instead of reporting it running.
+    let probe = host
+        .run_task(req_with(
+            "",
+            "settled filler",
+            false,
+            Some(&fillers[15]),
+            None,
+        ))
+        .await
+        .expect("probe");
+    assert!(matches!(&probe, TaskOutcome::Running(_)));
+    let child = agent
+        .task_snapshot(&id)
+        .expect("a running child must not be evicted for capacity");
+    assert_eq!(
+        child.state,
+        TaskState::Running,
+        "and still running, not settled"
+    );
+    assert!(
+        agent.task_snapshot(&fillers[0]).is_none(),
+        "the eviction took the oldest settled entry instead"
+    );
+    assert_eq!(agent.task_ids().len(), 16, "the registry stays at its cap");
+}
+
+#[tokio::test]
+async fn a_resumed_run_that_fails_lands_failed_not_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent_file = tmp.path().join("tui.jsonl");
+    let agent = slow_agent(
+        vec![
+            FauxStep::say("leg one"),
+            FauxStep::Error {
+                message: "provider exploded".into(),
+            },
+        ],
+        150,
+        Some(&parent_file),
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let first = host
+        .run_task(req("first leg", "doomed resume", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    // The failing leg's error must be accompanied by a terminal write: the claim
+    // this milestone adds is only honest while every way out of a leg records
+    // its outcome, so the entry lands `Failed` with the reason — never left
+    // `Running`, which is what an unpaired claim would strand it in.
+    let failure = host
+        .run_task(req("second leg", "doomed resume", false, Some(&id)))
+        .await
+        .expect_err("the failing leg must surface as an error");
+    assert!(failure.contains("provider exploded"), "{failure}");
+    let settled = agent.task_snapshot(&id).expect("still tracked");
+    assert_eq!(
+        settled.state,
+        TaskState::Failed,
+        "a failed resumed run lands Failed, not Running"
+    );
+    assert!(
+        settled.output.contains("provider exploded"),
+        "{}",
+        settled.output
+    );
+    assert!(
+        agent
+            .task_snapshots()
+            .iter()
+            .all(|s| s.state != TaskState::Running),
+        "no entry may be left Running after a failed leg"
+    );
+
+    // A rehydrate that cannot rebuild its child fails *before* any claim: nothing
+    // may be registered — an entry left `Running` by a failed lookup would be the
+    // other lie the claim's placement (after the last fallible step) prevents.
+    let ghost = "task-ghost-type";
+    seed_child_file(tmp.path(), ghost, "no-such-agent-type");
+    let err = host
+        .run_task(req_with("", "ghost", false, Some(ghost), None))
+        .await
+        .expect_err("a child whose type cannot be rebuilt must fail");
+    assert!(err.contains("unknown agent type"), "{err}");
+    assert!(
+        !agent.task_ids().iter().any(|tracked| tracked == ghost),
+        "a failed rehydrate registers no entry"
+    );
+    assert!(
+        agent
+            .task_snapshots()
+            .iter()
+            .all(|s| s.state != TaskState::Running),
+        "and leaves nothing Running behind"
+    );
+}
+
+/// Provider that answers the first call and panics where the seam would be on
+/// the second. Used *without* `PanicGuard` so the panic reaches the agent loop
+/// the way a core bug — rather than a provider fault — would (the F18 wrap must
+/// contain it either way).
+struct PanicOnSecondCall {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl epsilon_llm::StreamFn for PanicOnSecondCall {
+    async fn stream(
+        &self,
+        model: &epsilon_llm::ModelRef,
+        ctx: epsilon_llm::LlmContext,
+    ) -> epsilon_llm::BoxEventStream {
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            panic!("provider exploded");
+        }
+        FauxProvider::new(vec![FauxStep::say("provider answer")])
+            .stream(model, ctx)
+            .await
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_resumed_run_lands_failed_not_running() {
+    // The extra test the F18 wrap owes: a panic inside the detached body used to
+    // end the task silently, leaving the entry at its previous state and never
+    // queueing a notice — the registry reported a settled child for a leg that
+    // died mid-run.
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(PanicOnSecondCall {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let first = host
+        .run_task(req("first leg", "panic probe", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    let resumed = host
+        .run_task(req("second leg", "panic probe", true, Some(&id)))
+        .await
+        .expect("resume");
+    assert!(matches!(&resumed, TaskOutcome::Running(s) if s.state == TaskState::Running));
+
+    let settled = await_settled(&agent, &id).await;
+    assert_eq!(
+        settled.state,
+        TaskState::Failed,
+        "a panicking run must still be recorded as failed"
+    );
+    assert!(
+        settled.output.contains("panicked"),
+        "the record says the run panicked: {}",
+        settled.output
+    );
+    assert!(
+        settled.output.contains("provider exploded"),
+        "and keeps the panic's own message: {}",
+        settled.output
+    );
+
+    // The parent model is told the truth too: the notice says failed.
+    let run = agent.run(user_msg("carry on")).await.expect("parent run");
+    let notices: Vec<String> = run
+        .produced
+        .iter()
+        .filter_map(|m| match m {
+            Message::User(u) => Some(
+                u.content
+                    .iter()
+                    .filter_map(|c| match c {
+                        UserContent::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(""),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notices.iter().any(|n| n.contains("state=\"failed\"")),
+        "the panic must reach the parent as a failed notice: {notices:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_panicking_foreground_resume_lands_failed_not_running() {
+    // The foreground leg had no panic boundary of its own: the claim (or the fresh
+    // register) writes `Running` before the background/foreground split, so an unwind
+    // straight through `await_task_run` used to leave the just-claimed entry `Running`
+    // forever. The containment must land the same terminal record the detached body
+    // lands.
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(PanicOnSecondCall {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    let host = agent.clone() as Arc<dyn TaskHost>;
+    let first = host
+        .run_task(req("first leg", "foreground panic probe", false, None))
+        .await
+        .expect("foreground leg");
+    let id = task_id_of(&first);
+
+    // The panic surfaces as the call's error — not as an unwind through the caller...
+    let failure = host
+        .run_task(req(
+            "second leg",
+            "foreground panic probe",
+            false,
+            Some(&id),
+        ))
+        .await
+        .expect_err("a panicking foreground leg must surface as an error");
+    assert!(failure.contains("panicked"), "{failure}");
+    assert!(failure.contains("provider exploded"), "{failure}");
+
+    // ...and the entry the claim marked `Running` ends `Failed`, naming the panic.
+    let settled = agent.task_snapshot(&id).expect("still tracked");
+    assert_eq!(
+        settled.state,
+        TaskState::Failed,
+        "a panicking foreground run must still be recorded as failed"
+    );
+    assert!(
+        settled.output.contains("panicked"),
+        "the record says the run panicked: {}",
+        settled.output
+    );
+    assert!(
+        settled.output.contains("provider exploded"),
+        "and keeps the panic's own message: {}",
+        settled.output
+    );
+}

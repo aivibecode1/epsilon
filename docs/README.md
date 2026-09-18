@@ -56,6 +56,11 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M93 — task state when resuming](milestones/M93-task-state-on-resume.md): F18 — a resumed
+  child is claimed `Running` in one lock hold before the background/foreground split, so the
+  refusal, the abort cascade and eviction all see it; both run bodies are contained so a panic
+  still lands a terminal record; verification pending.
+
 - [M92 — RPC protocol breadth](milestones/M92-rpc-protocol-breadth.md): the RPC-02 slice —
   correlated replies in pi's envelope while keeping the first wire's `ok`/`error` keys, an
   extracted testable dispatch path, `abort`/`get_state`/`set_thinking_level` ops, a lagged frame
