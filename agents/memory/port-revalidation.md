@@ -177,14 +177,24 @@
 - Next: SURFACE-05 (paged reads; brief banked in `surface05-paged-reads.md`).
 
 ## Next safe actions
-- Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
-- M85 docs/evidence closeout accompanies this note; inherited M84 hunks in
-  docs map/history/ADR/verification log are excluded. Queue work note retired.
+- **M94 landed (2026-09-18, commit `1392d37` + `d7ec973`)**: the owner-reported TUI
+  unresponsiveness in cmd/pwsh is fixed and measured (a 99-char burst: ~30 chars/s before, one
+  frame after), and the in-tree TUI slice is committed after three read-only review rounds that
+  found and fixed two approval-safety classes (an invisible approval answerable below 60×12, and a
+  last-frame guard that could answer a second parked ask). Battery `m94c`: 863/0/0/55, the whole
+  +65 delta being the `epsilon_tui` suite (98 → 163). Evidence: `audit/evidence/gate-m94c.log`,
+  `m94-{focused-tui,focused-cli,newtests-red}.log`, `m94-review.md`. The owner's binary was
+  reinstalled from the frozen candidate.
+- Queue after M94: **SURFACE-05 (paged reads)** — brief and couplings in
+  `surface05-paged-reads.md` (the `read_log` coverage handoff and the pager must ship in one
+  commit). Then the TUI follow-ups queued in `next-hardening.md` (run-loop ask FIFO + a notice
+  when a replaced ask is denied; the `'e'`-guidance/input coupling) and SESSION-01b (the TUI
+  session surface, now unblocked since the crate is committed).
 - Audit initial phase is complete, not production readiness. Maintained-doc
   rewrite incomplete; keep history as history rather than rewriting it as success.
-- Next port work (owner: port first): CORE-02 callbacks, SESSION-01 tree/fork workflows,
-  RPC-02 protocol breadth (F13 remainder), then F09 resolved containment
-  (alias-consistent identity, defensive only).
+- The port's open fidelity items are closed through M92 (CORE-02 → M89, SESSION-01a → M90,
+  RPC-02 → M92, F09 → closed); what remains from the roadmap is Phase 3-4 work and the
+  TUI-surface half of SESSION-01.
 - General reference improvements remain deferred until the port has no open fidelity
   items (audit/04-roadmap.md Phases 3-4).
 - Gate before future code commits; use isolated HEAD candidates to avoid mixing
