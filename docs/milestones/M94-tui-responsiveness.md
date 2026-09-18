@@ -116,10 +116,11 @@ The commit boundary is enumerated below; the other dirty workstreams' files are 
 - **A shared `CARGO_TARGET_DIR` between the repo and a Temp candidate copy leaves stale
   artifacts**: the TUI then failed with `E0425: cannot find function load_config_string` although
   the working tree defines it (`crates/epsilon-core/src/config.rs:32`). Fixed with
-  `cargo clean -p epsilon-core -p epsilon-tui`; rule recorded in `agents/memory/tui-responsiveness.md`.
+  `cargo clean -p epsilon-core -p epsilon-tui`; rule recorded in `agents/memory/next-hardening.md`.
 - **An earlier independent review rejected an earlier candidate** of this TUI work for an
-  undersized fallback that hid approval details while leaving approval keys live
-  (`agents/memory/tui-enhancement.md`). The modal routing fix and its denial regression are in
+  undersized fallback that hid approval details while leaving approval keys live (its report is
+  `audit/10-tui-enhancement.md`, with the review itself at
+  `audit/evidence/m86-candidate-review.json`). The modal routing fix and its denial regression are in
   this state; the M94 review re-opened the same class — the fallback was still answerable and a
   live ask could be covered by `/timeline` — and both halves are now fixed and pinned by rendering
   tests. The M94 re-review then found the same class one level down: the guard itself was a
@@ -159,9 +160,13 @@ uncommitted slice):
   the approval, not the auth buffer`; the fixed file was preserved byte-exactly before the run and
   restored byte-identically after it (sha256 equal, `cmp` exit 0), and the restored bytes re-ran
   the same two tests green (2 passed).
-- the **real-console before/after measurement** described above (a 99-character burst: ~30 chars/s
-  before, all characters within one frame after — the decisive evidence for the loop change, since
-  the loop cannot be unit-tested: it owns the real terminal).
+- the **real-console before/after measurement** described above. Before: the installed binary the
+  owner was running (the 2026-09-18 05:32 `epsilon.exe`, built from HEAD plus the then-current
+  slice) — a 99-character burst echoed at ~30 chars/s, half of it missing at the immediate capture.
+  After: the debug build of exactly these bytes (`epsilon-m93-target/debug/epsilon.exe`) — the same
+  burst shows all characters at the immediate capture. The release build that ships is the same
+  code; the loop cannot be unit-tested (it owns the real terminal), so this measurement is the
+  evidence for the loop change.
 
 **Frozen-candidate battery — label `m94c`, PASS.** `audit/evidence/gate-m94c.log`: all five gates
 exit 0 (fmt 2 s, clippy 38 s, test 1839 s, demo 17 s, real-check 36 s) and the log ends
@@ -196,7 +201,7 @@ delta and returned **no blockers**, with three non-blocking findings folded into
 - **The loop's drain has no unit test** (it owns stdout); the real-console measurement is the
   evidence, and it is recorded in this document rather than in a test.
 - **Carried over from the TUI work item** (still open, recorded in
-  `agents/memory/tui-enhancement.md` and its audit report): paste mutating input during approval;
+  `audit/10-tui-enhancement.md`): paste mutating input during approval;
   unconditional composer cursor; late autocomplete drawing; guidance and the other approval
   decisions untested; and the five static objections from its earlier review (wrapped tab stop,
   full-row newline caret, scalar-editor/grapheme-renderer mismatch, frozen-viewport live growth,

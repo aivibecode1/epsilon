@@ -3,7 +3,8 @@
 ## What
 
 The F18 half of `audit/02-defect-ledger.md` (P1, "resumed child task is not marked running before
-dispatch"), implemented from the verified brief in `agents/memory/f18-task-state.md`. The defect:
+dispatch"), implemented from a verified read-only brief (banked while the work was in flight and
+retired with this milestone). The defect:
 `Agent::delegate_task`'s resume branch looked up the tracked child and dispatched a new leg
 without ever writing `Running`, so everything that reads the registry was told the child was
 settled while it ran:
