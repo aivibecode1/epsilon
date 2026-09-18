@@ -15,6 +15,8 @@ see `crates/epsilon-core/assets/agent-contract.md`.
   history until that file confirms them. Read `audit/04-roadmap.md` before starting new work so
   you build the thing that is actually next.
 - Answer questions before acting; act before narrating when asked to implement.
+- Repo-local skills live in `.agents/skills/` — read the one matching your task before working;
+  each carries the proven procedure for that kind of work.
 - Keep responses short and technical.
 
 ## Verification commands (run after every code change)
@@ -86,9 +88,11 @@ cargo clean && rm -rf target                                     # then wipe bui
 df -h /c                                                         # confirm free space recovered
 ```
 
-Budget for a cold rebuild (~10-15 min) before the next verification round: run the
-full gate battery once per round, then wipe. Never clean mid-round, and never leave a
-`target/` behind after reporting results.
+Budget a cold round at **~30–45 min with one job** (the C dependency build dominates; a release
+`cargo install` measured 28 min with deps warm). Recent rounds build into an external
+`CARGO_TARGET_DIR` rather than an in-repo `target/` — the wipe below then applies to that
+directory. Run the full gate battery once per round, then wipe. Never clean mid-round, and never
+leave a `target/` behind after reporting results.
 
 - When CLI/TUI behavior changed and gates pass, reinstall the global `epsilon.exe`
   before cleaning: the user tests the installed binary. No reinstall for docs-only work.
@@ -190,6 +194,8 @@ on CLI. New edges require review rather than relying on an illustrative layer di
   name probes in the same directory and `CARGO_TARGET_DIR` outside the repo;
   clearing the detection or adding an exclusion is an owner decision requiring
   administrator rights — never change security configuration from an agent session.
+  The current recipe (fresh test-profile metadata) is under "Verification rounds on this
+  machine".
 
 ## Agent memory (`agents/memory/`)
 
@@ -202,6 +208,9 @@ context loss, checked into the codebase where the work happens.
 - **Update in the same turn** a work item's status, decisions, evidence paths,
   or next steps change — never end a turn on stale memory.
 - **One file per active work item**, topic-slug named, under ~80 lines.
+- **Keep the index in step**: every note appears in `agents/memory/README.md` with a one-line
+  status, and retiring a note deletes its row in the same change — an unlisted note is lost
+  state.
 - **Checkpoint before compaction**: record verified facts, assumptions, decisions,
   evidence paths, running process IDs, dirty-work boundaries and the next safe action.
 - **Retire after closeout**: remove the working note only after documentation,
@@ -245,7 +254,8 @@ docs/
 scripts/gate.sh    the full verification battery in one command
 crates/            the 12 workspace crates
 references/        the four reference harnesses (not committed)
-agents/            agent working memory (open work state) + local agent skills
+agents/            agent working memory (open work state; see "Agent memory")
+.agents/skills/    repo-local skills (procedures agents and contributors follow)
 ```
 
 ## Conflict resolution
