@@ -113,6 +113,71 @@ impl Default for FailTool {
     }
 }
 
+/// Sleeps for a fixed delay, counts executions, and deliberately ignores the run
+/// token: a test that aborts *during* a call needs one call still in flight when the
+/// abort lands, and needs to observe whether a later call in the same batch ever
+/// started.
+///
+/// `Sequential` with no declared resource, so a batch containing it is a barrier —
+/// its calls run one at a time, in the order the model asked for them (exec.rs
+/// `plan_batch`).
+pub struct SlowTool {
+    descriptor: ToolDescriptor,
+    delay_ms: u64,
+    runs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SlowTool {
+    /// Build with the default name `slow`.
+    pub fn new(delay_ms: u64) -> Self {
+        Self {
+            descriptor: ToolDescriptor {
+                name: "slow".into(),
+                label: "Slow".into(),
+                description: "Sleeps, then echoes its input; counts executions.".into(),
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"]
+                }),
+                execution_mode: ExecutionMode::Sequential,
+            },
+            delay_ms,
+            runs: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
+    /// How many times this tool actually started executing (counted before the
+    /// sleep, so a refused call is never counted).
+    pub fn runs(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        std::sync::Arc::clone(&self.runs)
+    }
+}
+
+#[async_trait]
+impl Tool for SlowTool {
+    fn descriptor(&self) -> &ToolDescriptor {
+        &self.descriptor
+    }
+
+    async fn execute(
+        &self,
+        call: ToolInvocation,
+        _ctx: ToolContext,
+        _on_update: ToolUpdateSink,
+    ) -> Result<ToolOutput, ToolFailure> {
+        self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+        let text = call
+            .args
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(ToolOutput::text(text))
+    }
+}
+
 #[async_trait]
 impl Tool for FailTool {
     fn descriptor(&self) -> &ToolDescriptor {

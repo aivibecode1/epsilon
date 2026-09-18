@@ -789,6 +789,236 @@ async fn abort_mid_stream_preserves_partial_text() {
     }
 }
 
+// CORE-05: the aborted turn now has the same message lifecycle as a completed
+// one — runtime history, durable mirror, and a MessageEnd event — so a reopened
+// session keeps the interrupted answer (pi persists assistant message-end
+// events, `agent-session.ts:639-656`). The old arms returned the synthetic
+// message only in `produced`.
+#[tokio::test]
+async fn abort_mid_stream_commits_the_terminal_message_to_history_and_store() {
+    use epsilon_contracts::message::StopReason;
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::{ModelViewEntry, SessionStore};
+
+    struct HangAfterStartStream {
+        events: std::collections::VecDeque<epsilon_contracts::stream::StreamEvent>,
+    }
+
+    #[async_trait]
+    impl epsilon_llm::EventStream for HangAfterStartStream {
+        async fn next(&mut self) -> Option<epsilon_contracts::stream::StreamEvent> {
+            if let Some(ev) = self.events.pop_front() {
+                Some(ev)
+            } else {
+                std::future::pending().await
+            }
+        }
+    }
+
+    struct HangAfterStartProvider;
+
+    #[async_trait]
+    impl epsilon_llm::StreamFn for HangAfterStartProvider {
+        async fn stream(
+            &self,
+            _model: &epsilon_llm::ModelRef,
+            _ctx: epsilon_llm::LlmContext,
+        ) -> epsilon_llm::BoxEventStream {
+            use epsilon_contracts::message::{AssistantMessage, Usage};
+            use epsilon_contracts::stream::StreamEvent;
+            let partial = AssistantMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                provider: "test".into(),
+                model_id: "hang-1".into(),
+                content: vec![],
+                stop_reason: StopReason::EndTurn,
+                error_message: None,
+                usage: Usage::default(),
+            };
+            Box::new(HangAfterStartStream {
+                events: [
+                    StreamEvent::Start { partial },
+                    StreamEvent::TextDelta {
+                        index: 0,
+                        delta: "half an answer".into(),
+                    },
+                ]
+                .into_iter()
+                .collect(),
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(dir.path().join("session.jsonl")).unwrap();
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(HangAfterStartProvider)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+    let handle = agent.store_handle_for_tests();
+    let mut rx = agent.subscribe();
+
+    let run = tokio::spawn({
+        let agent = Arc::clone(&agent);
+        async move { agent.run(user_msg("go")).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(agent.abort_current_run());
+    let outcome = run.await.unwrap().unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Aborted);
+
+    // Exactly one terminal assistant message, in runtime history...
+    let assistants: Vec<_> = agent
+        .history()
+        .into_iter()
+        .filter_map(|m| match m {
+            Message::Assistant(a) => Some(a),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        assistants.len(),
+        1,
+        "one terminal message survives the abort"
+    );
+    assert_eq!(assistants[0].stop_reason, StopReason::Aborted);
+    assert_eq!(assistants[0].text(), "half an answer");
+
+    // ...in the durable mirror...
+    let stored = handle
+        .lock()
+        .unwrap()
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .find_map(|e| match e.kind {
+            EntryKind::Message {
+                message: Message::Assistant(a),
+                ..
+            } => Some(a),
+            _ => None,
+        })
+        .expect("the aborted message is durable");
+    assert_eq!(stored.text(), "half an answer");
+    assert_eq!(stored.stop_reason, StopReason::Aborted);
+
+    // ...and in the view a reopened session would actually send.
+    let view = handle.lock().unwrap().model_view().unwrap();
+    assert!(
+        view.iter().any(|v| matches!(
+            v,
+            ModelViewEntry::Message(Message::Assistant(a)) if a.text() == "half an answer"
+        )),
+        "the reopened model view keeps the partial answer"
+    );
+
+    // Subscribers saw exactly one MessageEnd for it (zero was the old behavior).
+    let mut message_ends = 0usize;
+    loop {
+        match rx.try_recv() {
+            Ok(ev) => {
+                if matches!(*ev, AgentEvent::MessageEnd { .. }) {
+                    message_ends += 1;
+                }
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    assert_eq!(message_ends, 1, "one terminal message end, not zero");
+}
+
+// F20: after Esc, the rest of the active batch must not start. pi stops scheduling
+// the remainder and marks each unstarted call "Operation aborted"
+// (`agent-loop.ts:478-553,629-635`); before this, every call in the batch ran to
+// completion after the abort — a cancelled write or shell command could still run.
+#[tokio::test]
+async fn abort_mid_batch_refuses_calls_that_have_not_started() {
+    use epsilon_core::testing::SlowTool;
+    use epsilon_llm::FauxToolCall;
+
+    let slow = Arc::new(SlowTool::new(400));
+    let runs = slow.runs();
+    let mut registry = ToolRegistry::new();
+    let tool: Arc<dyn epsilon_contracts::tool::Tool> = slow.clone();
+    registry.register(tool);
+
+    let steps = vec![
+        // One assistant turn, two calls to the same sequential tool: the batch is a
+        // barrier, so they run in call order and the second would start only after the
+        // first settled — by which time the abort has already landed.
+        epsilon_llm::FauxStep::ToolCalls {
+            text: None,
+            calls: vec![
+                FauxToolCall {
+                    id: "c1".into(),
+                    name: "slow".into(),
+                    arguments: serde_json::json!({"text": "first"}),
+                },
+                FauxToolCall {
+                    id: "c2".into(),
+                    name: "slow".into(),
+                    arguments: serde_json::json!({"text": "second"}),
+                },
+            ],
+        },
+        epsilon_llm::FauxStep::say("unreachable"),
+    ];
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+            steps,
+        ))),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    let run = tokio::spawn({
+        let agent = Arc::clone(&agent);
+        async move { agent.run(user_msg("go")).await }
+    });
+    // Long enough for the first call to be in flight, then cancel.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert!(agent.abort_current_run());
+    let outcome = run.await.unwrap().unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Aborted);
+
+    assert_eq!(
+        runs.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "only the call that was already running may execute"
+    );
+    let results: Vec<_> = agent
+        .history()
+        .into_iter()
+        .filter_map(|m| match m {
+            Message::ToolResult(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "every call receives a result");
+    assert_eq!(results[0].tool_call_id, "c1");
+    assert_eq!(results[1].tool_call_id, "c2");
+    assert!(results[1].is_error, "the refused call is an error result");
+    let text: String = results[1]
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            epsilon_contracts::content::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        text.contains("not executed"),
+        "the refused call must say so plainly: {text}"
+    );
+}
+
 /// M61: a session file has one writer, and the agent's resume path respects it.
 #[tokio::test]
 async fn resuming_a_session_another_writer_holds_is_refused_with_a_clear_reason() {

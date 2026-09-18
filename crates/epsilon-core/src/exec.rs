@@ -623,6 +623,15 @@ pub(super) async fn execute_batch(
 async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage {
     let name = p.ctx_tool_name.clone();
     let tool_call_id = p.invocation.tool_call_id.clone();
+
+    // Abort checkpoint (F20): a call that has not started must not start once the run
+    // is cancelled. This is the single choke point for both batch plans, so a cancelled
+    // batch never begins new work — in-flight calls still settle, exactly as pi awaits
+    // scheduled calls and emits their results.
+    if agent.current_run_token().is_some_and(|t| t.is_cancelled()) {
+        return aborted_result(&tool_call_id, &name);
+    }
+
     agent.emit(AgentEvent::ToolExecutionStart {
         tool_call_id: tool_call_id.clone(),
         tool_name: name.clone(),
@@ -805,6 +814,27 @@ fn error_result(call_id: &str, name: &str, message: String) -> ToolResultMessage
         tool_name: name.to_string(),
         content: vec![ContentBlock::text(message)],
         details: serde_json::json!({"blocked": true}),
+        usage: None,
+        is_error: true,
+    }
+}
+
+/// Result for a call the run refused to start after cancellation (F20).
+///
+/// pi stops scheduling the remainder of an aborted batch and marks each unstarted call
+/// as "Operation aborted" (`agent-loop.ts:629-635`); the result still arrives, in call
+/// order, so the transcript never carries a call without an answer and the model is
+/// told plainly that the work did not happen.
+fn aborted_result(call_id: &str, name: &str) -> ToolResultMessage {
+    ToolResultMessage {
+        id: new_id("msg"),
+        timestamp_ms: now_ms(),
+        tool_call_id: call_id.to_string(),
+        tool_name: name.to_string(),
+        content: vec![ContentBlock::text(
+            "[harness] this call was not executed: the run was cancelled before it started.",
+        )],
+        details: serde_json::json!({"aborted": true}),
         usage: None,
         is_error: true,
     }
