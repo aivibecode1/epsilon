@@ -714,6 +714,12 @@ impl SessionStore {
 
     /// The model-visible view of the active branch: message entries plus synthetic summary
     /// messages emitted by compaction entries; shadowed ranges are skipped entirely.
+    ///
+    /// A later compaction *replaces* the projection an earlier one built rather than
+    /// appending to it: pi's `session-manager.ts:418-453` selects the latest compaction
+    /// on the active path and builds context from it plus its retained entries. Without
+    /// the replacement the superseded summary and its tail would ride along in every
+    /// provider request while runtime history already held only the newer pair.
     pub fn model_view(&self) -> Result<Vec<ModelViewEntry>, StoreError> {
         let branch = self.branch_entries()?;
         let mut out = Vec::new();
@@ -733,6 +739,10 @@ impl SessionStore {
                     retained_tail,
                     ..
                 } => {
+                    // This compaction supersedes whatever projection exists so far:
+                    // everything an earlier one synthesized is summarized inside this
+                    // one, so keeping both would rebuild the context it just replaced.
+                    out.clear();
                     out.push(ModelViewEntry::Summary {
                         text: summary.clone(),
                         seq: e.seq,

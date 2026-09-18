@@ -202,6 +202,82 @@ fn model_view_shadows_compacted_ranges_but_file_keeps_them() {
 }
 
 #[test]
+fn a_second_compaction_replaces_the_superseded_projection() {
+    // CORE-03: the durable model view must agree with runtime history after a
+    // second compaction — the latest compaction's summary, its retained tail, and
+    // everything after it. The earlier summary and its tail are superseded.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+
+    for text in ["old-1", "old-2"] {
+        store
+            .append(EntryKind::Message {
+                message: user_msg(text),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+    store
+        .append(EntryKind::Compaction {
+            summary: "first summary".into(),
+            tokens_before: 5000,
+            retained_tail: vec![user_msg("tail-1")],
+            details: None,
+            usage: None,
+        })
+        .unwrap();
+    store
+        .append(EntryKind::Message {
+            message: user_msg("between"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    store
+        .append(EntryKind::Compaction {
+            summary: "second summary".into(),
+            tokens_before: 6000,
+            retained_tail: vec![user_msg("tail-2")],
+            details: None,
+            usage: None,
+        })
+        .unwrap();
+    store
+        .append(EntryKind::Message {
+            message: user_msg("after"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    let view = store.model_view().unwrap();
+    assert_eq!(view.len(), 3, "view: {view:?}");
+    assert!(
+        matches!(&view[0], ModelViewEntry::Summary { text, .. } if text == "second summary"),
+        "the latest summary leads the projection"
+    );
+    assert!(
+        matches!(&view[1], ModelViewEntry::Message(Message::User(u))
+            if matches!(&u.content[0], UserContent::Text { text } if text == "tail-2")),
+        "and keeps its own retained tail"
+    );
+    assert!(
+        matches!(&view[2], ModelViewEntry::Message(Message::User(u))
+            if matches!(&u.content[0], UserContent::Text { text } if text == "after")),
+        "messages after the latest compaction stay"
+    );
+
+    // The superseded summary and its tail must NOT ride along in the request.
+    assert!(
+        !view
+            .iter()
+            .any(|v| matches!(v, ModelViewEntry::Summary { text, .. } if text == "first summary")),
+        "the first summary is superseded, not repeated"
+    );
+
+    // Retention is not the mechanism: the human log keeps every entry.
+    assert_eq!(store.read_all().unwrap().len(), 6);
+}
+
+#[test]
 fn crash_truncated_final_line_is_detected_and_truncated() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s.jsonl");

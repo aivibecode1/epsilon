@@ -222,30 +222,16 @@ pub fn summary_context(
 pub(crate) const SUMMARY_SYSTEM: &str =
     "You compress coding-agent transcripts into structured summaries. Output ONLY the template.";
 
-const TEMPLATE: &str = "\
-## Objective
-(one line)
-
-## Important Details
-- facts, constraints, decisions worth keeping
-
-## Work State
-- what was done / changed
-
-## Next Move
-- concrete next action
-
-## Relevant Files
-- paths touched or planned";
-
 /// Extract the assistant's summary text from a completed provider turn.
-pub fn summary_text(answer: &epsilon_contracts::message::AssistantMessage) -> String {
+///
+/// `None` when the turn carried no usable text. A compaction must never replace
+/// useful context with a placeholder, so the caller skips the commit and reports
+/// the failure instead of substituting one. (pi's inspected helper returns the
+/// extracted text without a nonempty check — this refusal is Epsilon's own
+/// reliability rule, not a claimed parity behavior.)
+pub fn summary_text(answer: &epsilon_contracts::message::AssistantMessage) -> Option<String> {
     let t = answer.text();
-    if t.trim().is_empty() {
-        TEMPLATE.to_string() // degraded-but-valid: never compact to nothing
-    } else {
-        t
-    }
+    if t.trim().is_empty() { None } else { Some(t) }
 }
 
 /// The model-free pass: drop old tool RESULTS beyond the protected tail window.

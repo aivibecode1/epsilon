@@ -35,17 +35,29 @@ fn setup(
     Arc<Mutex<SessionStore>>,
     tempfile::TempDir,
 ) {
+    setup_with_summarizer(
+        steps,
+        limits,
+        Arc::new(PanicGuard(SlowProvider::new(
+            FauxProvider::new(vec![FauxStep::say("## Objective\nsummarized state")]),
+            20,
+        ))),
+    )
+}
+
+fn setup_with_summarizer(
+    steps: Vec<FauxStep>,
+    limits: LoopLimits,
+    summarizer: Arc<dyn epsilon_llm::StreamFn>,
+) -> (
+    Arc<epsilon_core::Agent>,
+    Arc<Mutex<SessionStore>>,
+    tempfile::TempDir,
+) {
     let dir = tempfile::tempdir().unwrap();
     let store = SessionStore::open(dir.path().join("session.jsonl")).unwrap();
 
     let provider = SlowProvider::new(FauxProvider::new(steps), 20);
-    // Dedicated summarizer script: aux calls are isolated from the main loop's provider
-    // (production semantics AND deterministic faux scripts).
-    let summarizer = SlowProvider::new(
-        FauxProvider::new(vec![FauxStep::say("## Objective\nsummarized state")]),
-        20,
-    );
-
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()));
 
@@ -56,27 +68,40 @@ fn setup(
         Arc::new(AutoAllow),
         dir.path().to_path_buf(),
     );
-    agent.set_summarizer(Arc::new(PanicGuard(summarizer)));
+    // Dedicated summarizer script: aux calls are isolated from the main loop's provider
+    // (production semantics AND deterministic faux scripts).
+    agent.set_summarizer(summarizer);
     agent.attach_session_store(Arc::new(Mutex::new(store)));
     let handle = agent.store_handle_for_tests();
     (agent, handle, dir)
 }
 
 fn drain_compactions(rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>) -> (usize, usize) {
+    let (started, finished, _) = drain_all(rx);
+    (started, finished)
+}
+
+/// One pass over the event log: compaction bookends plus notices, so a test can
+/// assert both what the loop did and what it told the user.
+fn drain_all(
+    rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>,
+) -> (usize, usize, Vec<String>) {
     let mut started = 0;
     let mut finished = 0;
+    let mut notices = Vec::new();
     loop {
         match rx.try_recv() {
-            Ok(ev) => match *ev {
+            Ok(ev) => match &*ev {
                 AgentEvent::CompactionStarted => started += 1,
                 AgentEvent::CompactionFinished => finished += 1,
+                AgentEvent::Notice { text } => notices.push(text.clone()),
                 _ => {}
             },
             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
-    (started, finished)
+    (started, finished, notices)
 }
 
 fn has_summary_head(agent: &epsilon_core::Agent) -> bool {
@@ -313,4 +338,169 @@ async fn model_hot_swap_refreshes_live_window() {
         s2 >= 1 && s2 == f2,
         "cleared window must fire: s={s2} f={f2}"
     );
+}
+
+/// CORE-04: a failed provider turn is not a summary (pi rejects
+/// `stopReason === "error"`). The attempt is reported, nothing is committed, and
+/// the run continues on the uncompacted transcript instead of replacing it with
+/// failure prose or a placeholder.
+#[tokio::test]
+async fn failed_summarization_does_not_commit_and_is_reported_once() {
+    let steps = vec![
+        big_echo_call("tc_1", 4000),
+        big_echo_call("tc_2", 4000),
+        FauxStep::say("final answer"),
+    ];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 1500,
+        compaction_tail_tokens: 300,
+        max_turns: 8,
+        ..Default::default()
+    };
+    let (agent, store, _dir) = setup_with_summarizer(
+        steps,
+        limits,
+        Arc::new(PanicGuard(SlowProvider::new(
+            FauxProvider::new(vec![FauxStep::Error {
+                message: "429 rate limited".into(),
+            }]),
+            5,
+        ))),
+    );
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user("long task")).await.unwrap();
+
+    // The run continues: a summarizer failure is a compaction problem, not a run
+    // failure, and the transcript it could not summarize stays intact.
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+    assert!(
+        !has_summary_head(&agent),
+        "no summary may replace the transcript"
+    );
+    assert!(
+        agent
+            .history()
+            .iter()
+            .any(|m| matches!(m, Message::ToolResult(_))),
+        "the real tool results stay in history"
+    );
+
+    let (started, finished, notices) = drain_all(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (1, 0),
+        "one attempt, nothing committed"
+    );
+    assert!(
+        notices.iter().any(|n| n.contains("compaction skipped")),
+        "the failure is reported, not silent: {notices:?}"
+    );
+
+    let st = store.lock().unwrap();
+    assert!(
+        !st.read_all().unwrap().iter().any(|e| matches!(
+            e.kind,
+            epsilon_contracts::session_entry::EntryKind::Compaction { .. }
+        )),
+        "no compaction entry may be durable"
+    );
+}
+
+/// CORE-04, second acceptance path: an empty answer is refused rather than
+/// replaced with the old template placeholder (an Epsilon reliability rule; pi's
+/// inspected helper has no nonempty check).
+#[tokio::test]
+async fn empty_summary_text_is_refused_rather_than_padded() {
+    let steps = vec![big_echo_call("tc_1", 4000), FauxStep::say("final answer")];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 1500,
+        compaction_tail_tokens: 300,
+        max_turns: 8,
+        ..Default::default()
+    };
+    let (agent, store, _dir) = setup_with_summarizer(
+        steps,
+        limits,
+        Arc::new(PanicGuard(SlowProvider::new(
+            FauxProvider::new(vec![FauxStep::say("   \n  ")]),
+            5,
+        ))),
+    );
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user("long task")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Completed
+    );
+
+    let (started, finished, notices) = drain_all(&mut rx);
+    assert_eq!((started, finished), (1, 0));
+    assert!(
+        notices.iter().any(|n| n.contains("no text")),
+        "the empty answer is named: {notices:?}"
+    );
+    assert!(!has_summary_head(&agent));
+    let st = store.lock().unwrap();
+    assert!(!st.read_all().unwrap().iter().any(|e| matches!(
+        e.kind,
+        epsilon_contracts::session_entry::EntryKind::Compaction { .. }
+    )));
+}
+
+/// CORE-04 (cancellation): Esc during the summarization call reaches that call,
+/// and a cancelled pass neither rewrites the transcript nor appends an entry.
+#[tokio::test]
+async fn abort_during_summarization_ends_the_run_aborted_and_commits_nothing() {
+    let steps = vec![big_echo_call("tc_1", 4000), FauxStep::say("never reached")];
+    let limits = LoopLimits {
+        compaction_threshold_tokens: 1500,
+        compaction_tail_tokens: 300,
+        max_turns: 8,
+        ..Default::default()
+    };
+    // Summon the summarizer's stalled connect: the pass is inside its select when
+    // the abort arrives.
+    let (agent, store, _dir) = setup_with_summarizer(
+        steps,
+        limits,
+        Arc::new(PanicGuard(SlowProvider::new(
+            FauxProvider::new(vec![FauxStep::say("## Objective\ntoo late")]),
+            5_000,
+        ))),
+    );
+    let mut rx = agent.subscribe();
+
+    let handle = tokio::spawn({
+        let agent = Arc::clone(&agent);
+        async move { agent.run(user("long task")).await }
+    });
+    // Long enough for turn one to finish and the summarization call to start.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert!(agent.abort_current_run());
+
+    let outcome = handle.await.unwrap().unwrap();
+    assert_eq!(
+        outcome.reason,
+        epsilon_contracts::agent_event::TurnEndReason::Aborted
+    );
+    assert!(
+        !has_summary_head(&agent),
+        "a cancelled pass must not compact"
+    );
+    let (started, finished, _) = drain_all(&mut rx);
+    assert_eq!(
+        (started, finished),
+        (1, 0),
+        "the attempt started, nothing was committed"
+    );
+    let st = store.lock().unwrap();
+    assert!(!st.read_all().unwrap().iter().any(|e| matches!(
+        e.kind,
+        epsilon_contracts::session_entry::EntryKind::Compaction { .. }
+    )));
 }

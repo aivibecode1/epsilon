@@ -236,6 +236,22 @@ pub struct RunOutcome {
     pub usage: Usage,
 }
 
+/// What one compaction pass actually did.
+///
+/// A pass replaces runtime history and appends the durable entry only when the
+/// summarization call produced a usable summary. The failure shapes stay
+/// distinguishable so the loop can report them honestly and stop retrying
+/// instead of treating "attempted" as "compacted".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionOutcome {
+    /// Context replaced; the durable entry (when a store is attached) was appended.
+    Committed,
+    /// Summarization produced no usable result; nothing was committed.
+    Failed(String),
+    /// Cancellation won while summarizing; nothing was committed.
+    Cancelled,
+}
+
 /// Heuristic overflow classifier (DSH's CONTEXT_WINDOW_EXCEEDED, message-shaped).
 /// One-line description of a scheduled retry (M60) — the text a user reads when
 /// the harness pauses instead of failing. Pure, so the notice text is covered by
@@ -315,6 +331,10 @@ pub struct Agent {
     session_store: Mutex<Option<Arc<Mutex<SessionStore>>>>,
     /// Set when an overflow-triggered compaction already retried this run.
     overflow_retried: AtomicBool,
+    /// Set when a pressure-triggered compaction pass failed this run (provider error,
+    /// empty answer, append failure). One attempt per run: a summarizer that just
+    /// failed will not succeed on the next turn, and each retry is a paid call.
+    compact_suppressed: AtomicBool,
     /// Discovered agent-type defs for `task` routing (M50: pi `agents.ts` parity).
     /// Interior-mutable so composition code can attach discoveries after Arc<Agent>.
     agents: Mutex<Vec<crate::agents::AgentDef>>,
@@ -410,6 +430,7 @@ impl Agent {
             workspace_root,
             session_store: Mutex::new(None),
             overflow_retried: AtomicBool::new(false),
+            compact_suppressed: AtomicBool::new(false),
             agents: Mutex::new(Vec::new()),
             task_depth: Mutex::new(0),
             agent_brief: Mutex::new(String::new()),
@@ -939,6 +960,7 @@ impl Agent {
         // reset the latch here or the first recovered overflow disables recovery for
         // every later run in a long-lived TUI/server session.
         self.overflow_retried.store(false, Ordering::SeqCst);
+        self.compact_suppressed.store(false, Ordering::SeqCst);
         self.push_message(&prompt);
         self.emit(AgentEvent::AgentStart);
 
@@ -1074,8 +1096,24 @@ impl Agent {
                 }
 
                 // ---- compaction pressure check (ADR-007 trigger 1) ----------------
-                if self.compaction_due() {
-                    self.compact_now(&mut produced).await?;
+                // One pressure-triggered attempt per run after a failure: the
+                // summarizer just failed once (provider error, empty answer, append
+                // failure) and every retry is a paid provider call, so the next
+                // attempt belongs to the next run.
+                if !self.compact_suppressed.load(Ordering::SeqCst) && self.compaction_due() {
+                    match self.compact_now(&mut produced).await? {
+                        CompactionOutcome::Committed => {}
+                        CompactionOutcome::Failed(why) => {
+                            self.compact_suppressed.store(true, Ordering::SeqCst);
+                            self.emit(AgentEvent::Notice {
+                                text: format!("context compaction skipped: {why}"),
+                            });
+                        }
+                        CompactionOutcome::Cancelled => {
+                            reason = reason.merge_sticky(TurnEndReason::Aborted);
+                            break 'outer;
+                        }
+                    }
                 }
 
                 self.emit(AgentEvent::TurnStart { turn_index });
@@ -1103,8 +1141,22 @@ impl Agent {
                     // Discard the failed attempt, shrink, and retry this turn.
                     self.pop_last_message();
                     produced.pop();
-                    self.compact_now(&mut produced).await?;
-                    continue;
+                    match self.compact_now(&mut produced).await? {
+                        CompactionOutcome::Committed => continue,
+                        // Recovery could not summarize: retrying the same oversized
+                        // request would just fail again. Report the real reason.
+                        CompactionOutcome::Failed(why) => {
+                            self.emit(AgentEvent::Notice {
+                                text: format!("context overflow recovery failed: {why}"),
+                            });
+                            reason = reason.merge_sticky(TurnEndReason::Error(why));
+                            break 'outer;
+                        }
+                        CompactionOutcome::Cancelled => {
+                            reason = reason.merge_sticky(TurnEndReason::Aborted);
+                            break 'outer;
+                        }
+                    }
                 }
 
                 if assistant.stop_reason.is_failure() {
@@ -1408,11 +1460,24 @@ impl Agent {
     }
 
     /// Run one full compaction pass: prune → summarize (isolated call, amend-mode when a
-    /// prior summary exists) → replace runtime history → persist entry + emit events.
+    /// prior summary exists) → append the durable entry (store attached) → replace runtime
+    /// history → emit events.
+    ///
+    /// Commits only after a usable summary arrived, cancellation was checked at the
+    /// last moment, and the durable entry (when a store is attached) appended
+    /// successfully; every other path leaves history, store and provider view as
+    /// they were and says why. Provider failures arrive as outcomes rather than
+    /// `RunError`s because a failed summarizer is a compaction problem, not an
+    /// agent-invariant violation.
+    ///
+    /// Event shape: `CompactionStarted` is emitted for every attempt, `CompactionFinished`
+    /// only when the pass committed. `Failed` is surfaced to frontends by its `Notice`
+    /// (which replaces any "compacting…" status); `Cancelled` ends the run immediately, so
+    /// the frontends' run-end handling clears the status instead.
     pub async fn compact_now(
         self: &Arc<Self>,
         produced: &mut Vec<Message>,
-    ) -> Result<(), RunError> {
+    ) -> Result<CompactionOutcome, RunError> {
         use crate::compact;
         self.emit(AgentEvent::CompactionStarted);
 
@@ -1474,17 +1539,69 @@ impl Agent {
             .map(|s| s.clone())
             .unwrap_or_else(|_| "faux-1".into());
         let model = epsilon_llm::ModelRef::new(model_id);
-        let mut stream = self.summarizer_stream().stream(&model, sctx).await;
+        // Summarization is a real provider call (isolated on the aux stream, but still
+        // billable and still mine to cancel): cancellation must reach it the way it
+        // reaches the main turn, and a cancelled pass commits nothing (pi checks the
+        // signal before the append — `agent-session.ts:1854-1881`). Biased select:
+        // an already-cancelled token wins over a ready frame.
+        let run_token = self.current_run_token();
+        // Bound to a local before the select: `summarizer_stream()` returns a
+        // temporary `Arc`, and the stream future borrows it (E0716 otherwise — the
+        // same shape `stream_one_turn` uses for the main provider).
+        let summarizer = self.summarizer_stream();
+        let mut stream = tokio::select! {
+            biased;
+            _ = async {
+                match run_token {
+                    Some(ref t) => t.cancelled().await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => return Ok(CompactionOutcome::Cancelled),
+            s = summarizer.stream(&model, sctx) => s,
+        };
         let answer = loop {
-            match stream.next().await {
-                Some(StreamEvent::Done { message }) => break message,
-                Some(_) => continue,
-                None => {
-                    return Err(RunError::Internal("summarizer stream ended early".into()));
+            tokio::select! {
+                biased;
+                _ = async {
+                    match run_token {
+                        Some(ref t) => t.cancelled().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => return Ok(CompactionOutcome::Cancelled),
+                ev = stream.next() => {
+                    match ev {
+                        Some(StreamEvent::Done { message }) => break message,
+                        Some(_) => continue,
+                        None => {
+                            return Ok(CompactionOutcome::Failed(
+                                "summarizer stream ended early".into(),
+                            ));
+                        }
+                    }
                 }
             }
         };
-        let summary = compact::summary_with_ledger(&compact::summary_text(&answer), &ledger);
+        // A failed provider turn is not a summary: pi rejects `stopReason === "error"`
+        // before the append (`compaction.ts:670-685`). Accepting it would replace
+        // useful context with failure prose — the opposite of what compaction is for.
+        if answer.stop_reason.is_failure() {
+            return Ok(CompactionOutcome::Failed(format!(
+                "summarization turn failed: {}",
+                answer
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("provider reported an error")
+            )));
+        }
+        // An empty answer is refused rather than padded with a placeholder: the
+        // template fallback used to guarantee "valid-looking" output, which meant a
+        // blank summary could silently replace the context it failed to summarize.
+        let Some(text) = compact::summary_text(&answer) else {
+            return Ok(CompactionOutcome::Failed(
+                "summarization returned no text".into(),
+            ));
+        };
+        let summary = compact::summary_with_ledger(&text, &ledger);
         // ...plus the user's own words from the range just summarized, verbatim: a paraphrase of
         // an instruction is an instruction followed approximately (Hermes micro-compaction).
         let summary =
@@ -1502,23 +1619,47 @@ impl Agent {
         new_history.extend(kept_tail.iter().cloned());
 
         let estimate_messages_before: usize = self.estimated_context_tokens();
-        // Persist a compaction entry so the durable mirror's MODEL VIEW shadows the range.
-        if let Some(store) = self.store()
-            && let Ok(mut st) = store.lock()
-        {
-            let _ = st.append(EntryKind::Compaction {
+        // Last cancellation check before anything durable or live changes: a token
+        // cancelled while the summary streamed must not still rewrite the transcript.
+        if run_token.as_ref().is_some_and(|t| t.is_cancelled()) {
+            return Ok(CompactionOutcome::Cancelled);
+        }
+        // Persist the compaction entry so the durable mirror's MODEL VIEW shadows the
+        // range — before runtime history is replaced. With a store attached, provider
+        // requests read the store's projection, so committing only one of the two views
+        // would leave them disagreeing (the F07 append-failure shape).
+        if let Some(store) = self.store() {
+            let mut st = store
+                .lock()
+                .map_err(|_| RunError::Internal("store poisoned".into()))?;
+            if let Err(e) = st.append(EntryKind::Compaction {
                 summary: summary.clone(),
                 tokens_before: estimate_messages_before as u64,
                 retained_tail: kept_tail.to_vec(),
                 details: Some(serde_json::json!({ "pruned_tool_results": pruned_count })),
                 usage: None,
-            });
+            }) {
+                return Ok(CompactionOutcome::Failed(format!(
+                    "compaction entry could not be appended: {e}"
+                )));
+            }
         }
 
-        *self
-            .history
-            .lock()
-            .map_err(|_| RunError::Internal("history poisoned".into()))? = new_history;
+        match self.history.lock() {
+            Ok(mut h) => *h = new_history,
+            Err(_) => {
+                // Poisoned history: the durable entry was already appended. Drop it again
+                // so the two views cannot disagree — with a store attached the provider
+                // request reads the store's projection, and it must describe the same
+                // transcript runtime history holds.
+                if let Some(store) = self.store()
+                    && let Ok(mut st) = store.lock()
+                {
+                    let _ = st.pop_last();
+                }
+                return Err(RunError::Internal("history poisoned".into()));
+            }
+        }
         // The anchor described the transcript that was just replaced; the next
         // request re-measures from scratch.
         self.clear_usage_anchor();
@@ -1530,7 +1671,7 @@ impl Agent {
             }],
         }));
         self.emit(AgentEvent::CompactionFinished);
-        Ok(())
+        Ok(CompactionOutcome::Committed)
     }
 
     /// Synthesize the in-band abort message when cancellation wins mid-stream.
@@ -1694,7 +1835,17 @@ impl Agent {
                     None => std::future::pending::<()>().await,
                 }
             } => {
-                return Ok(self.aborted_message(None));
+                // A terminal message reaches the transcript the same way a completed
+                // turn does: runtime history, durable mirror, and a MessageEnd event.
+                // Returning early used to leave the visible abort only in `produced`,
+                // so a resumed conversation lost the interrupted answer (pi persists
+                // assistant message-end events; `agent-session.ts:639-656`).
+                let message = self.aborted_message(None);
+                self.push_message(&Message::Assistant(message.clone()));
+                self.emit(AgentEvent::MessageEnd {
+                    message: Box::new(Message::Assistant(message.clone())),
+                });
+                return Ok(message);
             }
             s = stream_fn.stream(&model, ctx) => s,
         };
@@ -1709,7 +1860,14 @@ impl Agent {
                         None => std::future::pending::<()>().await,
                     }
                 } => {
-                    return Ok(self.aborted_message(folder.partial()));
+                    // Same lifecycle as the connect-time abort above: the folded-so-far
+                    // text is real output and must survive in the transcript.
+                    let message = self.aborted_message(folder.partial());
+                    self.push_message(&Message::Assistant(message.clone()));
+                    self.emit(AgentEvent::MessageEnd {
+                        message: Box::new(Message::Assistant(message.clone())),
+                    });
+                    return Ok(message);
                 }
                 ev = stream.next() => {
                     match ev {
