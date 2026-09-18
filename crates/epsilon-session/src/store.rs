@@ -686,6 +686,24 @@ impl SessionStore {
     ///
     /// Parses the file once; branch walks are infrequent (model view, navigation), so
     /// simplicity beats a reverse id->seq index until profiling says otherwise.
+    ///
+    /// Tolerant by design: this walk backs the model view and navigation, and a
+    /// transcript whose chain is broken is still worth showing. It already stopped at a
+    /// chain that ends on a missing parent; M91 adds the two hand-corruption shapes a
+    /// file the store wrote can never contain, both of which used to be fatal — an
+    /// infinite walk or an out-of-bounds index:
+    ///
+    /// - **Cycle** — a file whose entries form a parent cycle (a's parent is `b`, `b`'s
+    ///   is `a`; pi's own walk is equally unbounded). The walk keeps a visited set and
+    ///   stops the moment the next parent would re-enter an entry already on the chain,
+    ///   returning the entries it legitimately reached, each once, in file order — the
+    ///   same tolerant contract as a chain that ends early.
+    /// - **`seq` mismatch** — the id → position map below is built from the entries'
+    ///   STORED `seq` values, so in a hand-edited file whose `seq`s disagree with line
+    ///   order a position can point past the end of the parsed vector (panic) or at a
+    ///   different entry (a silently wrong branch). Every step now requires the entry at
+    ///   that position to be the one the chain named; anything else counts as the same
+    ///   broken chain and stops the walk.
     pub fn branch_entries(&self) -> Result<Vec<SessionEntry>, StoreError> {
         let all = self.read_all()?;
         let by_pos: std::collections::HashMap<&str, usize> = all
@@ -694,12 +712,23 @@ impl SessionStore {
             .collect();
 
         let mut chain_rev: Vec<SessionEntry> = Vec::new();
+        // M91: entries already on the chain — a repeat is a parent cycle, and the walk
+        // stops there instead of looping forever.
+        let mut on_chain: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut cursor = self.leaf_id();
         while let Some(id) = cursor {
             let Some(pos) = by_pos.get(id.as_str()).copied() else {
                 break;
             };
-            let entry = &all[pos];
+            // M91: `pos` is `seq`-derived, not an index into `all` — resolve safely and
+            // require the id to match, so a mismatched `seq` is a chain break, not a
+            // panic or a wrong entry.
+            let Some(entry) = all.get(pos).filter(|e| e.id == id) else {
+                break;
+            };
+            if !on_chain.insert(entry.id.as_str()) {
+                break;
+            }
             cursor = entry.parent_id.clone();
             chain_rev.push(entry.clone());
         }
@@ -853,16 +882,33 @@ impl SessionStore {
     /// `NotFound`, and an ancestry that does not reach a root is `InvalidData`,
     /// because a partial path written out as a session file would be a silent lie
     /// about what the branch contains.
+    ///
+    /// M91: a parent CYCLE is refused the same way. The walk used to be unbounded —
+    /// with the two entries pointing at each other it never reached a root and never
+    /// terminated (pi's walk is equally unbounded); a hand-corrupted file must be
+    /// refused by name instead. The refusal is `InvalidData` and names the entry the
+    /// chain re-entered, so the report says which cycle to look for.
     fn branch_to(&self, leaf_id: &str) -> std::io::Result<Vec<SessionEntry>> {
         let all = self.read_all().map_err(std::io::Error::other)?;
         let by_id: std::collections::HashMap<&str, &SessionEntry> =
             all.iter().map(|e| (e.id.as_str(), e)).collect();
         let mut chain_rev: Vec<SessionEntry> = Vec::new();
+        // M91: entries already on the chain (see the doc above).
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut cursor = Some(leaf_id.to_string());
         while let Some(id) = cursor {
             let Some(entry) = by_id.get(id.as_str()).copied() else {
                 break;
             };
+            if !seen.insert(entry.id.as_str()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "entry {leaf_id} does not reach a root: its parent chain contains a \
+                         cycle through {id}"
+                    ),
+                ));
+            }
             cursor = entry.parent_id.clone();
             chain_rev.push(entry.clone());
         }

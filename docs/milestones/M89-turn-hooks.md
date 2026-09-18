@@ -113,7 +113,10 @@ exactly as before.
   replacement*; the containment test cannot by itself distinguish "contained" from "never
   invoked", and the compaction-invalidation test cannot distinguish "invalidated" from "never
   installed" — both halves are pinned elsewhere in the suite (installation and per-turn
-  invocation are asserted by other tests).
+  invocation are asserted by other tests). **The drain-point mirror, the overflow-discard pop
+  and the attach/detach invalidation are now exercised directly by
+  [M91](M91-review-hardening.md);** the containment and invalidation variants still rely on the
+  rest of the suite.
 - Containment bounds: it wraps `poll`, so hook bodies are covered; a panic while *constructing*
   a hook future, a panic inside a task the hook itself spawned, and a hypothetical
   `panic=abort` profile (none is declared in the workspace) are outside it.

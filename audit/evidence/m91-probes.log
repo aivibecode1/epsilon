@@ -1,0 +1,14 @@
+=== P1: seq guard reverted (expect FAIL with OOB) ===
+thread 'a_seq_that_disagrees_with_line_order_is_a_chain_break_not_a_panic' (18472) panicked at crates\epsilon-session\src\store.rs:726:29:
+index out of bounds: the len is 3 but the index is 7
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.01s
+=== P2: cycle guard reverted (expect HANG, killed at 90s) ===
+Caused by:
+  process didn't exit successfully: `C:\Users\Hp\AppData\Local/Temp/epsilon-m91-target\debug\deps\session_store-e5eb5a9935f6b247.exe a_parent_cycle` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+P2 exit=0 (124 = hung as designed)
+=== P3: overflow pop reverted (expect FAIL) ===
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.01s
+=== P4: attach bump reverted (expect FAIL) ===
+thread 'attaching_a_store_mid_run_invalidates_the_replacement' (11040) panicked at crates\epsilon-core\tests\loop_scenarios.rs:2259:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.01s

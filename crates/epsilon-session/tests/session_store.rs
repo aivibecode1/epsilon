@@ -1393,3 +1393,168 @@ fn fork_refuses_an_ancestry_that_does_not_reach_a_root() {
         "the source is untouched"
     );
 }
+
+// ---- M91: reader hardening — parent cycles and `seq` mismatches (hand-corruption only) --------
+
+/// M91 (closes the M90 limits entry + `audit/evidence/m90-review.md` finding 6): the
+/// parent-chain walks had no cycle guard. A hand-corrupted file whose entries point at
+/// each other used to loop forever in `branch_entries` (the active-leaf walk) and in
+/// `branch_to` (the fork's ancestry walk). Both must terminate; the tolerant walk stops
+/// and returns what it legitimately reached, the exact one refuses by name.
+#[test]
+fn a_parent_cycle_terminates_the_tolerant_walk_and_is_refused_by_the_fork() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cycle.jsonl");
+    // The 2-cycle from the review: a's parent is b, b's parent is a. No store append can
+    // write this (parents are ids of existing entries), so the file is hand-written.
+    write_session_file(
+        &path,
+        &SessionHeader {
+            kind: SessionHeaderKind::Session,
+            version: Some(CURRENT_SESSION_VERSION),
+            id: "ses_cycle".into(),
+            timestamp: "1".into(),
+            cwd: dir.path().to_string_lossy().into_owned(),
+            parent_session: None,
+        },
+        &[
+            message_entry("ent_a", 0, Some("ent_b"), 10, user_msg("a")),
+            message_entry("ent_b", 1, Some("ent_a"), 20, user_msg("b")),
+        ],
+    );
+
+    let store = SessionStore::open_in(&path, dir.path()).unwrap();
+    assert_eq!(
+        store.leaf_id().as_deref(),
+        Some("ent_b"),
+        "opening replays the tree: the last line is the leaf"
+    );
+
+    // The tolerant walk stops where the chain would repeat and returns the entries it
+    // legitimately reached — each once, oldest first, exactly as it does for a chain
+    // that ends on a missing parent.
+    let branch = store.branch_entries().expect("the walk must terminate");
+    assert_eq!(
+        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec!["ent_a".to_string(), "ent_b".to_string()],
+        "the cycle is cut at the repeat, not replayed"
+    );
+    // The model view rides the same walk: degraded, but back.
+    assert_eq!(
+        view_texts(&store.model_view().unwrap()),
+        vec!["a".to_string(), "b".to_string()]
+    );
+
+    // The fork's ancestry walk is exact and refuses a chain that cannot reach a root (a
+    // cycle never does) — before any side effect, as with a dangling chain.
+    let dest_dir = dir.path().join("forks");
+    let err = store.fork_branch_at("ent_b", &dest_dir).unwrap_err();
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::InvalidData,
+        "a cycle is InvalidData, the same kind a dangling chain gets: {err}"
+    );
+    assert!(
+        err.to_string().contains("cycle"),
+        "the refusal must name the cycle: {err}"
+    );
+    assert!(
+        err.to_string().contains("ent_"),
+        "and the entry it re-entered, so the report is actionable: {err}"
+    );
+    assert!(
+        !dest_dir.exists(),
+        "the refusal happens before anything is written"
+    );
+    // Refused, never rewritten: the file still holds exactly the corrupt tree.
+    assert_eq!(store.read_all().unwrap().len(), 2);
+}
+
+/// M91 (same review finding): `branch_entries` resolves each id through the entry's
+/// STORED `seq`, so a hand-edited file whose `seq` values disagree with line order could
+/// index past the parsed vector (panic) or at a different entry (a silently wrong
+/// branch). Both are chain breaks now — the walk stops and returns what it legitimately
+/// reached, the tolerant behaviour above, never a panic.
+#[test]
+fn a_seq_that_disagrees_with_line_order_is_a_chain_break_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = SessionHeader {
+        kind: SessionHeaderKind::Session,
+        version: Some(CURRENT_SESSION_VERSION),
+        id: "ses_seq".into(),
+        timestamp: "1".into(),
+        cwd: dir.path().to_string_lossy().into_owned(),
+        parent_session: None,
+    };
+
+    // (a) The mismatched `seq` points PAST the end of the file: ent_b claims seq 7 while
+    // sitting at position 1. Before the guard this panicked on `all[7]`.
+    let path = dir.path().join("out-of-range.jsonl");
+    write_session_file(
+        &path,
+        &header,
+        &[
+            message_entry("ent_a", 0, None, 10, user_msg("a")),
+            message_entry("ent_b", 7, Some("ent_a"), 20, user_msg("b")),
+            message_entry("ent_c", 2, Some("ent_b"), 30, user_msg("c")),
+        ],
+    );
+    let store = SessionStore::open_in(&path, dir.path()).unwrap();
+    let branch = store
+        .branch_entries()
+        .expect("an out-of-range seq must not fail the read");
+    assert_eq!(
+        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec!["ent_c".to_string()],
+        "the walk keeps only the entries it legitimately reached: {:?}",
+        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>()
+    );
+    // The same tolerant read backs the model view: no panic from either caller.
+    assert_eq!(
+        view_texts(&store.model_view().unwrap()),
+        vec!["c".to_string()]
+    );
+    // The reader itself is untouched: every line is still there, in file order.
+    assert_eq!(store.read_all().unwrap().len(), 3);
+
+    // (b) The mismatched `seq` resolves IN BOUNDS to a different entry: ent_b claims
+    // seq 0, where ent_a sits. A range guard alone would follow ent_a's parent and
+    // return the wrong branch ([ent_a, ent_c]); the id check makes it a chain break.
+    let path = dir.path().join("wrong-entry.jsonl");
+    write_session_file(
+        &path,
+        &header,
+        &[
+            message_entry("ent_a", 0, None, 10, user_msg("a")),
+            message_entry("ent_b", 0, Some("ent_a"), 20, user_msg("b")),
+            message_entry("ent_c", 2, Some("ent_b"), 30, user_msg("c")),
+        ],
+    );
+    let store = SessionStore::open_in(&path, dir.path()).unwrap();
+    let branch = store.branch_entries().expect("no panic, no error");
+    assert_eq!(
+        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec!["ent_c".to_string()],
+        "an entry that is not the one the chain named ends the walk"
+    );
+
+    // The fork's walk resolves by id, not by seq, so it still reaches the real root:
+    // the guard is scoped to the seq-indexed walk, not to the reader.
+    let dest_dir = dir.path().join("forks");
+    let dest = store.fork_branch_at("ent_c", &dest_dir).unwrap();
+    let forked = SessionStore::open_in(&dest, dir.path()).unwrap();
+    assert_eq!(
+        forked
+            .read_all()
+            .unwrap()
+            .iter()
+            .map(|e| e.id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            "ent_a".to_string(),
+            "ent_b".to_string(),
+            "ent_c".to_string()
+        ],
+        "the fork follows parent ids, so the corrupt seqs do not affect it"
+    );
+}

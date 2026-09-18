@@ -210,4 +210,6 @@ The evidence this slice owes, and where it lives:
   parent cycle loops forever (pi's own walk is equally unbounded), and `branch_entries` indexes
   by `seq` position, so a hand-edited file whose `seq` values do not match line order can panic.
   The fork preserves the gapless-`seq` invariant by construction; hardening the reader against
-  hand-corruption is a separate item (queued in `agents/memory/next-hardening.md`).
+  hand-corruption is a separate item (queued in `agents/memory/next-hardening.md`). **Both were
+  closed by [M91](M91-review-hardening.md)** — the walks now stop on a repeat and the fork
+  refuses a cycle, and a mismatched `seq` is a chain break rather than a panic or a wrong entry.

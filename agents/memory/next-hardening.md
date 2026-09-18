@@ -44,15 +44,25 @@
   dropped events), then F09 resolved containment (alias-consistent identity, defensive only).
   SESSION-01b is blocked on the TUI work item's uncommitted changes landing first.
 - Recorded follow-ups from M89 (in the milestone limits, do not silently drop): unify
-  `TurnModel` with `epsilon_llm::ModelRef`; re-base (not clear) the usage anchor for
-  replacement-built requests; regression tests for the drain-point mirror, the overflow-discard
-  pop, and the attach/detach epoch bump.
-- Queued from M90's review (milestone limits carry the reasoning): harden the session reader
-  against hand-corruption — `branch_entries`/`branch_to` need a cycle guard (pi's walk is
-  equally unbounded) and `branch_entries` indexes by `seq`, so a file whose `seq` values do not
-  match line order can panic; and decide whether a branch summary should survive a later
-  compaction the way pi's entry-level window keeps it (today it is dropped with the replaced
-  messages, recorded as the one non-pi-equivalent projection).
+  `TurnModel` with `epsilon_llm::ModelRef`; **the anchor re-base is still open** — M91 (C)
+  refused it with the exact reason and a sketch, and added the related precision gap that
+  `attach_session_store`/`detach_session_store` bump the epoch without clearing the anchor; a
+  correct fix needs `compact.rs`'s anchor shape plus lifetime discipline. **The three regression
+  tests (drain-point mirror, overflow-discard pop, attach/detach invalidation) landed in M91**
+  (`docs/milestones/M91-review-hardening.md`).
+- Queued from M90's review: **the reader hardening landed in M91** — the walks stop on a repeat
+  (the fork refuses a cycle) and a mismatched `seq` is a chain break, not a panic. Still open:
+  whether a branch summary should survive a later compaction the way pi's entry-level window
+  keeps it (today it is dropped with the replaced messages — the one non-pi-equivalent
+  projection).
+- Queued from M91's own review (`audit/evidence/m91-review.md`): (a) `pop_last` truncates the
+  file but not `migrated_entries`, so open → pop_last → append serves a popped entry and breaks
+  the chain — fix the bookkeeping and give `SessionStore::pop_last` a test (it has none
+  anywhere); (b) the tolerant chain break is silent — let `repair_on_open` report a chain that
+  stopped early and surface it in a frontend; (c) B2's store-side pop has no observable — attach
+  a store in that test so the pop is pinned via `read_all`; (d) name the duplicate-ids shape
+  beside the other two tolerant-stop triggers in the guard's doc comment; (e) the cycle test
+  should hash the source file rather than assert a length.
 - Then the audit/04-roadmap.md general-improvement phases; the port must have no open
   fidelity items first.
 - Canonicalization is not race-resistant access. Windows/Linux differences must

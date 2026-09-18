@@ -56,6 +56,12 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M91 — review hardening](milestones/M91-review-hardening.md): the follow-ups the M89/M90
+  reviews recorded as owed — session-reader guards against hand-corruption (a parent cycle and a
+  `seq`/line-order mismatch, neither of which may hang or panic), the three missing CORE-02 loop
+  tests (drain-point mirror, overflow-discard pop, mid-run store attach/detach), and a refused-
+  with-reason anchor re-base.
+
 - [M90 — session tree](milestones/M90-session-tree.md): the store half of pi's session-tree
   workflows — branch summaries with pi's exact target shapes, explicit no-leaf root navigation,
   `BranchSummary` projected on the active branch, and a fork that writes only the selected

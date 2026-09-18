@@ -1929,3 +1929,474 @@ async fn panicking_turn_hooks_are_contained_and_the_next_run_still_starts() {
         "a panicking hook must not change the run's model or thinking level"
     );
 }
+
+// ---- M91: the CORE-02 test gaps M89's review recorded (drain point, overflow pop, epoch) ----
+
+/// M91 (closes the M89 limits entry "the drain-point mirror … not exercised *with an active
+/// replacement*"; `audit/evidence/m89-review.md`): the loop appends every message it adds to
+/// the transcript to the run's replacement context, including the messages a drain point
+/// injects. The existing tests pin the turn's own assistant message and tool results; this
+/// pins the drain point: with a replacement installed at the end of turn one, the steering
+/// message queued during that turn must appear in the very next request — the one built
+/// from the replacement.
+#[tokio::test]
+async fn a_drain_point_message_reaches_an_installed_replacement() {
+    let provider = FauxProvider::new(vec![
+        epsilon_llm::FauxStep::call("tc_1", "steer", serde_json::json!({})),
+        epsilon_llm::FauxStep::say("after the drain"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let slot: Arc<Mutex<Option<Arc<epsilon_core::Agent>>>> = Arc::new(Mutex::new(None));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(SteerDuringTurn {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "steer".into(),
+            label: "Steer".into(),
+            description: "Inert fixture: queues a steering message while the turn runs".into(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Sequential,
+        },
+        agent: slot.clone(),
+        text: "typed while the turn ran".into(),
+    }));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    *slot.lock().unwrap() = Some(agent.clone());
+
+    let replacement = user_msg("replacement context only");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![replacement.clone()]),
+        model: None,
+        thinking: None,
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+    assert_eq!(
+        *hooks.prepared.lock().unwrap(),
+        2,
+        "one prepare per completed turn: the install after turn one, and the turn after it"
+    );
+
+    let requests = recorded.lock().unwrap();
+    assert_eq!(requests.len(), 2, "turn one and the turn after the swap");
+    assert_eq!(
+        request_texts(&requests[0]),
+        vec!["go".to_string()],
+        "turn one still runs on the un-replaced context"
+    );
+    // Request #2 is built from the replacement (the swap landed at the end of turn one)…
+    assert_eq!(requests[1].messages[0], replacement);
+    // …and the interjection the drain point injected AFTER the swap is in it: the mirror
+    // the review could not find a test for. A replacement that froze at install time — or
+    // a drain point that only appended to runtime history — would send just
+    // `[replacement]` here and silently drop the user's input.
+    assert_eq!(
+        request_texts(&requests[1]),
+        vec![
+            "replacement context only".to_string(),
+            "typed while the turn ran".to_string()
+        ],
+        "the drained steering message must reach the replacement too"
+    );
+    assert_eq!(
+        requests[1].messages.len(),
+        2,
+        "exactly the replacement plus the drained message"
+    );
+
+    // The interjection is transcript state, exactly once (ADR-007: the replacement is
+    // run-scoped, the transcript is the record).
+    let history = agent.history();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|m| message_text(m) == "typed while the turn ran")
+            .count(),
+        1,
+        "the drained interjection is in the transcript exactly once"
+    );
+    assert!(
+        !history.contains(&replacement),
+        "the replacement itself never enters the transcript"
+    );
+}
+
+/// M91 (closes the M89 limits entry "the overflow-discard pop … not exercised *with an
+/// active replacement*"; `audit/evidence/m89-review.md`): an overflow retry discards the
+/// failed attempt from runtime history, from `produced` and from the run's replacement.
+/// A committed compaction then invalidates the replacement (the epoch rule), so the
+/// request the run actually sends is the rebuilt source — and the joint contract a caller
+/// sees is: the post-retry request matches the transcript and carries NOTHING of the
+/// discarded attempt. The replacement pop is not separately observable because the same
+/// commit that triggers the retry is what drops the replacement.
+#[tokio::test]
+async fn an_overflow_retry_discards_the_failed_attempt_from_transcript_and_replacement() {
+    let provider = FauxProvider::new(vec![
+        echo_call("tc_1", "first"),
+        epsilon_llm::FauxStep::Error {
+            message: "context window exceeded (faux): 200000 > 128000".into(),
+        },
+        epsilon_llm::FauxStep::say("after recovery"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    // The summarizer is its own provider, so the main script stays exactly three steps:
+    // turn one, the overflowed turn, the retry.
+    agent.set_summarizer(Arc::new(epsilon_llm::PanicGuard(FauxProvider::new(vec![
+        epsilon_llm::FauxStep::say("## Objective\nsummarized state"),
+    ]))));
+
+    let replacement = user_msg("replacement context only");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![replacement.clone()]),
+        model: None,
+        thinking: None,
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(
+        outcome.reason,
+        TurnEndReason::Completed,
+        "the overflow retry recovered the run"
+    );
+    assert_eq!(
+        *hooks.prepared.lock().unwrap(),
+        2,
+        "the failed attempt never reached the hook seam: one prepare for turn one, one for the retry"
+    );
+
+    let requests = recorded.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "turn one, the overflowed turn, and the retry"
+    );
+    assert_eq!(request_texts(&requests[0]), vec!["go".to_string()]);
+    assert_eq!(
+        requests[1].messages,
+        vec![replacement.clone()],
+        "the failed turn ran on the replacement, so the pop had something to pop"
+    );
+
+    // The retry's request is the rebuilt source — the compaction summary proves the
+    // replacement was dropped, and the transcript rides with it…
+    let retry = &requests[2];
+    let texts = request_texts(retry);
+    assert!(
+        texts.iter().any(|t| t.starts_with("<compaction_summary>")),
+        "the post-retry request must be rebuilt from the source: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t == "replacement context only"),
+        "the stale replacement must not ride along: {texts:?}"
+    );
+    // …and nothing of the discarded attempt is in it. The retained tail keeps the whole
+    // pre-overflow transcript (the messages are small), so a missed discard would leave
+    // an error-stamped assistant message in the request — an extra message the provider
+    // would read as the model's own failed output.
+    assert!(
+        !retry
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::Assistant(a) if a.error_message.is_some())),
+        "the discarded failed attempt must not reach the provider: {texts:?}"
+    );
+    let history = agent.history();
+    assert_eq!(
+        history.len(),
+        5,
+        "prompt + turn one's assistant and result + the summary + the recovered answer"
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|m| matches!(m, Message::Assistant(a) if a.error_message.is_some())),
+        "the failed attempt is gone from the transcript"
+    );
+    assert_eq!(
+        retry.messages,
+        history[..4].to_vec(),
+        "the post-retry request matches the transcript"
+    );
+}
+
+/// M91: a tool that swaps the agent's provider-view source mid-run (the CORE-02 epoch
+/// guard): `Some(store)` attaches that store, `None` detaches the attached one. Both must
+/// invalidate the run's replacement, so the next request rebuilds from the new source.
+/// The agent handle is late-bound, like [`SteerDuringTurn`].
+struct SwapStoreDuringTurn {
+    descriptor: epsilon_contracts::tool::ToolDescriptor,
+    agent: Arc<Mutex<Option<Arc<epsilon_core::Agent>>>>,
+    store: Option<Arc<Mutex<epsilon_session::SessionStore>>>,
+}
+
+#[async_trait]
+impl epsilon_contracts::tool::Tool for SwapStoreDuringTurn {
+    fn descriptor(&self) -> &epsilon_contracts::tool::ToolDescriptor {
+        &self.descriptor
+    }
+    async fn execute(
+        &self,
+        _call: epsilon_contracts::tool::ToolInvocation,
+        _ctx: epsilon_contracts::tool::ToolContext,
+        _sink: epsilon_contracts::tool::ToolUpdateSink,
+    ) -> Result<epsilon_contracts::tool::ToolOutput, epsilon_contracts::tool::ToolFailure> {
+        let output = match (&self.store, self.agent.lock().unwrap().as_ref()) {
+            (Some(store), Some(agent)) => {
+                agent.attach_session_store(Arc::clone(store));
+                "attached"
+            }
+            (None, Some(agent)) => {
+                agent.detach_session_store();
+                "detached"
+            }
+            _ => "no agent",
+        };
+        Ok(epsilon_contracts::tool::ToolOutput::text(output))
+    }
+}
+
+/// M91 (closes the M89 limits entry "the epoch is also bumped when the store is attached or
+/// detached mid-run … not regression-tested, because no in-tree caller attaches a store
+/// mid-run today"; `audit/evidence/m89-review.md`): with a replacement installed, attaching
+/// a session store mid-run swaps the source the next request reads from. The replacement
+/// must not survive that swap.
+#[tokio::test]
+async fn attaching_a_store_mid_run_invalidates_the_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let late = Arc::new(Mutex::new(
+        epsilon_session::SessionStore::open(dir.path().join("late.jsonl")).unwrap(),
+    ));
+
+    let provider = FauxProvider::new(vec![
+        echo_call("tc_1", "first"),
+        epsilon_llm::FauxStep::call("tc_2", "attach_store", serde_json::json!({})),
+        epsilon_llm::FauxStep::say("after the swap"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let slot: Arc<Mutex<Option<Arc<epsilon_core::Agent>>>> = Arc::new(Mutex::new(None));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    registry.register(Arc::new(SwapStoreDuringTurn {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "attach_store".into(),
+            label: "Attach store".into(),
+            description: "Inert fixture: attaches a session store while the turn runs".into(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Sequential,
+        },
+        agent: slot.clone(),
+        store: Some(Arc::clone(&late)),
+    }));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    *slot.lock().unwrap() = Some(agent.clone());
+
+    let replacement = user_msg("replacement context only");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![replacement.clone()]),
+        model: None,
+        thinking: None,
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+
+    let requests = recorded.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "turn one, the attach turn, and the turn after the swap"
+    );
+    assert_eq!(
+        request_texts(&requests[0]),
+        vec!["go".to_string()],
+        "turn one ran before anything was attached"
+    );
+    assert_eq!(
+        requests[1].messages,
+        vec![replacement.clone()],
+        "the replacement was live when the store was attached"
+    );
+    // The attach happened DURING the turn whose request was the replacement: that
+    // replacement is stale now, so the turn after the swap reads the newly attached
+    // store — whose view holds only what was pushed since the attach.
+    let after_swap = &requests[2];
+    assert!(
+        !after_swap.messages.iter().any(|m| m == &replacement),
+        "the stale replacement must not survive a mid-run attach: {:?}",
+        request_texts(after_swap)
+    );
+    // Each script step is one TURN, so the attach runs in the turn whose request was the
+    // replacement; the store is attached during it and receives what is pushed after —
+    // starting with that turn's own tool result. The request after the swap is that
+    // store view, not the three-message replacement the run held a moment before.
+    assert_eq!(
+        after_swap.messages.len(),
+        1,
+        "the request is the store's view, not the replacement: {:?}",
+        request_texts(after_swap)
+    );
+    assert!(
+        matches!(&after_swap.messages[0], Message::ToolResult(t) if t.tool_call_id == "tc_2"),
+        "the store's first entry is the attach turn's own result"
+    );
+
+    // The store really is the attached one, and it received everything pushed after the
+    // swap — the attach became the durable mirror.
+    let attached = agent.store_handle_for_tests();
+    assert!(Arc::ptr_eq(&attached, &late));
+    let stored: Vec<Message> = attached
+        .lock()
+        .unwrap()
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            epsilon_contracts::session_entry::EntryKind::Message { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        stored.len(),
+        2,
+        "the attach turn's result plus the answer the turn after the swap produced"
+    );
+    assert_eq!(
+        after_swap.messages,
+        stored[..1].to_vec(),
+        "the post-swap request is the store's own view"
+    );
+    assert_eq!(message_text(&stored[1]), "after the swap");
+}
+
+/// M91 (same entry): the other half of the swap — a store attached BEFORE the run that is
+/// DETACHED mid-run must invalidate the replacement the same way, and the next request
+/// falls back to the runtime transcript.
+#[tokio::test]
+async fn detaching_the_store_mid_run_invalidates_the_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = Arc::new(Mutex::new(
+        epsilon_session::SessionStore::open(dir.path().join("held.jsonl")).unwrap(),
+    ));
+
+    let provider = FauxProvider::new(vec![
+        echo_call("tc_1", "first"),
+        epsilon_llm::FauxStep::call("tc_2", "detach_store", serde_json::json!({})),
+        epsilon_llm::FauxStep::say("after the detach"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let slot: Arc<Mutex<Option<Arc<epsilon_core::Agent>>>> = Arc::new(Mutex::new(None));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool::new()));
+    registry.register(Arc::new(SwapStoreDuringTurn {
+        descriptor: epsilon_contracts::tool::ToolDescriptor {
+            name: "detach_store".into(),
+            label: "Detach store".into(),
+            description: "Inert fixture: detaches the session store while the turn runs".into(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: epsilon_contracts::tool::ExecutionMode::Sequential,
+        },
+        agent: slot.clone(),
+        store: None,
+    }));
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(registry),
+        Arc::new(AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    *slot.lock().unwrap() = Some(agent.clone());
+    // Attached before the run: this test's whole point is the DETACH, so the source swap
+    // has to be the detach alone.
+    agent.attach_session_store(Arc::clone(&held));
+
+    let replacement = user_msg("replacement context only");
+    let hooks = Arc::new(RecordingTurnHooks {
+        apply_once: true,
+        ..RecordingTurnHooks::new()
+    });
+    *hooks.update.lock().unwrap() = Some(epsilon_contracts::turn::TurnUpdate {
+        context: Some(vec![replacement.clone()]),
+        model: None,
+        thinking: None,
+    });
+    agent.set_turn_hooks(hooks.clone());
+
+    let outcome = agent.run(user_msg("go")).await.unwrap();
+    assert_eq!(outcome.reason, TurnEndReason::Completed);
+
+    let requests = recorded.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "turn one, the detach turn, and the turn after the swap"
+    );
+    assert_eq!(
+        request_texts(&requests[0]),
+        vec!["go".to_string()],
+        "turn one read the attached store's view"
+    );
+    assert_eq!(
+        requests[1].messages,
+        vec![replacement.clone()],
+        "the replacement was live when the store was detached"
+    );
+    // The detach bumped the epoch, so the turn after it rebuilds from runtime history —
+    // the whole transcript, which is neither the replacement nor the store's view.
+    let after_swap = &requests[2];
+    assert!(
+        !after_swap.messages.iter().any(|m| m == &replacement),
+        "the stale replacement must not survive a mid-run detach"
+    );
+    assert!(
+        request_texts(after_swap).iter().any(|t| t == "go"),
+        "the rebuilt request is the transcript, so it carries the original prompt: {:?}",
+        request_texts(after_swap)
+    );
+    assert_eq!(
+        after_swap.messages,
+        agent.history()[..5].to_vec(),
+        "the post-detach request matches the transcript (the run's own answer is not in it yet)"
+    );
+    assert_eq!(agent.history().len(), 6);
+    assert!(
+        agent.session_store().is_none(),
+        "the detach really dropped the store"
+    );
+}
