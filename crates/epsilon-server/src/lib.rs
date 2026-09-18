@@ -21,9 +21,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 mod openapi;
 use axum::routing::{get, post};
 use axum::{Router, http::StatusCode, response::IntoResponse};
-use epsilon_contracts::content::UserContent;
-use epsilon_contracts::message::{Message, UserMessage};
-use epsilon_contracts::new_id;
+use epsilon_contracts::message::Message;
 use epsilon_core::Agent;
 use epsilon_safety::ChannelApprovalUi;
 use futures_util::Stream;
@@ -84,14 +82,9 @@ impl ServeState {
     }
 
     fn user_message(&self, text: String) -> Message {
-        Message::User(UserMessage {
-            id: new_id("msg"),
-            timestamp_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
-            content: vec![UserContent::Text { text }],
-        })
+        // M74: `@` references resolve through the shared constructor, so the HTTP surface gets
+        // the same attachments as the TUI and `-p`.
+        epsilon_core::references::user_message(self.agent.workspace_root(), &text)
     }
 }
 
@@ -229,6 +222,18 @@ pub async fn serve(state: ServeState, listener: tokio::net::TcpListener) -> std:
     axum::serve(listener, router(state)).await
 }
 
+/// Releases the server's single-run slot when the admitted run's task ends.
+///
+/// Drop-based so a panicking run task cannot leave the server permanently convinced a
+/// run is active (which would turn every later prompt into a 409).
+struct RunSlot(Arc<AtomicUsize>);
+
+impl Drop for RunSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 async fn prompt(State(st): State<ServeState>, body: Option<Json<PromptBody>>) -> impl IntoResponse {
     let Some(Json(PromptBody { task })) = body else {
         return (
@@ -242,21 +247,28 @@ async fn prompt(State(st): State<ServeState>, body: Option<Json<PromptBody>>) ->
             "task must not be empty".to_string(),
         );
     }
-    // Single-run invariant mirrors Agent's own guard; fail fast with 409 instead of
-    // accepting work that would die with AlreadyRunning.
-    if st.active_runs() > 0 {
+    // Single-run invariant, reserved ATOMICALLY before any reply (F13's HTTP half).
+    // The previous check-then-act told the loser of an overlapping pair 202 Accepted
+    // and left it to die with AlreadyRunning, with nothing tying that failure back to
+    // the reply; the RPC surface now keeps the same contract.
+    if st.run_depth.fetch_add(1, Ordering::SeqCst) != 0 {
+        st.run_depth.fetch_sub(1, Ordering::SeqCst);
         return (
             StatusCode::CONFLICT,
             "another run is already active".to_string(),
         );
     }
+    // The guard is built immediately after the reservation, before anything else can
+    // fail or panic: from here on the slot is always released.
+    let slot = RunSlot(Arc::clone(&st.run_depth));
     let msg = st.user_message(task);
-    let depth = Arc::clone(&st.run_depth);
     let agent = Arc::clone(&st.agent);
-    depth.fetch_add(1, Ordering::SeqCst);
     tokio::spawn(async move {
-        let _ = agent.run(msg).await;
-        depth.fetch_sub(1, Ordering::SeqCst);
+        // The slot releases when this task ends, even if `run` panics.
+        let _slot = slot;
+        if let Err(e) = agent.run(msg).await {
+            eprintln!("serve: admitted run failed: {e}");
+        }
     });
     (StatusCode::ACCEPTED, "run started".to_string())
 }
@@ -474,6 +486,56 @@ mod tests {
         )
         .await;
         assert_eq!(status, 202, "slot freed after completion");
+    }
+
+    /// F13 (HTTP half): admission is reserved atomically before the reply, so an
+    /// overlapping prompt receives 409 instead of a 202 it cannot keep. A slow
+    /// provider keeps the first run active while the second request arrives.
+    #[tokio::test]
+    async fn overlapping_prompts_have_exactly_one_admitted() {
+        let approvals = Arc::new(ChannelApprovalUi::new());
+        let gate = Arc::new(RulesetGate::new(
+            Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
+        ));
+        let agent = Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(PanicGuard(epsilon_core::testing::SlowProvider::new(
+                FauxProvider::new(vec![FauxStep::say("done")]),
+                400,
+            ))),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            gate,
+            std::env::temp_dir(),
+        );
+        let state = ServeState::new(agent, approvals);
+        let app = router(state.clone());
+
+        let (first, _) = json_response(
+            app.clone(),
+            "POST",
+            "/prompt",
+            Some(r#"{"task": "one"}"#.into()),
+        )
+        .await;
+        assert_eq!(first, 202);
+
+        let (second, body) = json_response(
+            app.clone(),
+            "POST",
+            "/prompt",
+            Some(r#"{"task": "two"}"#.into()),
+        )
+        .await;
+        assert_eq!(second, 409, "overlapping prompt: {body}");
+        assert!(body.contains("another run"), "{body}");
+
+        // Ending the run releases the reservation; nothing stays wedged.
+        state.agent.abort_current_run();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while state.active_runs() > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(state.active_runs(), 0, "admission must be released");
     }
 
     #[tokio::test]

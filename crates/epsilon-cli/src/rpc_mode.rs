@@ -34,15 +34,101 @@ enum Op {
     Ping,
 }
 
-fn user_message(text: String) -> epsilon_contracts::message::Message {
-    epsilon_contracts::message::Message::User(epsilon_contracts::message::UserMessage {
-        id: epsilon_contracts::new_id("msg"),
-        timestamp_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-        content: vec![epsilon_contracts::content::UserContent::Text { text }],
-    })
+/// What one prompt request actually did (RPC-01).
+#[derive(Debug, PartialEq, Eq)]
+enum Admission {
+    /// The run owns the agent now; its outcome arrives through the event stream.
+    Started,
+    /// No work started; the string is the attributable reason.
+    Rejected(String),
+}
+
+/// Admit a prompt run and report what actually happened.
+///
+/// `Agent::run` decides admission itself and settles it before its first await:
+/// a rejected run returns `AlreadyRunning` immediately, an admitted one emits
+/// `AgentStart` immediately after the check. Racing the spawned run against its
+/// own first event therefore answers truthfully without waiting for the work to
+/// finish. The old shape consulted a helper that always returned "not busy" and
+/// replied `started` to a request the agent had already rejected (pi emits
+/// success only through prompt preflight — `rpc-mode.ts:394-415`).
+async fn admit_prompt(
+    agent: &Arc<Agent>,
+    prompt: epsilon_contracts::message::Message,
+) -> Admission {
+    enum Step {
+        Started,
+        Finished,
+        Rejected(String),
+        Again,
+    }
+
+    // Subscribe before spawning: here, on this line, no runtime can deliver the
+    // AgentStart that decides this request before we are listening for it.
+    let mut adm = agent.subscribe();
+    let a = Arc::clone(agent);
+    let mut handle = tokio::spawn(async move { a.run(prompt).await });
+    let step = loop {
+        let step = tokio::select! {
+            // The event arm first, and biased: a run that was admitted and then failed
+            // has its AgentStart queued before its outcome resolves, so it is reported
+            // as started — its events already streamed and its prompt is already durable.
+            // Answering "no work started" to it would invite a retry that double-prompts.
+            biased;
+            ev = adm.recv() => match ev {
+                Ok(ev) => {
+                    if matches!(&*ev, epsilon_contracts::agent_event::AgentEvent::AgentStart) {
+                        Step::Started
+                    } else {
+                        // Other work (a finishing previous run, notices) does not
+                        // decide this request.
+                        Step::Again
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => Step::Again,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    Step::Rejected("event stream closed".to_string())
+                }
+            },
+            res = &mut handle => match res {
+                // No AgentStart was observed and the run is already over: the agent
+                // rejected the request outright (`AlreadyRunning` is returned before a
+                // run's first await), or the task itself failed.
+                Ok(Err(e)) => Step::Rejected(e.to_string()),
+                Ok(Ok(_)) => Step::Finished,
+                Err(join) => Step::Rejected(format!("run task failed: {join}")),
+            },
+        };
+        match step {
+            Step::Again => continue,
+            settled => break settled,
+        }
+    };
+    match step {
+        Step::Started => {
+            // A failure *after* admission must not vanish: the old code discarded
+            // the run result entirely. The rejection case is already answered in
+            // the reply, so only real post-admission failures are logged.
+            tokio::spawn(async move {
+                if let Ok(Err(e)) = handle.await {
+                    eprintln!("rpc: admitted run failed: {e}");
+                }
+            });
+            Admission::Started
+        }
+        Step::Finished => Admission::Started,
+        // Unreachable by construction — the loop above continues on `Again` and only
+        // breaks settled — but reported as a rejection rather than panicking, so a
+        // future edit cannot turn this into a crash.
+        Step::Again => Admission::Rejected("admission was not settled".to_string()),
+        Step::Rejected(why) => Admission::Rejected(why),
+    }
+}
+
+/// Build the user message for `text`, resolving any `@` references (M74). Same constructor the
+/// TUI and `-p` use, so a reference behaves identically however the prompt arrives.
+fn user_message(agent: &Agent, text: String) -> epsilon_contracts::message::Message {
+    epsilon_core::references::user_message(agent.workspace_root(), &text)
 }
 
 /// Run the stdio loop until stdin closes. Returns the process exit code.
@@ -80,22 +166,18 @@ pub async fn run(agent: Arc<Agent>, approvals: Arc<ChannelApprovalUi>) -> i32 {
         let reply = match serde_json::from_str::<Op>(&line) {
             Ok(Op::Ping) => ok_json(serde_json::json!({"pong": true})),
             Ok(Op::Prompt { task }) => {
-                if agent_is_busy(&agent) {
-                    err_json("another run is already active")
-                } else {
-                    let a = Arc::clone(&agent);
-                    tokio::spawn(async move {
-                        let _ = a.run(user_message(task)).await;
-                    });
-                    ok_json(serde_json::json!({"started": true}))
+                let prompt = user_message(&agent, task);
+                match admit_prompt(&agent, prompt).await {
+                    Admission::Started => ok_json(serde_json::json!({ "started": true })),
+                    Admission::Rejected(why) => err_json(why),
                 }
             }
             Ok(Op::Steer { text }) => {
-                agent.steer(user_message(text));
+                agent.steer(user_message(&agent, text));
                 ok_json(serde_json::json!({"queued": "steer"}))
             }
             Ok(Op::Followup { text }) => {
-                agent.follow_up(user_message(text));
+                agent.follow_up(user_message(&agent, text));
                 ok_json(serde_json::json!({"queued": "followup"}))
             }
             Ok(Op::Approvals) => ok_json(serde_json::json!({
@@ -117,12 +199,6 @@ pub async fn run(agent: Arc<Agent>, approvals: Arc<ChannelApprovalUi>) -> i32 {
         w.flush().await.ok();
     }
     0
-}
-
-fn agent_is_busy(_agent: &Arc<Agent>) -> bool {
-    // Mirrors the server's active_runs guard; Agent rejects concurrent runs itself, so
-    // this is advisory only (the spawned run reports AlreadyRunning through events).
-    false
 }
 
 fn ok_json(v: serde_json::Value) -> String {
@@ -155,5 +231,65 @@ mod tests {
     fn replies_are_single_lines() {
         assert!(!ok_json(serde_json::json!({"a":1})).contains('\n'));
         assert!(err_json("boom").contains("\"boom\""));
+    }
+
+    /// RPC-01: overlapping prompts must not both receive success. Admission is
+    /// decided by the run itself, so the second request receives an attributable
+    /// rejection while the first is active — and admission frees when it ends.
+    #[tokio::test]
+    async fn a_second_prompt_is_rejected_while_a_run_is_admitted() {
+        use epsilon_contracts::content::UserContent;
+        use epsilon_contracts::message::{Message, UserMessage};
+
+        let agent = Arc::new(epsilon_core::Agent::new(
+            epsilon_core::LoopLimits::default(),
+            Arc::new(epsilon_llm::PanicGuard(
+                epsilon_core::testing::SlowProvider::new(
+                    epsilon_llm::FauxProvider::new(vec![epsilon_llm::FauxStep::say("hi")]),
+                    300,
+                ),
+            )),
+            Arc::new(epsilon_core::ToolRegistry::new()),
+            Arc::new(epsilon_core::AutoAllow),
+            std::env::temp_dir(),
+        ));
+        let prompt = |text: &str| {
+            Message::User(UserMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                content: vec![UserContent::Text {
+                    text: text.to_string(),
+                }],
+            })
+        };
+
+        let first = admit_prompt(&agent, prompt("one")).await;
+        assert_eq!(first, Admission::Started, "the first request is admitted");
+
+        match admit_prompt(&agent, prompt("two")).await {
+            Admission::Rejected(why) => assert!(
+                why.contains("another run"),
+                "the rejection must name the real reason: {why}"
+            ),
+            Admission::Started => panic!("rejected work must not receive a false success"),
+        }
+
+        // Ending the run releases admission: the rejection described the active
+        // run, not a permanent state.
+        assert!(agent.abort_current_run());
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut admitted_again = false;
+        while tokio::time::Instant::now() < deadline {
+            if admit_prompt(&agent, prompt("three")).await == Admission::Started {
+                admitted_again = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            admitted_again,
+            "admission must be released when the run ends"
+        );
+        let _ = agent.abort_current_run();
     }
 }
