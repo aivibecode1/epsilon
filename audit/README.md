@@ -6,6 +6,11 @@
 authorizes autonomous audit, restructure and implementation commits; no push
 or paid provider calls are implied.
 
+## Active TUI work
+
+[10 — TUI composer and viewport](10-tui-enhancement.md) records the owner-priority
+rendering corrections, focused execution and remaining gate/integration limits.
+
 ## Historical Phase 1 assessment
 
 The remaining sections describe the 2026-09-16 review and its then-current

@@ -13,6 +13,9 @@ use crate::theme::Theme;
 
 /// Convert assistant markdown into styled transcript rows.
 pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
+    // LaTeX: render math spans to unicode before markdown parsing (pi `markdown.ts` + `latex.ts`).
+    let preprocessed = crate::latex::preprocess_math(text);
+    let text: &str = preprocessed.as_str();
     use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -169,5 +172,22 @@ mod tests {
         let bullets: Vec<String> = lines.iter().map(|l| plain(l)).collect();
         assert!(bullets[0].starts_with("  • "), "{bullets:?}");
         assert!(bullets.last().unwrap().contains("nested"), "{bullets:?}");
+    }
+
+    #[test]
+    fn latex_math_renders_to_unicode_and_strips_delimiters() {
+        let lines = md_to_lines(r"Let $\alpha$ and $$\beta = \gamma$$ end");
+        let joined = lines
+            .iter()
+            .map(|l| plain(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains('α'), "alpha -> unicode: {joined}");
+        assert!(
+            joined.contains('β') && joined.contains('γ'),
+            "beta/gamma: {joined}"
+        );
+        assert!(!joined.contains('$'), "delimiters stripped: {joined}");
+        assert!(!joined.contains(r"\alpha"), "raw latex gone: {joined}");
     }
 }

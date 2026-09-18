@@ -14,13 +14,16 @@ pub mod bench;
 pub mod editor_ops;
 pub mod footer;
 pub mod fuzzy;
+pub mod keybindings;
 pub mod kill_ring;
+pub mod latex;
 pub mod markdown;
 pub mod picker;
 pub mod render_cache;
 pub mod scroll;
 pub mod state;
 pub mod theme;
+pub mod trust_store;
 pub mod undo;
 pub mod wrap;
 

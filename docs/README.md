@@ -56,10 +56,17 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M94 — TUI responsiveness](milestones/M94-tui-responsiveness.md): the owner-reported
+  unresponsiveness in cmd/pwsh, reproduced in a real console (~30 chars/s echo) and fixed in the
+  run loop (drain input before drawing, coalesce agent events, ~30 fps ceiling with a due-frame
+  wake, input/approval priority) — measured at ~one frame per burst afterwards; lands the
+  in-tree TUI enhancement together with its `config.rs` dependency and the M36 pins.
 - [M93 — task state when resuming](milestones/M93-task-state-on-resume.md): F18 — a resumed
   child is claimed `Running` in one lock hold before the background/foreground split, so the
   refusal, the abort cascade and eviction all see it; both run bodies are contained so a panic
-  still lands a terminal record; verification pending.
+  still lands a terminal record. Verified: battery `m93b` 798 passed / 0 failed, two
+  negative-control probes (disabling the claim reds seven tests; disabling the containment reds
+  both panic tests).
 
 - [M92 — RPC protocol breadth](milestones/M92-rpc-protocol-breadth.md): the RPC-02 slice —
   correlated replies in pi's envelope while keeping the first wire's `ok`/`error` keys, an

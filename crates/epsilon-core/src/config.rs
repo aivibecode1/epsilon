@@ -12,6 +12,27 @@ use std::path::{Path, PathBuf};
 /// Default catalog id when nothing is configured or the file is unreadable.
 pub const DEFAULT_MODEL_ID: &str = "faux-1";
 
+/// Read `[<table>] <key> = "…"` from a config dir's `config.toml` (M59: the
+/// external-editor command is user configuration, and the TUI reads every
+/// config value through this module rather than parsing TOML itself).
+/// Missing file, table, key, or a non-string value → `None` (never an error:
+/// a config typo must not break a session).
+pub fn load_config_string_in(config_dir: &Path, table: &str, key: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(config_dir.join("config.toml")).ok()?;
+    let parsed: toml::Value = toml::from_str(&raw).ok()?;
+    parsed
+        .get(table)?
+        .get(key)?
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// [`load_config_string_in`] against the resolved global directory.
+pub fn load_config_string(table: &str, key: &str) -> Option<String> {
+    load_config_string_in(&global_dir()?, table, key)
+}
+
 /// `~/.config/epsilon` — resolved from `$HOME`, falling back to `$USERPROFILE`.
 pub fn global_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;

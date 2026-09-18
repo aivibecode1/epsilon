@@ -41,6 +41,7 @@ not themselves trigger runtime compression.
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
 | [f18-task-state.md](f18-task-state.md) | F18 task state when resuming | M93 implementation in flight (deleg_40696843); brief verified at fec032a |
 | [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | brief verified at fec032a; implementation queued behind M93's build |
+| [tui-responsiveness.md](tui-responsiveness.md) | TUI responsiveness in cmd/pwsh (owner priority) | reproduced + root-caused; fix designed; console harness open for verification |
 | [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5 |
 
 

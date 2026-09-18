@@ -89,3 +89,23 @@
 - Original 313-file snapshot: C:/Users/Hp/AppData/Local/Temp/
   epsilon-integration-preserved-350c9ec/project-snapshot.zip; keep this backup.
 - No builds or child agents running at closeout.
+- A round script's `echo "BATTERY_EXIT=$?"` sentinel is unreliable: if the battery process is
+  killed mid-run (e.g. by a kill sweep), the echo can still print 0 while `gate-<label>.log`
+  stops mid-gate. **The gate log is the authority, not the sentinel**: require the log to end in
+  `===== GATE PASS =====` (or a gate `[exit=` line for the failing gate) before believing any
+  round result. Seen 2026-09-18: an 84-byte log (fmt done, clippy started) alongside
+  "BATTERY_EXIT=0".
+- **Dispatch a fix round once.** A slice's follow-up work must have exactly one writer: before
+  dispatching, list the running children (`delegate_task action='list'`); before assuming a
+  round finished, check the tree, not the message. Seen 2026-09-18: the same M94 fix brief went
+  out twice (two children, ~50 calls each, both editing app.rs) and had to be reconciled
+  afterwards — the round script for such a recovery should grep for duplicated `fn` names before
+  building.
+- **TUI: a replaced approval is denied silently.** `drive`'s ask arm replaces `app.pending_ask`
+  (app.rs ~:2786): both the unpainted and the painted-but-unanswered case fail closed to Deny
+  (channel drop semantics; verified, cannot stall), but the user gets no notice — the dialog
+  content just swaps. Cheap fix, queued: push a notice at the replacement site. Batch it with the
+  run-loop ask FIFO (seat one ask per frame) so it costs one battery cycle, not two.
+- **`docs/milestones/M33–M59` exist only as untracked files** (≈27 historical logs). They are real
+  project documentation that a `git clean` would destroy. They need their own disclosed docs
+  commit (spot-check then state the scope) — deliberately NOT folded into the M94 code commit.

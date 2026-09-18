@@ -54,6 +54,10 @@ pulldown-cmark = "=0.13.4"
 # M16a: display-width math for the transcript wrap + footer (CJK/emoji columns).
 # Already in-tree transitively via ratatui-core's `>=0.2.0` requirement; pinned exact.
 unicode-width = "=0.2.2"
+# M36: grapheme-cluster editing (pi `Intl.Segmenter` parity — backspace/delete
+# and cursor movement must never split ZWJ/combining sequences).
+# Already in-tree transitively (1.13.3 in Cargo.lock); pinned exact.
+unicode-segmentation = "=1.13.3"
 # M43: image attachments (pi `harness/tools/image.ts` base64). Already in-tree
 # transitively (0.23.1 in Cargo.lock via rmcp/reqwest); pinned exact.
 base64 = "=0.23.1"

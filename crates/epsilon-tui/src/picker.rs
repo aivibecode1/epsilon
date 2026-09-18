@@ -91,10 +91,35 @@ pub fn build_rows_with(
     live: &[(String, Vec<String>)],
     customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
-    let needle = filter.trim().to_ascii_lowercase();
-    let matches_filter =
-        |hay: &str| needle.is_empty() || hay.to_ascii_lowercase().contains(&needle);
+    let needle = filter.trim();
+    // pi parity (tui/fuzzy.ts:fuzzyFilter): token-split + total-score ordering.
+    // Collect candidates first so we can sort by fuzzy score (best first), then
+    // emit in section order with per-section sort — preserves favorites/recents
+    // grouping while ranking best matches top within each section.
+    let total_score = |hay: &str| -> Option<i64> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+        let tokens: Vec<&str> = needle
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .filter(|t| !t.is_empty())
+            .collect();
+        if tokens.is_empty() {
+            return Some(0);
+        }
+        let mut total: i64 = 0;
+        for tok in &tokens {
+            let m = crate::fuzzy::fuzzy_match(tok, hay);
+            if !m.matches {
+                return None;
+            }
+            total += m.score;
+        }
+        Some(total)
+    };
 
+    // Helper: collect then sort by score; deduped via push_unique shape kept
+    // in the per-section loops below (we score then emit).
     let mut rows: Vec<PickerRow> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
 
@@ -107,69 +132,92 @@ pub fn build_rows_with(
 
     // Active model floats to top so it is always reachable/visible.
     if let Some(info) = catalog::lookup_model(current)
-        && matches_filter(&format!("{} {} {}", info.id, info.label, info.provider))
+        && total_score(&format!("{} {} {}", info.id, info.label, info.provider)).is_some()
     {
         push_unique(row_from_info(info), &mut rows, &mut seen);
     }
 
-    // Favorites (M23, opencode "Favorites" section): starred ids first.
-    for id in favorites {
-        if matches_filter(id)
-            && let Some(info) = catalog::lookup_model(id)
-        {
-            let mut row = row_from_info(info);
-            row.is_favorite = true;
-            row.provider = "favorite".into();
+    // Favorites (M23, opencode "Favorites" section): starred ids first — sorted by score.
+    {
+        let mut fav_cands: Vec<(i64, PickerRow)> = Vec::new();
+        for id in favorites {
+            if let Some(sc) = total_score(id) {
+                if let Some(info) = catalog::lookup_model(id) {
+                    let mut row = row_from_info(info);
+                    row.is_favorite = true;
+                    row.provider = "favorite".into();
+                    fav_cands.push((sc, row));
+                } else {
+                    fav_cands.push((sc, synthetic_row(id, "favorite", false, false, false)));
+                }
+            }
+        }
+        fav_cands.sort_by_key(|(sc, _)| *sc);
+        for (_, row) in fav_cands {
             push_unique(row, &mut rows, &mut seen);
-        } else if matches_filter(id) {
-            push_unique(
-                synthetic_row(id, "favorite", false, false, false),
-                &mut rows,
-                &mut seen,
-            );
         }
     }
 
-    // Recents exclude favorites (opencode filters them out of "Recent").
-    for id in recents
-        .iter()
-        .filter(|id| !favorites.iter().any(|f| f.eq_ignore_ascii_case(id)))
+    // Recents exclude favorites (opencode filters them out of "Recent") — sorted by score.
     {
-        if matches_filter(id)
-            && let Some(info) = catalog::lookup_model(id)
+        let mut rec_cands: Vec<(i64, PickerRow)> = Vec::new();
+        for id in recents
+            .iter()
+            .filter(|id| !favorites.iter().any(|f| f.eq_ignore_ascii_case(id)))
         {
-            let mut row = row_from_info(info);
-            row.is_recent = true;
-            row.provider = "recent".into();
+            if let Some(sc) = total_score(id) {
+                if let Some(info) = catalog::lookup_model(id) {
+                    let mut row = row_from_info(info);
+                    row.is_recent = true;
+                    row.provider = "recent".into();
+                    rec_cands.push((sc, row));
+                } else {
+                    rec_cands.push((sc, synthetic_row(id, "recent", false, false, true)));
+                }
+            }
+        }
+        rec_cands.sort_by_key(|(sc, _)| *sc);
+        for (_, row) in rec_cands {
             push_unique(row, &mut rows, &mut seen);
-        } else if matches_filter(id) {
-            push_unique(
-                synthetic_row(id, "recent", false, false, true),
-                &mut rows,
-                &mut seen,
-            );
         }
     }
 
     // Live listings (M20): ids fetched from each provider's own API that are NOT
     // already in the bundled catalog surface under their provider's group.
-    for (provider, ids) in live {
-        for id in ids {
-            if matches_filter(id) && catalog::lookup_model(id).is_none() {
-                push_unique(
-                    synthetic_row(id, provider, false, true, false),
-                    &mut rows,
-                    &mut seen,
-                );
+    // Sorted by score so the best live hit surfaces first within the live block.
+    {
+        let mut live_cands: Vec<(i64, String, String)> = Vec::new();
+        for (provider, ids) in live {
+            for id in ids {
+                if catalog::lookup_model(id).is_none()
+                    && let Some(sc) = total_score(id)
+                {
+                    live_cands.push((sc, provider.clone(), id.clone()));
+                }
             }
+        }
+        live_cands.sort_by_key(|(sc, _, _)| *sc);
+        for (_, provider, id) in live_cands {
+            push_unique(
+                synthetic_row(&id, &provider, false, true, false),
+                &mut rows,
+                &mut seen,
+            );
         }
     }
 
-    for info in catalog::curated() {
-        if matches_filter(&format!("{} {} {}", info.id, info.label, info.provider)) {
-            let mut row = row_from_info(info);
-            // Star marker follows the id into the full catalog list too.
-            row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+    {
+        let mut cat_cands: Vec<(i64, PickerRow)> = Vec::new();
+        for info in catalog::curated() {
+            if let Some(sc) = total_score(&format!("{} {} {}", info.id, info.label, info.provider))
+            {
+                let mut row = row_from_info(info);
+                row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+                cat_cands.push((sc, row));
+            }
+        }
+        cat_cands.sort_by_key(|(sc, _)| *sc);
+        for (_, row) in cat_cands {
             push_unique(row, &mut rows, &mut seen);
         }
     }
@@ -177,9 +225,16 @@ pub fn build_rows_with(
     // M28: declared custom providers surface one guidance row each, so a
     // configured endpoint is discoverable without reading docs. Selecting it
     // stages `<name>/` in the input for completing with the model name.
-    for c in customs {
-        let hint = format!("{}/", c.name);
-        if matches_filter(&hint) {
+    {
+        let mut cust_cands: Vec<(i64, String)> = Vec::new();
+        for c in customs {
+            let hint = format!("{}/", c.name);
+            if let Some(sc) = total_score(&hint) {
+                cust_cands.push((sc, hint));
+            }
+        }
+        cust_cands.sort_by_key(|(sc, _)| *sc);
+        for (_, hint) in cust_cands {
             push_unique(
                 synthetic_row(&hint, "custom provider", true, false, false),
                 &mut rows,
@@ -224,15 +279,19 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/compact",
-        description: "compact context (summarize history)",
+        description: "summarize older context to reclaim token window",
     },
     SlashItem {
         value: "/timeline",
-        description: "list session branch entries",
+        description: "browse session branches by seq/lane/snippet, Enter jumps",
+    },
+    SlashItem {
+        value: "/tasks",
+        description: "subagent tasks: state, turns, ids (Esc stops them with the run)",
     },
     SlashItem {
         value: "/fork",
-        description: "fork session at current branch",
+        description: "copy current session JSONL to a new branch file",
     },
     SlashItem {
         value: "/skills",
@@ -270,18 +329,127 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         value: "/quit",
         description: "exit the session",
     },
+    // --- pi parity: additional builtins (G1) ---
+    SlashItem {
+        value: "/new",
+        description: "start a new session",
+    },
+    SlashItem {
+        value: "/resume ",
+        description: "resume a session file by path (bare /resume opens the browser)",
+    },
+    SlashItem {
+        value: "/sessions",
+        description: "browse session files in this workspace and resume one",
+    },
+    SlashItem {
+        value: "/editor",
+        description: "compose this draft in $EDITOR (Alt+E)",
+    },
+    SlashItem {
+        value: "/session",
+        description: "show session info and stats",
+    },
+    SlashItem {
+        value: "/tree",
+        description: "navigate session tree (switch branches)",
+    },
+    SlashItem {
+        value: "/clone",
+        description: "duplicate the current session at current position",
+    },
+    SlashItem {
+        value: "/trust ",
+        description: "save project trust decision for future sessions",
+    },
+    SlashItem {
+        value: "/reload",
+        description: "reload skills, prompts, and config without restarting",
+    },
+    SlashItem {
+        value: "/export ",
+        description: "export session (HTML default, or specify path: .html/.json)",
+    },
+    SlashItem {
+        value: "/import ",
+        description: "import and resume a session from a JSONL file",
+    },
+    SlashItem {
+        value: "/share",
+        description: "share session as a secret GitHub gist",
+    },
+    SlashItem {
+        value: "/copy",
+        description: "copy last agent message to clipboard",
+    },
+    SlashItem {
+        value: "/name ",
+        description: "set session display name",
+    },
+    SlashItem {
+        value: "/changelog",
+        description: "show changelog entries",
+    },
+    SlashItem {
+        value: "/hotkeys",
+        description: "show all keyboard shortcuts",
+    },
+    SlashItem {
+        value: "/settings",
+        description: "open settings menu",
+    },
+    SlashItem {
+        value: "/scoped-models",
+        description: "enable/disable models for Ctrl+P cycling",
+    },
 ];
 
-/// Candidates whose head matches the typed `/prefix` (input has no space yet),
-/// in registry order — pi returns fuzzy-filtered registry order too.
+/// Candidates that fuzzy-match the typed `/prefix` (input has no space yet),
+/// sorted by match quality — pi's `fuzzyFilter` over `AutocompleteItem.name`.
 pub fn slash_items(input: &str) -> Vec<&'static SlashItem> {
     if !input.starts_with('/') || input.contains(' ') {
         return Vec::new();
     }
-    SLASH_ITEMS
+    let needle = input.trim_start_matches('/').trim();
+    if needle.is_empty() {
+        return SLASH_ITEMS.iter().collect();
+    }
+    let mut scored: Vec<(i64, &'static SlashItem)> = SLASH_ITEMS
         .iter()
-        .filter(|item| item.value.starts_with(input))
-        .collect()
+        .filter_map(|item| {
+            let hay = item.value.trim_start_matches('/').trim();
+            let m = crate::fuzzy::fuzzy_match(needle, hay);
+            if m.matches {
+                Some((m.score, item))
+            } else {
+                None
+            }
+        })
+        .collect();
+    scored.sort_by_key(|(score, _)| *score);
+    scored.into_iter().map(|(_, it)| it).collect()
+}
+
+/// Best fuzzy guess for an unknown slash word (e.g. `/modl` → `/model`).
+/// Returns the top-scoring [`SlashItem`] whose name fuzzy-matches `word`.
+pub fn suggest_slash(word: &str) -> Option<&'static SlashItem> {
+    let needle = word.trim().trim_start_matches('/').trim();
+    if needle.is_empty() {
+        return None;
+    }
+    let mut best: Option<(i64, &'static SlashItem)> = None;
+    for item in SLASH_ITEMS {
+        let hay = item.value.trim_start_matches('/').trim();
+        let m = crate::fuzzy::fuzzy_match(needle, hay);
+        if m.matches {
+            match best {
+                None => best = Some((m.score, item)),
+                Some((best_score, _)) if m.score < best_score => best = Some((m.score, item)),
+                _ => {}
+            }
+        }
+    }
+    best.map(|(_, it)| it)
 }
 
 /// A parsed editor command.
@@ -316,6 +484,44 @@ pub enum Command {
     },
     /// Remove a stored provider key (`/logout <provider>`).
     Logout(String),
+    /// Start a new session (clear transcript; session file continues; use /fork for a branch file).
+    New,
+    /// Resume a different session (path hint; live switch is deferred to restart).
+    Resume(String),
+    /// Open the draft in `$EDITOR` (M59; `Alt+E` / `Ctrl+O` do the same).
+    Editor,
+    /// Browse the workspace's session files and resume one (M57).
+    Sessions,
+    /// Show session info and stats.
+    Session,
+    /// List delegated subagent tasks (state, turns, ids) — M54.
+    Tasks,
+    /// Navigate session tree (alias for timeline).
+    Tree,
+    /// Duplicate the current session at current position.
+    Clone,
+    /// Trust decision for project config.
+    Trust(Option<String>),
+    /// Reload skills, prompts, and config.
+    Reload,
+    /// Export session (tail may contain format/path hint).
+    Export(Option<String>),
+    /// Import a session JSONL (path in tail).
+    Import(String),
+    /// Share session as a gist.
+    Share,
+    /// Copy last agent message to clipboard.
+    Copy,
+    /// Set session display name.
+    Name(Option<String>),
+    /// Show changelog.
+    Changelog,
+    /// Show keyboard shortcuts.
+    Hotkeys,
+    /// Open settings menu.
+    Settings,
+    /// Enable/disable models for picker cycling.
+    ScopedModels,
     /// Exit the session.
     Quit,
     /// A `/word` we do not know — surfaced as an error, never sent to the model.
@@ -344,7 +550,38 @@ pub fn parse_command(input: &str) -> Option<Command> {
         })),
         "compact" => Some(Command::Compact),
         "timeline" | "branch" => Some(Command::Timeline),
+        "tree" => Some(Command::Tree),
         "fork" => Some(Command::Fork),
+        "clone" => Some(Command::Clone),
+        "new" => Some(Command::New),
+        "resume" => Some(Command::Resume(tail.to_string())),
+        "sessions" => Some(Command::Sessions),
+        "editor" => Some(Command::Editor),
+        "session" => Some(Command::Session),
+        "trust" => Some(Command::Trust(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
+        "reload" => Some(Command::Reload),
+        "export" => Some(Command::Export(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
+        "import" => Some(Command::Import(tail.to_string())),
+        "share" => Some(Command::Share),
+        "copy" => Some(Command::Copy),
+        "name" => Some(Command::Name(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
+        "changelog" => Some(Command::Changelog),
+        "tasks" => Some(Command::Tasks),
+        "hotkeys" => Some(Command::Hotkeys),
+        "settings" => Some(Command::Settings),
+        "scoped-models" | "scoped_models" => Some(Command::ScopedModels),
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),
@@ -505,27 +742,60 @@ pub fn build_models_for_provider(
         }
         return rows;
     }
-    let mut rows: Vec<PickerRow> = catalog::curated()
-        .iter()
-        .filter(|i| i.provider == provider)
-        .map(row_from_info)
-        .filter(|row| {
-            needle.is_empty()
-                || fuzzy::fuzzy_match(needle, &row.id).matches
-                || fuzzy::fuzzy_match(needle, &row.label).matches
-        })
-        .collect();
+    // pi parity: score + sort like fuzzyFilter — best (lowest score) first.
+    // When the filter is empty, preserve the "current floats to top" order;
+    // when filtering, fuzzy ranking wins (pi's filterModels sets selectedIndex=0
+    // on the scored list, not on a current-first list).
+    let score_hay = |hay: &str| -> Option<i64> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+        let tokens: Vec<&str> = needle
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .filter(|t| !t.is_empty())
+            .collect();
+        if tokens.is_empty() {
+            return Some(0);
+        }
+        let mut total: i64 = 0;
+        for tok in &tokens {
+            let m = fuzzy::fuzzy_match(tok, hay);
+            if !m.matches {
+                return None;
+            }
+            total += m.score;
+        }
+        Some(total)
+    };
+    let mut scored: Vec<(i64, PickerRow)> = Vec::new();
+    for info in catalog::curated().iter().filter(|i| i.provider == provider) {
+        let hay = format!("{} {}", info.id, info.label);
+        if let Some(sc) = score_hay(&hay) {
+            scored.push((sc, row_from_info(info)));
+        }
+    }
     if let Some((_, ids)) = live.iter().find(|(p, _)| p == provider) {
         for id in ids {
-            let known = rows.iter().any(|r| r.id.eq_ignore_ascii_case(id));
-            if !known && (needle.is_empty() || fuzzy::fuzzy_match(needle, id).matches) {
-                rows.push(synthetic_row(id, provider, false, true, false));
+            let known = scored.iter().any(|(_, r)| r.id.eq_ignore_ascii_case(id));
+            if !known && let Some(sc) = score_hay(id) {
+                scored.push((sc, synthetic_row(id, provider, false, true, false)));
             }
         }
     }
-    // Active model floats to top.
-    rows.sort_by_key(|r| r.id != current);
-    rows
+    if needle.is_empty() {
+        // No filter: current floats to top (stable, pi's sortModels semantics).
+        scored.sort_by(|a, b| {
+            let a_cur = a.1.id == current;
+            let b_cur = b.1.id == current;
+            b_cur
+                .cmp(&a_cur)
+                .then(a.0.cmp(&b.0))
+                .then(a.1.id.cmp(&b.1.id))
+        });
+    } else {
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+    }
+    scored.into_iter().map(|(_, r)| r).collect()
 }
 
 // ---- M16c: command palette -----------------------------------------------------
@@ -605,9 +875,266 @@ pub fn filter_palette(query: &str) -> Vec<PaletteEntry> {
     scored.into_iter().map(|(_, e)| e).collect()
 }
 
+// ---- M57: session browser rows --------------------------------------------------
+
+/// One row in the `/sessions` browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    /// File to resume.
+    pub path: std::path::PathBuf,
+    /// Display title (display name → first user message → file stem).
+    pub title: String,
+    /// Right-hand meta: age · size · what the title did NOT say.
+    pub meta: String,
+    /// True for the session this app is attached to right now.
+    pub is_current: bool,
+}
+
+/// Compact byte size for the browser (`0 B`, `812 B`, `12 KB`, `1.4 MB`).
+pub fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let kb = bytes as f64 / 1024.0;
+    if kb < 1024.0 {
+        return format!("{kb:.0} KB");
+    }
+    format!("{:.1} MB", kb / 1024.0)
+}
+
+/// Age label from two epoch-millis stamps (`just now`, `5m`, `3h`, `2d`).
+/// Injected `now_ms` keeps this deterministic in tests.
+pub fn age_label(now_ms: u64, then_ms: u64) -> String {
+    if then_ms == 0 || now_ms <= then_ms {
+        return "just now".to_string();
+    }
+    let secs = (now_ms - then_ms) / 1000;
+    if secs < 60 {
+        return "just now".to_string();
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m ago");
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    format!("{}d ago", hours / 24)
+}
+
+/// Rows for `/sessions`: newest first, fuzzy-filtered over title, file name and
+/// the session's own cwd. `current` marks the attached session; `now_ms` is
+/// injected for deterministic ages.
+pub fn session_rows(
+    dir: &std::path::Path,
+    filter: &str,
+    current: Option<&std::path::Path>,
+    now_ms: u64,
+) -> Vec<SessionRow> {
+    let needle = filter.trim();
+    let tokens: Vec<&str> = needle
+        .split(|c: char| c.is_whitespace() || c == '/')
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut scored: Vec<(i64, SessionRow)> = Vec::new();
+    for session in epsilon_session::list_sessions(dir) {
+        let title = session.title();
+        let file = session
+            .path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Meta shows what the title does not: the file name is redundant when
+        // the title already IS the stem.
+        let meta_head = format!(
+            "{} · {}{}{}",
+            age_label(now_ms, session.modified_ms),
+            format_bytes(session.bytes),
+            // M58: a delegated task's transcript is a session too — say so, or
+            // the list looks like it grew files nobody asked for.
+            if session.parent_session.is_some() {
+                " · task child"
+            } else {
+                ""
+            },
+            // M61: a session another window is writing — resuming it will be
+            // refused, so say so here rather than on the attempt.
+            if session.in_use { " · in use" } else { "" }
+        );
+        // Title and file name match fuzzily; the session's cwd only matches
+        // literally. Fuzzy subsequence over a long path is not a filter — `old`
+        // is a subsequence of `…\AppData\Local\…` — and a browser that matches
+        // everything is a browser that filters nothing.
+        let hay = format!("{title} {file}");
+        let cwd_lower = session.cwd.to_lowercase();
+        let mut score: i64 = 0;
+        let mut matched = true;
+        for tok in &tokens {
+            let m = crate::fuzzy::fuzzy_match(tok, &hay);
+            if m.matches {
+                score += m.score;
+                continue;
+            }
+            if cwd_lower.contains(&tok.to_lowercase()) {
+                continue;
+            }
+            matched = false;
+            break;
+        }
+        if !matched {
+            continue;
+        }
+        let is_current = current.is_some_and(|c| same_session_file(c, &session.path));
+        scored.push((
+            score,
+            SessionRow {
+                path: session.path.clone(),
+                title,
+                meta: format!("{meta_head} · {file}"),
+                is_current,
+            },
+        ));
+    }
+    if !tokens.is_empty() {
+        scored.sort_by_key(|(s, _)| *s);
+    }
+    scored.into_iter().map(|(_, r)| r).collect()
+}
+
+/// Same file, tolerating relative/absolute and `.`-segment differences between
+/// what the app was handed and what the directory listing produced.
+fn same_session_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_rows_list_newest_first_and_mark_the_current_file() {
+        // M57: the browser reads the same directory `--continue` scans.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let header = |id: &str| {
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "session", "version": 3, "id": id,
+                    "timestamp": "2026-09-14T10:00:00Z", "cwd": dir.to_string_lossy(),
+                })
+            )
+        };
+        let user = |text: &str| {
+            let entry = epsilon_contracts::session_entry::SessionEntry {
+                id: "e1".to_string(),
+                seq: 1,
+                parent_id: None,
+                timestamp_ms: 0,
+                kind: epsilon_contracts::session_entry::EntryKind::Message {
+                    message: epsilon_contracts::message::Message::User(
+                        epsilon_contracts::message::UserMessage {
+                            id: "m1".to_string(),
+                            timestamp_ms: 0,
+                            content: vec![epsilon_contracts::content::UserContent::Text {
+                                text: text.to_string(),
+                            }],
+                        },
+                    ),
+                    api_request_sha256: None,
+                },
+            };
+            format!("{}\n", serde_json::to_string(&entry).unwrap())
+        };
+        std::fs::write(
+            dir.join("old.jsonl"),
+            format!("{}{}", header("ses_old"), user("first")),
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(
+            dir.join("new.jsonl"),
+            format!("{}{}", header("ses_new"), user("second task")),
+        )
+        .unwrap();
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+
+        let now = 10_000_000_000u64;
+        let rows = session_rows(dir, "", None, now);
+        assert_eq!(rows.len(), 2, "only session files: {rows:?}");
+        assert_eq!(rows[0].title, "second task", "newest first");
+        assert!(rows[0].meta.contains("new.jsonl"));
+        assert!(!rows[0].is_current);
+
+        // The current file is marked, and the filter matches title, file, or cwd.
+        let rows = session_rows(dir, "", Some(&dir.join("new.jsonl")), now);
+        assert!(rows[0].is_current, "the attached session is marked");
+        assert!(!rows[1].is_current);
+        assert_eq!(session_rows(dir, "old", None, now).len(), 1);
+        assert_eq!(
+            session_rows(dir, "second", None, now).len(),
+            1,
+            "title matches"
+        );
+        assert!(session_rows(dir, "zzz-nothing", None, now).is_empty());
+    }
+
+    #[test]
+    fn session_rows_flag_delegated_task_children() {
+        // M58: children carry a parent link in their header; the browser says so.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let parent = dir.join("tui.jsonl");
+        let child = dir.join("tui-task_abc.jsonl");
+        let _ = epsilon_session::SessionStore::open_in(&parent, dir).unwrap();
+        let _ = epsilon_session::SessionStore::open_child_in(&child, dir, "ses_parent").unwrap();
+
+        let rows = session_rows(dir, "", None, 1_000_000);
+        assert_eq!(rows.len(), 2);
+        let child_row = rows.iter().find(|r| r.path == child).expect("child listed");
+        let parent_row = rows
+            .iter()
+            .find(|r| r.path == parent)
+            .expect("parent listed");
+        assert!(child_row.meta.contains("task child"), "{}", child_row.meta);
+        assert!(
+            !parent_row.meta.contains("task child"),
+            "{}",
+            parent_row.meta
+        );
+    }
+
+    #[test]
+    fn a_leased_session_is_marked_in_use() {
+        // M61: the row says why a resume would be refused, before the attempt.
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("ses_busy.jsonl");
+        let _store = epsilon_session::SessionStore::open_in(&path, dir.path()).expect("writer");
+        let rows = session_rows(dir.path(), "", None, 0);
+        let row = rows.first().expect("the session is listed");
+        assert!(row.meta.contains("in use"), "{}", row.meta);
+    }
+
+    #[test]
+    fn age_and_size_labels_are_compact_and_deterministic() {
+        let now = 1_000_000_000_000u64;
+        assert_eq!(age_label(now, now), "just now");
+        assert_eq!(age_label(now, now - 30_000), "just now");
+        assert_eq!(age_label(now, now - 5 * 60_000), "5m ago");
+        assert_eq!(age_label(now, now - 3 * 3_600_000), "3h ago");
+        assert_eq!(age_label(now, now - 50 * 3_600_000), "2d ago");
+        // Unknown mtime never renders as a huge age.
+        assert_eq!(age_label(now, 0), "just now");
+
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(812), "812 B");
+        assert_eq!(format_bytes(12 * 1024), "12 KB");
+        assert_eq!(format_bytes(3 * 1024 * 1024 / 2), "1.5 MB");
+    }
 
     #[test]
     fn empty_filter_lists_recents_then_catalog_with_current_first() {
@@ -625,7 +1152,10 @@ mod tests {
 
     #[test]
     fn filter_matches_id_label_or_provider_case_insensitively() {
-        // The current catalog exposes v4.1 in the label, not the model ID.
+        // M55: the third query is a LABEL-only term — the registry retired
+        // `deepseek-reasoner`, but `v4.1` appears in `deepseek-flash`'s label
+        // ("DeepSeek V4.1 Flash") and nowhere in its id, so the label path and
+        // the case-folding both stay covered.
         for q in ["deepseek", "DEEPSEEK", "v4.1"] {
             let rows = build_rows(q, "", &[], &[]);
             assert!(
@@ -739,6 +1269,97 @@ mod tests {
     }
 
     #[test]
+    fn build_rows_uses_fuzzy_subsequence_not_substring() {
+        // pi parity: "dvp" is a fuzzy subsequence of "deepseek-v4-pro", not a
+        // substring; stage1's build_rows_with must find it via fuzzy_match like
+        // stage2 does. (Pin moved at the M55 refresh: the registry dropped the
+        // old `deepseek-chat` row this case used.)
+        let rows = build_rows("dvp", "", &[], &[]);
+        assert!(
+            rows.iter().any(|r| r.id == "deepseek-v4-pro"),
+            "fuzzy subsequence dvp must find deepseek-v4-pro via fuzzy_match"
+        );
+        // "codex52" swapped still finds gpt-5.2-codex via swapped fallback parity
+        let rows2 = build_rows("codex52", "", &[], &[]);
+        assert!(
+            rows2.iter().any(|r| r.id.contains("codex")),
+            "swapped codex52 should match a codex model via pi swapped fallback"
+        );
+    }
+
+    #[test]
+    fn deterministic_order_same_filter_same_rows() {
+        let a = build_rows("deep", "", &[], &[]);
+        let b = build_rows("deep", "", &[], &[]);
+        assert_eq!(a, b, "same filter must produce identical row order");
+
+        let s1 = build_models_for_provider("deepseek", "pro", "", &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[]);
+        assert_eq!(s1, s2, "stage2 deterministic too");
+    }
+
+    #[test]
+    fn multi_token_filter_finds_split_words() {
+        // pi parity: fuzzyFilter splits on space/slash — every token must match
+        for q in ["deep pro", "deep/pro", "  deep   pro  "] {
+            let rows = build_rows(q, "", &[], &[]);
+            assert!(
+                rows.iter().any(|r| r.id == "deepseek-v4-pro"),
+                "multi-token {q:?} must find deepseek-v4-pro"
+            );
+        }
+        // Stage2 also token-aware
+        let s2 = build_models_for_provider("deepseek", "deep pro", "", &[], &[]);
+        assert!(
+            s2.iter().any(|r| r.id == "deepseek-v4-pro"),
+            "stage2 multi-token must find deepseek-v4-pro"
+        );
+        // Non-matching second token must NOT match
+        let miss = build_rows("deep zzz-nope", "", &[], &[]);
+        assert!(
+            miss.iter().all(|r| r.is_custom),
+            "second token miss must yield only custom row"
+        );
+    }
+
+    #[test]
+    fn filtered_results_are_ranked_by_fuzzy_score_best_first() {
+        // pi parity: fuzzyFilter sorts by totalScore. "deep pro" must put
+        // deepseek-v4-pro before any other deepseek* that only matches "deep".
+        let rows = build_rows("deep pro", "", &[], &[]);
+        let pos_pro = rows
+            .iter()
+            .position(|r| r.id == "deepseek-v4-pro")
+            .expect("must find deepseek-v4-pro");
+        // Any deepseek row that doesn't contain "pro" must rank after it
+        if let Some(pos_other) = rows
+            .iter()
+            .position(|r| r.provider == "deepseek" && !r.id.contains("pro"))
+        {
+            assert!(
+                pos_pro < pos_other,
+                "deepseek-v4-pro (pos {pos_pro}) must rank before non-pro deepseek row (pos {pos_other}) under fuzzy scoring"
+            );
+        }
+        // Empty filter still deterministic (already covered), but stage2 with filter
+        // must also be scored — "pro" within deepseek provider should win.
+        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[]);
+        assert_eq!(
+            s2.first().map(|r| r.id.as_str()),
+            Some("deepseek-v4-pro"),
+            "stage2 ranking: pro top"
+        );
+        // Empty stage2 still puts current first (stable when no query).
+        let s2_empty_a = build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[]);
+        let s2_empty_b = build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[]);
+        assert_eq!(s2_empty_a, s2_empty_b);
+        assert_eq!(
+            s2_empty_a.first().map(|r| r.id.as_str()),
+            Some("deepseek-v4-pro")
+        );
+    }
+
+    #[test]
     fn commands_parse_with_optional_args_and_case() {
         assert_eq!(parse_command("/models"), Some(Command::Models));
         assert_eq!(
@@ -761,11 +1382,76 @@ mod tests {
         assert_eq!(parse_command("/skills"), Some(Command::Skills));
         assert_eq!(parse_command("/quit"), Some(Command::Quit));
         assert_eq!(parse_command("/q"), Some(Command::Quit));
+        // pi parity builtins (G1): every builtin must parse, not fall to Unknown
+        assert_eq!(parse_command("/new"), Some(Command::New));
+        assert_eq!(
+            parse_command("/resume /tmp/s.json"),
+            Some(Command::Resume("/tmp/s.json".into()))
+        );
+        assert_eq!(parse_command("/session"), Some(Command::Session));
+        assert_eq!(parse_command("/tree"), Some(Command::Tree));
+        assert_eq!(parse_command("/clone"), Some(Command::Clone));
+        assert_eq!(
+            parse_command("/trust yes"),
+            Some(Command::Trust(Some("yes".into())))
+        );
+        assert_eq!(parse_command("/trust"), Some(Command::Trust(None)));
+        assert_eq!(parse_command("/reload"), Some(Command::Reload));
+        assert_eq!(
+            parse_command("/export ./out.html"),
+            Some(Command::Export(Some("./out.html".into())))
+        );
+        assert_eq!(
+            parse_command("/import ./in.jsonl"),
+            Some(Command::Import("./in.jsonl".into()))
+        );
+        assert_eq!(parse_command("/share"), Some(Command::Share));
+        assert_eq!(parse_command("/copy"), Some(Command::Copy));
+        assert_eq!(
+            parse_command("/name my-session"),
+            Some(Command::Name(Some("my-session".into())))
+        );
+        assert_eq!(parse_command("/changelog"), Some(Command::Changelog));
+        assert_eq!(parse_command("/hotkeys"), Some(Command::Hotkeys));
+        assert_eq!(parse_command("/settings"), Some(Command::Settings));
+        assert_eq!(parse_command("/scoped-models"), Some(Command::ScopedModels));
         assert_eq!(
             parse_command("/bogus"),
             Some(Command::Unknown("bogus".into())),
             "unknown slash words error out — never sent to the model"
         );
         assert_eq!(parse_command("fix the bug"), None);
+    }
+
+    #[test]
+    fn slash_items_uses_fuzzy_not_only_prefix() {
+        // pi parity: slash autocomplete uses fuzzyFilter over command names, not starts_with
+        assert!(
+            slash_items("/modl")
+                .iter()
+                .any(|it| it.value.trim() == "/model"),
+            "/modl typo must still surface /model via fuzzy"
+        );
+        assert!(
+            slash_items("/sesn")
+                .iter()
+                .any(|it| it.value.trim() == "/session"),
+            "/sesn typo must surface /session via fuzzy"
+        );
+        // exact prefix still ranks first/best
+        let first = slash_items("/mod").first().expect("/mod matches").value;
+        assert!(first.trim_start_matches('/').starts_with("mod"));
+    }
+
+    #[test]
+    fn suggest_slash_finds_best_fuzzy_hint_for_unknown() {
+        let hit = suggest_slash("modl").expect("modl suggests something");
+        assert!(
+            matches!(hit.value.trim(), "/model" | "/models"),
+            "modl should hint /model or /models, got {}",
+            hit.value
+        );
+        assert!(suggest_slash("").is_none());
+        assert!(suggest_slash("zzzzz-nope-zzz").is_none());
     }
 }

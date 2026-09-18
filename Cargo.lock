@@ -808,12 +808,14 @@ dependencies = [
  "epsilon-core",
  "epsilon-llm",
  "epsilon-safety",
+ "epsilon-session",
  "futures-util",
  "pulldown-cmark",
  "ratatui",
  "serde_json",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

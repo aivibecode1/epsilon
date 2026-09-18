@@ -151,6 +151,31 @@
   the untested `run()`/pump wiring, the `ThinkingLevel::ALL`-derived OpenAPI enum residual, and
   `pending_message_count`'s steering-only meaning.
 
+## M93 / F18 task state when resuming (2026-09-18)
+- 5ab723f: `claim_task_running` claims a resumed child `Running` in ONE lock hold before the
+  background/foreground split (and the old racy guard is deleted — the claim is the refusal), so
+  the second-resume refusal, the abort cascade's reach and unevictability all follow from the
+  state; both run legs (detached and foreground) are contained by `contain_panic`, so a panic
+  lands a truthful `Failed` instead of a permanently-claimed entry. Ledger F18 rewritten with
+  corrected HEAD citations (the recorded ones anchored to `3afafd3`, +135/+458 drift) and F20
+  stamped as verified by `m86-88f`/`31b1794`.
+- Battery `m93b` (candidate = HEAD `fec032a` + eleven slice files, hash-verified, sibling hunks
+  provably absent): all five gates exit 0, **798 passed / 0 failed / 0 ignored across 55
+  summaries**, delta +7 reconciled per binary (`task_scenarios` 14→21). Evidence:
+  `gate-m93b.log` (sha256 `19ecc04e…`), `m93b-probes.log` (sha256 `05d6c456…` — claim disabled →
+  7 fail; containment disabled → both panic tests fail, proving the foreground wrap is
+  load-bearing), `m93b-preflight.log`, `m93-review.md`, `m93-cleanup.log`.
+- **New environment block:** Avira false-positives the *debug-built* `epsilon-core` lib-test
+  executable (`HEUR/APC.Misc`, execution denied). The battery ran with
+  `CARGO_PROFILE_TEST_DEBUG=0` after a pre-flight chose the knob that executes; no security
+  configuration touched (owner/admin action).
+- Independent review caught one real gap (the uncontained foreground leg) and one false claim in
+  the milestone's own record (the "two live children" case is impossible — M61's store lease
+  refuses the second open; the truth is the running task goes untracked), both fixed pre-commit.
+- Reinstall: the global `epsilon.exe` was rebuilt from the frozen candidate (CLI/TUI-visible
+  change), so it carries the verified bytes and none of the other work item's changes.
+- Next: SURFACE-05 (paged reads; brief banked in `surface05-paged-reads.md`).
+
 ## Next safe actions
 - Owner redirected priority to TUI enhancement; see tui-enhancement.md. F04 investigation deferred without code changes.
 - M85 docs/evidence closeout accompanies this note; inherited M84 hunks in

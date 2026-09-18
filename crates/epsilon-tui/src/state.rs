@@ -4,7 +4,7 @@
 //! reducer, kept free of terminal code so it is unit-testable without a pty.
 
 use epsilon_contracts::agent_event::AgentEvent;
-use epsilon_contracts::message::{AssistantMessage, Message};
+use epsilon_contracts::message::{AssistantMessage, Message, StopReason};
 
 /// Visual class of one transcript line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,56 @@ static NEXT_LINE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn take_line_id() -> u64 {
     NEXT_LINE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Human-readable placeholder for an image that cannot be rendered as graphics.
+///
+/// Mirrors pi's `imageFallback()` text path — the Kitty/iTerm2 escape is honest-parity
+/// deferred (needs `detectCapabilities()` + `Kitty` negotiation). Until then the transcript
+/// must not swallow images silently. `ponytail: no terminal probing, no base64 decode at v1`.
+pub fn image_fallback_line(mime: &str, bytes: Option<usize>, filename: Option<&str>) -> String {
+    let name = filename.unwrap_or("image");
+    match bytes {
+        Some(n) => format!("[image: {mime} {name} ({} bytes) — graphics deferred]", n),
+        None => format!("[image: {mime} {name} — graphics deferred]"),
+    }
+}
+
+/// Try to summarize a tool output that is likely an inline image blob.
+///
+/// Returns a single-line fallback when the text looks like `data:image/...;base64,` or a
+/// very long base64 payload that would otherwise flood the transcript. `None` means "not an image".
+pub fn summarize_image_blob(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.starts_with("data:image/") {
+        // `data:image/png;base64,iVBOR…`
+        let mime_end = t.find(';').unwrap_or(12);
+        let mime = &t[5..mime_end];
+        // rough byte estimate: base64 len * 3/4
+        let b64_start = t.find(',').map(|i| i + 1).unwrap_or(t.len());
+        let b64_len = t[b64_start..].trim().len();
+        let est = if b64_len > 0 {
+            Some((b64_len * 3) / 4)
+        } else {
+            None
+        };
+        return Some(image_fallback_line(mime, est, None));
+    }
+    // Heuristic: single line > 4k that is > 95% base64 chars → treat as image blob
+    if t.len() > 4096 && !t.contains('\n') {
+        let b64_like = t
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '/' || *c == '=')
+            .count();
+        if b64_like * 20 >= t.len() * 19 {
+            return Some(image_fallback_line(
+                "image/*",
+                Some((t.len() * 3) / 4),
+                None,
+            ));
+        }
+    }
+    None
 }
 
 /// One rendered transcript row.
@@ -131,6 +181,11 @@ impl UiState {
         &self.streaming_text
     }
 
+    /// In-flight thinking not yet committed (pi: rendered as DIM thinking tail).
+    pub fn streaming_thinking(&self) -> &str {
+        &self.streaming_thinking
+    }
+
     /// Footer status text.
     pub fn status(&self) -> &str {
         &self.status
@@ -181,6 +236,132 @@ impl UiState {
         self.streaming_thinking.clear();
     }
 
+    /// Hydrate the visible transcript from a restored history (live `/resume` + `/import`).
+    ///
+    /// Clears existing rows and rebuilds them from `messages` (the store's shadowed
+    /// model view). Ponytail: reuse existing line constructors and token accounting.
+    pub fn hydrate_from_history(&mut self, messages: &[Message]) {
+        self.lines.clear();
+        self.streaming_text.clear();
+        self.streaming_thinking.clear();
+        self.tokens_in = 0;
+        self.tokens_out = 0;
+        self.cache_read = 0;
+        self.cache_write = 0;
+        self.latest_prompt_tokens = 0;
+        self.compacted = false;
+        for msg in messages {
+            match msg {
+                Message::User(u) => {
+                    let text: String = u
+                        .content
+                        .iter()
+                        .filter_map(|c| match c {
+                            epsilon_contracts::content::UserContent::Text { text } => {
+                                Some(text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+                    self.push_line(TranscriptLine::plain(LineKind::User, format!("> {}", text)));
+                }
+                Message::Assistant(a) => {
+                    let thinking = thinking_of(a);
+                    if !thinking.is_empty() {
+                        self.push_line(TranscriptLine::plain(
+                            LineKind::Thinking,
+                            truncate(&thinking, MAX_RESULT_CHARS),
+                        ));
+                    }
+                    let text = a.text();
+                    if !text.is_empty() {
+                        self.push_line(TranscriptLine::assistant_md(text));
+                    }
+                    for (_, name, args) in a.tool_calls() {
+                        self.push_line(TranscriptLine::plain(
+                            LineKind::ToolCall,
+                            format!("tool-call {} {}", name, summarize_args(args)),
+                        ));
+                    }
+                    self.tokens_in += a.usage.input;
+                    self.tokens_out += a.usage.output;
+                    self.cache_read += a.usage.cache_read;
+                    self.cache_write += a.usage.cache_write;
+                    let prompt = a.usage.input + a.usage.cache_read + a.usage.cache_write;
+                    if prompt > 0 {
+                        self.latest_prompt_tokens = prompt;
+                        self.compacted = false;
+                    }
+                }
+                Message::ToolResult(t) => {
+                    let body = t
+                        .content
+                        .iter()
+                        .filter_map(|c| match c {
+                            epsilon_contracts::content::ContentBlock::Text { text } => {
+                                Some(text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<String>();
+                    if t.tool_name == "todo"
+                        && let Some(head) = todo_head(&t.details)
+                    {
+                        self.push_line(TranscriptLine::expandable(
+                            LineKind::ToolResultOk,
+                            head,
+                            format!("todo\n{body}"),
+                        ));
+                        continue;
+                    }
+                    if let Some(img) = summarize_image_blob(&body) {
+                        self.push_line(TranscriptLine::expandable(
+                            if t.is_error {
+                                LineKind::ToolResultErr
+                            } else {
+                                LineKind::ToolResultOk
+                            },
+                            img.clone(),
+                            img,
+                        ));
+                        continue;
+                    }
+                    let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
+                    let full = if t.tool_name == "edit"
+                        && let Some(diff) = t.details.get("diff").and_then(|d| d.as_str())
+                        && !diff.is_empty()
+                    {
+                        format!("{} → diff:\n{diff}", t.tool_name)
+                    } else {
+                        format!("{} → {body}", t.tool_name)
+                    };
+                    self.push_line(TranscriptLine::expandable(
+                        if t.is_error {
+                            LineKind::ToolResultErr
+                        } else {
+                            LineKind::ToolResultOk
+                        },
+                        head,
+                        full,
+                    ));
+                }
+                Message::Custom(c) => {
+                    self.push_line(TranscriptLine::plain(
+                        LineKind::System,
+                        format!("[custom {}] {}", c.custom_type, c.payload),
+                    ));
+                }
+            }
+        }
+        if !messages.is_empty() {
+            self.status = format!("resumed {} messages", messages.len());
+        }
+    }
+
     /// Reduce one lifecycle event into the model.
     pub fn apply(&mut self, ev: &AgentEvent) {
         match ev {
@@ -210,7 +391,8 @@ impl UiState {
                     }
                     self.streaming_text.clear();
                     let text = a.text();
-                    if !text.is_empty() {
+                    let text_empty = text.is_empty();
+                    if !text_empty {
                         // M15: raw markdown stored; the renderer expands it into
                         // styled rows (via the M16a render cache — once per message).
                         self.push_line(TranscriptLine::assistant_md(text));
@@ -220,6 +402,22 @@ impl UiState {
                             LineKind::ToolCall,
                             format!("tool-call {} {}", name, summarize_args(args)),
                         ));
+                    }
+                    if a.stop_reason == StopReason::Error
+                        && let Some(err) = a.error_message.as_deref()
+                        && !err.is_empty()
+                    {
+                        // Empty-Error Dones used to vanish (no text + no tool_call
+                        // → zero lines), so the provider detail is always rendered.
+                        // M62: when text DID arrive (salvage after a mid-stream
+                        // failure) the marker is what stops a cut-off answer from
+                        // reading as a complete one.
+                        let label = if text_empty {
+                            format!("error: {err}")
+                        } else {
+                            format!("error: {err} — the reply above is partial")
+                        };
+                        self.push_line(TranscriptLine::plain(LineKind::System, label));
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
@@ -256,6 +454,21 @@ impl UiState {
                         self.status = "tool done".into();
                         return;
                     }
+                    // Image blobs are summarized to a one-line placeholder so a pasted
+                    // screenshot / data: URI does not flood the transcript (pi imageFallback parity).
+                    if let Some(img) = summarize_image_blob(&body) {
+                        self.push_line(TranscriptLine::expandable(
+                            if t.is_error {
+                                LineKind::ToolResultErr
+                            } else {
+                                LineKind::ToolResultOk
+                            },
+                            img.clone(),
+                            img,
+                        ));
+                        self.status = "tool done".into();
+                        return;
+                    }
                     let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
                     // M30: edit results with a diff show the unified diff when
                     // expanded (Ctrl+X), giving the user a clear before/after view.
@@ -283,6 +496,33 @@ impl UiState {
             AgentEvent::ToolExecutionStart { tool_name, .. } => {
                 self.status = format!("running {tool_name}…");
             }
+            AgentEvent::ToolExecutionUpdate {
+                tool_name, partial, ..
+            } => {
+                // M63: a long command reports what it is doing while it runs. The
+                // status line carries the newest output line (bounded to one row);
+                // the complete output still arrives with the tool result, so this
+                // is a view, never the record.
+                let text = partial
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        epsilon_contracts::content::ContentBlock::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<String>();
+                let last = text
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .trim();
+                if !last.is_empty() {
+                    self.status = format!("{tool_name}: {}", truncate(last, 120));
+                }
+            }
             AgentEvent::PermissionDecided { decision, .. } => {
                 let label = match decision {
                     epsilon_contracts::agent_event::PermissionDecision::AllowOnce => "allowed",
@@ -307,6 +547,13 @@ impl UiState {
                 // (pi footer: render `?` for the context percentage in this window).
                 self.compacted = true;
             }
+            AgentEvent::Notice { text } => {
+                // M60: transport status (provider retries, stall watchdogs). The
+                // status line carries it live; the transcript keeps a dim system
+                // line so a pause after the fact is still explainable.
+                self.status = text.clone();
+                self.push_system(format!("⟳ {text}"));
+            }
             AgentEvent::AgentEnd { .. } => {
                 // Flush any dangling stream buffer (error paths skip MessageEnd).
                 self.streaming_text.clear();
@@ -315,9 +562,9 @@ impl UiState {
                 self.status = "idle · type a task and press Enter".into();
                 self.push_system("── run end ──");
             }
-            // ToolExecutionUpdate partials and TurnEnd summaries are intentionally not
-            // rendered yet: status shows activity; expandable tool cards stay on the
-            // M12 polish ledger (architecture §11).
+            // TurnEnd summaries are intentionally not rendered yet: status shows
+            // activity; expandable tool cards stay on the M12 polish ledger
+            // (architecture §11).
             _ => {}
         }
     }
@@ -431,6 +678,54 @@ mod tests {
             error_message: None,
             usage,
         }
+    }
+
+    #[test]
+    fn a_salvaged_partial_reply_is_marked_partial_not_complete() {
+        // M62: text + a failure must read as a cut-off answer, never as a
+        // finished one — the whole point of salvaging instead of discarding.
+        let mut st = UiState::new();
+        let mut msg = assistant("the answer so f", vec![], Usage::default());
+        msg.stop_reason = StopReason::Error;
+        msg.error_message = Some("stream read failed: connection reset".into());
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(msg)),
+        });
+        let joined = st
+            .lines()
+            .iter()
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("the answer so f"), "{joined}");
+        assert!(
+            joined.contains("partial"),
+            "the failure is stated, not implied: {joined}"
+        );
+        assert!(joined.contains("connection reset"), "{joined}");
+    }
+
+    #[test]
+    fn retry_notices_land_in_the_transcript_and_the_status_line() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::Notice {
+            text: "HTTP 503: overloaded — retrying gpt-x in 2.0s (attempt 2) (server error)".into(),
+        });
+        assert!(
+            st.status.contains("retrying"),
+            "status shows the wait: {}",
+            st.status
+        );
+        let joined = st
+            .lines()
+            .iter()
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("retrying gpt-x"),
+            "the transcript keeps the notice so a pause is explainable afterwards: {joined}"
+        );
     }
 
     #[test]
@@ -686,5 +981,60 @@ mod tests {
             !full.contains("@@"),
             "no diff in full when details.diff is absent"
         );
+    }
+
+    #[test]
+    fn data_uri_image_becomes_placeholder_not_flood() {
+        let mut st = UiState::new();
+        let blob = format!("data:image/png;base64,{}", "A".repeat(8000));
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "read".into(),
+                content: vec![ContentBlock::text(blob.clone())],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let line = &st.lines()[0];
+        assert!(
+            line.text.starts_with("[image:"),
+            "should be placeholder: {:?}",
+            line.text
+        );
+        assert!(!line.text.contains('A'), "must not contain raw base64");
+        assert!(line.text.contains("graphics deferred"));
+    }
+
+    #[test]
+    fn long_base64_blob_becomes_placeholder() {
+        let mut st = UiState::new();
+        let blob = "A".repeat(9000);
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".into(),
+                tool_name: "bash".into(),
+                content: vec![ContentBlock::text(blob)],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        assert!(
+            st.lines()[0].text.starts_with("[image:"),
+            "{:?}",
+            st.lines()[0].text
+        );
+    }
+
+    #[test]
+    fn normal_text_not_mistaken_for_image() {
+        assert!(summarize_image_blob("hello world").is_none());
+        assert!(summarize_image_blob("data:text/plain;base64,SGVsbG8=").is_none());
     }
 }

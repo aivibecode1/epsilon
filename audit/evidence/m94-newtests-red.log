@@ -1,0 +1,150 @@
+# M94 new-test RED demonstration — 2026-09-18 21:57:27 +0300
+# The three rendering tests run against the pre-fix behaviour: the approval
+# key guard, the truthful undersized banner and the draw-order move are
+# temporarily reverted in app.rs; nothing else differs.
+# command: cargo test -p epsilon-tui --lib -- approval_keys_do_not_answer_an_invisible_approval an_undersized_terminal_names_a_pending_approval a_pending_approval_is_drawn_over_the_timeline
+# app.rs sha256 (reverted state):
+f3b1856fde65feddaf92de34e6a70d59330b632774b1460898f50897751d7e2d *crates/epsilon-tui/src/app.rs
+
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+warning: unused import: `Wrap`
+  --> crates\epsilon-tui\src\app.rs:24:58
+   |
+24 | use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+   |                                                          ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `epsilon-tui` (lib test) generated 1 warning (run `cargo fix --lib -p epsilon-tui --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.97s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m94-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 3 tests
+test app::tests::approval_keys_do_not_answer_an_invisible_approval ... FAILED
+test app::tests::an_undersized_terminal_names_a_pending_approval ... FAILED
+test app::tests::a_pending_approval_is_drawn_over_the_timeline ... FAILED
+
+failures:
+
+---- app::tests::approval_keys_do_not_answer_an_invisible_approval stdout ----
+
+thread 'app::tests::approval_keys_do_not_answer_an_invisible_approval' (4160) panicked at crates\epsilon-tui\src\app.rs:5547:13:
+Char('y') answered an approval that was never drawn
+
+---- app::tests::an_undersized_terminal_names_a_pending_approval stdout ----
+
+thread 'app::tests::an_undersized_terminal_names_a_pending_approval' (708) panicked at crates\epsilon-tui\src\app.rs:5582:9:
+the fallback did not name the ask:              terminal too small — need 60×12            
+                                                        
+                                                        
+                                                        
+                                                        
+                                                        
+                                                        
+                                                        
+                                                        
+                                                        
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- app::tests::a_pending_approval_is_drawn_over_the_timeline stdout ----
+
+thread 'app::tests::a_pending_approval_is_drawn_over_the_timeline' (20192) panicked at crates\epsilon-tui\src\app.rs:5609:9:
+the timeline covered the approval dialog:                                                                                 
+                                                                                
+                                                                                
+                                                                                
+        ┌ timeline ────────────────────────────────────────────────────┐        
+        │#7 [user] TIMELINE-ROW-MARKER                                 │        
+        │                                                              │        
+        │1/1 · ↑/↓ move · Enter jump · Esc close                       │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                                                              │        
+[y] allo└──────────────────────────────────────────────────────────────┘        
+┌input — Ctrl+J newline · Ctrl+Y yank · Ctrl+Z undo────────────────────────────┐
+│>                                                                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+idle · type a task and press Enter ~\Desktop\My Agent Space\Epsilon\crates\epsil
+
+
+failures:
+    app::tests::a_pending_approval_is_drawn_over_the_timeline
+    app::tests::an_undersized_terminal_names_a_pending_approval
+    app::tests::approval_keys_do_not_answer_an_invisible_approval
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 158 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p epsilon-tui --lib`
+red-run exit=101
+
+# ===== ROUND 2 (M94 re-review) — pre-fix RED for the two new tests — 2026-09-18 22:32:57 +0300 =====
+# The two tests run against the PRE-FIX source: app.rs = the round-2 starting
+# state (no identity guard, no auth-precedence routing) plus ONLY the two new
+# test functions; the round-2 diff is otherwise absent. The fixed file was
+# preserved byte-exactly and restored afterwards (hashes below).
+# repo HEAD: 5ab723f
+# fixed app.rs sha256 (round-2 starting state, preserved as Temp/m94-red/app-fixed.rs):
+5932c6d01c892fc8d6ef3d9ed19c5719eb9e5f5431bcf7033a380f617f66609e *crates/epsilon-tui/src/app.rs  (the fixed file, restored after the run)
+# PRE-FIX app.rs sha256 (the round's starting bytes, preserved as Temp/m94-red/app-prefix.rs):
+5ac0f0fd44b2102f898492467798db2c9ddf997a028284e4449ad00a7dcc2fa8 *C:\Users\Hp\AppData\Local/Temp/m94-red/app-prefix.rs  (the file the RED candidate is built from)
+# RED candidate sha256 (pre-fix + the two tests only):
+d2d4df3910a769ab349e6ce99ca621b6f9690ce0bba372339ccef7238a3b470d *crates/epsilon-tui/src/app.rs  (in tree during this run)
+# command: cargo test -p epsilon-tui --lib -- a_second_parked_ask_is_not_answerable_before_a_frame_paints_it a_pending_approval_preempts_the_auth_key_prompt
+=== cargo test -p epsilon-tui --lib -- <the two new tests> (pre-fix bytes) ===
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.08s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m94-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 2 tests
+test app::tests::a_pending_approval_preempts_the_auth_key_prompt ... FAILED
+test app::tests::a_second_parked_ask_is_not_answerable_before_a_frame_paints_it ... FAILED
+
+failures:
+
+---- app::tests::a_pending_approval_preempts_the_auth_key_prompt stdout ----
+
+thread 'app::tests::a_pending_approval_preempts_the_auth_key_prompt' (16824) panicked at crates\epsilon-tui\src\app.rs:5755:9:
+'y' must answer the approval, not the auth buffer
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- app::tests::a_second_parked_ask_is_not_answerable_before_a_frame_paints_it stdout ----
+
+thread 'app::tests::a_second_parked_ask_is_not_answerable_before_a_frame_paints_it' (936) panicked at crates\epsilon-tui\src\app.rs:5686:13:
+assertion `left == right` failed: Char('y') answered ask B before any frame painted it
+  left: None
+ right: Some("ask-b")
+
+
+failures:
+    app::tests::a_pending_approval_preempts_the_auth_key_prompt
+    app::tests::a_second_parked_ask_is_not_answerable_before_a_frame_paints_it
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 161 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p epsilon-tui --lib`
+red-run exit=101
+
+# restored app.rs sha256:
+5932c6d01c892fc8d6ef3d9ed19c5719eb9e5f5431bcf7033a380f617f66609e *crates/epsilon-tui/src/app.rs
+# restore byte-identical to the pre-run fixed file: YES (sha256 equal, cmp exit 0)
+# post-restore re-run of the same two tests (proves the restored bytes are the green ones):
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.69s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m94-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 2 tests
+test app::tests::a_pending_approval_preempts_the_auth_key_prompt ... ok
+test app::tests::a_second_parked_ask_is_not_answerable_before_a_frame_paints_it ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 161 filtered out; finished in 0.02s
+
+post-restore exit=0
+# fixed file sha256 unchanged since before the RED run: YES
