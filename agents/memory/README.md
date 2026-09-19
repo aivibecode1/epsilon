@@ -37,7 +37,7 @@ not themselves trigger runtime compression.
 | File | Work item | Status |
 |------|-----------|--------|
 | [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
-| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed (213 tests green, 7a94ccd + 59fdf2e); overlays not yet migrated, `app.rs` split open |
+| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed (213 tests green, 7a94ccd + 59fdf2e); overlay chrome migrated for all list panels + prompts (uncommitted); `draw_at_file`/`draw_auth_picker` left, `app.rs` split open |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
 | [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | **landed** 27cd677; full workspace suite green on a fresh test profile; note retired after the milestone doc's reinstall line is reconciled |
 | [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984 |

@@ -19,7 +19,7 @@ use epsilon_safety::{ChannelApprovalUi, PendingAsk};
 use futures_util::StreamExt;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -506,7 +506,6 @@ impl App {
         self.apply_model(agent, next);
     }
 }
-
 
 impl App {
     #[allow(clippy::too_many_arguments)]
@@ -4142,9 +4141,10 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         // Name a pending approval even here. The dialog is not painted, so the
         // keys are refused, but silently hiding a decision that is blocking the
         // run is how a user concludes the harness has hung.
-        let mut lines: Vec<Line<'static>> = vec![Line::from(
-            crate::ui::layout::too_small_message(area.width, area.height),
-        )];
+        let mut lines: Vec<Line<'static>> = vec![Line::from(crate::ui::layout::too_small_message(
+            area.width,
+            area.height,
+        ))];
         if let Some(ask) = app.pending_ask.as_ref() {
             lines.push(Line::from(format!(
                 "approval pending: {} · {}",
@@ -4163,7 +4163,8 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     // The composer wraps to the same width the shell will draw it at, so the
     // caret lands in the column the text actually occupies.
     let draft_width = crate::ui::shell::composer_text_width(area.width, &app.theme.glyphs);
-    let (draft_rows, caret_row, caret_col) = composer_rows(&app.input, app.cursor_chars, draft_width);
+    let (draft_rows, caret_row, caret_col) =
+        composer_rows(&app.input, app.cursor_chars, draft_width);
     // The theme is `Copy`, so the closure below can still take `&mut app`: the
     // alternative — holding a borrow of `app.theme` across the call — is what the
     // borrow checker refuses, and rightly, since the closure mutates the app.
@@ -4359,6 +4360,8 @@ pub(crate) fn draw_frame(f: &mut Frame<'_>, app: &mut App) {
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
 /// column. The active model floats to the top (picker::build_rows).
 fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+
     // M16c two-stage: stage 1 lists providers; stage 2 that provider's models.
     if let Some(provider) = &app.picker_provider.clone() {
         draw_picker_stage2(f, app, outer, provider);
@@ -4368,134 +4371,94 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         .into_iter()
         .map(|p| (p.id, p.model_count, p.auth_ready, p.is_active))
         .collect::<Vec<_>>();
-    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + 1;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    let title = format!("models — filter: '{}'", app.input);
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned rather than centred, like the palette: the picker opens
+        // where the composer is and stays put while the filter changes.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: &title,
+        focused: true,
     };
+    let inner = panel.open(f);
 
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active())
-        .title(Span::styled(
-            format!(" models — filter: '{}' ", app.input),
-            crate::theme::Theme::accent(),
-        ));
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    if rows.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "no providers",
-            crate::theme::Theme::muted(),
-        )));
-    }
     // M15 viewport fix: pi's centered scroll window — render only the visible slice
     // so long lists stay navigable (previously rows past the box were unreachable).
-    let capacity = area.height.saturating_sub(4).max(1) as usize; // borders + footer + headroom
+    let capacity = inner.height.saturating_sub(2).max(1) as usize; // blank line + hint footer
     let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
     let end = (start + capacity).min(rows.len());
 
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled("no providers", app.theme.dim())));
+    }
     for (i, (id, count, auth_ready, is_active)) in
         rows.iter().enumerate().skip(start).take(end - start)
     {
         let selected = i == app.picker_index;
+        // The active-provider mark and the auth badge are leading columns of the
+        // label; `list_row` owns the selection bar and right-aligns the count.
         let marker = if *is_active { "● " } else { "  " };
         let auth = if *auth_ready { "🔑" } else { "· " };
-        lines.push(Line::from(vec![
-            Span::styled(
-                marker.to_string(),
-                if selected {
-                    crate::theme::Theme::accent()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(
-                format!("{auth} "),
-                if *auth_ready {
-                    if selected {
-                        crate::theme::Theme::selected_muted()
-                    } else {
-                        crate::theme::Theme::success()
-                    }
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-            Span::styled(
-                id.clone(),
-                if selected {
-                    crate::theme::Theme::selected()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(
-                format!("  {count} models"),
-                if selected {
-                    crate::theme::Theme::selected_muted()
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-        ]));
+        lines.push(overlay::list_row(
+            &app.theme,
+            selected,
+            &format!("{marker}{auth} {id}"),
+            Some(format!("{count} models")).as_deref(),
+            inner.width as usize,
+        ));
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "↑/↓ · Enter browse models · Esc close".to_string(),
-        crate::theme::Theme::muted(),
-    )));
-
-    let para = Paragraph::new(lines).block(block);
-    f.render_widget(para, area);
+    lines.push(overlay::hint_row(
+        &app.theme,
+        &[("↑↓", "move"), ("enter", "browse models"), ("esc", "close")],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Stage-2 of the two-stage picker: one provider's models with fuzzy filter.
 /// M57: the `/sessions` overlay. Rows are session files from the workspace's
 /// `.epsilon/sessions`, newest first; the current one is marked `●`.
 fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+
     let Some(browser) = app.session_browser.as_ref() else {
         return;
     };
-    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + 1;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    let title = format!("sessions — filter '{}'", app.input);
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned like the palette and the picker: the browser opens at the
+        // composer's edge and does not jump as the filter narrows the list.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: &title,
+        focused: true,
     };
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active())
-        .title(Span::styled(
-            format!(" sessions — filter '{}' ", app.input),
-            crate::theme::Theme::accent(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = panel.open(f);
+
+    // Same centered scroll window as the pickers: only the visible slice is built.
+    let capacity = inner.height.saturating_sub(1).max(1) as usize; // footer
+    let start = crate::scroll::scroll_start(browser.rows.len(), browser.index, capacity);
+    let end = (start + capacity).min(browser.rows.len());
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if browser.rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "no matches — Backspace to widen, Esc closes",
-            crate::theme::Theme::muted(),
+            app.theme.dim(),
         )));
     }
-    // Same centered scroll window as the pickers: only the visible slice is built.
-    let capacity = inner.height.saturating_sub(1).max(1) as usize;
-    let start = crate::scroll::scroll_start(browser.rows.len(), browser.index, capacity);
-    let end = (start + capacity).min(browser.rows.len());
     for (i, row) in browser
         .rows
         .iter()
@@ -4504,39 +4467,32 @@ fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         .take(end - start)
     {
         let selected = i == browser.index;
+        // The current-session mark leads the title column; the age/size meta
+        // stays the right-aligned column it was.
         let marker = if row.is_current { "● " } else { "  " };
-        lines.push(Line::from(vec![
-            Span::styled(
-                marker.to_string(),
-                if selected {
-                    crate::theme::Theme::accent()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(
-                row.title.clone(),
-                if selected {
-                    crate::theme::Theme::selected()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(format!("  {}", row.meta), crate::theme::Theme::muted()),
-        ]));
+        lines.push(overlay::list_row(
+            &app.theme,
+            selected,
+            &format!("{marker}{}", row.title),
+            Some(row.meta.as_str()),
+            inner.width as usize,
+        ));
     }
-    lines.push(Line::from(Span::styled(
-        format!(
-            "{} of {} · Enter resumes · Esc closes",
-            browser.index + 1,
-            browser.rows.len()
-        ),
-        crate::theme::Theme::muted(),
-    )));
+    // The position counter and the key hints share the footer line: a `hint_row`
+    // carries the hints, and the counter stays where the reader looks for it.
+    let mut footer = vec![Span::styled(
+        format!("{} of {}", browser.index + 1, browser.rows.len()),
+        app.theme.dim(),
+    )];
+    footer.push(Span::styled(" · ", app.theme.faint()));
+    footer.extend(overlay::hint_row(&app.theme, &[("enter", "resumes"), ("esc", "closes")]).spans);
+    lines.push(Line::from(footer));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str) {
+    use crate::ui::overlay::{self, Panel, Width};
+
     let rows = crate::picker::build_models_for_provider(
         provider,
         &app.input,
@@ -4544,102 +4500,60 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         &app.live_cache,
         &app.customs,
     );
-    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + 1;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    let title = format!("models — {provider}: filter '{}'", app.input);
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned like stage 1, so stepping between the two stages does not
+        // move the frame under the reader.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: &title,
+        focused: true,
     };
+    let inner = panel.open(f);
 
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active())
-        .title(Span::styled(
-            format!(" models — {provider}: filter '{}' ", app.input),
-            crate::theme::Theme::accent(),
-        ));
+    let capacity = inner.height.saturating_sub(2).max(1) as usize; // blank line + hint footer
+    let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
+    let end = (start + capacity).min(rows.len());
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "no matches — Backspace to widen, Esc closes",
-            crate::theme::Theme::muted(),
+            app.theme.dim(),
         )));
     }
-    let capacity = area.height.saturating_sub(4).max(1) as usize;
-    let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
-    let end = (start + capacity).min(rows.len());
     for (i, row) in rows.iter().enumerate().skip(start).take(end - start) {
         let selected = i == app.picker_index;
+        // The active-model mark, the auth badge and the favorite star are leading
+        // columns of the label; the model id stays the right-aligned meta column.
         let marker = if row.id == app.model_id { "● " } else { "  " };
         let auth = if row.auth_ready { "🔑" } else { "· " };
         // M23: ★ marks favorites (opencode's star column); Ctrl+F toggles.
         let star = if row.is_favorite { "★" } else { " " };
-        lines.push(Line::from(vec![
-            Span::styled(
-                marker.to_string(),
-                if selected {
-                    crate::theme::Theme::accent()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(
-                format!("{auth} "),
-                if row.auth_ready {
-                    if selected {
-                        crate::theme::Theme::selected_muted()
-                    } else {
-                        crate::theme::Theme::success()
-                    }
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-            Span::styled(
-                format!("{star} "),
-                if row.is_favorite {
-                    if selected {
-                        crate::theme::Theme::selected_muted()
-                    } else {
-                        Style::default().fg(Color::Yellow)
-                    }
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-            Span::styled(
-                row.label.clone(),
-                if selected {
-                    crate::theme::Theme::selected()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(
-                format!("  {}", row.id),
-                if selected {
-                    crate::theme::Theme::selected_muted()
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-        ]));
+        lines.push(overlay::list_row(
+            &app.theme,
+            selected,
+            &format!("{marker}{auth} {star} {}", row.label),
+            Some(row.id.as_str()),
+            inner.width as usize,
+        ));
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "type filters (fuzzy) · Enter apply · Backspace/Esc back",
-        crate::theme::Theme::muted(),
-    )));
-
-    let para = Paragraph::new(lines).block(block);
-    f.render_widget(para, area);
+    lines.push(overlay::hint_row(
+        &app.theme,
+        &[
+            ("type", "filters (fuzzy)"),
+            ("enter", "apply"),
+            ("backspace/esc", "back"),
+        ],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// M16a virtualized draw: reconcile the render cache (renders ONLY unseen lines),
@@ -4761,9 +4675,9 @@ mod composer_viewport_tests {
                 .backend()
                 .buffer()
                 .content()
-            .iter()
-            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-            .collect();
+                .iter()
+                .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+                .collect();
             assert_eq!(
                 screen.matches('§').count(),
                 app.input.chars().count(),
@@ -5038,6 +4952,8 @@ fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatui::layout::
 }
 
 fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+
     if !app.timeline_open || app.timeline_entries.is_empty() {
         return;
     }
@@ -5045,21 +4961,21 @@ fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let capacity = 12usize.min(outer.height.saturating_sub(6).max(1) as usize);
     let start = crate::scroll::scroll_start(total, app.timeline_index, capacity);
     let end = (start + capacity).min(total);
-    let width = (outer.width * 4 / 5).max(56).min(outer.width);
+    // The timeline is a list panel like the others, so it takes the panel width;
+    // the height still follows the visible row count.
+    let width = Width::PANEL.resolve(outer);
     let height = (capacity as u16 + 4).min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + (outer.height.saturating_sub(height)) / 2;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    let panel = Panel {
+        theme: &app.theme,
+        area: overlay::centered(outer, width, height),
+        title: "timeline",
+        focused: true,
     };
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active())
-        .title(Span::styled(" timeline ", crate::theme::Theme::accent()));
+    let inner = panel.open(f);
+
+    // A row is truncated to what the frame can actually show: the selection bar
+    // and its gutter take two columns of the inner width.
+    let budget = (inner.width as usize).saturating_sub(2);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, (seq, tag, snippet)) in app
         .timeline_entries
@@ -5068,33 +4984,38 @@ fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
         .skip(start)
         .take(end - start)
     {
-        let selected = i == app.timeline_index;
         let raw = format!("#{seq} [{tag}] {snippet}");
-        let display = if raw.len() > (width as usize).saturating_sub(4) {
-            let w = (width as usize).saturating_sub(7);
+        let display = if raw.len() > budget {
+            let w = budget.saturating_sub(3);
             format!("{}...", &raw[..w.min(raw.len())])
         } else {
             raw
         };
-        lines.push(Line::from(Span::styled(
-            display,
-            if selected {
-                crate::theme::Theme::selected()
-            } else {
-                Style::default()
-            },
-        )));
+        lines.push(overlay::list_row(
+            &app.theme,
+            i == app.timeline_index,
+            &display,
+            None,
+            inner.width as usize,
+        ));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        format!(
-            "{}/{} · ↑/↓ move · Enter jump · Esc close",
-            app.timeline_index + 1,
-            total
-        ),
-        crate::theme::Theme::muted(),
-    )));
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    // The position counter and the key hints share the footer line: a `hint_row`
+    // carries the hints, and the counter stays where the reader looks for it.
+    let mut footer = vec![Span::styled(
+        format!("{}/{}", app.timeline_index + 1, total),
+        app.theme.dim(),
+    )];
+    footer.push(Span::styled(" · ", app.theme.faint()));
+    footer.extend(
+        overlay::hint_row(
+            &app.theme,
+            &[("↑↓", "move"), ("enter", "jump"), ("esc", "close")],
+        )
+        .spans,
+    );
+    lines.push(Line::from(footer));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The slash-command popup, anchored directly above the composer.
@@ -5650,7 +5571,8 @@ mod tests {
             "the timeline covered the approval dialog: {screen}"
         );
         assert!(
-            rows.iter().any(|r| r.contains("capability") && r.contains("bash")),
+            rows.iter()
+                .any(|r| r.contains("capability") && r.contains("bash")),
             "the dialog body is buried: {screen}"
         );
 

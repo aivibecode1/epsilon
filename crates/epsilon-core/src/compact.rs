@@ -228,14 +228,23 @@ pub fn summary_context(
 /// and leave the specific sections thin.
 pub const SUMMARY_SECTIONS: [(&str, &str); 6] = [
     ("Goal", "what the user is ultimately trying to achieve"),
-    ("Constraints & Preferences", "exact instructions, style rules, and prohibitions"),
-    ("Progress", "what has been done, what is verified, what is in flight"),
+    (
+        "Constraints & Preferences",
+        "exact instructions, style rules, and prohibitions",
+    ),
+    (
+        "Progress",
+        "what has been done, what is verified, what is in flight",
+    ),
     ("Key Decisions", "choices made and the reason for each"),
     (
         "Next Steps",
         "the immediate next actions, specific enough to resume without guessing",
     ),
-    ("Critical Context", "facts, paths, errors or state that would otherwise be lost"),
+    (
+        "Critical Context",
+        "facts, paths, errors or state that would otherwise be lost",
+    ),
 ];
 
 /// The system prompt for a summarization call.

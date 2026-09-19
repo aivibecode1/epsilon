@@ -1,8 +1,10 @@
 # TUI redesign: chrome economy
 
-**Status:** presentation layer landed and green (207 `epsilon-tui` tests). Owner
-priority: the TUI looked dated. This note records the design rules and the traps
-found while building it, so the next slice does not rediscover them.
+**Status:** presentation layer landed and green (213 `epsilon-tui` tests). The
+overlay chrome migration is complete for every list panel and prompt but sits
+**uncommitted** in the working tree. Owner priority: the TUI looked dated. This
+note records the design rules and the traps found while building it, so the next
+slice does not rediscover them.
 
 ## The design rule
 
@@ -73,9 +75,23 @@ three lines in a draw call:
 
 ## Open threads
 
-- Overlays (picker, palette, approval dialog, timeline, auth) still draw through
-  the older `crate::theme` shim and full boxes. Migrating them is the next slice,
-  and the shim exists only to make that migration incremental.
+- Overlay chrome is done for the palette, approval dialog, auth prompt, slash
+  popup, both model-picker stages, the `/sessions` browser and the timeline: all
+  of them now go through `ui::overlay` (`Panel`, `list_row`, `hint_row`,
+  `Width::PANEL`). Two surfaces still draw through the `crate::theme` shim and a
+  hand-built box: `draw_at_file` (the `@` file popup) and `draw_auth_picker` (the
+  `/connect` provider list). `draw_transcript`'s streaming tail still needs the
+  shim for two styles, too.
+- Capacity arithmetic when moving a `Block` panel onto `Panel`: `Panel::inner` is
+  two rows shorter than a `Block::inner` of the same frame (title row + bottom
+  rule), and it insets two columns a side, so the old `area.height - 4` window
+  becomes `inner.height - 2` — that keeps the visible row count identical, which
+  is what the pickers' `scroll_start` window depends on.
+- Gate note (2026-09-19): HEAD was **not** `cargo fmt --all --check` clean under
+  this machine's rustfmt 1.9.0-stable/1.97.1 — 33 sites across 11 files
+  (epsilon-core, epsilon-tui `ui/`, `app.rs` tests). Running `cargo fmt --all`
+  normalizes them, so its diff carries unrelated reflow; the pristine-HEAD probe
+  is `%TEMP%\eps-pty-head-fmt-check.txt`.
 - `app.rs` is ~7000 lines and owns the event loop, key handling and the legacy
   draw functions. Splitting it (`event.rs`, `update.rs`, key handling per mode)
   is the structural half of this work and is not done.
