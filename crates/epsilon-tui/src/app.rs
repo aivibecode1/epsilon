@@ -18,7 +18,7 @@ use epsilon_core::Agent;
 use epsilon_safety::{ChannelApprovalUi, PendingAsk};
 use futures_util::StreamExt;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -349,6 +349,10 @@ pub(crate) struct App {
     /// M59: set by `/editor` (or the keybinding); the event loop performs the
     /// actual suspend → spawn → resume, because it owns the terminal.
     external_editor_requested: bool,
+    /// The resolved look for this session: colour mode, glyph repertoire, and the
+    /// palette. Detected once at startup, because a look that changes mid-session
+    /// would make the screen flicker between two designs.
+    theme: crate::ui::theme::Theme,
 }
 
 /// M57: state of the `/sessions` browser overlay.
@@ -503,12 +507,6 @@ impl App {
     }
 }
 
-/// Braille spinner frames (pi loader convention).
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// M16b acceptance: editor grows to fit the draft up to this many rows, then
-/// scrolls internally (tail visible — that's where the caret lives).
-const INPUT_MAX_ROWS: usize = 8;
 
 impl App {
     #[allow(clippy::too_many_arguments)]
@@ -536,6 +534,7 @@ impl App {
             picker_index: 0,
             session_browser: None,
             external_editor_requested: false,
+            theme: crate::ui::theme::Theme::detect(),
             recents: epsilon_core::config::load_recent_models(),
             favorites: epsilon_core::config::load_favorite_models(),
             favorite_thinking: epsilon_core::config::load_favorite_thinking(),
@@ -4130,90 +4129,59 @@ fn levels_help() -> String {
         .join(", ")
 }
 
-/// Contextual key-hint bar (pi's keybinding-hints pattern).
-fn hint_line(app: &App) -> Line<'static> {
-    use crate::theme::Theme;
-    let text = if app.pending_ask.is_some() {
-        "[y] allow · [a] always · [n] deny · [e] guidance · [Esc] deny"
-    } else if app.auth_prompt_open {
-        "API key prompt — Enter save · Esc cancel · paste works (masked)"
-    } else if app.auth_pick_open {
-        "pick a provider · type filters · ↑/↓ move · Enter pastes key (masked) · Esc cancel"
-    } else if app.picker_open {
-        "type filters · ↑/↓ move · Ctrl+F favorite ★ · Ctrl+G refresh · Enter apply · Esc close"
-    } else if app.compact_running {
-        "compacting context… · Esc abort turn"
-    } else if app.timeline_open {
-        "timeline · ↑/↓ move · Enter jump · Esc close"
-    } else if app.at_open {
-        "@-file · Tab insert · Enter insert + space · Esc close"
-    } else if app.slash_open {
-        "↑/↓ pick · Tab/Enter apply · Esc dismiss"
-    } else if app.ui.running() {
-        "Esc abort run · type to steer after this turn"
-    } else if !epsilon_llm::catalog::credentials_ready(&app.model_id) {
-        // M32 discovery: when the active model's provider has no key, surface
-        // the fix right in the hint bar so a first-run user never has to read
-        // /help to get past it. Mirrors opencode's \"connect\" banner.
-        "⚠ no API key for this model — /login (picker) · /login <provider> · Ctrl+P palette"
-    } else {
-        "/help commands · /models picker (Ctrl+M) · Ctrl+P palette · /login connects · Esc quit"
-    };
-    Line::from(Span::styled(text.to_string(), Theme::system()))
-}
-
+/// Collector's note on the safety rule below.
+///
+/// The too-small fallback cannot paint the approval dialog, so it must also make
+/// sure `handle_key` refuses to answer one: `approval_painted_id` records which
+/// ask a frame actually showed, and clearing it here means no key can authorize
+/// work the user never saw. That behaviour is preserved from M94 unchanged.
 fn draw(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
-    if area.width < 60 || area.height < 12 {
-        // M94 review: this fallback used to be a bare size banner — an approval
-        // could be pending behind it while y/a/n/Esc still answered, so a user
-        // below 60×12 could authorize work they never saw. Two rules now:
-        // the banner NAMES a pending approval (capability · pattern, the same
-        // fields the dialog shows) and says how to answer it; and because the
-        // dialog was not painted, `approval_painted_id` is cleared so `handle_key`
-        // refuses the approval keys.
-        let lines: Vec<Line<'static>> = if let Some(ask) = app.pending_ask.as_ref() {
-            vec![
-                Line::from("terminal too small — need 60×12"),
-                Line::from(format!(
-                    "approval pending: {} · {}",
-                    ask.request.capability, ask.request.pattern
-                )),
-                Line::from("[y] allow · [a] always · [n] deny"),
-                Line::from("enlarge the terminal to answer"),
-            ]
-        } else {
-            vec![Line::from("terminal too small — need 60×12")]
-        };
+    if crate::ui::layout::Regions::too_small(area) {
         app.approval_painted_id = None;
+        // Name a pending approval even here. The dialog is not painted, so the
+        // keys are refused, but silently hiding a decision that is blocking the
+        // run is how a user concludes the harness has hung.
+        let mut lines: Vec<Line<'static>> = vec![Line::from(
+            crate::ui::layout::too_small_message(area.width, area.height),
+        )];
+        if let Some(ask) = app.pending_ask.as_ref() {
+            lines.push(Line::from(format!(
+                "approval pending: {} · {}",
+                ask.request.capability, ask.request.pattern
+            )));
+            lines.push(Line::from(
+                "widen the window to answer it — the run is waiting on you",
+            ));
+        }
         f.render_widget(
             Paragraph::new(lines).centered().wrap(Wrap { trim: true }),
             area,
         );
         return;
     }
-    // Grow for visual rows, not just newlines; leave most space to the transcript.
-    let draft_rows = composer_rows(
-        &app.input,
-        app.cursor_chars,
-        area.width.saturating_sub(2) as usize,
-    )
-    .0
-    .len();
-    let max_rows = INPUT_MAX_ROWS.min((area.height / 3).saturating_sub(2).max(1) as usize);
-    let input_height = draft_rows.clamp(1, max_rows) as u16 + 2;
-    let [transcript_area, hints_area, input_area, status_area] = Layout::vertical([
-        Constraint::Min(3),
-        Constraint::Length(1),
-        Constraint::Length(input_height),
-        Constraint::Length(1),
-    ])
-    .areas(f.area());
-
-    draw_transcript(f, app, transcript_area);
-    f.render_widget(hint_line(app), hints_area);
-    draw_input(f, app, input_area);
-    draw_status(f, app, status_area);
+    // The composer wraps to the same width the shell will draw it at, so the
+    // caret lands in the column the text actually occupies.
+    let draft_width = crate::ui::shell::composer_text_width(area.width, &app.theme.glyphs);
+    let (draft_rows, caret_row, caret_col) = composer_rows(&app.input, app.cursor_chars, draft_width);
+    // The theme is `Copy`, so the closure below can still take `&mut app`: the
+    // alternative — holding a borrow of `app.theme` across the call — is what the
+    // borrow checker refuses, and rightly, since the closure mutates the app.
+    let theme = app.theme;
+    let shell = crate::ui::shell::Shell {
+        theme: &theme,
+        run: app.run_state(),
+        metrics: app.metrics(),
+        hints: app.hints(),
+        draft: draft_rows,
+        caret: (caret_row, caret_col),
+        composer_focused: !app.overlay_open(),
+        transcript_empty: app.transcript_is_empty(),
+    };
+    let painted = crate::ui::shell::paint(f, area, &shell, |f, transcript_area| {
+        draw_transcript(f, app, transcript_area);
+    });
+    let transcript_area = painted.transcript;
 
     if app.session_browser.is_some() {
         draw_session_browser(f, app, f.area());
@@ -4256,12 +4224,129 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
 }
 
+/// Adapters from live application state to the plain values the presentation
+/// layer draws with. Keeping them here — rather than letting widgets read the
+/// app — is what lets every screen be rendered in a test without an agent.
+impl App {
+    /// The look this session was started with.
+    pub fn theme(&self) -> &crate::ui::theme::Theme {
+        &self.theme
+    }
+
+    /// Run state for the header.
+    ///
+    /// The phase word is derived here rather than stored, so it cannot disagree
+    /// with the flags it is derived from.
+    fn run_state(&self) -> crate::ui::header::RunState {
+        match self.run_started_at {
+            Some(started) => crate::ui::header::RunState::Running {
+                frame: self.spinner_phase,
+                phase: self.ui.status().to_string(),
+                elapsed_secs: started.elapsed().as_secs(),
+            },
+            None if self.ui.running() => crate::ui::header::RunState::Running {
+                frame: self.spinner_phase,
+                phase: self.ui.status().to_string(),
+                elapsed_secs: 0,
+            },
+            None => crate::ui::header::RunState::Idle,
+        }
+    }
+
+    /// The measurements the header reports.
+    ///
+    /// Cost is computed here, from catalog prices, and is `None` for a model the
+    /// catalog cannot price — the header then omits it rather than printing a
+    /// confident `$0`. Integer micro-USD throughout (ADR-010), so no float drift
+    /// accumulates over a long session.
+    fn metrics(&self) -> crate::ui::metrics::Metrics {
+        let (tokens_in, tokens_out) = self.ui.usage();
+        let (cache_read, cache_write) = self.ui.cache_usage();
+        let latest_prompt = self.ui.latest_prompt_tokens();
+        let info = epsilon_llm::catalog::lookup_model(&self.model_id);
+        let cost_micro_usd = info.as_ref().map(|info| {
+            tokens_in * info.input_cost_micro_per_mtok / 1_000_000
+                + tokens_out * info.output_cost_micro_per_mtok / 1_000_000
+        });
+        crate::ui::metrics::Metrics {
+            model_label: epsilon_llm::catalog::display_label(&self.model_id).to_string(),
+            offline: self.model_id.starts_with("faux"),
+            context_used: (latest_prompt > 0).then_some(latest_prompt),
+            context_window: info.as_ref().map(|i| i.context_window).filter(|w| *w > 0),
+            tokens_in,
+            tokens_out,
+            cache_read,
+            cache_write,
+            cost_micro_usd,
+            compacted: self.ui.is_compacted(),
+        }
+    }
+
+    /// Footer hints for the current state.
+    fn hints(&mut self) -> crate::ui::footer::Hints {
+        use crate::ui::footer::Hints;
+        let mut hints = if self.pending_ask.is_some() {
+            Hints::approval()
+        } else if self.overlay_open() {
+            // Overlays own the keyboard; the footer points at their own keys
+            // rather than advertising send/stop, which would not work.
+            Hints {
+                keys: vec![
+                    ("type".into(), "filter".into()),
+                    ("↑↓".into(), "move".into()),
+                    ("enter".into(), "choose".into()),
+                    ("esc".into(), "close".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.ui.running() {
+            Hints::running(self.steer_queue_len)
+        } else {
+            Hints::idle()
+        };
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from);
+        // A quarter of the row is the most the location may take before the hints
+        // stop being readable; past that the tail of the path is what matters.
+        hints.location = Some(crate::ui::format::format_path(
+            &self.workspace_root,
+            home.as_deref(),
+            28,
+        ));
+        if let Some(branch) = self.cached_branch() {
+            hints.branch = Some(branch);
+        }
+        hints
+    }
+
+    /// Whether any overlay currently owns the keyboard.
+    fn overlay_open(&self) -> bool {
+        self.picker_open
+            || self.palette_open
+            || self.auth_prompt_open
+            || self.auth_pick_open
+            || self.timeline_open
+            || self.session_browser.is_some()
+            || self.pending_ask.is_some()
+    }
+
+    /// Whether the transcript has nothing to show yet.
+    ///
+    /// Streaming text counts: a run that has started producing output must not
+    /// have the welcome screen painted over it.
+    fn transcript_is_empty(&self) -> bool {
+        self.ui.lines().is_empty()
+            && self.ui.streaming_text().is_empty()
+            && self.ui.streaming_thinking().is_empty()
+    }
+}
+
 /// Headless render seam used by `--tui-bench` (M16a): build a persistent [`App`]
 /// whose caches live across frames exactly like the real event loop.
 pub(crate) fn bench_app(ui: UiState) -> App {
     App::over_ui(ui, "faux-1".to_string())
 }
-
 /// Draw one frame with a caller-owned App (production draw path).
 pub(crate) fn draw_frame(f: &mut Frame<'_>, app: &mut App) {
     draw(f, app);
@@ -4634,7 +4719,7 @@ mod composer_viewport_tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(screen.contains("LATEST"), "stream hidden: {screen}");
     }
@@ -4654,7 +4739,7 @@ mod composer_viewport_tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(screen.contains("ROW-099"), "tail disappeared: {screen}");
         assert!(screen.contains("ROW-095"));
@@ -4672,9 +4757,9 @@ mod composer_viewport_tests {
                 .backend()
                 .buffer()
                 .content()
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect();
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
             assert_eq!(
                 screen.matches('§').count(),
                 app.input.chars().count(),
@@ -4693,7 +4778,7 @@ mod composer_viewport_tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(screen.contains("terminal too small"));
     }
@@ -4704,16 +4789,43 @@ mod composer_viewport_tests {
         let mut app = bench_app(UiState::new());
         app.input = "界".repeat(35);
         app.cursor_chars = 35;
-        let mut terminal = Terminal::new(TestBackend::new(60, 5)).unwrap();
-        terminal
-            .draw(|frame| draw_input(frame, &app, frame.area()))
-            .unwrap();
-        // 58 inner columns: prefix + 28 wide glyphs; seven on row two.
-        assert_eq!(
-            terminal.backend_mut().get_cursor_position().unwrap(),
-            (15, 2).into()
+        let theme = crate::ui::theme::Theme::new(
+            crate::ui::theme::ColorMode::Ansi16,
+            crate::ui::theme::ASCII,
         );
-        assert_eq!(terminal.backend().buffer()[(1, 2)].symbol(), "界");
+        let width = 60;
+        let text_width = crate::ui::shell::composer_text_width(width, &theme.glyphs);
+        let (rows, caret_row, caret_col) = composer_rows(&app.input, app.cursor_chars, text_width);
+        let mut terminal = Terminal::new(TestBackend::new(width, 5)).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::ui::composer::draw(
+                    frame,
+                    frame.area(),
+                    &theme,
+                    &rows,
+                    caret_row,
+                    caret_col,
+                    true,
+                );
+            })
+            .unwrap();
+        // The caret sits in *display* columns: each wide glyph is two cells, so
+        // counting scalars would put it half a line away from the text.
+        let caret = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!(
+            usize::from(caret.y),
+            caret_row,
+            "caret on the wrong draft row"
+        );
+        assert_eq!(
+            usize::from(caret.x),
+            crate::ui::composer::gutter_width(&theme.glyphs) + caret_col
+        );
+        let glyph = terminal.backend().buffer()[(caret.x - 2, caret.y)]
+            .symbol()
+            .to_string();
+        assert_eq!(glyph, "界", "the caret is not next to the text it edits");
     }
 
     #[test]
@@ -4721,27 +4833,55 @@ mod composer_viewport_tests {
         let mut app = bench_app(UiState::new());
         app.input = "FIRST\nsecond\nthird\nfourth\nfifth\nLAST".into();
         app.cursor_chars = 2;
-        let mut terminal = Terminal::new(TestBackend::new(60, 5)).unwrap();
+        let theme = crate::ui::theme::Theme::new(
+            crate::ui::theme::ColorMode::Ansi16,
+            crate::ui::theme::ASCII,
+        );
+        let width = 60;
+        let text_width = crate::ui::shell::composer_text_width(width, &theme.glyphs);
+        let (rows, caret_row, caret_col) = composer_rows(&app.input, app.cursor_chars, text_width);
+        let mut terminal = Terminal::new(TestBackend::new(width, 5)).unwrap();
         terminal
-            .draw(|frame| draw_input(frame, &app, frame.area()))
+            .draw(|frame| {
+                crate::ui::composer::draw(
+                    frame,
+                    frame.area(),
+                    &theme,
+                    &rows,
+                    caret_row,
+                    caret_col,
+                    true,
+                );
+            })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        let first_row: String = (0..60).map(|x| buffer[(x, 1)].symbol()).collect();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
         assert!(
-            first_row.contains("FIRST"),
-            "caret line hidden: {first_row}"
+            screen.contains("FIRST"),
+            "the line being edited scrolled out of view: {screen}"
         );
     }
 }
 
 /// Lay out draft and caret together, retaining whitespace and whole graphemes.
 /// Unlike transcript wrapping, composer wrapping must not eat typed spaces.
+///
+/// `width` is the composer's *text* width and the returned rows are bare text:
+/// the prompt glyph is the composer's business, not this function's. The
+/// returned column is therefore relative to the start of the text, and the
+/// caller adds its own gutter — which is what keeps caret arithmetic in one
+/// place instead of two that can disagree.
 fn composer_rows(input: &str, cursor_chars: usize, width: usize) -> (Vec<String>, usize, usize) {
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
     let width = width.max(2);
-    let mut rows = vec![String::from("> ")];
-    let mut col = 2;
+    let mut rows = vec![String::new()];
+    let mut col = 0;
     let mut offset = 0;
     let mut caret = None;
     for cluster in input.graphemes(true) {
@@ -4778,165 +4918,6 @@ fn composer_rows(input: &str, cursor_chars: usize, width: usize) -> (Vec<String>
     }
     let (row, col) = caret.unwrap_or((rows.len() - 1, col));
     (rows, row, col.min(width - 1))
-}
-
-fn draw_input(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let title = if app.guidance_mode {
-        "guidance for denial — Enter sends, Esc cancels"
-    } else if app.ui.running() {
-        "input — typing during a run queues steering · Ctrl+J newline"
-    } else if !epsilon_llm::catalog::credentials_ready(&app.model_id) {
-        "input — ⚠ no key: /login <provider> pastes masked"
-    } else {
-        "input — Ctrl+J newline · Ctrl+Y yank · Ctrl+Z undo"
-    };
-    let prompt_color = if app.ui.running() && !app.guidance_mode {
-        Color::Yellow
-    } else {
-        Color::Cyan
-    };
-    let border_style = if !epsilon_llm::catalog::credentials_ready(&app.model_id) {
-        crate::theme::Theme::auth()
-    } else {
-        crate::theme::Theme::border()
-    };
-    let frame_box = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(Span::styled(title, Style::default().fg(Color::DarkGray)));
-    let inner = frame_box.inner(area);
-    if inner.width == 0 || inner.height == 0 {
-        f.render_widget(frame_box, area);
-        return;
-    }
-    let (rows, caret_row, caret_col) =
-        composer_rows(&app.input, app.cursor_chars, inner.width as usize);
-    let skip = caret_row.saturating_sub(inner.height as usize - 1);
-    let shown: Vec<Line<'static>> = rows
-        .into_iter()
-        .skip(skip)
-        .take(inner.height as usize)
-        .enumerate()
-        .map(|(index, text)| {
-            if index == 0 && skip == 0 {
-                Line::from(vec![
-                    Span::styled("> ", Style::default().fg(prompt_color)),
-                    Span::raw(text.strip_prefix("> ").unwrap_or(&text).to_string()),
-                ])
-            } else {
-                Line::from(text)
-            }
-        })
-        .collect();
-    f.render_widget(Paragraph::new(shown).block(frame_box), area);
-    f.set_cursor_position((
-        inner.x + caret_col as u16,
-        inner.y + (caret_row - skip) as u16,
-    ));
-}
-
-fn draw_status(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    // ---- left: run state (spinner + status + elapsed, M15 behavior) --------------
-    let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
-    let left = if let Some(started) = app.run_started_at {
-        let secs = started.elapsed().as_secs();
-        let badge = if app.steer_queue_len > 0 {
-            format!(" · {} queued", app.steer_queue_len)
-        } else {
-            String::new()
-        };
-        format!("{spinner} running {secs}s · {}{badge}", app.ui.status())
-    } else if app.ui.running() {
-        format!("{spinner} {}", app.ui.status())
-    } else {
-        app.ui.status().to_string()
-    };
-
-    // ---- right: pi footer stats — where/what/how-much ----------------------------
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from);
-    let mut pwd = crate::footer::format_cwd(&app.workspace_root, home.as_deref());
-    if let Some(branch) = app.cached_branch() {
-        pwd.push_str(&format!(" ({branch})"));
-    }
-
-    let (tin, tout) = app.ui.usage();
-    let (cread, cwrite) = app.ui.cache_usage();
-    // Cost from catalog placeholder prices when the model is known (ADR-010 item 5;
-    // integer micro-USD, no float drift). Unknown/custom ids omit cost honestly.
-    let cost_micro: u64 = match epsilon_llm::catalog::lookup_model(&app.model_id) {
-        Some(info) => {
-            tin * info.input_cost_micro_per_mtok / 1_000_000
-                + tout * info.output_cost_micro_per_mtok / 1_000_000
-        }
-        None => 0,
-    };
-    let mut parts = crate::footer::stats_parts(&crate::footer::FooterStats {
-        tokens_in: tin,
-        tokens_out: tout,
-        cache_read: cread,
-        cache_write: cwrite,
-        latest_prompt_tokens: app.ui.latest_prompt_tokens(),
-        compacted: app.ui.is_compacted(),
-        context_window: epsilon_llm::catalog::lookup_model(&app.model_id).map(|i| i.context_window),
-        thinking_level: Some(app.thinking),
-        cost_micro_usd: cost_micro,
-    });
-    // Model id anchors the far right (pi puts it there too).
-    // M32d: tag offline so the user sees why prompts still hit faux.
-    let is_faux = app.model_id.starts_with("faux");
-    parts.push(crate::footer::FooterPart {
-        text: epsilon_llm::catalog::display_label(&app.model_id).to_string(),
-        tone: if is_faux {
-            crate::footer::Tone::Warn
-        } else {
-            crate::footer::Tone::Normal
-        },
-    });
-    if is_faux {
-        parts.push(crate::footer::FooterPart {
-            text: "offline".to_string(),
-            tone: crate::footer::Tone::Warn,
-        });
-    }
-
-    let tone_color = |t: crate::footer::Tone| match t {
-        crate::footer::Tone::Normal => Color::DarkGray,
-        crate::footer::Tone::Warn => Color::Yellow,
-        crate::footer::Tone::Error => Color::Red,
-    };
-    let right_spans: Vec<Span<'static>> =
-        std::iter::once(Span::styled(pwd, Style::default().fg(Color::DarkGray)))
-            .chain(
-                parts
-                    .iter()
-                    .flat_map(|p| {
-                        [
-                            Span::raw(" · "),
-                            Span::styled(p.text.clone(), Style::default().fg(tone_color(p.tone))),
-                        ]
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .collect();
-
-    // Fit: truncate the LEFT side first (status is less important than the stats).
-    let right_len: usize = right_spans.iter().map(|s| s.content.chars().count()).sum();
-    let width = area.width as usize;
-    let left_fit = left
-        .chars()
-        .count()
-        .min(width.saturating_sub(right_len + 2));
-    let pad = width
-        .saturating_sub(right_len)
-        .saturating_sub(left_fit)
-        .max(1);
-
-    let mut line_spans = vec![Span::styled(left, Style::default().fg(Color::DarkGray))];
-    line_spans.push(Span::raw(" ".repeat(pad)));
-    line_spans.extend(right_spans);
-    f.render_widget(Line::from(line_spans), area);
 }
 
 /// Command palette overlay (M16c, opencode command-palette pattern): fuzzy-filtered
@@ -5641,16 +5622,17 @@ mod tests {
         let approvals = ChannelApprovalUi::new();
         let _response = park_ask(&mut app, &approvals, "undersized-test").await;
 
-        let rows = render_rows(&mut app, 56, 10);
+        // Below the layout floor, where no pane can be drawn at all.
+        let rows = render_rows(&mut app, 43, 10);
         let screen = rows.join("\n");
-        assert!(screen.contains("terminal too small"), "{screen}");
+        assert!(screen.contains("too small"), "{screen}");
         assert!(
             screen.contains("approval pending: bash · rm -rf build"),
             "the fallback did not name the ask: {screen}"
         );
         assert!(
-            screen.contains("[y] allow · [a] always · [n] deny"),
-            "the fallback did not show the keys: {screen}"
+            screen.contains("widen the window"),
+            "the fallback did not say how to proceed: {screen}"
         );
     }
 

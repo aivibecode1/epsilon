@@ -24,6 +24,7 @@ pub mod scroll;
 pub mod state;
 pub mod theme;
 pub mod trust_store;
+pub mod ui;
 pub mod undo;
 pub mod wrap;
 
