@@ -79,6 +79,13 @@ three lines in a draw call:
   surface reads one passed-in `Theme`: `md_to_lines` and the render cache take
   `&Theme` as an argument, which is also what makes them testable in more than
   one colour mode. Do not reintroduce a free-function palette.
+- **`app.rs` is 4,951 lines** after the tests moved to `app/tests.rs` and
+  `app/composer_viewport_tests.rs` (they compile as children of the same module,
+  so `super::*` still reaches private items — keep that property, it is what
+  makes extraction free). What remains to extract is the **key handling**
+  (`handle_key`, `handle_approval_key`, `handle_auth_key`, paste), then the
+  **event loop** (`drive`), leaving `app.rs` as state plus the adapters that feed
+  the shell.
 - Capacity arithmetic when moving a `Block` panel onto `Panel`: `Panel::inner` is
   two rows shorter than a `Block::inner` of the same frame (title row + bottom
   rule), and it insets two columns a side, so the old `area.height - 4` window
@@ -87,18 +94,14 @@ three lines in a draw call:
 - **`cargo fmt --all -- --check` is clean as of `style:` commit 46c4ead**, which
   normalized 33 sites of pre-existing drift. If it fails again, check whether the
   drift is older than the change you are looking at before assuming it is yours.
-- **`app.rs` is ~6900 lines** and owns the event loop, key handling and the
-  remaining draw code. Splitting it (`event.rs`, `update.rs`, key handling per
-  mode, `ui/` for the rest) is the structural half of this work and is the next
-  slice.
 - No terminal-integration test runs in CI yet. `.tmp-console/conprobe` (real
-  conhost, drives the installed binary) and `.tmp-console/ptyharness` (ConPTY +
+  conhost, drives the built binary) and `.tmp-console/ptyharness` (ConPTY +
   vt100 emulator) are working local harnesses; they should become a checked-in
   test target rather than living in a scratch directory.
-- The TUI freeze the owner reported is **not reproduced** by either harness
-  against the current binary: it renders and echoes correctly in a real Windows
-  console. Two genuine defects were found and fixed on the way (input bursts
-  faster than the draw loop garbled the composer; a ConPTY driver that does not
-  answer the terminal's `ESC[6n` blocks the whole session). If the owner reports
-  it again, the next step is a diagnostic log inside the TUI rather than more
-  probing from outside.
+- The TUI freeze the owner reported was **the bash tool, not the TUI**: every
+  Windows tool call spawned `powershell -Command` without `-NoProfile`, loading
+  the user's profile first — measured at 6.2 s versus 1.1 s for a one-word
+  `echo`. Fixed in `3e1d01b`; the full loop now completes end to end. **Lesson
+  worth keeping: when the TUI "looks frozen", time a tool call before reading any
+  rendering code.** Two harnesses and a lot of drawing analysis went into a bug
+  that was six seconds of PowerShell profile.

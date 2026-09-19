@@ -1,7 +1,7 @@
 # M24 — MCP health probes + provider fallback chains
 
 Closes DIRECTION-02 (MCP TTL+grace probes) and DIRECTION-03 (fallback chains),
-the last two open items from `reports/research-pass-2-2026-08.md`.
+the last two open items from `docs/research/research-pass-2-2026-08.md`.
 
 ## What shipped
 
@@ -105,5 +105,5 @@ CI                                  green (windows-full, linux-confinement, msrv
 
 Both features are ports of Hermes Agent patterns
 (`chat_completion_helpers.try_activate_fallback` and the check_fn availability
-probes), documented in `reports/harness-analysis.md` §3 and reimplemented from
+probes), documented in `docs/research/harness-analysis.md` §3 and reimplemented from
 scratch on Epsilon's seams. Full credit table: README "Credits and references".

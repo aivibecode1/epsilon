@@ -1,7 +1,7 @@
 # M21 — Thinking fidelity sweep (DIRECTION-04): pi parity on the hottest path
 
 Date: 2026-08-25. Trigger: the standing loop ("implement slice → gates green →
-re-read references → close gaps"). `plans/README.md` recommended DIRECTION-04
+re-read references → close gaps"). `docs/plans/README.md` recommended DIRECTION-04
 after 05 closed in M20: thinking/reasoning effort is pi's most-missed capability
 on the hottest path, and Epsilon had the session-entry vocabulary
 (`EntryKind::ThinkingLevelChange`) with NOTHING reading or writing it.

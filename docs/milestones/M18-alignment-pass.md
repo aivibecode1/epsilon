@@ -38,7 +38,7 @@ implemented, problems-and-solutions, decisions-and-reasoning). Findings and fixe
 
 ### 2. Pi alignment report + gap closure (phase 2a/2b)
 
-New `reports/pi-alignment-2026-08.md`: layer-by-layer correspondence table between
+New `docs/research/pi-alignment-2026-08.md`: layer-by-layer correspondence table between
 pi-0.84.2 packages and Epsilon crates, verified by reading both trees this session.
 Post-M17 verdict: aligned layer-for-layer at semantics level with three ADR'd
 divergences. Gaps found: G1 session search (CLOSED here), G2 eval scenarios (deferred,
@@ -60,7 +60,7 @@ real store and asserting hit lines through handle_key.
 
 ### 3. Reference research pass 2 + import (phase 2c/2d)
 
-New `reports/research-pass-2-2026-08.md`. Community signal gathered: r/PiCodingAgent,
+New `docs/research/research-pass-2-2026-08.md`. Community signal gathered: r/PiCodingAgent,
 HN threads (pi launch + opencode thread), DSH GitHub discussion, independent DSH
 review. Headline findings: users confirm pi's grounded-minimal behavior; pi's most-
 missed feature is PLAN MODE; HN endorses sandbox-over-permission-theater (Epsilon
@@ -112,4 +112,4 @@ Suite delta: +8 (search module 6, TUI key-path 1, safety engine +2, minus none).
   still follow default ask posture (deliberate: research runs can still run read-only
   shell like cargo test).
 - Full re-audit (/improve deep + ponytail) runs immediately after this log lands;
-  results become plans/ entries.
+  results become docs/plans/ entries.

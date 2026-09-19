@@ -2,7 +2,7 @@
 
 Date: 2026-08-24. Trigger: the user reported the model picker "still shows old
 models" and pointed at opencode/Hermes behavior as the reference. This milestone
-closes plans/README.md's DIRECTION-05 (catalog regenerate script) and imports the
+closes docs/plans/README.md's DIRECTION-05 (catalog regenerate script) and imports the
 opencode/Hermes live-listing convention into the picker.
 
 ## The problem, precisely

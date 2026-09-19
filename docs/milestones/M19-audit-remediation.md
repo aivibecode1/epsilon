@@ -2,11 +2,11 @@
 
 Date: 2026-08-24 · Status: shipped in this session. Trigger: the user's instruction
 to implement every plan produced by the deep audit (Phase 3a of the alignment
-program). Input: `plans/001`–`plans/008` + `plans/README.md`.
+program). Input: `docs/plans/001`–`docs/plans/008` + `docs/plans/README.md`.
 
 ## What happened
 
-The 7-auditor deep audit (`reports/re-audit-2026-08-24.md`) found 30+ verified
+The 7-auditor deep audit (`docs/research/re-audit-2026-08-24.md`) found 30+ verified
 issues. This milestone executes ALL eight plans, in dependency order, with gates
 run after each plan and a full battery at the end.
 

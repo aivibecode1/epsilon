@@ -56,6 +56,16 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M95 — paged reads](milestones/M95-paged-reads.md): SURFACE-05 — `read` finally pages the way
+  its own description promised: pi's offset/limit window over the whole file (`read.ts:275-323`)
+  with pi's continuation strings, past-end error, empty-file Ok and the `sed` fallback for an
+  over-cap single line, streamed with whole-line boundaries (no U+FFFD cut, no partial line) and
+  faithful real line counts. The same change moves the stale-read guard to a coverage model so a
+  page of a large file can never grant a wholesale overwrite (F01), and `grep`'s 256 KiB cap is
+  announced instead of silent. Focused runs green with a 7-test pre-fix RED; the read-only review
+  returned one blocker in the same F01 class (an over-cap line *mid-page* replaced the page and
+  recorded `capped`), now fixed — the over-cap branch is gated on the page's first line, with its
+  own RED-screened test. Battery `m95b`: 876 passed / 0 failed / 0 ignored; landed 27cd677.
 - [M94 — TUI responsiveness](milestones/M94-tui-responsiveness.md): the owner-reported
   unresponsiveness in cmd/pwsh, reproduced in a real console (~30 chars/s echo) and fixed in the
   run loop (drain input before drawing, coalesce agent events, ~30 fps ceiling with a due-frame
