@@ -23,6 +23,7 @@
 //! | [`transcript`] | Gutter, role separation, first-run screen |
 //! | [`composer`] | The draft, the caret, the rule above it |
 //! | [`footer`] | The keys that work right now, and where the session lives |
+//! | [`overlay`] | Modal chrome: panels, prompts, list rows |
 //! | [`shell`] | Assembling one frame from application state |
 
 pub mod composer;
@@ -31,6 +32,7 @@ pub mod format;
 pub mod header;
 pub mod layout;
 pub mod metrics;
+pub mod overlay;
 pub mod shell;
 pub mod theme;
 pub mod transcript;
