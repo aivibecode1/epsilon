@@ -12,14 +12,16 @@ this file wins and says why.
 
 ## How this assessment was produced
 
-Four independent passes, each read-only:
+Four independent passes, each read-only. The reports are checked in beside this
+file rather than left in a scratch directory, because a finding that only exists
+in a temporary folder is a finding the next reader has to redo:
 
 | Pass | Method | Artifact |
 |---|---|---|
-| Test-suite credibility | Read all 884 test bodies; hand-verified every candidate finding | `.tmp-console/test-audit.md` |
-| pi port fidelity | Read pi 0.85.1's loop, prompt, skills, compaction, tools, streaming; compared against the Rust counterparts | `.tmp-console/port-fidelity-audit.md` |
+| Test-suite credibility | Read all 884 test bodies; hand-verified every candidate finding | [`evidence/test-suite-audit.md`](evidence/test-suite-audit.md) |
+| pi port fidelity | Read pi 0.85.1's loop, prompt, skills, compaction, tools, streaming; compared against the Rust counterparts | [`evidence/port-fidelity-audit.md`](evidence/port-fidelity-audit.md) |
+| Reference design study | Read pi, opencode and hermes terminal UIs plus DSH's token layer | [`evidence/reference-tui-design-spec.md`](evidence/reference-tui-design-spec.md), [`evidence/reference-harness-ideas.md`](evidence/reference-harness-ideas.md) |
 | Gap and contradiction review | Reconciled `audit/00`–`10`, `docs/history.md`, milestone logs and `git log` | summarized below |
-| Reference design study | Read pi, opencode and hermes terminal UIs plus DSH's token layer | `.tmp-console/tui-design-spec.md` |
 
 Plus execution: a full-workspace test run on a fresh profile, a strict-Clippy
 run, and a terminal-integration probe that drives the built binary in a real
@@ -73,7 +75,7 @@ recovery machinery and the instruction-loading seams.
 
 | # | Gap | Evidence | Why it matters |
 |---|---|---|---|
-| G1 | The agent contract tells the model to load a skill body through a `skill` tool that does not exist in the registry, and the catalog prints no path | `crates/epsilon-core/assets/agent-contract.md:103`; `crates/epsilon-core/src/skills.rs:118`; `crates/epsilon-tools/src/lib.rs:109-138` | The model learns a skill exists and cannot open it. Fix is a tool, or a contract that names `read` plus a location. |
+| ~~G1~~ | **Closed** in M97 (`2d50813`): the `skill` tool now exists and is registered from the discovered list, and the catalog no longer advertises skills the model may not load (`87c5628`). | new tests in `crates/epsilon-tools/src/skill.rs` | — |
 | G2 | F09 resolved filesystem containment is open | `audit/02-defect-ledger.md:157`; `agents/memory/f09-path-policy.md` | The native filesystem tools run inside the harness process; Windows Job Objects bound resources, not content. |
 | G3 | Checkpoint restore conflates "skipped" with "deleted" (F15); a durable-commit failure is discarded (F07) | `audit/02` F07/F15 | Silent data loss in the recovery path, which is the path a user reaches only when something already went wrong. |
 | G4 | Unsupported final entries are truncated (F08) | `audit/02` F08 | Same class: the difference between "there was nothing" and "we could not read it" is exactly what a recovery path must preserve. |
@@ -83,7 +85,7 @@ recovery machinery and the instruction-loading seams.
 | # | Gap | Evidence |
 |---|---|---|
 | G5 | `.gitignore` is not honoured by grep/find, and both tool descriptions say it is | `.tmp-console/port-fidelity-audit.md` D-9 |
-| G6 | `disable-model-invocation` is parsed but never filtered out of the catalog | D-4 |
+| ~~G6~~ | **Closed** in `87c5628`: both the catalog and the tool filter it. | D-4 | — |
 | G7 | `SYSTEM.md`, `APPEND_SYSTEM.md` and `.epsilon/prompts/` are trust-gate-detected but never loaded | D-7 |
 | G8 | `AGENTS.override.md` and ancestor context files above the workspace are never loaded | D-8 |
 | G9 | A `MaxTokens`-truncated summary is committed as if complete | D-5 |
@@ -94,7 +96,7 @@ recovery machinery and the instruction-loading seams.
 | # | Gap |
 |---|---|
 | G11 | `crates/epsilon-tui/src/app.rs` is ~7,000 lines owning the event loop, key handling and legacy draw code |
-| G12 | Five overlays still draw through the deprecated `crate::theme` shim; the shim cannot be deleted until they move |
+| ~~G12~~ | **Closed** in `278d2ec`: every surface takes a passed-in `Theme` and the shim is deleted. |
 | G13 | No terminal-integration test runs in CI, though two working harnesses exist locally |
 | G14 | `epsilon-ext` has 5 tests for a whole crate — the least covered surface relative to its size |
 

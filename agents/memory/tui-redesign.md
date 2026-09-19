@@ -75,27 +75,30 @@ three lines in a draw call:
 
 ## Open threads
 
-- Overlay chrome is done for the palette, approval dialog, auth prompt, slash
-  popup, both model-picker stages, the `/sessions` browser and the timeline: all
-  of them now go through `ui::overlay` (`Panel`, `list_row`, `hint_row`,
-  `Width::PANEL`). Two surfaces still draw through the `crate::theme` shim and a
-  hand-built box: `draw_at_file` (the `@` file popup) and `draw_auth_picker` (the
-  `/connect` provider list). `draw_transcript`'s streaming tail still needs the
-  shim for two styles, too.
+- **The `crate::theme` shim is deleted** (commit `refactor(tui)`), and every
+  surface reads one passed-in `Theme`: `md_to_lines` and the render cache take
+  `&Theme` as an argument, which is also what makes them testable in more than
+  one colour mode. Do not reintroduce a free-function palette.
 - Capacity arithmetic when moving a `Block` panel onto `Panel`: `Panel::inner` is
   two rows shorter than a `Block::inner` of the same frame (title row + bottom
   rule), and it insets two columns a side, so the old `area.height - 4` window
   becomes `inner.height - 2` — that keeps the visible row count identical, which
   is what the pickers' `scroll_start` window depends on.
-- Gate note (2026-09-19): HEAD was **not** `cargo fmt --all --check` clean under
-  this machine's rustfmt 1.9.0-stable/1.97.1 — 33 sites across 11 files
-  (epsilon-core, epsilon-tui `ui/`, `app.rs` tests). Running `cargo fmt --all`
-  normalizes them, so its diff carries unrelated reflow; the pristine-HEAD probe
-  is `%TEMP%\eps-pty-head-fmt-check.txt`.
-- `app.rs` is ~7000 lines and owns the event loop, key handling and the legacy
-  draw functions. Splitting it (`event.rs`, `update.rs`, key handling per mode)
-  is the structural half of this work and is not done.
+- **`cargo fmt --all -- --check` is clean as of `style:` commit 46c4ead**, which
+  normalized 33 sites of pre-existing drift. If it fails again, check whether the
+  drift is older than the change you are looking at before assuming it is yours.
+- **`app.rs` is ~6900 lines** and owns the event loop, key handling and the
+  remaining draw code. Splitting it (`event.rs`, `update.rs`, key handling per
+  mode, `ui/` for the rest) is the structural half of this work and is the next
+  slice.
 - No terminal-integration test runs in CI yet. `.tmp-console/conprobe` (real
   conhost, drives the installed binary) and `.tmp-console/ptyharness` (ConPTY +
   vt100 emulator) are working local harnesses; they should become a checked-in
   test target rather than living in a scratch directory.
+- The TUI freeze the owner reported is **not reproduced** by either harness
+  against the current binary: it renders and echoes correctly in a real Windows
+  console. Two genuine defects were found and fixed on the way (input bursts
+  faster than the draw loop garbled the composer; a ConPTY driver that does not
+  answer the terminal's `ESC[6n` blocks the whole session). If the owner reports
+  it again, the next step is a diagnostic log inside the TUI rather than more
+  probing from outside.

@@ -37,29 +37,25 @@ not themselves trigger runtime compression.
 | File | Work item | Status |
 |------|-----------|--------|
 | [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
-| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed (213 tests green, 7a94ccd + 59fdf2e); overlay chrome migrated for all list panels + prompts (uncommitted); `draw_at_file`/`draw_auth_picker` left, `app.rs` split open |
+| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed, 213 tests green; every overlay migrated and the `crate::theme` shim **deleted** (278d2ec); `app.rs` split is the next slice |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
 | [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | **landed** 27cd677; full workspace suite green on a fresh test profile; note retired after the milestone doc's reinstall line is reconciled |
-| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984 |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984; M97 2d50813 |
 
 ## Next safe action
 
-The TUI is the owner's stated priority and its presentation layer is now a real
-module tree under `crates/epsilon-tui/src/ui/`. Two things remain, in this order:
+1. **Split `app.rs`** (~6900 lines: the event loop, key handling and the
+   remaining draw code). Target shape: `event.rs` for the loop, `keys/` per mode,
+   `ui/` for everything that draws, leaving `app.rs` as state plus the adapters
+   that feed the shell. This is the last structural item of the TUI work.
+2. **Check in the terminal integration test.** `.tmp-console/conprobe` (real
+   conhost, drives the built binary) and `.tmp-console/ptyharness` (ConPTY +
+   `vt100`) both work; a visual regression should be a failing test, not a bug
+   report from someone's console.
+3. Then the remaining port gaps, in the order `audit/11` ranks them: G5
+   (`.gitignore` promised but not implemented), G7/G8 (context files detected but
+   never loaded), G3/G4 (checkpoint restore conflating absent with unreadable).
 
-1. **Migrate the eight overlay functions in `app.rs`** (`draw_picker`,
-   `draw_session_browser`, `draw_palette`, `draw_timeline`, `draw_at_file`,
-   `draw_slash_autocomplete`, `draw_dialog`, `draw_auth_prompt`,
-   `draw_auth_picker`) onto `ui::overlay::{Panel, Width, centered, list_row,
-   hint_row}`. That is mechanical now, and it is what lets `crate::theme` — the
-   compatibility shim — be deleted.
-2. **Split `app.rs`** (~7000 lines: event loop + key handling + legacy draw).
-   Target shape: `event.rs`, `update.rs`, `keys/` per mode, with the draw path
-   reduced to the shell call plus overlays.
-
-Then the checked-in terminal integration test: `.tmp-console/conprobe` (real
-conhost) and `.tmp-console/ptyharness` (ConPTY + vt100) both work; they belong
-in the repo as a test target rather than in a scratch directory.
 
 
 
