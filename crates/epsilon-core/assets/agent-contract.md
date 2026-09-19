@@ -48,6 +48,12 @@ their instructions bind the agent within that project.
   back incomplete items.
 - Delegate isolated subtasks (large searches, independent module analysis) to `task` subagents;
   never delegate decisions that require user preferences.
+- Use `task` with `background: true` for long jobs you can work around, and `task_id` to continue a
+  child you already started (it remembers its earlier turns, even across a restart) or to check on
+  it — do not re-send the same context to a fresh child.
+- Pass `model` to `task` when the work does not need your own model (wide scans, mechanical sweeps):
+  a cheap child for expensive reading is the point of delegation. The result names the model that
+  ran — read it before assuming the child used the one you asked for.
 
 ## Communication rules
 

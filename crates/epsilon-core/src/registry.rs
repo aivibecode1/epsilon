@@ -32,13 +32,24 @@ impl ToolRegistry {
         self.tools.get(name).cloned()
     }
 
-    /// Descriptors of every registered tool (provider payload order is insertion order of
-    /// the underlying map — deterministic per process run).
+    /// Descriptors of every registered tool, in a **stable, sorted order**.
+    ///
+    /// The order matters more than it looks: this list is what the prompt's
+    /// STABLE tier prints *and* what every provider payload sends as `tools`.
+    /// It used to come straight out of a `HashMap`, whose iteration order is
+    /// seeded per process — so two runs of the same session sent byte-different
+    /// system prompts and tool arrays, and a provider prompt cache could never
+    /// hit across invocations. Sorting by name makes the bytes a function of the
+    /// tool set alone (ADR-008's byte-stable premise), which is the whole point
+    /// of the tier discipline.
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
-        self.tools
+        let mut out: Vec<ToolDescriptor> = self
+            .tools
             .values()
             .map(|t| t.descriptor().clone())
-            .collect()
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
     }
 
     /// Registry containing only the named tools, sharing the same tool Arcs
@@ -94,6 +105,33 @@ mod tests {
         ) -> Result<ToolOutput, ToolFailure> {
             Ok(ToolOutput::text("ok"))
         }
+    }
+
+    #[test]
+    fn descriptor_order_is_a_function_of_the_tool_set_not_of_hash_seeds() {
+        // Registration order deliberately differs from alphabetical order: the
+        // bug this guards against was a HashMap iteration order that changed per
+        // process, which made the prompt's STABLE tier and every provider `tools`
+        // array byte-different between two runs of the same session (and so made
+        // provider prompt caching impossible across invocations).
+        let mut reg = ToolRegistry::new();
+        for name in ["write", "read", "glob", "grep", "bash", "edit"] {
+            reg.register(Arc::new(Named::new(name)));
+        }
+        let names: Vec<String> = reg.descriptors().into_iter().map(|d| d.name).collect();
+        assert_eq!(
+            names,
+            vec!["bash", "edit", "glob", "grep", "read", "write"],
+            "descriptors must be sorted, not hash-ordered"
+        );
+
+        // A second, identically-built registry produces the same order.
+        let mut again = ToolRegistry::new();
+        for name in ["grep", "bash", "write", "edit", "read", "glob"] {
+            again.register(Arc::new(Named::new(name)));
+        }
+        let names2: Vec<String> = again.descriptors().into_iter().map(|d| d.name).collect();
+        assert_eq!(names, names2);
     }
 
     #[test]

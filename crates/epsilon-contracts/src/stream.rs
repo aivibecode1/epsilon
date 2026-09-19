@@ -87,8 +87,28 @@ impl StreamFolder {
                 while msg.content.len() <= index {
                     msg.content.push(crate::content::ContentBlock::text(""));
                 }
-                match msg.content.get_mut(index)? {
-                    crate::content::ContentBlock::Text { text } => text.push_str(delta),
+                match msg.content.get_mut(index) {
+                    Some(crate::content::ContentBlock::Text { text }) => text.push_str(delta),
+                    Some(crate::content::ContentBlock::Thinking { .. }) => {
+                        // DeepSeek/Anthropic wire collision: thinking and text both at index 0.
+                        // Preserve both blocks by spilling text to the next text slot.
+                        let next = index + 1;
+                        while msg.content.len() <= next {
+                            msg.content.push(crate::content::ContentBlock::text(""));
+                        }
+                        match msg.content.get_mut(next) {
+                            Some(crate::content::ContentBlock::Text { text }) => {
+                                text.push_str(delta)
+                            }
+                            Some(crate::content::ContentBlock::Thinking { .. }) => {
+                                msg.content.insert(
+                                    next,
+                                    crate::content::ContentBlock::text(delta.clone()),
+                                );
+                            }
+                            _ => return None,
+                        }
+                    }
                     _ => return None,
                 }
             }
@@ -99,8 +119,30 @@ impl StreamFolder {
                         text: String::new(),
                     });
                 }
-                match msg.content.get_mut(index)? {
-                    crate::content::ContentBlock::Thinking { text } => text.push_str(delta),
+                match msg.content.get_mut(index) {
+                    Some(crate::content::ContentBlock::Thinking { text }) => text.push_str(delta),
+                    Some(crate::content::ContentBlock::Text { .. }) => {
+                        let next = index + 1;
+                        while msg.content.len() <= next {
+                            msg.content.push(crate::content::ContentBlock::Thinking {
+                                text: String::new(),
+                            });
+                        }
+                        match msg.content.get_mut(next) {
+                            Some(crate::content::ContentBlock::Thinking { text }) => {
+                                text.push_str(delta)
+                            }
+                            Some(crate::content::ContentBlock::Text { .. }) => {
+                                msg.content.insert(
+                                    next,
+                                    crate::content::ContentBlock::Thinking {
+                                        text: delta.clone(),
+                                    },
+                                );
+                            }
+                            _ => return None,
+                        }
+                    }
                     _ => return None,
                 }
             }

@@ -400,6 +400,489 @@ async fn read_returns_numbered_lines_and_rejects_escapes() {
     assert!(err.contains("outside the workspace"));
 }
 
+// ---- M95: paged reads (pi `read.ts` offset/limit semantics) ------------------------------------
+
+/// `lines` lines of `line <n> PAD<100 p's>`; line `markered` (1-based) carries a marker
+/// instead, so a page can be identified by its content.
+fn paged_file(lines: usize, markered: usize) -> String {
+    let mut body = String::new();
+    for n in 1..=lines {
+        if n == markered {
+            body.push_str(&format!("MARKER_LINE_{n}\n"));
+        } else {
+            body.push_str(&format!("line {n} {}\n", "p".repeat(100)));
+        }
+    }
+    body
+}
+
+/// The `offset=` a continuation notice offers, so a test can follow the tool's own advice.
+fn next_offset(notice: &str) -> usize {
+    let at = notice.find("Use offset=").expect("a continuation notice") + "Use offset=".len();
+    let digits: String = notice[at..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().expect("the notice names a numeric offset")
+}
+
+#[tokio::test]
+async fn read_pages_past_the_byte_prefix_to_the_marker() {
+    // The old reader took the first 256 KiB and *then* applied offset/limit to that prefix, so
+    // nothing past byte 262144 was reachable and the continuation notice counted the prefix.
+    // pi's offset pages through the whole file (`read.ts:284-321`).
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    let body = paged_file(3_400, 3_400);
+    assert!(body.len() > util::MAX_READ_BYTES);
+    std::fs::write(dir.path().join("big.txt"), &body).unwrap();
+
+    let first = run_full(&read, &ctx, serde_json::json!({"path": "big.txt"}))
+        .await
+        .unwrap();
+    let out = output_text(&first);
+    assert!(out.contains("line 1 "), "the first page starts at line 1");
+    assert!(
+        out.contains("[Showing lines 1-2000 of 3400. Use offset=2001 to continue.]"),
+        "pi's continuation string with the file's real total: {out}"
+    );
+    assert_eq!(first.details["read"]["first_line"], 1);
+    assert_eq!(first.details["read"]["total_lines"], 3_400);
+    assert_eq!(first.details["read"]["truncated_by"], "lines");
+    assert_eq!(first.details["read"]["next_offset"], 2_001);
+
+    // Follow the tool's own continuation offsets until the marker line (3400) arrives.
+    let mut out = out;
+    let mut pages = 1usize;
+    while !out.contains("MARKER_LINE_3400") {
+        pages += 1;
+        assert!(pages <= 5, "paging must reach line 3400: {out}");
+        let offset = next_offset(&out);
+        out = run(
+            &read,
+            &ctx,
+            serde_json::json!({"path": "big.txt", "offset": offset}),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(pages >= 2, "the file really is more than one page long");
+    assert!(
+        !out.contains("Use offset="),
+        "the page that reaches the marker is the last one: {out}"
+    );
+}
+
+#[tokio::test]
+async fn read_past_the_end_errors_and_an_empty_file_reads_ok_empty() {
+    let (_d, ctx) = seeded_workspace(); // src/lib.rs has two lines
+    let read = ReadTool::new();
+
+    let err = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "src/lib.rs", "offset": 3}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        err, "Offset 3 is beyond end of file (2 lines total)",
+        "pi's error, word for word (read.ts:282) with the real line count"
+    );
+    let last = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "src/lib.rs", "offset": 2}),
+    )
+    .await
+    .unwrap();
+    assert!(last.contains("    2| pub fn beta() {}"), "{last}");
+
+    // An empty file is pi's Ok-empty case, not the past-end error.
+    std::fs::write(ctx.cwd.join("empty.txt"), "").unwrap();
+    let empty = run(&read, &ctx, serde_json::json!({"path": "empty.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        empty.is_empty(),
+        "pi returns an empty result for an empty file, not a marker: {empty:?}"
+    );
+    // ...but an offset past even that is the error again, naming zero lines.
+    let err = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "empty.txt", "offset": 2}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, "Offset 2 is beyond end of file (0 lines total)");
+}
+
+#[tokio::test]
+async fn a_multibyte_character_is_never_cut_by_the_page_boundary() {
+    // The old reader cut the file at byte MAX_READ_BYTES and decoded the fragment with
+    // `from_utf8_lossy`, so a character straddling that byte became U+FFFD. pi truncates on
+    // lines: a page may never contain a replacement character the file does not contain.
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    let mut body = String::new();
+    let filler = "x".repeat(99);
+    while body.len() + 101 < util::MAX_READ_BYTES - 1 {
+        body.push_str(&filler);
+        body.push('\n');
+    }
+    let pad = util::MAX_READ_BYTES - 1 - body.len();
+    if pad > 0 {
+        body.push_str(&"y".repeat(pad - 1));
+        body.push('\n');
+    }
+    assert_eq!(body.len(), util::MAX_READ_BYTES - 1, "fixture alignment");
+    body.push('é'); // the two bytes this milestone is about: 0xC3 0xA9
+    body.push_str(&"é".repeat(50));
+    body.push('\n');
+    body.push_str("tail line\n");
+    std::fs::write(dir.path().join("utf8.txt"), &body).unwrap();
+    assert_eq!(
+        body.as_bytes()[util::MAX_READ_BYTES - 1],
+        0xC3,
+        "the straddling character starts exactly at the old cut"
+    );
+    assert_eq!(body.as_bytes()[util::MAX_READ_BYTES], 0xA9);
+
+    let first = run(&read, &ctx, serde_json::json!({"path": "utf8.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        !first.contains('\u{FFFD}'),
+        "no replacement character from the window"
+    );
+    let boundary_line = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "utf8.txt", "offset": 2_596}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        boundary_line.contains('é'),
+        "the line holding the boundary arrives whole: {boundary_line:?}"
+    );
+    assert!(
+        !boundary_line.contains('\u{FFFD}'),
+        "and its character is intact: {boundary_line:?}"
+    );
+    let resume = next_offset(&first);
+    assert!(
+        resume <= 2_596,
+        "the page's own continuation reaches that line (was {resume})"
+    );
+}
+
+#[tokio::test]
+async fn a_small_explicit_limit_reports_how_many_lines_remain() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    std::fs::write(dir.path().join("twelve.txt"), paged_file(12, 0)).unwrap();
+
+    let out = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "twelve.txt", "offset": 3, "limit": 4}),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("    3| line 3 "), "{out}");
+    assert!(out.contains("    6| line 6 "), "{out}");
+    assert!(
+        !out.contains("    7|"),
+        "the caller's limit stops the page: {out}"
+    );
+    assert!(
+        out.contains("[6 more lines in file. Use offset=7 to continue.]"),
+        "pi's user-limit string (read.ts:313-317): {out}"
+    );
+}
+
+#[tokio::test]
+async fn a_page_that_ends_on_a_blank_line_keeps_that_line() {
+    // The page's text is whole lines joined by '\n', so a page ending on an empty line ends
+    // with a newline. The numbering must still show that line: a `str::lines` split would
+    // silently drop it and the model would read a shorter file than it has.
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    std::fs::write(dir.path().join("blanks.txt"), "first\nsecond\n\nfourth\n").unwrap();
+
+    let out = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "blanks.txt", "offset": 2, "limit": 2}),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("    2| second"), "{out}");
+    assert!(
+        out.contains("    3| "),
+        "the blank line keeps its number: {out:?}"
+    );
+    assert!(
+        out.contains("[1 more lines in file. Use offset=4 to continue.]"),
+        "{out}"
+    );
+    let whole = run(&read, &ctx, serde_json::json!({"path": "blanks.txt"}))
+        .await
+        .unwrap();
+    assert!(whole.contains("    4| fourth"), "{whole}");
+}
+
+#[tokio::test]
+async fn an_over_cap_single_line_points_at_bash_and_leaves_the_write_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    let huge = format!(
+        "{}\nrest of file\n",
+        "x".repeat(util::MAX_READ_BYTES + 4096)
+    );
+    let path = dir.path().join("huge.txt");
+    std::fs::write(&path, &huge).unwrap();
+
+    let out = run(&read, &ctx, serde_json::json!({"path": "huge.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        out.contains("exceeds 256.0KB limit"),
+        "pi's firstLineExceedsLimit message (read.ts:297-301): {out}"
+    );
+    assert!(
+        out.contains("Use bash: sed -n '1p' huge.txt | head -c 262144"),
+        "the fallback names the line, the path and the budget: {out}"
+    );
+    assert!(
+        !out.contains("xxxx"),
+        "not even a lossy prefix of the over-cap line is returned: {out}"
+    );
+
+    // The window this read could not widen is the harness's byte budget on one line, which no
+    // re-read through this tool can lift — pi answers it with `sed` — so it is not a trap: the
+    // wholesale write is allowed (the M65 exemption, narrowed to its one honest case).
+    run(
+        &WriteTool::new(),
+        &ctx,
+        serde_json::json!({"path": "huge.txt", "content": "replaced\n"}),
+    )
+    .await
+    .expect("a single over-cap line does not block a rewrite forever");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "replaced\n");
+}
+
+#[tokio::test]
+async fn a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite() {
+    // The over-cap answer above is for a page whose *first* line is the over-cap one. A line
+    // that exceeds the budget later in the page is an ordinary byte stop in pi
+    // (`truncate.ts:126-137` never lets it through, it just stops where the budget ran out):
+    // the lines already read stay visible, the file's real total and the continuation survive,
+    // and the read is a partial view — so a wholesale overwrite stays refused. Pre-fix,
+    // `read_page` fired the over-cap branch for *any* over-cap line, `files.rs` replaced the
+    // whole decoded page with the sed message, and the recorded `capped` coverage then let a
+    // write destroy a file the model had displayed nothing of (the F01 class this slice exists
+    // to close). The write refusal is asserted first so a pre-fix run fails naming that
+    // data-loss window itself, with the page it replaced attached.
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    let write = WriteTool::new();
+    let over_cap = "x".repeat(util::MAX_READ_BYTES + 4096);
+    let body = format!("a\nb\nc\n{over_cap}\nd\n");
+    let path = dir.path().join("mixed.txt");
+    std::fs::write(&path, &body).unwrap();
+
+    let first = run_full(&read, &ctx, serde_json::json!({"path": "mixed.txt"}))
+        .await
+        .unwrap();
+    let out = output_text(&first);
+
+    match run(
+        &write,
+        &ctx,
+        serde_json::json!({"path": "mixed.txt", "content": "replaced\n"}),
+    )
+    .await
+    {
+        Err(_) => {}
+        Ok(ok) => panic!(
+            "a read stopped by a later over-cap line must remain a partial view, but the \
+             whole-file write returned Ok({ok:?}) while the read had shown {out:?}"
+        ),
+    }
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        body,
+        "the refusal left every byte in place"
+    );
+
+    // The page itself: the three readable lines survive, the sed fallback stays reserved for a
+    // first-line page, and the file's real total plus the continuation are still reported.
+    assert!(out.contains("    1| a"), "{out}");
+    assert!(out.contains("    2| b"), "{out}");
+    assert!(out.contains("    3| c"), "{out}");
+    assert!(
+        !out.contains("Line 4 is") && !out.contains("sed -n"),
+        "the sed fallback must not replace a page that has lines to show: {out}"
+    );
+    assert!(
+        out.contains("[Showing lines 1-3 of 5 (256.0KB limit). Use offset=4 to continue.]"),
+        "pi's byte-stop notice, with the file's real total (read.ts:309-311): {out}"
+    );
+    assert_eq!(first.details["read"]["truncated_by"], "bytes");
+    assert_eq!(first.details["read"]["total_lines"], 5);
+    assert_eq!(first.details["read"]["next_offset"], 4);
+
+    // Following the continuation lands on the over-cap line as *that* page's first line, where
+    // pi's sed fallback is the right answer — the one window the guard opens for (see the test
+    // above); the page before it never had to be thrown away to get here.
+    let resumed = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "mixed.txt", "offset": 4}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        resumed.contains("exceeds 256.0KB limit"),
+        "the over-cap line is answered where it is first: {resumed}"
+    );
+    assert!(
+        resumed.contains("sed -n '4p' mixed.txt"),
+        "and the fallback names it: {resumed}"
+    );
+}
+
+#[tokio::test]
+async fn paging_to_the_end_grants_the_overwrite_but_a_skipped_page_does_not() {
+    // The sharpest discriminator for the coverage handoff (F01). Reading this file once used to
+    // grant wholesale overwrite rights, because the read reported itself capped "so no re-read
+    // can widen it" — with pages, the next offset *can* widen it, and this test is the proof the
+    // guard follows the offsets instead of the old premise.
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    let write = WriteTool::new();
+    let body = paged_file(5_500, 0);
+    let path = dir.path().join("book.txt");
+    std::fs::write(&path, &body).unwrap();
+
+    let first = run(&read, &ctx, serde_json::json!({"path": "book.txt"}))
+        .await
+        .unwrap();
+    let refuse = |err: String| {
+        assert!(err.contains("only read in part"), "{err}");
+        assert!(
+            err.contains("read it through first"),
+            "the refusal must say what lifts it: {err}"
+        );
+    };
+    refuse(
+        run(
+            &write,
+            &ctx,
+            serde_json::json!({"path": "book.txt", "content": "one page in\n"}),
+        )
+        .await
+        .unwrap_err(),
+    );
+    assert!(first.contains(" of 5500"), "{first}");
+
+    let second = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "book.txt", "offset": next_offset(&first)}),
+    )
+    .await
+    .unwrap();
+    assert!(second.contains(" of 5500"), "{second}");
+    refuse(
+        run(
+            &write,
+            &ctx,
+            serde_json::json!({"path": "book.txt", "content": "two pages in\n"}),
+        )
+        .await
+        .unwrap_err(),
+    );
+
+    let last = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "book.txt", "offset": next_offset(&second)}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !last.contains("Use offset="),
+        "the last page reaches the end of the file: {last}"
+    );
+    run(
+        &write,
+        &ctx,
+        serde_json::json!({"path": "book.txt", "content": "every line seen\n"}),
+    )
+    .await
+    .expect("the whole file is covered, so the overwrite is legitimate");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "every line seen\n",
+        "the write lands once the model has seen every line"
+    );
+}
+
+#[tokio::test]
+async fn grep_marks_the_files_it_could_only_search_in_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let grep = GrepTool::new();
+    let mut body = String::new();
+    while body.len() <= util::MAX_READ_BYTES {
+        body.push_str("filler line\n");
+    }
+    body.push_str("NEEDLE_BEYOND_THE_CAP\n");
+    std::fs::write(dir.path().join("long.txt"), &body).unwrap();
+    assert!(
+        body.find("NEEDLE_BEYOND_THE_CAP").unwrap() > util::MAX_READ_BYTES,
+        "the fixture puts the needle past the cap"
+    );
+
+    // Today's behaviour, recorded rather than fixed: the walker reads every file through the
+    // same 256 KiB helper, so a match past that byte is not found. It is no longer *silent*.
+    let out = run(
+        &grep,
+        &ctx,
+        serde_json::json!({"pattern": "NEEDLE_BEYOND_THE_CAP"}),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("no matches"), "{out}");
+    assert!(
+        out.contains("searched only the first 262144 bytes of 1 file(s)"),
+        "the incomplete search is named: {out}"
+    );
+    assert!(out.contains("long.txt"), "and the file is named: {out}");
+
+    // The note rides beside real hits too: the capped file is still only partly searched.
+    std::fs::write(dir.path().join("short.txt"), "NEEDLE\n").unwrap();
+    let hit = run(&grep, &ctx, serde_json::json!({"pattern": "NEEDLE"}))
+        .await
+        .unwrap();
+    assert!(hit.contains("short.txt:1: NEEDLE"), "{hit}");
+    assert!(
+        hit.contains("searched only the first 262144 bytes of 1 file(s)"),
+        "a partial search is reported even when other files matched: {hit}"
+    );
+}
+
 #[tokio::test]
 async fn read_returns_image_attachments_for_images() {
     // pi parity (`createReadTool` image branch): magic bytes win over text —

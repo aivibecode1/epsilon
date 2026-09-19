@@ -1,5 +1,6 @@
 //! File-manipulation tools: read, write, edit.
 
+use std::io::Read as _;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -43,10 +44,11 @@ async fn diagnostics_note(
 pub struct ReadArgs {
     /// File path (absolute or workspace-relative).
     pub path: String,
-    /// 1-based first line to return (default 1).
+    /// 1-based first line to return (default 1). Past the end of the file is an error
+    /// naming the offset and the file's line count (pi `read.ts:281-283`).
     #[serde(default)]
     pub offset: Option<usize>,
-    /// Max lines to return (default: cap).
+    /// Max lines to return (default: the page's line cap).
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -107,11 +109,23 @@ impl Tool for ReadTool {
         if !inside {
             return Err(escaped_workspace(&args.path));
         }
-        // Images ride as attachments (pi `createReadTool` image branch): magic
-        // bytes first, so a `.png` that is really text still reads as text and
-        // a text file with image bytes never parses as text.
-        let bytes = std::fs::read(&path)
-            .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?;
+        // Images ride as attachments (pi `createReadTool` image branch): magic bytes first,
+        // so a `.png` that is really text still reads as text and a text file with image
+        // bytes never parses as text. Only the head is probed (M95): reading the file whole
+        // just to look at its leading magic bytes made every read O(file) in memory before
+        // the paged path ran, which is the bound this milestone claims. Detection needs only
+        // the head — every signature is in its first bytes — but when the head *is* an image
+        // the whole file is read, because the attachment below needs the bytes.
+        let mut bytes = Vec::new();
+        std::fs::File::open(&path)
+            .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?
+            .take(4096)
+            .read_to_end(&mut bytes)
+            .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
+        if crate::image::detect_supported_image_mime(&bytes).is_some() {
+            bytes = std::fs::read(&path)
+                .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?;
+        }
         if let Some(mime) = crate::image::detect_supported_image_mime(&bytes) {
             if mime == "image/bmp" {
                 // No BMP converter in the tree (pi needs an injected
@@ -141,53 +155,93 @@ impl Tool for ReadTool {
                 terminate: false,
             });
         }
-        let (content, capped) = util::read_text_capped_ex(&path)?;
+        let page = util::read_page(&path, args.offset.unwrap_or(1), args.limit)?;
 
-        let all_lines: Vec<&str> = content.lines().collect();
-        let start = args.offset.unwrap_or(1).max(1);
-        let limit = args
-            .limit
-            .unwrap_or(util::MAX_READ_LINES)
-            .min(util::MAX_READ_LINES);
-        let slice: Vec<&str> = all_lines
-            .iter()
-            .skip(start.saturating_sub(1))
-            .take(limit)
-            .copied()
-            .collect();
-
-        let mut body = slice
+        // Number the page's lines. The split is on '\n' and not `str::lines()` because the
+        // text holds *exactly* the lines the page covered: a page is allowed to end with a
+        // blank line, and `lines()` would drop it (and its number) from the output.
+        let rows: Vec<&str> = if page.first_line == 0 {
+            Vec::new()
+        } else {
+            page.text.split('\n').collect()
+        };
+        let mut body = rows
             .iter()
             .enumerate()
-            .map(|(i, line)| format!("{:>5}| {}", start + i, line))
+            .map(|(i, line)| format!("{:>5}| {line}", page.first_line + i))
             .collect::<Vec<_>>()
             .join("\n");
-        let total = all_lines.len();
-        // Was this a window onto the file rather than the whole of it? Either the caller asked
-        // for a range, or the file is longer than the line cap. The answer decides whether a
-        // later full overwrite is legitimate (`crate::read_log`).
-        let windowed = start > 1 || slice.len() < total || total >= util::MAX_READ_LINES || capped;
-        if total > util::MAX_READ_LINES && slice.len() == limit {
-            body.push_str(&format!(
-                "\n[file has {total} lines; showing {start}-{}; pass offset to continue]",
-                start + slice.len() - 1
-            ));
-        }
-        if capped {
-            // Say it out loud: a silent cap makes a 1 MB file look fully read, and the model
-            // then reasons about a file it has only seen the start of.
-            let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            body.push_str(&format!(
-                "\n[file is {len} bytes; this read is limited to the first {} bytes — \
-                 use grep or bash to inspect the rest]",
+        if let Some((line, bytes)) = page.long_line {
+            // pi `read.ts:297-301`: a page whose *first* line alone exceeds the byte budget is
+            // not shown at all — not even the prefix paging would have to decode lossily — and
+            // the model is pointed at the one tool that can stream it. `read_page` sets
+            // `long_line` only for that first-line case, so the page's already-decoded lines are
+            // never thrown away for a line that merely stops the page later on.
+            body = format!(
+                "[Line {line} is {}, exceeds {} limit. Use bash: sed -n '{line}p' {} | head -c {}]",
+                util::format_size(bytes),
+                util::format_size(util::MAX_READ_BYTES),
+                args.path,
                 util::MAX_READ_BYTES
-            ));
+            );
+        } else if let Some(next) = page.next_offset {
+            // The continuation notices are pi's own strings (`read.ts:306-317`), with the
+            // offsets and counts this page actually produced. `total_lines` is `Some` whenever
+            // `next_offset` is (a page that is not the first-line over-cap case always scans to
+            // EOF), so the numbers are exact rather than the byte-prefix count the old notice
+            // reported.
+            let total = page.total_lines.unwrap_or(page.last_line);
+            let notice = match page.truncated_by {
+                util::PageBound::Lines => format!(
+                    "[Showing lines {}-{} of {total}. Use offset={next} to continue.]",
+                    page.first_line, page.last_line
+                ),
+                util::PageBound::Bytes => format!(
+                    "[Showing lines {}-{} of {total} ({} limit). Use offset={next} to continue.]",
+                    page.first_line,
+                    page.last_line,
+                    util::format_size(util::MAX_READ_BYTES)
+                ),
+                _ => format!(
+                    "[{} more lines in file. Use offset={next} to continue.]",
+                    total.saturating_sub(page.last_line)
+                ),
+            };
+            // pi always attaches the notice with a blank separator — `outputText =
+            // `${truncation.content}\n\n[...]`` (`read.ts:317`, and its user-limit branch at
+            // :313-317, which is what a `limit: 0` read lands in: pi answers that one with the
+            // notice alone, never with silence). So there is no empty-body special case.
+            body.push_str("\n\n");
+            body.push_str(&notice);
         }
-        if body.is_empty() {
-            body = "(empty or past end of file)".to_string();
-        }
-        crate::read_log::record_read(&ctx.observation_scope, &path, windowed, capped);
-        Ok(ToolOutput::text(body))
+        // What this read actually covered decides whether a later wholesale overwrite is
+        // legitimate (`crate::read_log`): the lines it showed, whether it reached the end of
+        // the file, and whether the byte budget alone is what stopped it. `long_line` means the
+        // page's *first* line alone was over the budget and nothing was shown — the one window
+        // no read of this tool can widen; every other page, including one a later over-cap line
+        // stopped, records the lines it actually showed and stays partial until reads reach EOF.
+        let coverage = match page.long_line {
+            Some(_) => crate::read_log::Coverage::long_line(),
+            None => {
+                crate::read_log::Coverage::page(page.first_line, page.last_line, page.total_lines)
+            }
+        };
+        crate::read_log::record_read(&ctx.observation_scope, &path, coverage);
+        let mut details = serde_json::json!({});
+        details["read"] = serde_json::json!({
+            "offset": page.first_line.max(1),
+            "first_line": page.first_line,
+            "last_line": page.last_line,
+            "total_lines": page.total_lines,
+            "next_offset": page.next_offset,
+            "truncated_by": page.truncated_by.as_str(),
+        });
+        Ok(ToolOutput {
+            content: vec![epsilon_contracts::content::ContentBlock::text(body)],
+            details,
+            usage: None,
+            terminate: false,
+        })
     }
 }
 

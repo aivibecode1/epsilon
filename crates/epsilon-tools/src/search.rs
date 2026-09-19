@@ -171,6 +171,11 @@ impl Tool for GrepTool {
         let mut limit_reached = false;
         let mut lines_truncated = false;
         let mut skipped_secrets: Vec<String> = Vec::new();
+        // Files longer than the byte cap were searched only in their first MAX_READ_BYTES
+        // bytes. That is a real miss and it used to be silent (M95): the cap stays — an
+        // unbounded read per walked file trades a silent miss for an unbounded scan — but the
+        // result now says which files were only searched in part.
+        let mut capped_files: Vec<String> = Vec::new();
         'outer: for rel in util::walk_files(&root) {
             let abs = root.join(&rel);
             if abs.is_dir() {
@@ -190,9 +195,12 @@ impl Tool for GrepTool {
                 skipped_secrets.push(rel_norm);
                 continue;
             }
-            let Ok(text) = util::read_text_capped(&abs) else {
+            let Ok((text, capped)) = util::read_text_capped_ex(&abs) else {
                 continue;
             };
+            if capped {
+                capped_files.push(rel_norm.clone());
+            }
             files_scanned += 1;
             // CRLF-normalized once per file so `context` windows and line text
             // match pi's re-read path (`\r\n`/`\r` → `\n`).
@@ -229,23 +237,36 @@ impl Tool for GrepTool {
             }
         }
 
+        // Honesty notes that have no file row of their own: skipped secret-class files, and
+        // files only partly searched. Both are reported even when nothing matched — an
+        // incomplete search is exactly the state in which a bare "no matches" would be a lie.
+        let mut notes: Vec<String> = Vec::new();
         if !skipped_secrets.is_empty() {
-            rows.push((
-                String::new(),
-                0,
-                false,
-                format!(
-                    "[grep] skipped {} secret-class file(s): {}",
-                    skipped_secrets.len(),
-                    skipped_secrets.join(", ")
-                ),
+            notes.push(format!(
+                "[grep] skipped {} secret-class file(s): {}",
+                skipped_secrets.len(),
+                skipped_secrets.join(", ")
+            ));
+        }
+        if !capped_files.is_empty() {
+            notes.push(format!(
+                "[grep] searched only the first {} bytes of {} file(s) — matches past that \
+                 byte are not reported: {}",
+                util::MAX_READ_BYTES,
+                capped_files.len(),
+                capped_files.join(", ")
             ));
         }
 
         if rows.iter().all(|r| r.0.is_empty()) {
-            return Ok(ToolOutput::text("no matches"));
+            let mut text = String::from("no matches");
+            for note in &notes {
+                text.push('\n');
+                text.push_str(note);
+            }
+            return Ok(ToolOutput::text(text));
         }
-        let mut out_lines: Vec<String> = Vec::with_capacity(rows.len() + 2);
+        let mut out_lines: Vec<String> = Vec::with_capacity(rows.len() + notes.len() + 3);
         for (rel, no, is_match, text) in &rows {
             if rel.is_empty() {
                 out_lines.push(text.clone());
@@ -255,6 +276,7 @@ impl Tool for GrepTool {
                 out_lines.push(format!("{rel}-{no}- {text}"));
             }
         }
+        out_lines.extend(notes);
         let mut notices: Vec<String> = Vec::new();
         if limit_reached {
             notices.push(format!(
@@ -276,6 +298,9 @@ impl Tool for GrepTool {
             "truncated": limit_reached,
             "lines_truncated": lines_truncated,
         });
+        if !capped_files.is_empty() {
+            details["files_capped"] = serde_json::json!(capped_files);
+        }
         if limit_reached {
             details["match_limit_reached"] = serde_json::json!(max_matches);
         }

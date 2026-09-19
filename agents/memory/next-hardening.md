@@ -109,3 +109,9 @@
 - **`docs/milestones/M33–M59` exist only as untracked files** (≈27 historical logs). They are real
   project documentation that a `git clean` would destroy. They need their own disclosed docs
   commit (spot-check then state the scope) — deliberately NOT folded into the M94 code commit.
+- **M95 follow-up (queued, delta re-review F2-F5; one battery cycle):** the `limit:0` "N more
+  lines" count uses `total` where pi uses `total − startLine` (visible at `offset>1`); an empty
+  file with `limit:0` is silent where pi emits its phantom notice; nothing pins `limit:0`; the
+  ninth tests's refusal matches `Err(_)` not the `only read in part` diagnosis; the over-cap branch
+  compares raw bytes vs pi's lossy-decoded length; `details.read.offset` says 1 on an empty page
+  while the notice disagrees. None affects the read-coverage guard. Recorded in the M95 doc Limits.

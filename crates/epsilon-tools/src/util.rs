@@ -2,7 +2,7 @@
 //! and output truncation with spill-to-disk locators.
 
 use std::fs;
-use std::io::Read as _;
+use std::io::{BufRead, BufReader, Read as _, Seek as _};
 use std::path::{Path, PathBuf};
 
 use epsilon_contracts::tool::{ToolFailure, ToolUpdateSink};
@@ -198,9 +198,12 @@ pub fn read_text_capped(path: &Path) -> Result<String, ToolFailure> {
 
 /// As [`read_text_capped`], but also reports whether the file was longer than the byte cap.
 ///
-/// The caller needs to know: a truncated read is a *partial view*, and the read tool both says
-/// so in its output and marks the path as seen-only-in-part (`crate::read_log`). Without the
-/// flag the cap was silent, which made a 1 MB file look fully read.
+/// The caller needs to know: a truncated read is a *partial view* and must be announced as
+/// one (`grep` names the files it could only search in part). The read tool no longer uses
+/// this helper — since M95 it pages with [`read_page`], where a window boundary is always a
+/// line boundary — but `grep` still searches each walked file through it, and the cap there
+/// is deliberate: the walker visits up to [`WALK_MAX_ENTRIES`] files and an unbounded read
+/// per file would trade a silent miss for an unbounded scan.
 pub fn read_text_capped_ex(path: &Path) -> Result<(String, bool), ToolFailure> {
     let f = fs::File::open(path)
         .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?;
@@ -215,6 +218,303 @@ pub fn read_text_capped_ex(path: &Path) -> Result<(String, bool), ToolFailure> {
         .map(|m| m.len() > MAX_READ_BYTES as u64)
         .unwrap_or(false);
     Ok((String::from_utf8_lossy(&buf).into_owned(), capped))
+}
+
+// ---------------------------------------------------------------------------
+// M95: paged reads — pi's `read`-tool offset/limit window, streamed
+// ---------------------------------------------------------------------------
+
+/// Where the scan that produced a [`ReadPage`] stopped. pi's `TruncationResult.truncatedBy`
+/// (`truncate.ts:21`) plus [`PageBound::CallerLimit`], which pi resolves before truncation
+/// (`read.ts:287-293`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageBound {
+    /// The page reached the end of the file; nothing follows it.
+    Eof,
+    /// The page filled [`MAX_READ_LINES`].
+    Lines,
+    /// The page filled [`MAX_READ_BYTES`].
+    Bytes,
+    /// The caller's `limit` was reached; the file continues.
+    CallerLimit,
+    /// The first line of the page alone exceeds [`MAX_READ_BYTES`] (pi `firstLineExceedsLimit`).
+    LongLine,
+}
+
+impl PageBound {
+    /// Stable name for `details` payloads and test assertions.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Eof => "eof",
+            Self::Lines => "lines",
+            Self::Bytes => "bytes",
+            Self::CallerLimit => "caller_limit",
+            Self::LongLine => "long_line",
+        }
+    }
+}
+
+/// One window of a text file (M95).
+///
+/// - `text` holds whole lines joined by `\n` — never a partial line, and never a lossy
+///   fragment of one (pi's truncation is line-based; the old byte-prefix cut could split a
+///   UTF-8 character and `from_utf8_lossy` turned the fragment into U+FFFD).
+/// - `first_line`/`last_line` are the 1-based numbers of the lines in `text` (`0` when the
+///   page is empty).
+/// - `total_lines` is the file's exact line count when the scan reached EOF. pi always knows
+///   it — it reads the whole file (`read.ts:275-276`); a streamed page knows it only when it
+///   got there and reports `None` rather than a guess.
+/// - `next_offset` is the offset a continuation read should use: `Some` exactly when unread
+///   lines remain, and the same number pi writes into its continuation notices.
+/// - `long_line` is `Some((line number, byte size))` when the page stopped because its *first*
+///   line alone exceeds [`MAX_READ_BYTES`]: pi answers with a `sed` fallback, not with content,
+///   and the page carries no other lines.
+pub struct ReadPage {
+    /// Whole lines from the page, joined by `\n` (no trailing newline).
+    pub text: String,
+    /// 1-based number of the first line in `text` (0 when it is empty).
+    pub first_line: usize,
+    /// 1-based number of the last line in `text` (0 when it is empty).
+    pub last_line: usize,
+    /// The file's exact line count, when the scan reached EOF.
+    pub total_lines: Option<usize>,
+    /// The offset a continuation read should use; `None` when no unread line remains.
+    pub next_offset: Option<usize>,
+    /// Why the page stopped where it did.
+    pub truncated_by: PageBound,
+    /// The over-cap line that stopped the page, with its exact byte size.
+    pub long_line: Option<(usize, usize)>,
+}
+
+/// One raw line, as [`read_page`] reads it: the retained head, the line's exact content byte
+/// length, and whether the stream had nothing left at all.
+struct RawLine {
+    /// The first bytes of the line's content, at most the caller's retention cap.
+    head: Vec<u8>,
+    /// Exact content byte length, newline excluded (`\r` included, as pi counts it).
+    len: usize,
+    /// True when the stream was already at EOF and nothing was read.
+    eof: bool,
+}
+
+/// Read one `\n`-terminated line, counting its exact byte length while retaining at most
+/// `retain` bytes of it.
+///
+/// `BufReader::read_until` grows its buffer to the whole line, which a single over-cap line
+/// would make unbounded; this counts without retaining, so the size can still be reported
+/// exactly (pi's `firstLineExceedsLimit` message carries it) at bounded memory.
+fn read_line_bounded(reader: &mut impl BufRead, retain: usize) -> std::io::Result<RawLine> {
+    let mut head: Vec<u8> = Vec::new();
+    let mut len = 0usize;
+    loop {
+        let buf = reader.fill_buf()?;
+        if buf.is_empty() {
+            return Ok(RawLine {
+                head,
+                len,
+                eof: len == 0,
+            });
+        }
+        let newline = buf.iter().position(|&b| b == b'\n');
+        let content = &buf[..newline.unwrap_or(buf.len())];
+        let room = retain.saturating_sub(head.len());
+        head.extend_from_slice(&content[..content.len().min(room)]);
+        len += content.len();
+        match newline {
+            Some(at) => {
+                reader.consume(at + 1);
+                return Ok(RawLine {
+                    head,
+                    len,
+                    eof: false,
+                });
+            }
+            None => {
+                let n = buf.len();
+                reader.consume(n);
+            }
+        }
+    }
+}
+
+/// Decode one line's bytes into the string a read shows.
+///
+/// Splitting is on `\n` with one trailing `\r` removed (`str::lines`' rule, which is what
+/// this tool has always shown). Bytes that are not valid UTF-8 are replaced the way pi's
+/// `buffer.toString("utf-8")` (`read.ts:274`) replaces them — and because a page is cut on
+/// line boundaries, that replacement can only come from the file's own bytes, never from the
+/// window.
+fn decode_line(bytes: &[u8]) -> String {
+    let body = bytes.strip_suffix(b"\r").unwrap_or(bytes);
+    String::from_utf8_lossy(body).into_owned()
+}
+
+/// Format bytes the way pi's `formatSize` does (`truncate.ts:61-69`): `512B`, `50.0KB`, `5.0MB`.
+pub fn format_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{bytes}B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// Read one page of a text file with pi's `read`-tool semantics (M95).
+///
+/// The scan is streamed: lines before `offset` are read and dropped, the page is retained,
+/// and the remainder is counted without being retained — resident memory is one line plus
+/// the page, never the whole file, at the cost of an `O(file bytes)` scan. pi reads the whole
+/// file and slices (`read.ts:273-293`); this produces the same window without the memory.
+/// Decoding is per line, so a window boundary is always a line boundary and no multibyte
+/// character is ever cut in half.
+///
+/// Semantics ported from pi (`packages/coding-agent/src/core/tools/read.ts:275-323`, and the
+/// same function in `packages/agent/src/harness/tools/read.ts:97-141`):
+/// - `offset` is 1-based and past the end of the file is an error naming both numbers
+///   (`read.ts:281-283`), while an empty file reads as `Ok` and empty (pi's `"".split("\n")`
+///   yields one empty element, so the offset check passes and the selection is empty);
+/// - `limit` slices first and the page is then capped at [`MAX_READ_LINES`] / [`MAX_READ_BYTES`]
+///   (`read.ts:287-295`; epsilon keeps its own byte budget where pi uses 50 KiB);
+/// - a page whose first line alone exceeds the byte budget reports that line's size and a
+///   `sed` fallback (`read.ts:297-301`) instead of returning a lossy prefix of it.
+///
+/// One deliberate divergence, recorded in `docs/milestones/M95-paged-reads.md`: this counts
+/// the lines it can display (`str::lines`), where pi counts `text.split("\n").length` — one
+/// more for a newline-terminated file, a phantom line pi can return as empty and which would
+/// make the numbers in pi's own continuation notices disagree with the lines it can show.
+pub fn read_page(
+    path: &Path,
+    offset: usize,
+    limit: Option<usize>,
+) -> Result<ReadPage, ToolFailure> {
+    let offset = offset.max(1);
+    let mut file = fs::File::open(path)
+        .map_err(|e| ToolFailure::msg(format!("cannot open {}: {e}", path.display())))?;
+    // Binary refusal on the first 4 KiB of the file — the same rule (and window) the edit
+    // path has always applied. Probed before the scan so a short page cannot hide it.
+    let mut probe = [0u8; 4096];
+    let probed = file
+        .read(&mut probe)
+        .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
+    if probe[..probed].contains(&0) {
+        return Err(ToolFailure::msg("refused: file looks binary"));
+    }
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
+    let mut reader = BufReader::new(file);
+
+    let mut line_no = 0usize; // 1-based number of the last line read from the file
+    let mut lines: Vec<String> = Vec::new();
+    let mut page_bytes = 0usize;
+    let mut truncated_by = PageBound::Eof;
+    let mut long_line: Option<(usize, usize)> = None;
+    let mut eof = false;
+
+    loop {
+        let raw = read_line_bounded(&mut reader, MAX_READ_BYTES + 1)
+            .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
+        if raw.eof {
+            eof = true;
+            break;
+        }
+        line_no += 1;
+        if line_no < offset {
+            continue;
+        }
+        if limit.is_some_and(|l| lines.len() >= l) {
+            truncated_by = PageBound::CallerLimit;
+            break;
+        }
+        if lines.is_empty() && raw.len > MAX_READ_BYTES {
+            // pi `firstLineExceedsLimit` (`read.ts:297-301`; `truncate.ts:103-105` checks the
+            // *selection's* `lines[0]` alone): the page's first line exceeds the budget, so no
+            // offset can ever show it through this tool and the page is not a window onto it.
+            // An over-cap line *later* in the page is an ordinary byte stop instead: the lines
+            // already shown are kept, the total and the continuation survive, and coverage
+            // stays partial — pi's byte accounting (`truncate.ts:126-137`) never lets such a
+            // line through either, it just stops the page where the budget ran out.
+            long_line = Some((line_no, raw.len));
+            truncated_by = PageBound::LongLine;
+            break;
+        }
+        // pi's byte accounting over the selection: content bytes plus one separator for
+        // every line after the selection's first (`truncate.ts:126-137`).
+        let cost = raw.len + usize::from(!lines.is_empty());
+        if page_bytes + cost > MAX_READ_BYTES {
+            truncated_by = PageBound::Bytes;
+            break;
+        }
+        if lines.len() >= MAX_READ_LINES {
+            truncated_by = PageBound::Lines;
+            break;
+        }
+        lines.push(decode_line(&raw.head));
+        page_bytes += cost;
+    }
+    // pi's post-hoc tie-break (`truncate.ts:139-142`): a byte stop on a selection that
+    // already holds the full line budget is reported as the line limit.
+    if truncated_by == PageBound::Bytes && lines.len() >= MAX_READ_LINES {
+        truncated_by = PageBound::Lines;
+    }
+
+    // Count the rest of the file without retaining it, so the notices and the past-end error
+    // can carry pi's exact numbers. The over-cap stop skips this: pi's message for it needs
+    // only the line's size, and the caller has already been pointed at `sed`.
+    // ponytail: O(rest of file) per read — that scan is what makes the counts exact, and pi
+    // reads the whole file anyway; a line index (bytes → line number) is the upgrade path if it
+    // ever shows up in profiles.
+    if !eof && truncated_by != PageBound::LongLine {
+        loop {
+            let raw = read_line_bounded(&mut reader, 0)
+                .map_err(|e| ToolFailure::msg(format!("read error: {e}")))?;
+            if raw.eof {
+                break;
+            }
+            line_no += 1;
+        }
+    }
+    let total_lines = if truncated_by == PageBound::LongLine {
+        None
+    } else {
+        Some(line_no)
+    };
+
+    if let Some(total) = total_lines {
+        // pi `read.ts:281-283`. `max(1)` keeps an empty file readable at offset 1 (pi's Ok,
+        // empty case) while any offset past the last line stays the error it is in pi.
+        if offset > total.max(1) {
+            return Err(ToolFailure::msg(format!(
+                "Offset {offset} is beyond end of file ({total} lines total)"
+            )));
+        }
+    }
+
+    let first_line = if lines.is_empty() { 0 } else { offset };
+    let last_line = if lines.is_empty() {
+        0
+    } else {
+        offset + lines.len() - 1
+    };
+    let shown_to = if lines.is_empty() {
+        offset - 1
+    } else {
+        last_line
+    };
+    let next_offset = match (truncated_by, total_lines) {
+        (PageBound::LongLine, _) => None,
+        (_, Some(total)) if total > shown_to => Some(shown_to + 1),
+        _ => None,
+    };
+    Ok(ReadPage {
+        text: lines.join("\n"),
+        first_line,
+        last_line,
+        total_lines,
+        next_offset,
+        truncated_by,
+        long_line,
+    })
 }
 
 /// Bridge between a running child process's raw output and the agent's tool
