@@ -18,6 +18,7 @@ use ratatui::text::{Line, Span};
 
 use crate::markdown;
 use crate::state::{LineKind, TranscriptLine};
+use crate::ui::theme::Theme;
 use crate::wrap;
 
 /// One logical transcript line rendered into `width`-wide screen rows.
@@ -28,11 +29,11 @@ pub struct RenderedLine {
 }
 
 impl RenderedLine {
-    fn build(line: &TranscriptLine, width: usize, expand_outputs: bool) -> Self {
+    fn build(line: &TranscriptLine, width: usize, expand_outputs: bool, theme: &Theme) -> Self {
         // Each LOGICAL line wraps independently (headings/fences never merge across
         // paragraphs); their wrapped rows concatenate into this line's screen rows.
         let mut rows = Vec::new();
-        for logical in logical_lines(line, expand_outputs) {
+        for logical in logical_lines(line, expand_outputs, theme) {
             rows.extend(wrap::wrap_line(&logical, width));
         }
         if rows.is_empty() {
@@ -44,16 +45,20 @@ impl RenderedLine {
 
 /// The styled logical lines of one transcript row BEFORE wrapping (prefix + body).
 /// Markdown rows expand here — once per line id, never per frame.
-fn logical_lines(line: &TranscriptLine, expand_outputs: bool) -> Vec<Vec<(String, Style)>> {
+fn logical_lines(
+    line: &TranscriptLine,
+    expand_outputs: bool,
+    theme: &Theme,
+) -> Vec<Vec<(String, Style)>> {
     // Expandable rows show their full payload when toggled (M13 behavior preserved).
     if expand_outputs && let Some(full) = line.full.as_ref() {
-        return vec![vec![(full.clone(), style_for(line.kind))]];
+        return vec![vec![(full.clone(), style_for(line.kind, theme))]];
     }
     if line.code {
-        return vec![vec![(line.text.clone(), crate::theme::Theme::code_block())]];
+        return vec![vec![(line.text.clone(), theme.code_block())]];
     }
     if let Some(md) = line.md.as_ref() {
-        return markdown::md_to_lines(md)
+        return markdown::md_to_lines(md, theme)
             .into_iter()
             .map(|l| {
                 l.spans
@@ -65,8 +70,8 @@ fn logical_lines(line: &TranscriptLine, expand_outputs: bool) -> Vec<Vec<(String
     }
     match line.kind {
         LineKind::User => vec![vec![
-            ("❯ ".to_string(), style_for(LineKind::User)),
-            (line.text.clone(), style_for(LineKind::User)),
+            ("❯ ".to_string(), style_for(LineKind::User, theme)),
+            (line.text.clone(), style_for(LineKind::User, theme)),
         ]],
         LineKind::ToolResultOk | LineKind::ToolResultErr => {
             let mark = if line.kind == LineKind::ToolResultErr {
@@ -75,24 +80,27 @@ fn logical_lines(line: &TranscriptLine, expand_outputs: bool) -> Vec<Vec<(String
                 "✓ "
             };
             vec![vec![
-                (mark.to_string(), style_for(line.kind)),
-                (line.text.clone(), style_for(line.kind)),
+                (mark.to_string(), style_for(line.kind, theme)),
+                (line.text.clone(), style_for(line.kind, theme)),
             ]]
         }
-        _ => vec![vec![(line.text.clone(), style_for(line.kind))]],
+        _ => vec![vec![(line.text.clone(), style_for(line.kind, theme))]],
     }
 }
 
-fn style_for(kind: LineKind) -> Style {
-    use crate::theme::Theme;
+/// The body style for a transcript row.
+///
+/// The gutter and any band come from `ui::transcript::decorate`; this is only the
+/// text. Both read the same theme, so a row cannot end up half-styled.
+fn style_for(kind: LineKind, theme: &Theme) -> Style {
     match kind {
-        LineKind::User => Theme::user(),
-        LineKind::Assistant => Theme::assistant(),
-        LineKind::Thinking => Theme::thinking(),
-        LineKind::ToolCall => Theme::tool_call(),
-        LineKind::ToolResultOk => Theme::tool_ok(),
-        LineKind::ToolResultErr => Theme::tool_err(),
-        LineKind::System => Theme::system(),
+        LineKind::User => theme.user(),
+        LineKind::Assistant => theme.assistant(),
+        LineKind::Thinking => theme.thinking(),
+        LineKind::ToolCall => theme.warn(),
+        LineKind::ToolResultOk => theme.dim(),
+        LineKind::ToolResultErr => theme.danger(),
+        LineKind::System => theme.system(),
     }
 }
 
@@ -137,7 +145,13 @@ impl RenderCache {
     /// reconcile is reused untouched (transcripts are append-only except `/clear`),
     /// so an idle session's steady-state reconcile cost is O(1), independent of
     /// transcript length.
-    pub fn reconcile(&mut self, lines: &[TranscriptLine], width: usize, expand_outputs: bool) {
+    pub fn reconcile(
+        &mut self,
+        lines: &[TranscriptLine],
+        width: usize,
+        expand_outputs: bool,
+        theme: &Theme,
+    ) {
         let invalidate_all = width != self.width || expand_outputs != self.expand_outputs;
         if invalidate_all {
             self.rendered.clear();
@@ -164,7 +178,7 @@ impl RenderCache {
         for line in &lines[reuse..] {
             self.rendered
                 .entry(line.id)
-                .or_insert_with(|| RenderedLine::build(line, width, expand_outputs));
+                .or_insert_with(|| RenderedLine::build(line, width, expand_outputs, theme));
             let h = self.rendered[&line.id].rows.len();
             total += h;
             self.reconciled_ids.push(line.id);
@@ -235,15 +249,22 @@ pub fn snapshot_rows(
     expand_outputs: bool,
     skip: usize,
     visible: usize,
+    theme: &Theme,
 ) -> Vec<Line<'static>> {
     let mut cache = RenderCache::new();
-    cache.reconcile(lines, width, expand_outputs);
+    cache.reconcile(lines, width, expand_outputs, theme);
     cache.visible_rows(skip, visible)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One theme for the suite: the cache does not key on it, and tests that
+    /// care about styling assert through `ui::transcript` instead.
+    fn theme() -> Theme {
+        Theme::new(crate::ui::theme::ColorMode::Ansi16, crate::ui::theme::ASCII)
+    }
 
     fn plain(kind: LineKind, text: impl Into<String>) -> TranscriptLine {
         TranscriptLine::plain(kind, text)
@@ -253,10 +274,10 @@ mod tests {
     fn assistant_markdown_renders_once_and_stays_cached() {
         let lines = vec![TranscriptLine::assistant_md("# Title\n\nbody text")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false);
+        cache.reconcile(&lines, 80, false, &theme());
         assert_eq!(cache.len(), 1);
         // Same state again: no new renders (len unchanged), offsets stable.
-        cache.reconcile(&lines, 80, false);
+        cache.reconcile(&lines, 80, false, &theme());
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.total_rows(), 2, "heading + paragraph");
     }
@@ -268,7 +289,7 @@ mod tests {
             lines.push(plain(LineKind::System, format!("system line {i}")));
         }
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false);
+        cache.reconcile(&lines, 80, false, &theme());
         let mid = cache.visible_rows(20, 5);
         assert_eq!(mid.len(), 5);
         let text_of = |l: &Line<'_>| {
@@ -290,7 +311,7 @@ mod tests {
             plain(LineKind::System, "after"),
         ];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 30, false);
+        cache.reconcile(&lines, 30, false, &theme());
         assert!(cache.total_rows() > 3, "tool line must wrap");
         // Window starting AT the tool line: its first wrapped row carries the ✓
         // mark (prefix and body are one logical line), later rows are continuations.
@@ -317,9 +338,9 @@ mod tests {
     fn clear_then_reappend_drops_stale_entries() {
         let mut lines = vec![plain(LineKind::System, "one")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false);
+        cache.reconcile(&lines, 80, false, &theme());
         lines = vec![plain(LineKind::System, "fresh")];
-        cache.reconcile(&lines, 80, false);
+        cache.reconcile(&lines, 80, false, &theme());
         assert_eq!(cache.len(), 1, "stale id evicted");
         assert_eq!(cache.total_rows(), 1);
     }
@@ -328,9 +349,9 @@ mod tests {
     fn width_change_invalidates_everything() {
         let lines = vec![plain(LineKind::System, "some text")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false);
+        cache.reconcile(&lines, 80, false, &theme());
         let before = cache.len();
-        cache.reconcile(&lines, 40, false);
+        cache.reconcile(&lines, 40, false, &theme());
         assert_eq!(before, 1);
         assert_eq!(cache.len(), 1, "rebuilt once at the new width");
     }
@@ -344,9 +365,9 @@ mod tests {
             format!("bash → {long}"),
         )];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 60, false);
+        cache.reconcile(&lines, 60, false, &theme());
         let collapsed_rows = cache.total_rows();
-        cache.reconcile(&lines, 60, true);
+        cache.reconcile(&lines, 60, true, &theme());
         assert!(
             cache.total_rows() > collapsed_rows,
             "expanded payload must produce more rows"
@@ -363,7 +384,7 @@ mod tests {
                 "bash → boom".to_string(),
             ),
         ];
-        let rows = snapshot_rows(&lines, 80, false, 0, 10);
+        let rows = snapshot_rows(&lines, 80, false, 0, 10, &theme());
         let text_of = |l: &Line<'_>| {
             l.spans
                 .iter()

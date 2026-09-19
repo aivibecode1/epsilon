@@ -19,9 +19,8 @@ use epsilon_safety::{ChannelApprovalUi, PendingAsk};
 use futures_util::StreamExt;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::state::UiState;
 
@@ -4562,7 +4561,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
 fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(1) as usize; // 1-col slack, no h-scroll
     app.render_cache
-        .reconcile(app.ui.lines(), width, app.prefs.expand_outputs);
+        .reconcile(app.ui.lines(), width, app.prefs.expand_outputs, &app.theme);
     let total = app.render_cache.total_rows();
     let visible = area.height as usize;
 
@@ -4570,8 +4569,8 @@ fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     // history + live tail in screen rows, including tails taller than the viewport.
     let mut tail_rows = Vec::new();
     for (text, style) in [
-        (app.ui.streaming_thinking(), crate::theme::Theme::thinking()),
-        (app.ui.streaming_text(), crate::theme::Theme::assistant()),
+        (app.ui.streaming_thinking(), app.theme.thinking()),
+        (app.ui.streaming_text(), app.theme.assistant()),
     ] {
         if !text.is_empty() {
             for line in text.split('\n') {
@@ -4922,33 +4921,44 @@ fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatui::layout::
         width: transcript_area.width.min(64),
         height,
     };
-    f.render_widget(ratatui::widgets::Clear, area);
+    let panel = crate::ui::overlay::Panel {
+        theme: &app.theme,
+        area,
+        title: "files",
+        focused: true,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
     let mut lines: Vec<ratatui::text::Line<'static>> = rows[start..end]
         .iter()
         .enumerate()
-        .map(|(i, path)| {
-            let selected = start + i == app.at_index;
-            let raw = if path.len() > 56 {
-                format!("...{}", &path[path.len() - 53..])
-            } else {
-                path.clone()
-            };
-            let style = if selected {
-                crate::theme::Theme::selected()
-            } else {
-                crate::theme::Theme::accent()
-            };
-            ratatui::text::Line::from(ratatui::text::Span::styled(format!(" @{} ", raw), style))
+        .map(|(index, path)| {
+            // Trim by characters, never by bytes: a path with one non-ASCII
+            // component would otherwise panic on a boundary that happens to land
+            // inside a multi-byte character.
+            let shown = crate::ui::format::format_path(
+                std::path::Path::new(path),
+                None,
+                inner.width.saturating_sub(6) as usize,
+            );
+            crate::ui::overlay::list_row(
+                theme,
+                start + index == app.at_index,
+                &shown,
+                None,
+                inner.width as usize,
+            )
         })
         .collect();
-    lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        "Tab insert · Enter insert + space · Esc close".to_string(),
-        crate::theme::Theme::muted(),
-    )));
-    let block = ratatui::widgets::Block::default()
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_style(crate::theme::Theme::border_active());
-    f.render_widget(ratatui::widgets::Paragraph::new(lines).block(block), area);
+    lines.push(crate::ui::overlay::hint_row(
+        theme,
+        &[
+            ("tab", "insert"),
+            ("enter", "insert + space"),
+            ("esc", "close"),
+        ],
+    ));
+    f.render_widget(ratatui::widgets::Paragraph::new(lines), inner);
 }
 
 fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
@@ -5201,6 +5211,7 @@ fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
 /// existing `/models` provider rows, with auth badge and active mark so a
 /// first-run user can see at a glance what is wired up.
 fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
     let rows = crate::picker::build_provider_rows(&app.model_id, &app.customs);
     let query = app.input.trim().to_ascii_lowercase();
     let filtered: Vec<_> = if query.is_empty() {
@@ -5211,91 +5222,68 @@ fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
             .filter(|(_, p)| p.id.to_ascii_lowercase().contains(&query))
             .collect()
     };
-    let width = (outer.width * 4 / 5).max(48).min(outer.width);
+    let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + 1;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned like the model picker: the two are the same list at
+        // different moments, and a panel that moves between them is disorienting.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: "connect — pick a provider",
+        focused: true,
     };
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active())
-        .title(Span::styled(
-            " connect — pick a provider ",
-            crate::theme::Theme::accent(),
-        ));
-    let capacity = area.height.saturating_sub(4).max(1) as usize;
+    let inner = panel.open(f);
+    let theme = &app.theme;
+    let capacity = inner.height.saturating_sub(2).max(1) as usize;
     let start = crate::scroll::scroll_start(filtered.len(), app.auth_pick_index, capacity);
     let end = (start + capacity).min(filtered.len());
     let mut lines: Vec<Line<'static>> = Vec::new();
     if filtered.is_empty() {
         lines.push(Line::from(Span::styled(
             format!("no match for '{}' — type another provider id", app.input),
-            crate::theme::Theme::muted(),
+            theme.dim(),
         )));
     }
-    for (i, row) in filtered.iter().enumerate().skip(start).take(end - start) {
-        let selected = i == app.auth_pick_index;
-        let prow = row.1;
-        let marker = if prow.is_active { "● " } else { "  " };
-        let auth = if prow.auth_ready { "🔑" } else { "· " };
-        let style = if selected {
-            crate::theme::Theme::accent()
+    for (index, (_, prow)) in filtered.iter().enumerate().skip(start).take(end - start) {
+        // Auth state is a word, not only a colour: a key glyph is invisible on a
+        // console that cannot render it, and "ready to use" is not a detail to
+        // lose to a font.
+        let auth = if prow.auth_ready { "key" } else { "—" };
+        let oauth = if epsilon_llm::oauth_login::login_flow(&prow.id).is_some() {
+            "oauth"
         } else {
-            Style::default()
+            ""
         };
-        lines.push(Line::from(vec![
-            Span::styled(marker.to_string(), style),
-            Span::styled(
-                format!("{auth} "),
-                if prow.auth_ready {
-                    crate::theme::Theme::success()
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-            Span::styled(
-                prow.id.clone(),
-                if selected {
-                    crate::theme::Theme::selected()
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(
-                format!("  {} models", prow.model_count),
-                if selected {
-                    crate::theme::Theme::selected_muted()
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-            Span::styled(
-                if epsilon_llm::oauth_login::login_flow(&prow.id).is_some() {
-                    "  ⌁ oauth"
-                } else {
-                    ""
-                },
-                if selected {
-                    crate::theme::Theme::selected_muted()
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ),
-        ]));
+        let meta = format!("{auth} · {} models {oauth}", prow.model_count)
+            .trim_end()
+            .to_string();
+        let label = if prow.is_active {
+            format!("{} (active)", prow.id)
+        } else {
+            prow.id.clone()
+        };
+        lines.push(overlay::list_row(
+            theme,
+            index == app.auth_pick_index,
+            &label,
+            Some(&meta),
+            inner.width as usize,
+        ));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "type filters · ↑/↓ move · Enter pastes key (masked) · ⌁ oauth = subscription login · Esc cancel",
-        crate::theme::Theme::muted(),
-    )));
-    let para = Paragraph::new(lines).block(block);
-    f.render_widget(para, area);
+    lines.push(overlay::hint_row(
+        theme,
+        &[
+            ("type", "filter"),
+            ("↑↓", "move"),
+            ("enter", "paste key"),
+            ("esc", "cancel"),
+        ],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 #[cfg(test)]

@@ -9,10 +9,14 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::theme::Theme;
+use crate::ui::theme::Theme;
 
 /// Convert assistant markdown into styled transcript rows.
-pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
+///
+/// The theme comes in rather than being reached for: the palette is a runtime
+/// decision (colour depth, `NO_COLOR`), and a renderer that reads it implicitly
+/// cannot be tested in more than one of those modes.
+pub fn md_to_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
     // LaTeX: render math spans to unicode before markdown parsing (pi `markdown.ts` + `latex.ts`).
     let preprocessed = crate::latex::preprocess_math(text);
     let text: &str = preprocessed.as_str();
@@ -24,7 +28,7 @@ pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
     let mut in_code_block = false;
     let mut list_depth = 0usize;
 
-    let top = |stack: &Vec<Style>| stack.last().copied().unwrap_or_else(Theme::assistant);
+    let top = |stack: &Vec<Style>| stack.last().copied().unwrap_or_else(|| theme.assistant());
     let flush = |spans: &mut Vec<Span<'static>>, out: &mut Vec<Line<'static>>| {
         out.push(Line::from(std::mem::take(spans)));
     };
@@ -35,8 +39,9 @@ pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
             Event::End(TagEnd::Paragraph) => flush(&mut spans, &mut out),
             Event::Start(Tag::Heading { level, .. }) => {
                 style_stack.push(match level {
-                    HeadingLevel::H1 | HeadingLevel::H2 => Theme::heading(),
-                    _ => Theme::heading().add_modifier(Modifier::empty()),
+                    // H1/H2 carry weight; deeper headings are labels, not titles.
+                    HeadingLevel::H1 | HeadingLevel::H2 => theme.title(),
+                    _ => theme.dim_strong(),
                 });
             }
             Event::End(TagEnd::Heading(_)) => {
@@ -56,7 +61,7 @@ pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
                 style_stack.pop();
             }
             Event::Start(Tag::BlockQuote(_)) => {
-                spans.push(Span::styled("❯ ".to_string(), Theme::system()));
+                spans.push(Span::styled("❯ ".to_string(), theme.system()));
             }
             Event::Start(Tag::List(_)) => {
                 list_depth += 1;
@@ -67,7 +72,7 @@ pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
             Event::Start(Tag::Item) => {
                 spans.push(Span::styled(
                     "  • ".repeat(list_depth.max(1)),
-                    Theme::system(),
+                    theme.system(),
                 ));
             }
             Event::Start(Tag::CodeBlock(kind)) => {
@@ -77,22 +82,22 @@ pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
                 {
                     out.push(Line::from(Span::styled(
                         format!("··· {lang}"),
-                        Theme::code_block(),
+                        theme.code_block(),
                     )));
                 } else {
-                    out.push(Line::from(Span::styled("···", Theme::code_block())));
+                    out.push(Line::from(Span::styled("···", theme.code_block())));
                 }
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
-                out.push(Line::from(Span::styled("···", Theme::code_block())));
+                out.push(Line::from(Span::styled("···", theme.code_block())));
             }
             Event::Text(t) => {
                 if in_code_block {
                     for line in t.lines() {
                         out.push(Line::from(Span::styled(
                             format!("│ {line}"),
-                            Theme::code_block(),
+                            theme.code_block(),
                         )));
                     }
                 } else {
@@ -100,10 +105,10 @@ pub fn md_to_lines(text: &str) -> Vec<Line<'static>> {
                 }
             }
             Event::Code(c) => {
-                spans.push(Span::styled(format!(" {c} "), Theme::code_inline()));
+                spans.push(Span::styled(format!(" {c} "), theme.code()));
             }
             Event::SoftBreak | Event::HardBreak => flush(&mut spans, &mut out),
-            Event::Rule => out.push(Line::from(Span::styled("─".repeat(24), Theme::system()))),
+            Event::Rule => out.push(Line::from(Span::styled("─".repeat(24), theme.system()))),
             _ => {}
         }
     }
@@ -127,48 +132,53 @@ mod tests {
 
     #[test]
     fn paragraphs_become_single_plain_rows() {
-        let lines = md_to_lines("hello world");
+        let theme = Theme::detect();
+        let lines = md_to_lines("hello world", &theme);
         assert_eq!(lines.len(), 1);
         assert_eq!(plain(&lines[0]), "hello world");
     }
 
     #[test]
     fn strong_emphasis_code_get_distinct_styles() {
-        let lines = md_to_lines("**bold** and `code` end");
+        let theme = Theme::detect();
+        let lines = md_to_lines("**bold** and `code` end", &theme);
         assert_eq!(lines.len(), 1);
         let l = &lines[0];
         assert_eq!(l.spans[0].style.add_modifier, Modifier::BOLD);
         assert_eq!(l.spans[0].content.to_string(), "bold");
         assert!(plain(l).contains(" and "));
-        let code_span = l.spans.iter().find(|s| s.style == Theme::code_inline());
+        let code_span = l.spans.iter().find(|s| s.style == theme.code());
         assert!(code_span.is_some(), "inline code themed: {:?}", l.spans);
     }
 
     #[test]
     fn headings_use_accent_bold() {
-        let lines = md_to_lines("# Title\n\nbody");
+        let theme = Theme::detect();
+        let lines = md_to_lines("# Title\n\nbody", &theme);
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].spans[0].style, Theme::heading());
+        assert_eq!(lines[0].spans[0].style, theme.title());
         assert_eq!(plain(&lines[0]), "Title");
         assert_eq!(plain(&lines[1]), "body");
     }
 
     #[test]
     fn fenced_blocks_render_as_gutter_rows() {
-        let lines = md_to_lines("```rust\nlet x = 1;\n```");
+        let theme = Theme::detect();
+        let lines = md_to_lines("```rust\nlet x = 1;\n```", &theme);
         assert!(lines[0].spans[0].content.contains("rust"));
         assert_eq!(lines[1].spans[0].content.to_string(), "│ let x = 1;");
         assert_eq!(lines.last().unwrap().spans[0].content.to_string(), "···");
         assert!(lines.iter().all(|l| {
             l.spans
                 .iter()
-                .all(|s| s.style == Theme::code_block() || s.content.starts_with("···"))
+                .all(|s| s.style == theme.code_block() || s.content.starts_with("···"))
         }));
     }
 
     #[test]
     fn lists_get_bullets_and_nested_indent() {
-        let lines = md_to_lines("- one\n- two\n  - nested");
+        let theme = Theme::detect();
+        let lines = md_to_lines("- one\n- two\n  - nested", &theme);
         let bullets: Vec<String> = lines.iter().map(|l| plain(l)).collect();
         assert!(bullets[0].starts_with("  • "), "{bullets:?}");
         assert!(bullets.last().unwrap().contains("nested"), "{bullets:?}");
@@ -176,7 +186,8 @@ mod tests {
 
     #[test]
     fn latex_math_renders_to_unicode_and_strips_delimiters() {
-        let lines = md_to_lines(r"Let $\alpha$ and $$\beta = \gamma$$ end");
+        let theme = Theme::detect();
+        let lines = md_to_lines(r"Let $\alpha$ and $$\beta = \gamma$$ end", &theme);
         let joined = lines
             .iter()
             .map(|l| plain(l))
