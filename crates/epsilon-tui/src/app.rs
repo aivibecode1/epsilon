@@ -6855,14 +6855,17 @@ mod tests {
         app.ui.push_notice("two");
         // User pages up 10 rows from the bottom.
         app.scroll_from_bottom = 10;
-        // Three rows append mid-read (each AgentStart pushes one system row).
+        // A run start and end append nothing to the transcript any more — the
+        // header carries that state — so a frozen reading window must not move
+        // while runs come and go around it. This is the property that matters:
+        // the reader stays where they were looking.
         for _ in 0..3 {
             apply_with_scroll(&mut app, &AgentEvent::AgentStart);
             apply_with_scroll(&mut app, &AgentEvent::AgentEnd { messages: vec![] });
         }
         assert_eq!(
-            app.scroll_from_bottom, 16,
-            "offset grows with appends (2 rows x 3 pairs) so the window stays put"
+            app.scroll_from_bottom, 10,
+            "lifecycle events add no rows, so a frozen window must not scroll"
         );
 
         // A pinned view (offset 0) keeps following the tail.

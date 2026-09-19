@@ -368,7 +368,10 @@ impl UiState {
             AgentEvent::AgentStart => {
                 self.running = true;
                 self.status = "run started".into();
-                self.push_system("── run start ──");
+                // No "run started" row. The header already says a run is in
+                // flight, and a marker row between every user turn and every
+                // answer turns a conversation into a log file. The transcript is
+                // for what was *said*; lifecycle state belongs in the chrome.
             }
             AgentEvent::TurnStart { turn_index } => {
                 self.status = format!("turn {turn_index}: thinking…");
@@ -560,7 +563,9 @@ impl UiState {
                 self.streaming_thinking.clear();
                 self.running = false;
                 self.status = "idle · type a task and press Enter".into();
-                self.push_system("── run end ──");
+                // The matching marker for `AgentStart`: the header returns to
+                // `idle`, which is the visible signal that the run finished.
+                // A row saying so would be the third place the same fact lives.
             }
             // TurnEnd summaries are intentionally not rendered yet: status shows
             // activity; expandable tool cards stay on the M12 polish ledger
@@ -758,20 +763,24 @@ mod tests {
         });
         st.apply(&AgentEvent::AgentEnd { messages: vec![] });
 
+        // The transcript holds what was said, and only that: assistant prose,
+        // the tool call, its result. Lifecycle state lives in the header, so a
+        // run produces no marker rows to scroll past.
         let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
         assert_eq!(
             kinds,
             vec![
-                LineKind::System,
                 LineKind::Assistant,
                 LineKind::ToolCall,
-                LineKind::ToolResultOk,
-                LineKind::System,
+                LineKind::ToolResultOk
             ]
         );
-        assert!(st.lines()[2].text.contains("bash"));
-        assert!(st.lines()[3].text.contains("hi"));
-        assert!(!st.running());
+        assert!(st.lines()[1].text.contains("bash"));
+        assert!(st.lines()[2].text.contains("hi"));
+        // The header is where "a run is happening" is visible, so the state must
+        // still know it even though no row says so.
+        assert!(!st.running(), "the run ended");
+        assert_eq!(st.status(), "idle · type a task and press Enter");
         assert_eq!(st.usage(), (10, 5));
     }
 
@@ -823,8 +832,9 @@ mod tests {
             tool_results: vec![],
         });
         let _ = TurnEndReason::Completed; // reason taxonomy exercised elsewhere
-        assert_eq!(st.lines()[1].kind, LineKind::ToolResultErr);
-        assert!(st.lines()[1].text.contains("boom"));
+        // No leading lifecycle marker row any more, so the error is first.
+        assert_eq!(st.lines()[0].kind, LineKind::ToolResultErr);
+        assert!(st.lines()[0].text.contains("boom"));
     }
 
     #[test]

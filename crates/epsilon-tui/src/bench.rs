@@ -153,10 +153,9 @@ mod tests {
     fn synthetic_transcript_produces_expected_shape() {
         let mut ui = UiState::new();
         build_synthetic_transcript(&mut ui, 3);
-        // run-start + per message (assistant + thinking? no — assistant+tool) +
-        // tool-call rows on every 3rd message + run-end.
-        // 3 msgs → start, 3×(assistant), 1×tool-call (i=0 only), 3×tool, end = 9.
-        assert_eq!(ui.lines().len(), 9);
+        // No lifecycle markers: 3 assistant rows, a tool call on the first
+        // message, and 3 tool results = 7.
+        assert_eq!(ui.lines().len(), 7);
         assert!(ui.lines().iter().any(|l| l.md.is_some()));
     }
 
