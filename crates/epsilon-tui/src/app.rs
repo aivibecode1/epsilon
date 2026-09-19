@@ -19,7 +19,7 @@ use epsilon_safety::{ChannelApprovalUi, PendingAsk};
 use futures_util::StreamExt;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -5097,62 +5097,58 @@ fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+/// The slash-command popup, anchored directly above the composer.
+///
+/// Anchored rather than centred on purpose: it is a completion list for what the
+/// user is *currently typing*, so it belongs next to the text, and a centred
+/// panel would pull the eye away from the caret on every keystroke.
 fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) {
+    use crate::ui::overlay::{self, Panel};
+
     let candidates = crate::picker::slash_items(&app.input);
     if !app.slash_open || candidates.is_empty() {
         return;
     }
-    // Cap height so the popup never smothers the input box. 8 items of
-    // content plus the help footer (1), plus borders (2) = max 11. Scroll
-    // window follows slash_index like every other list widget.
     let total = candidates.len();
+    // Eight visible rows, then the list scrolls: taller than that and the popup
+    // covers the conversation it is helping with.
     let capacity = 8usize.min(total);
     let start = crate::scroll::scroll_start(total, app.slash_index, capacity);
-    let end = (start + capacity).min(total);
-    let height = (capacity as u16) + 1 + 2; // items + footer + borders
-    let y = transcript_area.bottom().saturating_sub(height);
+    let height = capacity as u16 + 1 + 2; // rows + hint + frame
     let area = Rect {
         x: transcript_area.x,
-        y,
+        y: transcript_area.bottom().saturating_sub(height),
         width: transcript_area.width.min(56),
         height,
     };
-    f.render_widget(Clear, area);
-    let mut lines: Vec<Line<'static>> = candidates[start..end]
+    let panel = Panel {
+        theme: &app.theme,
+        area,
+        title: "commands",
+        focused: true,
+    };
+    let inner = panel.open(f);
+
+    let mut lines: Vec<Line<'static>> = candidates[start..(start + capacity).min(total)]
         .iter()
         .enumerate()
-        .map(|(i, item)| {
-            let idx = start + i;
-            let selected = idx == app.slash_index;
-            let mut spans = vec![Span::styled(
-                format!(" {} ", item.value),
-                if selected {
-                    crate::theme::Theme::selected()
-                } else {
-                    crate::theme::Theme::accent()
-                },
-            )];
-            if !item.description.is_empty() {
-                spans.push(Span::styled(
-                    format!(" {}", item.description),
-                    if selected {
-                        crate::theme::Theme::selected_muted()
-                    } else {
-                        crate::theme::Theme::muted()
-                    },
-                ));
-            }
-            Line::from(spans)
+        .map(|(offset, item)| {
+            overlay::list_row(
+                &app.theme,
+                start + offset == app.slash_index,
+                item.value,
+                // The description is the hint column; `list_row` right-aligns it,
+                // and an empty one means "no hint" rather than a blank column.
+                Some(item.description).filter(|d| !d.is_empty()),
+                inner.width as usize,
+            )
         })
         .collect();
-    lines.push(Line::from(Span::styled(
-        "↑/↓ pick · Tab/Enter apply · Esc dismiss".to_string(),
-        crate::theme::Theme::muted(),
-    )));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active());
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    lines.push(overlay::hint_row(
+        &app.theme,
+        &[("↑↓", "pick"), ("tab", "apply"), ("esc", "dismiss")],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The permission dialog.
@@ -5216,73 +5212,64 @@ fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
 }
 
 /// M32: masked API-key prompt (opencode DialogPrompt parity). The real key
-/// lives in `app.auth_key` but rendering shows `•` per char so the secret
-/// never appears in the transcript or on screen.
+/// lives in `app.auth_key` but rendering shows one dot per character so the
+/// secret never appears in the transcript, in a screenshot, or in a scrollback
+/// buffer.
 fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
-    let width = (outer.width * 3 / 5).max(48).min(outer.width);
-    let height = 8u16.min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + (outer.height.saturating_sub(height)) / 2;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
-    };
-    f.render_widget(Clear, area);
+    use crate::ui::overlay::{self, Panel, Width};
 
-    let masked_len = app.auth_key.chars().count();
-    let masked: String = "•".repeat(masked_len);
-    // Caret in masked space: count chars left of cursor, clamp to width.
-    let inner_w = width.saturating_sub(4) as usize;
-    let cursor_col = app
-        .auth_key_cursor
-        .min(masked_len)
-        .min(inner_w.saturating_sub(1));
-
+    let width = Width::PROMPT.resolve(outer);
+    let height = 8u16.min(outer.height.saturating_sub(2)).max(5);
     let oauth_mode = app.oauth_code_tx.is_some();
     let title = if oauth_mode {
-        format!(" OAuth login: {} ", app.auth_provider)
+        format!("OAuth login · {}", app.auth_provider)
     } else {
-        format!(" API key for '{}' ", app.auth_provider)
+        format!("API key · {}", app.auth_provider)
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::auth())
-        .title(Span::styled(
-            title,
-            crate::theme::Theme::auth().add_modifier(Modifier::BOLD),
-        ));
-    let hint = if oauth_mode {
-        if masked_len == 0 {
-            "paste the redirect URL (or the bare code) — Ctrl+V works, Enter sends".to_string()
-        } else {
-            format!("{} chars — Enter send · Esc cancel", masked_len)
-        }
-    } else if masked_len == 0 {
-        "paste your key (Ctrl+V / bracketed paste) — masked, Enter saves".to_string()
-    } else {
-        format!("{} chars — Enter save · Esc cancel", masked_len)
+    let panel = Panel {
+        theme: &app.theme,
+        area: overlay::centered(outer, width, height),
+        title: &title,
+        focused: true,
     };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+
+    let masked_len = app.auth_key.chars().count();
+    let masked: String = theme.glyphs.bullet.repeat(masked_len);
+    let hint = match (oauth_mode, masked_len) {
+        (true, 0) => "paste the redirect URL or the bare code — Ctrl+V works, Enter sends",
+        (true, _) => "Enter sends · Esc cancels",
+        (false, 0) => "paste your key — it stays masked, Enter saves",
+        (false, _) => "Enter saves · Esc cancels",
+    };
+
     let body = vec![
         Line::from(Span::styled(
             if oauth_mode {
-                "hidden while typing — paste works, Enter sends"
+                "hidden while typing"
             } else {
-                "key is masked — paste works, typing works"
+                "the key is never shown, here or in the transcript"
             },
-            crate::theme::Theme::muted(),
+            theme.faint(),
         )),
-        Line::from(Span::styled(masked.clone(), crate::theme::Theme::auth())),
-        Line::from(Span::styled(hint, crate::theme::Theme::muted())),
+        Line::from(Span::styled(masked, theme.warn())),
+        Line::from(""),
+        Line::from(Span::styled(hint, theme.dim())),
     ];
-    let para = Paragraph::new(body).block(block);
-    f.render_widget(para, area);
-    // Place the terminal cursor inside the masked field (if the field fits).
-    let cx = area.x + 2 + cursor_col as u16;
-    let cy = area.y + 2; // second line inside the box is the masked field
-    if cx < area.x + area.width - 1 && cy < area.y + area.height - 1 {
-        f.set_cursor_position((cx, cy));
+    f.render_widget(Paragraph::new(body), inner);
+
+    // The caret is placed inside the masked field so a paste lands visibly.
+    // Column arithmetic is in display cells, and the field is the second row of
+    // the body (the first is the explanatory line).
+    let cursor_col = app
+        .auth_key_cursor
+        .min(masked_len)
+        .min(inner.width.saturating_sub(1) as usize);
+    let x = inner.x + cursor_col as u16;
+    let y = inner.y + 1;
+    if x < inner.x + inner.width && y < inner.y + inner.height {
+        f.set_cursor_position((x, y));
     }
 }
 
