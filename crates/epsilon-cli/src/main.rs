@@ -1558,6 +1558,24 @@ async fn build_runtime(
         workspace,
         project_trusted,
     ));
+    // The catalog tells the model a skill exists; the `skill` tool is how it opens
+    // one. Registering the tool from the same list keeps the two from disagreeing —
+    // and a skill the user marked as not-model-invocable is filtered out here, so
+    // the model cannot reach it even by guessing its name.
+    let loadable: Vec<epsilon_tools::skill::LoadableSkill> = skills
+        .iter()
+        .filter(|s| !s.disable_model_invocation)
+        .map(|s| epsilon_tools::skill::LoadableSkill {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            dir: s.dir.clone(),
+        })
+        .collect();
+    if !loadable.is_empty() {
+        registry.register(std::sync::Arc::new(epsilon_tools::skill::SkillTool::new(
+            loadable,
+        )));
+    }
     if !skills.is_empty() {
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         eprintln!("skills: {}", names.join(", "));

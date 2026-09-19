@@ -15,6 +15,7 @@ mod mutation;
 mod read_log;
 mod search;
 mod shell;
+pub mod skill;
 mod task;
 mod todo;
 pub mod util;
@@ -86,6 +87,24 @@ pub enum Lsp {
 /// ([`register_builtins_with`] with [`Lsp::Auto`]).
 pub fn register_builtins(registry: &mut ToolRegistry, confinement: &Confinement) {
     register_builtins_with(registry, confinement, Lsp::Off);
+}
+
+/// Register every built-in tool, with the skills the model may load.
+///
+/// Skills are discovered by the frontend, which owns the trust policy; passing
+/// them in keeps that decision in one place instead of teaching this crate where
+/// skill directories live. An empty list registers no `skill` tool at all, so a
+/// workspace with no skills does not pay for a tool that could only ever fail.
+pub fn register_builtins_with_skills(
+    registry: &mut ToolRegistry,
+    confinement: &Confinement,
+    lsp: Lsp,
+    skills: Vec<crate::skill::LoadableSkill>,
+) {
+    register_builtins_with(registry, confinement, lsp);
+    if !skills.is_empty() {
+        registry.register(Arc::new(crate::skill::SkillTool::new(skills)));
+    }
 }
 
 /// Register every built-in tool into `registry` under the given confinement and diagnostics choice.

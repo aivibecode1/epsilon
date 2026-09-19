@@ -1,0 +1,29 @@
+Load the full instructions of one skill, by name.
+
+Your context carries a skill catalog: a name and a one-line description for each
+skill available in this workspace. A catalog entry is a pointer, not the
+procedure. When a skill's description matches the task in front of you, call this
+tool with that skill's name to read its actual instructions, then follow them.
+
+When to call this:
+
+- The task is a multi-step procedure the catalog already describes (a review
+  checklist, a release process, a migration recipe). Loading the skill is cheaper
+  and more reliable than reconstructing the procedure from memory.
+- You are about to say "I would normally ..." — that is the signal that a skill
+  probably exists and should be read first.
+
+When not to call this:
+
+- Speculatively, "just in case". Every loaded body stays in the context window
+  for the rest of the session, and a skill you did not need is context you no
+  longer have for the work.
+- For a name you are guessing at. The catalog lists the real names; an unknown
+  name comes back with the list, which costs a round trip you did not need.
+
+Only one skill is loaded per call. If two skills both apply, load the one whose
+description matches the immediate next step, and load the other when you reach
+the work it covers.
+
+A skill marked as unavailable to model invocation does not appear here: those are
+procedures the user runs deliberately, and calling one is not possible.
