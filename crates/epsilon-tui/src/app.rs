@@ -4229,6 +4229,10 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
 /// app — is what lets every screen be rendered in a test without an agent.
 impl App {
     /// The look this session was started with.
+    ///
+    /// Public so a caller outside the draw path (a future integration test, a
+    /// screenshot harness) can render with the same palette the binary uses.
+    #[allow(dead_code, reason = "the draw path reads the field directly")]
     pub fn theme(&self) -> &crate::ui::theme::Theme {
         &self.theme
     }

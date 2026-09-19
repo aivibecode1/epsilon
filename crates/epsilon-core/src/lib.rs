@@ -273,14 +273,85 @@ pub fn retry_notice_text(n: &epsilon_llm::RetryNotice) -> String {
     )
 }
 
+/// Does this provider error mean "your prompt did not fit"?
+///
+/// The message we classify is the provider's body verbatim, so the classifier has
+/// to know every spelling the providers actually use. The underscore forms are
+/// the ones that mattered: Anthropic answers `request_too_large`, and an earlier
+/// version of this list carried only the spaced spelling — so a real overflow
+/// failed the run instead of compacting once and retrying, which is the whole
+/// point of the branch this feeds.
 fn looks_like_context_overflow(msg: &str) -> bool {
+    const NEEDLES: [&str; 12] = [
+        "context window",
+        "context_window",
+        "context_length",
+        "maximum context",
+        "too many tokens",
+        "request too large",
+        "request_too_large",
+        "prompt is too long",
+        "prompt_too_long",
+        "input is too long",
+        "exceeds the maximum",
+        "reduce the length",
+    ];
     let m = msg.to_ascii_lowercase();
-    m.contains("context window")
-        || m.contains("context_length")
-        || m.contains("maximum context")
-        || m.contains("too many tokens")
-        || m.contains("request too large")
-        || m.contains("context_window_exceeded")
+    NEEDLES.iter().any(|needle| m.contains(needle))
+}
+
+#[cfg(test)]
+mod overflow_classifier_tests {
+    use super::looks_like_context_overflow;
+
+    #[test]
+    fn every_spelling_the_providers_use_is_recognised() {
+        // Each of these is a real provider body shape. The underscore forms are
+        // the ones that were missing, and their absence meant a genuine overflow
+        // failed the run instead of compacting once and retrying.
+        for message in [
+            "request_too_large",
+            "Error: request_too_large: prompt exceeds the model's maximum",
+            "prompt is too long: 210000 tokens > 200000 maximum",
+            "prompt_too_long",
+            "This model's maximum context length is 128000 tokens",
+            "context_length_exceeded",
+            "context_window_exceeded",
+            "Input is too long for requested model",
+            "Request too large for this model",
+            "too many tokens in request",
+            "please reduce the length of the messages",
+        ] {
+            assert!(
+                looks_like_context_overflow(message),
+                "not recognised as an overflow: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_failures_are_not_mistaken_for_overflow() {
+        // A false positive costs a pointless compaction that throws away context,
+        // so the classifier has to be specific as well as complete.
+        for message in [
+            "401 Unauthorized: invalid api key",
+            "rate limit exceeded, retry after 20s",
+            "connection reset by peer",
+            "tool call arguments were truncated",
+            "the model returned an empty response",
+        ] {
+            assert!(
+                !looks_like_context_overflow(message),
+                "wrongly classified as an overflow: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn classification_ignores_case() {
+        assert!(looks_like_context_overflow("REQUEST_TOO_LARGE"));
+        assert!(looks_like_context_overflow("Prompt Is Too Long"));
+    }
 }
 
 /// Run a turn-hook call to completion, containing a panic the way the provider seam's

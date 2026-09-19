@@ -209,7 +209,7 @@ pub fn summary_context(
     epsilon_llm::LlmContext {
         // Summarization calls never need reasoning (ADR-007: isolated, cheap).
         thinking_level: epsilon_contracts::ThinkingLevel::Off,
-        system_prompt: SUMMARY_SYSTEM.into(),
+        system_prompt: summary_system_prompt(),
         messages: vec![Message::User(epsilon_contracts::message::UserMessage {
             id: epsilon_contracts::new_id("msg"),
             timestamp_ms: 0,
@@ -219,8 +219,50 @@ pub fn summary_context(
     }
 }
 
-pub(crate) const SUMMARY_SYSTEM: &str =
-    "You compress coding-agent transcripts into structured summaries. Output ONLY the template.";
+/// The six sections every summary is required to have.
+///
+/// The order is the order a reader reloads context in: what was being done, then
+/// the rules they set, then where it got to, then why, then what is next, then
+/// whatever else would be lost. `Critical Context` is last on purpose — it is the
+/// catch-all, and putting it earlier invites the model to dump everything there
+/// and leave the specific sections thin.
+pub const SUMMARY_SECTIONS: [(&str, &str); 6] = [
+    ("Goal", "what the user is ultimately trying to achieve"),
+    ("Constraints & Preferences", "exact instructions, style rules, and prohibitions"),
+    ("Progress", "what has been done, what is verified, what is in flight"),
+    ("Key Decisions", "choices made and the reason for each"),
+    (
+        "Next Steps",
+        "the immediate next actions, specific enough to resume without guessing",
+    ),
+    ("Critical Context", "facts, paths, errors or state that would otherwise be lost"),
+];
+
+/// The system prompt for a summarization call.
+///
+/// Built from [`SUMMARY_SECTIONS`] so the template the model is asked to fill in
+/// is the template it is actually sent. The earlier version asserted "Output ONLY
+/// the template" while sending no template at all, which produced a different
+/// summary shape on every compaction — and a summary whose shape changes is one a
+/// reader has to re-learn each time.
+pub fn summary_system_prompt() -> String {
+    let mut s = String::from(
+        "You compress coding-agent transcripts into a structured summary. \
+         Output ONLY the sections below, in this order, using these exact headings.\n\n",
+    );
+    for (index, (name, what)) in SUMMARY_SECTIONS.iter().enumerate() {
+        s.push_str(&format!("{}. ## {name} — {what}\n", index + 1));
+    }
+    s.push_str(
+        "\nRules:\n\
+         - Quote the user's instructions rather than paraphrasing them.\n\
+         - Prefer specific facts (paths, commands, error text) over narrative.\n\
+         - Say what is UNVERIFIED as clearly as what is done.\n\
+         - Never invent progress that the transcript does not show.\n\
+         - Omit a section only if the transcript truly says nothing about it.",
+    );
+    s
+}
 
 /// Extract the assistant's summary text from a completed provider turn.
 ///
@@ -1065,5 +1107,45 @@ mod ledger_tests {
             rendered.contains("do") && rendered.contains("NOT copy it"),
             "and is told the block is harness-maintained, not summary material"
         );
+    }
+
+    #[test]
+    fn the_summarizer_is_sent_the_template_it_is_told_to_follow() {
+        // The bug this pins: the system prompt said "output ONLY the template"
+        // while the request carried no template, so every compaction produced a
+        // differently shaped summary.
+        let ctx = summary_context(&[], None, &FileLedger::default());
+        for (name, _) in SUMMARY_SECTIONS {
+            assert!(
+                ctx.system_prompt.contains(name),
+                "the template must name the {name} section: {}",
+                ctx.system_prompt
+            );
+        }
+        assert!(
+            ctx.system_prompt.contains("Output ONLY"),
+            "the instruction and the template have to travel together"
+        );
+        // Order is part of the contract: a reader reloads context in this order.
+        let positions: Vec<usize> = SUMMARY_SECTIONS
+            .iter()
+            .map(|(name, _)| ctx.system_prompt.find(name).expect("section present"))
+            .collect();
+        assert!(
+            positions.windows(2).all(|w| w[0] < w[1]),
+            "sections must be listed in template order: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn the_section_list_is_the_one_the_prompt_renders() {
+        // Guards against the two drifting apart: the constant is the template.
+        let prompt = summary_system_prompt();
+        for (index, (name, what)) in SUMMARY_SECTIONS.iter().enumerate() {
+            assert!(
+                prompt.contains(&format!("{}. ## {name} — {what}", index + 1)),
+                "section {index} rendered differently from the constant"
+            );
+        }
     }
 }

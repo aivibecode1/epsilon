@@ -457,12 +457,11 @@ impl Theme {
     /// Reversed like [Self::selected] so the two halves of one row highlight
     /// as a single band instead of two different treatments.
     pub fn selected_muted(&self) -> Style {
-        let base = self.role(Role::text_faint, Emphasis::Plain);
-        if self.mode == ColorMode::None {
-            base.add_modifier(Modifier::REVERSED)
-        } else {
-            base.add_modifier(Modifier::REVERSED)
-        }
+        // Reversed in every mode: it is the quiet half of a row that is already
+        // reversed, and two different treatments inside one highlighted row read
+        // as a rendering fault rather than as emphasis.
+        self.role(Role::text_faint, Emphasis::Plain)
+            .add_modifier(Modifier::REVERSED)
     }
 
     /// The accent used for authentication prompts.

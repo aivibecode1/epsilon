@@ -14,7 +14,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 
 use crate::ui::layout::{Priority, clamp_line, side_by_side};
 use crate::ui::theme::Theme;
