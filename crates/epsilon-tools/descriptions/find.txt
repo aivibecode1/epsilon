@@ -1,1 +1,5 @@
-Find files by glob pattern. Returns matching file paths relative to search dir. Respects .gitignore. Output truncated to 1000 results or 64KB (whichever first).
+Find files by glob pattern. Returns matching file paths relative to the search directory.
+
+Respects the workspace's .gitignore, including negations, and always skips build and VCS directories (target, node_modules, dist, .git). Hidden directories are skipped as well; hidden files are not.
+
+Output is truncated to 1000 results or 64KB, whichever comes first.

@@ -544,7 +544,15 @@ mod tests {
         let owner = Arc::new(());
         let p = tmp("edited", "one");
         record_read(&owner, &p, whole(1));
-        std::fs::write(&p, "two").unwrap();
+        // The replacement is deliberately a DIFFERENT LENGTH. Writing a
+        // same-length string makes this test depend on the filesystem's mtime
+        // resolution: on NTFS two writes inside one clock tick leave both the
+        // recorded length and the timestamp identical, `verify` sees no change,
+        // and the test fails at random — which it did, roughly one run in three.
+        // A length difference is a change no clock resolution can hide, and the
+        // property under test (an edit needs the same guard a write does) does
+        // not depend on how the change was spelled.
+        std::fs::write(&p, "much longer than the original").unwrap();
         assert!(
             matches!(verify(&owner, &p, false), Err(Stale::Modified { .. })),
             "an edit applies old_string to unknown content, so it needs the same guard"

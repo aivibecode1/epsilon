@@ -14,6 +14,7 @@ pub mod config;
 mod exec;
 mod gate;
 mod guards;
+pub mod ignore;
 pub mod paths;
 pub mod prompt;
 pub mod references;

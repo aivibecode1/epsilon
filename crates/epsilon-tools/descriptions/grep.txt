@@ -1,1 +1,5 @@
-Search file contents with a Rust regex across the workspace (build/VCS dirs skipped). Returns path:line: text matches, capped at 100 by default (use limit for more). Supports literal (fixed-string search), glob (restrict files, e.g. '*.rs'), ignore_case, and context (surrounding lines shown as path-line- text). Lines over 500 chars are truncated — read the file for the full text.
+Search file contents with a Rust regex across the workspace. Returns path:line: text matches, capped at 100 by default (use limit for more).
+
+Honours the workspace's .gitignore, and always skips build and VCS directories (target, node_modules, dist, .git) plus hidden directories. Hidden files are searched.
+
+Supports literal (fixed-string search), glob (restrict files, e.g. '*.rs'), ignore_case, and context (surrounding lines shown as path-line- text). Lines over 500 chars are truncated — read the file for the full text.
