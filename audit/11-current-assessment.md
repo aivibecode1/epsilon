@@ -84,7 +84,7 @@ recovery machinery and the instruction-loading seams.
 
 | # | Gap | Evidence |
 |---|---|---|
-| G5 | `.gitignore` is not honoured by grep/find, and both tool descriptions say it is | `.tmp-console/port-fidelity-audit.md` D-9 |
+| ~~G5~~ | **Closed** in M99 (`542fa92`): `.gitignore` is honoured, with the matcher in `epsilon-core::ignore` so the tools and the TUI's `@`-file completion share one answer. | [`evidence/port-fidelity-audit.md`](evidence/port-fidelity-audit.md) D-9 | — |
 | ~~G6~~ | **Closed** in `87c5628`: both the catalog and the tool filter it. | D-4 | — |
 | G7 | `SYSTEM.md`, `APPEND_SYSTEM.md` and `.epsilon/prompts/` are trust-gate-detected but never loaded | D-7 |
 | G8 | `AGENTS.override.md` and ancestor context files above the workspace are never loaded | D-8 |
@@ -99,6 +99,18 @@ recovery machinery and the instruction-loading seams.
 | ~~G12~~ | **Closed** in `278d2ec`: every surface takes a passed-in `Theme` and the shim is deleted. |
 | G13 | No terminal-integration test runs in CI, though two working harnesses exist locally |
 | G14 | `epsilon-ext` has 5 tests for a whole crate — the least covered surface relative to its size |
+
+### Known and deliberately not claimed
+
+- A `.gitignore` negation re-includes a hidden directory in the matcher, but the
+  walker still does not descend into one. `crates/epsilon-tools/src/util.rs` says
+  so in the test rather than asserting behaviour that is not there.
+- `epsilon-core::ignore` does not implement character classes (`[a-z]`), escaped
+  metacharacters, or `core.excludesFile`. The module docs name all three.
+- The header shows `0%%` in a **captured screen buffer** read through
+  `ReadConsoleOutputCharacterW`; the rendered row is `0%`. The duplication is in
+  the capture path, not the frame, and it is recorded here because it has not
+  been proven to my own satisfaction on a real terminal — only explained.
 
 ### Bookkeeping defects (not code)
 
