@@ -1,0 +1,40 @@
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.63s
+     Running unittests src\lib.rs (C:/Users/Hp/AppData/Local/Temp/epsilon-tui-enhance-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 5 tests
+test app::composer_viewport_tests::editing_start_of_long_draft_keeps_caret_line_visible ... ok
+test app::composer_viewport_tests::long_unicode_draft_wraps_and_places_caret_in_display_columns ... ok
+test app::composer_viewport_tests::long_transcript_renders_latest_visible_rows ... FAILED
+test app::composer_viewport_tests::undersized_terminal_has_explicit_fallback ... FAILED
+test app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths ... FAILED
+
+failures:
+
+---- app::composer_viewport_tests::long_transcript_renders_latest_visible_rows stdout ----
+
+thread 'app::composer_viewport_tests::long_transcript_renders_latest_visible_rows' (4932) panicked at crates\epsilon-tui\src\app.rs:4390:9:
+tail disappeared:                                                                                                                                                                                                                                                                                                             
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- app::composer_viewport_tests::undersized_terminal_has_explicit_fallback stdout ----
+
+thread 'app::composer_viewport_tests::undersized_terminal_has_explicit_fallback' (6100) panicked at crates\epsilon-tui\src\app.rs:4413:9:
+assertion failed: screen.contains("terminal too small")
+
+---- app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths stdout ----
+
+thread 'app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths' (6368) panicked at crates\epsilon-tui\src\app.rs:4403:13:
+assertion `left == right` failed: draft clipped at 60x20
+  left: 12
+ right: 68
+
+
+failures:
+    app::composer_viewport_tests::long_transcript_renders_latest_visible_rows
+    app::composer_viewport_tests::undersized_terminal_has_explicit_fallback
+    app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 151 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p epsilon-tui --lib`

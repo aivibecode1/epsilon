@@ -1,0 +1,30 @@
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+warning: unused import: `epsilon_safety::ApprovalUi`
+    --> crates\epsilon-tui\src\app.rs:5309:13
+     |
+5309 |         use epsilon_safety::ApprovalUi;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `epsilon_contracts::agent_event::PermissionRequest`
+    --> crates\epsilon-tui\src\app.rs:5310:13
+     |
+5310 |         use epsilon_contracts::agent_event::PermissionRequest;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `is_none` found for enum `Result<T, E>` in the current scope
+    --> crates\epsilon-tui\src\app.rs:5322:58
+     |
+5322 |         assert!(terminal.backend().get_cursor_position().is_none(), "composer caret leaked under modal");
+     |                                                          ^^^^^^^
+     |
+help: there is a method `is_ok` with a similar name
+     |
+5322 -         assert!(terminal.backend().get_cursor_position().is_none(), "composer caret leaked under modal");
+5322 +         assert!(terminal.backend().get_cursor_position().is_ok(), "composer caret leaked under modal");
+     |
+
+For more information about this error, try `rustc --explain E0599`.
+warning: `epsilon-tui` (lib test) generated 2 warnings
+error: could not compile `epsilon-tui` (lib test) due to 1 previous error; 2 warnings emitted

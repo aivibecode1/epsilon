@@ -1,0 +1,28 @@
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.95s
+     Running unittests src\lib.rs (C:/Users/Hp/AppData/Local/Temp/epsilon-tui-enhance-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 5 tests
+test app::composer_viewport_tests::undersized_terminal_has_explicit_fallback ... ok
+test app::composer_viewport_tests::editing_start_of_long_draft_keeps_caret_line_visible ... ok
+test app::composer_viewport_tests::long_unicode_draft_wraps_and_places_caret_in_display_columns ... ok
+test app::composer_viewport_tests::long_transcript_renders_latest_visible_rows ... ok
+test app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths ... FAILED
+
+failures:
+
+---- app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths stdout ----
+
+thread 'app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths' (5476) panicked at crates\epsilon-tui\src\app.rs:4409:13:
+assertion `left == right` failed: draft clipped at 120x30
+  left: 129
+ right: 128
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    app::composer_viewport_tests::wrapped_draft_grows_composer_at_supported_widths
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 151 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p epsilon-tui --lib`

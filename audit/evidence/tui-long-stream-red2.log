@@ -1,0 +1,22 @@
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.78s
+     Running unittests src\lib.rs (C:/Users/Hp/AppData/Local/Temp/epsilon-tui-enhance-target\debug\deps\epsilon_tui-ac499d5eb4b57588.exe)
+
+running 1 test
+test app::composer_viewport_tests::streaming_tail_is_visible_after_full_transcript ... FAILED
+
+failures:
+
+---- app::composer_viewport_tests::streaming_tail_is_visible_after_full_transcript stdout ----
+
+thread 'app::composer_viewport_tests::streaming_tail_is_visible_after_full_transcript' (14896) panicked at crates\epsilon-tui\src\app.rs:4446:9:
+stream hidden: live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer live answer 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    app::composer_viewport_tests::streaming_tail_is_visible_after_full_transcript
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 156 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p epsilon-tui --lib`
