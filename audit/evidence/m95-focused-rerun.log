@@ -1,0 +1,271 @@
+=== M95 / SURFACE-05 fix round — ONE focused log (review blocker 1 + folds) ===
+Date: 2026-09-19 (UTC+03:00). Base HEAD 6c946f5; slice uncommitted (do not commit from this log).
+Env: PATH=$HOME/.cargo/bin:$PATH; CARGO_BUILD_JOBS=1; CARGO_TARGET_DIR=$LOCALAPPDATA/Temp/epsilon-m95-target
+Round scope: read_page's over-cap branch gated on `lines.is_empty()` (only a page whose FIRST line
+exceeds the budget takes pi's sed path; a later over-cap line is an ordinary byte stop and the
+coverage stays partial); files.rs `limit: 0` notice now carries pi's blank separator (checked by
+executing pi's own code — section 1); comment corrections; the ninth integration test.
+scripts/gate.sh NOT run (the battery is the owner's to run).
+
+--- 0. slice sha256 before the RED revert (post-fix working-tree bytes) ---
+bc8ac7875ead95ef4fea1517ee8e42fc0c66dcffe13889e375430bf63521ca18 *crates/epsilon-tools/src/util.rs
+6f60e14099b09153a8227f715f11e39a4126c3f5f54d1879fece90d922d0747b *crates/epsilon-tools/src/read_log.rs
+e2cdcae78b51a22d6dc6092e44226f063f3273e62bf199eefa9233dec2946a58 *crates/epsilon-tools/src/files.rs
+867d6adaba67f21456a52aaad04c0d561bf5209a2448b92877809ce2773e91cb *crates/epsilon-tools/src/search.rs
+e5339904fce3b4abb2679375e1519504f7663db309f01b06b1c9392579b2671f *crates/epsilon-tools/tests/builtin_tools.rs
+fff98dabf15dc306c34aa558693aeed52da6a1f53f359b6c51997b11bc6bfccb *crates/epsilon-tools/descriptions/read.txt
+
+--- 1. pi `limit: 0` check (executed — the review's premise, tested against pi's real code) ---
+Method: node v24.18.1 imports pi 0.84.2's real truncate.ts and runs the read.ts
+selection/truncation/notice block extracted verbatim between two literal markers (gen.mjs), plus the
+harness read tool's block the same way (gen-harness.mjs). Scripts and outputs live in
+$LOCALAPPDATA/Temp/m95-pi-limit0/.
+Findings: pi emits its notice for limit:0 (never silence), always prefixed by the blank separator;
+a mid-page over-cap line keeps the page (line 1-3 plus the (50.0KB limit) continuation); only an
+over-cap FIRST line gets the sed message. The port now matches pi, with epsilon's line counts.
+$ node gen.mjs && node pi-main.ts   (pi 0.84.2: real truncate.ts + read.ts block extracted between literal markers)
+wrote pi-read-block.ts, block lines: 49
+--- normal 5-line file, limit=0, no offset -> "\n\n[6 more lines in file. Use offset=1 to continue.]"
+--- normal 5-line file, limit=0, offset=2 -> "\n\n[5 more lines in file. Use offset=2 to continue.]"
+--- normal 5-line file, limit=0, offset=5 -> "\n\n[2 more lines in file. Use offset=5 to continue.]"
+--- normal 5-line file, limit=2, offset=3 -> "c\nd\n\n[2 more lines in file. Use offset=5 to continue.]"
+--- normal 5-line file, no args -> "a\nb\nc\nd\ne\n"
+--- empty file, limit=0 -> "\n\n[1 more lines in file. Use offset=1 to continue.]"
+--- empty file, no args -> ""
+--- mid-page over-cap line (line 4), no args -> "a\nb\nc\n\n[Showing lines 1-3 of 6 (50.0KB limit). Use offset=4 to continue.]"
+--- over-cap first line, no args -> "[Line 1 is 293.0KB, exceeds 50.0KB limit. Use bash: sed -n '1p' huge.txt | head -c 51200]"
+EXIT=0
+$ node gen-harness.mjs && node --experimental-strip-types harness-main.mjs   (harness read tool, same check)
+wrote pi-harness-block.ts, block lines: 45
+--- harness: limit=0 -> {"content":[{"type":"text","text":"\n\n[6 more lines in file. Use offset=1 to continue.]"}]}
+--- harness: mid-page over-cap -> {"content":[{"type":"text","text":"a\nb\nc\n\n[Showing lines 1-3 of 6 (50.0KB limit). Use offset=4 to continue.]"}],"details":{"truncation":{"content":"a\nb\nc","truncated":true,"truncatedBy":"bytes","totalLines":5,"totalBytes":300009,"outputLines":3,"outputBytes":5,"lastLinePartial":false,"firstLineExceedsLimit":false,"maxLines":2000,"maxBytes":51200}}}
+EXIT=0
+
+--- 2. RED: the ninth test against the reviewed pre-fix bytes ---
+Procedure run in the working tree (the revert isolated blocker 1 — util.rs only; the files.rs
+`limit:0` fold is not on this test's path):
+  a) backup: cp crates/epsilon-tools/src/util.rs -> $LOCALAPPDATA/Temp/m95-fix-round/util.rs.fixed
+     sha256 bc8ac7875ead95ef4fea1517ee8e42fc0c66dcffe13889e375430bf63521ca18 (post-fix bytes)
+  b) the fix's two edits were inverted in place (the `lines.is_empty()` gate and the ReadPage
+     doc line); `sha256sum crates/epsilon-tools/src/util.rs` then printed exactly the reviewed
+     pre-fix digest:
+       4cfe7bcc87c1550b2fa2b3932f76c77d4ed0a6ea99c1c2ae8d10531d8d7f978c
+     (same value m95-review.md records as `util.rs 4cfe7bcc…`)
+  c) the single new test was run against those bytes:
+$ cargo test -p epsilon-tools --test builtin_tools -- --exact a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running tests\builtin_tools.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m95-target\debug\deps\builtin_tools-e7728fa5fff11c15.exe)
+
+running 1 test
+test a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite ... FAILED
+
+failures:
+
+---- a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite stdout ----
+
+thread 'a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite' (10740) panicked at crates\epsilon-tools\tests\builtin_tools.rs:716:19:
+a read stopped by a later over-cap line must remain a partial view, but the whole-file write returned Ok("overwrote mixed.txt (9 bytes)") while the read had shown "[Line 4 is 260.0KB, exceeds 256.0KB limit. Use bash: sed -n '4p' mixed.txt | head -c 262144]"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 44 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p epsilon-tools --test builtin_tools`
+EXIT=101
+  d) util.rs was restored from the backup and hashed again — byte-identical to (a):
+       bc8ac7875ead95ef4fea1517ee8e42fc0c66dcffe13889e375430bf63521ca18
+  e) the same test was re-run on the restored bytes:
+$ cargo test -p epsilon-tools --test builtin_tools -- --exact a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.62s
+     Running tests\builtin_tools.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m95-target\debug\deps\builtin_tools-e7728fa5fff11c15.exe)
+
+running 1 test
+test a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 44 filtered out; finished in 0.01s
+
+EXIT=0
+Post-hoc byte-identity check (fresh output, after the runs above): the same two inverse edits,
+applied this time to a COPY of the post-fix bytes, reproduce the pre-fix digest exactly, and the
+repo file was not touched by the check:
+\4cfe7bcc87c1550b2fa2b3932f76c77d4ed0a6ea99c1c2ae8d10531d8d7f978c *C:\\Users\\Hp\\AppData\\Local/Temp/m95-fix-round/util.rs.prefix
+bc8ac7875ead95ef4fea1517ee8e42fc0c66dcffe13889e375430bf63521ca18 *crates/epsilon-tools/src/util.rs
+
+--- 3. gates on the final bytes (the doc edits are .md only) ---
+$ cargo fmt --all -- --check
+EXIT=0
+$ cargo clippy -p epsilon-tools --all-targets -- -D warnings
+    Checking epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.11s
+EXIT=0
+$ cargo test -p epsilon-tools
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.60s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m95-target\debug\deps\epsilon_tools-eccb2d724e384a10.exe)
+
+running 82 tests
+test checkpoint::tests::blob_names_are_stable_and_content_dependent ... ok
+test checkpoint::tests::a_path_outside_the_workspace_is_skipped_rather_than_stored ... ok
+test checkpoint::tests::a_file_that_did_not_exist_is_restored_by_removing_it ... ok
+test edit_match::tests::a_fixed_width_stage_reports_no_span_numbers_because_there_are_none ... ok
+test checkpoint::tests::an_oversized_file_is_skipped_with_a_reason_that_reaches_the_ledger ... ok
+test edit_match::tests::a_loose_match_over_a_huge_span_is_refused_not_applied ... ok
+test checkpoint::tests::a_recorded_file_can_be_restored_byte_for_byte ... ok
+test edit_match::tests::a_paraphrased_middle_matches_on_its_anchors ... ok
+test edit_match::tests::a_two_line_anchor_pair_is_not_enough_to_guess ... ok
+test edit_match::tests::ambiguity_still_wins_over_a_looser_stage ... ok
+test edit_match::tests::ambiguous_exact_reports_count_even_when_loose_stage_unique ... ok
+test edit_match::tests::blank_lines_around_the_block_are_ignored ... ok
+test edit_match::tests::eol_detection_and_restore_round_trip ... ok
+test edit_match::tests::anchors_that_are_only_superficially_alike_do_not_match ... ok
+test edit_match::tests::genuinely_different_text_is_not_found ... ok
+test edit_match::tests::escaped_newlines_in_the_arguments_match_real_newlines ... ok
+test edit_match::tests::exact_match_on_lf_files_is_unchanged_behavior ... ok
+test edit_match::tests::replace_all_applies_to_variable_height_spans ... ok
+test edit_match::tests::replace_all_hits_every_occurrence ... ok
+test edit_match::tests::similarity_and_distance_are_what_they_claim ... ok
+test edit_match::tests::the_guard_boundary_is_inclusive_of_opencodes_rule ... ok
+test edit_match::tests::trailing_whitespace_differences_still_match ... ok
+test edit_match::tests::window_splice_preserves_trailing_newline ... ok
+test edit_match::tests::wrong_indentation_still_matches_flexibly ... ok
+test edit_match::tests::the_refusal_covers_the_character_rule_as_well_as_the_line_rule ... ok
+test checkpoint::tests::identical_content_is_stored_once ... ok
+test checkpoint::tests::the_ledger_is_monotonic_and_lists_the_newest_state_per_path ... ok
+test image::tests::detects_jpeg_gif_webp_bmp_and_rejects_other ... ok
+test find::tests::resource_key_covers_default_and_explicit_search_directories ... ok
+test image::tests::detects_still_png_rejects_animated ... ok
+test read_log::tests::a_file_that_does_not_exist_yet_may_be_created ... ok
+test read_log::tests::a_line_longer_than_the_byte_budget_is_the_only_window_left_open ... ok
+test read_log::tests::a_file_that_changed_underneath_is_refused_with_both_sizes ... ok
+test read_log::tests::a_page_of_a_larger_file_cannot_justify_a_full_overwrite ... ok
+test read_log::tests::a_partial_read_cannot_justify_a_full_overwrite ... ok
+test find::tests::respects_limit ... ok
+test read_log::tests::an_existing_file_nobody_read_is_not_overwritten_blind ... ok
+test find::tests::bare_pattern_matches_at_any_depth ... ok
+test read_log::tests::an_unchanged_file_may_be_written ... ok
+test read_log::tests::coverage_of_one_content_does_not_cover_another ... ok
+test read_log::tests::retired_observation_scopes_are_reclaimed_on_access ... ok
+test read_log::tests::our_own_write_is_not_downgraded_by_a_later_page_read ... ok
+test shell::verdict_tests::a_non_zero_exit_is_a_command_outcome_never_a_confinement_one ... ok
+test shell::verdict_tests::the_enforcement_vocabulary_cannot_be_empty_partial ... ok
+test shell::verdict_tests::zero_and_signals_are_their_own_answers ... ok
+test task::tests::background_true_starts_the_child_and_reports_running ... ok
+test read_log::tests::pages_extend_coverage_only_when_they_are_contiguous ... ok
+test task::tests::defaults_subagent_type_to_default ... ok
+test read_log::tests::edits_are_guarded_too ... ok
+test task::tests::isolated_host_failure_surfaces_naming_type ... ok
+test read_log::tests::our_own_write_does_not_look_like_someone_elses_change ... ok
+test task::tests::isolated_host_receives_subagent_type_verbatim ... ok
+test task::tests::model_parameter_reaches_the_host_and_the_result_names_it ... ok
+test task::tests::model_is_optional_and_advertised_in_the_schema ... ok
+test task::tests::renders_envelope_with_description_and_prompt ... ok
+test task::tests::rejects_empty_description_and_prompt ... ok
+test task::tests::resume_with_a_prompt_forwards_the_task_id ... ok
+test task::tests::task_id_alone_is_a_status_probe_not_a_new_run ... ok
+test task::tests::unknown_task_id_error_reaches_the_model ... ok
+test util::diff_tests::identical_inputs_produce_no_output ... ok
+test util::diff_tests::pure_deletion ... ok
+test todo::tests::empty_list_is_a_valid_clear_signal ... ok
+test todo::tests::renders_checklist_with_counts_and_details ... ok
+test util::diff_tests::pure_insertion ... ok
+test util::diff_tests::simple_replacement ... ok
+test todo::tests::rejects_empty_content_and_oversized_lists ... ok
+test util::tests::lexical_traversal_is_contained ... ok
+test search::tests::glob_translation_covers_dialect ... ok
+test checkpoint::tests::the_store_evicts_old_blobs_when_it_grows_past_its_ceiling ... ok
+test util::tests::a_failed_spill_is_reported_instead_of_promised ... ok
+test webfetch::tests::accepts_http_and_https ... ok
+test webfetch::tests::max_chars_truncation_shape ... ok
+test webfetch::tests::rejects_non_http_scheme ... ok
+test util::tests::truncate_spills_and_notes_locator ... ok
+test util::tests::keeps_the_head_and_the_tail_of_a_long_log ... ok
+test webfetch::tests::status_error_formats_snippet ... ok
+test util::tests::every_retained_window_is_char_boundary_safe ... ok
+test util::tests::walker_skips_ignored_dirs_but_keeps_hidden_files ... ok
+test util::tests::spill_files_are_created_exclusively_under_a_private_dir ... ok
+test mutation::tests::different_paths_run_concurrently ... ok
+test webfetch::tests::spill_helper_reused ... ok
+test mutation::tests::serializes_same_path ... ok
+
+test result: ok. 82 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests\builtin_tools.rs (C:\Users\Hp\AppData\Local/Temp/epsilon-m95-target\debug\deps\builtin_tools-e7728fa5fff11c15.exe)
+
+running 45 tests
+test a_call_asking_for_danger_full_access_is_refused_before_anything_runs ... ok
+test a_refused_command_is_marked_as_confinement_and_produces_no_verdict ... ok
+test a_page_that_ends_on_a_blank_line_keeps_that_line ... ok
+test a_small_explicit_limit_reports_how_many_lines_remain ... ok
+test a_partial_read_cannot_justify_overwriting_the_whole_file ... ok
+test a_write_carries_what_the_language_server_thinks_of_it ... ok
+test a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite ... ok
+test a_write_is_unchanged_when_no_server_can_answer ... ok
+test a_multibyte_character_is_never_cut_by_the_page_boundary ... ok
+test a_write_after_something_else_changed_the_file_is_refused ... ok
+test an_edit_carries_the_diagnostics_too ... ok
+test an_edit_after_a_change_is_refused_but_an_unchanged_edit_is_not ... ok
+test an_over_cap_single_line_points_at_bash_and_leaves_the_write_open ... ok
+test edit_falls_back_to_line_trimmed_and_indent_flexible_matching ... ok
+test creating_a_file_needs_no_history_but_blind_overwrites_do_not_happen ... ok
+test edit_refuses_capped_source_without_losing_tail ... ok
+test edit_matches_lf_args_against_crlf_files_and_preserves_crlf ... ok
+test edit_matches_on_anchors_and_refuses_a_disproportionate_span ... ok
+test edit_source_multibyte_split_at_limit_is_refused ... ok
+test edit_source_one_byte_over_limit_is_refused ... ok
+test edit_source_invalid_utf8_is_refused ... ok
+test observations_are_not_inherited_from_another_agent ... ok
+test grep_glob_ls_find_seeded_content ... ok
+test grep_marks_the_files_it_could_only_search_in_part ... ok
+test observations_partial_reads_and_failed_edits_do_not_refresh_siblings ... ok
+test observations_stay_stale_after_a_sibling_write_until_reread ... ok
+test observations_sibling_edits_invalidate_only_the_changed_path ... ok
+test edit_source_at_and_below_limit_is_complete ... ok
+test read_past_the_end_errors_and_an_empty_file_reads_ok_empty ... ok
+test read_pages_past_the_byte_prefix_to_the_marker ... ok
+test read_returns_numbered_lines_and_rejects_escapes ... ok
+test read_returns_image_attachments_for_images ... ok
+test the_permissions_and_justification_arguments_must_travel_together ... ok
+test util_walker_respects_skip_list ... ok
+test paging_to_the_end_grants_the_overwrite_but_a_skipped_page_does_not ... ok
+test widening_beyond_the_session_mode_is_refused_with_a_hint ... ok
+test workspace_escape_refused_in_write_and_edit ... ok
+test with_confinement_off_a_narrowing_request_is_refused_rather_than_lied_about ... ok
+test write_creates_then_edit_modifies_with_safety ... ok
+test bash_timeout_kills_long_commands ... ok
+test a_non_zero_exit_is_a_command_outcome_never_a_confinement_one ... ok
+test a_call_may_narrow_its_own_sandbox_mode_to_read_only ... ok
+test the_result_reports_how_completely_the_boundary_held ... ok
+test oversized_outputs_spill_with_locator ... ok
+test bash_runs_powershell_with_exit_codes_and_caps ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.80s
+
+   Doc-tests epsilon_tools
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXIT=0
+
+--- 4. slice sha256 after all of the above (identical to section 0) ---
+bc8ac7875ead95ef4fea1517ee8e42fc0c66dcffe13889e375430bf63521ca18 *crates/epsilon-tools/src/util.rs
+6f60e14099b09153a8227f715f11e39a4126c3f5f54d1879fece90d922d0747b *crates/epsilon-tools/src/read_log.rs
+e2cdcae78b51a22d6dc6092e44226f063f3273e62bf199eefa9233dec2946a58 *crates/epsilon-tools/src/files.rs
+867d6adaba67f21456a52aaad04c0d561bf5209a2448b92877809ce2773e91cb *crates/epsilon-tools/src/search.rs
+e5339904fce3b4abb2679375e1519504f7663db309f01b06b1c9392579b2671f *crates/epsilon-tools/tests/builtin_tools.rs
+fff98dabf15dc306c34aa558693aeed52da6a1f53f359b6c51997b11bc6bfccb *crates/epsilon-tools/descriptions/read.txt
+
+--- 5. doc edits in this round (for the record; not part of the gates) ---
+docs/milestones/M95-paged-reads.md (fmt citation -> this log; ninth-test RED; 8th test honesty
+note; final hashes; new Limits: edit-stamps-complete / usize offsets / sed raw bytes; over-cap
+bullet restated as first-line-only)
+docs/design/epsilon-decisions.md (ADR-005 M95 amendment: the exemption lives in `capped`, not a
+`Stale` variant — corrected)
+docs/README.md (M95 status: review returned one blocker, fixed), agents/memory/README.md,
+agents/memory/surface05-paged-reads.md (fix-round outcome)
+=== end of log ===
