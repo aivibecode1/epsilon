@@ -1,21 +1,28 @@
 # Epsilon audit
 
-**Current assessment:** [09 — source revalidation and port-first plan](09-revalidation.md),
-2026-09-17, working tree over `80b32eb`: five gates passed, 795 tests passed,
-0 failed, 1 ignored. Known correctness and port gaps remain. The owner now
-authorizes autonomous audit, restructure and implementation commits; no push
-or paid provider calls are implied.
+**Current assessment:** [11 — current assessment and plan](11-current-assessment.md),
+2026-09-19, working tree over `0548e9f`. It folds in 09's revalidation rather than
+replacing it with silence: 09's findings are carried forward with their status.
+Start at 11 unless you are specifically re-checking the earlier revalidation.
+
+| Document | Status |
+|---|---|
+| [11 — current assessment](11-current-assessment.md) | **live** — current state, ranked gaps, plan |
+| [09 — source revalidation](09-revalidation.md) | superseded as the live assessment; its findings are folded into 11 |
+| [01 — 08, 10](01-usability-review.md) | historical. Read for the reasoning, not for current status. |
 
 ## Active TUI work
 
-[10 — TUI composer and viewport](10-tui-enhancement.md) records the owner-priority
-rendering corrections, focused execution and remaining gate/integration limits.
+[10 — TUI composer and viewport](10-tui-enhancement.md) records an earlier round
+of rendering corrections. The presentation layer has since been rebuilt under
+`crates/epsilon-tui/src/ui/`; 11 carries the current status and what remains.
 
 ## Historical Phase 1 assessment
 
 The remaining sections describe the 2026-09-16 review and its then-current
 authorization. Its red baseline and mandatory review stops are historical, not
 today's status or instructions.
+
 
 **Audience:** the owner reviewing scope, and engineers implementing the approved roadmap.
 **Date:** 2026-09-16. **Baseline:** working tree over `e200815`, not the committed tree alone.
