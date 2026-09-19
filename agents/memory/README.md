@@ -37,24 +37,27 @@ not themselves trigger runtime compression.
 | File | Work item | Status |
 |------|-----------|--------|
 | [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
-| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed, 213 tests green; every overlay migrated and the `crate::theme` shim **deleted** (278d2ec); `app.rs` split is the next slice |
+| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed, 213 tests green; overlays migrated, `crate::theme` deleted, tests extracted to `app/tests.rs`; `app.rs` is 4,951 lines and the key handling + event loop are the next extraction |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
-| [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | **landed** 27cd677; full workspace suite green on a fresh test profile; note retired after the milestone doc's reinstall line is reconciled |
-| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984; M97 2d50813 |
+| [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | **landed** 27cd677 with its evidence logs tracked; full workspace suite green on a fresh test profile; note can be retired once the milestone doc's reinstall line is reconciled |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984; M97 2d50813; M98 3e1d01b; M99 542fa92; M100 46235bb |
 
 ## Next safe action
 
-1. **Split `app.rs`** (~6900 lines: the event loop, key handling and the
-   remaining draw code). Target shape: `event.rs` for the loop, `keys/` per mode,
-   `ui/` for everything that draws, leaving `app.rs` as state plus the adapters
-   that feed the shell. This is the last structural item of the TUI work.
+1. **Extract `app.rs`'s key handling**, then its event loop. `app.rs` is 4,951
+   lines after the tests moved out; what remains that is not state is
+   `handle_key`/`handle_approval_key`/`handle_auth_key`/paste handling and
+   `drive`. Target: `app/keys/` per mode and `app/event.rs`, leaving `app.rs` as
+   state plus the adapters that feed the shell. Keep the tests as children of the
+   module so `super::*` still reaches private items.
 2. **Check in the terminal integration test.** `.tmp-console/conprobe` (real
    conhost, drives the built binary) and `.tmp-console/ptyharness` (ConPTY +
    `vt100`) both work; a visual regression should be a failing test, not a bug
    report from someone's console.
-3. Then the remaining port gaps, in the order `audit/11` ranks them: G5
-   (`.gitignore` promised but not implemented), G7/G8 (context files detected but
-   never loaded), G3/G4 (checkpoint restore conflating absent with unreadable).
+3. Then the port gaps `audit/11` still lists: G3/G4 (the remaining checkpoint
+   restore semantics — a concurrent workstream is on G7/G8), G2 (resolved
+   containment, a design task), and the ranked P1 set.
+
 
 
 
