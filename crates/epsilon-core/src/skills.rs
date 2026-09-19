@@ -113,14 +113,25 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Skill> {
     out
 }
 
-/// Catalog text for the prompt CONTEXT tier: one line per skill (progressive disclosure —
-/// bodies cost nothing until invoked).
+/// Catalog text for the prompt CONTEXT tier: one line per skill the model may
+/// load (progressive disclosure — bodies cost nothing until invoked).
+///
+/// **Only model-loadable skills appear.** A skill marked
+/// `disable-model-invocation` is a procedure the user drives deliberately.
+/// Advertising it would leave the model holding a name it is not allowed to use,
+/// which is worse than not knowing it: an instruction it cannot follow invites a
+/// guess, and then an apology. The `skill` tool filters identically, so the
+/// catalog and the tool agree about what exists.
 pub fn catalog(skills: &[Skill]) -> String {
-    if skills.is_empty() {
+    let loadable = skills
+        .iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .collect::<Vec<_>>();
+    if loadable.is_empty() {
         return String::new();
     }
     let mut s = String::from("# Skills\nLoad a skill's full instructions before following them.\n");
-    for sk in skills {
+    for sk in loadable {
         s.push_str(&format!("- {}: {}\n", sk.name, sk.description));
     }
     s
@@ -150,6 +161,38 @@ mod tests {
             format!("---\nname: {dir}\ndescription: {fm}\n---\n{body}"),
         )
         .unwrap();
+    }
+
+    fn skill(name: &str, disable_model_invocation: bool) -> Skill {
+        Skill {
+            name: name.into(),
+            description: format!("{name} does a thing"),
+            dir: std::path::PathBuf::from(name),
+            disable_model_invocation,
+        }
+    }
+
+    #[test]
+    fn the_catalog_lists_only_what_the_model_may_load() {
+        // Advertising a skill the model cannot open is worse than hiding it: the
+        // instruction cannot be followed, so the model guesses and then apologises.
+        let skills = vec![skill("open", false), skill("user-only", true)];
+        let text = catalog(&skills);
+        assert!(text.contains("open"), "{text}");
+        assert!(
+            !text.contains("user-only"),
+            "a skill the model may not load must not be advertised: {text}"
+        );
+    }
+
+    #[test]
+    fn a_catalog_of_nothing_loadable_is_empty_rather_than_a_bare_heading() {
+        let text = catalog(&[skill("user-only", true)]);
+        assert!(
+            text.is_empty(),
+            "an empty Skills section is noise: {text:?}"
+        );
+        assert!(catalog(&[]).is_empty());
     }
 
     #[test]
