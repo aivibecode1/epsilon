@@ -4927,66 +4927,55 @@ fn composer_rows(input: &str, cursor_chars: usize, width: usize) -> (Vec<String>
 /// Command palette overlay (M16c, opencode command-palette pattern): fuzzy-filtered
 /// list of all commands with keybinding hints.
 fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+
     let entries = crate::picker::filter_palette(&app.input);
-    let width = (outer.width * 3 / 5).max(48).min(outer.width);
-    let height = 12u16.min(outer.height.saturating_sub(2));
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + 1;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    let width = Width::Fixed(64).resolve(outer);
+    let height = 14u16.min(outer.height.saturating_sub(2)).max(4);
+    let panel = Panel {
+        theme: &app.theme,
+        // Top-aligned rather than centred: the palette opens where the eye
+        // already is (the composer), and a centred panel would jump as the
+        // filter list changes height.
+        area: Rect {
+            y: outer.y + 1,
+            ..overlay::centered(outer, width, height)
+        },
+        title: "commands",
+        focused: true,
     };
+    let inner = panel.open(f);
 
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_active())
-        .title(Span::styled(
-            format!(" commands — filter: '{}' ", app.input),
-            crate::theme::Theme::accent(),
-        ));
-
+    let capacity = inner.height.saturating_sub(2).max(1) as usize;
+    let start = crate::scroll::scroll_start(entries.len(), app.picker_index, capacity);
     let mut lines: Vec<Line<'static>> = Vec::new();
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "no matching commands",
-            crate::theme::Theme::muted(),
+            app.theme.dim(),
         )));
     }
-    let capacity = area.height.saturating_sub(4).max(1) as usize;
-    let start = crate::scroll::scroll_start(entries.len(), app.picker_index, capacity);
-    let end = (start + capacity).min(entries.len());
-    for (i, entry) in entries.iter().enumerate().skip(start).take(end - start) {
-        let selected = i == app.picker_index;
-        let mut spans = vec![Span::styled(
-            entry.title.clone(),
-            if selected {
-                crate::theme::Theme::selected()
-            } else {
-                Style::default()
-            },
-        )];
-        if let Some(b) = entry.binding {
-            spans.push(Span::styled(
-                format!("  [{b}]"),
-                if selected {
-                    crate::theme::Theme::selected_muted()
-                } else {
-                    crate::theme::Theme::muted()
-                },
-            ));
-        }
-        lines.push(Line::from(spans));
+    for (index, entry) in entries.iter().enumerate().skip(start).take(capacity) {
+        lines.push(overlay::list_row(
+            &app.theme,
+            index == app.picker_index,
+            &entry.title,
+            entry.binding.map(|b| format!("[{b}]")).as_deref(),
+            inner.width as usize,
+        ));
     }
+    // The filter itself lives in the title bar, so the body stays a pure list.
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "type to filter · ↑/↓ move · Enter run · Esc close",
-        crate::theme::Theme::muted(),
-    )));
-
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    lines.push(overlay::hint_row(
+        &app.theme,
+        &[
+            ("type", "filter"),
+            ("↑↓", "move"),
+            ("enter", "run"),
+            ("esc", "close"),
+        ],
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 // (M17b: slash registry moved to `picker::SLASH_ITEMS`/`picker::slash_items` —
@@ -5166,52 +5155,64 @@ fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) 
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+/// The permission dialog.
+///
+/// This is the most important screen in the harness: it is the moment the user
+/// decides whether the agent may do something. It is drawn with the *danger*
+/// accent rather than the ordinary focus accent, because "this owned the
+/// keyboard" and "this can authorize a write" are different statements, and
+/// telling them apart at a glance is the point.
+///
+/// The body answers three questions in the order they are asked: what capability,
+/// against what, and with what arguments.
 fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
-    let width = (outer.width * 3 / 5).max(40).min(outer.width);
-    let height = 9u16.min(outer.height);
-    let x = outer.x + (outer.width.saturating_sub(width)) / 2;
-    let y = outer.y + (outer.height.saturating_sub(height)) / 2;
-    let area = Rect {
-        x,
-        y,
-        width,
-        height,
+    use crate::ui::overlay::{self, Panel, Width};
+
+    let width = Width::PROMPT.resolve(outer);
+    let height = 11u16.min(outer.height);
+    let panel = Panel {
+        theme: &app.theme,
+        area: overlay::centered(outer, width, height),
+        title: "permission required",
+        focused: true,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+
+    let body: Vec<Line<'static>> = match app.pending_ask.as_ref() {
+        Some(ask) => {
+            let req = &ask.request;
+            // A labelled field, then its value: the label is dim so a reader
+            // scanning for the answer skips it, and the value is not.
+            let field = |label: &str, value: String| {
+                Line::from(vec![
+                    Span::styled(format!("{label:<10}"), theme.faint()),
+                    Span::styled(value, theme.text()),
+                ])
+            };
+            vec![
+                field("capability", req.capability.clone()),
+                field("pattern", req.pattern.clone()),
+                field("detail", summarize_detail(&req.detail)),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("y", theme.success()),
+                    Span::styled(" allow once", theme.dim()),
+                    Span::styled("    a", theme.success()),
+                    Span::styled(" always this session", theme.dim()),
+                ]),
+                Line::from(vec![
+                    Span::styled("n", theme.danger()),
+                    Span::styled(" deny", theme.dim()),
+                    Span::styled("          e", theme.danger()),
+                    Span::styled(" deny with guidance", theme.dim()),
+                ]),
+            ]
+        }
+        None => vec![Line::from(Span::styled("resolving…", theme.dim()))],
     };
 
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::auth())
-        .title(Span::styled(
-            " permission required ",
-            crate::theme::Theme::auth().add_modifier(Modifier::BOLD),
-        ));
-
-    let body: Vec<Line<'static>> = if let Some(ask) = app.pending_ask.as_ref() {
-        let req = &ask.request;
-        vec![
-            Line::from(Span::styled(
-                format!("capability: {}", req.capability),
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(format!("pattern:   {}", req.pattern)),
-            Line::from(format!("detail:    {}", summarize_detail(&req.detail))),
-            Line::from(""),
-            Line::from(Span::styled(
-                "[y] allow once   [a] always this session",
-                Style::default().fg(Color::Green),
-            )),
-            Line::from(Span::styled(
-                "[n] deny         [e] deny with guidance",
-                Style::default().fg(Color::Red),
-            )),
-        ]
-    } else {
-        vec![Line::from("resolving…")]
-    };
-
-    let para = Paragraph::new(body).block(block);
-    f.render_widget(para, area);
+    f.render_widget(Paragraph::new(body), inner);
 }
 
 /// M32: masked API-key prompt (opencode DialogPrompt parity). The real key
@@ -5662,7 +5663,7 @@ mod tests {
             "the timeline covered the approval dialog: {screen}"
         );
         assert!(
-            rows.iter().any(|r| r.contains("capability: bash")),
+            rows.iter().any(|r| r.contains("capability") && r.contains("bash")),
             "the dialog body is buried: {screen}"
         );
 
