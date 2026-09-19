@@ -255,28 +255,49 @@ impl CheckpointStore {
 
     /// Restore `path` to the state recorded in `entry`.
     ///
-    /// Returns the number of bytes written, or `0` when the entry means the file did not exist and
-    /// was removed. The restore itself is only recorded by the caller's next mutation — reverting is
-    /// a change like any other, and the caller owns the mutation queue that keeps writers serialized.
+    /// Returns the number of bytes written, or `0` when the entry means the file
+    /// did not exist and was removed. The restore itself is only recorded by the
+    /// caller's next mutation — reverting is a change like any other, and the
+    /// caller owns the mutation queue that keeps writers serialized.
+    ///
+    /// # No blob is two different situations, and only one of them means "delete"
+    ///
+    /// `blob: None` is written for a file that did not exist, so reverting means
+    /// removing it. It is *also* written for a file whose capture was **skipped**
+    /// — too large, unreadable, or outside the workspace. Those entries carry
+    /// `existed: true` and a `skipped` reason.
+    ///
+    /// Treating the second case like the first turns "we could not save this
+    /// file" into "delete this file". That is the worst outcome a revert path can
+    /// produce: the user asks to undo a large file's edit, and loses the file.
+    /// So a missing blob on a file that existed is an error the caller must see,
+    /// never a silent removal.
     pub fn restore(&self, workspace: &Path, entry: &Entry) -> Result<u64, String> {
         let target = workspace.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
-        match &entry.blob {
-            Some(blob) => {
-                let bytes = std::fs::read(self.blob_path(blob))
-                    .map_err(|e| format!("checkpoint blob {blob} is missing: {e}"))?;
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
-                }
-                std::fs::write(&target, &bytes).map_err(|e| format!("write: {e}"))?;
-                Ok(bytes.len() as u64)
+        let Some(blob) = &entry.blob else {
+            if entry.existed {
+                let why = entry
+                    .skipped
+                    .as_deref()
+                    .unwrap_or("the reason was not recorded");
+                return Err(format!(
+                    "cannot restore {}: nothing was captured for it ({why}). \
+                     The file is untouched rather than removed — revert it by hand.",
+                    entry.path
+                ));
             }
-            None => {
-                if target.exists() {
-                    std::fs::remove_file(&target).map_err(|e| format!("remove: {e}"))?;
-                }
-                Ok(0)
+            if target.exists() {
+                std::fs::remove_file(&target).map_err(|e| format!("remove: {e}"))?;
             }
+            return Ok(0);
+        };
+        let bytes = std::fs::read(self.blob_path(blob))
+            .map_err(|e| format!("checkpoint blob {blob} is missing: {e}"))?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
         }
+        std::fs::write(&target, &bytes).map_err(|e| format!("write: {e}"))?;
+        Ok(bytes.len() as u64)
     }
 
     /// Total bytes of blobs on disk.
@@ -457,6 +478,57 @@ mod tests {
             .expect("the skip is recorded");
         assert!(entry.skipped.is_some());
         assert!(entry.blob.is_none());
+    }
+
+    #[test]
+    fn reverting_a_skipped_capture_refuses_instead_of_deleting_the_file() {
+        // The failure this pins is the worst one a revert path can produce. An
+        // oversized file is recorded with `blob: None` and `existed: true`; an
+        // entry for a file that never existed also has `blob: None`. Treating
+        // them alike means "we could not save this" becomes "delete this", so the
+        // user asks to undo one edit and loses the whole file.
+        let dir = ws();
+        let file = dir.path().join("src/big.bin");
+        let original = vec![7u8; (MAX_FILE_BYTES + 1) as usize];
+        std::fs::write(&file, &original).unwrap();
+        let store = CheckpointStore::open(dir.path());
+        let _ = store.record(dir.path(), &file, "write");
+        let entry = store.latest_for("src/big.bin").expect("skip recorded");
+
+        let err = store
+            .restore(dir.path(), &entry)
+            .expect_err("a skipped capture cannot be restored");
+        assert!(
+            err.contains("nothing was captured"),
+            "the refusal must say why: {err}"
+        );
+        assert!(
+            file.exists(),
+            "the file must survive a revert that could not restore it"
+        );
+        assert_eq!(
+            std::fs::read(&file).expect("still readable"),
+            original,
+            "and its contents must be untouched"
+        );
+    }
+
+    #[test]
+    fn reverting_a_file_that_never_existed_still_removes_it() {
+        // The other half: `existed: false` really does mean "delete on revert",
+        // and the refusal above must not have swallowed that case.
+        let dir = ws();
+        let file = dir.path().join("src/fresh.rs");
+        let store = CheckpointStore::open(dir.path());
+        assert_eq!(store.record(dir.path(), &file, "write"), Recorded::Created);
+        let entry = store.latest_for("src/fresh.rs").expect("entry recorded");
+        std::fs::write(&file, "created by the agent").unwrap();
+
+        assert_eq!(store.restore(dir.path(), &entry).expect("restores"), 0);
+        assert!(
+            !file.exists(),
+            "a file the agent created is removed by reverting its creation"
+        );
     }
 
     #[test]
