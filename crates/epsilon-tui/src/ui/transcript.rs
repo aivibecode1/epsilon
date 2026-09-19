@@ -88,7 +88,12 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
 /// adds the two-column gutter and, where the terminal supports it, the band that
 /// runs to the right edge. Doing it here rather than in the cache keeps the cache
 /// independent of the theme, so switching colour mode does not invalidate it.
-pub fn decorate(theme: &Theme, kind: LineKind, body: Vec<Span<'static>>, width: usize) -> Line<'static> {
+pub fn decorate(
+    theme: &Theme,
+    kind: LineKind,
+    body: Vec<Span<'static>>,
+    width: usize,
+) -> Line<'static> {
     let (glyph, gutter_style, _body_style, band) = row_style(theme, kind);
     let mut spans = Vec::with_capacity(body.len() + 2);
     let padded = format!("{glyph:<GUTTER$}");
@@ -97,7 +102,10 @@ pub fn decorate(theme: &Theme, kind: LineKind, body: Vec<Span<'static>>, width: 
     if band != Style::default() {
         // The band has to reach the right edge, or it reads as a highlight on
         // the text rather than as a block of speech.
-        let used: usize = spans.iter().map(|s| crate::ui::layout::display_width(&s.content)).sum();
+        let used: usize = spans
+            .iter()
+            .map(|s| crate::ui::layout::display_width(&s.content))
+            .sum();
         if used < width {
             spans.push(Span::styled(" ".repeat(width - used), band));
         }
@@ -122,7 +130,11 @@ pub fn welcome(theme: &Theme, width: usize) -> Vec<Line<'static>> {
     let title = "EPSILON";
     // A plain, wide-tracked wordmark. Not ASCII art: art breaks on a narrow
     // terminal and reads as noise on a re-read.
-    let tracked = title.chars().map(|c| c.to_string()).collect::<Vec<_>>().join(" ");
+    let tracked = title
+        .chars()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(tracked, theme.accent())));
     lines.push(Line::from(Span::styled(
@@ -237,7 +249,11 @@ mod tests {
     fn a_banded_row_fills_to_the_right_edge() {
         let theme = Theme::new(ColorMode::Truecolor, UNICODE);
         let line = decorate(&theme, LineKind::User, vec![Span::raw("hi")], 20);
-        let total: usize = line.spans.iter().map(|s| crate::ui::layout::display_width(&s.content)).sum();
+        let total: usize = line
+            .spans
+            .iter()
+            .map(|s| crate::ui::layout::display_width(&s.content))
+            .sum();
         assert_eq!(total, 20, "band did not reach the edge");
     }
 
@@ -247,7 +263,11 @@ mod tests {
         // and make `NO_COLOR` output differ from coloured output for no reason.
         let theme = Theme::new(ColorMode::None, ASCII);
         let line = decorate(&theme, LineKind::Assistant, vec![Span::raw("hi")], 20);
-        let total: usize = line.spans.iter().map(|s| crate::ui::layout::display_width(&s.content)).sum();
+        let total: usize = line
+            .spans
+            .iter()
+            .map(|s| crate::ui::layout::display_width(&s.content))
+            .sum();
         assert_eq!(total, GUTTER + 2);
     }
 

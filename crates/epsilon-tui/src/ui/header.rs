@@ -213,7 +213,10 @@ mod tests {
             &metrics,
         );
         assert!(line.contains("DeepSeek"), "model name trimmed away: {line}");
-        assert!(line.contains("running"), "run state must survive too: {line}");
+        assert!(
+            line.contains("running"),
+            "run state must survive too: {line}"
+        );
         // The near end of the measurements is what yields, so the fragment that
         // says what every other number means is never the casualty.
         assert!(!line.contains("ctx"), "nothing should be invented: {line}");

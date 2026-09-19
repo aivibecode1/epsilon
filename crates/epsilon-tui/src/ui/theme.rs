@@ -367,7 +367,6 @@ impl Theme {
         self.role(Role::user, Emphasis::Plain)
     }
 
-
     /// What the model said.
     pub fn assistant(&self) -> Style {
         self.role(Role::assistant, Emphasis::Plain)
@@ -391,7 +390,6 @@ impl Theme {
         self.role(Role::danger, Emphasis::Plain)
     }
 
-
     /// Something the reader should act on.
     pub fn warn(&self) -> Style {
         self.role(Role::warn, Emphasis::Plain)
@@ -408,7 +406,6 @@ impl Theme {
     pub fn code(&self) -> Style {
         self.role(Role::code, Emphasis::Plain)
     }
-
 
     /// Fenced code bodies.
     pub fn code_block(&self) -> Style {
@@ -492,12 +489,10 @@ impl Theme {
         self.surface(Role::surface_pending)
     }
 
-
     /// The band behind a tool call that succeeded.
     pub fn surface_ok(&self) -> Style {
         self.surface(Role::surface_ok)
     }
-
 
     /// The band behind a tool call that failed.
     pub fn surface_err(&self) -> Style {

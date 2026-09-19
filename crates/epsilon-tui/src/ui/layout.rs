@@ -72,16 +72,22 @@ impl Regions {
         let composer = composer_rows.clamp(1, Self::composer_cap(area.height));
         // `Min(1)` rather than `Fill`: with `Fill` a very short screen hands the
         // transcript a zero-height rectangle and the body silently disappears.
-        let [header, transcript, transcript_rule, composer_area, composer_rule, footer] =
-            Layout::vertical([
-                Constraint::Length(1),
-                Constraint::Min(1),
-                Constraint::Length(1),
-                Constraint::Length(composer),
-                Constraint::Length(1),
-                Constraint::Length(1),
-            ])
-            .areas(area);
+        let [
+            header,
+            transcript,
+            transcript_rule,
+            composer_area,
+            composer_rule,
+            footer,
+        ] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(composer),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
         Self {
             header,
             transcript,
@@ -289,11 +295,7 @@ pub fn clamp_line(
     line: ratatui::text::Line<'static>,
     width: usize,
 ) -> ratatui::text::Line<'static> {
-    let total: usize = line
-        .spans
-        .iter()
-        .map(|s| display_width(&s.content))
-        .sum();
+    let total: usize = line.spans.iter().map(|s| display_width(&s.content)).sum();
     if total <= width {
         return line;
     }
@@ -346,7 +348,6 @@ pub fn cut_keeping_tail(
     out
 }
 
-
 /// Cut styled spans to at most `width` columns, keeping whole characters.
 ///
 /// A wide glyph that does not fit is dropped rather than halved: half a CJK
@@ -382,7 +383,6 @@ pub fn cut(
     }
     out
 }
-
 
 /// Read one screen row back as text.
 ///

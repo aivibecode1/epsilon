@@ -75,7 +75,12 @@ pub fn draw(
     let skip = caret_row.saturating_sub(area.height as usize - 1);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    for (index, text) in rows.iter().enumerate().skip(skip).take(area.height as usize) {
+    for (index, text) in rows
+        .iter()
+        .enumerate()
+        .skip(skip)
+        .take(area.height as usize)
+    {
         let is_first = index == 0;
         let prompt = if is_first { glyphs.bullet } else { " " };
         let prompt_style = if focused {
@@ -122,8 +127,8 @@ mod tests {
 
     fn render_rows(width: u16, rows: &[String], caret: (usize, usize)) -> String {
         let theme = Theme::new(ColorMode::Ansi16, ASCII);
-        let mut terminal = Terminal::new(TestBackend::new(width, rows.len() as u16))
-            .expect("test terminal");
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, rows.len() as u16)).expect("test terminal");
         terminal
             .draw(|f| draw(f, f.area(), &theme, rows, caret.0, caret.1, true))
             .expect("draw");

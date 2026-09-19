@@ -174,7 +174,11 @@ mod tests {
         };
         for width in [30u16, 50, 80, 120] {
             let line = render(width, &hints);
-            assert_eq!(crate::ui::layout::display_width(&line), width as usize, "width {width}");
+            assert_eq!(
+                crate::ui::layout::display_width(&line),
+                width as usize,
+                "width {width}"
+            );
             assert!(line.contains("main"), "width {width}: {line}");
         }
         // Narrower than the location: show the location, drop the hints.
@@ -192,7 +196,10 @@ mod tests {
                 "width {width} overflowed to {} cells: {line:?}",
                 crate::ui::layout::display_width(&line)
             );
-            assert!(!line.ends_with(' '), "trailing padding looks like a bug: {line:?}");
+            assert!(
+                !line.ends_with(' '),
+                "trailing padding looks like a bug: {line:?}"
+            );
         }
     }
 }

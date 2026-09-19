@@ -6,7 +6,6 @@
 //! makes that policy invisible and lets two screens disagree about the same
 //! number — which is exactly how a status bar starts lying.
 
-
 /// Format a token count so it keeps a stable width as the number grows.
 ///
 /// The rules, kept from the reference behaviour because users read these fluently:
@@ -120,7 +119,12 @@ pub fn format_path(path: &std::path::Path, home: Option<&std::path::Path>, width
         // Nothing fits whole: hard-truncate, keeping the tail characters.
         let chars: Vec<char> = shown.chars().collect();
         let keep = width.saturating_sub(1);
-        return format!("…{}", chars[chars.len().saturating_sub(keep)..].iter().collect::<String>());
+        return format!(
+            "…{}",
+            chars[chars.len().saturating_sub(keep)..]
+                .iter()
+                .collect::<String>()
+        );
     }
     format!("…{}{tail}", std::path::MAIN_SEPARATOR)
 }

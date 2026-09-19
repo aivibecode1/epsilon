@@ -62,7 +62,9 @@ impl Width {
                 numerator,
                 denominator,
                 min,
-            } => (outer.width * numerator / denominator).max(min).min(outer.width),
+            } => (outer.width * numerator / denominator)
+                .max(min)
+                .min(outer.width),
             Self::Fixed(width) => width.min(outer.width),
         }
     }
@@ -122,7 +124,13 @@ impl Panel<'_> {
             Span::styled(title, self.theme.title()),
             Span::styled(right, border),
         ]);
-        f.render_widget(Paragraph::new(top), Rect { height: 1, ..self.area });
+        f.render_widget(
+            Paragraph::new(top),
+            Rect {
+                height: 1,
+                ..self.area
+            },
+        );
 
         if self.area.height >= 2 {
             let bottom = Line::from(Span::styled(
@@ -203,7 +211,10 @@ pub fn list_row(
         theme.text()
     };
     let mut spans = vec![
-        Span::styled(format!("{bar}{}", " ".repeat(GUTTER_AFTER_BAR)), theme.accent()),
+        Span::styled(
+            format!("{bar}{}", " ".repeat(GUTTER_AFTER_BAR)),
+            theme.accent(),
+        ),
         Span::styled(label.to_string(), label_style),
     ];
     if let Some(meta) = meta {
@@ -296,8 +307,7 @@ mod tests {
         for width in [20u16, 46, 80, 120] {
             let theme = theme();
             let area = Rect::new(0, 0, width, 3);
-            let mut terminal =
-                Terminal::new(TestBackend::new(width, 3)).expect("test terminal");
+            let mut terminal = Terminal::new(TestBackend::new(width, 3)).expect("test terminal");
             terminal
                 .draw(|f| {
                     Panel {

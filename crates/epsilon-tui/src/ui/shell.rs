@@ -234,8 +234,7 @@ mod tests {
                 caret: (0, text_width),
                 ..shell(&theme, false)
             };
-            let mut terminal =
-                Terminal::new(TestBackend::new(width, 12)).expect("test terminal");
+            let mut terminal = Terminal::new(TestBackend::new(width, 12)).expect("test terminal");
             terminal
                 .draw(|f| {
                     paint(f, f.area(), &sh, |_, _| {});
