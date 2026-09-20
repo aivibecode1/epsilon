@@ -126,6 +126,13 @@ fixing precisely because they make every other claim harder to trust:
 - The M95 review record lived only in `%LOCALAPPDATA%\Temp`, outside the repo.
 - `audit/10-tui-enhancement.md` names evidence logs whose names disagree with
   their contents (`tui-full-green.log` is a RED run).
+- `epsilon --help` opens by promising "every flag, env var and file, in full" and
+  omitted `epsilon doctor` — a documented subcommand the binary accepts. Found
+  while checking the README's commands against the binary rather than against the
+  documentation, which is the check that catches this class; fixed in the same
+  commit as the reference-version corrections.
+- `agents/memory/next-hardening.md` still describes a baseline from before the
+  TUI work and does not mention the terminal integration test.
 
 ## 3. The plan
 

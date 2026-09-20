@@ -1,6 +1,15 @@
 # Next hardening slice
 
 ## Baseline now reproducible
+
+**This section is historical.** It describes the M83 candidate; the suite has more
+than doubled since and the numbers below are not today's. The live baseline is
+`audit/11-current-assessment.md`, and the verification command list is in
+`AGENTS.md`. Kept because the *method* it records — freeze a candidate, hash it,
+run the gates against those bytes, and keep the evidence — is still how a round is
+verified here, and because deleting a worked example of it would lose more than
+the stale numbers cost.
+
 - b57c8bf integrates the required companion sources forward. All 169 committed
   source/manifest/script/asset files match the isolated verified candidate.
 - Gates: 740 passed, 0 failed; all five gates green; locked real/offline checks pass.
@@ -10,14 +19,28 @@
   audit/evidence/integration-*-review.json. No release/security certification.
 - The earlier 794-test result describes broader uncommitted owner work, not HEAD.
 
+## Since M83 (2026-09-20)
+
+- Suite: **985 passed, 0 failed, 1 ignored** on the workspace; add ~45 s for
+  `crates/epsilon-cli/tests/terminal.rs`, which drives the built binary through a
+  real pseudo-console and is the only test that can fail because the program never
+  reached a terminal. Invocation in `AGENTS.md`.
+- TUI: `app.rs` 6,700 → 3,594 lines, with the keyboard model, the event loop and
+  the test modules beside it; `ui/` owns everything that draws. See
+  `agents/memory/tui-redesign.md`.
+- The owner-reported "shrink and freeze" was the bash tool spawning
+  `powershell -Command` without `-NoProfile` — 6.2 s per call. Not a rendering bug.
+
+
 ## Operating notes (this machine)
 - One build owner; batteries run with `CARGO_BUILD_JOBS=1` and an external
   `CARGO_TARGET_DIR` (every failure at parallel jobs was 0xc0000142 compiler startup;
   single-job + external has passed every round since).
 - **Give every battery attempt its own label** (`gate-m86-88b`, never reuse): the wrapper
   truncates `target/gate-<label>.log` on start, so reusing a label destroys the failed
-  attempt's evidence. (Learned 2026-09-18 — an attempt-1 log was lost that way; the rule
-  belongs in AGENTS.md but that write needs owner approval.)
+  attempt's evidence. (Learned 2026-09-18 — an attempt-1 log was lost that way. The rule
+  is now in AGENTS.md under "Verification rounds on this machine", so this note is the
+  story rather than the only record.)
 - `kill -0` is unreliable on MSYS for liveness — use the process tool or log growth.
   To stop a battery, take the WINPID of the MSYS wrapper from `ps -W` and run
   `MSYS_NO_PATHCONV=1 taskkill /F /PID <WINPID>`; the process tool's kill can time out
