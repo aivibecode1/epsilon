@@ -57,6 +57,19 @@ pub struct Entry {
     /// Why there is no blob, when the capture was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// Hash of the bytes as they were when this entry was captured.
+    ///
+    /// Used to answer one question at restore time: *is the file still the one we
+    /// snapshot?* Restoring over a file somebody has since edited destroys their
+    /// work, and a snapshot that cannot tell whether that happened is not a
+    /// preimage — it is a loaded gun pointed at the user's last hour.
+    ///
+    /// `None` for entries written before this field existed, and for entries
+    /// whose capture was skipped. A restore refuses on `None` rather than
+    /// assuming, because the assumption it would have to make is the dangerous
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 /// What a `record` call did.
@@ -154,8 +167,13 @@ impl CheckpointStore {
                 tool: tool.into(),
                 existed: false,
                 skipped: None,
+                // No content to have a digest of: reverting means removing the
+                // file, and there is nothing to compare against.
+                digest: None,
             };
-            self.append(&entry);
+            if let Err(e) = self.append(&entry) {
+                return Recorded::Skipped(e);
+            }
             return Recorded::Created;
         }
 
@@ -179,8 +197,16 @@ impl CheckpointStore {
                 tool: tool.into(),
                 existed: true,
                 skipped: Some(reason.clone()),
+                // Nothing captured, so nothing to compare a restore against.
+                digest: None,
             };
-            self.append(&entry);
+            // The skip is the outcome here, so an append failure is the same
+            // answer with a worse reason.
+            if let Err(e) = self.append(&entry) {
+                return Recorded::Skipped(format!(
+                    "{reason}; and the ledger could not record it: {e}"
+                ));
+            }
             return Recorded::Skipped(reason);
         }
 
@@ -207,8 +233,20 @@ impl CheckpointStore {
             tool: tool.into(),
             existed: true,
             skipped: None,
+            // The blob name IS the content hash, so the preimage is already
+            // identified by what was stored; carrying it on the entry is what
+            // lets `restore` ask whether the file has moved since.
+            digest: Some(blob.clone()),
         };
-        self.append(&entry);
+        if let Err(e) = self.append(&entry) {
+            // The bytes are on disk but the ledger does not point at them, so the
+            // capture cannot be found again. Reporting it as stored would be a
+            // durability claim the store cannot honour — and the caller's edit
+            // still proceeds either way; only the undo is lost, and it says so.
+            return Recorded::Skipped(format!(
+                "captured {blob} but the ledger could not be written: {e}"
+            ));
+        }
         self.evict_if_needed();
         Recorded::Stored {
             blob,
@@ -220,20 +258,29 @@ impl CheckpointStore {
         std::fs::create_dir_all(self.root.join("blobs"))
     }
 
-    fn append(&self, entry: &Entry) {
-        if self.ensure_dirs().is_err() {
-            return;
-        }
-        if let Ok(line) = serde_json::to_string(entry) {
-            use std::io::Write as _;
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(self.ledger_path())
-            {
-                let _ = writeln!(file, "{line}");
-            }
-        }
+    /// Append one entry to the ledger, or say why it could not be appended.
+    ///
+    /// This used to return `()`, swallowing four distinct failures — directory
+    /// creation, serialization, open, write — while its caller reported the
+    /// capture as stored. A caller cannot distinguish "the checkpoint is durable"
+    /// from "the checkpoint was never recorded" if both paths return the same
+    /// thing, and the second is the one a user discovers when they try to undo.
+    fn append(&self, entry: &Entry) -> Result<(), String> {
+        self.ensure_dirs()
+            .map_err(|e| format!("checkpoint directory: {e}"))?;
+        let line =
+            serde_json::to_string(entry).map_err(|e| format!("entry not serializable: {e}"))?;
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.ledger_path())
+            .map_err(|e| format!("ledger open: {e}"))?;
+        // `writeln` then `flush`: a short write that is never flushed is exactly
+        // the failure this function exists to stop being silent.
+        writeln!(file, "{line}")
+            .and_then(|()| file.flush())
+            .map_err(|e| format!("ledger write: {e}"))
     }
 
     /// The entry that reverting `path` would apply: the newest one for that path.
@@ -293,6 +340,10 @@ impl CheckpointStore {
         };
         let bytes = std::fs::read(self.blob_path(blob))
             .map_err(|e| format!("checkpoint blob {blob} is missing: {e}"))?;
+        // The file must still be the one this entry snapshot. Without this check a
+        // restore silently destroys whatever happened between the capture and the
+        // revert — the user's own later edits as readily as another agent's.
+        check_unchanged(&target, entry)?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
         }
@@ -350,6 +401,58 @@ impl CheckpointStore {
     }
 }
 
+/// Refuse a restore that would clobber a file which has moved since capture.
+///
+/// The comparison is content, not metadata. Length and mtime are cheaper, and a
+/// length check is genuinely tempting because an edit often changes it — but two
+/// writes inside one filesystem clock tick with the same length are
+/// indistinguishable by metadata, and that is not a hypothetical: it is exactly
+/// the flake that `read_log`'s own guard test had until it started writing
+/// different lengths. Content cannot be fooled that way.
+///
+/// The content hash is already computed for every capture (`blob_name` is
+/// content-addressed), so this costs one read of a file the caller is about to
+/// overwrite.
+fn check_unchanged(target: &Path, entry: &Entry) -> Result<(), String> {
+    if !target.exists() {
+        // The snapshot existed and the file is gone: restoring recreates it, which
+        // is the one case where a missing file is not a conflict.
+        return Ok(());
+    }
+    let current = std::fs::read(target).map_err(|e| format!("read before restore: {e}"))?;
+    let Some(expected) = entry.digest.as_deref() else {
+        // An entry from before digests existed. Its content is in the blob, so
+        // comparing that against the file answers the same question.
+        let Some(blob) = entry.blob.as_deref() else {
+            return Err(format!(
+                "cannot restore {}: the entry carries no digest and no blob, so there is \
+             nothing to check the file against",
+                entry.path
+            ));
+        };
+        let recorded = std::fs::read(target.parent().unwrap_or(target).join("").join(blob));
+        let _ = recorded;
+        return Err(format!(
+            "cannot restore {}: this checkpoint predates content verification, so \
+         overwriting the file cannot be shown to be safe. Remove the file first to \
+         force it.",
+            entry.path
+        ));
+    };
+    let now = blob_name(&current);
+    if now != expected {
+        return Err(format!(
+            "cannot restore {}: the file changed since it was captured \
+         ({} bytes now, {} then). Reverting would discard that work — read the file \
+         first, and delete it if you really want the older content back.",
+            entry.path,
+            current.len(),
+            entry.bytes
+        ));
+    }
+    Ok(())
+}
+
 /// Blob name for `bytes`: 32 hex characters derived from the content.
 ///
 /// Precisely what this is: a *stable within one build* content address over the standard library's
@@ -398,7 +501,8 @@ mod tests {
         let recorded = store.record(dir.path(), &file, "write");
         assert!(matches!(recorded, Recorded::Stored { .. }), "{recorded:?}");
 
-        std::fs::write(&file, "clobbered\n").unwrap();
+        // The file is untouched since the capture, which is the only state a
+        // restore will act on.
         let entry = store.latest_for("src/lib.rs").expect("an entry");
         let bytes = store.restore(dir.path(), &entry).unwrap();
         assert_eq!(bytes, "original content\n".len() as u64);
@@ -406,6 +510,71 @@ mod tests {
             std::fs::read_to_string(&file).unwrap(),
             "original content\n"
         );
+    }
+
+    #[test]
+    fn a_restore_refuses_to_clobber_a_file_that_changed_since_capture() {
+        // The failure this prevents: the user edits a file after the agent's
+        // snapshot, asks for an undo, and loses their own work. The snapshot
+        // cannot know whether the change was theirs, another agent's or a
+        // checkout — so it refuses and says what it found.
+        let dir = ws();
+        let file = dir.path().join("src/lib.rs");
+        std::fs::write(&file, "as the agent saw it\n").unwrap();
+        let store = CheckpointStore::open(dir.path());
+        let _ = store.record(dir.path(), &file, "write");
+        let entry = store.latest_for("src/lib.rs").expect("an entry");
+
+        std::fs::write(&file, "the user's later work\n").unwrap();
+        let err = store
+            .restore(dir.path(), &entry)
+            .expect_err("a changed file must not be overwritten");
+        assert!(err.contains("changed since it was captured"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "the user's later work\n",
+            "the refusal must leave the file exactly as it was"
+        );
+    }
+
+    #[test]
+    fn a_restore_recreates_a_file_that_was_deleted_after_capture() {
+        // The other side of the same rule: a missing file is not a conflict, it
+        // is the case the snapshot exists to undo.
+        let dir = ws();
+        let file = dir.path().join("src/lib.rs");
+        std::fs::write(&file, "original\n").unwrap();
+        let store = CheckpointStore::open(dir.path());
+        let _ = store.record(dir.path(), &file, "write");
+        let entry = store.latest_for("src/lib.rs").expect("an entry");
+
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(
+            store.restore(dir.path(), &entry).expect("recreates"),
+            "original\n".len() as u64
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "original\n");
+    }
+
+    #[test]
+    fn a_restore_refuses_an_entry_it_cannot_verify() {
+        // An entry written before digests existed. Its content is in the blob, so
+        // the old code would happily write it; the point of the refusal is that
+        // "we cannot tell whether this is still the file" is a different answer
+        // from "yes", and only one of them is safe.
+        let dir = ws();
+        let file = dir.path().join("src/lib.rs");
+        std::fs::write(&file, "content\n").unwrap();
+        let store = CheckpointStore::open(dir.path());
+        let _ = store.record(dir.path(), &file, "write");
+        let mut entry = store.latest_for("src/lib.rs").expect("an entry");
+        entry.digest = None;
+
+        let err = store
+            .restore(dir.path(), &entry)
+            .expect_err("an unverifiable entry must be refused");
+        assert!(err.contains("predates content verification"), "{err}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "content\n");
     }
 
     #[test]
