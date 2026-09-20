@@ -23,6 +23,11 @@ Load only the reference the current task needs:
 | Sessions / transcript / composer / tools / palette | `references/ai-harness.md` |
 | Widget recipes and third-party crates | `references/widgets.md` |
 
+There is also a **working** theme to copy rather than re-derive: `assets/theme.rs`
+(role-based palette, colour-depth detection, `NO_COLOR` fallback, column-accurate
+width helpers, and tests). It compiles as-is and encodes four decisions that a
+naive token struct gets wrong — read its header comment before adapting it.
+
 ## Target versions
 
 - ratatui `0.30` (current patch 0.30.2, MSRV 1.88, edition 2024)
@@ -77,6 +82,21 @@ Do not hand-roll raw-mode + alt-screen + panic restore unless the project alread
 - Never encode state with color alone. Pair with text, symbol, or position.
 - Every action is keyboard-reachable. Vim keys (`hjkl`, `g`/`G`, `/`, `Esc`) are the default lingua franca outside insert mode.
 - Footer shows the keys that work **right now**, not a dump of the full keymap.
+- **Detect colour depth once, at startup, and carry it on the theme.** Claiming
+  24-bit colour on a console that lacks it produces unreadable output; falling
+  back to 16 colours merely looks plainer. `COLORTERM` and `WT_SESSION` are the
+  positive signals; the safe default is 16.
+- **Pair every glyph vocabulary with an ASCII fallback** (`EPSILON_ASCII=1` or
+  similar). A legacy code page renders `╭` as mojibake, and the answer cannot be
+  detected reliably — a documented switch beats a wrong guess.
+- **`NO_COLOR` still has to convey meaning.** Do not map every role to
+  `Style::default()`; give "background material" dim+italic and "the value you
+  must catch" bold. A theme that collapses under `NO_COLOR` makes reasoning
+  traces indistinguishable from answers.
+- **Withhold filled background bands on a 16-colour terminal** rather than
+  approximating them. A wrong background collides with whatever theme the user
+  already runs; a missing one just looks plainer, and the gutter glyph still
+  carries the distinction.
 
 ## Default AI-harness chrome
 
@@ -139,6 +159,38 @@ State what happens at 80×24 and 60×20:
 - When the app shows `terminal too small` instead of a broken layout
 
 A three-column design without a single-pane fallback is incomplete.
+
+## Traps that cost real time
+
+Each of these produced a bug that survived review, and each is cheap to avoid if
+you know it is there.
+
+- **Character counts are not columns.** `⠹`, `┌` and `界` are each one `char`
+  but one, one and two columns. Every width decision — layout, truncation, "does
+  this fit" — goes through `unicode-width`. Measured in `chars()` instead, rows
+  come out one cell too wide and wrap. See `assets/theme.rs`.
+- **`Cell::symbol()` can hold a repeated run.** ratatui coalesces adjacent
+  identical cells into one cell whose symbol repeats, so reading a screen buffer
+  back and concatenating symbols doubles characters (`100%` → `100%%`). Append
+  the whole symbol and step by its display width.
+- **`''.chars().all(..)` is vacuously true**, so "count the rows that are only
+  dashes" counts every blank row. Guard test predicates with a non-empty check.
+- **Trim a status row from its far end.** The half that yields must give up the
+  end touching the other half, or the leading fragments survive and the model
+  name — the one value that explains every other number — is what disappears.
+- **Clamp a one-row bar on the way out.** Two width tables (yours and ratatui's)
+  can disagree by a column on rare code points, so measure the finished line once
+  more and cut it to the area. That makes "this row must never wrap" structural
+  rather than a property of arithmetic that has to stay correct in every branch.
+- **Do not put lifecycle markers in the transcript.** `-- run start --` between
+  every question and answer turns a conversation into a log file. The header
+  already says whether a run is in flight; a row saying so is a third copy.
+- **When the UI looks frozen, time a tool call before reading any rendering
+  code.** A measured case: every Windows tool call spawned `powershell -Command`
+  without `-NoProfile`, loading the user's interactive profile first — 6.2 s for a
+  one-word `echo` against 1.1 s without it. From the TUI that is
+  indistinguishable from a deadlock, and it looked exactly like a rendering bug
+  for a long time. `cargo build` + a stopwatch beats reading the draw loop.
 
 ## Implementation defaults
 
