@@ -465,13 +465,14 @@ pub enum TrustRequiringResource {
     Extensions,
     /// `.epsilon/skills/` or `.agents/skills/` in the workspace tree.
     Skills,
-    /// `.epsilon/prompts/` (pi `prompts`: system-prompt overlays).
+    /// `.epsilon/prompts/` (pi `prompts`: user-invoked slash templates, not yet ported —
+    /// gated anyway, so the day they load they cannot load untrusted).
     Prompts,
     /// `.epsilon/themes/` (pi `themes`: TUI theme code).
     Themes,
-    /// `.epsilon/SYSTEM.md` (pi `SYSTEM.md`: appended system instructions).
+    /// `.epsilon/SYSTEM.md` (pi `SYSTEM.md`: replaces the built-in contract).
     SystemMd,
-    /// `.epsilon/APPEND_SYSTEM.md` (pi `APPEND_SYSTEM.md`).
+    /// `.epsilon/APPEND_SYSTEM.md` (pi `APPEND_SYSTEM.md`: appended to the system prompt).
     AppendSystemMd,
 }
 
@@ -985,6 +986,51 @@ mod tests {
             );
         }
         assert!(has_trust_requiring_resources(&ws));
+    }
+
+    #[test]
+    fn every_system_md_the_trust_gate_names_is_actually_loaded() {
+        // D-7 was a trust prompt with no effect: the two names were detected here and read
+        // nowhere (`epsilon_core::prompt` had no slot for either). Detection lives in this
+        // crate and loading in the next one, so the invariant has to be a test — otherwise
+        // the next name added to one list silently recreates the complaint.
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        assert!(
+            !trust_requiring_resources(&ws).contains(&TrustRequiringResource::SystemMd),
+            "an empty workspace asks for nothing"
+        );
+        assert_eq!(
+            epsilon_core::prompt::load_system_overlay_in(&ws, true, None),
+            epsilon_core::prompt::SystemOverlay::default()
+        );
+
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        std::fs::write(ws.join(".epsilon/SYSTEM.md"), "epsilon-contract").unwrap();
+        assert!(
+            trust_requiring_resources(&ws).contains(&TrustRequiringResource::SystemMd),
+            "the gate asks about it"
+        );
+        assert_eq!(
+            epsilon_core::prompt::load_system_overlay_in(&ws, true, None)
+                .custom
+                .as_deref(),
+            Some("epsilon-contract"),
+            "and trusting the project loads it"
+        );
+
+        std::fs::write(ws.join(".epsilon/APPEND_SYSTEM.md"), "epsilon-append").unwrap();
+        assert!(
+            trust_requiring_resources(&ws).contains(&TrustRequiringResource::AppendSystemMd),
+            "the gate asks about the append file too"
+        );
+        assert_eq!(
+            epsilon_core::prompt::load_system_overlay_in(&ws, true, None)
+                .append
+                .as_deref(),
+            Some("epsilon-append")
+        );
     }
 
     #[test]

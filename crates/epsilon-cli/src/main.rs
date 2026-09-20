@@ -109,8 +109,12 @@ FILES
   ~/.config/epsilon/history       prompt history
   .epsilon/sessions/*.jsonl       session transcripts for this workspace
   .epsilon/config.toml            project config (trust-gated)
-  AGENTS.md, CLAUDE.md, MEMORY.md project instructions and memory, injected into
-                                  the prompt's CONTEXT tier
+  AGENTS.override.md, AGENTS.md, CLAUDE.md, MEMORY.md
+                                  project instructions and memory, injected into the
+                                  prompt's CONTEXT tier; instruction files are read from
+                                  the workspace and every directory above it
+  .epsilon/SYSTEM.md              replaces the built-in agent contract (trust-gated)
+  .epsilon/APPEND_SYSTEM.md       appended to the system prompt (trust-gated)
   .epsilon/skills, .agents/skills, ~/.config/epsilon/skills
                                   SKILL.md skill folders (progressive disclosure)
 
@@ -1631,6 +1635,20 @@ async fn build_runtime(
     }
     agent.set_model_id(model_id);
     agent.set_skills(skills);
+    // Identity tier: `.epsilon/SYSTEM.md` replaces the built-in contract and
+    // `.epsilon/APPEND_SYSTEM.md` extends it (pi `discoverSystemPromptFile`). The same trust
+    // decision that gates skills decides whether the project's copy loads, so the prompt the
+    // user is asked about at startup is the prompt that takes effect; the global pair under
+    // ~/.config/epsilon is the fallback. Announced, because "I wrote SYSTEM.md, was asked to
+    // trust it, and nothing changed" is the report this wiring exists to answer.
+    let overlay = epsilon_core::prompt::load_system_overlay(workspace, project_trusted);
+    if let Some(path) = &overlay.custom_path {
+        eprintln!("system prompt: {path} replaces the built-in contract");
+    }
+    if let Some(path) = &overlay.append_path {
+        eprintln!("system prompt: {path} appended");
+    }
+    agent.set_system_overlay(overlay);
     // Agent defs (M50: pi `agents.ts` parity) — user roots always, project
     // roots only when trusted (same gate as skills). The `task` tool routes
     // `subagent_type` through these; unknown named types fail naming the list.

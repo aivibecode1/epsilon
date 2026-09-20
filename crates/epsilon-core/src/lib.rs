@@ -494,6 +494,10 @@ pub struct Agent {
     /// Role brief for delegated children (M50: agent-def system prompt).
     /// Rendered FIRST in the CONTEXT tier so role survives cache discipline.
     agent_brief: Mutex<String>,
+    /// Workspace-supplied replacement/extension of the STABLE tier's identity block
+    /// (`crate::prompt::SystemOverlay`; pi `SYSTEM.md` + `APPEND_SYSTEM.md`).
+    /// Frontend-attached, because the frontend owns the trust decision that guards it.
+    system_overlay: Mutex<crate::prompt::SystemOverlay>,
     /// What the last session resume had to repair (M75), so a frontend can tell the user what
     /// their session was missing. `None` when the session opened clean or was never attached.
     last_repair: Mutex<Option<epsilon_session::repair::RepairReport>>,
@@ -584,6 +588,7 @@ impl Agent {
             agents: Mutex::new(Vec::new()),
             task_depth: Mutex::new(0),
             agent_brief: Mutex::new(String::new()),
+            system_overlay: Mutex::new(crate::prompt::SystemOverlay::default()),
             touched_dirs: Mutex::new(Default::default()),
             last_repair: Mutex::new(None),
             tasks: Arc::new(Mutex::new(Vec::new())),
@@ -686,6 +691,26 @@ impl Agent {
         if let Ok(mut slot) = self.agent_brief.lock() {
             *slot = brief;
         }
+    }
+
+    /// Attach the workspace's identity-tier overlays (`.epsilon/SYSTEM.md` and
+    /// `.epsilon/APPEND_SYSTEM.md`, or the global pair).
+    ///
+    /// Discovery stays with the frontend because it owns the trust decision, exactly as it
+    /// does for skills: an untrusted checkout must not be able to replace the harness's own
+    /// contract. Setting this once at composition time is what makes a written `SYSTEM.md`
+    /// something other than a file the user was asked to trust for no reason.
+    pub fn set_system_overlay(&self, overlay: crate::prompt::SystemOverlay) {
+        if let Ok(mut slot) = self.system_overlay.lock() {
+            *slot = overlay;
+        }
+    }
+
+    fn system_overlay(&self) -> crate::prompt::SystemOverlay {
+        self.system_overlay
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     fn agent_list(&self) -> Vec<crate::agents::AgentDef> {
@@ -2154,8 +2179,18 @@ impl Agent {
                 .map(|s| s.clone())
                 .unwrap_or_else(|_| "faux-1".into()),
         };
+        // The identity overlays are discovered once per frontend, so a delegated child has to
+        // be handed the same ones: a child that ran under the built-in contract while its
+        // parent ran under the user's `SYSTEM.md` would be a different agent than the one the
+        // task was delegated from.
+        let overlay = self.system_overlay();
+        let stable = prompt::Stable {
+            tools: &tool_lines,
+            custom_identity: overlay.custom.as_deref(),
+            append: overlay.append.as_deref(),
+        };
         let system_prompt = prompt::build(
-            &prompt::Stable { tools: &tool_lines },
+            &stable,
             &prompt::ContextTier {
                 agent_brief: self
                     .agent_brief
@@ -2183,7 +2218,8 @@ impl Agent {
         );
         // The stable tier is what the provider is expected to keep cached; its fingerprint is
         // recorded with the call so an unexplained miss can be told from an explained one.
-        let stable_hash = prompt::stable_fingerprint(&prompt::Stable { tools: &tool_lines });
+        // The same `Stable` value that built the prompt, so the two cannot drift apart.
+        let stable_hash = prompt::stable_fingerprint(&stable);
 
         // CORE-02 request boundary (pi `agent-loop.ts:288-295`): transform the run's context
         // first, then convert to provider-visible messages. Both are pure reads — the store
@@ -2468,6 +2504,10 @@ impl Agent {
         child.set_thinking_level(self.thinking_level());
         // Child discovers the same skill catalog (read-only share).
         child.set_skills(self.skill_list());
+        // ...and the same identity overlays, for the same reason: the workspace's
+        // `SYSTEM.md` is the contract the user wrote for this repository, not a property of
+        // the top-level session.
+        child.set_system_overlay(self.system_overlay());
         // Child inherits agent defs (so ITS error messages name the same
         // types) at one deeper depth.
         child.set_agents(self.agent_list());

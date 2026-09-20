@@ -183,7 +183,9 @@ impl Facts {
             out.push_str(&format!("  instructions       {name} ({bytes} bytes)\n"));
         }
         if self.instructions.is_empty() {
-            out.push_str("  instructions       none (no AGENTS.md / CLAUDE.md at the root)\n");
+            out.push_str(
+                "  instructions       none (no AGENTS.md / CLAUDE.md / MEMORY.md at the root)\n",
+            );
         }
         match &self.project_config {
             Some((path, true)) => out.push_str(&format!("  project config     {path}\n")),
@@ -357,7 +359,18 @@ pub fn gather(inputs: &Inputs<'_>) -> Facts {
 
     // ---- workspace ---------------------------------------------------------------------------
     f.is_git_repo = inputs.workspace.join(".git").exists();
-    for name in ["AGENTS.md", "CLAUDE.md", "MEMORY.md"] {
+    // The candidate names the prompt loader consults at the root, in its own precedence
+    // order (`epsilon_core::prompt`): the first one present is the one that loads, and a
+    // report that omitted `AGENTS.override.md` would tell a user who has one that no
+    // instructions are loaded.
+    for name in [
+        "AGENTS.override.md",
+        "AGENTS.md",
+        "AGENTS.MD",
+        "CLAUDE.md",
+        "CLAUDE.MD",
+        "MEMORY.md",
+    ] {
         let p = inputs.workspace.join(name);
         if let Ok(meta) = std::fs::metadata(&p) {
             f.instructions.push((name.to_string(), meta.len()));
@@ -762,7 +775,7 @@ mod tests {
             "{out}"
         );
         assert!(
-            out.contains("none (no AGENTS.md / CLAUDE.md at the root)"),
+            out.contains("none (no AGENTS.md / CLAUDE.md / MEMORY.md at the root)"),
             "{out}"
         );
         assert!(out.contains("newest             none"), "{out}");

@@ -1,9 +1,11 @@
 //! Three-tier byte-stable system prompt assembly (ADR-008).
 //!
 //! Tiers, in fixed order:
-//! 1. **STABLE** — identity (the embedded agent contract) + tool list + global guidelines.
-//!    Byte-identical for a session lifetime; providers cache it.
-//! 2. **CONTEXT** — project instructions (AGENTS.md family), versioned by content hash.
+//! 1. **STABLE** — identity (the embedded agent contract, or the workspace's own
+//!    `SYSTEM.md` with `APPEND_SYSTEM.md` after the guidelines) + tool list + global
+//!    guidelines. Byte-identical for a session lifetime; providers cache it.
+//! 2. **CONTEXT** — project instructions (the AGENTS.md family, from the workspace and
+//!    from every ancestor above it), versioned by content hash.
 //! 3. **VOLATILE** — runtime snapshot (cwd/date/model); changes per turn, placed LAST so
 //!    stable prefixes survive.
 //!
@@ -29,6 +31,21 @@ pub struct ToolLine {
 pub struct Stable<'a> {
     /// Prompt-facing summaries of ACTIVE tools only.
     pub tools: &'a [ToolLine],
+    /// Text that replaces the embedded contract inside the identity block
+    /// (pi `.pi/SYSTEM.md`, loaded as `customPrompt`).
+    ///
+    /// Only the contract is replaced. The tool inventory and the guidelines below it are
+    /// generated from the live registry, so a user's prompt cannot leave the model
+    /// believing in a tool set that is not there; pi drops its own tool list along with
+    /// the default prompt (`core/system-prompt.ts:48-73`), which for us would trade a
+    /// documented divergence for a blind one.
+    pub custom_identity: Option<&'a str>,
+    /// Text appended at the end of this tier, after the guidelines (pi
+    /// `.pi/APPEND_SYSTEM.md`, `core/system-prompt.ts:41,146-148`).
+    ///
+    /// Last in the tier on purpose: it is the user's own instruction and the closest
+    /// thing to the conversation, which is the position a model reads as most specific.
+    pub append: Option<&'a str>,
 }
 
 /// Project-sourced instructions (AGENTS.md family), hash-tagged for observability.
@@ -63,9 +80,9 @@ pub struct Volatile<'a> {
 /// provider caches is the prefix up to the first differing byte, and for a session in good health
 /// that boundary is the end of this tier.
 ///
-/// A change in this number is a genuine cache event: the tool set or the identity block moved.
-/// That is the quantity ADR-008's discipline is supposed to hold constant, now measurable from
-/// the loop (`crate::cache_stats`).
+/// A change in this number is a genuine cache event: the tool set, the identity block, or
+/// the appended system text moved. That is the quantity ADR-008's discipline is supposed
+/// to hold constant, now measurable from the loop (`crate::cache_stats`).
 pub fn stable_fingerprint(stable: &Stable<'_>) -> u64 {
     fn mix(h: u64, bytes: &[u8]) -> u64 {
         let mut h = h;
@@ -76,11 +93,16 @@ pub fn stable_fingerprint(stable: &Stable<'_>) -> u64 {
         h
     }
     const SEED: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut h = mix(SEED, AGENT_CONTRACT.trim_end().as_bytes());
+    let identity = stable.custom_identity.unwrap_or(AGENT_CONTRACT);
+    let mut h = mix(SEED, identity.trim_end().as_bytes());
     for tool in stable.tools {
         h = mix(h, tool.name.as_bytes());
         h = mix(h, b"\0");
         h = mix(h, tool.snippet.as_bytes());
+    }
+    if let Some(extra) = stable.append {
+        h = mix(h, b"\0");
+        h = mix(h, extra.trim_end().as_bytes());
     }
     h
 }
@@ -94,7 +116,9 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
 
     // ---- Tier 1: STABLE ------------------------------------------------------------
     p.push_str("# Identity\n\n");
-    p.push_str(AGENT_CONTRACT.trim_end());
+    // `.epsilon/SYSTEM.md` replaces the contract; everything below it in the tier is
+    // generated from the running registry, so only this block is user-owned.
+    p.push_str(stable.custom_identity.unwrap_or(AGENT_CONTRACT).trim_end());
     p.push_str("\n\n# Available tools\n\n");
     if stable.tools.is_empty() {
         p.push_str("(no tools active)\n");
@@ -109,6 +133,13 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
          - Prefer the smallest sufficient tool; batch independent reads.\n\
          - Verify with the project's own checks after code changes; report failures honestly.\n",
     );
+    // pi appends `APPEND_SYSTEM.md` here: after the guidelines, before project context
+    // (`core/system-prompt.ts:146-148`), so it stays part of the cached prefix.
+    if let Some(extra) = stable.append {
+        p.push_str("\n\n");
+        p.push_str(extra.trim_end());
+        p.push('\n');
+    }
 
     // ---- Tier 2: CONTEXT -------------------------------------------------------------
     // Agent brief first (M50): the delegated child's role is the most stable
@@ -148,7 +179,7 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
     p
 }
 
-/// Load AGENTS.md-family files + persistent MEMORY.md that exist under `workspace`.
+/// Load AGENTS.md-family files + persistent MEMORY.md for `workspace`.
 ///
 /// Hermes-style durable memory: `MEMORY.md` at the workspace root is the *project*
 /// memory tier (long-lived project facts), while `~/.config/epsilon/MEMORY.md` (the
@@ -156,8 +187,15 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
 /// optional; missing files are silently skipped so a fresh install has zero
 /// ceremony. Loaded entries join the CONTEXT tier as hash-tagged
 /// `<project_instructions>` blocks — same prefix-cache discipline as AGENTS.md.
+///
+/// The context files themselves come from `workspace` **and every ancestor up to the
+/// filesystem root**, outermost first (pi `loadProjectContextFiles`,
+/// `core/resource-loader.ts:119-157`). pi's reason is the one that bites: a session
+/// opened in a subdirectory of a repository still has to see the repository's own
+/// instructions. Reading the list top-down, the outermost file is background and the
+/// nearest one is the last word — which is why the workspace's own file is pushed last
+/// rather than first, and why `MEMORY.md` (the most specific tier of all) follows it.
 pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
-    const AGENTS_CANDIDATES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
     const MEMORY_NAME: &str = "MEMORY.md";
     let mut out = Vec::new();
 
@@ -172,14 +210,25 @@ pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
         out.push((format!("~/.config/epsilon/{MEMORY_NAME}"), content));
     }
 
-    // Workspace AGENTS.md / CLAUDE.md — first match wins per file-type convention.
-    for name in AGENTS_CANDIDATES {
-        let path = workspace.join(name);
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            out.push((name.to_string(), content));
+    // Context files, outermost first: pi walks up from the workspace and unshifts each
+    // hit (`resource-loader.ts:140-152`), so the list it ends with is root-first.
+    let mut ancestors: Vec<(String, String)> = Vec::new();
+    let mut dir: Option<&Path> = Some(workspace);
+    while let Some(d) = dir {
+        // A relative workspace bottoms out at the empty path, whose "AGENTS.md" would
+        // resolve against the process's own directory — a file nobody asked for.
+        if d.as_os_str().is_empty() {
             break;
         }
+        if let Some(path) = context_file_in(d)
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            ancestors.push((context_file_label(workspace, &path), content));
+        }
+        dir = d.parent();
     }
+    ancestors.reverse();
+    out.extend(ancestors);
 
     // Workspace MEMORY.md is additive (not mutually exclusive with AGENTS.md).
     let ws_memory = workspace.join(MEMORY_NAME);
@@ -190,6 +239,132 @@ pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
     }
 
     out
+}
+
+/// Candidate context-file names for ONE directory, in pi's precedence order
+/// (`core/resource-loader.ts:72`).
+///
+/// `AGENTS.override.md` leads because it exists to be the exception: it is how a
+/// machine-local or personal note overrides a checked-in `AGENTS.md` without the user
+/// editing a tracked file.
+const CONTEXT_FILE_CANDIDATES: [&str; 5] = [
+    "AGENTS.override.md",
+    "AGENTS.md",
+    "AGENTS.MD",
+    "CLAUDE.md",
+    "CLAUDE.MD",
+];
+
+/// The single context file that governs `dir`, or `None` when the directory has none.
+///
+/// One file per directory, first existing candidate wins (pi `loadContextFileFromDir`,
+/// `core/resource-loader.ts:71-90`). Loading an `AGENTS.md` *and* the
+/// `AGENTS.override.md` sitting beside it would make "override" mean "add", which is the
+/// opposite of what the name promises.
+fn context_file_in(dir: &Path) -> Option<std::path::PathBuf> {
+    CONTEXT_FILE_CANDIDATES
+        .iter()
+        .map(|name| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+/// How a context file is named in the prompt.
+///
+/// Workspace-relative while the file is inside the workspace, because that is how a user
+/// refers to their own instructions; absolute above it, because `../AGENTS.md` repeated
+/// once per level would name no location the model can act on.
+fn context_file_label(workspace: &Path, path: &Path) -> String {
+    path.strip_prefix(workspace)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Identity-tier text a workspace supplies to replace or extend the built-in contract
+/// (pi `.pi/SYSTEM.md` / `.pi/APPEND_SYSTEM.md`).
+///
+/// Paths are carried alongside the text so a frontend can tell the user which file is in
+/// force — the complaint that produced this type is a user writing `SYSTEM.md`, being
+/// asked to trust it, and seeing nothing happen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SystemOverlay {
+    /// Display path of the file that replaces the contract, when one was found.
+    pub custom_path: Option<String>,
+    /// That file's contents.
+    pub custom: Option<String>,
+    /// Display path of the file appended to the identity tier, when one was found.
+    pub append_path: Option<String>,
+    /// That file's contents.
+    pub append: Option<String>,
+}
+
+/// Find the identity-tier overlays for `workspace` (pi `discoverSystemPromptFile` /
+/// `discoverAppendSystemPromptFile`, `core/resource-loader.ts:1023-1049`).
+///
+/// The project's file wins only when the project is trusted: an untrusted checkout must
+/// not be able to rewrite the harness's own contract, which is exactly what the trust
+/// prompt in front of these two names exists to prevent. A project without a file of its
+/// own — or an untrusted one — falls back to the global pair under `~/.config/epsilon`,
+/// matching pi's global fallback. The pair is not additive across scopes: one project
+/// `SYSTEM.md` shadows the global one, so a project's prompt is predictable.
+pub fn load_system_overlay(workspace: &Path, project_trusted: bool) -> SystemOverlay {
+    load_system_overlay_in(
+        workspace,
+        project_trusted,
+        crate::config::global_dir().as_deref(),
+    )
+}
+
+/// [`load_system_overlay`] with the global directory supplied.
+///
+/// Split out so tests can drive both scopes without writing into the real home
+/// directory (the same `_in` seam `crate::config` uses for its own resolution).
+pub fn load_system_overlay_in(
+    workspace: &Path,
+    project_trusted: bool,
+    global_dir: Option<&Path>,
+) -> SystemOverlay {
+    const CUSTOM: &str = "SYSTEM.md";
+    const APPEND: &str = "APPEND_SYSTEM.md";
+    const PROJECT_CUSTOM: &str = ".epsilon/SYSTEM.md";
+    const PROJECT_APPEND: &str = ".epsilon/APPEND_SYSTEM.md";
+    const GLOBAL_CUSTOM: &str = "~/.config/epsilon/SYSTEM.md";
+    const GLOBAL_APPEND: &str = "~/.config/epsilon/APPEND_SYSTEM.md";
+
+    let project = workspace.join(".epsilon");
+    let custom = if project_trusted {
+        read_overlay(&project, CUSTOM, PROJECT_CUSTOM)
+    } else {
+        None
+    }
+    .or_else(|| global_dir.and_then(|d| read_overlay(d, CUSTOM, GLOBAL_CUSTOM)));
+    let append = if project_trusted {
+        read_overlay(&project, APPEND, PROJECT_APPEND)
+    } else {
+        None
+    }
+    .or_else(|| global_dir.and_then(|d| read_overlay(d, APPEND, GLOBAL_APPEND)));
+
+    SystemOverlay {
+        custom_path: custom.as_ref().map(|(path, _)| path.clone()),
+        custom: custom.map(|(_, content)| content),
+        append_path: append.as_ref().map(|(path, _)| path.clone()),
+        append: append.map(|(_, content)| content),
+    }
+}
+
+/// Read one overlay file as `(display path, contents)`; `None` when it is missing,
+/// unreadable or blank.
+///
+/// Blank counts as absent: pi tests the string it read (`if (customPrompt)`,
+/// `core/system-prompt.ts:48`), so an empty `SYSTEM.md` means the default prompt stands.
+/// A zero-byte file that silently deleted the contract would be a trap, not a feature.
+fn read_overlay(dir: &Path, name: &str, label: &str) -> Option<(String, String)> {
+    let content = std::fs::read_to_string(dir.join(name)).ok()?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    Some((label.to_string(), content))
 }
 
 /// Instruction files found in the directories the agent has actually touched (M73).
@@ -209,6 +384,9 @@ pub fn load_project_instructions(workspace: &Path) -> Vec<(String, String)> {
 ///   directories is one block in the prompt, which is both cheaper and less confusing.
 /// - **Nearest first, at most [`HINT_MAX_FILES`]** — when a deep tree has more hints than the
 ///   budget, the closest directory is the one that governs what the model is editing.
+/// - **One file per directory, by the same candidate order as the root loader** — an
+///   `AGENTS.override.md` in a subdirectory overrides its sibling exactly as it does at
+///   the workspace root; a second name in the same directory would only add to it.
 /// - **Each file capped at [`HINT_MAX_BYTES`]** — an unbounded include is how a prompt becomes
 ///   unaffordable; the cut is announced in the block rather than silent.
 ///
@@ -218,7 +396,6 @@ pub fn load_subdirectory_hints(
     workspace: &Path,
     touched: &[std::path::PathBuf],
 ) -> Vec<(String, String)> {
-    const CANDIDATES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
     let mut seen_paths: std::collections::HashSet<std::path::PathBuf> = Default::default();
     let mut seen_digests: std::collections::HashSet<u64> = Default::default();
     let mut candidates: Vec<(usize, std::path::PathBuf)> = Vec::new();
@@ -230,11 +407,10 @@ pub fn load_subdirectory_hints(
             if !d.starts_with(workspace) || d == workspace {
                 break;
             }
-            for name in CANDIDATES {
-                let path = d.join(name);
-                if path.is_file() && seen_paths.insert(path.clone()) {
-                    candidates.push((depth, path));
-                }
+            if let Some(path) = context_file_in(d)
+                && seen_paths.insert(path.clone())
+            {
+                candidates.push((depth, path));
             }
             current = d.parent();
         }
@@ -306,17 +482,17 @@ mod tests {
     fn the_stable_fingerprint_moves_only_when_the_stable_tier_does() {
         // The fingerprint exists so a cache miss can be attributed (M69). It has to be stable
         // across everything that is *not* the stable tier, and sensitive to everything that is.
-        let base = stable_fingerprint(&Stable { tools: &tools() });
+        let base = stable_fingerprint(&stable(&tools()));
         assert_eq!(
             base,
-            stable_fingerprint(&Stable { tools: &tools() }),
+            stable_fingerprint(&stable(&tools())),
             "the same tools fingerprint the same"
         );
 
         // A different snippet is different bytes — the prompt cache would see them too.
         let mut renamed = tools();
         renamed[0].snippet = "Read files, differently described.".into();
-        assert_ne!(base, stable_fingerprint(&Stable { tools: &renamed }));
+        assert_ne!(base, stable_fingerprint(&stable(&renamed)));
 
         // An added tool changes the tier.
         let mut longer = tools();
@@ -324,20 +500,20 @@ mod tests {
             name: "grep".into(),
             snippet: "Search files.".into(),
         });
-        assert_ne!(base, stable_fingerprint(&Stable { tools: &longer }));
+        assert_ne!(base, stable_fingerprint(&stable(&longer)));
 
         // Order is part of the bytes: the registry sorts descriptors precisely so that the same
         // tool set cannot produce two different prefixes (D-05). A different order *should*
         // fingerprint differently, because the provider would see different bytes.
         let mut flipped = tools();
         flipped.reverse();
-        assert_ne!(base, stable_fingerprint(&Stable { tools: &flipped }));
+        assert_ne!(base, stable_fingerprint(&stable(&flipped)));
 
         // And nothing about the volatile tiers leaks into it: today's date, the cwd and the
         // model id are not part of this number, which is why a turn that only changes them does
         // not look like a cache break.
         let with_context = build(
-            &Stable { tools: &tools() },
+            &stable(&tools()),
             &ContextTier::default(),
             &Volatile {
                 cwd: Path::new("/tmp/here"),
@@ -346,7 +522,7 @@ mod tests {
             },
         );
         let with_other_context = build(
-            &Stable { tools: &tools() },
+            &stable(&tools()),
             &ContextTier::default(),
             &Volatile {
                 cwd: Path::new("/somewhere/else"),
@@ -360,7 +536,7 @@ mod tests {
         );
         assert_eq!(
             base,
-            stable_fingerprint(&Stable { tools: &tools() }),
+            stable_fingerprint(&stable(&tools())),
             "while the stable fingerprint does not"
         );
     }
@@ -378,12 +554,26 @@ mod tests {
         ]
     }
 
+    /// A STABLE tier with no identity overlay: the shape every pre-overlay expectation used,
+    /// and the shape a workspace with no `SYSTEM.md` still produces.
+    fn stable<'a>(tools: &'a [ToolLine]) -> Stable<'a> {
+        Stable {
+            tools,
+            custom_identity: None,
+            append: None,
+        }
+    }
+
     #[test]
     fn byte_stable_for_identical_inputs() {
         let tools = tools();
         let mk = || {
             (
-                Stable { tools: &tools },
+                Stable {
+                    tools: &tools,
+                    custom_identity: None,
+                    append: None,
+                },
                 ContextTier {
                     agent_brief: String::new(),
                     instructions: vec![],
@@ -406,7 +596,7 @@ mod tests {
     #[test]
     fn identity_embeds_agent_contract_and_tiers_are_ordered() {
         let out = build(
-            &Stable { tools: &tools() },
+            &stable(&tools()),
             &ContextTier {
                 agent_brief: String::new(),
                 instructions: vec![("AGENTS.md".into(), "be nice".into())],
@@ -433,7 +623,7 @@ mod tests {
     fn context_changes_do_not_disturb_stable_prefix_length() {
         let stable_tier = |out: &str| out.find("<project_context>").unwrap_or(out.len());
         let base = build(
-            &Stable { tools: &tools() },
+            &stable(&tools()),
             &ContextTier {
                 agent_brief: String::new(),
                 instructions: vec![],
@@ -446,7 +636,7 @@ mod tests {
             },
         );
         let with = build(
-            &Stable { tools: &tools() },
+            &stable(&tools()),
             &ContextTier {
                 agent_brief: String::new(),
                 instructions: vec![("AGENTS.md".into(), "rules".into())],
@@ -467,7 +657,7 @@ mod tests {
     #[test]
     fn instruction_hash_detects_content_change() {
         let a = build(
-            &Stable { tools: &[] },
+            &stable(&[]),
             &ContextTier {
                 agent_brief: String::new(),
                 instructions: vec![("A.md".into(), "v1".into())],
@@ -480,7 +670,7 @@ mod tests {
             },
         );
         let b = build(
-            &Stable { tools: &[] },
+            &stable(&[]),
             &ContextTier {
                 agent_brief: String::new(),
                 instructions: vec![("A.md".into(), "v2".into())],
@@ -532,7 +722,7 @@ mod tests {
             skills_catalog: None,
         };
         let out = build(
-            &Stable { tools: &[] },
+            &stable(&[]),
             &tier,
             &Volatile {
                 cwd: dir.path(),
@@ -547,7 +737,257 @@ mod tests {
         assert!(out.contains("hash=\""), "each entry hash-tagged");
     }
 
-    // ---- M73: subdirectory hints ---------------------------------------------------------
+    // ---- D-8: the five-name list and the walk above the workspace -----------------------
+
+    /// Only the entries carrying one of `markers`.
+    ///
+    /// The loader reads the whole directory chain, which on a developer's machine reaches
+    /// directories the test did not create; filtering by content keeps these assertions
+    /// about this workspace rather than about whatever sits above the temp directory.
+    fn marked(loaded: &[(String, String)], markers: &[&str]) -> Vec<(String, String)> {
+        loaded
+            .iter()
+            .filter(|(_, content)| markers.contains(&content.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn one_context_file_per_directory_and_the_override_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("CLAUDE.md"), "epsilon-claude").unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "epsilon-agents").unwrap();
+        std::fs::write(dir.path().join("AGENTS.override.md"), "epsilon-override").unwrap();
+        let markers = ["epsilon-claude", "epsilon-agents", "epsilon-override"];
+
+        // pi's order within one directory: the override is the file that governs, and the
+        // sibling it overrides is not loaded beside it.
+        let loaded = marked(&load_project_instructions(dir.path()), &markers);
+        assert_eq!(
+            loaded.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+            vec!["epsilon-override"],
+            "{loaded:#?}"
+        );
+        assert_eq!(
+            loaded[0].0, "AGENTS.override.md",
+            "labelled by its own name"
+        );
+
+        // Remove it: AGENTS.md is next in the list, still ahead of CLAUDE.md.
+        std::fs::remove_file(dir.path().join("AGENTS.override.md")).unwrap();
+        let loaded = marked(&load_project_instructions(dir.path()), &markers);
+        assert_eq!(loaded[0].0, "AGENTS.md");
+
+        // And with that gone, CLAUDE.md is the last candidate that matches.
+        std::fs::remove_file(dir.path().join("AGENTS.md")).unwrap();
+        let loaded = marked(&load_project_instructions(dir.path()), &markers);
+        assert_eq!(loaded[0].0, "CLAUDE.md");
+    }
+
+    #[test]
+    fn context_files_above_the_workspace_are_loaded_outermost_first() {
+        // Opening a session in a subdirectory used to lose the repository's own
+        // instructions entirely. pi walks to the filesystem root and unshifts each hit, so
+        // the outermost file leads the list and the workspace's own file is last.
+        let ws = ws_with(&[
+            ("AGENTS.md", "epsilon-outer"),
+            ("a/AGENTS.md", "epsilon-middle"),
+            ("a/b/AGENTS.md", "epsilon-inner"),
+        ]);
+        let markers = ["epsilon-outer", "epsilon-middle", "epsilon-inner"];
+        let loaded = marked(&load_project_instructions(&ws.path().join("a/b")), &markers);
+        assert_eq!(
+            loaded.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+            vec!["epsilon-outer", "epsilon-middle", "epsilon-inner"],
+            "outermost first, nearest last: {loaded:#?}"
+        );
+        // The workspace's own file keeps the short relative label; a file above it has no
+        // relative name that would tell the model where it lives.
+        assert_eq!(loaded.last().unwrap().0, "AGENTS.md");
+        assert!(
+            Path::new(&loaded[0].0).is_absolute(),
+            "an ancestor file is named by its absolute path: {}",
+            loaded[0].0
+        );
+    }
+
+    #[test]
+    fn a_workspace_below_the_repository_root_still_gets_the_repository_instructions() {
+        // The same walk read the way a user experiences it: the repo's own file reaches the
+        // model even though the workspace is a subdirectory, and it is rendered first so the
+        // nearest file has the last word.
+        let ws = ws_with(&[
+            ("AGENTS.md", "epsilon-repo-rules"),
+            ("crates/x/AGENTS.md", "epsilon-crate-rules"),
+        ]);
+        let cwd = ws.path().join("crates/x");
+        let loaded = load_project_instructions(&cwd);
+        assert!(
+            loaded.iter().any(|(_, c)| c == "epsilon-repo-rules"),
+            "{loaded:#?}"
+        );
+        let out = build(
+            &stable(&[]),
+            &ContextTier {
+                agent_brief: String::new(),
+                instructions: loaded,
+                skills_catalog: None,
+            },
+            &Volatile {
+                cwd: &cwd,
+                model_id: "m",
+                today: "t".into(),
+            },
+        );
+        assert!(
+            out.find("epsilon-repo-rules").unwrap() < out.find("epsilon-crate-rules").unwrap(),
+            "the repository file is background and the crate file is the last word"
+        );
+    }
+
+    // ---- D-7: the identity overlays -----------------------------------------------------
+
+    #[test]
+    fn the_project_overlay_pair_shadows_the_global_pair() {
+        let ws = ws_with(&[
+            (".epsilon/SYSTEM.md", "epsilon-project-contract"),
+            (".epsilon/APPEND_SYSTEM.md", "epsilon-project-append"),
+        ]);
+        let global = ws_with(&[
+            ("SYSTEM.md", "epsilon-global-contract"),
+            ("APPEND_SYSTEM.md", "epsilon-global-append"),
+        ]);
+
+        let trusted = load_system_overlay_in(ws.path(), true, Some(global.path()));
+        assert_eq!(trusted.custom.as_deref(), Some("epsilon-project-contract"));
+        assert_eq!(trusted.custom_path.as_deref(), Some(".epsilon/SYSTEM.md"));
+        assert_eq!(trusted.append.as_deref(), Some("epsilon-project-append"));
+        assert_eq!(
+            trusted.append_path.as_deref(),
+            Some(".epsilon/APPEND_SYSTEM.md")
+        );
+
+        // An untrusted project contributes nothing — rewriting the harness's own contract is
+        // what the trust prompt in front of these names exists to prevent — while the user's
+        // global pair still applies.
+        let untrusted = load_system_overlay_in(ws.path(), false, Some(global.path()));
+        assert_eq!(untrusted.custom.as_deref(), Some("epsilon-global-contract"));
+        assert_eq!(
+            untrusted.custom_path.as_deref(),
+            Some("~/.config/epsilon/SYSTEM.md")
+        );
+        assert_eq!(untrusted.append.as_deref(), Some("epsilon-global-append"));
+    }
+
+    #[test]
+    fn an_absent_or_blank_overlay_leaves_the_built_in_contract_alone() {
+        let bare = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load_system_overlay_in(bare.path(), true, Some(global.path())),
+            SystemOverlay::default(),
+            "no files, no overlay"
+        );
+
+        // A blank SYSTEM.md is not a contract replacement: pi tests the string it read
+        // (`system-prompt.ts:48`), and a zero-byte file that deleted the instructions would
+        // be a trap rather than a feature.
+        std::fs::create_dir_all(bare.path().join(".epsilon")).unwrap();
+        std::fs::write(bare.path().join(".epsilon/SYSTEM.md"), "   \n").unwrap();
+        let blank = load_system_overlay_in(bare.path(), true, Some(global.path()));
+        assert_eq!(blank.custom, None);
+    }
+
+    #[test]
+    fn a_custom_identity_replaces_the_contract_and_keeps_the_generated_sections() {
+        let tools = tools();
+        let out = build(
+            &Stable {
+                tools: &tools,
+                custom_identity: Some("epsilon-my-rules\n"),
+                append: None,
+            },
+            &ContextTier::default(),
+            &Volatile {
+                cwd: Path::new("/w"),
+                model_id: "m",
+                today: "t".into(),
+            },
+        );
+        assert!(out.contains("epsilon-my-rules"));
+        assert!(
+            !out.contains("Epsilon Agent Operating Contract"),
+            "the contract is replaced, not amended: {out}"
+        );
+        // The tool inventory is a fact about the running registry, so it survives a user
+        // prompt that says nothing about tools.
+        assert!(
+            out.contains("# Available tools") && out.contains("- read: Read files."),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn appended_system_text_follows_the_guidelines_and_precedes_project_context() {
+        let tools = tools();
+        let out = build(
+            &Stable {
+                tools: &tools,
+                custom_identity: None,
+                append: Some("epsilon-house-style\n"),
+            },
+            &ContextTier {
+                agent_brief: String::new(),
+                instructions: vec![("AGENTS.md".into(), "epsilon-project".into())],
+                skills_catalog: None,
+            },
+            &Volatile {
+                cwd: Path::new("/w"),
+                model_id: "m",
+                today: "t".into(),
+            },
+        );
+        let guidelines = out.find("# Guidelines").unwrap();
+        let appended = out.find("epsilon-house-style").unwrap();
+        let context = out.find("<project_context>").unwrap();
+        assert!(
+            guidelines < appended && appended < context,
+            "pi appends at the end of the identity tier: {out}"
+        );
+        // Inside the cached prefix, not after the volatile snapshot.
+        assert!(appended < out.find("<runtime_context>").unwrap());
+    }
+
+    #[test]
+    fn the_fingerprint_covers_both_overlays() {
+        let tools = tools();
+        let base = stable_fingerprint(&stable(&tools));
+        let with_custom = stable_fingerprint(&Stable {
+            tools: &tools,
+            custom_identity: Some("epsilon-mine"),
+            append: None,
+        });
+        let with_append = stable_fingerprint(&Stable {
+            tools: &tools,
+            custom_identity: None,
+            append: Some("epsilon-mine"),
+        });
+        assert_ne!(base, with_custom, "a replaced identity is a cache event");
+        assert_ne!(base, with_append, "appended text is part of the same bytes");
+        assert_ne!(
+            with_custom, with_append,
+            "the two overlays are not one field"
+        );
+
+        // Editing the file between runs changes the number — that is the point of folding it
+        // in: a cache miss caused by a user's own edit is explained, not mysterious.
+        let edited = stable_fingerprint(&Stable {
+            tools: &tools,
+            custom_identity: Some("epsilon-mine, revised"),
+            append: None,
+        });
+        assert_ne!(with_custom, edited);
+    }
 
     fn ws_with(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -575,6 +1015,21 @@ mod tests {
         assert!(!hints.iter().any(|(p, _)| p.contains("y")));
         // ...and the root file is not repeated: `load_project_instructions` already has it.
         assert!(!hints.iter().any(|(p, _)| p == "AGENTS.md"));
+    }
+
+    #[test]
+    fn a_subdirectory_override_file_shadows_its_agents_md() {
+        // The override has to mean the same thing one directory down as it does at the root,
+        // otherwise the escape hatch only works where it is least needed.
+        let ws = ws_with(&[
+            ("AGENTS.md", "root"),
+            ("crates/x/AGENTS.md", "epsilon-crate"),
+            ("crates/x/AGENTS.override.md", "epsilon-crate-override"),
+        ]);
+        let hints = load_subdirectory_hints(ws.path(), &[ws.path().join("crates/x")]);
+        assert_eq!(hints.len(), 1, "{hints:#?}");
+        assert_eq!(hints[0].0, "crates/x/AGENTS.override.md");
+        assert_eq!(hints[0].1, "epsilon-crate-override");
     }
 
     #[test]
