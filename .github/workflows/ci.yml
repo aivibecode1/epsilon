@@ -49,6 +49,20 @@ jobs:
       - name: Demo must complete
         run: cargo run -q -p epsilon-cli -- --demo
 
+      # The terminal integration test needs a built binary and a real
+      # pseudo-console, so it cannot run from `cargo test` alone. Without this
+      # step it is a test nobody runs, which is a test that rots.
+      #
+      # `--test-threads=1`: each test opens its own console, and serialising them
+      # keeps a failure's output attributable to one session.
+      - name: Build the binary for the terminal test
+        run: cargo build -p epsilon-cli
+
+      - name: Terminal integration test (drives the built binary in a pseudo-console)
+        env:
+          EPSILON_BIN: target/debug/epsilon.exe
+        run: cargo test -p epsilon-cli --test terminal -- --test-threads=1
+
   linux-confinement:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -75,6 +89,17 @@ jobs:
 
       - name: Full suite on Linux too (portability guard)
         run: cargo test --workspace
+
+      # The pty layer is the one part of this project that is genuinely
+      # platform-specific (openpty here, ConPTY on Windows). Running the terminal
+      # test on both is what makes "it works on Windows" a claim with evidence.
+      - name: Build the binary for the terminal test
+        run: cargo build -p epsilon-cli
+
+      - name: Terminal integration test (openpty on Linux)
+        env:
+          EPSILON_BIN: target/debug/epsilon
+        run: cargo test -p epsilon-cli --test terminal -- --test-threads=1
 
   msrv:
     runs-on: ubuntu-latest
