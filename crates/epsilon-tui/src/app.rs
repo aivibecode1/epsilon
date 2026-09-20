@@ -3928,4 +3928,10 @@ fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
 }
 
 #[cfg(test)]
+mod tests_support;
+
+#[cfg(test)]
+mod golden;
+
+#[cfg(test)]
 mod tests;

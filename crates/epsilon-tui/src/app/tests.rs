@@ -9,6 +9,8 @@ use super::*;
 // The key handlers are one module down (they were moved out of `app.rs`),
 // so the tests that drive them name the module rather than a re-export.
 use super::keys::{begin_auth_key_prompt, handle_key};
+// Frame helpers and the wired app are shared with `golden.rs`.
+use super::tests_support::{render_rows, test_app};
 use crossterm::event::KeyEventState;
 use epsilon_contracts::agent_event::PermissionRequest;
 use epsilon_contracts::message::UserMessage;
@@ -145,21 +147,6 @@ async fn approval_preempts_palette_and_picker_without_changing_filter() {
         assert_eq!(app.palette_open, palette);
         assert_eq!(app.picker_open, !palette);
     }
-}
-
-/// M94 review: paint one full frame into a `TestBackend` and return it as
-/// one string per row (buffer inspection, the crate's rendering-test style).
-fn render_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
-    use ratatui::{Terminal, backend::TestBackend};
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| draw(frame, app)).unwrap();
-    (0..height)
-        .map(|y| {
-            (0..width)
-                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                .collect::<String>()
-        })
-        .collect()
 }
 
 /// Park one ask on the shared queue and hand it to the app, exactly like the
@@ -414,31 +401,6 @@ async fn a_pending_approval_preempts_the_auth_key_prompt() {
         "'y' must not reach the masked buffer"
     );
     assert_eq!(app.auth_key_cursor, before.3, "nor move its caret");
-}
-
-type TestReceivers = (
-    tokio::sync::mpsc::UnboundedReceiver<(String, Result<Vec<String>, String>)>,
-    tokio::sync::mpsc::UnboundedReceiver<String>,
-);
-
-fn test_app() -> (App, Arc<Agent>, TestReceivers) {
-    let (ftx, frx) = tokio::sync::mpsc::unbounded_channel();
-    let (ntx, nrx) = tokio::sync::mpsc::unbounded_channel();
-    let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
-    let approvals = Arc::new(ChannelApprovalUi::new());
-    let gate = Arc::new(epsilon_safety::RulesetGate::new(
-        Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
-    ));
-    let agent = Agent::new(
-        epsilon_core::LoopLimits::default(),
-        Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
-            vec![],
-        ))),
-        Arc::new(epsilon_core::ToolRegistry::new()),
-        gate,
-        std::env::temp_dir(),
-    );
-    (App::new("faux-1".into(), ftx, ntx, otx), agent, (frx, nrx))
 }
 
 /// M75: `/session` says nothing about repairs when the session opened clean — the listing
