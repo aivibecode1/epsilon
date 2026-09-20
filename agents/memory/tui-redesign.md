@@ -79,13 +79,18 @@ three lines in a draw call:
   surface reads one passed-in `Theme`: `md_to_lines` and the render cache take
   `&Theme` as an argument, which is also what makes them testable in more than
   one colour mode. Do not reintroduce a free-function palette.
-- **`app.rs` is 4,951 lines** after the tests moved to `app/tests.rs` and
-  `app/composer_viewport_tests.rs` (they compile as children of the same module,
-  so `super::*` still reaches private items — keep that property, it is what
-  makes extraction free). What remains to extract is the **key handling**
-  (`handle_key`, `handle_approval_key`, `handle_auth_key`, paste), then the
-  **event loop** (`drive`), leaving `app.rs` as state plus the adapters that feed
-  the shell.
+- **`app.rs` is 3,783 lines** (from 6,700). Extracted so far: the tests
+  (`app/tests.rs`, `app/composer_viewport_tests.rs`) and the keyboard model
+  (`app/keys.rs`). All three compile as children of the same module, so
+  `super::*` still reaches private items — **keep that property, it is what makes
+  extraction free.** What remains is the event loop (`drive`), the draw path, and
+  the adapters that feed the shell.
+- When extracting from `app.rs`, two things repeatedly need care: a moved item
+  used by the *parent* needs `pub(crate)` plus a re-export (the compiler's
+  "private, and cannot be re-exported" error tells you which), and state that
+  parent code touches (the OAuth event type, the `LoginUi` impl, `clipboard_set`)
+  should stay with the state rather than travel with the functions that happened
+  to sit beside it.
 - Capacity arithmetic when moving a `Block` panel onto `Panel`: `Panel::inner` is
   two rows shorter than a `Block::inner` of the same frame (title row + bottom
   rule), and it insets two columns a side, so the old `area.height - 4` window
