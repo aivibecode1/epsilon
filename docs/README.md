@@ -56,6 +56,16 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+- [M101 — the context files the harness was already detecting](milestones/M101-context-files.md):
+  three ways the harness told the user something untrue. `SYSTEM.md` / `APPEND_SYSTEM.md` raised a
+  trust prompt and never loaded; `AGENTS.override.md` was missing from the candidate list *and*
+  `doctor` kept a second, shorter list of its own; ancestor context files were never read. All
+  three fixed, with the important half being semantics rather than names — **one context file per
+  directory, first existing wins**, because adding the override to the old loop would have made it
+  additive and it would have stopped overriding. The audit was wrong in two places and this
+  milestone records both: `.epsilon/prompts/` is slash templates, not system-prompt text, so it
+  stays gated and unloaded; and the `skill` tool it said did not exist has existed since M97.
+  Negative control: each fix reverted in place, 9 named tests fail. Landed df338b7.
 - [M95 — paged reads](milestones/M95-paged-reads.md): SURFACE-05 — `read` finally pages the way
   its own description promised: pi's offset/limit window over the whole file (`read.ts:275-323`)
   with pi's continuation strings, past-end error, empty-file Ok and the `sed` fallback for an

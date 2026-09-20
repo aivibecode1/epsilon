@@ -1107,6 +1107,29 @@ each alters what a user sees.
   edited) and 4 KB each with the cut announced. Hints appear only after the work reaches the
   directory, which costs one prefix re-read per discovered directory and is asserted to be
   once-per-directory rather than per-turn.
+- **ADR-008 amendment (M101) — the STABLE tier gains a user identity and an append, and the
+  context-file rule becomes one file per directory.** `.epsilon/SYSTEM.md` and
+  `.epsilon/APPEND_SYSTEM.md` were trust-gated and never loaded, which is the worst of both
+  outcomes: the prompt implied the file took effect. `prompt::SystemOverlay` now carries both
+  (`load_system_overlay{,_in}`, mirroring pi's `discoverSystemPromptFile` /
+  `discoverAppendSystemPromptFile`, `resource-loader.ts:1023-1049`); the project pair shadows the
+  global pair rather than adding to it, and a blank file counts as absent, both matching pi.
+  `Stable` gains `custom_identity` and `append`, so the byte-stability fingerprint covers them and
+  a change to either invalidates the cache prefix exactly as a context-file change does. **One
+  deliberate divergence, stated because a later reader would otherwise "fix" it back:** a custom
+  identity replaces the *contract* only. The generated `# Available tools` and `# Guidelines`
+  sections stay, because they describe the live registry and a hand-written tool list that has
+  drifted is the harness lying about itself. pi drops its own list with the default prompt
+  (`system-prompt.ts:48-73`); we keep ours on purpose. Separately, `CONTEXT_FILE_CANDIDATES`
+  becomes pi's five names with **first-existing-wins per directory**: the previous loop loaded
+  every candidate it matched, so merely adding `AGENTS.override.md` to the list would have made
+  the override *additive* and it would have stopped overriding. Ancestor directories up to the
+  filesystem root are walked and reversed, so ordering is outermost-first and a nearer file still
+  wins; ancestor blocks are labelled by absolute path, since a relative `../AGENTS.md` per level
+  names no usable location. `.epsilon/prompts/` stays gated and unloaded — pi's `prompts/*.md` are
+  user-invoked slash templates with `$1`/`$ARGUMENTS` substitution
+  (`prompt-templates.ts:11-18,70-80`), not system-prompt text, and the template feature is
+  unported.
 - **ADR-002 amendment (M72) — the barrier is per-resource, not per-mode.** The pool's rule
   was all-or-nothing: any `Sequential` tool made the whole batch a barrier, which was safe and
   expensive — `write` and `edit` are `Sequential`, so three edits to three different files

@@ -1,0 +1,37 @@
+M101 — gate re-run by the delegated subagent that wrote the slice
+(2026-09-20 03:00-04:10; Windows; CARGO_BUILD_JOBS=1;
+CARGO_TARGET_DIR=C:\Users\Hp\AppData\Local\Temp\eps-pty-target; CARGO_PROFILE_TEST_DEBUG=1)
+
+Bytes under test: the slice as committed in df338b7
+(crates/epsilon-core/src/prompt.rs sha256 52D19BD971563FCBF48A20C4973F5ACE10E921CA7E6ECBD5E1B59EEE73F3025F,
+the file the negative controls were reverted from and restored to).
+
+Gates
+  cargo fmt -p epsilon-core -p epsilon-cli -- --check        exit 0
+  cargo fmt --all -- --check                                 exit 0
+      (re-run after 1e04a39 landed the TUI workstream's files. Before that commit it failed
+      only on crates/epsilon-tui/src/app.rs and crates/epsilon-tui/src/app/keys.rs — files this
+      slice never touched, and the reason the first `--all` run in this session exited 1.)
+  cargo clippy --workspace --all-targets -- -D warnings      exit 0
+  cargo test --workspace                                     exit 0
+      57 test binaries: 975 passed / 0 failed / 1 ignored
+  cargo test -p epsilon-core                                 exit 0
+      242 passed / 0 failed (140 lib incl. 16 new prompt tests, 102 integration incl. the 3 new
+      system_overlay tests)
+  cargo test -p epsilon-cli                                  exit 0
+      58 passed / 0 failed (incl. runtime::tests::every_system_md_the_trust_gate_names_is_actually_loaded)
+  cargo check -p epsilon-cli --features real                 exit 0
+  cargo run -q -p epsilon-cli -- --demo                      exit 0   final reason: Completed
+
+  Note on the demo: it ran after another workstream began editing crates/epsilon-core/compact.rs
+  and src/lib.rs in the same tree, and that in-flight edit emits `unused import: AssistantMessage`
+  (a warning, not an error; their slice, not this one). The demo itself completed normally. Every
+  other gate above ran against the M101 bytes before that edit existed.
+
+Negative controls (each fix reverted in place, then restored and hash-verified)
+  audit/evidence/g7g8-negative-control-prompt.log          6 named tests fail for their own reason
+  audit/evidence/g7g8-negative-control-integration.log     2 of 3 fail (request + child contract)
+  audit/evidence/g7g8-negative-control-fingerprint.log     the fingerprint test fails
+
+Raw logs from this session, if the trimmed summaries above are not enough:
+  C:\Users\Hp\AppData\Local\Temp\eps-test-workspace.log, eps-clippy.log, eps-demo2.log
