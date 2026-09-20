@@ -275,12 +275,26 @@ pub fn summary_system_prompt() -> String {
 
 /// Extract the assistant's summary text from a completed provider turn.
 ///
-/// `None` when the turn carried no usable text. A compaction must never replace
-/// useful context with a placeholder, so the caller skips the commit and reports
-/// the failure instead of substituting one. (pi's inspected helper returns the
-/// extracted text without a nonempty check — this refusal is Epsilon's own
-/// reliability rule, not a claimed parity behavior.)
+/// `None` when the turn produced nothing usable, and there are two ways that
+/// happens:
+///
+/// * **The answer is empty.** A compaction must never replace useful context with
+///   a placeholder, so the caller skips the commit and reports the failure rather
+///   than substituting one.
+/// * **The answer was cut off by the output limit** (`StopReason::MaxTokens`).
+///   A half-written summary is the more dangerous of the two, because it is not
+///   obviously broken: it has a Goal and a Progress section, so it reads as a
+///   complete record of a session that simply had less in it, and the transcript
+///   it replaced is gone. pi refuses a `length`-stopped summary for the same
+///   reason; the caller falls back to context-free pruning, which loses detail
+///   but never fabricates a record.
+///
+/// The empty-answer check is Epsilon's own rule rather than a claimed parity
+/// behaviour — pi's inspected helper returns the extracted text without one.
 pub fn summary_text(answer: &epsilon_contracts::message::AssistantMessage) -> Option<String> {
+    if answer.stop_reason == epsilon_contracts::message::StopReason::MaxTokens {
+        return None;
+    }
     let t = answer.text();
     if t.trim().is_empty() { None } else { Some(t) }
 }
@@ -566,6 +580,7 @@ fn push_once(list: &mut Vec<String>, path: &str) {
 mod anchor_and_cut_tests {
     use super::*;
     use epsilon_contracts::content::{ContentBlock, UserContent};
+    use epsilon_contracts::message::AssistantMessage;
     use epsilon_contracts::message::{Message, ToolResultMessage, UserMessage};
 
     fn user(text: &str) -> Message {
@@ -600,6 +615,51 @@ mod anchor_and_cut_tests {
             Some(Message::Custom(_)) => "custom",
             None => "end-of-history",
         }
+    }
+
+    /// A summary turn that stopped for a named reason.
+    fn answer_with(stop_reason: epsilon_contracts::message::StopReason) -> AssistantMessage {
+        AssistantMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            provider: "test".into(),
+            model_id: "test".into(),
+            content: vec![ContentBlock::text("## Goal\nlooks complete")],
+            stop_reason,
+            error_message: None,
+            usage: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_summary_cut_off_by_the_output_limit_is_refused() {
+        // The dangerous case is not the empty answer — that one is obviously
+        // broken. A truncated summary has a Goal and a Progress section, so it
+        // reads as a complete record of a shorter session, and committing it
+        // replaces the real transcript with it.
+        let truncated = answer_with(epsilon_contracts::message::StopReason::MaxTokens);
+        assert!(
+            summary_text(&truncated).is_none(),
+            "a length-stopped summary must not be committed"
+        );
+    }
+
+    #[test]
+    fn a_complete_summary_is_still_accepted() {
+        // The refusal must not spread: an ordinary end-of-turn summary is exactly
+        // what this function exists to return.
+        let complete = answer_with(epsilon_contracts::message::StopReason::EndTurn);
+        assert_eq!(
+            summary_text(&complete).as_deref(),
+            Some("## Goal\nlooks complete")
+        );
+    }
+
+    #[test]
+    fn an_empty_summary_is_still_refused() {
+        let mut empty = answer_with(epsilon_contracts::message::StopReason::EndTurn);
+        empty.content = vec![ContentBlock::text("   ")];
+        assert!(summary_text(&empty).is_none());
     }
 
     fn assistant(text: &str) -> Message {

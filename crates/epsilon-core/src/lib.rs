@@ -1975,13 +1975,22 @@ impl Agent {
                     .unwrap_or("provider reported an error")
             )));
         }
-        // An empty answer is refused rather than padded with a placeholder: the
-        // template fallback used to guarantee "valid-looking" output, which meant a
-        // blank summary could silently replace the context it failed to summarize.
+        // No usable text, for one of two reasons — and they need different
+        // words, because they need different responses from whoever reads the
+        // log. An empty answer is refused rather than padded: the template
+        // fallback used to guarantee "valid-looking" output, which meant a blank
+        // summary could silently replace the context it failed to summarize. A
+        // summary cut off by the output limit is refused for the harder reason:
+        // it looks complete, so committing it would replace the real transcript
+        // with a plausible-looking record of a shorter session.
         let Some(text) = compact::summary_text(&answer) else {
-            return Ok(CompactionOutcome::Failed(
-                "summarization returned no text".into(),
-            ));
+            let why = if answer.stop_reason == epsilon_contracts::message::StopReason::MaxTokens {
+                "summarization hit the output limit and was cut off; a truncated summary \
+                 is worse than none because it reads as complete"
+            } else {
+                "summarization returned no text"
+            };
+            return Ok(CompactionOutcome::Failed(why.into()));
         };
         let summary = compact::summary_with_ledger(&text, &ledger);
         // ...plus the user's own words from the range just summarized, verbatim: a paraphrase of
