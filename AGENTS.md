@@ -38,6 +38,30 @@ All five in one shot, with a disposable build log at `target/gate-<label>.log`
 bash scripts/gate.sh post            # any label; exits non-zero if a gate fails
 ```
 
+### The terminal integration test
+
+Separate, because it needs a built binary and a real pseudo-console and so cannot
+run from `cargo test` alone:
+
+```sh
+cargo build -p epsilon-cli
+EPSILON_BIN=target/debug/epsilon cargo test -p epsilon-cli --test terminal -- --test-threads=1
+```
+
+It skips — loudly — when `EPSILON_BIN` is unset, so the workspace suite stays green
+without it. Run it whenever TUI startup, input, resize or rendering changes: it is
+the only test that can fail because the binary never reached a terminal at all, and
+it takes about 45 seconds. Two things learned building it, both of which cost real
+time:
+
+- **Answer the pseudo-console's `ESC [ 6 n`.** ConPTY asks where the cursor is and
+  emits nothing else until it hears back, so a harness with no responder looks
+  exactly like a program that renders nothing. The responder is in the test, with
+  a comment explaining why.
+- **Resize the pty and the emulator together.** Moving only the pty leaves the test
+  reading a screen the program is not drawing into, which turns a correct resize
+  into a spurious "row wider than the window" failure.
+
 > `real` is a **default** feature since M63 (the offline-only binary was a trap), so the
 > `--features real` flag above is now redundant but harmless. Build offline-only with
 > `--no-default-features`.
