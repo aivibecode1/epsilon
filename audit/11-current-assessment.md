@@ -100,7 +100,7 @@ recovery machinery and the instruction-loading seams.
 | ~~G11~~ | **Closed**: `app.rs` is **3,594 lines** from 6,700. The keyboard model, the event loop and all three test modules now live beside it (`app/keys.rs`, `app/event.rs`, `app/{tests,golden,composer_viewport_tests,tests_support}.rs`). |
 | ~~G12~~ | **Closed** in `278d2ec`: every surface takes a passed-in `Theme` and the shim is deleted. |
 | ~~G13~~ | **Closed**, in two layers. In-process: `app/golden.rs` drives the production `draw()` at 44x10 through 160x48 and asserts on the assembled frame. Process-level: `crates/epsilon-cli/tests/terminal.rs` spawns the real binary in a pseudo-console and asserts on the screen — startup, typing, the visibility of the gauges, a submitted turn, and a resize to 44x10. Run it with `EPSILON_BIN=target/debug/epsilon cargo test -p epsilon-cli --test terminal`; it skips loudly without that variable. |
-| G14 | `epsilon-ext` has 5 tests for a whole crate — the least covered surface relative to its size, and still open. |
+| ~~G14~~ | **Closed** in M103: `epsilon-ext` went from 5 tests to 30, driving the real fixture process rather than a mock. It found a real defect — the frame cap only bounded a line whose newline had not yet arrived, so one oversized line came back as valid. |
 
 ### Known and deliberately not claimed
 
