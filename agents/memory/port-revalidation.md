@@ -224,7 +224,9 @@
 - Files: `epsilon-core/src/{prompt.rs,lib.rs}`, `epsilon-core/tests/system_overlay.rs` (new),
   `epsilon-cli/src/{main.rs,runtime.rs,doctor.rs}`.
 - Evidence: `audit/evidence/g7g8-workspace-tests.log` (975 passed / 0 failed / 1 ignored,
-  57 binaries, exit 0), `g7g8-negative-control-{prompt,integration,fingerprint}.log`
+  57 binaries, exit 0), `m101-gates.log` (this session's fmt/clippy/test/demo re-runs with exit
+  codes and the one caveat: the demo compiled a tree that also carried another workstream's
+  in-flight `compact.rs` edit), `g7g8-negative-control-{prompt,integration,fingerprint}.log`
   (each fix reverted in place: 6 + 2 + 1 named tests fail for the named reason; restored
   byte-identically, sha256 `52D19BD9…`).
 - Limits: `cargo fmt --all --check` passed against the committed tree (the earlier failure

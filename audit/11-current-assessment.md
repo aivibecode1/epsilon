@@ -88,7 +88,7 @@ recovery machinery and the instruction-loading seams.
 | ~~G6~~ | **Closed** in `87c5628`: both the catalog and the tool filter it. | D-4 | — |
 | ~~G7~~ | **Closed** in M101 (`df338b7`) for `SYSTEM.md` + `APPEND_SYSTEM.md` (both load; the project pair shadows the global one). **`.epsilon/prompts/` stays detected and unloaded**: pi's `prompts/*.md` are user-invoked slash templates, not system-prompt text, and the template feature is unported — the gate is kept so they cannot load untrusted when it lands. | D-7 | prompts templates still open |
 | ~~G8~~ | **Closed** in M101 (`df338b7`): `AGENTS.override.md` is in the candidate list, ancestors load root-to-leaf, and `doctor` now reads the loader's own list instead of a second copy. | D-8 | — |
-| G9 | A `MaxTokens`-truncated summary is committed as if complete | D-5 |
+| ~~G9~~ | **Closed** in M102 (`989bd0a`): a length-stopped summary is refused and the caller falls back to context-free pruning. | D-5 | — |
 | ~~G10~~ | **Wrong, and closed by diagnosis**: the TUI was repainting (the spinner advanced); the *tool call* was stalling six seconds on a PowerShell profile. See G15. | M98 `3e1d01b` | — |
 
 | G15 | Every Windows `bash` call loaded the user's PowerShell profile — 6.2 s for a one-word `echo`, measured against 1.1 s with `-NoProfile` | M98 `3e1d01b`, probe `.tmp-console/bashtest` | **Closed.** This is what "the TUI freezes" was. |
