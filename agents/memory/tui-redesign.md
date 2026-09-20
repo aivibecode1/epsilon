@@ -79,12 +79,13 @@ three lines in a draw call:
   surface reads one passed-in `Theme`: `md_to_lines` and the render cache take
   `&Theme` as an argument, which is also what makes them testable in more than
   one colour mode. Do not reintroduce a free-function palette.
-- **`app.rs` is 3,783 lines** (from 6,700). Extracted so far: the tests
-  (`app/tests.rs`, `app/composer_viewport_tests.rs`) and the keyboard model
-  (`app/keys.rs`). All three compile as children of the same module, so
-  `super::*` still reaches private items — **keep that property, it is what makes
-  extraction free.** What remains is the event loop (`drive`), the draw path, and
-  the adapters that feed the shell.
+- **`app.rs` is 3,594 lines** (from 6,700) and the split is done. Beside it:
+  `app/keys.rs` (the keyboard model, 1,191), `app/event.rs` (the loop, 226),
+  `app/golden.rs` (whole-screen tests, 206), `app/tests.rs` (1,545),
+  `app/composer_viewport_tests.rs`, `app/tests_support.rs`. Every one compiles as
+  a child of the same module, so `super::*` still reaches private items — **keep
+  that property, it is what makes extraction free.** `app.rs` is now state, the
+  draw path, and the adapters that feed the shell.
 - When extracting from `app.rs`, two things repeatedly need care: a moved item
   used by the *parent* needs `pub(crate)` plus a re-export (the compiler's
   "private, and cannot be re-exported" error tells you which), and state that
