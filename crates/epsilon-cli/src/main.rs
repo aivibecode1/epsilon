@@ -67,6 +67,11 @@ MODES (pick one; the default is the interactive TUI)
   auth list | login <provider> [key] [--oauth [--paste]] | logout <provider>
                     manage stored credentials
   --tui-bench N     render benchmark for the transcript (N synthetic messages)
+  doctor            report configuration and available capabilities without
+                    starting a model run: build, workspace, instructions loaded,
+                    provider keys present (never their values), confinement and
+                    integration availability. The first thing to run when
+                    something is not working and you do not yet know why.
 
 FLAGS
   -m, --model ID        model to run (catalog id, alias, or provider/model)
