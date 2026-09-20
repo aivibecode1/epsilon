@@ -86,16 +86,18 @@ recovery machinery and the instruction-loading seams.
 |---|---|---|
 | ~~G5~~ | **Closed** in M99 (`542fa92`): `.gitignore` is honoured, with the matcher in `epsilon-core::ignore` so the tools and the TUI's `@`-file completion share one answer. | [`evidence/port-fidelity-audit.md`](evidence/port-fidelity-audit.md) D-9 | — |
 | ~~G6~~ | **Closed** in `87c5628`: both the catalog and the tool filter it. | D-4 | — |
-| G7 | `SYSTEM.md`, `APPEND_SYSTEM.md` and `.epsilon/prompts/` are trust-gate-detected but never loaded | D-7 |
-| G8 | `AGENTS.override.md` and ancestor context files above the workspace are never loaded | D-8 |
+| ~~G7~~ | **Closed** in M101 (`df338b7`): all three load, project shadowing global. | D-7 | — |
+| ~~G8~~ | **Closed** in M101 (`df338b7`): `AGENTS.override.md` is in the candidate list, ancestors load root-to-leaf, and `doctor` now reads the loader's own list instead of a second copy. | D-8 | — |
 | G9 | A `MaxTokens`-truncated summary is committed as if complete | D-5 |
-| G10 | The TUI stops repainting after a tool approval in at least one reproduced sequence | `.tmp-console` conhost probe, 12 identical screen digests while the process stayed alive |
+| ~~G10~~ | **Wrong, and closed by diagnosis**: the TUI was repainting (the spinner advanced); the *tool call* was stalling six seconds on a PowerShell profile. See G15. | M98 `3e1d01b` | — |
+
+| G15 | Every Windows `bash` call loaded the user's PowerShell profile — 6.2 s for a one-word `echo`, measured against 1.1 s with `-NoProfile` | M98 `3e1d01b`, probe `.tmp-console/bashtest` | **Closed.** This is what "the TUI freezes" was. |
 
 ### P2 — structure and teaching value
 
 | # | Gap |
 |---|---|
-| G11 | `crates/epsilon-tui/src/app.rs` is ~7,000 lines owning the event loop, key handling and legacy draw code |
+| G11 | `crates/epsilon-tui/src/app.rs` is **3,783 lines** (was 6,700). Tests and the keyboard model are extracted; the event loop is what remains. |
 | ~~G12~~ | **Closed** in `278d2ec`: every surface takes a passed-in `Theme` and the shim is deleted. |
 | G13 | No terminal-integration test runs in CI, though two working harnesses exist locally |
 | G14 | `epsilon-ext` has 5 tests for a whole crate — the least covered surface relative to its size |

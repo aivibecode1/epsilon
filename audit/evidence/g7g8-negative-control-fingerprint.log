@@ -1,0 +1,24 @@
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.29s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local\Temp\eps-pty-target\debug\deps\epsilon_core-8333d5e26b6ff7c9.exe)
+
+running 1 test
+test prompt::tests::the_fingerprint_covers_both_overlays ... FAILED
+
+failures:
+
+---- prompt::tests::the_fingerprint_covers_both_overlays stdout ----
+
+thread 'prompt::tests::the_fingerprint_covers_both_overlays' (928) panicked at crates\epsilon-core\src\prompt.rs:976:9:
+assertion `left != right` failed: a replaced identity is a cache event
+  left: 9184532546027682170
+ right: 9184532546027682170
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    prompt::tests::the_fingerprint_covers_both_overlays
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p epsilon-core --lib`

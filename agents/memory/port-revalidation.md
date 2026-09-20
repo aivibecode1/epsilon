@@ -199,3 +199,36 @@
   items (audit/04-roadmap.md Phases 3-4).
 - Gate before future code commits; use isolated HEAD candidates to avoid mixing
   inherited source with the verified slice. Review once, act on blockers, converge.
+
+## G7/G8 context files and identity overlays (2026-09-20, IN TREE, UNCOMMITTED)
+- Slice owner: delegated subagent (parent `session-6572a389`). No commit, per its brief;
+  the docs below are owed by whoever commits.
+- **G7 decided as "load", not "stop detecting"**: `epsilon-core::prompt` gains
+  `SystemOverlay` + `load_system_overlay{,_in}` (pi `discoverSystemPromptFile` /
+  `discoverAppendSystemPromptFile`, `resource-loader.ts:1023-1049`), `Stable` gains
+  `custom_identity` + `append`, and the CLI wires it in `build_runtime` (trust-gated,
+  global pair as fallback, announced on stderr). Task children inherit it.
+  `.epsilon/prompts/` stays gated and unloaded: pi's `prompts/*.md` are user-invoked slash
+  templates, not system-prompt text — a separate unported feature.
+- **G8**: candidate list is pi's five names, one file per directory (override first), and
+  `load_project_instructions` walks the workspace **and every ancestor to the filesystem
+  root**, outermost first. Precedence: global `MEMORY.md` → ancestors (root-first) →
+  workspace context file → workspace `MEMORY.md` → touched-subdirectory hints. The M73 hints
+  loader uses the same candidate list, so `AGENTS.override.md` works in subdirectories too.
+- **G9/D-9 remainder (skill catalog): already correct, no change.** `catalog` filters
+  (`skills.rs:125-138`) and is the only prompt path (`lib.rs:2211`); the `skill` tool is
+  built from an explicitly filtered `Vec<LoadableSkill>` (`main.rs:1565-1578`), a type with
+  no disabled flag, so the filter cannot be silently skipped. `/skills` (`skill_names`) is
+  user-facing and should list disabled skills. Audit D-1 ("no skill tool") is stale: the tool
+  exists (`epsilon-tools/src/skill.rs`, M97/`87c5628`).
+- Files: `epsilon-core/src/{prompt.rs,lib.rs}`, `epsilon-core/tests/system_overlay.rs` (new),
+  `epsilon-cli/src/{main.rs,runtime.rs,doctor.rs}`.
+- Evidence: `audit/evidence/g7g8-workspace-tests.log` (975 passed / 0 failed / 1 ignored,
+  57 binaries, exit 0), `g7g8-negative-control-{prompt,integration,fingerprint}.log`
+  (each fix reverted in place: 6 + 2 + 1 named tests fail for the named reason; restored
+  byte-identically, sha256 `52D19BD9…`).
+- Limits: `cargo fmt --all --check` fails **only** on `epsilon-tui/src/app.rs` and
+  `app/keys.rs` (the concurrent TUI workstream, untouched here); global
+  `~/.config/epsilon/AGENTS.md`-family (pi's agentDir context file) is still not loaded;
+  prompt templates unported. ADR-008 amendment, milestone doc and `docs/history.md` row
+  are still owed.

@@ -40,7 +40,7 @@ not themselves trigger runtime compression.
 | [tui-redesign.md](tui-redesign.md) | TUI presentation layer | `ui/` landed, 213 tests green; overlays migrated, `crate::theme` deleted, tests extracted to `app/tests.rs`; `app.rs` is 4,951 lines and the key handling + event loop are the next extraction |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
 | [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | **landed** 27cd677 with its evidence logs tracked; full workspace suite green on a fresh test profile; note can be retired once the milestone doc's reinstall line is reconciled |
-| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984; M97 2d50813; M98 3e1d01b; M99 542fa92; M100 46235bb |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984; M97 2d50813; M98 3e1d01b; M99 542fa92; M100 46235bb; **G7/G8 implemented in the working tree, uncommitted** |
 
 ## Next safe action
 
@@ -55,8 +55,9 @@ not themselves trigger runtime compression.
    `vt100`) both work; a visual regression should be a failing test, not a bug
    report from someone's console.
 3. Then the port gaps `audit/11` still lists: G3/G4 (the remaining checkpoint
-   restore semantics — a concurrent workstream is on G7/G8), G2 (resolved
-   containment, a design task), and the ranked P1 set.
+   restore semantics), G2 (resolved containment, a design task), and the ranked P1
+   set. G7/G8 (context files and identity overlays) are implemented in the working
+   tree — uncommitted, docs owed; see `port-revalidation.md`.
 
 
 
