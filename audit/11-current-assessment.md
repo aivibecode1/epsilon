@@ -91,7 +91,7 @@ recovery machinery and the instruction-loading seams.
 | ~~G9~~ | **Closed** in M102 (`989bd0a`): a length-stopped summary is refused and the caller falls back to context-free pruning. | D-5 | — |
 | ~~G10~~ | **Wrong, and closed by diagnosis**: the TUI was repainting (the spinner advanced); the *tool call* was stalling six seconds on a PowerShell profile. See G15. | M98 `3e1d01b` | — |
 
-| G15 | Every Windows `bash` call loaded the user's PowerShell profile — 6.2 s for a one-word `echo`, measured against 1.1 s with `-NoProfile` | M98 `3e1d01b`, probe `.tmp-console/bashtest` | **Closed.** This is what "the TUI freezes" was. |
+| ~~G15~~ | Every Windows `bash` call loaded the user's PowerShell profile — 6.2 s for a one-word `echo`, measured against 1.1 s with `-NoProfile`. **Closed** in M98 (`3e1d01b`); the probe lives on as `crates/epsilon-cli/tests/terminal.rs`'s sibling knowledge, and the measurement is in `shell_argv`'s doc comment. This is what "the TUI freezes" actually was. |
 
 ### P2 — structure and teaching value
 
