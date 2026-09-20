@@ -6,6 +6,9 @@
 //! would be testing a different thing.
 
 use super::*;
+// The key handlers are one module down (they were moved out of `app.rs`),
+// so the tests that drive them name the module rather than a re-export.
+use super::keys::{begin_auth_key_prompt, handle_key};
 use crossterm::event::KeyEventState;
 use epsilon_contracts::agent_event::PermissionRequest;
 use epsilon_contracts::message::UserMessage;
