@@ -49,8 +49,19 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 tempfile = { workspace = true }
 
+# The terminal integration test drives the built binary through a real
+# pseudo-console. In-process tests render into a `TestBackend`, which is the right
+# tool for what a frame looks like and cannot tell you whether the *binary* puts
+# that frame on a terminal — terminal init, raw mode, the alternate screen and the
+# event stream are all outside the in-process boundary, and they are where the
+# reported Windows freeze lived.
+[dev-dependencies]
+portable-pty = { workspace = true }
+vt100 = { workspace = true }
+
 [lints]
 workspace = true
+
 
 
 
