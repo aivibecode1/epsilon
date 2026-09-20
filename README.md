@@ -4,58 +4,72 @@
   <img src="assets/Logo.png" alt="Epsilon logo" width="720">
 </p>
 
-Epsilon is a Rust coding-agent harness with terminal, headless, HTTP/SSE and
-stdio RPC frontends. Its goal is to port pi-agent's coding workflows to Rust,
-while adopting useful execution, permissions and recovery mechanisms from
-DeepSeek Harness, Hermes Agent and opencode. **The port is incomplete.**
+Epsilon is a coding-agent harness written in Rust: a terminal UI, a headless
+mode, an HTTP/SSE server and a stdio RPC frontend over one agent core. It began
+as a port of [pi-agent](https://github.com/earendil-works/pi) and has since taken
+execution, permission and recovery ideas from DeepSeek Harness, Hermes Agent and
+opencode.
 
-> **Development status:** incomplete pi port, not production-ready. The latest
-> [Windows audit battery](audit/09-revalidation.md) passed, but source review found
-> unresolved persistence, transport and workflow defects. Use backed-up or disposable
-> workspaces. Passing regression tests is not proof of complete port fidelity.
+The port is **not complete**, and this file says where it stops rather than
+leaving that to be discovered.
 
 ## Contents
 
-- [Start here](#start-here)
-- [Capabilities and limits](#capabilities-and-limits)
-- [Architecture](#architecture)
-- [Development and testing](#development-and-testing)
+- [What it does](#what-it-does)
+- [Install](#install)
+- [Using it](#using-it)
+- [Current status](#current-status)
+- [How it is built](#how-it-is-built)
+- [Working on it](#working-on-it)
 - [Documentation](#documentation)
 - [References and credits](#references-and-credits)
 
-## Start here
+## What it does
 
-You need Rust 1.88 or newer and the platform's Rust build prerequisites. Rust 1.97.1
-was used for the recorded Windows verification; MSRV and Linux CI lanes are
-configured but were not rerun in that audit. Shell commands need a shell executable;
-Linux shell confinement additionally needs `bwrap`. Optional LSP, MCP and extension
-features need their own installed programs. There is no required Node/Python runtime
-for the Rust harness itself, but this is not a dependency-free execution environment.
+You point it at a workspace and describe a task. It reads files, edits them, runs
+commands, searches, delegates to subagents, and keeps a session you can resume.
+Every side-effecting action passes a permission gate first, and on Windows the
+commands it runs are confined by a Job Object, on Linux by bubblewrap where it is
+installed.
 
-From a source checkout:
+It is a single binary with no required Node or Python runtime.
 
-```sh
-git clone https://github.com/AIVibecode1/epsilon.git
-cd epsilon
-cargo run -q -p epsilon-cli -- --demo
-```
+## Install
 
-The demo is offline and scripted; it does not contact a model provider. It exercises
-the agent loop and intentional tool failure handling. A fresh network clone was not
-tested in the latest audit. Local uncommitted features are not available merely
-because this working tree passed its gates; see the audit for the exact baseline.
-
-To install a reviewed build:
+Rust 1.88 or newer.
 
 ```sh
 cargo install --path crates/epsilon-cli --force
 epsilon --help
 ```
 
-Real-provider support is enabled by default. Install only a reviewed build, not an
-unreviewed local diff. Setup and platform limits are in [Install](docs/user/install.md).
+From a clone, without installing:
 
-For supervised real-provider use after configuring your own credentials:
+```sh
+cargo run -q -p epsilon-cli -- --demo     # offline, scripted, no provider needed
+cargo run -q -p epsilon-cli               # the terminal UI
+```
+
+Platform notes, shell requirements and what each confinement backend does and
+does not do are in [Install](docs/user/install.md) and
+[Permissions](docs/user/permissions.md).
+
+## Using it
+
+| Command | What it does |
+|---|---|
+| `epsilon` | Interactive terminal UI |
+| `epsilon -p "summarize this repo"` | One prompt, headless; approvals default to denial |
+| `epsilon doctor` | Report configuration and available capabilities without running a model |
+| `epsilon -c` / `epsilon --resume <file>` | Continue a session |
+| `epsilon --serve --port 8787` | HTTP/SSE frontend |
+| `epsilon --rpc` | Epsilon's own NDJSON protocol, not pi RPC compatibility |
+| `epsilon --plan` | Deny native write/edit/bash/shell, keeping project rules |
+
+In the TUI, Enter sends, Esc cancels, `/help` lists commands, and the header shows
+the model, the remaining context window, the cache hit rate and the running cost.
+
+For real providers, after configuring your own credentials:
 
 ```sh
 epsilon auth login anthropic
@@ -63,81 +77,57 @@ epsilon --list-models
 epsilon --model <model-id>
 ```
 
-Enter credentials through the local login prompt, not as command-line arguments.
-OAuth requires provider-specific setup; see [Auth](docs/user/auth.md). Live login
-and a live coding workflow are not established by the offline demo.
+Credentials go through the local login prompt, never a command-line argument.
+OAuth needs provider-specific setup: see [Auth](docs/user/auth.md).
 
-Common commands:
+## Current status
 
-| Command | Purpose |
-|---|---|
-| `epsilon` | Interactive terminal UI |
-| `epsilon -p "summarize this repo"` | Headless prompt; approval requests default to denial |
-| `epsilon doctor` | Inspect configuration and available capabilities without starting a model run |
-| `epsilon -c` / `epsilon --resume <file>` | Continue a session; back up important transcripts first |
-| `epsilon --serve --port 8787` | HTTP/SSE frontend |
-| `epsilon --rpc` | Epsilon's NDJSON protocol, not pi RPC compatibility |
-| `epsilon --plan` | Deny native write/edit/bash/shell while retaining project rules; not a side-effect classifier for extensions |
-| `epsilon --help` | Implemented command inventory; known help-text overclaims are listed in the audit |
+**An incomplete port, not production-ready.** The verification this rests on, and
+what each number does and does not prove, is
+[audit/11 — current assessment](audit/11-current-assessment.md). Read that before
+trusting any claim here.
 
-In the TUI, Enter sends a prompt, Esc requests cancellation and `/help` lists
-commands. Cancellation and recovery limitations are documented in
-[Sessions](docs/user/sessions.md).
+What is solid: the agent loop, the tool set, session storage, compaction, the
+permission gate, and a test suite that runs offline against scripted providers —
+including a terminal integration test that drives the real binary through a real
+pseudo-console.
 
-## Capabilities and limits
+What is not: resolved filesystem containment for the native file tools is still
+open; checkpoint restore has known gaps, so it is not yet a safe user-facing undo;
+some pi features are unported, prompt templates among them; and nothing here has
+been certified on Linux or macOS beyond CI compiling it.
 
-Implemented mechanisms include read/write/edit/search tools, shell execution,
-per-agent tool loops, delegation, provider adapters, retry/fallback, session JSONL,
-compaction, permission prompts, process extensions, MCP and optional LSP diagnostics.
-Their presence does not establish complete pi behavior or production readiness.
+Use backed-up or disposable workspaces until that list is shorter.
 
-- **Permissions:** matching denies take precedence over allows and remembered approval.
-  Other matching allow/ask decisions use the later rule. `--yes` automatically approves
-  asks; it does not repair broken boundaries.
-- **Confinement:** Windows Job Objects constrain resources/processes, not filesystem
-  or network access. Linux bubblewrap restricts writes and network access but does not
-  hide all host files. Native file tools are not wrapped by those subprocess backends.
-  Default shell execution refuses when no backend is available; `--sandbox off`
-  explicitly disables confinement. macOS has no native backend here.
-- **Persistence and recovery:** append-only storage, leases and compaction exist, but
-  ignored append failures, repeated-compaction projection and final-entry repair need
-  hardening. Checkpoint capture is not yet safe user undo.
-- **Providers and integrations:** protocol fixtures and compilation are useful evidence,
-  not proof that every catalog model, OAuth flow or extension works. SSE buffering,
-  refresh, run admission and diagnostic freshness have open findings.
+## How it is built
 
-See [Permissions](docs/user/permissions.md), [the defect ledger](audit/02-defect-ledger.md)
-and [pi fidelity matrix](audit/03-port-plan.md) for concrete paths and acceptance tests.
-
-## Architecture
-
-The conventional Cargo workspace has twelve crates under `crates/`. CLI composes
-adapters; core owns agent execution; shared contracts keep implementation-specific
-types out of interfaces. Cargo enforces declared dependencies and rejects cycles,
-not a separate architectural layering policy.
+Twelve crates under `crates/`. Each has one job, and the edges between them are
+documented rather than assumed — Cargo rejects cycles but will happily accept an
+edge nobody meant to add.
 
 | Crate | Responsibility |
 |---|---|
-| `epsilon-contracts` | Shared types/traits; currently also validation and stateful stream folding |
-| `epsilon-llm` | Provider protocols, faux provider, routing, catalog, auth, retry/fallback |
-| `epsilon-session` | JSONL storage, indexing, branch projection, repair and leases |
-| `epsilon-core` | Agent loop, scheduling, context, compaction and task lifecycle |
-| `epsilon-tools` | Native tools, shell adapter, observations, mutation locks and checkpoints |
-| `epsilon-safety` | Permission rules/approvals, environment filtering and sandbox adapters |
-| `epsilon-lsp` | Optional language-server discovery/client and diagnostic reports |
-| `epsilon-ext` | Process extension protocol and host |
+| `epsilon-contracts` | Shared types and traits |
+| `epsilon-llm` | Provider protocols, the offline provider, routing, catalog, auth, retry |
+| `epsilon-session` | Session storage, indexing, branch projection, repair, leases |
+| `epsilon-core` | Agent loop, scheduling, context assembly, compaction, task lifecycle |
+| `epsilon-tools` | Native tools, the shell adapter, read observations, checkpoints |
+| `epsilon-safety` | Permission rules and approvals, environment filtering, sandbox backends |
+| `epsilon-lsp` | Optional language-server client and diagnostics |
+| `epsilon-ext` | The process-extension protocol and its host |
 | `epsilon-mcp` | MCP client and tool adapter |
-| `epsilon-tui` | Ratatui frontend and editor |
+| `epsilon-tui` | Terminal frontend |
 | `epsilon-server` | HTTP/SSE frontend |
-| `epsilon-cli` | Executable, arguments, configuration and runtime composition |
+| `epsilon-cli` | The binary: arguments, configuration, runtime composition |
 
-The [architecture guide](docs/design/epsilon-architecture.md) maps the actual crate
-edges and execution paths. The contracts crate's executable helpers are a known
-departure from the types-only policy, not a newly accepted architectural exception.
+The [architecture guide](docs/design/epsilon-architecture.md) maps the real edges
+and the execution paths. Decisions and their reasoning are recorded as ADRs in
+[docs/design/epsilon-decisions.md](docs/design/epsilon-decisions.md).
 
-## Development and testing
+## Working on it
 
-Read [AGENTS.md](AGENTS.md) before changing code. Run from the repository root:
+Read [AGENTS.md](AGENTS.md) first — it is the contract for anyone editing this
+repository, human or agent.
 
 ```sh
 cargo fmt --all -- --check
@@ -147,36 +137,46 @@ cargo run -q -p epsilon-cli -- --demo
 cargo check -p epsilon-cli --features real
 ```
 
-`bash scripts/gate.sh <label>` runs those gates and writes `target/gate-<label>.log`.
-Keep relevant evidence outside `target/` before clearing build artifacts. Reinstall
-the global CLI only after verified CLI/TUI changes; do not replace it with a failing
-build. Cleanup commands and failed-round handling are in AGENTS.md.
+`bash scripts/gate.sh <label>` runs all five and writes `target/gate-<label>.log`.
+Keep any evidence you want to cite outside `target/`, which is disposable.
 
-The [current audit](audit/09-revalidation.md) names the tested tree, gate results,
-remaining defects and untested surfaces. Tests use faux providers and local fixtures
-by default; live-provider checks are opt-in. Windows, Linux and MSRV CI definitions
-live in `.github/workflows/ci.yml`; configured lanes are not evidence they ran locally.
+Two habits that save time here:
+
+- **Build with one job.** Long builds on a busy machine have failed with compiler
+  startup errors under parallelism; `CARGO_BUILD_JOBS=1` and a target directory
+  outside the repository have passed every round since.
+- **The TUI has two test layers.** In-process golden frames check what a screen
+  looks like; `crates/epsilon-cli/tests/terminal.rs` spawns the real binary in a
+  pseudo-console and checks that it gets there at all. Run the second with
+  `EPSILON_BIN=target/debug/epsilon cargo test -p epsilon-cli --test terminal` —
+  it skips without that variable, and it is the only test that can fail because
+  the program never reached a terminal.
+
+Test counts, gate results and their limits are recorded per milestone in
+[docs/history.md](docs/history.md), not asserted here.
 
 ## Documentation
 
-- [Documentation map](docs/README.md): user guides, contributor references and historical records.
-- [User guides](docs/user/README.md): installation, configuration, auth, permissions and sessions.
-- [Audit and roadmap](audit/README.md): verified findings, evidence limits and ordered hardening work.
-- [Architecture decisions](docs/design/epsilon-decisions.md): recorded intent, including commitments not yet implemented.
-- [Project history](docs/history.md): historical milestones, not current gate certification.
+- [Documentation map](docs/README.md) — everything below, in one index.
+- [User guides](docs/user/README.md) — install, configuration, auth, permissions, sessions.
+- [Audit and plan](audit/README.md) — what is verified, what is not, and what is next.
+- [Architecture decisions](docs/design/epsilon-decisions.md) — recorded intent, including
+  commitments not yet implemented.
+- [Project history](docs/history.md) — the milestone timeline.
 
 ## References and credits
 
-The locally inspected reference snapshots (not included in a clone) are:
+The reference harnesses studied while building this, none of them vendored:
 
 | Reference | Areas studied |
 |---|---|
-| [pi 0.84.2](https://github.com/earendil-works/pi) | Agent loop, queues, coding tools, sessions, resources and embedding |
-| [DeepSeek Harness v0.1.1-rc.2](https://github.com/deepseek-ai/deepseek-harness) | Bounded capture, subprocess lifecycle and confinement |
-| [Hermes Agent 2026.8.19](https://github.com/NousResearch/hermes-agent) | Observer identity, verification evidence, prompts and recovery |
-| [opencode 1.18.21](https://github.com/anomalyco/opencode) | Permissions, change provenance and LSP edit feedback |
+| [pi 0.85.1](https://github.com/earendil-works/pi) | Agent loop, queues, coding tools, sessions, resources, prompt assembly |
+| [DeepSeek Harness v0.1.6-alpha.2](https://github.com/deepseek-ai/deepseek-harness) | Bounded capture, subprocess lifecycle, design tokens |
+| [Hermes Agent 2026.9.14](https://github.com/NousResearch/hermes-agent) | Observer identity, verification evidence, prompts, recovery |
+| [opencode 1.18.31](https://github.com/anomalyco/opencode) | Permissions, change provenance, language-server edit feedback |
 
 [Reference comparison](audit/06-reference-comparison.md) explains which mechanisms
-fit and which do not. [models.dev](https://models.dev) supplies catalog research via
-`scripts/regen_catalog.py`. These acknowledgements do not certify complete port
-fidelity or substitute for a source/license provenance review.
+fit and which do not. [models.dev](https://models.dev) supplies catalog research
+via `scripts/regen_catalog.py`. These acknowledgements credit the ideas; they are
+not a claim of complete fidelity, nor a substitute for a licence review before
+any of this is redistributed.
