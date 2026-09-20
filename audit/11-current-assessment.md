@@ -86,7 +86,7 @@ recovery machinery and the instruction-loading seams.
 |---|---|---|
 | ~~G5~~ | **Closed** in M99 (`542fa92`): `.gitignore` is honoured, with the matcher in `epsilon-core::ignore` so the tools and the TUI's `@`-file completion share one answer. | [`evidence/port-fidelity-audit.md`](evidence/port-fidelity-audit.md) D-9 | — |
 | ~~G6~~ | **Closed** in `87c5628`: both the catalog and the tool filter it. | D-4 | — |
-| ~~G7~~ | **Closed** in M101 (`df338b7`): all three load, project shadowing global. | D-7 | — |
+| ~~G7~~ | **Closed** in M101 (`df338b7`) for `SYSTEM.md` + `APPEND_SYSTEM.md` (both load; the project pair shadows the global one). **`.epsilon/prompts/` stays detected and unloaded**: pi's `prompts/*.md` are user-invoked slash templates, not system-prompt text, and the template feature is unported — the gate is kept so they cannot load untrusted when it lands. | D-7 | prompts templates still open |
 | ~~G8~~ | **Closed** in M101 (`df338b7`): `AGENTS.override.md` is in the candidate list, ancestors load root-to-leaf, and `doctor` now reads the loader's own list instead of a second copy. | D-8 | — |
 | G9 | A `MaxTokens`-truncated summary is committed as if complete | D-5 |
 | ~~G10~~ | **Wrong, and closed by diagnosis**: the TUI was repainting (the spinner advanced); the *tool call* was stalling six seconds on a PowerShell profile. See G15. | M98 `3e1d01b` | — |

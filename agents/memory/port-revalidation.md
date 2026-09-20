@@ -200,9 +200,9 @@
 - Gate before future code commits; use isolated HEAD candidates to avoid mixing
   inherited source with the verified slice. Review once, act on blockers, converge.
 
-## G7/G8 context files and identity overlays (2026-09-20, IN TREE, UNCOMMITTED)
-- Slice owner: delegated subagent (parent `session-6572a389`). No commit, per its brief;
-  the docs below are owed by whoever commits.
+## G7/G8 context files and identity overlays (2026-09-20, COMMITTED as M101 `df338b7`)
+- Slice owner: delegated subagent (parent `session-6572a389`); the parent committed the
+  slice and re-ran the gates itself (M101's message is the authoritative record).
 - **G7 decided as "load", not "stop detecting"**: `epsilon-core::prompt` gains
   `SystemOverlay` + `load_system_overlay{,_in}` (pi `discoverSystemPromptFile` /
   `discoverAppendSystemPromptFile`, `resource-loader.ts:1023-1049`), `Stable` gains
@@ -227,8 +227,9 @@
   57 binaries, exit 0), `g7g8-negative-control-{prompt,integration,fingerprint}.log`
   (each fix reverted in place: 6 + 2 + 1 named tests fail for the named reason; restored
   byte-identically, sha256 `52D19BD9…`).
-- Limits: `cargo fmt --all --check` fails **only** on `epsilon-tui/src/app.rs` and
-  `app/keys.rs` (the concurrent TUI workstream, untouched here); global
-  `~/.config/epsilon/AGENTS.md`-family (pi's agentDir context file) is still not loaded;
-  prompt templates unported. ADR-008 amendment, milestone doc and `docs/history.md` row
-  are still owed.
+- Limits: `cargo fmt --all --check` passed against the committed tree (the earlier failure
+  was the TUI workstream's in-flight `app.rs`/`app/keys.rs`, since committed in `1e04a39`);
+  global `~/.config/epsilon/AGENTS.md`-family (pi's agentDir context file) is still not
+  loaded; prompt templates unported (so `.epsilon/prompts/` stays gated-but-unused, and the
+  G7 row in `audit/11` says so instead of "all three load"). An M101 milestone doc and an
+  ADR-008 amendment for the STABLE-tier overlay are still owed.
