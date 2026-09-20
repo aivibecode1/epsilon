@@ -19,12 +19,23 @@ pub const GARBAGE_MARKER: &str = "not json at all";
 pub const TOOL_ERROR: &str = "the fixture tool failed on purpose";
 
 /// Cap on how long a *spawn* may take before the test calls it a hang. The handshake
-/// timeout is `INVOKE_TIMEOUT_SECS`, so this leaves room for process start-up on top.
-pub const MANIFEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// timeout is `INVOKE_TIMEOUT_SECS` (10 s), so the interesting spawn returns at about
+/// ten seconds having decided the child is silent; the rest is margin for process
+/// start-up and for tearing the child down afterwards.
+///
+/// Why the margin is this wide: a healthy run measures 47 ms (`--no-hello`) to 10.03 s
+/// (`--slow-hello`) for `ExtHost::spawn` itself, but starting a fresh process measured
+/// **1.7 s** on this machine and a spawn-plus-teardown round measured **23.4 s** under
+/// load — so a 20 s bound failed for a host that was behaving correctly, which is the
+/// one thing a protocol test must never do. A bound of 45 s still fails a real hang
+/// loudly, and `awake` names the mode and the deadline when it does.
+pub const MANIFEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Cap on any single call that can legitimately hit the ten-second invoke timeout. A call
-/// that outlives this is not slow, it is unbounded.
-pub const INVOKE_CAP: Duration = Duration::from_secs(25);
+/// that outlives this is not slow, it is unbounded. The margin is wide because a loaded
+/// machine can delay a process spawn by seconds, and a test that fails only under load
+/// teaches nothing.
+pub const INVOKE_CAP: Duration = Duration::from_secs(40);
 
 /// Path to the fixture binary.
 pub fn fixture_exe() -> PathBuf {

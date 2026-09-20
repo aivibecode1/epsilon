@@ -9,11 +9,11 @@
 //! | mode | misbehaviour |
 //! |---|---|
 //! | `--sleep` | never answers (stalls past the invoke timeout) |
-//! | `--pace` | never answers, but writes a log line every second |
+//! | `--pace` | never answers, but writes a frame every 20 ms |
 //! | `--die` | exits right after handshake (crash-budget fixture) |
 //! | `--exit-mid` | exits when the first invoke arrives |
 //! | `--no-hello` | exits without ever writing hello |
-//! | `--slow-hello` | stays alive but silent past the handshake timeout |
+//! | `--slow-hello` | stays alive but never speaks (the handshake's own timeout) |
 //! | `--garbage-hello` | first line is not JSON |
 //! | `--garbage` | answers every invoke with a non-JSON line |
 //! | `--tool-error` | answers with a well-formed result that reports failure |
@@ -66,8 +66,16 @@ fn main() {
         std::process::exit(0);
     }
     if mode == "--slow-hello" {
-        // Alive, but silent past the handshake window.
-        std::thread::sleep(Duration::from_secs(12));
+        // Silent, permanently. The point of this mode is a child that is *alive but says
+        // nothing*, so that the only thing which can end the handshake is the host's own
+        // deadline. A finite silence is a race the host is allowed to lose: the first
+        // version slept 30 s, and any run where the process took longer than 20 s to
+        // start made the test's outer bound fire before the host's inner one (measured:
+        // 23.4 s for spawn+teardown on a loaded machine). An unbounded silence cannot
+        // lose that race — the host times out at 10 s against a child that never speaks.
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
     }
 
     writeln!(
@@ -102,12 +110,14 @@ fn main() {
             "--die" => std::process::exit(7),
             "--exit-mid" => std::process::exit(9),
             "--sleep" => std::thread::sleep(Duration::from_secs(60)),
-            // A frame every second, never a result: each read succeeds, so the host must
-            // still stop at its own deadline rather than resetting one per line.
+            // One small frame at a time, never a result. Every read therefore succeeds, so
+            // a host that measures its timeout per read can be kept here indefinitely; the
+            // trickle also stays far below the per-invoke byte budget, so the only thing
+            // that can end the call is the host's own deadline.
             "--pace" => loop {
                 writeln!(out, r#"{{"type":"log","text":"still here"}}"#).unwrap();
                 out.flush().unwrap();
-                std::thread::sleep(Duration::from_secs(1));
+                std::thread::sleep(Duration::from_millis(20));
             },
             "--garbage" => {
                 writeln!(out, "{GARBAGE}").unwrap();

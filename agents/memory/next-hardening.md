@@ -21,7 +21,7 @@ the stale numbers cost.
 
 ## Since M83 (2026-09-20)
 
-- Suite: **985 passed, 0 failed, 1 ignored** on the workspace; add ~45 s for
+- Suite: **1,017 passed, 0 failed, 1 ignored** on the workspace; add ~45 s for
   `crates/epsilon-cli/tests/terminal.rs`, which drives the built binary through a
   real pseudo-console and is the only test that can fail because the program never
   reached a terminal. Invocation in `AGENTS.md`.
@@ -30,6 +30,16 @@ the stale numbers cost.
   `agents/memory/tui-redesign.md`.
 - The owner-reported "shrink and freeze" was the bash tool spawning
   `powershell -Command` without `-NoProfile` — 6.2 s per call. Not a rendering bug.
+- **A protocol test must not fail because the machine was slow** (fixed 2026-09-20).
+  `a_child_that_never_says_hello_times_out_at_spawn` flaked because the fixture's
+  silence was *finite* (30 s) while the test's outer bound was 20 s, so on a loaded
+  machine the bound fired before the host's 10 s handshake deadline. Measured on this
+  box: process start-up 1.7 s, spawn+teardown of a silent child 23.4 s under load,
+  and the host itself timing out correctly at 10.03 s. The fixture now stays silent
+  *forever* (no race to lose) and `MANIFEST_TIMEOUT` is 45 s with the measurements in
+  its doc comment. Suite went from wedging at ~30 s serial to 14 s parallel: 22/22.
+  Method note: the root cause came from a throwaway phase-timing probe test, not from
+  reading the code — instrument before theorising.
 
 
 ## Operating notes (this machine)

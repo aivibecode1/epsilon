@@ -35,7 +35,11 @@ async fn spawn(dir: &std::path::Path, mode: &str) -> Result<std::sync::Arc<ExtHo
     let manifest = fixture(mode);
     match tokio::time::timeout(MANIFEST_TIMEOUT, ExtHost::spawn(dir, &manifest)).await {
         Ok(r) => r,
-        Err(_) => panic!("spawn({mode}) did not return within {MANIFEST_TIMEOUT:?}"),
+        Err(_) => panic!(
+            "spawn({mode}) did not settle within {MANIFEST_TIMEOUT:?}; the host's own handshake \
+             deadline is far shorter, so reaching this bound means the child never started or \
+             never went away"
+        ),
     }
 }
 
@@ -286,9 +290,11 @@ async fn a_child_that_never_replies_times_out() {
     );
 }
 
-/// The timeout is per *invoke*, not per line read. A child that emits any complete frame
-/// inside the window resets a per-read timer, so a frame every second keeps the call
-/// alive forever while the documented contract promises it ends at ten seconds.
+/// The timeout is per *invoke*, not per line read. The child writes a small frame every
+/// 20 ms and never answers, so every individual read succeeds: a per-read timer never
+/// fires and the call is held open while the documented contract promises it ends at ten
+/// seconds. The trickle is ~200 KB per invoke, far below the byte budget, so the deadline
+/// is the only defence that can end this call — the two are tested apart, not raced.
 #[tokio::test]
 async fn a_chatty_child_cannot_extend_the_invoke_timeout_indefinitely() {
     let dir = tempfile::tempdir().unwrap();
@@ -298,7 +304,7 @@ async fn a_chatty_child_cannot_extend_the_invoke_timeout_indefinitely() {
     let err = awake(
         host.invoke("ext_echo", "tc_1", serde_json::json!({})),
         support::INVOKE_CAP,
-        "invoke against a child that never answers but writes a line every second",
+        "invoke against a child that never answers but keeps writing frames",
     )
     .await
     .expect_err("a child that answers nothing must not keep the invoke alive");
@@ -478,6 +484,13 @@ async fn a_child_that_exits_at_handshake_fails_to_spawn() {
 
 /// A child that is alive but silent is neither a crash nor a protocol violation: the
 /// handshake has its own timeout, and `attach_extensions` reports it as a failed start.
+///
+/// The child never speaks, so nothing it does can end this handshake — only the host's
+/// deadline can. That matters because the *test's* bound must never be the thing that
+/// fires: when the fixture's silence was finite (30 s) and the bound was 20 s, a loaded
+/// machine lost the race and the test failed against a host that was behaving perfectly
+/// (measured on this box: 1.7 s to start one small process, 23.4 s for a spawn plus
+/// teardown of a silent child, and 10.03 s for the host's own timeout to fire).
 #[tokio::test]
 async fn a_child_that_never_says_hello_times_out_at_spawn() {
     let dir = tempfile::tempdir().unwrap();
