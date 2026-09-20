@@ -12,6 +12,24 @@ use tokio::sync::Mutex;
 use crate::manifest::ExtManifest;
 use crate::{CRASH_BUDGET, INVOKE_TIMEOUT_SECS};
 
+/// Largest single protocol frame accepted from a child (2 MiB, aligned with
+/// `epsilon_tools::checkpoint::MAX_FILE_BYTES`).
+///
+/// A line is the only unit the protocol has, so a child that never sends a newline would
+/// otherwise make the host buffer whatever it likes: `read_line` is happy to accumulate
+/// megabytes, and the child chooses the number. The cap is far above any frame the host
+/// itself sends and far above a large tool result; it exists to bound the host's memory,
+/// not to police result size.
+const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
+
+/// Most bytes of child output one invoke may consume.
+///
+/// `INVOKE_TIMEOUT_SECS` bounds an invoke in time; this bounds it in bytes. Without it a
+/// child could keep the reader busy for the whole window — and, because chatter is skipped
+/// rather than failing, busy is all it would ever be — on a stream the host can never
+/// finish reading. Hitting this is a protocol violation, not a slow extension.
+const MAX_INVOKE_BYTES: usize = 16 * 1024 * 1024;
+
 /// Errors surfaced by the host. All are values — a crashing extension must degrade the
 /// extension, never the harness.
 #[derive(Debug)]
@@ -218,20 +236,36 @@ impl ExtHost {
             .await
             .map_err(|e| ExtError::Crashed(format!("flush: {e}")))?;
 
+        // The deadline is for the whole invoke, not for each line. A child that emits any
+        // complete frame inside the window would otherwise restart a per-read timer and
+        // hold the call open indefinitely while the documented contract promises it ends.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(INVOKE_TIMEOUT_SECS);
+        let mut bytes_read = 0usize;
+
         loop {
-            let line = tokio::time::timeout(
-                Duration::from_secs(INVOKE_TIMEOUT_SECS),
-                read_line_str(&mut io.stdout),
-            )
-            .await
-            .map_err(|_| ExtError::Timeout)?
-            .map_err(|e| ExtError::Crashed(format!("read: {e}")))?;
-            let Some(line) = line else {
-                return Err(ExtError::Crashed("stdout closed".into()));
+            let line = tokio::time::timeout_at(deadline, read_line_bytes(&mut io.stdout))
+                .await
+                .map_err(|_| ExtError::Timeout)?
+                .map_err(|e| ExtError::Crashed(format!("read: {e}")))?;
+            let line = match line {
+                Frame::Line(l) => l,
+                Frame::Eof => return Err(ExtError::Crashed("stdout closed".into())),
+                Frame::TooLong => {
+                    return Err(ExtError::Protocol(format!(
+                        "frame exceeds {MAX_FRAME_BYTES} bytes"
+                    )));
+                }
             };
+            bytes_read += line.len();
+            if bytes_read > MAX_INVOKE_BYTES {
+                return Err(ExtError::Protocol(format!(
+                    "child produced more than {MAX_INVOKE_BYTES} bytes for one invoke without \
+                     answering it"
+                )));
+            }
             // Child diagnostics channel: {"type":"log","text":...} — collected, never
             // treated as a result.
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line)
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&line)
                 && v.get("type").and_then(|t| t.as_str()) == Some("log")
             {
                 if let (Some(text), true) =
@@ -241,27 +275,133 @@ impl ExtHost {
                 }
                 continue;
             }
-            let v: serde_json::Value = serde_json::from_str(&line)
-                .map_err(|e| ExtError::Protocol(format!("{e} in: {line}")))?;
+            let v: serde_json::Value = serde_json::from_slice(&line)
+                .map_err(|e| ExtError::Protocol(format!("{e} in a {}-byte line", line.len())))?;
             if v.get("type").and_then(|t| t.as_str()) != Some("result") {
                 continue; // ignore non-result chatter v1
             }
             if v.get("id").and_then(|i| i.as_str()) != Some(id) {
                 continue; // stale/unknown id: skip
             }
-            let is_error = v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false);
-            let text = v
-                .get("text")
-                .and_then(|t| t.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let details = v.get("details").cloned().unwrap_or(serde_json::json!({}));
+            // A result frame is validated before anything in it is believed. Accepting a
+            // frame with no `text`, or with a `details` that is not an object, would turn
+            // a broken child into a successful empty tool result — indistinguishable, in
+            // the transcript, from a tool that legitimately returned nothing. The host
+            // names the problem instead of quoting the payload (`ExtError::Protocol` goes
+            // into `ToolFailure` text, which lands in the transcript).
+            let text = match v.get("text") {
+                Some(serde_json::Value::String(t)) => t.clone(),
+                Some(other) => {
+                    return Err(ExtError::Protocol(format!(
+                        "result.text must be a string, got {}",
+                        json_kind(other)
+                    )));
+                }
+                None => return Err(ExtError::Protocol("result has no text".into())),
+            };
+            let details = match v.get("details") {
+                Some(d @ serde_json::Value::Object(_)) => d.clone(),
+                Some(other) => {
+                    return Err(ExtError::Protocol(format!(
+                        "result.details must be an object, got {}",
+                        json_kind(other)
+                    )));
+                }
+                None => return Err(ExtError::Protocol("result has no details".into())),
+            };
+            let is_error = match v.get("is_error") {
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(other) => {
+                    return Err(ExtError::Protocol(format!(
+                        "result.is_error must be a bool, got {}",
+                        json_kind(other)
+                    )));
+                }
+                None => return Err(ExtError::Protocol("result has no is_error".into())),
+            };
             return if is_error {
                 Err(ExtError::ToolFailed { message: text })
             } else {
                 Ok((text, details))
             };
         }
+    }
+}
+
+/// What one read off the child's stdout produced.
+enum Frame {
+    /// A complete line, with its terminator stripped and its JSON escapes intact.
+    Line(Vec<u8>),
+    /// Clean end of stream.
+    Eof,
+    /// A line longer than [`MAX_FRAME_BYTES`]; the rest of it is left unread on purpose.
+    TooLong,
+}
+
+/// Read one protocol frame as bytes, refusing to buffer more than [`MAX_FRAME_BYTES`].
+///
+/// Bytes rather than `read_line`'s `String`: a line is only known to be UTF-8 once it is
+/// complete, and deciding that per 8 KiB pipe chunk would reject a multi-byte character
+/// that happens to straddle a buffer boundary. The cap is what keeps a child that never
+/// sends a newline from choosing how much memory the harness allocates; when it trips,
+/// the host stops draining the line, so callers must treat the stream as desynchronized.
+async fn read_line_bytes<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> std::io::Result<Frame> {
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(if buf.is_empty() {
+                Frame::Eof
+            } else {
+                // Final line with no terminator, then EOF: still a frame.
+                Frame::Line(buf)
+            });
+        }
+        if let Some(pos) = available.iter().position(|b| *b == b'\n') {
+            if buf.len() + pos > MAX_FRAME_BYTES {
+                // The terminator is already in view, so the overrun is knowable before it
+                // is buffered — the check below the loop would have had to store it first.
+                return Ok(Frame::TooLong);
+            }
+            buf.extend_from_slice(&available[..=pos]);
+            reader.consume(pos + 1);
+            break;
+        }
+        let n = available.len();
+        buf.extend_from_slice(available);
+        reader.consume(n);
+        if buf.len() > MAX_FRAME_BYTES {
+            return Ok(Frame::TooLong);
+        }
+    }
+    while matches!(buf.last(), Some(b'\r' | b'\n')) {
+        buf.pop();
+    }
+    // The cap applies to the finished line, not only to the chunks that arrived
+    // without a terminator. Checking inside the loop alone let one oversized line
+    // through whenever the newline arrived in the same read — which is the common
+    // case, and exactly the payload a hostile extension would send.
+    if buf.len() > MAX_FRAME_BYTES {
+        return Ok(Frame::TooLong);
+    }
+    // A malformed UTF-8 line is a protocol problem the caller reports, not an I/O error.
+    if std::str::from_utf8(&buf).is_err() {
+        buf = String::from_utf8_lossy(&buf).into_owned().into_bytes();
+    }
+    Ok(Frame::Line(buf))
+}
+
+/// Name a JSON value's kind, for diagnostics that must not quote the child's payload.
+fn json_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a bool",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
     }
 }
 
@@ -276,4 +416,87 @@ async fn read_line_str<R: tokio::io::AsyncBufRead + Unpin>(
     } else {
         Some(buf.trim_end_matches(['\r', '\n']).to_string())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The handshake still reads a `String`; the frame reader hands back bytes. Both have
+    /// to agree on where a line ends, or a child's first line and its tenth would be
+    /// framed differently.
+    #[tokio::test]
+    async fn the_frame_reader_and_the_handshake_reader_agree_on_a_line() {
+        let raw = b"{\"type\":\"hello\"}\r\n{\"type\":\"result\"}\n";
+        let mut a = BufReader::new(std::io::Cursor::new(raw.to_vec()));
+        let mut b = BufReader::new(std::io::Cursor::new(raw.to_vec()));
+
+        for expected in ["{\"type\":\"hello\"}", "{\"type\":\"result\"}"] {
+            let via_handshake = read_line_str(&mut a).await.unwrap().unwrap();
+            let via_frames = match read_line_bytes(&mut b).await.unwrap() {
+                Frame::Line(l) => String::from_utf8(l).unwrap(),
+                other => panic!(
+                    "expected a line, got {}",
+                    match other {
+                        Frame::Eof => "eof",
+                        _ => "too long",
+                    }
+                ),
+            };
+            assert_eq!(via_handshake, expected);
+            assert_eq!(via_frames, expected);
+        }
+        assert!(read_line_str(&mut a).await.unwrap().is_none());
+        assert!(matches!(read_line_bytes(&mut b).await.unwrap(), Frame::Eof));
+    }
+
+    /// A line with no terminator at the end of the stream is still a frame: closing stdin
+    /// is a legitimate way for a child to end.
+    #[tokio::test]
+    async fn a_final_line_without_a_terminator_is_a_frame() {
+        let mut r = BufReader::new(std::io::Cursor::new(b"{\"a\":1}".to_vec()));
+        match read_line_bytes(&mut r).await.unwrap() {
+            Frame::Line(l) => assert_eq!(l, b"{\"a\":1}"),
+            _ => panic!("expected the unterminated line"),
+        }
+    }
+
+    /// The cap has to trip on total bytes, including bytes that arrive after some complete
+    /// characters — so this overruns with a multi-byte character rather than with `x`.
+    #[tokio::test]
+    async fn a_line_past_the_cap_is_refused_rather_than_buffered() {
+        let mut raw = vec![b'a'; MAX_FRAME_BYTES + 1];
+        raw.push(b'\n');
+        let mut r = BufReader::new(std::io::Cursor::new(raw));
+        assert!(matches!(
+            read_line_bytes(&mut r).await.unwrap(),
+            Frame::TooLong
+        ));
+    }
+
+    /// A frame exactly at the cap is accepted: the boundary must not depend on which side
+    /// of it the newline falls.
+    #[tokio::test]
+    async fn a_line_at_the_cap_is_still_a_frame() {
+        let mut raw = vec![b'a'; MAX_FRAME_BYTES];
+        raw.push(b'\n');
+        let mut r = BufReader::new(std::io::Cursor::new(raw));
+        match read_line_bytes(&mut r).await.unwrap() {
+            Frame::Line(l) => assert_eq!(l.len(), MAX_FRAME_BYTES),
+            _ => panic!("a frame at the cap must be read"),
+        }
+    }
+
+    /// Invalid UTF-8 is reported by the JSON parse (a protocol violation), not as an I/O
+    /// error that would read as a crash.
+    #[tokio::test]
+    async fn invalid_utf8_becomes_a_line_for_the_json_parser_to_refuse() {
+        let mut r = BufReader::new(std::io::Cursor::new(vec![0xff, 0xfe, b'\n']));
+        match read_line_bytes(&mut r).await.unwrap() {
+            Frame::Line(l) => {
+                assert!(serde_json::from_slice::<serde_json::Value>(&l).is_err());
+            }
+            _ => panic!("invalid UTF-8 must still produce a line"),
+        }
+    }
 }
