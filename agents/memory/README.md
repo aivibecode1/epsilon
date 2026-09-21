@@ -46,13 +46,12 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-21 (sixth round of the day)** — M112: the cost model returns a
-   breakdown (divide-once preserved and pinned), the `:free`-model floor bug fixed, the dead
-   `CostMicro` type deleted from contracts, and `/help` now decodes the header. Battery
-   `m112a`: 1,032 passed / 0 failed. Also landed: the **port plan re-check**
-   (`43edd22`, `audit/evidence/port-gap-recheck-2026-09-21.md`) — 17 rows re-verified
-   against the code and pi 0.85.1, 12 stale claims corrected, and the still-open gaps ranked
-   in `port-revalidation.md`. Global `epsilon.exe` reinstalled. Remaining: clean `target/`.
+1. **Round closed 2026-09-22 (seventh round of the day)** — M113: an unknown entry kind is
+   now **preserved** instead of closing the session (`EntryKind::Unknown`, lenient tag /
+   strict body, `LineDiagnosis::MalformedEntry`, `KNOWN_ENTRY_KINDS` with a drift guard,
+   `preserved_unknown()`); pi's `Label`/`SessionInfo` kinds added. Battery `m113a`: 1,038
+   passed / 0 failed. Verified end-to-end through the CLI on both sides of the rule, before
+   and after the reinstall. Global `epsilon.exe` reinstalled. Cleaned: 32.5 GB free.
 2. **The port's loudest gap is bigger than the plan said: it is an IMPORTER gap.** pi
    entries carrying `label`/`session_info` are refused, but adding those two variants would
    not make a single genuine pi file readable — the refusal happens before the kind is
