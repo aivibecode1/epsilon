@@ -235,3 +235,35 @@
   loaded; prompt templates unported (so `.epsilon/prompts/` stays gated-but-unused, and the
   G7 row in `audit/11` says so instead of "all three load"). An M101 milestone doc and an
   ADR-008 amendment for the STABLE-tier overlay are still owed.
+
+## Port plan re-checked (2026-09-21, commit 43edd22)
+
+`audit/03-port-plan.md` was written against `references/pi-0.84.2/`, which **no longer
+exists** — 21 citations point at it, and only `pi-0.85.1` is checked out. Every row was
+re-checked against the current code and pi 0.85.1:
+[`audit/evidence/port-gap-recheck-2026-09-21.md`](../../audit/evidence/port-gap-recheck-2026-09-21.md)
+(17 rows; 2 closed since, 13 still open, **12 claims now factually wrong** — wrong paths,
+line numbers past EOF, a deleted Rust file, and "no producer was found" for something M90
+added). Treat unverified line numbers in `03` as historical.
+
+**The still-open rows, ranked by what a user notices:**
+
+1. **Session format** — pi entries carrying `label`/`session_info` are REFUSED, not partly
+   read: `EntryKind` has no such variants, so an unknown `kind.type` becomes
+   `StoreError::corrupt` (`store.rs:610-612`). A pi session with labels cannot be opened.
+   The loudest fidelity gap, and the one to take next.
+2. **Branch navigation on the user path** — the store operations exist
+   (`branch_with_summary`, `fork_branch_at`, projection) and nothing calls them: `/tree` is
+   an alias for the active-branch picker and `/fork` is a raw `fs::copy`
+   (`app.rs:1458-1489,1606-1621`). This is SESSION-01b.
+3. **Tool surface** — 12 tools + `skill` registered by default where pi's default active
+   set is 4; no `powershell`; `ls` has no limit; `ignoreCase` has no alias; `find`
+   truncates silently.
+4. **Prompt templates** — trust-gated and never loaded; no substitution anywhere.
+5. **F07 persistence** — `let _ = st.append(..)` / `let _ = s.pop_last()`.
+6. Then config breadth, skills scan/collision policy, resources/themes, Codex/Azure/
+   Cloudflare wires, RPC op surface, extension SDK, image resize.
+
+**One wrong claim lives in shipped code, not docs:** `crates/epsilon-tui/src/skills.rs`
+says its later-root shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision
+diagnostic (`skills.ts:432-439`). Behaviour question with a test to write — queued.

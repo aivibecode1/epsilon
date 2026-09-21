@@ -1222,6 +1222,13 @@ impl App {
                     "subscription login: /login anthropic oauth · /login xai oauth (device code) · /login openrouter oauth — browser round-trip, same store",
                     "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
                     "thinking: Ctrl+T cycles · current level in the status bar",
+                    // The header is the harness's own report on itself, and a report with
+                    // no legend is only transparent to the person who wrote it. These two
+                    // lines decode it, including the two placeholders that mean "unknown"
+                    // rather than "zero".
+                    "header: 42%/200k = context used/window (warns at 70%, red at 90%) · ↑12k ↓3.4k = tokens in/out this session",
+                    "header: cache 87% = share of the LAST prompt served from cache (— = none yet) · $0.42 = estimated cost at list prices",
+                    "header: a trailing + on the cost means the session moved tokens the model registry does not price, so the figure is a lower bound",
                     "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
                 ] {
@@ -2890,8 +2897,10 @@ impl App {
             cache_read: cache_read_session,
             cache_write: cache_write_session,
         };
-        let cost_micro_usd = info.as_ref().map(|info| {
-            crate::ui::cost::micro_usd(
+        // One call, so the total and the floor marker cannot disagree about which
+        // components were priced.
+        let cost = info.as_ref().map(|info| {
+            crate::ui::cost::breakdown(
                 counts,
                 crate::ui::cost::TokenPrices {
                     input: info.input_cost_micro_per_mtok,
@@ -2901,17 +2910,8 @@ impl App {
                 },
             )
         });
-        let cost_is_floor = info.as_ref().is_some_and(|info| {
-            crate::ui::cost::is_floor(
-                counts,
-                crate::ui::cost::TokenPrices {
-                    input: info.input_cost_micro_per_mtok,
-                    output: info.output_cost_micro_per_mtok,
-                    cache_read: info.cache_read_cost_micro_per_mtok,
-                    cache_write: info.cache_write_cost_micro_per_mtok,
-                },
-            )
-        });
+        let cost_micro_usd = cost.as_ref().map(crate::ui::cost::CostBreakdown::total);
+        let cost_is_floor = cost.as_ref().is_some_and(|c| c.is_floor());
         crate::ui::metrics::Metrics {
             model_label: epsilon_llm::catalog::display_label(&self.model_id).to_string(),
             offline: self.model_id.starts_with("faux"),

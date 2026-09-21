@@ -130,19 +130,6 @@ pub struct Usage {
     pub total_tokens: u64,
 }
 
-/// Per-rate cost components in micro-USD (1_000_000 = $1).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CostMicro {
-    /// Cost of `Usage::input` tokens.
-    pub input: u64,
-    /// Cost of `Usage::output` tokens.
-    pub output: u64,
-    /// Cost of cache reads.
-    pub cache_read: u64,
-    /// Cost of cache writes.
-    pub cache_write: u64,
-}
-
 impl Usage {
     /// Component-wise addition (port of pi's `combineUsage`); also available via `+`.
     pub fn combine(self, other: Usage) -> Usage {
@@ -160,18 +147,6 @@ impl std::ops::Add for Usage {
     type Output = Usage;
     fn add(self, rhs: Usage) -> Usage {
         Usage::combine(self, rhs)
-    }
-}
-
-impl std::ops::Add for CostMicro {
-    type Output = CostMicro;
-    fn add(self, rhs: CostMicro) -> CostMicro {
-        CostMicro {
-            input: self.input + rhs.input,
-            output: self.output + rhs.output,
-            cache_read: self.cache_read + rhs.cache_read,
-            cache_write: self.cache_write + rhs.cache_write,
-        }
     }
 }
 
