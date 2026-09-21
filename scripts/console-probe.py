@@ -214,6 +214,13 @@ def set_size(out_handle, cols, rows, buffer_rows=None):
     return {name: bool(ok) for name, ok in steps}
 
 
+#: Text characters that need a real virtual key code to mean anything. A console
+#: application reads the *key*, not the character: `\r` with a zero VK code is a
+#: keystroke no application recognises as Enter, which is why a probe that only sent
+#: characters could type `/help` into the composer and never submit it.
+VK_BY_CHAR = {"\r": 0x0D, "\n": 0x0D, "\t": 0x09, "\x1b": 0x1B}
+
+
 def type_text(in_handle, text):
     records = (INPUT_RECORD * (len(text) * 2))()
     i = 0
@@ -223,7 +230,7 @@ def type_text(in_handle, text):
             rec.EventType = KEY_EVENT
             rec.Event.KeyEvent.bKeyDown = 1 if down else 0
             rec.Event.KeyEvent.wRepeatCount = 1
-            rec.Event.KeyEvent.wVirtualKeyCode = 0
+            rec.Event.KeyEvent.wVirtualKeyCode = VK_BY_CHAR.get(ch, 0)
             rec.Event.KeyEvent.wVirtualScanCode = 0
             rec.Event.KeyEvent.UnicodeChar = ch
             rec.Event.KeyEvent.dwControlKeyState = 0
