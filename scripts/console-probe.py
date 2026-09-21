@@ -246,6 +246,7 @@ def main():
     mode = "late"
     size = None
     maximize = False
+    wait_s = 7.0
     text = "hello from the probe"
     positionals = []
     i = 0
@@ -256,6 +257,11 @@ def main():
             mode = "late"
         elif argv[i] == "--maximize":
             maximize = True
+        elif argv[i] == "--at":
+            # Seconds to wait after attaching before typing. The default suits a settled
+            # TUI; measuring whether early keystrokes survive needs it smaller.
+            i += 1
+            wait_s = float(argv[i])
         elif argv[i] == "--size":
             i += 1
             parts = argv[i].lower().split("x")
@@ -267,7 +273,7 @@ def main():
     if len(positionals) > 1:
         text = positionals[1]
 
-    result = {"exe": exe, "typed_text": text, "mode": mode, "size": size}
+    result = {"exe": exe, "typed_text": text, "mode": mode, "size": size, "wait_s": wait_s}
 
     # 1. A console of our own, created the way a user creates one. `ping` is the
     #    sleep: it does not read stdin, so nothing competes with the TUI for keys.
@@ -313,7 +319,7 @@ def main():
         result["typed_early_again"] = type_text(inp, " second")
         time.sleep(4.0)
     else:
-        time.sleep(7.0)
+        time.sleep(wait_s)
 
     result["after"] = snapshot(out)
     result["after_screen"] = screen_text(out, limit_rows=64)

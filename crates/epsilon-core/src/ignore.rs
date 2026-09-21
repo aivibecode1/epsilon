@@ -85,6 +85,15 @@ impl IgnoreSet {
     /// work it was asked for. When the cap is hit, the rules found so far still
     /// apply — the walk is narrower than ideal, never wrong about what it
     /// searched.
+    ///
+    /// **The search itself is pruned by the rules as they are found.** A directory
+    /// the rules parsed so far already ignore is not descended into, because git
+    /// does not descend into one either: a deeper `.gitignore` could only speak
+    /// about paths git would never look at. That is a correctness argument, and it
+    /// is also the difference between reading a repository and reading everything
+    /// beside it — this project ignores `/references/`, four checkouts of other
+    /// people's source, and an unpruned search reads every one of their
+    /// directories looking for `.gitignore` files that cannot change the answer.
     pub fn load(root: &Path, max_files: usize) -> Self {
         let mut set = Self::default();
         let mut seen = 0usize;
@@ -110,9 +119,22 @@ impl IgnoreSet {
                 if skip_dir(&name) {
                     continue;
                 }
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    queue.push(entry.path());
+                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
                 }
+                let path = entry.path();
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                // Pruned by the rules found so far, which is git's own rule: it never
+                // descends into an ignored directory, so nothing inside one can re-include
+                // it. Without this the search reads every ignored tree — see the doc above.
+                if set.is_ignored(&relative, true) {
+                    continue;
+                }
+                queue.push(path);
             }
         }
         set
@@ -494,6 +516,36 @@ mod tests {
         assert!(
             s.is_empty(),
             "a rule inside target/ must never be read: it cannot apply to real content"
+        );
+    }
+
+    #[test]
+    fn the_search_is_pruned_by_the_rules_it_finds() {
+        // A directory the rules already ignore is not searched. This is git's own rule —
+        // it never descends into an ignored directory, so a `.gitignore` inside one can
+        // only speak about paths git would never look at — and it is what keeps the search
+        // proportional to the repository instead of to everything sitting beside it. This
+        // project ignores `/references/`, four checkouts of other people's source; before
+        // the pruning, every `IgnoreSet::load` read all of their directories.
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join(".gitignore"), "vendor/\n").expect("root ignore");
+        let vendor = tmp.path().join("vendor");
+        std::fs::create_dir_all(&vendor).expect("vendor");
+        std::fs::write(vendor.join(".gitignore"), "*.log\n*.tmp\n").expect("vendor ignore");
+        let app = tmp.path().join("app");
+        std::fs::create_dir_all(&app).expect("app");
+        std::fs::write(app.join(".gitignore"), "*.bak\n").expect("app ignore");
+
+        let s = IgnoreSet::load(tmp.path(), 64);
+        assert_eq!(
+            s.len(),
+            2,
+            "the root rule and app's rule, and none of vendor's two: {s:?}"
+        );
+        assert!(s.is_ignored("vendor", true), "the root rule still applies");
+        assert!(
+            s.is_ignored("app/x.bak", false),
+            "a visited directory's rules still load"
         );
     }
 

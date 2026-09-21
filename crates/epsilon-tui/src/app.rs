@@ -333,6 +333,16 @@ pub(crate) struct App {
     workspace_root: std::path::PathBuf,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
     branch_cache: (Option<String>, std::time::Instant),
+    /// Cached ignore rules for `@` completion, with the time they were read.
+    ///
+    /// `IgnoreSet::load` searches the workspace for `.gitignore` files, which is not work
+    /// a keystroke can pay for: typing `@Cargo` re-derives the popup once per character.
+    /// Without this cache each character paid a full search, and in a workspace holding a
+    /// large ignored tree the popup simply never appeared — measured in a real console,
+    /// which is how the regression was found (M110). The branch cache above uses the same
+    /// TTL shape for the same reason; the TTL is what bounds how long an edited
+    /// `.gitignore` goes unnoticed.
+    at_ignore: Option<(epsilon_core::ignore::IgnoreSet, std::time::Instant)>,
     /// G6: pi `KeybindingsManager` parity — `~/.config/epsilon/keybindings.json`.
     keybindings: crate::keybindings::KeybindingsManager,
     /// M25: mirror of the agent's thinking level for the footer. Written ONLY
@@ -574,6 +584,9 @@ impl App {
                 None,
                 std::time::Instant::now() - std::time::Duration::from_secs(10),
             ),
+            // `None` means "never loaded": the first `@` pays for the search once, and
+            // every keystroke after it reads the cached rules.
+            at_ignore: None,
             workspace_root,
             keybindings: crate::keybindings::KeybindingsManager::create(),
             thinking: epsilon_contracts::ThinkingLevel::default(),
@@ -979,7 +992,7 @@ impl App {
     }
 
     /// File candidates for `fragment` (case-insensitive substring, cap 200).
-    fn at_file_rows(&self, fragment: &str) -> Vec<String> {
+    fn at_file_rows(&mut self, fragment: &str) -> Vec<String> {
         // The `@` list has to agree with the tools about which files exist: offering a path
         // the model's own read tool would refuse is a promise the harness cannot keep.
         // `epsilon_core::ignore` is that single answer (M99), and `epsilon-tui` already
@@ -989,12 +1002,28 @@ impl App {
         // for typing latency (a few hundred rows, stop early) rather than for a tool call
         // that must see everything. One ignore answer, two walks with different budgets —
         // if a third consumer appears, the walk belongs in core beside `IgnoreSet`.
-        let ignore = epsilon_core::ignore::IgnoreSet::load(
-            &self.workspace_root,
-            crate::at_files::AT_IGNORE_FILES,
-        );
+        //
+        // The rules are cached, because this runs once per keystroke and loading them
+        // searches the workspace. A stale cache for a few seconds is the price, and it is
+        // the same price the branch cache above pays.
+        const AT_IGNORE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+        let fresh = matches!(&self.at_ignore, Some((_, at)) if at.elapsed() <= AT_IGNORE_TTL);
+        if !fresh {
+            self.at_ignore = Some((
+                epsilon_core::ignore::IgnoreSet::load(
+                    &self.workspace_root,
+                    crate::at_files::AT_IGNORE_FILES,
+                ),
+                std::time::Instant::now(),
+            ));
+        }
+        let ignore = &self
+            .at_ignore
+            .as_ref()
+            .expect("the cache was just filled")
+            .0;
         let mut budget = crate::at_files::AT_ROW_BUDGET;
-        let files = crate::at_files::walk(&self.workspace_root, &ignore, &mut budget);
+        let files = crate::at_files::walk(&self.workspace_root, ignore, &mut budget);
         let needle = fragment.trim();
         if needle.is_empty() {
             let mut out = files;
