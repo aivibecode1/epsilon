@@ -45,26 +45,38 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-21**: five commits (`968cbba` the eight reconstructed dev logs,
-   `873869a` the Windows battery + conhost probe, `829c3da` the audit corrections,
-   `497093e` the M105 session-store fix, `74ed230` the ext frame-cap test). Battery
-   `m105d` green: 1,023 passed / 0 failed / 1 ignored across 59 binaries. Remaining for
-   the round: reinstall the global `epsilon.exe` (CLI-visible change) and clean `target/`.
-2. **`at_file_rows` shares the ignore answer** (`epsilon_core::ignore`) — one small
+1. **Round closed 2026-09-21** — eight commits, tree clean, `target/` and the scratch
+   dirs removed (C: back to 32.7 GB free). The round's commits: `968cbba` the eight
+   reconstructed dev logs, `873869a` the Windows battery + conhost probe, `829c3da` the
+   audit corrections, `497093e` the M105 session-store fix, `74ed230` the ext frame-cap
+   test, `893284f` the evidence + memory closeout, `4d180c7` G16, `6d51196` G17,
+   `178c2fe` the installed-binary probe. Battery `m105d` green: 1,023 passed / 0 failed /
+   1 ignored across 59 binaries. Global `epsilon.exe` reinstalled (30 min) and probed in
+   a real conhost: 100×30 before and after, frame on screen, typed line in the composer.
+2. **G16 — the cache-hit gauge divides a session total by one prompt** — top queued
+   slice, because the owner asked for this number specifically and it currently pins at
+   `cache 100%`. The per-call value is already in hand beside `latest_prompt_tokens`
+   (`state.rs:294`/`:430`); carry it in `Metrics` and divide like for like, then rewrite
+   `cache_rate_is_about_the_latest_prompt_not_the_session` so it fails against the
+   session total. Full finding: `audit/11` G16.
+3. **G17 — delete the dead second footer** (`crates/epsilon-tui/src/footer.rs`, all of it
+   except `git_branch`), which also removes the duplicate `format_tokens` and the dead
+   copy of the G16 formula.
+4. **`at_file_rows` shares the ignore answer** (`epsilon_core::ignore`) — one small
    slice that makes `audit/11`'s G5 row true instead of aspirational. `epsilon-tui`
    already depends on `epsilon-core`, so no new edge.
-3. **F08's live half**: `reindex` returns `bool`, so an unknown-`kind.type` final line
+5. **F08's live half**: `reindex` returns `bool`, so an unknown-`kind.type` final line
    is indistinguishable from a torn write and is truncated. A typed tail diagnosis is
    the fix; design in `audit/evidence/g3-g4-checkpoint-restore-design.md`.
-4. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable
+6. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable
    write leaves memory and the model view divergent with no signal.
-5. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`):
+7. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`):
    reproduced with the console probe; the fix is a design decision because a pid
    liveness check wants a platform call and `unsafe` is forbidden outside a reviewed
    override.
-6. Then the port gaps `audit/11` still lists: G2 (resolved containment, a design task)
+8. Then the port gaps `audit/11` still lists: G2 (resolved containment, a design task)
    and the remaining `audit/03-port-plan.md` parity rows.
-7. The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB
+9. The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB
    timeline read by nobody, and `docs/README.md` needs to be the map a newcomer
    actually follows.
 
