@@ -361,8 +361,9 @@ async fn read_line_bytes<R: tokio::io::AsyncBufRead + Unpin>(
         }
         if let Some(pos) = available.iter().position(|b| *b == b'\n') {
             if buf.len() + pos > MAX_FRAME_BYTES {
-                // The terminator is already in view, so the overrun is knowable before it
-                // is buffered — the check below the loop would have had to store it first.
+                // The terminator is already in view, so the overrun is knowable without
+                // buffering it: the check below the loop exists for the cases this one
+                // cannot see, and waiting for it here would store the payload it refuses.
                 return Ok(Frame::TooLong);
             }
             buf.extend_from_slice(&available[..=pos]);
@@ -373,16 +374,14 @@ async fn read_line_bytes<R: tokio::io::AsyncBufRead + Unpin>(
         buf.extend_from_slice(available);
         reader.consume(n);
         if buf.len() > MAX_FRAME_BYTES {
+            // A line that never ends is refused as soon as it is longer than the cap.
             return Ok(Frame::TooLong);
         }
     }
     while matches!(buf.last(), Some(b'\r' | b'\n')) {
         buf.pop();
     }
-    // The cap applies to the finished line, not only to the chunks that arrived
-    // without a terminator. Checking inside the loop alone let one oversized line
-    // through whenever the newline arrived in the same read — which is the common
-    // case, and exactly the payload a hostile extension would send.
+    // Terminator and payload can arrive in one read, so the finished line is checked too.
     if buf.len() > MAX_FRAME_BYTES {
         return Ok(Frame::TooLong);
     }
@@ -485,6 +484,48 @@ mod tests {
             Frame::Line(l) => assert_eq!(l.len(), MAX_FRAME_BYTES),
             _ => panic!("a frame at the cap must be read"),
         }
+    }
+
+    /// A reader that hands over a few bytes per poll, so the frame reader has to
+    /// accumulate instead of seeing the whole line at once. Real pipes behave this way,
+    /// and staying inside `AsyncRead` keeps the test free of `unsafe`.
+    struct Drip {
+        data: Vec<u8>,
+        at: usize,
+        size: usize,
+    }
+
+    impl tokio::io::AsyncRead for Drip {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let n = (self.data.len() - self.at)
+                .min(buf.remaining())
+                .min(self.size);
+            let at = self.at;
+            buf.put_slice(&self.data[at..at + n]);
+            self.at += n;
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// The cap must fire while the line is still arriving. A check that only runs on the
+    /// finished line would have stored the whole payload first — which is the entire cost
+    /// the cap exists to avoid, and unbounded when the child chooses to keep writing.
+    #[tokio::test]
+    async fn a_line_past_the_cap_is_refused_while_it_is_still_arriving() {
+        let endless = Drip {
+            data: vec![b'a'; MAX_FRAME_BYTES * 2],
+            at: 0,
+            size: 4096,
+        };
+        let mut r = BufReader::new(endless);
+        assert!(
+            matches!(read_line_bytes(&mut r).await.unwrap(), Frame::TooLong),
+            "an endless line must be refused before it is buffered whole"
+        );
     }
 
     /// Invalid UTF-8 is reported by the JSON parse (a protocol violation), not as an I/O
