@@ -222,13 +222,32 @@ pub struct SessionStore {
     /// Header read at open (or synthesized for old headerless files).
     /// `None` only for a brand-new empty file with no entries yet.
     header: Option<SessionHeader>,
+    /// Byte offset just past the header line, when the file has one. Set by
+    /// [`SessionStore::reindex`]. This is the floor for
+    /// [`SessionStore::truncate_to_index`]: a repaired file keeps its header even when no
+    /// entry survived, because a header is content and losing it costs the session its
+    /// identity.
+    header_end: Option<u64>,
     /// True when the indexed entries were migrated forward from an older
     /// version (caller persists via [`SessionStore::persist_migration`]).
     migrated: bool,
-    /// Migrated entries in seq order (populated only when `migrated`).
-    /// Reads serve these clones: indexed offsets still point at the OLD lines
-    /// until [`SessionStore::persist_migration`] rewrites the file.
-    migrated_entries: Vec<SessionEntry>,
+    /// The entries as [`SessionStore::reindex`] parsed them, in seq order — the
+    /// read-through copy [`SessionStore::read_entry`] serves before touching the file.
+    ///
+    /// One vector, two jobs, which is why it is populated for EVERY file and not only for
+    /// a migrated one (an earlier version of this comment claimed otherwise, and the code
+    /// never matched it). For an old file it holds the MIGRATED entries while the index
+    /// still points at the old lines, so reads must come from here until
+    /// [`SessionStore::persist_migration`] rewrites the file. For a current file it is an
+    /// ordinary cache of what the last scan parsed.
+    ///
+    /// The invariant is positional: `cached_entries[i]` is the entry at `index[i]`, and
+    /// the cache is never longer than the index. Appending leaves it one short — the new
+    /// entry is read back from the file, which is where it was just written, so a torn
+    /// write still shows up as a read error instead of hiding behind a memory copy.
+    /// Anything that DROPS an index entry must shorten the cache in step; otherwise the
+    /// dropped entry is served again under the next sequence number.
+    cached_entries: Vec<SessionEntry>,
     /// Cross-process write lease (M61). The store IS the writer, so the writer's
     /// lock belongs to it: a second store on the same file — in this process or
     /// any other — is refused at construction, and the lock is released exactly
@@ -311,8 +330,9 @@ impl SessionStore {
             leaf: Leaf::None,
             next_seq: 0,
             header: None,
+            header_end: None,
             migrated: false,
-            migrated_entries: Vec::new(),
+            cached_entries: Vec::new(),
             _lease: lease,
         };
         if !store.reindex()? {
@@ -407,6 +427,10 @@ impl SessionStore {
         self.file.flush()?;
         self.file.seek(SeekFrom::End(0))?;
         self.header = Some(header);
+        // Record where the header ends so `keep_end` still has a floor on a file the
+        // store stamped itself. A file opened before this field existed has it filled in
+        // by `reindex`; this is the other half of "set whenever `header` is set".
+        self.header_end = Some(line.len() as u64);
         Ok(())
     }
 
@@ -450,8 +474,9 @@ impl SessionStore {
         self.leaf = Leaf::None;
         self.next_seq = 0;
         self.header = None;
+        self.header_end = None;
         self.migrated = false;
-        self.migrated_entries.clear();
+        self.cached_entries.clear();
 
         // Collect the non-blank lines with file offsets first, so a bad last line
         // (crash mid-write) can be told apart from a bad mid-file line (corruption).
@@ -469,12 +494,14 @@ impl SessionStore {
             offset += len as u64;
         }
 
-        // Header: the first non-blank line, when it parses as one.
+        // Header: the first non-blank line, when it parses as one. Its end offset is
+        // remembered separately from the entry index, so a repair can keep it (below).
         let mut first_entry_idx = 0usize;
         #[allow(clippy::collapsible_if)]
-        if let Some((_, fragment, _)) = lines.first() {
+        if let Some((off, fragment, _)) = lines.first() {
             if let Some(Ok(SessionLine::Header(h))) = SessionLine::parse(fragment) {
                 self.header = Some(h);
+                self.header_end = Some(off + fragment.len() as u64);
                 first_entry_idx = 1;
             }
         }
@@ -584,11 +611,31 @@ impl SessionStore {
             };
             self.next_seq = entry.seq + 1;
         }
-        // Migrated entries live in memory only until persisted; their indexed
-        // offsets still point at the OLD lines, so reads must serve the
-        // migrated copies. Stash them alongside the index.
-        self.migrated_entries = parsed.into_iter().map(|(_, _, e, _)| e).collect();
+        // The parse above produced the entries in their CURRENT shape (migrated, when
+        // the file was older). Keep them beside the index: their indexed offsets may
+        // still point at the OLD lines, so reads have to come from here until
+        // `persist_migration` rewrites the file. See the field's doc for the invariant.
+        self.cached_entries = parsed.into_iter().map(|(_, _, e, _)| e).collect();
         Ok(!torn_tail)
+    }
+
+    /// Byte offset the file must be cut back to in order to drop everything the index
+    /// does not cover — just past the last indexed entry, or, when no entry survived,
+    /// just past the header.
+    ///
+    /// The header is the floor deliberately. It is content, not framing: it carries the
+    /// session's id, its working directory and — for a delegated child — the parent link.
+    /// Cutting back to zero instead would empty the file while `self.header` still said
+    /// otherwise, so the next append would skip the header (it believes one exists) and
+    /// the file would come back as a headerless v1 session, re-migrated under fresh ids
+    /// with its identity and its parent gone. A torn tail can leave exactly that state:
+    /// a new session whose very first entry was half-written.
+    fn keep_end(&self) -> u64 {
+        self.index
+            .last()
+            .map(|loc| loc.offset + loc.len as u64)
+            .or(self.header_end)
+            .unwrap_or(0)
     }
 
     /// Physically truncate anything after the last well-formed indexed line.
@@ -596,11 +643,7 @@ impl SessionStore {
     /// Reopens the file read+write WITHOUT append: append-only handles on Windows carry
     /// only FILE_APPEND_DATA, which `set_len` rejects — and reindex needs read access.
     pub fn truncate_to_index(&mut self) -> Result<(), StoreError> {
-        let good_end = self
-            .index
-            .last()
-            .map(|loc| loc.offset + loc.len as u64)
-            .unwrap_or(0);
+        let good_end = self.keep_end();
         self.file.flush()?;
         let f = OpenOptions::new().read(true).write(true).open(&self.path)?;
         f.set_len(good_end)?;
@@ -612,10 +655,10 @@ impl SessionStore {
     }
 
     /// Read one entry by sequence number (lazy: seeks and parses just that line;
-    /// serves the migrated in-memory copy when the file hasn't been rewritten yet).
+    /// serves the parsed copy from [`SessionStore`]'s cache when it has one).
     pub fn read_entry(&self, seq: u64) -> Result<Option<SessionEntry>, StoreError> {
-        if let Some(migrated) = self.migrated_entries.get(seq as usize) {
-            return Ok(Some(migrated.clone()));
+        if let Some(cached) = self.cached_entries.get(seq as usize) {
+            return Ok(Some(cached.clone()));
         }
         let Some(loc) = self.index.get(seq as usize) else {
             return Ok(None);
@@ -737,13 +780,27 @@ impl SessionStore {
     }
 
     /// Remove the final entry (overflow-retry discard). Index-aware, O(1).
+    ///
+    /// This is a real product path, not test scaffolding: the agent loop calls it to
+    /// discard the message that overflowed the context window before retrying
+    /// (`epsilon_core`'s `pop_last_message`). Three things have to move together or the
+    /// store starts lying about its own contents — the index, the read-through cache
+    /// (see `cached_entries`), and the file.
     pub fn pop_last(&mut self) -> Result<Option<SessionEntry>, StoreError> {
         if self.next_seq == 0 {
             return Ok(None);
         }
         let last_seq = self.next_seq - 1;
         let entry = self.read_entry(last_seq)?;
+        self.file.flush()?;
         self.index.pop();
+        // The cache is positional, so shortening it to the index both drops the popped
+        // entry and repairs a cache an earlier append left one short. Leaving it long was
+        // a live defect: `read_entry` consults the cache first, so the next append got the
+        // POPPED entry back for its own sequence number, and `branch_entries` — which
+        // resolves the leaf id through `read_all` — found no leaf at all and reported an
+        // empty transcript.
+        self.cached_entries.truncate(self.index.len());
         self.next_seq = last_seq;
         self.leaf = match self.index.last() {
             Some(_) => match self.read_entry(last_seq - 1)? {
@@ -755,12 +812,9 @@ impl SessionStore {
             },
             None => Leaf::None,
         };
-        // Truncate the physical file to drop the popped line.
-        let good_end = self
-            .index
-            .last()
-            .map(|l| l.offset + l.len as u64)
-            .unwrap_or(0);
+        // Truncate the physical file to drop the popped line, keeping the header when
+        // that line was the only entry (see `keep_end`).
+        let good_end = self.keep_end();
         let mut f = std::fs::OpenOptions::new()
             .read(true)
             .write(true)

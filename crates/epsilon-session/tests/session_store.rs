@@ -769,6 +769,27 @@ fn assistant_msg(text: &str) -> Message {
     })
 }
 
+/// The user/assistant text an entry carries. Enough to tell two turns apart without
+/// comparing whole `SessionEntry`s, which carry a fresh id and timestamp on every run.
+fn entry_text(entry: &SessionEntry) -> String {
+    match &entry.kind {
+        EntryKind::Message { message, .. } => match message {
+            Message::User(u) => u
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    UserContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Assistant(a) => a.text(),
+            other => format!("{other:?}"),
+        },
+        other => format!("{other:?}"),
+    }
+}
+
 /// The provider-bound rendering of a view: what a request built from it would carry.
 fn view_texts(view: &[ModelViewEntry]) -> Vec<String> {
     view.iter()
@@ -1557,4 +1578,150 @@ fn a_seq_that_disagrees_with_line_order_is_a_chain_break_not_a_panic() {
         ],
         "the fork follows parent ids, so the corrupt seqs do not affect it"
     );
+}
+
+#[test]
+fn a_torn_first_entry_does_not_take_the_header_with_it() {
+    // The state a kill leaves behind one line into a brand-new session: a header, then a
+    // half-written entry. Repair must drop the fragment WITHOUT dropping the header.
+    //
+    // The header is the session's identity — id, working directory, and for a delegated
+    // child the parent link that puts it in the session tree. Cutting the file back to
+    // zero bytes instead (what "truncate everything the index does not cover" means when
+    // no entry was indexed) left `store.header` still answering Some, so the next append
+    // skipped the header it believed was there and the file reopened as a headerless v1
+    // session: fresh ids, no cwd, no parent, decided silently at the next open.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("torn.jsonl");
+    let header = SessionHeader {
+        kind: SessionHeaderKind::Session,
+        version: Some(CURRENT_SESSION_VERSION),
+        id: "ses_keepme".to_string(),
+        timestamp: "2026-09-20T00:00:00Z".to_string(),
+        cwd: dir.path().to_string_lossy().into_owned(),
+        parent_session: Some("ses_parent".to_string()),
+    };
+    let mut body = serde_json::to_string(&header).unwrap();
+    body.push('\n');
+    // A real torn write: the JSON stops mid-string, with no newline to close the line.
+    body.push_str(r#"{"type":"message","id":"ent_tr"#);
+    std::fs::write(&path, body).unwrap();
+
+    let mut store = SessionStore::open_in(&path, dir.path()).expect("a torn tail is recoverable");
+    assert_eq!(store.len(), 0, "no entry survived the tear");
+    assert_eq!(
+        store.header().map(|h| h.id.as_str()),
+        Some("ses_keepme"),
+        "the header is still the one the session was created with"
+    );
+
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        on_disk.lines().count(),
+        1,
+        "the fragment is gone and the header is what is left: {on_disk:?}"
+    );
+    assert!(on_disk.contains("ses_keepme"));
+
+    // And the file stays a current-version child after the next append: this is the
+    // consequence the assertion above exists to protect.
+    store
+        .append(EntryKind::Message {
+            message: user_msg("after the tear"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    drop(store); // release the write lease before reopening (M61)
+    let reopened = SessionStore::open_in(&path, dir.path()).unwrap();
+    assert_eq!(reopened.version(), CURRENT_SESSION_VERSION);
+    assert!(
+        !reopened.migrated(),
+        "nothing to migrate: the header survived"
+    );
+    assert_eq!(
+        reopened.header().and_then(|h| h.parent_session.as_deref()),
+        Some("ses_parent"),
+        "a repaired child session is still a child"
+    );
+    assert_eq!(
+        reopened
+            .read_all()
+            .unwrap()
+            .iter()
+            .map(entry_text)
+            .collect::<Vec<_>>(),
+        vec!["after the tear".to_string()]
+    );
+}
+
+#[test]
+fn popping_the_last_entry_keeps_the_header_and_the_read_cache_in_step() {
+    // `pop_last` is the overflow-retry discard the agent loop calls for real
+    // (`epsilon_core`'s `pop_last_message`). Two ways it used to lie about the file:
+    //
+    // 1. the read-through entry cache kept the popped entry, so the next append recorded
+    //    the new line at a sequence number the cache still answered for — and because
+    //    `branch_entries` resolves the leaf id through those reads, the active branch came
+    //    back EMPTY, as if the conversation had never happened;
+    // 2. popping the only entry cut the file back to zero bytes, taking the header with it.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pop.jsonl");
+    let mut store = SessionStore::open_in(&path, dir.path()).unwrap();
+    for text in ["first", "second"] {
+        store
+            .append(EntryKind::Message {
+                message: user_msg(text),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+
+    let popped = store.pop_last().unwrap().expect("there is an entry to pop");
+    assert_eq!(entry_text(&popped), "second");
+
+    // The header is still line one, and only the surviving entry follows it.
+    let after_pop = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = after_pop.lines().collect();
+    assert_eq!(lines.len(), 2, "header + 'first': {after_pop:?}");
+    assert!(lines[0].contains("\"type\":\"session\""));
+    assert!(
+        !after_pop.contains("second"),
+        "the popped entry is off the disk"
+    );
+
+    // The next append must land on the entry that is actually there.
+    store
+        .append(EntryKind::Message {
+            message: user_msg("third"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .read_all()
+            .unwrap()
+            .iter()
+            .map(entry_text)
+            .collect::<Vec<_>>(),
+        vec!["first".to_string(), "third".to_string()],
+        "the popped entry must not come back under the new sequence number"
+    );
+    let branch = store.branch_entries().unwrap();
+    assert_eq!(
+        branch.iter().map(entry_text).collect::<Vec<_>>(),
+        vec!["first".to_string(), "third".to_string()],
+        "the branch walk still reaches the leaf"
+    );
+
+    // Popping down to nothing leaves an empty but still-identified session.
+    store.pop_last().unwrap();
+    store.pop_last().unwrap();
+    assert!(store.pop_last().unwrap().is_none(), "nothing left to pop");
+    assert_eq!(store.len(), 0);
+    let empty = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(empty.lines().count(), 1, "the header outlives its entries");
+    drop(store);
+    let reopened = SessionStore::open_in(&path, dir.path()).unwrap();
+    assert!(reopened.is_empty());
+    assert_eq!(reopened.version(), CURRENT_SESSION_VERSION);
 }
