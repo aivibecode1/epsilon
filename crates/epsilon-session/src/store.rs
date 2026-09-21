@@ -52,10 +52,22 @@ pub enum LineDiagnosis {
     /// Not JSON at all: a partial write, or an edit that damaged the file.
     NotJson,
     /// Valid JSON in entry shape whose `kind.type` this build does not know — a session written
-    /// by a newer Epsilon. Refused rather than skipped: dropping it silently would lose a
-    /// message and change the transcript's meaning without a word.
+    /// by a newer Epsilon. Distinct from [`LineDiagnosis::MalformedEntry`], which is the same
+    /// shape with a type this build *does* recognize.
     UnknownEntryType {
         /// The `kind.type` string as written in the file.
+        entry_type: String,
+    },
+    /// A `kind.type` this build **knows**, carrying a body it cannot read.
+    ///
+    /// The counterpart to `UnknownEntryType`, and the reason both exist: "an entry from a
+    /// newer build" and "an entry of a kind I know, written wrong" call for different actions
+    /// from whoever reads the message. Preserving the second the way an unknown kind is
+    /// preserved would open the session with a silent gap where a turn should be — the
+    /// failure M108 was written to end, and the reason the `kind` codec insists on a readable
+    /// body for a known tag.
+    MalformedEntry {
+        /// The `kind.type` string, which this build recognizes.
         entry_type: String,
     },
     /// A second header line, mid-file.
@@ -80,6 +92,12 @@ impl LineDiagnosis {
                 "entry type `{entry_type}` is not known to this build — the session was probably \
                  written by a newer Epsilon. Refusing rather than dropping the line, because \
                  skipping it would change the transcript silently"
+            ),
+            LineDiagnosis::MalformedEntry { entry_type } => format!(
+                "entry type `{entry_type}` is one this build knows, but its body cannot be read \
+                 — the entry is damaged rather than foreign. Refusing rather than preserving it, \
+                 because an entry nothing can interpret would leave a silent gap in the \
+                 transcript"
             ),
             LineDiagnosis::SecondHeader => "a second header line, mid-file".to_string(),
             LineDiagnosis::UnknownLineShape => {
@@ -757,6 +775,27 @@ impl SessionStore {
         self.leaf.id().map(str::to_string)
     }
 
+    /// The entry kinds this store kept **without understanding**, in file order.
+    ///
+    /// An entry whose `kind.type` this build does not know is preserved rather than refused
+    /// ([`epsilon_contracts::session_entry::EntryKind::Unknown`]), so it never reaches the
+    /// model view and never appears in a transcript — which makes it exactly the kind of
+    /// silent absence a caller has to be able to report. A frontend that opens a session with
+    /// a non-empty list here should say so, the same way it reports repairs.
+    ///
+    /// Only the entries the last scan parsed are inspected, which for a store that has since
+    /// appended is a prefix of the file; an entry appended this session is written by this
+    /// build and cannot be unknown.
+    pub fn preserved_unknown(&self) -> Vec<(u64, String)> {
+        self.cached_entries
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                EntryKind::Unknown { type_name, .. } => Some((entry.seq, type_name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Walk back from the leaf collecting the active branch (oldest first).
     ///
     /// Parses the file once; branch walks are infrequent (model view, navigation), so
@@ -1287,8 +1326,18 @@ fn diagnose_line(fragment: &str) -> LineDiagnosis {
         .and_then(|k| k.get("type"))
         .and_then(|t| t.as_str())
     {
-        return LineDiagnosis::UnknownEntryType {
-            entry_type: kind_type.to_string(),
+        // The list of kinds this build knows decides which of the two sentences the reader
+        // gets. Without it, an entry of a kind we understand but could not read was reported
+        // as "probably written by a newer Epsilon" — the wrong conclusion, and the one
+        // M108's Limits recorded as owed.
+        return if epsilon_contracts::session_entry::KNOWN_ENTRY_KINDS.contains(&kind_type) {
+            LineDiagnosis::MalformedEntry {
+                entry_type: kind_type.to_string(),
+            }
+        } else {
+            LineDiagnosis::UnknownEntryType {
+                entry_type: kind_type.to_string(),
+            }
         };
     }
     if value.get("session_id").is_some() || value.get("version").is_some() {

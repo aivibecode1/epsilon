@@ -58,10 +58,14 @@ not themselves trigger runtime compression.
    not make a single genuine pi file readable — the refusal happens before the kind is
    considered, because pi's entry **envelope** differs (no `seq`, ISO `timestamp`,
    `parentId`, kind at the top level rather than under `kind`). Plan:
-   `audit/evidence/session-format-gap-plan.md`. **Next round starts by verifying that
-   envelope claim against a real pi file** rather than trusting the document, then builds
-   the importer. The plan also argues preservation-over-refusal for an unknown *tag* (M108's
-   goal, answered better) while a known tag with an unreadable body still refuses.
+   `audit/evidence/session-format-gap-plan.md`. **M113 landed slice 4A** (the kinds, plus
+   `EntryKind::Unknown` preservation and `LineDiagnosis::MalformedEntry`); **4B, the
+   importer, is the next milestone** and starts by constructing a real pi file from pi's own
+   writer code, because the claim that its envelope refuses has been read but not yet run.
+3. **Surface the preserved entries.** `SessionStore::preserved_unknown()` exists and is
+   tested; nothing prints it, so a user opening a session with a foreign entry still learns
+   nothing. Wire it where the repair report is reported (the CLI resume path and the TUI),
+   which is what makes preservation *loud* rather than merely safe.
 3. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
    `/tree` is an alias for the active-branch picker, `/fork` is a raw `fs::copy`.
 4. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root

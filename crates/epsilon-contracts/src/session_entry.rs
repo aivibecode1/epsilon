@@ -84,8 +84,34 @@ pub struct SessionEntry {
     /// Unix epoch milliseconds at append.
     pub timestamp_ms: u64,
     /// The payload.
+    ///
+    /// The codec is lenient about the *tag* and strict about the *body*, which is the rule
+    /// [`EntryKind::Unknown`] exists to express. See [`EntryKind::deserialize_kind`].
+    #[serde(
+        deserialize_with = "EntryKind::deserialize_kind",
+        serialize_with = "EntryKind::serialize_kind"
+    )]
     pub kind: EntryKind,
 }
+
+/// The `type` tags this build understands, as written on the wire.
+///
+/// The single source of truth for "known kind", needed in two places that must agree: the
+/// lenient codec below (which decides whether to preserve or to insist), and the store's
+/// diagnosis (which must not blame a newer build for a body this build merely cannot read).
+/// `the_known_kind_list_covers_every_variant` fails if a variant is added without a tag here.
+pub const KNOWN_ENTRY_KINDS: &[&str] = &[
+    "message",
+    "model_change",
+    "thinking_level_change",
+    "active_tools_change",
+    "compaction",
+    "branch_summary",
+    "custom",
+    "turn_end",
+    "label",
+    "session_info",
+];
 
 /// Payload kinds. Order of declaration mirrors pi for reviewability.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -152,6 +178,46 @@ pub enum EntryKind {
         /// Why the run ended.
         reason: TurnEndReason,
     },
+    /// A label (bookmark) attached to an entry — pi's `label` entry kind.
+    ///
+    /// Not part of the model-visible transcript: it names a point in the session so a human
+    /// can navigate back to it. Kept typed rather than opaque because the harness can *apply*
+    /// it (show it in a branch list) rather than merely retain it.
+    Label {
+        /// Entry the label points at.
+        target_id: String,
+        /// The label text; pi treats `null` as "clear the label".
+        label: Option<String>,
+    },
+    /// Session metadata written by the agent itself — pi's `session_info` entry kind.
+    SessionInfo {
+        /// The session's title, when one has been set.
+        name: Option<String>,
+    },
+    /// A kind this build does not know, kept so it can be replayed verbatim.
+    ///
+    /// Two situations produce one, and they are different: an entry written by a *newer*
+    /// Epsilon, and an entry written by another tool that shares this envelope. Neither is
+    /// damage, and neither may be deleted — the rule the session store applies to a complete
+    /// line it cannot read.
+    ///
+    /// The body is the whole `kind` object as it was parsed, so writing the entry back
+    /// reproduces every field and value it carried rather than the two fields this build
+    /// happens to name. **Key order is not preserved** — `serde_json::Value` is a sorted map
+    /// — so the replayed object is equal as JSON, not equal as bytes. That is the honest
+    /// limit of preservation without pulling a key-order-preserving map into the workspace,
+    /// and JSON object order carries no meaning: whoever reads the rewritten line sees the
+    /// same object, with its keys in a different order.
+    ///
+    /// A raw *line* cannot be preserved this way — `seq` is the file index and every rewrite
+    /// re-serializes typed values — but the payload inside the envelope can, and this is
+    /// where it goes.
+    Unknown {
+        /// The `type` tag as written.
+        type_name: String,
+        /// The `kind` object, with every field and value as written.
+        body: serde_json::Value,
+    },
 }
 
 impl SessionHeader {
@@ -169,6 +235,69 @@ impl SessionLine {
             return None;
         }
         Some(serde_json::from_str(line.trim_end()))
+    }
+}
+
+impl EntryKind {
+    /// Deserialize a `kind` object: lenient about the tag, strict about the body.
+    ///
+    /// A tag this build does not know becomes [`EntryKind::Unknown`] with the object kept
+    /// verbatim — the entry is *preserved* rather than refused, because something wrote it
+    /// deliberately and deleting it would destroy data. Nothing is applied to the model view
+    /// either way; `Unknown` is not model-visible.
+    ///
+    /// A tag this build *does* know must carry a body it can read. Falling back to `Unknown`
+    /// there would turn a corrupt entry into a silent gap in the transcript, which is the
+    /// failure the storage layer spent M108 learning to refuse: the user would see a session
+    /// that opens and is quietly missing a turn. An unreadable body is therefore an error,
+    /// and `LineDiagnosis::MalformedEntry` names it as one.
+    pub fn deserialize_kind<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::Deserialize as _;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let Some(tag) = value.get("type").and_then(|t| t.as_str()) else {
+            return Err(serde::de::Error::custom(
+                "an entry kind must carry a string `type` tag",
+            ));
+        };
+        if KNOWN_ENTRY_KINDS.contains(&tag) {
+            return serde_json::from_value(value).map_err(serde::de::Error::custom);
+        }
+        Ok(EntryKind::Unknown {
+            type_name: tag.to_string(),
+            body: value,
+        })
+    }
+
+    /// Serialize a `kind`: an unknown kind is replayed exactly as it was read.
+    fn serialize_kind<S>(kind: &Self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::Serialize as _;
+        match kind {
+            EntryKind::Unknown { body, .. } => body.serialize(serializer),
+            known => known.serialize(serializer),
+        }
+    }
+
+    /// The wire tag this kind is written with.
+    ///
+    /// Serializing is the authority — this reads the tag back out of the encoded form rather
+    /// than restating it, so it cannot drift from the `rename_all` rule above.
+    pub fn wire_tag(&self) -> Option<String> {
+        serde_json::to_value(self)
+            .ok()?
+            .get("type")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    /// True when this build does not know what the entry means.
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, EntryKind::Unknown { .. })
     }
 }
 
@@ -209,6 +338,132 @@ mod tests {
         let line = serde_json::to_string(&entry).unwrap();
         assert!(!line.contains('\n'));
         assert_eq!(serde_json::from_str::<SessionEntry>(&line).unwrap(), entry);
+    }
+
+    #[test]
+    fn the_known_kind_list_covers_every_variant() {
+        // The list is a second declaration of the same fact, so it can drift. This walks one
+        // of every variant and fails if a tag is missing from it — which is what would make
+        // the store call a readable entry "from a newer build".
+        let every = vec![
+            EntryKind::Message {
+                message: user_msg(),
+                api_request_sha256: None,
+            },
+            EntryKind::ModelChange {
+                provider: "p".into(),
+                model_id: "m".into(),
+            },
+            EntryKind::ThinkingLevelChange {
+                level: "low".into(),
+            },
+            EntryKind::ActiveToolsChange {
+                tools: vec!["read".into()],
+            },
+            EntryKind::Compaction {
+                summary: "s".into(),
+                tokens_before: 1,
+                retained_tail: vec![],
+                details: None,
+                usage: None,
+            },
+            EntryKind::BranchSummary {
+                from_id: "ent_a".into(),
+                summary: "s".into(),
+                usage: None,
+            },
+            EntryKind::Custom {
+                custom_type: "c".into(),
+                data: None,
+            },
+            EntryKind::TurnEnd {
+                reason: TurnEndReason::Completed,
+            },
+            EntryKind::Label {
+                target_id: "ent_a".into(),
+                label: Some("here".into()),
+            },
+            EntryKind::SessionInfo {
+                name: Some("title".into()),
+            },
+        ];
+        assert_eq!(
+            every.len(),
+            KNOWN_ENTRY_KINDS.len(),
+            "a variant was added without a tag in KNOWN_ENTRY_KINDS, or the list has a tag \
+             with no variant"
+        );
+        for kind in &every {
+            let tag = kind
+                .wire_tag()
+                .expect("every known kind serializes with a tag");
+            assert!(
+                KNOWN_ENTRY_KINDS.contains(&tag.as_str()),
+                "`{tag}` is missing from KNOWN_ENTRY_KINDS"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_kind_keeps_every_field_and_value() {
+        // A kind from a newer build (or another tool sharing this envelope) must survive a
+        // parse/serialize round trip with all of its content — including fields this build
+        // has no name for. Key ORDER is not preserved (`serde_json::Value` is a sorted map),
+        // so the assertion is JSON equality plus the specific nested value, which is what
+        // "nothing was lost" actually means.
+        let line = r#"{"id":"ent_x","seq":1,"parent_id":null,"timestamp_ms":7,"kind":{"type":"future_thing","payload":{"deep":[1,2,3]},"extra":null}}"#;
+        let entry: SessionEntry = serde_json::from_str(line).expect("an unknown kind still parses");
+        let EntryKind::Unknown { type_name, body } = &entry.kind else {
+            panic!("expected an unknown kind, got {:?}", entry.kind);
+        };
+        assert_eq!(type_name, "future_thing");
+        assert_eq!(body["payload"]["deep"][2], 3);
+        assert!(entry.kind.is_unknown());
+
+        let back = serde_json::to_string(&entry).unwrap();
+        let original: serde_json::Value = serde_json::from_str(line).unwrap();
+        let rewritten: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(
+            rewritten, original,
+            "an unknown kind must carry every field and value back out"
+        );
+    }
+
+    #[test]
+    fn a_known_kind_with_an_unreadable_body_is_an_error_not_a_preservation() {
+        // `message` is a kind this build knows, so an entry of that shape with no message is
+        // corrupt rather than foreign. Preserving it would open the session with a silent gap
+        // in the transcript, which is the failure mode the store refuses (M108).
+        let line =
+            r#"{"id":"ent_x","seq":1,"parent_id":null,"timestamp_ms":7,"kind":{"type":"message"}}"#;
+        let err = serde_json::from_str::<SessionEntry>(line)
+            .expect_err("a known tag with a broken body must not become an Unknown");
+        assert!(
+            err.to_string().contains("message"),
+            "the error should name the field that is missing: {err}"
+        );
+    }
+
+    #[test]
+    fn a_kind_without_a_tag_is_refused() {
+        let line =
+            r#"{"id":"ent_x","seq":1,"parent_id":null,"timestamp_ms":7,"kind":{"nope":true}}"#;
+        assert!(
+            serde_json::from_str::<SessionEntry>(line).is_err(),
+            "an entry kind must carry a `type` tag"
+        );
+    }
+
+    #[test]
+    fn label_and_session_info_keep_their_optional_fields() {
+        // pi's shapes: a label may carry `null` (clear it), a session_info may have no name.
+        for line in [
+            r#"{"id":"ent_l","seq":2,"parent_id":"ent_a","timestamp_ms":9,"kind":{"type":"label","target_id":"ent_a","label":null}}"#,
+            r#"{"id":"ent_i","seq":3,"parent_id":"ent_a","timestamp_ms":10,"kind":{"type":"session_info","name":"Refactor the parser"}}"#,
+        ] {
+            let entry: SessionEntry = serde_json::from_str(line).expect("parses");
+            assert_eq!(serde_json::to_string(&entry).unwrap(), line);
+        }
     }
 
     #[test]

@@ -657,16 +657,92 @@ fn each_child_session_leases_its_own_file() {
 
 // ---- M75: typed corruption reasons -----------------------------------------------------------
 
-/// The case this milestone exists for: a file from a *newer* Epsilon is not damaged, and saying
-/// "corrupt line 2" about it sends the user looking for a fault that is not there.
+/// The case this test exists for: a file from a *newer* Epsilon is not damaged, and saying
+/// "corrupt line 2" about it would send the user looking for a fault that is not there.
+///
+/// M113 changed what the store does about it, so the test changed with it. The entry is now
+/// **preserved** rather than refused — the session opens, the entry keeps every field and
+/// value for whoever wrote it, and the store reports what it kept instead of the frontend
+/// having to guess. Refusing was safe but cost the whole conversation; preserving is safe
+/// *and* usable, which is what "not damaged" should mean. The refusal path still exists for
+/// the case that deserves it, one test below.
 #[test]
-fn an_unknown_entry_type_is_refused_by_name_not_called_corruption() {
+fn an_unknown_entry_type_is_preserved_and_reported_rather_than_refused() {
     let dir = tempfile::tempdir().unwrap();
     let lines = raw_message_lines(&dir, "s.jsonl", &["one"]);
     let path = dir.path().join("s.jsonl");
     // A well-formed entry from the future: same envelope, a kind this build has never seen.
-    let future = r#"{"id":"ent_future","seq":1,"parent_id":null,"timestamp_ms":0,"kind":{"type":"telemetry_v9","payload":{"n":1}}}"#;
-    let content = format!("{}\n{future}\n{}\n", lines[0], lines[0]);
+    // Its parent is the real first entry, so the lane stays one continuous chain — a foreign
+    // kind must not cost the entry its place in the tree either.
+    let first: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    let first_id = first["id"].as_str().unwrap();
+    let future = format!(
+        r#"{{"id":"ent_future","seq":1,"parent_id":"{first_id}","timestamp_ms":0,"kind":{{"type":"telemetry_v9","payload":{{"n":1}}}}}}"#
+    );
+    let content = format!("{}\n{future}\n", lines[0]);
+    std::fs::write(&path, &content).unwrap();
+
+    let store =
+        SessionStore::open(&path).expect("a foreign entry must not close the whole session");
+    assert_eq!(
+        store.preserved_unknown(),
+        vec![(1u64, "telemetry_v9".to_string())],
+        "the store must be able to say what it kept without understanding"
+    );
+    // The file is untouched at open — the store only reads.
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+
+    // The entry is readable and intact, and it is NOT part of the model's view: a foreign
+    // kind contributes nothing to the transcript rather than contributing something wrong.
+    let all = store.read_all().unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(all[1].kind.is_unknown());
+    assert_eq!(
+        all[1].parent_id.as_deref(),
+        Some(all[0].id.as_str()),
+        "the foreign entry keeps its place in the chain"
+    );
+    let view = store.model_view().unwrap();
+    assert_eq!(view.len(), 1, "only the known message reaches the model");
+
+    // And it survives a rewrite. A fork is the operation that re-serializes entries into a
+    // new file one at a time, so it is the one that could quietly drop a kind it cannot
+    // write — appending would not have tested this at all, since appending only adds bytes.
+    let leaf = store.leaf_id().expect("the foreign entry is the leaf");
+    let dest_dir = dir.path().join("forks");
+    let dest = store.fork_branch_at(&leaf, &dest_dir).unwrap();
+    drop(store);
+    let forked = SessionStore::open_in(&dest, dir.path()).unwrap();
+    assert_eq!(
+        forked.preserved_unknown(),
+        vec![(1u64, "telemetry_v9".to_string())],
+        "a rewrite must not quietly drop what the previous read preserved"
+    );
+    let rewritten = std::fs::read_to_string(&dest).unwrap();
+    let foreign: serde_json::Value = serde_json::from_str(
+        rewritten
+            .lines()
+            .find(|l| l.contains("telemetry_v9"))
+            .expect("the foreign entry is still in the forked file"),
+    )
+    .unwrap();
+    assert_eq!(foreign["kind"]["payload"]["n"], 1, "{rewritten}");
+    // The original is untouched by the fork, and still byte-identical.
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+}
+
+/// The other half of the rule, and the reason the codec is strict about a known tag: an entry
+/// of a kind this build understands, carrying a body it cannot read, would leave a *silent gap*
+/// in the transcript if it were preserved. That is the failure M108 was written to end, so it
+/// is still refused — with a diagnosis that says "damaged", not "from a newer build".
+#[test]
+fn a_known_kind_with_an_unreadable_body_is_refused_as_damage_not_as_foreign() {
+    let dir = tempfile::tempdir().unwrap();
+    let lines = raw_message_lines(&dir, "s.jsonl", &["one"]);
+    let path = dir.path().join("s.jsonl");
+    // `message` is a kind this build knows; the body has no message in it.
+    let broken = r#"{"id":"ent_bad","seq":1,"parent_id":"ent_0","timestamp_ms":0,"kind":{"type":"message"}}"#;
+    let content = format!("{}\n{broken}\n", lines[0]);
     std::fs::write(&path, &content).unwrap();
 
     match SessionStore::open(&path) {
@@ -674,19 +750,18 @@ fn an_unknown_entry_type_is_refused_by_name_not_called_corruption() {
             assert_eq!(line, 2, "the line is named");
             assert_eq!(
                 diagnosis,
-                LineDiagnosis::UnknownEntryType {
-                    entry_type: "telemetry_v9".to_string()
+                LineDiagnosis::MalformedEntry {
+                    entry_type: "message".to_string()
                 },
-                "and so is the type, which is the actionable part"
+                "the type is known and the body is not — the actionable difference"
             );
             let text = diagnosis.explain();
-            assert!(text.contains("newer Epsilon"), "{text}");
-            assert!(text.contains("telemetry_v9"), "{text}");
+            assert!(text.contains("damaged rather than foreign"), "{text}");
+            assert!(text.contains("message"), "{text}");
         }
-        Ok(_) => panic!("expected a typed refusal, the open succeeded"),
+        Ok(_) => panic!("a known kind with an unreadable body must not open silently"),
         Err(e) => panic!("expected a typed refusal, got {e:?}"),
     }
-    // Refused, not repaired: the file is untouched, so a newer build can still read it.
     assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
 }
 
