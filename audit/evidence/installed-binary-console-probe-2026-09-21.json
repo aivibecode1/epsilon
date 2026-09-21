@@ -1,0 +1,132 @@
+{
+  "exe": "C:\\Users\\Hp\\.cargo\\bin\\epsilon.exe",
+  "typed_text": "installed binary",
+  "mode": "late",
+  "size": [
+    100,
+    30
+  ],
+  "host_class": "ConsoleWindowClass",
+  "resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": true
+  },
+  "before": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      0,
+      0
+    ]
+  },
+  "after": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "after_screen": [
+    "idle                                                   ?/164k \u00b7 \u21910 \u21930 \u00b7 cache \u2014 \u00b7 $0 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  type      describe a task and press enter",
+    "  /         commands \u2014 try /help, /models, /sessions",
+    "  @         reference a file by name",
+    "  ctrl-p    command palette",
+    "",
+    "  this session runs against the model shown at the top right",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "enter send \u00b7 ctrl-j newline \u00b7 ctrl-p palette \u00b7 ? help                \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "typed": {
+    "ok": true,
+    "written": 32,
+    "err": 87
+  },
+  "after_typing": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      18,
+      27
+    ]
+  },
+  "typed_screen": [
+    "idle                                                   ?/164k \u00b7 \u21910 \u21930 \u00b7 cache \u2014 \u00b7 $0 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  type      describe a task and press enter",
+    "  /         commands \u2014 try /help, /models, /sessions",
+    "  @         reference a file by name",
+    "  ctrl-p    command palette",
+    "",
+    "  this session runs against the model shown at the top right",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "\u2022 installed binary",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "enter send \u00b7 ctrl-j newline \u00b7 ctrl-p palette \u00b7 ? help                \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ]
+}

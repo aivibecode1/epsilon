@@ -118,3 +118,19 @@ JSON object on stdout; the four runs behind this note are kept verbatim in
 [`console-probe-runs-2026-09-21.json`](console-probe-runs-2026-09-21.json), because
 `target/` is disposable on this machine and evidence that only exists there is
 evidence that has already been deleted.
+
+## And the binary the owner actually runs
+
+The measurements above are against `target/debug/epsilon.exe`. The owner runs the
+**installed** `%USERPROFILE%\.cargo\bin\epsilon.exe`, so the same probe was run
+against it after the round's reinstall — 100×30, real conhost:
+
+```
+host=ConsoleWindowClass  before win=100x30 buf=100x30
+                         after  win=100x30 buf=100x30
+• installed binary
+enter send · ctrl-j newline · ctrl-p palette · ? help   …\My Agent Space\Epsilon · main
+```
+
+Same result: no window change, frame on screen, typed text in the composer. Raw run:
+[`installed-binary-console-probe-2026-09-21.json`](installed-binary-console-probe-2026-09-21.json).
