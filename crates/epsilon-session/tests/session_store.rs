@@ -736,12 +736,17 @@ fn the_line_diagnoses_are_distinguishable_from_each_other() {
 /// corruption report at all. The distinction is the whole point — damage is refused, a partial
 /// write is expected.
 #[test]
-fn a_torn_tail_is_still_tolerated_whatever_its_shape() {
+fn a_torn_tail_is_still_tolerated() {
+    // A crash mid-write leaves a *fragment*: the write died inside a value. That is debris, and
+    // dropping it costs the user nothing because the tail never became a whole thought. Every
+    // shape here is deliberately not parseable as JSON — the counter-case, a complete line this
+    // build does not recognize, is refused instead and has its own test below.
     let dir = tempfile::tempdir().unwrap();
     let lines = raw_message_lines(&dir, "s.jsonl", &["one", "two"]);
     for torn in [
-        "{\"id\":\"ent_x\",\"seq\":2,\"kin", // cut mid-JSON
-        r#"{"id":"ent_x","seq":2,"kind":{"type":"future_thing"}}"#, // complete JSON, unknown type
+        "{\"id\":\"ent_x\",\"seq\":2,\"kin", // cut mid-key
+        "{\"id\":\"ent_x\",\"seq\":2,\"kind\":{\"type\":\"message\"}", // cut before the close
+        "",                                  // nothing at all after a newline
     ] {
         let path = dir.path().join("torn.jsonl");
         let content = format!("{}\n{}\n{torn}", lines[0], lines[1]);
@@ -749,8 +754,63 @@ fn a_torn_tail_is_still_tolerated_whatever_its_shape() {
         let store = SessionStore::open(&path).expect("a torn tail must not fail the open");
         assert!(
             store.branch_entries().map(|v| v.len()).unwrap_or(0) >= 2,
-            "the intact entries survive"
+            "the intact entries survive: {torn:?}"
         );
+    }
+}
+
+/// The other half of that distinction, and the half that used to be wrong: a **complete** final
+/// line this build does not recognize was truncated as if it were crash debris. It is not debris
+/// — something wrote it on purpose, so it is the user's newest turn or a newer Epsilon's entry —
+/// and deleting it silently is the one failure a recovery path must not have (F08).
+///
+/// Every case below is whole JSON. The open must come back refused with a diagnosis that names
+/// the shape, and the file must be byte-identical afterwards.
+#[test]
+fn a_complete_but_unknown_final_line_is_refused_not_truncated() {
+    let dir = tempfile::tempdir().unwrap();
+    let lines = raw_message_lines(&dir, "s.jsonl", &["one", "two"]);
+    for (final_line, expected) in [
+        (
+            r#"{"id":"ent_x","seq":2,"kind":{"type":"future_thing"}}"#,
+            LineDiagnosis::UnknownEntryType {
+                entry_type: "future_thing".to_string(),
+            },
+        ),
+        (
+            r#"{"session_id":"ses_other","version":3,"cwd":"C:\\x"}"#,
+            LineDiagnosis::SecondHeader,
+        ),
+        (
+            r#"{"some":"future shape"}"#,
+            LineDiagnosis::UnknownLineShape,
+        ),
+        ("42", LineDiagnosis::UnknownLineShape),
+        (r#""a bare string""#, LineDiagnosis::UnknownLineShape),
+        ("[]", LineDiagnosis::UnknownLineShape),
+        ("{}", LineDiagnosis::UnknownLineShape),
+    ] {
+        // Both spellings of "the file ends here": with the trailing newline a completed append
+        // leaves, and without it. The newline is not what makes a line complete.
+        for trailing in ["", "\n"] {
+            let path = dir.path().join("complete.jsonl");
+            let content = format!("{}\n{}\n{final_line}{trailing}", lines[0], lines[1]);
+            std::fs::write(&path, &content).unwrap();
+
+            match SessionStore::open(&path) {
+                Err(StoreError::Corrupt { line, diagnosis }) => {
+                    assert_eq!(line, 3, "for {final_line:?}");
+                    assert_eq!(diagnosis, expected, "for {final_line:?}");
+                }
+                Ok(_) => panic!("a complete unknown final line was accepted: {final_line:?}"),
+                Err(e) => panic!("expected a refusal for {final_line:?}, got {e:?}"),
+            }
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                content,
+                "the refusal must leave the file untouched: {final_line:?}{trailing:?}"
+            );
+        }
     }
 }
 

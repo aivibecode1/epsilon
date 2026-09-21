@@ -60,6 +60,11 @@ pub enum LineDiagnosis {
     },
     /// A second header line, mid-file.
     SecondHeader,
+    /// Complete JSON that is none of the shapes this build knows: not an entry, not a header, not
+    /// a legacy entry. Refused for the same reason as an unknown entry type, and named separately
+    /// because "I do not recognize this line" and "this line is damaged" call for different
+    /// actions from whoever reads the message.
+    UnknownLineShape,
     /// A v1-shaped entry in a current-version file, where healing it would change its meaning.
     LegacyInCurrentFile,
 }
@@ -77,6 +82,12 @@ impl LineDiagnosis {
                  skipping it would change the transcript silently"
             ),
             LineDiagnosis::SecondHeader => "a second header line, mid-file".to_string(),
+            LineDiagnosis::UnknownLineShape => {
+                "valid JSON that is not an entry, a header or a legacy entry — a shape this build \
+                 does not know. Refusing rather than dropping the line, because a session written \
+                 by a newer Epsilon is not a damaged session"
+                    .to_string()
+            }
             LineDiagnosis::LegacyInCurrentFile => {
                 "a v1-format entry in a current-version file (healing it in place would change \
                  its meaning)"
@@ -261,6 +272,11 @@ impl SessionStore {
     ///
     /// A crash-truncated final line is detected and physically removed automatically —
     /// recovery is the expected path after a kill, not an exceptional error.
+    ///
+    /// "Crash-truncated" means a *fragment*: a final line that is not whole JSON, so the write
+    /// demonstrably died inside a value. A final line that IS whole JSON but uses a shape this
+    /// build does not know is refused instead, with the file left untouched (F08) — see
+    /// [`SessionStore::reindex`].
     ///
     /// M41: header/version handling (pi `session-manager.ts`):
     /// - a missing header line on a non-empty file means version 1;
@@ -454,9 +470,17 @@ impl SessionStore {
     /// M41: lines parse as [`SessionLine`]. A leading header line is consumed
     /// into [`SessionStore::header`] (NOT indexed — seq 0 is the first entry,
     /// so old files and new files number entries identically). Blank and
-    /// malformed lines keep the M33 semantics: only a bad *last* line counts
-    /// as a crash-truncated tail; a bad mid-file line is genuine corruption
+    /// malformed lines keep the M33 semantics: only a bad *last* line can be a
+    /// crash-truncated tail; a bad mid-file line is genuine corruption
     /// ([`StoreError::Corrupt`], file untouched).
+    ///
+    /// F08 narrowed "bad last line" to what the phrase can honestly cover. A last line that is
+    /// **not whole JSON** is a fragment — the write died inside a value — so it is dropped as
+    /// debris. A last line that **is** whole JSON but not a shape this build knows (an entry type
+    /// from a newer Epsilon, a second header, bare JSON of any kind) was written on purpose, so
+    /// it is refused with a typed [`LineDiagnosis`] and the file is left alone. Position is not
+    /// what makes a line damaged; the old behaviour truncated the same bytes that a mid-file
+    /// position would have refused.
     ///
     /// Old files (no header, or header version < [`CURRENT_SESSION_VERSION`])
     /// migrate in memory: entries gain chain `id`/`parent_id` (v1→v2),
@@ -464,8 +488,9 @@ impl SessionStore {
     /// `hookMessage` roles become `custom` (v2→v3). The store reports
     /// [`SessionStore::migrated`] so the caller can persist.
     ///
-    /// Returns `true` when the file was fully clean, `false` when a crash-truncated tail
-    /// line was found (indexing stopped there; call [`Self::truncate_to_index`] to remove it).
+    /// Returns `true` when the file was fully clean, `false` when a crash-truncated *fragment* was
+    /// found (indexing stopped there; call [`Self::truncate_to_index`] to remove it). A complete
+    /// but unrecognized line is an `Err`, not a `false` — the file must not be repaired.
     pub fn reindex(&mut self) -> Result<bool, StoreError> {
         self.file.seek(SeekFrom::Start(0))?;
         let mut raw = String::new();
@@ -530,7 +555,11 @@ impl SessionStore {
                     // A second header line mid-file is not a header — but it is
                     // also not a transcript entry. Treat it as corruption so the
                     // file gets inspected rather than silently skipped.
-                    if i + 1 == last {
+                    //
+                    // A *complete* last line is corruption wherever it sits (F08): it was
+                    // written on purpose, so removing it destroys something. Only a line
+                    // that is still a fragment can be crash debris.
+                    if i + 1 == last && !is_whole_json(fragment) {
                         torn_tail = true;
                     } else if first_bad.is_none() {
                         first_bad = Some((*no, LineDiagnosis::SecondHeader));
@@ -554,7 +583,10 @@ impl SessionStore {
                             legacy.push(leg);
                         }
                         None => {
-                            if i + 1 == last {
+                            if i + 1 == last && !is_whole_json(fragment) {
+                                // The write stopped mid-line: no closing brace, no
+                                // newline, nothing that parses. That is what a crash
+                                // leaves, and dropping it is the repair.
                                 torn_tail = true;
                             } else if first_bad.is_none() {
                                 // The line is unusable — say *why*, so an unknown entry type is
@@ -565,7 +597,7 @@ impl SessionStore {
                     }
                 }
                 None => {
-                    if i + 1 == last {
+                    if i + 1 == last && !is_whole_json(fragment) {
                         // Crash mid-write: the final line is a partial write.
                         torn_tail = true;
                     } else if first_bad.is_none() {
@@ -1265,7 +1297,24 @@ fn diagnose_line(fragment: &str) -> LineDiagnosis {
     if is_legacy_entry_shape(&value) {
         return LineDiagnosis::LegacyInCurrentFile;
     }
-    LineDiagnosis::NotJson
+    // Whole JSON, but none of the shapes above: `"hello"`, `42`, `[]`, `{}`, or an
+    // object with nothing this build recognizes in it. Not damage — a shape from
+    // somewhere else — and the reader needs to be told which of the two it is.
+    LineDiagnosis::UnknownLineShape
+}
+
+/// Is this line a complete JSON value, as opposed to a fragment of one?
+///
+/// The store repairs a crash-truncated final line by dropping it, and that is safe exactly when
+/// the line never became a whole thought: a half-written value is debris, and removing it costs
+/// the user nothing. A line that *is* whole JSON was written deliberately by something, so
+/// deleting it would discard the user's last turn (or invent a transcript that never happened);
+/// those are refused instead, with the file left alone.
+///
+/// Only the *syntax* is judged here. Whether the shape is one this build knows is the caller's
+/// question, and [`diagnose_line`] has a typed answer for it.
+fn is_whole_json(fragment: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(fragment.trim_end()).is_ok()
 }
 
 /// Lenient parse: typed entries first, then legacy v1 shapes (no `id`/`seq`),
