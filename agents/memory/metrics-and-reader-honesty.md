@@ -1,7 +1,9 @@
-# Metrics and session-reader honesty (M106–M108)
+# Metrics and reader honesty (M106–M109)
 
-**Status: 2026-09-21, in the tree, battery `m106a` running.** Three slices that came out
-of one reading pass over the TUI's visibility numbers and the store's repair rules.
+**Status: 2026-09-21.** M106–M108 landed with battery `m106a` (1,021 tests); M109 with
+`m109a` (1,025 — four more, exactly the new `at_files` tests). Four slices that came out of
+one reading pass over the TUI's visibility numbers, the store's repair rules and the `@`
+completion list.
 
 ## M106 — the cache gauge divided a session total by one prompt
 
@@ -49,11 +51,34 @@ the file after restoring. Cost 10 minutes here.
 
 ## Evidence
 
-- Battery `m106a` → copy `target/gate-m106a.log` to `audit/evidence/` before cleanup.
-- `epsilon-tui` 220 → 217 (−8 footer tests, +4 git, +1 metrics); `epsilon-session`
-  integration 29 → 30.
+- Batteries `m106a` (M106–M108) and `m109a` (M109), both copied to `audit/evidence/`.
+- `epsilon-tui` 220 → 221 across the round (−8 dead footer, +4 git, +1 metrics, +4 at_files);
+  `epsilon-session` integration 29 → 30; workspace 1,023 → 1,025.
 - Milestone docs: `docs/milestones/M106-cache-hit-accuracy.md`,
-  `M107-dead-footer.md`, `M108-unknown-final-line.md`.
+  `M107-dead-footer.md`, `M108-unknown-final-line.md`, `M109-at-file-ignore.md`.
+
+## M109 — the `@` list now shares the ignore answer (and the dead-logic find)
+
+`App::at_file_rows` had its own walker and its own hardcoded skip list, so `@` offered
+files the tools would refuse while `audit/11` claimed one shared answer. It now loads
+`epsilon_core::ignore` (same `IgnoreSet`, same `skip_dir`) and keeps only its traversal,
+which is budgeted for typing latency rather than for a tool call. The walk moved to
+`crates/epsilon-tui/src/at_files.rs` with four tests.
+
+**The find:** the tool walk's hidden-directory check reads
+`name.starts_with('.') && !ignore.is_ignored(..)` and its comment promised a `.gitignore`
+negation re-includes a hidden directory. It cannot. `is_ignored` walks ancestors and
+returns **false** for `.hidden/` + `!.hidden/` — the same answer as for a directory no rule
+mentions — so the clause can only differ from "always skip" when the next check skips the
+entry anyway. Dead logic plus an unkeepable promise, in both walks; the tool *test* had
+recorded the limitation honestly while the inline comment and `walk_files`'s doc comment
+claimed the feature. Clause deleted, comments corrected, and the limitation pinned by
+`a_hidden_directory_is_skipped_even_when_a_negation_names_it` so the day the escape hatch
+becomes real, that test fails.
+
+Lesson worth keeping: when a test of a documented behaviour fails, find out which of the
+two is lying before changing either. Here the matcher's doc (real git semantics for
+*matching*) had been over-generalized into a capability the API cannot express.
 
 ## Open, recorded not fixed
 
