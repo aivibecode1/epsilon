@@ -48,3 +48,25 @@ which is the M91 rule doing its job: a `seq` that disagrees with line order is a
 break, not a panic and not a wrong branch.
 
 Re-run: `target/debug/epsilon.exe --resume <file> --print hi`.
+
+## The same two runs against the installed binary
+
+After the round's reinstall, `%USERPROFILE%\.cargo\bin\epsilon.exe` was checked on both
+sides of the new rule, because a rule that only preserves would be as wrong as one that only
+refuses:
+
+```
+$ epsilon --resume foreign-real.jsonl --print hi          # one foreign kind appended
+resumed 2 entries … · exit=0 · file unchanged
+
+$ epsilon --resume bad-body.jsonl --print hi              # `message` with no body
+open …: session line #4: entry type `message` is one this build knows, but its body cannot
+be read — the entry is damaged rather than foreign. Refusing rather than preserving it,
+because an entry nothing can interpret would leave a silent gap in the transcript
+(file left intact)
+exit=1
+```
+
+The second message is the one M108's Limits asked for: before this round, a known kind with
+a broken body was reported as *"not known to this build — the session was probably written
+by a newer Epsilon"*, which pointed the reader at the wrong cause.

@@ -62,6 +62,12 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M113 — an entry kind this build does not know is kept, not used to close the session](milestones/M113-unknown-kinds-preserved.md):
+  a session file carrying a `kind.type` from a newer build used to be **refused whole** — one
+  foreign entry cost the entire conversation. It is now parsed as an opaque object, replayed
+  on the next write, and left out of the model view: kept, not applied. The rule is lenient
+  about the tag and strict about the body, because preserving a *known* kind with an
+  unreadable body would open the session with a silent gap instead.
 - [M112 — the cost model gets a shape, its dead twin leaves, and the header gets a legend](milestones/M112-cost-shape-and-legend.md):
   `CostBreakdown` returns the four components with the unscaled products private, so the
   total divides once (a refactor had quietly restored the four-truncations bug, and a test
