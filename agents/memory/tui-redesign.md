@@ -46,10 +46,17 @@ three lines in a draw call:
 
 - **Context**: `context_used / context_window`, with warn at 70% and danger at
   90%. Unknown prints `?`, never a fabricated zero.
-- **Cache hit rate**: cache reads divided by *the prompt they belonged to*, not
-  by a session total. A session average falls every time the model answers, which
-  is the opposite of what the reader is watching for. A prompt under 1000 tokens
-  reports `—`: a 120-token "hit" proves nothing.
+- **Cache hit rate**: **broken, G16 — fix queued.** The intent (documented in the
+  module) is cache reads divided by *the prompt they belonged to*, because a
+  session average falls every time the model answers, which is the opposite of what
+  the reader is watching for. The implementation divides the **session total**
+  `cache_read` by the **latest** prompt size, so the gauge inflates each turn and
+  pins at `cache 100%`; `metrics.rs:103-110` contradicts its own doc comment, and
+  `cache_rate_is_about_the_latest_prompt_not_the_session` (`:270`) asserts the
+  wrong model and passes anyway. `footer.rs:71`'s `ch_rate` has the same shape.
+  The per-call value is already in hand at `state.rs:294`/`:430` — carry it beside
+  `latest_prompt_tokens` and divide like for like. This is the top queued slice:
+  the owner asked for this number specifically.
 - **Cost**: integer micro-USD throughout (ADR-010), priced from the catalog.
   An unpriced model omits the field rather than claiming `$0`.
 
