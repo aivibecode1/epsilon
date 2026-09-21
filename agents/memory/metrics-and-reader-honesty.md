@@ -107,13 +107,40 @@ before/after probe runs in `audit/evidence/at-popup-{prefix,postfix}-*.json`.
 a frame stops updating, time the *keystroke*, not just the frame rate — and repeat a
 suspected flake at several timings before believing it is flaky.
 
+## M111 — the cost estimate, and the buckets it was not charging
+
+The header added `tokens_in × input + tokens_out × output`. There are **four** disjoint
+buckets: `usage.input` excludes cached tokens (the adapters apply the providers' split at
+the wire boundary), cache writes are a third, output a fourth. Cache reads and writes were
+charged at **zero** — a cache-heavy session's cost was low by roughly the cached share
+times the input price.
+
+Fix: `ModelInfo` gains `cache_read_cost_micro_per_mtok` /
+`cache_write_cost_micro_per_mtok`; `scripts/regen_catalog.py` reads models.dev's
+`cost.cache_read`/`cost.cache_write`; the table was regenerated (359/557 rows publish a
+read price, 114 a write price). The arithmetic moved to
+`crates/epsilon-tui/src/ui/cost.rs` with four tests, because a claim about money needs a
+test and the old expression — sitting in the draw path — had none.
+
+`0` = *not published*, which is not free, so `Metrics::cost_is_floor` marks the case and
+the header prints `$0.42+`.
+
+**Refresh mechanism, worth remembering:** Python's `urllib` cannot reach models.dev here
+(MSYS Python has no CA roots → `CERTIFICATE_VERIFY_FAILED`); PowerShell can. So
+`Invoke-WebRequest https://models.dev/api.json -OutFile $env:TEMP\models-dev-api.json`,
+then `python scripts/regen_catalog.py <path>`. A regeneration also pulls unrelated upstream
+drift (this round: 547 → 557 rows, 15 in, 5 out, prices moved) — disclose it in the commit
+rather than smuggling it, with `catalog_is_current_generation` as the coherence check.
+
+**Still open:** the header's numbers have no legend on screen. A user sees
+`?/164k · ↑0 ↓0 · cache — · $0+ · DeepSeek V3.1` and nothing explains the `?`, the `—` or
+the `+`. `/help` (`app.rs:1212-1230`) is the natural home for two lines; queued as its own
+small slice so it gets its own battery.
+
 ## Open, recorded not fixed
 
-- **G18 — cost prices cached tokens at zero.** `tokens_in` excludes cached tokens by the
-  providers' split, and cache reads/writes are not priced at all. Needs a `ModelInfo`
-  field, a column in `scripts/regen_catalog.py` (models.dev publishes the prices) and the
-  regenerated `catalog_data.rs`. Until then the estimate is low on any cached session.
-  Recorded in `audit/11`.
+- **G18 — closed in M111.** Kept here only as the pointer: the cost estimate now prices all
+  four buckets, and reports a floor when the registry cannot price cache traffic.
 - **G17's class is not closed**: `pub` remains a hole in the dead-code gate, so anything
   else superseded by a redesign and left `pub` is still invisible.
 - Refusing an unknown final line means an older build cannot open a newer session at all —

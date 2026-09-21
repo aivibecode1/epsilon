@@ -46,17 +46,16 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-21 (fourth round of the day)** — M109 (`@` shares the ignore
-   answer) with `m109a` 1,025, then **M110, the stall M109 shipped**: the popup loaded
-   ignore rules per keystroke and `IgnoreSet::load` walked gitignored trees, so `@Cargo`
-   never drew. Fixed by a 5 s cache in the frontend and pruning in the matcher; battery
-   `m110a` 1,026. Found by the console probe, not by a test — the `@` popup still has no
-   automated end-to-end coverage. Global `epsilon.exe` reinstalled from this tree.
-   Remaining for the round: clean `target/`.
-2. **G18 — the cost estimate prices cached tokens at zero** — the third number the owner
-   asked to see. Needs a `ModelInfo` cache-price field, a column in
-   `scripts/regen_catalog.py`, and the regenerated table; the alternative is labelling the
-   number as an input/output-only estimate.
+1. **Round closed 2026-09-21 (fifth round of the day)** — M111: the cost estimate now prices
+   all four disjoint token buckets (cache prices added to `ModelInfo`, the bundled catalog
+   regenerated from models.dev, the arithmetic moved to `ui/cost.rs` with tests, and `$0.42+`
+   marking a floor when the registry cannot price cache traffic). Battery `m111a`: 1,031
+   passed / 0 failed. **All three numbers the owner asked for are now honest** — context,
+   cache rate, cost. Global `epsilon.exe` reinstalled from this tree. Remaining for the
+   round: clean `target/`.
+2. **The header's numbers have no legend on screen** — a user sees
+   `?/164k · ↑0 ↓0 · cache — · $0+ · DeepSeek V3.1` and nothing explains the `?`, the `—` or
+   the `+`. Two lines in `/help` (`app.rs:1212-1230`); small slice, own battery.
 3. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
    leaves memory and the model view divergent with no signal.
 4. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`):

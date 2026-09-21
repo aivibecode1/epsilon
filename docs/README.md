@@ -62,6 +62,13 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M111 — the cost estimate prices what it was leaving out](milestones/M111-cost-accuracy.md):
+  the header's cost figure added up two of the four disjoint token buckets a provider
+  reports, so cache reads and cache writes were charged at **zero** — not cheap, free, in
+  the one number a user checks to see what they are spending. The catalog now carries both
+  cache prices (regenerated from models.dev), the arithmetic lives in a tested module
+  instead of the draw path, and a session that moved tokens the registry cannot price
+  reports a floor (`$0.42+`) rather than a total.
 - [M110 — the `@` popup went blank, and the search behind it read everything](milestones/M110-at-popup-stall.md):
   the fix for a regression M109 shipped, found by the console probe. `@` completion loaded
   the ignore rules once per keystroke, and loading them searched gitignored trees too — in
