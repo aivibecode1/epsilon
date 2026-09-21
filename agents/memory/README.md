@@ -46,16 +46,22 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-21 (fifth round of the day)** — M111: the cost estimate now prices
-   all four disjoint token buckets (cache prices added to `ModelInfo`, the bundled catalog
-   regenerated from models.dev, the arithmetic moved to `ui/cost.rs` with tests, and `$0.42+`
-   marking a floor when the registry cannot price cache traffic). Battery `m111a`: 1,031
-   passed / 0 failed. **All three numbers the owner asked for are now honest** — context,
-   cache rate, cost. Global `epsilon.exe` reinstalled from this tree. Remaining for the
-   round: clean `target/`.
-2. **The header's numbers have no legend on screen** — a user sees
-   `?/164k · ↑0 ↓0 · cache — · $0+ · DeepSeek V3.1` and nothing explains the `?`, the `—` or
-   the `+`. Two lines in `/help` (`app.rs:1212-1230`); small slice, own battery.
+1. **Round closed 2026-09-21 (sixth round of the day)** — M112: the cost model returns a
+   breakdown (divide-once preserved and pinned), the `:free`-model floor bug fixed, the dead
+   `CostMicro` type deleted from contracts, and `/help` now decodes the header. Battery
+   `m112a`: 1,032 passed / 0 failed. Also landed: the **port plan re-check**
+   (`43edd22`, `audit/evidence/port-gap-recheck-2026-09-21.md`) — 17 rows re-verified
+   against the code and pi 0.85.1, 12 stale claims corrected, and the still-open gaps ranked
+   in `port-revalidation.md`. Global `epsilon.exe` reinstalled. Remaining: clean `target/`.
+2. **The port's loudest fidelity gap: the session format.** pi entries carrying
+   `label`/`session_info` are **refused**, not partly read — `EntryKind` has no such
+   variants, so an unknown `kind.type` becomes `StoreError::corrupt`. A pi session with
+   labels cannot be opened at all. Take this next; details and citations in
+   `port-revalidation.md`.
+3. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
+   `/tree` is an alias for the active-branch picker, `/fork` is a raw `fs::copy`.
+4. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
+   shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision diagnostic.
 3. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
    leaves memory and the model view divergent with no signal.
 4. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`):

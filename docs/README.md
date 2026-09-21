@@ -62,6 +62,12 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M112 — the cost model gets a shape, its dead twin leaves, and the header gets a legend](milestones/M112-cost-shape-and-legend.md):
+  `CostBreakdown` returns the four components with the unscaled products private, so the
+  total divides once (a refactor had quietly restored the four-truncations bug, and a test
+  caught it); a model whose every rate is zero was about to print `$0+` and no longer does;
+  the dead `CostMicro` type left `epsilon-contracts`; and `/help` now explains what the
+  header's figures — including its `?`, `—` and `+` — actually mean.
 - [M111 — the cost estimate prices what it was leaving out](milestones/M111-cost-accuracy.md):
   the header's cost figure added up two of the four disjoint token buckets a provider
   reports, so cache reads and cache writes were charged at **zero** — not cheap, free, in
