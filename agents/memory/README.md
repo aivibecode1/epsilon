@@ -53,11 +53,15 @@ not themselves trigger runtime compression.
    (`43edd22`, `audit/evidence/port-gap-recheck-2026-09-21.md`) — 17 rows re-verified
    against the code and pi 0.85.1, 12 stale claims corrected, and the still-open gaps ranked
    in `port-revalidation.md`. Global `epsilon.exe` reinstalled. Remaining: clean `target/`.
-2. **The port's loudest fidelity gap: the session format.** pi entries carrying
-   `label`/`session_info` are **refused**, not partly read — `EntryKind` has no such
-   variants, so an unknown `kind.type` becomes `StoreError::corrupt`. A pi session with
-   labels cannot be opened at all. Take this next; details and citations in
-   `port-revalidation.md`.
+2. **The port's loudest gap is bigger than the plan said: it is an IMPORTER gap.** pi
+   entries carrying `label`/`session_info` are refused, but adding those two variants would
+   not make a single genuine pi file readable — the refusal happens before the kind is
+   considered, because pi's entry **envelope** differs (no `seq`, ISO `timestamp`,
+   `parentId`, kind at the top level rather than under `kind`). Plan:
+   `audit/evidence/session-format-gap-plan.md`. **Next round starts by verifying that
+   envelope claim against a real pi file** rather than trusting the document, then builds
+   the importer. The plan also argues preservation-over-refusal for an unknown *tag* (M108's
+   goal, answered better) while a known tag with an unreadable body still refuses.
 3. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
    `/tree` is an alias for the active-branch picker, `/fork` is a raw `fs::copy`.
 4. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
