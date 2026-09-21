@@ -62,6 +62,11 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M109 — `@` completion stops offering files the tools would refuse](milestones/M109-at-file-ignore.md):
+  the `@` list had its own walker and its own hardcoded skips, so it disagreed with every
+  read tool about which files exist. It now shares `epsilon_core::ignore`, and the slice
+  found that the hidden-directory "escape hatch" both walks promised was dead logic —
+  `is_ignored` cannot tell "re-included" from "never mentioned", so both now say so.
 - [M108 — a complete line this build cannot read is refused, not deleted](milestones/M108-unknown-final-line.md):
   the session store dropped a final line it could not parse. That is right for a crash
   fragment and wrong for a *complete* line in an unknown shape — the first is debris, the

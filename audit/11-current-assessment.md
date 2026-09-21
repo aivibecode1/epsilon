@@ -143,9 +143,18 @@ One defect *did* reproduce while probing, and it is new:
 
 ### Known and deliberately not claimed
 
-- A `.gitignore` negation re-includes a hidden directory in the matcher, but the
-  walker still does not descend into one. `crates/epsilon-tools/src/util.rs` says
-  so in the test rather than asserting behaviour that is not there.
+- **The hidden-directory escape hatch was dead logic, and both walks now say so (M109).**
+  `walk_inner` read `name.starts_with('.') && !ignore.is_ignored(..)`, and its comment
+  promised that a `.gitignore` negation re-includes a hidden directory. It never could:
+  `IgnoreSet::is_ignored` returns **false** both for "a rule ignored this and a later one
+  re-included it" and for "no rule mentions it", so the clause changes the outcome only in
+  the case where the next check skips the entry anyway. The tool walk's own test had already
+  recorded the limitation ("NOT asserted, because it does not work yet"), so the code was
+  honest in one place and false in two others — the inline comment and the public doc
+  comment on `walk_files`. The clause is gone, both comments state the limitation with its
+  reason, and the `@`-completion walk (`crates/epsilon-tui/src/at_files.rs`) matches rather
+  than copying the illusion. Making the escape hatch real needs a matcher query that can
+  tell "re-included" from "never mentioned"; `is_ignored` cannot, by construction.
 - `epsilon-core::ignore` does not implement character classes (`[a-z]`), escaped
   metacharacters, or `core.excludesFile`. The module docs name all three.
 - The header shows `0%%` in a **captured screen buffer** read through

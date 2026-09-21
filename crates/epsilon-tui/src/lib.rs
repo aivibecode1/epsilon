@@ -10,6 +10,7 @@
 //! feature without touching this crate's logic.
 
 pub mod app;
+pub mod at_files;
 pub mod bench;
 pub mod editor_ops;
 pub mod fuzzy;

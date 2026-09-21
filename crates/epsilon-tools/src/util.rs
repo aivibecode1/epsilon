@@ -144,9 +144,19 @@ pub fn escaped_workspace(raw: &str) -> ToolFailure {
 /// already have an [`IgnoreSet`] should use [`walk_files_with`] rather than
 /// paying to read the same files twice.
 ///
-/// Hidden directories are skipped by default (a `.venv` is not workspace
-/// content), and hidden *files* stay visible (`.env` is). A `.gitignore`
-/// negation re-includes a hidden directory and therefore everything below it.
+/// Hidden directories are skipped, unconditionally: a `.venv` is not workspace
+/// content. Hidden *files* stay visible, because `.env` is content the read tools
+/// must be able to see.
+///
+/// A `.gitignore` negation does **not** re-include a hidden directory here, and the
+/// reason is worth stating because two comments in this file used to claim otherwise:
+/// `IgnoreSet::is_ignored` resolves ancestors and answers `false` both for "a rule
+/// ignored this and a later one re-included it" and for "no rule mentions it", so a
+/// walk has no query that can tell the two apart. The matcher itself is correct — see
+/// its own doc for the `dir/` + `!dir/` example — and the walker simply cannot use it.
+/// Making the escape hatch real needs a matcher query that distinguishes the cases;
+/// until then this is a tracked limitation, not a feature, and the test below says so
+/// rather than asserting behaviour that is not there.
 ///
 /// [`IgnoreSet`]: epsilon_core::ignore::IgnoreSet
 pub fn walk_files(root: &Path) -> Vec<PathBuf> {
@@ -203,13 +213,15 @@ fn walk_inner(
         if is_dir && epsilon_core::ignore::skip_dir(&name) {
             continue;
         }
-        // A hidden DIRECTORY is skipped unless a `.gitignore` re-includes it with
-        // a negation. Git's own default is the same shape — untracked dotfiles
-        // are not listed — and the escape hatch matters: a repository that wants
-        // `.github` searched can say so, and one that wants its `.venv` skipped
-        // gets that for free. Hidden *files* stay visible: `.env` is content, and
-        // the read tools must be able to see it.
-        if is_dir && name.starts_with('.') && !ignore.is_ignored(&relative, is_dir) {
+        // A hidden DIRECTORY is skipped, always; a hidden FILE is content and stays.
+        //
+        // This check used to read `name.starts_with('.') && !ignore.is_ignored(..)`, with
+        // a comment promising that a `.gitignore` negation re-includes a hidden directory.
+        // It never did: the clause can only differ from "always skip" when the directory
+        // *is* ignored, and the very next check skips it in that case. Dead logic plus a
+        // promise nobody could keep — the doc comment on `walk_files` now states the
+        // limitation and the test records why instead of asserting the feature.
+        if is_dir && name.starts_with('.') {
             continue;
         }
         if ignore.is_ignored(&relative, is_dir) {

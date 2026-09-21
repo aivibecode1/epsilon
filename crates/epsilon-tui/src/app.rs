@@ -980,62 +980,26 @@ impl App {
 
     /// File candidates for `fragment` (case-insensitive substring, cap 200).
     fn at_file_rows(&self, fragment: &str) -> Vec<String> {
-        // Reuse the shared walker; cap 200 to keep typing smooth (avoid scanning target/).
-        // Paths returned relative to workspace_root, like pi's relative workspace files.
-        let files = {
-            // Prefer the walk helper when available; otherwise fall back to entry read.
-            // We call epsilon_tools::util::walk_files via a local helper to avoid a TUI->tools dep.
-            // Instead, do a cheap local walk with the same SKIP_DIRS — no extra crate needed here.
-            fn walk_at(root: &std::path::Path, budget: &mut usize) -> Vec<String> {
-                fn rec(
-                    dir: &std::path::Path,
-                    root: &std::path::Path,
-                    rows: &mut Vec<String>,
-                    budget: &mut usize,
-                    depth: usize,
-                ) {
-                    if *budget == 0 || depth > 16 {
-                        return;
-                    }
-                    let Ok(entries) = std::fs::read_dir(dir) else {
-                        return;
-                    };
-                    for e in entries.flatten() {
-                        if *budget == 0 {
-                            break;
-                        }
-                        let p = e.path();
-                        let name = match p.file_name().and_then(|n| n.to_str()) {
-                            Some(n) => n,
-                            None => continue,
-                        };
-                        if [".git", "target", "node_modules", "dist", ".epsilon"].contains(&name) {
-                            continue;
-                        }
-                        if p.is_dir() {
-                            rec(&p, root, rows, budget, depth + 1);
-                        } else {
-                            if let Ok(rel) = p.strip_prefix(root) {
-                                rows.push(rel.to_string_lossy().replace('\\', "/"));
-                                *budget -= 1;
-                            }
-                        }
-                    }
-                }
-                let mut rows = Vec::new();
-                let mut b = *budget;
-                rec(root, root, &mut rows, &mut b, 0);
-                *budget = b;
-                rows
-            }
-            let mut budget = 200usize;
-            walk_at(&self.workspace_root, &mut budget)
-        };
+        // The `@` list has to agree with the tools about which files exist: offering a path
+        // the model's own read tool would refuse is a promise the harness cannot keep.
+        // `epsilon_core::ignore` is that single answer (M99), and `epsilon-tui` already
+        // depends on `epsilon-core`, so sharing it costs no new crate edge.
+        //
+        // What is still this module's own is the *traversal*, deliberately: it is budgeted
+        // for typing latency (a few hundred rows, stop early) rather than for a tool call
+        // that must see everything. One ignore answer, two walks with different budgets —
+        // if a third consumer appears, the walk belongs in core beside `IgnoreSet`.
+        let ignore = epsilon_core::ignore::IgnoreSet::load(
+            &self.workspace_root,
+            crate::at_files::AT_IGNORE_FILES,
+        );
+        let mut budget = crate::at_files::AT_ROW_BUDGET;
+        let files = crate::at_files::walk(&self.workspace_root, &ignore, &mut budget);
         let needle = fragment.trim();
         if needle.is_empty() {
             let mut out = files;
             out.sort();
-            out.truncate(200);
+            out.truncate(crate::at_files::AT_ROW_BUDGET);
             return out;
         }
         // pi `fuzzyFilter` on full paths — same semantics as model picker.
