@@ -187,6 +187,14 @@ fixing precisely because they make every other claim harder to trust:
   entry. Fixed 2026-09-21 by adding `scripts/gate.ps1`, the native Windows battery;
   `gate.sh` keeps working for POSIX and CI, and now names the missing binary
   instead of failing anonymously.
+- **A superseded `git stash` was dropped, with its content accounted for (2026-09-21).**
+  `stash@{0}` ("WIP on main", 2026-09-20 11:02) held session-store work that never landed:
+  an earlier `header_end`/`keep_end` (equivalent to M105's, which is better tested), a
+  typed `UnknownLineShape` for an unknown final line (**that is F08 — it landed as M108,
+  ported from here**), and three tests of which one carries leftover `eprintln!("PROBE …")`
+  debugging and a nested store opened only to print bytes. Nothing unique remained, so the
+  stash was dropped rather than left to read as unfinished work. It is still in the reflog
+  for the usual window if that assessment is ever disputed.
 - `agents/memory/next-hardening.md` still describes a baseline from before the
   TUI work. Its own header says the section is historical; the live baseline is
   this file.
