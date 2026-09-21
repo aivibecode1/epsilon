@@ -46,9 +46,21 @@ pub struct Metrics {
     /// Session totals.
     pub tokens_out: u64,
     /// Prompt tokens served from cache, session total.
-    pub cache_read: u64,
+    ///
+    /// A session total is the wrong numerator for the hit rate — see
+    /// [`Metrics::cache_read_last`] — but it is the honest answer to "how much of this
+    /// session came from cache", which a wider layout can show.
+    pub cache_read_session: u64,
     /// Prompt tokens written to cache, session total.
-    pub cache_write: u64,
+    pub cache_write_session: u64,
+    /// Prompt tokens served from cache in the **most recent call** — the numerator that
+    /// belongs with [`Metrics::context_used`].
+    ///
+    /// This pairing is the whole point. A hit rate is a claim about one prompt: cache
+    /// reads from earlier calls divided by the latest prompt size inflates every turn and
+    /// pins the gauge at 100% once the cumulative reads pass one prompt (G16, found by
+    /// reading this file against its own doc comment).
+    pub cache_read_last: u64,
     /// Estimated session cost in micro-USD, or `None` when unpriced.
     pub cost_micro_usd: Option<u64>,
     /// `true` once the session has been compacted and no fresh count has arrived.
@@ -92,20 +104,24 @@ impl Metrics {
 
     /// The share of the last prompt that came from the cache.
     ///
-    /// Numerator and denominator are deliberately from the same call: cache reads
-    /// divided by the prompt they were part of. Dividing session cache reads by a
-    /// session token total would produce a number that falls every time the model
-    /// answers, which is the opposite of what the reader is watching for.
+    /// Numerator and denominator come from the same call by construction:
+    /// [`Metrics::cache_read_last`] is the cached share of the prompt
+    /// [`Metrics::context_used`] measures. Dividing the *session* total by one prompt
+    /// would produce a number that climbs every turn and sits at 100% thereafter, which
+    /// is the opposite of what the reader is watching for.
     ///
-    /// `None` when there has been no prompt, or when the prompt was too small for
-    /// a cache decision to mean anything (a 4-token prompt "hitting" the cache
-    /// says nothing about prompt reuse).
+    /// `None` when there has been no prompt, or when the prompt was too small for a
+    /// cache decision to mean anything (a 4-token prompt "hitting" the cache says
+    /// nothing about prompt reuse).
     pub fn cache_hit_rate(&self) -> Option<f64> {
         let prompt = self.context_used?;
         if prompt < 1_000 {
             return None;
         }
-        let hits = self.cache_read.min(prompt);
+        // A provider that reports more cache reads than prompt tokens is contradicting
+        // itself; clamping keeps the gauge inside 0..=100% instead of reporting a lie
+        // with more decimal places.
+        let hits = self.cache_read_last.min(prompt);
         Some(hits as f64 / prompt as f64)
     }
 
@@ -237,8 +253,9 @@ mod tests {
             context_window: Some(200_000),
             tokens_in: 12_400,
             tokens_out: 3_400,
-            cache_read: 18_000,
-            cache_write: 2_000,
+            cache_read_session: 18_000,
+            cache_write_session: 2_000,
+            cache_read_last: 18_000,
             cost_micro_usd: Some(12_345),
             ..Metrics::default()
         }
@@ -272,10 +289,37 @@ mod tests {
         // 18k of a 24k prompt came from cache.
         assert_eq!(m.cache_hit_rate(), Some(0.75));
         assert_eq!(m.cache_gauge(), "cache 75%");
-        // A later, larger prompt with no cache hits must move the number, even
-        // though the session total is unchanged.
+
+        // A later prompt that hit nothing must read as a *miss*, even though the session
+        // still holds 18k of cache reads. This is the assertion the pre-G16 gauge failed:
+        // it divided the session total by this prompt and reported
+        // min(18_000, 48_000) / 48_000 = 37.5%, a hit rate for a prompt that had none.
         m.context_used = Some(48_000);
-        assert_eq!(m.cache_hit_rate(), Some(0.375));
+        m.cache_read_last = 0;
+        assert_eq!(
+            m.cache_hit_rate(),
+            Some(0.0),
+            "a prompt with no cache reads is a 0% hit rate, whatever the session total says"
+        );
+
+        // And a later prompt that hit half of itself reads as 50%, not as the session
+        // average.
+        m.cache_read_last = 24_000;
+        assert_eq!(m.cache_hit_rate(), Some(0.5));
+    }
+
+    #[test]
+    fn the_cache_numerator_never_borrows_from_earlier_calls() {
+        // The shape that produced G16: cumulative reads above one prompt. The session
+        // total is deliberately larger than the prompt, and the rate must ignore it.
+        let m = Metrics {
+            context_used: Some(10_000),
+            context_window: Some(200_000),
+            cache_read_session: 90_000,
+            cache_read_last: 1_000,
+            ..Metrics::default()
+        };
+        assert_eq!(m.cache_hit_rate(), Some(0.1));
     }
 
     #[test]
@@ -283,7 +327,7 @@ mod tests {
         let m = Metrics {
             context_used: Some(120),
             context_window: Some(200_000),
-            cache_read: 120,
+            cache_read_last: 120,
             ..Metrics::default()
         };
         assert!(m.cache_hit_rate().is_none(), "120 tokens proves nothing");
@@ -296,7 +340,7 @@ mod tests {
         // produce a rate above 100%.
         let m = Metrics {
             context_used: Some(10_000),
-            cache_read: 99_000,
+            cache_read_last: 99_000,
             ..Metrics::default()
         };
         assert_eq!(m.cache_hit_rate(), Some(1.0));

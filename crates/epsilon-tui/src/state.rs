@@ -158,6 +158,11 @@ pub struct UiState {
     tokens_out: u64,
     cache_read: u64,
     cache_write: u64,
+    /// Cache-read tokens of the most recent call, paired with `latest_prompt_tokens`.
+    ///
+    /// See [`UiState::latest_cache_read`] for why the rate cannot use the session totals
+    /// above — this pair is the fix for G16.
+    latest_cache_read: u64,
     latest_prompt_tokens: u64,
     compacted: bool,
 }
@@ -211,6 +216,19 @@ impl UiState {
     /// first provider response of the session.
     pub fn latest_prompt_tokens(&self) -> u64 {
         self.latest_prompt_tokens
+    }
+
+    /// Cache-read tokens of the **same call** [`UiState::latest_prompt_tokens`]
+    /// describes.
+    ///
+    /// The cache hit rate is a claim about one prompt, so its numerator has to come from
+    /// the same call as its denominator. The session totals in
+    /// [`UiState::cache_usage`] cannot serve that purpose: dividing them by a single
+    /// prompt inflates the rate every turn and pins it at 100%, which is what the gauge
+    /// did until G16. Kept as its own pair so the session totals remain available for a
+    /// wider layout.
+    pub fn latest_cache_read(&self) -> u64 {
+        self.latest_cache_read
     }
 
     /// True right after a compaction pass, before the next provider response reports
@@ -294,6 +312,7 @@ impl UiState {
                     let prompt = a.usage.input + a.usage.cache_read + a.usage.cache_write;
                     if prompt > 0 {
                         self.latest_prompt_tokens = prompt;
+                        self.latest_cache_read = a.usage.cache_read;
                         self.compacted = false;
                     }
                 }
@@ -430,6 +449,7 @@ impl UiState {
                     let prompt = a.usage.input + a.usage.cache_read + a.usage.cache_write;
                     if prompt > 0 {
                         self.latest_prompt_tokens = prompt;
+                        self.latest_cache_read = a.usage.cache_read;
                         self.compacted = false; // fresh counts retire the `?` marker
                     }
                 }

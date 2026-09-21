@@ -156,7 +156,8 @@ mod tests {
             context_window: Some(200_000),
             tokens_in: 12_400,
             tokens_out: 3_400,
-            cache_read: 36_000,
+            cache_read_session: 36_000,
+            cache_read_last: 36_000,
             cost_micro_usd: Some(12_345),
             ..Metrics::default()
         };
@@ -199,7 +200,8 @@ mod tests {
             context_window: Some(200_000),
             tokens_in: 12_400,
             tokens_out: 3_400,
-            cache_read: 36_000,
+            cache_read_session: 36_000,
+            cache_read_last: 36_000,
             cost_micro_usd: Some(12_345),
             ..Metrics::default()
         };

@@ -593,7 +593,7 @@ impl App {
     fn cached_branch(&mut self) -> Option<String> {
         const TTL: std::time::Duration = std::time::Duration::from_secs(2);
         if self.branch_cache.1.elapsed() > TTL {
-            let b = crate::footer::git_branch(&self.workspace_root);
+            let b = crate::git::branch(&self.workspace_root);
             self.branch_cache = (b, std::time::Instant::now());
         }
         self.branch_cache.0.clone()
@@ -2875,7 +2875,10 @@ impl App {
     /// accumulates over a long session.
     fn metrics(&self) -> crate::ui::metrics::Metrics {
         let (tokens_in, tokens_out) = self.ui.usage();
-        let (cache_read, cache_write) = self.ui.cache_usage();
+        let (cache_read_session, cache_write_session) = self.ui.cache_usage();
+        // The rate's numerator comes from the SAME call as `context_used`, not from the
+        // session totals above (G16).
+        let cache_read_last = self.ui.latest_cache_read();
         let latest_prompt = self.ui.latest_prompt_tokens();
         let info = epsilon_llm::catalog::lookup_model(&self.model_id);
         let cost_micro_usd = info.as_ref().map(|info| {
@@ -2889,8 +2892,9 @@ impl App {
             context_window: info.as_ref().map(|i| i.context_window).filter(|w| *w > 0),
             tokens_in,
             tokens_out,
-            cache_read,
-            cache_write,
+            cache_read_session,
+            cache_write_session,
+            cache_read_last,
             cost_micro_usd,
             compacted: self.ui.is_compacted(),
         }
