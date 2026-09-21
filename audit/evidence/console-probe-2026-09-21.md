@@ -113,5 +113,8 @@ python scripts/console-probe.py --late --maximize target/debug/epsilon.exe "text
 ```
 
 `--early` types while the program is still initialising, `--size CxR` (or
-`CxRxBUFFER`) forces the geometry. Output is one JSON object on stdout; the raw runs
-behind this note are `target/probe-*.json` (disposable, not committed).
+`CxRxBUFFER`) forces the geometry, `--maximize` maximizes the window. Output is one
+JSON object on stdout; the four runs behind this note are kept verbatim in
+[`console-probe-runs-2026-09-21.json`](console-probe-runs-2026-09-21.json), because
+`target/` is disposable on this machine and evidence that only exists there is
+evidence that has already been deleted.

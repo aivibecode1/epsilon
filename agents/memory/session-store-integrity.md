@@ -1,10 +1,16 @@
 # Session-store integrity (M105)
 
-**Status:** fixed in the working tree with tests, battery `m105c` running, **not yet
-committed**. Touches `crates/epsilon-session/src/store.rs` +
+**Status: closed, 2026-09-21.** Committed as `497093e` (with the milestone log and the
+history row), after battery `m105d`: all five gates exit 0, **1,023 passed / 0 failed /
+1 ignored across 59 test binaries**. The evidence is copied out of `target/` to
+`audit/evidence/gate-m105d.log` (the passing run) and `gate-m105c.log` (the first
+attempt, which failed only `fmt --check` and is kept because it is why the battery was
+re-run). Milestone: `docs/milestones/M105-session-repair-integrity.md`.
+
+Files: `crates/epsilon-session/src/store.rs` +
 `crates/epsilon-session/tests/session_store.rs`.
 
-## The two defects (both committed, both reachable from the product)
+## The two defects (both were committed, both reachable from the product)
 
 1. **A repair could delete the session's identity.** `truncate_to_index` cut the file
    back to the last indexed entry's end, or to **zero** when no entry survived. A kill
@@ -49,8 +55,16 @@ committed**. Touches `crates/epsilon-session/src/store.rs` +
 
 ## Evidence
 
-- Battery `m105c` → `target/gate-m105c.log` (copy the relevant lines before cleanup).
-- `audit/evidence/console-probe-2026-09-21.md` is the TUI half of the same round.
+- Battery `m105d` → copied to `audit/evidence/gate-m105d.log` (and `gate-m105c.log`,
+  the fmt-only failure that forced the re-run).
+- `audit/evidence/console-probe-2026-09-21.md` + `console-probe-runs-2026-09-21.json`
+  are the TUI half of the same round.
+- The `epsilon-ext` frame-cap test from the same round is its own commit, `74ed230`.
+
+## Reinstall
+
+Owed and done this round: session repair runs on every resume, so the slice is
+CLI-visible and the owner tests the installed binary.
 
 ## Open, recorded not fixed
 

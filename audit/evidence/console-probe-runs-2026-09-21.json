@@ -1,0 +1,487 @@
+{
+  "note": "Raw runs behind audit/evidence/console-probe-2026-09-21.md. Each object is one console_probe.py invocation; \"before\"/\"after\" are the console window and screen-buffer geometry before and after the TUI started, and \"typed_screen\" is what the window showed after KEY_EVENT records were pushed into the console input buffer.",
+  "runs": [
+    {
+      "exe": "C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\target\\debug\\epsilon.exe",
+      "typed_text": "typed after startup",
+      "mode": "late",
+      "size": [
+        100,
+        30
+      ],
+      "host_class": "ConsoleWindowClass",
+      "resize": {
+        "buffer-big": false,
+        "window": true,
+        "buffer-exact": true
+      },
+      "before": {
+        "buffer": [
+          100,
+          30
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 100,
+        "window_rows": 30,
+        "cursor": [
+          0,
+          0
+        ]
+      },
+      "after": {
+        "buffer": [
+          100,
+          30
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 100,
+        "window_rows": 30,
+        "cursor": [
+          2,
+          27
+        ]
+      },
+      "after_screen": [
+        "idle                                             ?/1.0M · ↑0 ↓0 · cache — · $0 · DeepSeek V4.1 Flash",
+        "",
+        "E P S I L O N",
+        "a coding agent in your terminal",
+        "",
+        "  type      describe a task and press enter",
+        "  /         commands — try /help, /models, /sessions",
+        "  @         reference a file by name",
+        "  ctrl-p    command palette",
+        "",
+        "  this session runs against the model shown at the top right",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "• ask anything",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "enter send · ctrl-j newline · ctrl-p palette · ? help                …\\My Agent Space\\Epsilon · main"
+      ],
+      "typed": {
+        "ok": true,
+        "written": 38,
+        "err": 87
+      },
+      "after_typing": {
+        "buffer": [
+          100,
+          30
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 100,
+        "window_rows": 30,
+        "cursor": [
+          21,
+          27
+        ]
+      },
+      "typed_screen": [
+        "idle                                             ?/1.0M · ↑0 ↓0 · cache — · $0 · DeepSeek V4.1 Flash",
+        "",
+        "E P S I L O N",
+        "a coding agent in your terminal",
+        "",
+        "  type      describe a task and press enter",
+        "  /         commands — try /help, /models, /sessions",
+        "  @         reference a file by name",
+        "  ctrl-p    command palette",
+        "",
+        "  this session runs against the model shown at the top right",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "• typed after startup",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "enter send · ctrl-j newline · ctrl-p palette · ? help                …\\My Agent Space\\Epsilon · main"
+      ]
+    },
+    {
+      "exe": "C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\target\\debug\\epsilon.exe",
+      "typed_text": "short window",
+      "mode": "late",
+      "size": [
+        100,
+        20,
+        9001
+      ],
+      "host_class": "ConsoleWindowClass",
+      "resize": {
+        "buffer-big": false,
+        "window": true,
+        "buffer-exact": true
+      },
+      "before": {
+        "buffer": [
+          100,
+          9001
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 100,
+        "window_rows": 20,
+        "cursor": [
+          0,
+          0
+        ]
+      },
+      "after": {
+        "buffer": [
+          100,
+          20
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 100,
+        "window_rows": 20,
+        "cursor": [
+          2,
+          17
+        ]
+      },
+      "after_screen": [
+        "idle                                             ?/1.0M · ↑0 ↓0 · cache — · $0 · DeepSeek V4.1 Flash",
+        "",
+        "E P S I L O N",
+        "a coding agent in your terminal",
+        "",
+        "  type      describe a task and press enter",
+        "  /         commands — try /help, /models, /sessions",
+        "  @         reference a file by name",
+        "  ctrl-p    command palette",
+        "",
+        "  this session runs against the model shown at the top right",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "• ask anything",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "enter send · ctrl-j newline · ctrl-p palette · ? help                …\\My Agent Space\\Epsilon · main"
+      ],
+      "typed": {
+        "ok": true,
+        "written": 24,
+        "err": 87
+      },
+      "after_typing": {
+        "buffer": [
+          100,
+          20
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 100,
+        "window_rows": 20,
+        "cursor": [
+          14,
+          17
+        ]
+      },
+      "typed_screen": [
+        "idle                                             ?/1.0M · ↑0 ↓0 · cache — · $0 · DeepSeek V4.1 Flash",
+        "",
+        "E P S I L O N",
+        "a coding agent in your terminal",
+        "",
+        "  type      describe a task and press enter",
+        "  /         commands — try /help, /models, /sessions",
+        "  @         reference a file by name",
+        "  ctrl-p    command palette",
+        "",
+        "  this session runs against the model shown at the top right",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "• short window",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "enter send · ctrl-j newline · ctrl-p palette · ? help                …\\My Agent Space\\Epsilon · main"
+      ]
+    },
+    {
+      "exe": "C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\target\\debug\\epsilon.exe",
+      "typed_text": "maximized window",
+      "mode": "late",
+      "size": null,
+      "host_class": "ConsoleWindowClass",
+      "maximized": true,
+      "before": {
+        "buffer": [
+          168,
+          9001
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 168,
+        "window_rows": 44,
+        "cursor": [
+          0,
+          0
+        ]
+      },
+      "after": {
+        "buffer": [
+          168,
+          44
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 168,
+        "window_rows": 44,
+        "cursor": [
+          2,
+          41
+        ]
+      },
+      "after_screen": [
+        "idle                                                                                                                 ?/1.0M · ↑0 ↓0 · cache — · $0 · DeepSeek V4.1 Flash",
+        "",
+        "E P S I L O N",
+        "a coding agent in your terminal",
+        "",
+        "  type      describe a task and press enter",
+        "  /         commands — try /help, /models, /sessions",
+        "  @         reference a file by name",
+        "  ctrl-p    command palette",
+        "",
+        "  this session runs against the model shown at the top right",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "• ask anything",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "enter send · ctrl-j newline · ctrl-p palette · ? help                                                                                    …\\My Agent Space\\Epsilon · main"
+      ],
+      "typed": {
+        "ok": true,
+        "written": 32,
+        "err": 0
+      },
+      "after_typing": {
+        "buffer": [
+          168,
+          44
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 168,
+        "window_rows": 44,
+        "cursor": [
+          18,
+          41
+        ]
+      },
+      "typed_screen": [
+        "idle                                                                                                                 ?/1.0M · ↑0 ↓0 · cache — · $0 · DeepSeek V4.1 Flash",
+        "",
+        "E P S I L O N",
+        "a coding agent in your terminal",
+        "",
+        "  type      describe a task and press enter",
+        "  /         commands — try /help, /models, /sessions",
+        "  @         reference a file by name",
+        "  ctrl-p    command palette",
+        "",
+        "  this session runs against the model shown at the top right",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "• maximized window",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "enter send · ctrl-j newline · ctrl-p palette · ? help                                                                                    …\\My Agent Space\\Epsilon · main"
+      ]
+    },
+    {
+      "exe": "C:\\Users\\Hp\\Desktop\\My Agent Space\\Epsilon\\target\\debug\\epsilon.exe",
+      "typed_text": "early keys",
+      "mode": "early",
+      "size": [
+        80,
+        25
+      ],
+      "host_class": "ConsoleWindowClass",
+      "resize": {
+        "buffer-big": false,
+        "window": true,
+        "buffer-exact": true
+      },
+      "before": {
+        "buffer": [
+          80,
+          25
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 80,
+        "window_rows": 25,
+        "cursor": [
+          0,
+          0
+        ]
+      },
+      "typed_early": {
+        "ok": true,
+        "written": 20,
+        "err": 87
+      },
+      "typed_early_again": {
+        "ok": true,
+        "written": 14,
+        "err": 87
+      },
+      "after": {
+        "buffer": [
+          80,
+          25
+        ],
+        "window_origin": [
+          0,
+          0
+        ],
+        "window_cols": 80,
+        "window_rows": 25,
+        "cursor": [
+          0,
+          7
+        ]
+      },
+      "after_screen": [
+        "provider: real (direct HTTP) · model: deepseek-flash · key stored (epsilon auth",
+        "login)",
+        "skills: improve, ponytail, ponytail-audit, ponytail-debt, ponytail-gain, ponytai",
+        "l-help, ponytail-review, ratatui-tui",
+        "open session store: another epsilon is already writing this session (pid=9944) —",
+        " one writer per session file; close it, or remove the .lock file if it is a cras",
+        "h leftover (a live holder re-stamps it every few seconds)",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    }
+  ]
+}
