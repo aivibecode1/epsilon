@@ -63,6 +63,14 @@ pub struct Metrics {
     pub cache_read_last: u64,
     /// Estimated session cost in micro-USD, or `None` when unpriced.
     pub cost_micro_usd: Option<u64>,
+    /// True when [`Metrics::cost_micro_usd`] is a **lower bound**, not the total.
+    ///
+    /// That happens when the session moved cache tokens and the registry publishes no
+    /// price for them: the tokens are real, their price is unknown, and counting them at
+    /// zero is what made the earlier estimate quietly low. The header then prints
+    /// `$0.42+`, so the reader is told which kind of number they are looking at instead of
+    /// being given a precise-looking one that is wrong (G18).
+    pub cost_is_floor: bool,
     /// `true` once the session has been compacted and no fresh count has arrived.
     pub compacted: bool,
 }
@@ -158,8 +166,18 @@ impl Metrics {
     }
 
     /// Cost as the header prints it, or `None` when the model is unpriced.
+    ///
+    /// A trailing `+` marks a lower bound — the session moved cache tokens the registry
+    /// could not price — so `$0.42+` reads as "at least 42 cents" rather than as a total.
     pub fn cost_gauge(&self) -> Option<String> {
-        self.cost_micro_usd.map(format_cost)
+        self.cost_micro_usd.map(|micro| {
+            let text = format_cost(micro);
+            if self.cost_is_floor {
+                format!("{text}+")
+            } else {
+                text
+            }
+        })
     }
 }
 
@@ -354,6 +372,35 @@ mod tests {
         };
         assert!(m.cost_gauge().is_none());
         assert!(!m.parts().iter().any(|p| p.text.starts_with('$')));
+    }
+
+    #[test]
+    fn a_floor_cost_is_marked_rather_than_reported_as_a_total() {
+        // The registry had no cache price for a session that moved cache tokens, so the
+        // total is a lower bound: `$0.012+` says that, `$0.012` would not.
+        let floor = Metrics {
+            cost_micro_usd: Some(12_345),
+            cost_is_floor: true,
+            ..metrics()
+        };
+        assert_eq!(floor.cost_gauge().as_deref(), Some("$0.012+"));
+
+        // A fully priced session carries no marker.
+        let exact = Metrics {
+            cost_micro_usd: Some(12_345),
+            cost_is_floor: false,
+            ..metrics()
+        };
+        assert_eq!(exact.cost_gauge().as_deref(), Some("$0.012"));
+
+        // A zero cost is still a dollar figure — and a zero-cost floor is still a floor,
+        // because the unpriced tokens may have cost something.
+        let free = Metrics {
+            cost_micro_usd: Some(0),
+            cost_is_floor: true,
+            ..metrics()
+        };
+        assert_eq!(free.cost_gauge().as_deref(), Some("$0+"));
     }
 
     #[test]

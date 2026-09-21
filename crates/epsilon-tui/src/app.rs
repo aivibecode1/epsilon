@@ -2866,6 +2866,16 @@ impl App {
     /// catalog cannot price — the header then omits it rather than printing a
     /// confident `$0`. Integer micro-USD throughout (ADR-010), so no float drift
     /// accumulates over a long session.
+    ///
+    /// Three of the four components are charged, not two. `usage.input` excludes cached
+    /// prompt tokens (the providers' own split), so uncached input, output, cache reads
+    /// and cache writes are disjoint quantities and each is priced at its own rate. The
+    /// terms are summed before the single division, which keeps micro-USD rounding to one
+    /// truncation instead of four.
+    ///
+    /// When the registry publishes no cache price and the session moved cache tokens, the
+    /// total is a **lower bound**, and `Metrics::cost_is_floor` says so — the header prints
+    /// `$0.42+` rather than a precise-looking number that is wrong (G18).
     fn metrics(&self) -> crate::ui::metrics::Metrics {
         let (tokens_in, tokens_out) = self.ui.usage();
         let (cache_read_session, cache_write_session) = self.ui.cache_usage();
@@ -2874,9 +2884,33 @@ impl App {
         let cache_read_last = self.ui.latest_cache_read();
         let latest_prompt = self.ui.latest_prompt_tokens();
         let info = epsilon_llm::catalog::lookup_model(&self.model_id);
+        let counts = crate::ui::cost::TokenCounts {
+            input: tokens_in,
+            output: tokens_out,
+            cache_read: cache_read_session,
+            cache_write: cache_write_session,
+        };
         let cost_micro_usd = info.as_ref().map(|info| {
-            tokens_in * info.input_cost_micro_per_mtok / 1_000_000
-                + tokens_out * info.output_cost_micro_per_mtok / 1_000_000
+            crate::ui::cost::micro_usd(
+                counts,
+                crate::ui::cost::TokenPrices {
+                    input: info.input_cost_micro_per_mtok,
+                    output: info.output_cost_micro_per_mtok,
+                    cache_read: info.cache_read_cost_micro_per_mtok,
+                    cache_write: info.cache_write_cost_micro_per_mtok,
+                },
+            )
+        });
+        let cost_is_floor = info.as_ref().is_some_and(|info| {
+            crate::ui::cost::is_floor(
+                counts,
+                crate::ui::cost::TokenPrices {
+                    input: info.input_cost_micro_per_mtok,
+                    output: info.output_cost_micro_per_mtok,
+                    cache_read: info.cache_read_cost_micro_per_mtok,
+                    cache_write: info.cache_write_cost_micro_per_mtok,
+                },
+            )
         });
         crate::ui::metrics::Metrics {
             model_label: epsilon_llm::catalog::display_label(&self.model_id).to_string(),
@@ -2889,6 +2923,7 @@ impl App {
             cache_write_session,
             cache_read_last,
             cost_micro_usd,
+            cost_is_floor,
             compacted: self.ui.is_compacted(),
         }
     }

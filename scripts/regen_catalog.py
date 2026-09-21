@@ -97,6 +97,8 @@ FAUX_ROW = """\
         max_output_tokens: 8_192,
         input_cost_micro_per_mtok: 0,
         output_cost_micro_per_mtok: 0,
+        cache_read_cost_micro_per_mtok: 0,
+        cache_write_cost_micro_per_mtok: 0,
         supports_tools: true,
         env_key: "",
         wire: super::FAUX_WIRE,
@@ -112,6 +114,8 @@ OLLAMA_ROWS = """\
         max_output_tokens: 8_192,
         input_cost_micro_per_mtok: 0,
         output_cost_micro_per_mtok: 0,
+        cache_read_cost_micro_per_mtok: 0,
+        cache_write_cost_micro_per_mtok: 0,
         supports_tools: false,
         env_key: "",
         wire: super::OLLAMA_WIRE,
@@ -124,6 +128,8 @@ OLLAMA_ROWS = """\
         max_output_tokens: 8_192,
         input_cost_micro_per_mtok: 0,
         output_cost_micro_per_mtok: 0,
+        cache_read_cost_micro_per_mtok: 0,
+        cache_write_cost_micro_per_mtok: 0,
         supports_tools: false,
         env_key: "",
         wire: super::OLLAMA_WIRE,
@@ -237,6 +243,13 @@ def select_rows(registry):
                 "out": out,
                 "pin": micro_usd(cost, "input"),
                 "pout": micro_usd(cost, "output"),
+                # Cache pricing: a prompt token served from cache costs a fraction of the
+                # input price on every provider that publishes one, and a token WRITTEN to
+                # cache usually costs more than a plain input token. Without these the cost
+                # estimate prices a cache-heavy session at zero for the cached share, which
+                # is why they are here (G18).
+                "pcin": micro_usd(cost, "cache_read"),
+                "pcw": micro_usd(cost, "cache_write"),
             })
     ids = [r["id"] for r in rows]
     dupes = {i for i in ids if ids.count(i) > 1}
@@ -311,6 +324,8 @@ def emit_row(r):
         f"        max_output_tokens: {rust_int(r['out'])},\n"
         f"        input_cost_micro_per_mtok: {rust_int(r['pin'])},\n"
         f"        output_cost_micro_per_mtok: {rust_int(r['pout'])},\n"
+        f"        cache_read_cost_micro_per_mtok: {rust_int(r['pcin'])},\n"
+        f"        cache_write_cost_micro_per_mtok: {rust_int(r['pcw'])},\n"
         "        supports_tools: true,\n"
         f"        env_key: \"{ENV_BY_PROVIDER[r['prov']]}\",\n"
         f"        wire: {wire_expr(r['prov'], r['id'])},\n"

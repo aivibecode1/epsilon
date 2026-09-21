@@ -27,6 +27,7 @@
 //! | [`shell`] | Assembling one frame from application state |
 
 pub mod composer;
+pub mod cost;
 pub mod footer;
 pub mod format;
 pub mod header;

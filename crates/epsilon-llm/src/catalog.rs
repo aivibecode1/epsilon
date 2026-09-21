@@ -131,6 +131,15 @@ pub struct ModelInfo {
     pub input_cost_micro_per_mtok: u64,
     /// Output price, micro-USD per million tokens (models.dev list price).
     pub output_cost_micro_per_mtok: u64,
+    /// Price for a prompt token served **from** the prompt cache, micro-USD per million
+    /// tokens. `0` means the registry publishes no separate price for this model, which is
+    /// not the same as "free": a caller reporting a cost must say when it could not price
+    /// cache traffic rather than quietly counting it as nothing (G18).
+    pub cache_read_cost_micro_per_mtok: u64,
+    /// Price for a prompt token **written to** the prompt cache. Usually higher than a plain
+    /// input token, which is why leaving it out under-reports a session that fills a cache.
+    /// `0` means unpublished, as above.
+    pub cache_write_cost_micro_per_mtok: u64,
     /// Whether tool/function calling works.
     pub supports_tools: bool,
     /// Env var holding this provider's API key (empty string = none needed).
