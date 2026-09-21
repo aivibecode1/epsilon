@@ -56,6 +56,23 @@ then the milestone log that introduces it.
 
 ## Current hardening work
 
+Newest first. Each entry is a two-line pointer; the linked log has the reasoning, the
+decisions and what the slice could not do. The eight logs marked *(reconstructed)* were
+written after the fact from the commits, because those milestones landed without one —
+they say so themselves, and their `## Verification` sections name what could not be
+recovered rather than inventing it.
+
+- [M104 — a restore verifies the file before overwriting it](milestones/M104-restore-verifies-the-file.md)
+  *(reconstructed)*: reverting a checkpoint over a file the user edited after the snapshot
+  silently discarded their work. Restore now refuses when the bytes on disk are not the
+  bytes that were captured, and says which file and why.
+- [M103 — the extension host protocol](milestones/M103-extension-host-protocol.md)
+  *(reconstructed)*: `epsilon-ext` went from 5 tests to 30 by driving the real fixture
+  process instead of a mock, which found a live defect — the frame cap only bounded a line
+  whose newline had not arrived yet, so one oversized line came back as valid.
+- [M102 — a summary cut off by the output limit is not committed](milestones/M102-length-stopped-summary.md)
+  *(reconstructed)*: a compaction summary that hit the model's output ceiling is a truncated
+  summary, not a summary; committing it replaced the transcript with a mutilated version of it.
 - [M101 — the context files the harness was already detecting](milestones/M101-context-files.md):
   three ways the harness told the user something untrue. `SYSTEM.md` / `APPEND_SYSTEM.md` raised a
   trust prompt and never loaded; `AGENTS.override.md` was missing from the candidate list *and*
@@ -66,6 +83,26 @@ then the milestone log that introduces it.
   milestone records both: `.epsilon/prompts/` is slash templates, not system-prompt text, so it
   stays gated and unloaded; and the `skill` tool it said did not exist has existed since M97.
   Negative control: each fix reverted in place, 9 named tests fail. Landed df338b7.
+- [M100 — a revert that cannot restore a file must not delete it](milestones/M100-restore-must-not-delete.md)
+  *(reconstructed)*: `restore` read "no captured bytes" as "the file did not exist, so remove
+  it", which is also what a *skipped* capture looks like. Deleting a file is the worst outcome a
+  revert path can produce, and the entry already carried the field that distinguishes the cases.
+- [M99 — `.gitignore` is honoured instead of merely promised](milestones/M99-gitignore.md)
+  *(reconstructed)*: `find`'s description claimed it and nothing read one. The matcher lives in
+  `epsilon-core::ignore` so the tools and the TUI share one answer — one half of which is still
+  not true; see the `@`-file note in [`../audit/11-current-assessment.md`](../audit/11-current-assessment.md).
+- [M98 — the six-second stall that read as a hang](milestones/M98-windows-shell-stall.md)
+  *(reconstructed)*: every Windows `bash` call ran `powershell -Command`, which loads the user's
+  interactive profile first — 6.2 s for a one-word `echo` against 1.06 s with `-NoProfile`. From
+  inside the TUI that is indistinguishable from a deadlock, and it is what the owner's "it
+  freezes when I send a prompt" actually was.
+- [M97 — the `skill` tool the contract always promised](milestones/M97-skill-tool.md)
+  *(reconstructed)*: the agent contract told the model to load a skill body "via the `skill`
+  tool" and no such tool existed, so the model could see a skill and never open it.
+- [M96 — three port gaps the fidelity audit proved](milestones/M96-compaction-and-overflow-fidelity.md)
+  *(reconstructed)*: the overflow classifier matched a spaced spelling no provider sends, so the
+  compaction-and-retry branch never fired for a real overflow; and the compaction prompt asserted
+  a template it never sent, so every summary came back in a different shape.
 - [M95 — paged reads](milestones/M95-paged-reads.md): SURFACE-05 — `read` finally pages the way
   its own description promised: pi's offset/limit window over the whole file (`read.ts:275-323`)
   with pi's continuation strings, past-end error, empty-file Ok and the `sed` fallback for an
