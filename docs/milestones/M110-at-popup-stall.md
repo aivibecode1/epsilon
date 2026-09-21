@@ -121,3 +121,9 @@ binary, and the binary that ships is built from the tree with both fixes.
 - **The `@` popup is still not covered by an automated test end-to-end.** The four
   `at_files` tests and this probe are the coverage; the probe is manual, so a future
   regression of this shape would again be found by running it rather than by the suite.
+- **Nothing pins the cache itself.** A later refactor could drop `App::at_ignore` and
+  restore the per-keystroke load with every test still green; only the probe would notice.
+  The property that *could* be tested in-process — "two keystrokes in a row load the rules
+  once" — needs a way to observe a load, which `IgnoreSet` does not currently expose.
+  Recorded rather than faked with a timer assertion, which would be flaky on a shared
+  machine and would not measure the thing that broke.
