@@ -52,15 +52,22 @@ not themselves trigger runtime compression.
    `preserved_unknown()`); pi's `Label`/`SessionInfo` kinds added. Battery `m113a`: 1,038
    passed / 0 failed. Verified end-to-end through the CLI on both sides of the rule, before
    and after the reinstall. Global `epsilon.exe` reinstalled. Cleaned: 32.5 GB free.
-2. **The port's loudest gap is bigger than the plan said: it is an IMPORTER gap.** pi
-   entries carrying `label`/`session_info` are refused, but adding those two variants would
-   not make a single genuine pi file readable — the refusal happens before the kind is
-   considered, because pi's entry **envelope** differs (no `seq`, ISO `timestamp`,
-   `parentId`, kind at the top level rather than under `kind`). Plan:
-   `audit/evidence/session-format-gap-plan.md`. **M113 landed slice 4A** (the kinds, plus
-   `EntryKind::Unknown` preservation and `LineDiagnosis::MalformedEntry`); **4B, the
-   importer, is the next milestone** and starts by constructing a real pi file from pi's own
-   writer code, because the claim that its envelope refuses has been read but not yet run.
+2. **G19 (P0) — reading a pi session empties it, then rewrites the file in place.** Found by
+   *running* the path: `epsilon --resume <pi fixture> --print hi` reports "resumed 369
+   entries", exits 0, and line 2's 668-character prompt is now 0 characters.
+   `heal_legacy_line` reads `content` with `as_str()` (pi sends an array of parts) and
+   `unwrap_or("")` empties it, ignores `message.role` (every message becomes a user turn),
+   and reads `timestamp` as a number (pi writes ISO, so everything is re-dated to now). Full
+   evidence: `audit/evidence/pi-import-empties-messages-2026-09-22.md`; audit row G19.
+   **Fix in flight this round** (delegated): read the role, convert the content array,
+   accept both timestamp spellings, preserve what it cannot interpret. The *write-in-place*
+   half is a separate decision — the importer plan already says import-as-copy, never
+   in-place, and today `--resume` on a foreign file converts and writes it.
+3. **The port's importer gap (slice 4B) is smaller than the plan said.** pi's shipped
+   fixtures are v1-shaped and Epsilon's migration path *already reads them* (369 and 914
+   entries) — the refusal the re-check described applies to pi *v2* files (entries carrying
+   `id`/`parentId`), which was not tested. The plan:
+   `audit/evidence/session-format-gap-plan.md`.
 3. **Surface the preserved entries.** `SessionStore::preserved_unknown()` exists and is
    tested; nothing prints it, so a user opening a session with a foreign entry still learns
    nothing. Wire it where the repair report is reported (the CLI resume path and the TUI),
