@@ -22,3 +22,6 @@ Thumbs.db
 # Env files carry secrets; never commit
 .env
 .env.*
+
+# Python bytecode from the diagnostic scripts
+__pycache__/
