@@ -102,11 +102,38 @@ model switch or a thinking-level change in a pi file is currently invisible to t
 Until that lands, **`--resume` on a pi session file is destructive** and should not be done
 without a backup.
 
+## The v2 question, answered by running it
+
+pi's shipped fixtures are v1-shaped, so the run above did not settle what happens to a
+*current* pi file — one whose entries carry `id`/`parentId`, which is what pi's own
+`migrateV1ToV2` adds (`session-manager.ts:230-242`). So one was built: every non-header line
+of `large-session.jsonl` given an `id` and a `parentId` chained to the previous entry.
+
+```
+$ epsilon --resume pi-v2.jsonl --print hi
+open …\pi-v2.jsonl: session line #2: valid JSON that is not an entry, a header or a legacy
+entry — a shape this build does not know. Refusing rather than dropping the line, because
+a session written by a newer Epsilon is not a damaged session
+exit=1
+```
+
+Refused, at the first entry, with a diagnosis that is honest about what it knows and does
+not touch the file. So the port re-check was right about **v2** files and wrong about the
+fixtures — and the two failures are different in kind:
+
+| pi file | today | why |
+|---|---|---|
+| v1 (fixtures) | **opens, and empties every message** (G19) | legacy healing reads a shape it cannot actually read |
+| v2 (current pi) | refused at line 2 | the envelope has no `kind`, so the line is "a shape this build does not know" |
+
+The second is a missing importer, which is honest work. The first is a defect, because it
+*succeeds*. Fixing the healer makes v1 files genuinely readable; the importer (slice 4B) is
+what makes v2 files readable at all.
+
 ## What is not claimed here
 
-- Whether pi *v2* files (entries carrying `id`/`parentId`) refuse or take a different path:
-  pi's shipped fixtures are v1-shaped, and no v2 fixture was tested. That is the question the
-  port re-check raised and this run did not answer.
+- ~~Whether pi *v2* files (entries carrying `id`/`parentId`) refuse or take a different
+  path~~ — answered above: they refuse at line 2.
 - Whether a full conversion round-trips without loss for the entry kinds other than
   `message` — the `Custom` fallback keeps their bytes, and that was not exercised against a
   written file.
