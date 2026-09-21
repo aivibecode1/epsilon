@@ -161,12 +161,22 @@ One defect *did* reproduce while probing, and it is new:
   `ReadConsoleOutputCharacterW`; the rendered row is `0%`. The duplication is in
   the capture path, not the frame, and it is recorded here because it has not
   been proven to my own satisfaction on a real terminal — only explained.
-- **The `@`-file completion does not share M99's answer, contrary to the G5 row
-  above.** `App::at_file_rows` keeps its own recursive walker and its own hardcoded
-  skip list (`crates/epsilon-tui/src/app.rs`), so `@` suggests files `.gitignore`
-  ignores and the tools would refuse. `epsilon-tui` already depends on
-  `epsilon-core`, so the fix is to call `epsilon_core::ignore::{IgnoreSet, skip_dir}`
-  from that walker — queued, not done, because the audit must not claim it twice.
+- **The `@`-file completion now shares M99's answer — closed in M109.** It used to keep
+  its own walker and hardcoded skip list, so `@` suggested files `.gitignore` ignores and
+  the tools would refuse. `App::at_file_rows` now loads `epsilon_core::ignore` and the walk
+  lives in `crates/epsilon-tui/src/at_files.rs`. This bullet said "queued, not done" until
+  2026-09-21; the port re-check below caught it, which is the argument for re-reading the
+  audit against the code rather than trusting it.
+- **The port plan was written against a pi snapshot that is no longer on disk.**
+  [`03-port-plan.md`](03-port-plan.md) cites `references/pi-0.84.2/` twenty-one times;
+  only `pi-0.85.1` exists. Every row was re-checked against the current code and pi 0.85.1
+  on 2026-09-21 — see
+  [`evidence/port-gap-recheck-2026-09-21.md`](evidence/port-gap-recheck-2026-09-21.md),
+  which lists the thirteen rows that still carry a gap, the two that closed since, and
+  **twelve claims in `audit/03` and this file that are now factually wrong** (wrong paths,
+  wrong line numbers, "no producer was found" for something that has one, a deleted Rust
+  file, and a code comment that claims pi behaviour it does not match). Treat unverified
+  line numbers in `03` as historical; the re-check is the current reading.
 
 ### Bookkeeping defects (not code)
 
