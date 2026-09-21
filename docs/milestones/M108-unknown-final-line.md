@@ -81,6 +81,21 @@ a complete unknown final line was accepted: "{\"id\":\"ent_x\",\"seq\":2,\"kind\
 restored and verified byte-identical by sha256 (`108B5BC17AB12355…`), the mtime trap above
 was cleared, and the suite went green again.
 
+**End-to-end, through the installed binary** (the strongest form of this evidence, and
+the reason the reinstall was owed). A copy of a real session file with one appended
+unknown-shaped entry, resumed with the reinstalled `epsilon.exe`:
+
+```
+$ epsilon --resume real-unknown.jsonl --print hi
+open …\real-unknown.jsonl: session line #5: entry type `future_thing` is not known to
+this build — the session was probably written by a newer Epsilon. Refusing rather than
+dropping the line, because skipping it would change the transcript silently
+(file left intact)
+exit=1 · file unchanged (sha256) · 5 lines still on disk
+```
+
+The refusal names the right line, the right cause, and leaves every byte in place.
+
 Global `epsilon.exe`: **reinstall required, and done.** Session open is the CLI's resume
 path; a file that used to be silently truncated now refuses with a message, which is
 user-visible behaviour. The installed binary is rebuilt from this round's tree.
@@ -99,3 +114,14 @@ user-visible behaviour. The installed binary is rebuilt from this round's tree.
 - **Only the store's own reader is covered.** `crates/epsilon-session/src/search.rs` and
   the TUI's session browser parse session files directly in places; whether they classify
   an unknown final line the same way was not checked in this slice.
+- **A known `kind.type` with an unreadable body is reported as an unknown type.** Probing
+  the new path with a hand-written fixture — `kind.type` `message`, but missing fields the
+  current `SessionEntry` requires — produced *"entry type `message` is not known to this
+  build — the session was probably written by a newer Epsilon"*. The refusal was correct
+  and the file was untouched, but the diagnosis names the wrong cause: `message` is a type
+  this build knows; what it could not read was the body. `diagnose_line` keys on the
+  presence of `kind.type` alone, so it cannot currently tell "an entry from a newer build"
+  from "an entry of a known type whose shape changed". Worth a follow-up:
+  `UnknownEntryType` only when the type is genuinely unrecognized, and a separate
+  `MalformedEntry { entry_type }` otherwise. Recorded rather than fixed here because it
+  needs the list of known `kind.type` values to live somewhere the diagnoser can reach.
