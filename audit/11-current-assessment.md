@@ -69,6 +69,42 @@ recovery machinery and the instruction-loading seams.
   header, transcript, composer, footer, overlay and shell, with 213 tests.
   Transparency is a data model (`ui/metrics.rs`), not a draw call.
 
+### Verified on this machine, 2026-09-21
+
+The owner's original report was that the TUI "shrinks and freezes" in CMD and
+PowerShell. The ConPTY test cannot answer that question — under ConPTY the console
+is emulated inside the terminal application, so no assertion it makes can observe a
+console *window* changing size. So a second harness was built:
+[`scripts/console-probe.py`](../scripts/console-probe.py) opens a real conhost
+window, attaches to it, measures the buffer and window geometry before and after the
+TUI starts, then types into the console input buffer and reads the screen back.
+
+Result, in four geometries including a maximized window over a 9001-row scrollback:
+**the window rectangle never changes, the frame renders, and typed text reaches the
+composer.** The active buffer does lose its scrollback height when the alternate
+screen is entered, which is what an alternate screen is for. Full table and raw
+output: [`evidence/console-probe-2026-09-21.md`](evidence/console-probe-2026-09-21.md).
+
+That does not retroactively make the report wrong. It was two real defects, both
+fixed and both measured when they were found: a full frame redrawn per keystroke and
+per streamed delta (M94 — a 99-character burst echoing at ~30 characters/second),
+and every Windows `bash` call loading the user's PowerShell profile, 6.2 s for a
+one-word `echo` (M98), which from inside the TUI is indistinguishable from a
+deadlock.
+
+One defect *did* reproduce while probing, and it is new:
+
+- **A killed instance locks the next launch out for up to 30 seconds.** The session
+  lease only calls a holder dead once its lock file is older than `STALE_AFTER`
+  (30 s, against a 10 s heartbeat), so relaunching after closing the window or
+  End-Tasking the process prints `another epsilon is already writing this session
+  (pid=…)` and **exits**. Reproduced: the 80×25 probe run refused to start because
+  `pid=9944` — the previous run's TUI, killed seconds earlier — still held the lock.
+  Not fixed here: checking whether a pid is alive needs a platform call and this
+  workspace forbids `unsafe` outside a reviewed per-crate override, so the fix is a
+  design decision (a narrowly scoped liveness probe, or a refusal that waits out the
+  remaining window with a countdown instead of exiting).
+
 ## 2. Gaps that remain, ranked
 
 ### P0 — correctness or safety
@@ -77,8 +113,8 @@ recovery machinery and the instruction-loading seams.
 |---|---|---|---|
 | ~~G1~~ | **Closed** in M97 (`2d50813`): the `skill` tool now exists and is registered from the discovered list, and the catalog no longer advertises skills the model may not load (`87c5628`). | new tests in `crates/epsilon-tools/src/skill.rs` | — |
 | G2 | F09 resolved filesystem containment is open | `audit/02-defect-ledger.md:157`; `agents/memory/f09-path-policy.md` | The native filesystem tools run inside the harness process; Windows Job Objects bound resources, not content. |
-| G3 | Checkpoint restore conflates "skipped" with "deleted" (F15); a durable-commit failure is discarded (F07) | `audit/02` F07/F15 | Silent data loss in the recovery path, which is the path a user reaches only when something already went wrong. |
-| G4 | Unsupported final entries are truncated (F08) | `audit/02` F08 | Same class: the difference between "there was nothing" and "we could not read it" is exactly what a recovery path must preserve. |
+| G3 | **Re-audited 2026-09-21, and the row was half wrong.** F15 ("restore conflates skipped with deleted") is **refuted by the code it cites**: `restore` branches on `entry.existed` and refuses, `append` returns a `Result` that becomes `Recorded::Skipped`, and content is verified before an overwrite — the ledger was last written 2026-09-18 and M100/M104 rewrote that file on 2026-09-20. F07 is **confirmed**: `epsilon-core`'s `persist` does `let _ = st.append(...)` and `pop_last_message` does `let _ = s.pop_last()`, while the provider request reads the store projection, so a failed durable write leaves memory and the model view silently divergent. | [`evidence/g3-g4-checkpoint-restore-design.md`](evidence/g3-g4-checkpoint-restore-design.md) | Two things survive: a *skipped* capture is never reported to anyone (`files.rs` discards `record()`'s outcome), and `restore` still has no production caller — so this is latent, not live. |
+| G4 | Unsupported final entries are truncated (F08) | `audit/02` F08 | **Half true.** A complete final line with an unknown `kind.type` is still classed torn and truncated at open; the header-deletion half of the claim was real at HEAD and is fixed by the session-repair slice (`keep_end`). The right fix is a typed tail diagnosis so an unknown-type tail is *refused* rather than truncated. |
 
 ### P1 — behaviour a user would notice
 
@@ -113,26 +149,44 @@ recovery machinery and the instruction-loading seams.
   `ReadConsoleOutputCharacterW`; the rendered row is `0%`. The duplication is in
   the capture path, not the frame, and it is recorded here because it has not
   been proven to my own satisfaction on a real terminal — only explained.
+- **The `@`-file completion does not share M99's answer, contrary to the G5 row
+  above.** `App::at_file_rows` keeps its own recursive walker and its own hardcoded
+  skip list (`crates/epsilon-tui/src/app.rs`), so `@` suggests files `.gitignore`
+  ignores and the tools would refuse. `epsilon-tui` already depends on
+  `epsilon-core`, so the fix is to call `epsilon_core::ignore::{IgnoreSet, skip_dir}`
+  from that walker — queued, not done, because the audit must not claim it twice.
 
 ### Bookkeeping defects (not code)
 
 These are the contradictions a fresh reader would trip over, and they are worth
 fixing precisely because they make every other claim harder to trust:
 
-- `docs/history.md` carried two contradictory M95 rows; now reconciled by
-  `27cd677`, but the pattern recurred across milestones.
-- `audit/05-verification-log.md` is seven batteries stale relative to the
-  milestone logs, while `AGENTS.md` calls it the latest baseline.
+- **Fixed 2026-09-21:** eight milestones (M96–M100, M102–M104) were committed
+  without their dev log, and the timeline had no rows for M102–M104. Reconstructed
+  from the commit diffs and messages; the one thing those logs cannot manufacture is
+  evidence, and they say so — **none of the eight has a preserved battery log**, so
+  each `## Verification` section reproduces the commit message's own measurements
+  and names the gap. Their claims now rest on the workspace battery from this round.
+- `audit/05-verification-log.md` is many batteries stale relative to the
+  milestone logs, while `AGENTS.md` calls it the latest baseline. This file is the
+  live baseline; that one is history.
 - The M95 review record lived only in `%LOCALAPPDATA%\Temp`, outside the repo.
 - `audit/10-tui-enhancement.md` names evidence logs whose names disagree with
   their contents (`tui-full-green.log` is a RED run).
-- `epsilon --help` opens by promising "every flag, env var and file, in full" and
-  omitted `epsilon doctor` — a documented subcommand the binary accepts. Found
-  while checking the README's commands against the binary rather than against the
-  documentation, which is the check that catches this class; fixed in the same
-  commit as the reference-version corrections.
+- `epsilon --help` opened by promising "every flag, env var and file, in full" and
+  omitted `epsilon doctor`. Fixed in `5fd12b5`, found by checking the README's
+  commands against the binary rather than against the documentation — the check
+  that catches this class.
+- **The gate battery could not run at all under `bash` on this machine.** `bash`
+  here is WSL: its own `$HOME`, its own PATH, no Windows `cargo`, so
+  `bash scripts/gate.sh <label>` exited 127 in zero seconds and the log ended in
+  `GATE FAIL` — which reads like five broken gates rather than one missing PATH
+  entry. Fixed 2026-09-21 by adding `scripts/gate.ps1`, the native Windows battery;
+  `gate.sh` keeps working for POSIX and CI, and now names the missing binary
+  instead of failing anonymously.
 - `agents/memory/next-hardening.md` still describes a baseline from before the
-  TUI work and does not mention the terminal integration test.
+  TUI work. Its own header says the section is historical; the live baseline is
+  this file.
 
 ## 3. The plan
 

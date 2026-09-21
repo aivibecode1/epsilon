@@ -72,7 +72,7 @@ The repository contains `.agents/skills`, not `.agent`. Relevant local skills we
 
 ## Disposition of the previous audit
 
-The top-level 01–05 reports are replaced, not adopted as a baseline. Earlier claimed execution logs were not rerun retroactively or retained as current proof. Reports under the local, untracked `audit/references/` directory are historical leads, not current evidence; [06](06-reference-comparison.md) is the committed comparison.
+The top-level 01–05 reports are replaced, not adopted as a baseline. Earlier claimed execution logs were not rerun retroactively or retained as current proof. The four reference studies under [`references/`](references) were written by the same earlier pass and are **historical leads, not current evidence** — they are tracked now (2026-09-21) so a `git clean` cannot destroy what this line points at, and because a dangling reference is worse than a dated one. [06](06-reference-comparison.md) is the committed comparison, and the current studies live in [`../docs/research/`](../docs/research).
 
 Corrections include:
 

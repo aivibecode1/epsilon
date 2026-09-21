@@ -37,26 +37,31 @@ not themselves trigger runtime compression.
 | File | Work item | Status |
 |------|-----------|--------|
 | [next-hardening.md](next-hardening.md) | Verified baseline and owner-work boundaries | reference before editing |
-| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | **split done**: `ui/` module tree, `app.rs` down to 3,594 lines with keys/event/tests beside it, `crate::theme` deleted, 220 TUI tests including whole-screen golden frames |
+| [tui-redesign.md](tui-redesign.md) | TUI presentation layer | **split done**; the owner's "shrink and freeze" measured on 2026-09-21 — no shrink, typing works, `scripts/console-probe.py` is the conhost harness. `@`-file completion still ignores `.gitignore` |
+| [session-store-integrity.md](session-store-integrity.md) | Session-store repair + entry cache | **fixed in the tree, battery running, uncommitted**: a repair no longer deletes the header, `pop_last` no longer desyncs the read cache |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
 | [surface05-paged-reads.md](surface05-paged-reads.md) | SURFACE-05 paged reads | **landed** 27cd677 with its evidence logs tracked; full workspace suite green on a fresh test profile; note can be retired once the milestone doc's reinstall line is reconciled |
-| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; M84 d0ac16b; M86-M88 36a226c/35da3d7/31b1794; M89 7e23e6e; M90 e663bd3; M91 fe386d1; M92 a238ce5; M93 5ab723f; M94 1392d37; M95 27cd677; M96 94df984; M97 2d50813; M98 3e1d01b; M99 542fa92; M100 46235bb; M101 df338b7 (G7/G8 context files + identity overlays) |
+| [port-revalidation.md](port-revalidation.md) | Autonomous audit, restructure and complete pi port | audit 13773b4; … M101 df338b7; **2026-09-21: M96–M100 and M102–M104 dev logs reconstructed, battery `m105c`, console probe** |
 
 ## Next safe action
 
-1. **Extract `app.rs`'s event loop** (`drive`), the last thing in it that is
-   not state or a draw call. Target: `app/event.rs`, leaving `app.rs` as state
-   plus the adapters that feed the shell. Keep everything a child of the module
-   so `super::*` still reaches private items, and give anything the parent calls
-   `pub(crate)` plus a re-export.
-2. **Check in the terminal integration test.** `.tmp-console/conprobe` (real
-   conhost, drives the built binary) and `.tmp-console/ptyharness` (ConPTY +
-   `vt100`) both work; a visual regression should be a failing test, not a bug
-   report from someone's console.
-3. Then the port gaps `audit/11` still lists: G3/G4 (the remaining checkpoint
-   restore semantics), G2 (resolved containment, a design task), and the ranked P1
-   set. G7/G8 (context files and identity overlays) are implemented in the working
-   tree — uncommitted, docs owed; see `port-revalidation.md`.
+1. **Finish the 2026-09-21 round**: battery `m105c` green → commit the session-store fix
+   (with its milestone log), the `epsilon-ext` frame-cap test, the reconstructed
+   M96–M100/M102–M104 logs, and the tooling (`scripts/gate.ps1`, `scripts/console-probe.py`,
+   `audit/evidence/console-probe-2026-09-21.md`). Reinstall the global `epsilon.exe`
+   (the store change is CLI-visible), then clean `target/`.
+2. **`at_file_rows` shares the ignore answer** (`epsilon_core::ignore`) — one small
+   slice that makes `audit/11`'s G5 row true instead of aspirational.
+3. **F08's live half**: `reindex` returns `bool`, so an unknown-`kind.type` final line
+   is indistinguishable from a torn write and is truncated. A typed tail diagnosis is
+   the fix; design in `audit/evidence/g3-g4-checkpoint-restore-design.md`.
+4. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable
+   write leaves memory and the model view divergent with no signal.
+5. Then the port gaps `audit/11` still lists: G2 (resolved containment, a design task)
+   and the remaining `audit/03-port-plan.md` parity rows.
+6. The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB
+   timeline read by nobody, and `docs/README.md` needs to be the map a newcomer
+   actually follows.
 
 
 

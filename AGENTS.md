@@ -35,8 +35,15 @@ All five in one shot, with a disposable build log at `target/gate-<label>.log`
 (copy relevant evidence outside `target/` before cleanup):
 
 ```sh
-bash scripts/gate.sh post            # any label; exits non-zero if a gate fails
+pwsh -File scripts/gate.ps1 <label>   # Windows — the one that works on this machine
+bash scripts/gate.sh <label>          # POSIX and CI
 ```
+
+> **Run the PowerShell one here.** `bash` on this box is WSL: a different `$HOME`,
+> a different PATH, and no Windows `cargo`. `bash scripts/gate.sh` therefore exits
+> 127 in zero seconds and writes a log ending in `GATE FAIL`, which reads like five
+> failed gates instead of one missing PATH entry. Both scripts now name the missing
+> binary instead of failing anonymously, but only `gate.ps1` can find it.
 
 ### The terminal integration test
 
@@ -61,6 +68,26 @@ time:
 - **Resize the pty and the emulator together.** Moving only the pty leaves the test
   reading a screen the program is not drawing into, which turns a correct resize
   into a spurious "row wider than the window" failure.
+
+### The conhost probe (the other half of the terminal picture)
+
+That test drives the binary through a **ConPTY**, where the console is emulated
+inside the terminal application — so nothing it asserts can observe the console
+*window* changing size. When the question is "what does the TUI do to a real CMD or
+PowerShell window", use the probe:
+
+```sh
+python scripts/console-probe.py --late --size 100x30 target/debug/epsilon.exe "text"
+python scripts/console-probe.py --late --maximize target/debug/epsilon.exe "text"
+python scripts/console-probe.py --early target/debug/epsilon.exe "text"
+```
+
+It opens a genuine conhost window, attaches to it, records the buffer and window
+geometry before and after the TUI starts, types real `KEY_EVENT` records into the
+console input buffer, and reads the screen back as JSON. Launch the TUI *from the
+shell in that console* — spawning it as a child of the probe hands it the probe's
+stdout, a pipe, and it renders the frame into the pipe instead of the screen. Results
+so far: [`audit/evidence/console-probe-2026-09-21.md`](audit/evidence/console-probe-2026-09-21.md).
 
 > `real` is a **default** feature since M63 (the offline-only binary was a trap), so the
 > `--features real` flag above is now redundant but harmless. Build offline-only with
@@ -209,9 +236,11 @@ on CLI. New edges require review rather than relying on an illustrative layer di
   contorting one handle across conflicting access needs.
 - PowerShell here-string edits miss CRLF/LF variants; prefer proper file-edit tooling over bulk
   string surgery.
-- Bash-launched tools may not see `cargo` even though PowerShell does (PATH differs per shell;
-  hit 2026-09-16 during the audit). If `scripts/gate.sh` fails with `cargo: command not found`,
-  point the script at the absolute path (`~/.cargo/bin/cargo.exe`) or run the five gates directly.
+- **`bash` on this machine is WSL, and it has no Windows `cargo`** (different `$HOME`,
+  different PATH; hit 2026-09-16 as "cargo: command not found", explained 2026-09-21 when the
+  battery exited 127 in zero seconds and the log still said `GATE FAIL`). Run
+  `pwsh -File scripts/gate.ps1 <label>` here; `scripts/gate.sh` is for POSIX and CI and now names
+  the missing binary instead of failing anonymously.
 - Avira Security on this machine has flagged freshly linked test executables with
   `HEUR/APC.Misc` and blocked the write (LNK1104), binding the block to the exact
   output path (hit 2026-09-17, see audit/05-verification-log.md). Diagnose with
@@ -275,7 +304,9 @@ docs/
   glossary.md      vocabulary
   handoff/         task handoffs
   user/            maintained product guides
-scripts/gate.sh    the full verification battery in one command
+scripts/gate.sh    the full verification battery in one command (POSIX and CI)
+scripts/gate.ps1   the same five gates, native Windows (the one that works here)
+scripts/console-probe.py  drives the built TUI in a real conhost window and measures it
 crates/            the 12 workspace crates
 references/        the four reference harnesses (not committed)
 agents/            agent working memory (open work state; see "Agent memory")
