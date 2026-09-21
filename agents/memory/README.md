@@ -37,7 +37,7 @@ not themselves trigger runtime compression.
 | File | Work item | Status |
 |------|-----------|--------|
 | [next-hardening.md](next-hardening.md) | Machine procedure, traps that cost real time, and the open queue | reference before editing |
-| [metrics-and-reader-honesty.md](metrics-and-reader-honesty.md) | The visibility numbers, the session reader, and the `@` list (M106–M109) | **closed**: cache gauge fixed, dead footer deleted, F08 refused-not-truncated, `@` shares the ignore answer; batteries `m106a`/`m109a` |
+| [metrics-and-reader-honesty.md](metrics-and-reader-honesty.md) | The visibility numbers, the session reader, the `@` list, and the stall behind it (M106–M110) | **closed**: cache gauge fixed, dead footer deleted, F08 refused-not-truncated, `@` shares the ignore answer, and M109's per-keystroke stall fixed in M110; batteries `m106a`/`m109a`/`m110a` |
 | [tui-redesign.md](tui-redesign.md) | TUI presentation layer | **split done**; the owner's "shrink and freeze" measured on 2026-09-21 — no shrink, typing works, `scripts/console-probe.py` is the conhost harness. The `@`-ignore gap it recorded is closed (M109) |
 | [session-store-integrity.md](session-store-integrity.md) | Session-store repair + entry cache | **closed**: committed `497093e`, battery `m105d` 1,023 passed / 0 failed across 59 binaries; evidence copied to `audit/evidence/gate-m105d.log` |
 | [f09-path-policy.md](f09-path-policy.md) | F09 filesystem identity | M84 scheduling slice closed (d0ac16b); resolved containment OPEN, next design task |
@@ -46,11 +46,13 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-21 (third round of the day)** — M106 (the cache gauge), M107 (the
-   dead footer), M108 (the unknown final line, F08) with battery `m106a` 1,021 tests, then
-   **M109 (`@` shares the ignore answer; the dead-logic find)** with `m109a` 1,025. Global
-   `epsilon.exe` reinstalled after M108 and again after M109. Remaining for the round: clean
-   `target/`.
+1. **Round closed 2026-09-21 (fourth round of the day)** — M109 (`@` shares the ignore
+   answer) with `m109a` 1,025, then **M110, the stall M109 shipped**: the popup loaded
+   ignore rules per keystroke and `IgnoreSet::load` walked gitignored trees, so `@Cargo`
+   never drew. Fixed by a 5 s cache in the frontend and pruning in the matcher; battery
+   `m110a` 1,026. Found by the console probe, not by a test — the `@` popup still has no
+   automated end-to-end coverage. Global `epsilon.exe` reinstalled from this tree.
+   Remaining for the round: clean `target/`.
 2. **G18 — the cost estimate prices cached tokens at zero** — the third number the owner
    asked to see. Needs a `ModelInfo` cache-price field, a column in
    `scripts/regen_catalog.py`, and the regenerated table; the alternative is labelling the

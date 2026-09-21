@@ -80,6 +80,33 @@ Lesson worth keeping: when a test of a documented behaviour fails, find out whic
 two is lying before changing either. Here the matcher's doc (real git semantics for
 *matching*) had been over-generalized into a capability the API cannot express.
 
+## M110 — the stall M109 shipped, and how it was caught
+
+M109's own verification found it. `at_file_rows` ran `IgnoreSet::load` **per keystroke**,
+and `load` searched gitignored trees instead of pruning with the rules it was finding — so
+every character after `@` walked `/references/` (404 MB, gitignored). One- and two-character
+queries drew a frame in time; `@argo`/`@Cargo` left the composer showing its *placeholder*,
+meaning the app had not drawn since before the keys arrived. That is indistinguishable from
+a hang, and it is the owner's original symptom class.
+
+**How the wrong hypothesis was killed:** the first story was timing ("the moment I launch
+it and start typing"), so the probe was run at waits of 3, 5, 8 and 12 s — identical
+failures every time, while short queries always worked. The variable was how much work the
+keystrokes queued. `scripts/console-probe.py` gained `--at SECONDS` to make that
+separable, and it stays.
+
+Two fixes, different jobs: `App::at_ignore` caches the rules with a **5 s TTL** (the branch
+cache's shape, same reason), and `IgnoreSet::load` **prunes** directories the rules so far
+already ignore — git's own rule, and the reason the fix belongs in the matcher: `grep`,
+`find` and `read` all call `load`, so every tool call was paying it too.
+
+Evidence: battery `m110a` (1,026 passed, +1 = `the_search_is_pruned_by_the_rules_it_finds`);
+before/after probe runs in `audit/evidence/at-popup-{prefix,postfix}-*.json`.
+
+**Rule to keep:** an interactive path that gets slower looks exactly like a deadlock. When
+a frame stops updating, time the *keystroke*, not just the frame rate — and repeat a
+suspected flake at several timings before believing it is flaky.
+
 ## Open, recorded not fixed
 
 - **G18 — cost prices cached tokens at zero.** `tokens_in` excludes cached tokens by the

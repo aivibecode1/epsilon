@@ -62,6 +62,13 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M110 — the `@` popup went blank, and the search behind it read everything](milestones/M110-at-popup-stall.md):
+  the fix for a regression M109 shipped, found by the console probe. `@` completion loaded
+  the ignore rules once per keystroke, and loading them searched gitignored trees too — in
+  this repository, 404 MB of reference checkouts per character. One- and two-character
+  queries worked; five or six showed the composer's *placeholder*, i.e. the app had not
+  drawn since before the keys arrived. Fixed by caching the rules in the frontend and by
+  pruning the search in the matcher, which makes every tool call cheaper as well.
 - [M109 — `@` completion stops offering files the tools would refuse](milestones/M109-at-file-ignore.md):
   the `@` list had its own walker and its own hardcoded skips, so it disagreed with every
   read tool about which files exist. It now shares `epsilon_core::ignore`, and the slice
