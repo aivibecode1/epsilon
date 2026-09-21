@@ -57,11 +57,27 @@ then the milestone log that introduces it.
 ## Current hardening work
 
 Newest first. Each entry is a two-line pointer; the linked log has the reasoning, the
-decisions and what the slice could not do. The eight logs marked *(reconstructed)* were
+decisions and what the slice could not do. The logs marked *(reconstructed)* were
 written after the fact from the commits, because those milestones landed without one —
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M108 — a complete line this build cannot read is refused, not deleted](milestones/M108-unknown-final-line.md):
+  the session store dropped a final line it could not parse. That is right for a crash
+  fragment and wrong for a *complete* line in an unknown shape — the first is debris, the
+  second is the user's newest turn or a newer Epsilon's entry. Position used to decide
+  whether data survived; `is_whole_json` decides now, and a refusal leaves the file
+  byte-identical.
+- [M107 — deleting the second footer a redesign left behind](milestones/M107-dead-footer.md):
+  `epsilon-tui/src/footer.rs` was a whole superseded footer with one live function, and
+  `clippy -D warnings` is structurally blind to it because `pub` items in a library crate
+  are exempt from `dead_code`. It carried a second `format_tokens` with different rounding
+  and a second copy of the cache-formula bug below.
+- [M106 — the cache-hit gauge measures one prompt, not a session](milestones/M106-cache-hit-accuracy.md):
+  the header divided the session-total cache reads by the latest prompt size, so the
+  figure inflated every turn and pinned at `cache 100%`. The test named for the right
+  property passed because it modelled the gauge wrongly — the numerator now comes from
+  the same call as the denominator.
 - [M104 — a restore verifies the file before overwriting it](milestones/M104-restore-verifies-the-file.md)
   *(reconstructed)*: reverting a checkpoint over a file the user edited after the snapshot
   silently discarded their work. Restore now refuses when the bytes on disk are not the
