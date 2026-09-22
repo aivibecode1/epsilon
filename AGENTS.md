@@ -112,6 +112,11 @@ contention, and single-job builds with an external target have passed every roun
   control* instead: revert one fix inside a disposable copy of the candidate and show that the
   test naming that property fails for the reason it names. Restore, verify byte-identity, then
   relaunch. Record the probe output as evidence.
+- **After restoring a file, touch it — or confirm `Compiling` appears.** `Copy-Item` (and every
+  copy that preserves timestamps) restores the *backup's* mtime, so cargo can decide the source
+  is unchanged, skip the rebuild, and silently run the **control** binary. The control then
+  appears to pass (or a real fix appears to fail) for a reason that has nothing to do with the
+  code. Cost two rounds here — 2026-09-21 and 2026-09-22 — before being written down.
 - **Shared files carrying another work item's uncommitted changes are staged by line, not by
   file:** `git hash-object -w <your built version>` then `git update-index --cacheinfo`, and diff
   the staged blob against HEAD to prove only your lines are in the commit.
