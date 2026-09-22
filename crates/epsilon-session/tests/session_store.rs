@@ -615,6 +615,348 @@ fn v1_file_with_legacy_shapes_migrates_in_memory() {
     assert_eq!(reopened.len(), 2);
 }
 
+// ---- pi's pre-v2 entries heal faithfully ------------------------------------------------------
+
+/// `"2025-12-08T22:41:05.306Z"` as epoch milliseconds, worked out by hand from the civil
+/// calendar (2025-12-08 is 20 430 days after 1970-01-01) rather than by calling the parser
+/// under test.
+const PI_ISO_MS: u64 = 1_765_233_665_306;
+
+/// The first line of pi's own `before-compaction.jsonl` — a user turn carrying 668
+/// characters of text as an array of parts, stamped with an ISO string.
+const PI_USER_LINE: &str = r#"{"type":"message","timestamp":"2025-12-08T22:41:05.306Z","message":{"role":"user","content":[{"type":"text","text":"alright, read @packages/coding-agent/src/main.ts in full. i feel like this is one big mess and could be refactored to be nicer."}],"timestamp":1765233665292}}"#;
+
+/// The second line of the same fixture: an assistant turn that is *only* tool calls, with
+/// the provider, model, usage and stop reason pi records alongside them.
+const PI_ASSISTANT_LINE: &str = r#"{"type":"message","timestamp":"2025-12-08T22:41:09.389Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"toolu_012yuiPP1VAfh196GXaAmT8D","name":"read","arguments":{"path":"/Users/badlogic/workspaces/pi-mono/packages/coding-agent/src/main.ts"}}],"api":"anthropic-messages","provider":"anthropic","model":"claude-opus-4-5","usage":{"input":2775,"output":141,"cacheRead":0,"cacheWrite":0,"totalTokens":2916},"stopReason":"toolUse","timestamp":1765233665294}}"#;
+
+/// The third line: the tool result for that call.
+const PI_TOOL_RESULT_LINE: &str = r#"{"type":"message","timestamp":"2025-12-08T22:41:09.394Z","message":{"role":"toolResult","toolCallId":"toolu_012yuiPP1VAfh196GXaAmT8D","toolName":"read","content":[{"type":"text","text":"import { Agent } from \"@mariozechner/pi-agent-core\";"}],"isError":false,"timestamp":1765233665294}}"#;
+
+/// One legacy line's healed entry: what the migration produced for a pi-shaped file.
+fn heal_pi_line(dir: &tempfile::TempDir, line: &str) -> SessionEntry {
+    let path = dir.path().join("pi.jsonl");
+    std::fs::write(&path, format!("{line}\n")).expect("write the pi-shaped line");
+    let store = SessionStore::open(&path).expect("a pi-shaped line must open");
+    assert!(store.migrated(), "a pi-shaped line is legacy and must heal");
+    let all = store.read_all().expect("read the healed entry");
+    assert_eq!(all.len(), 1, "one line in, one entry out");
+    all.into_iter().next().expect("the healed entry")
+}
+
+/// The text of a healed user message, so an assertion reads as the thing it is checking.
+fn user_text(message: &Message) -> String {
+    let Message::User(user) = message else {
+        panic!("expected a user message, got {message:?}");
+    };
+    user.content
+        .iter()
+        .map(|c| match c {
+            UserContent::Text { text } => text.clone(),
+            UserContent::Image(_) => "<image>".to_string(),
+        })
+        .collect()
+}
+
+/// The unmapped content parts a healed tool result preserved, or an empty list.
+fn preserved_parts(message: &Message) -> Vec<serde_json::Value> {
+    let Message::ToolResult(result) = message else {
+        panic!("expected a tool result, got {message:?}");
+    };
+    result
+        .details
+        .get("legacy_unmapped_parts")
+        .and_then(|p| p.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// A pi *user* entry keeps its text, its role and its timestamp.
+///
+/// All three were lost at once before this: `content` is an array of parts, so reading it
+/// with `as_str()` produced `""`; the role was never read, so every entry became a user
+/// turn; and `timestamp` is an ISO string, so `as_u64()` produced `now_ms()`. The
+/// assertion that names the worst one is the text — an importer that empties a transcript
+/// has destroyed it, and the other two defects merely hid that.
+#[test]
+fn a_pi_user_entry_heals_with_its_text_role_and_timestamp_intact() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let entry = heal_pi_line(&dir, PI_USER_LINE);
+
+    let EntryKind::Message { message, .. } = &entry.kind else {
+        panic!(
+            "a pi user line must heal to a message entry, got {:?}",
+            entry.kind
+        );
+    };
+    let Message::User(user) = message else {
+        panic!("pi's `role: user` must heal to Message::User, got {message:?}");
+    };
+
+    let text = user_text(message);
+    assert_eq!(
+        text,
+        "alright, read @packages/coding-agent/src/main.ts in full. i feel like this is one big \
+         mess and could be refactored to be nicer.",
+        "the part array must be read, not emptied"
+    );
+    assert_eq!(user.content.len(), 1, "one text part in, one block out");
+
+    assert_eq!(
+        entry.timestamp_ms, 1_765_233_665_292,
+        "the message's own millisecond stamp wins over the ISO string on the line"
+    );
+    assert_eq!(
+        PI_ISO_MS - entry.timestamp_ms,
+        14,
+        "parsing the ISO string (`2025-12-08T22:41:05.306Z`) must land within milliseconds \
+         of pi's millisecond field, not decades away at the import time"
+    );
+    assert_eq!(
+        user.timestamp_ms, entry.timestamp_ms,
+        "the message and its entry must agree on when the turn happened"
+    );
+}
+
+/// A pi *assistant* entry heals as an assistant turn with its tool call intact.
+///
+/// The call has to survive as a call: an assistant message with its content emptied is
+/// worse than an empty user message, because the transcript then shows a model turn that
+/// asked for nothing while the tool result below it answers something.
+#[test]
+fn a_pi_assistant_entry_heals_with_its_tool_call_intact() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let entry = heal_pi_line(&dir, PI_ASSISTANT_LINE);
+
+    let EntryKind::Message { message, .. } = &entry.kind else {
+        panic!(
+            "a pi assistant line must heal to a message entry, got {:?}",
+            entry.kind
+        );
+    };
+    let Message::Assistant(assistant) = message else {
+        panic!("pi's `role: assistant` must heal to Message::Assistant, got {message:?}");
+    };
+
+    let calls: Vec<_> = assistant.tool_calls().collect();
+    assert_eq!(
+        calls.len(),
+        1,
+        "the toolCall part must survive: {assistant:?}"
+    );
+    let (id, name, arguments) = calls[0];
+    assert_eq!(id, "toolu_012yuiPP1VAfh196GXaAmT8D");
+    assert_eq!(name, "read");
+    assert_eq!(
+        arguments["path"],
+        serde_json::json!("/Users/badlogic/workspaces/pi-mono/packages/coding-agent/src/main.ts"),
+        "the call's arguments must arrive whole"
+    );
+
+    // pi records the rest of the assistant turn too, and a healed turn that names no
+    // provider or model cannot be replayed against the right one.
+    assert_eq!(assistant.provider, "anthropic");
+    assert_eq!(assistant.model_id, "claude-opus-4-5");
+    assert_eq!(assistant.stop_reason, StopReason::ToolUse);
+    assert_eq!(assistant.usage.input, 2775);
+    assert_eq!(assistant.usage.total_tokens, 2916);
+    assert_eq!(
+        assistant.timestamp_ms, entry.timestamp_ms,
+        "the healed turn is stamped with its entry's instant, not with the import time"
+    );
+    assert_eq!(
+        entry.timestamp_ms, 1_765_233_665_294,
+        "pi's millisecond stamp"
+    );
+    assert_eq!(
+        PI_ISO_MS - entry.timestamp_ms,
+        12,
+        "the ISO string on the line (22:41:09.389Z) and pi's millisecond field are the same \
+         instant 12 ms apart, which is why the parsed string and the number must be told \
+         apart rather than assumed equal"
+    );
+}
+
+/// A pi *toolResult* entry heals as a tool result, not as something the user said.
+#[test]
+fn a_pi_tool_result_entry_heals_as_a_tool_result() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let entry = heal_pi_line(&dir, PI_TOOL_RESULT_LINE);
+
+    let EntryKind::Message { message, .. } = &entry.kind else {
+        panic!(
+            "a pi toolResult line must heal to a message entry, got {:?}",
+            entry.kind
+        );
+    };
+    let Message::ToolResult(result) = message else {
+        panic!("pi's `role: toolResult` must heal to Message::ToolResult, got {message:?}");
+    };
+
+    assert_eq!(
+        result.tool_call_id, "toolu_012yuiPP1VAfh196GXaAmT8D",
+        "the result must point at the call it answers"
+    );
+    assert_eq!(result.tool_name, "read");
+    assert_eq!(
+        result
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>(),
+        "import { Agent } from \"@mariozechner/pi-agent-core\";"
+    );
+    assert!(!result.is_error);
+    assert_eq!(
+        entry.timestamp_ms, 1_765_233_665_294,
+        "pi's millisecond stamp"
+    );
+    assert_eq!(
+        PI_ISO_MS + 4_088 - entry.timestamp_ms,
+        4_100,
+        "the tool result's ISO string is 4.1 s after the assistant call it answers"
+    );
+}
+
+/// An unrecognized role and an unrecognized content part are preserved, not dropped.
+///
+/// `bashExecution` is pi's fourth message role and has no Epsilon equivalent — the same
+/// shape of problem as an unrecognized part, and the same answer: keep the bytes. This is
+/// the assertion that would have caught the original bug if it had existed, because the
+/// old code turned this entry into an empty *user* message, which is both wrong and
+/// invisible.
+#[test]
+fn an_unrecognized_role_and_content_part_survive_the_heal() {
+    let dir = tempfile::tempdir().expect("tmp");
+
+    // pi's bashExecution: command, output, exit code — nothing Epsilon can type.
+    let bash = heal_pi_line(
+        &dir,
+        r#"{"type":"message","timestamp":"2025-12-08T23:58:22.057Z","message":{"role":"bashExecution","command":"ls","output":"AGENTS.md\nLICENSE\n","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1765238302057}}"#,
+    );
+    let EntryKind::Message { message, .. } = &bash.kind else {
+        panic!("the message kind is what pi wrote, whatever the role inside",);
+    };
+    let Message::Custom(custom) = message else {
+        panic!("a role with no Epsilon variant must stay Custom, got {message:?}");
+    };
+    assert_eq!(custom.custom_type, "legacy");
+    assert_eq!(
+        custom.payload["role"], "bashExecution",
+        "{:?}",
+        custom.payload
+    );
+    assert_eq!(
+        custom.payload["message"]["output"], "AGENTS.md\nLICENSE\n",
+        "the command's output is still reachable"
+    );
+    assert_eq!(custom.payload["message"]["exitCode"], 0);
+    assert_eq!(bash.timestamp_ms, 1_765_238_302_057);
+
+    // An assistant part this build cannot type: the text still reaches the model, and the
+    // part rides along in `details` instead of vanishing.
+    let unknown = heal_pi_line(
+        &dir,
+        r#"{"type":"message","timestamp":1765233665294,"message":{"role":"toolResult","toolCallId":"tc_1","toolName":"read","content":[{"type":"text","text":"kept"},{"type":"redacted_thinking","data":"opaque-blob"}],"timestamp":1765233665294}}"#,
+    );
+    let EntryKind::Message { message, .. } = &unknown.kind else {
+        panic!("a toolResult with one unknown part is still a message entry");
+    };
+    assert_eq!(preserved_parts(message).len(), 1);
+    assert_eq!(preserved_parts(message)[0]["data"], "opaque-blob");
+    assert!(
+        preserved_parts(message)[0].get("type").is_some(),
+        "the part is kept whole, `type` included"
+    );
+    let Message::ToolResult(result) = message else {
+        panic!("the typed part must stay typed, got {message:?}");
+    };
+    assert_eq!(result.content.len(), 1, "the known part is still a block");
+}
+
+/// A whole pi-shaped file survives a migration write and reopen without losing anything.
+///
+/// The in-memory heal is only half the path: `persist_migration` rewrites the file, and the
+/// re-read has to agree with what the first read produced. This is the test that would fail
+/// if the healed shapes were not ones the *writer* could express — the way the old code's
+/// empty user message could be written back without complaint.
+#[test]
+fn a_pi_shaped_file_round_trips_through_persist_migration() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("pi-v1.jsonl");
+    let bash = r#"{"type":"message","timestamp":"2025-12-08T23:58:22.057Z","message":{"role":"bashExecution","command":"ls","output":"AGENTS.md\n","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1765238302057}}"#;
+    std::fs::write(
+        &path,
+        format!("{PI_USER_LINE}\n{PI_ASSISTANT_LINE}\n{PI_TOOL_RESULT_LINE}\n{bash}\n"),
+    )
+    .expect("write the pi-shaped session");
+
+    let mut store = SessionStore::open(&path).expect("open");
+    assert!(store.migrated());
+    assert_eq!(store.len(), 4, "every line became an entry");
+    store.persist_migration().expect("persist the healed file");
+    assert!(!store.migrated(), "a rewritten file is current");
+    drop(store); // release the write lease before reopening (M61)
+
+    let reopened = SessionStore::open(&path).expect("reopen the rewritten file");
+    assert!(!reopened.migrated());
+    assert_eq!(reopened.len(), 4, "no entry was dropped by the rewrite");
+    let all = reopened.read_all().expect("read the rewritten entries");
+
+    let kinds: Vec<&str> = all
+        .iter()
+        .map(|e| match &e.kind {
+            EntryKind::Message { message, .. } => match message {
+                Message::User(_) => "user",
+                Message::Assistant(_) => "assistant",
+                Message::ToolResult(_) => "tool_result",
+                Message::Custom(_) => "custom",
+            },
+            EntryKind::Custom { .. } => "custom_entry",
+            other => panic!("unexpected entry kind {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["user", "assistant", "tool_result", "custom"],
+        "roles survive the rewrite, so a tool result is still not a user turn"
+    );
+
+    // Nothing was lost: the text, the call and its arguments, and the untranslatable
+    // bash output are all still there after the second read.
+    let EntryKind::Message { message, .. } = &all[0].kind else {
+        panic!("first entry is a message");
+    };
+    assert!(user_text(message).contains("could be refactored to be nicer"));
+    let EntryKind::Message { message, .. } = &all[1].kind else {
+        panic!("second entry is a message");
+    };
+    let Message::Assistant(assistant) = message else {
+        panic!("second entry is an assistant turn");
+    };
+    let calls: Vec<_> = assistant.tool_calls().collect();
+    assert_eq!(calls[0].0, "toolu_012yuiPP1VAfh196GXaAmT8D");
+    assert_eq!(
+        calls[0].2["path"],
+        serde_json::json!("/Users/badlogic/workspaces/pi-mono/packages/coding-agent/src/main.ts")
+    );
+    let EntryKind::Message { message, .. } = &all[3].kind else {
+        panic!("fourth entry is a message");
+    };
+    let Message::Custom(custom) = message else {
+        panic!("the bashExecution entry must still be preserved after the rewrite");
+    };
+    assert_eq!(custom.payload["message"]["output"], "AGENTS.md\n");
+    assert_eq!(
+        all[0].timestamp_ms,
+        PI_ISO_MS - 14,
+        "the rewrite keeps the instant pi wrote, not the moment of the import"
+    );
+}
+
 #[test]
 fn a_session_file_has_one_writer_at_a_time() {
     let dir = tempfile::tempdir().expect("tmp");

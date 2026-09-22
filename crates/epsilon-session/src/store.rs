@@ -5,6 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use epsilon_contracts::agent_event::TurnEndReason;
+use epsilon_contracts::content::{ContentBlock, UserContent};
 use epsilon_contracts::message::{Message, Usage, UserMessage};
 use epsilon_contracts::session_entry::{
     CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind, SessionLine,
@@ -1453,33 +1454,40 @@ fn parsed_healed_ids(
 
 /// Heal one legacy v1 line into a typed entry.
 ///
-/// pi's v1 message lines carry the full `AgentMessage` under `message`; the
-/// shapes this build round-trips are user text (`message.content` string) and
-/// compaction summaries. Anything else heals to a `Custom` entry preserving the
+/// pi's v1 message lines carry the full `AgentMessage` under `message`, and the
+/// `message` branch below converts that faithfully (see [`heal_legacy_message`]);
+/// anything this build cannot express heals to a `Custom` entry preserving the
 /// raw JSON (nothing silently dropped — the human log stays complete, and the
 /// model view skips `Custom` by construction).
+///
+/// The entry timestamp is the line's own `timestamp`, parsed via
+/// [`legacy_timestamp_ms`] — pi writes it as an ISO-8601 **string** there, while
+/// Epsilon's own v1 files wrote epoch numbers, and both spellings are accepted.
 fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
     let map = leg.value.as_object();
     let kind = map.and_then(|m| m.get("type")).and_then(|t| t.as_str());
     let timestamp_ms = map
         .and_then(|m| m.get("timestamp"))
+        .map_or_else(now_ms, legacy_timestamp_ms);
+    // pi stamps a message line twice: an ISO string on the line and epoch milliseconds
+    // inside the message, milliseconds apart. The millisecond one is the finer spelling of
+    // that instant, so it becomes the entry's stamp too (`heal_legacy_message` reads the
+    // same field), and the two can never disagree about when the turn happened.
+    let timestamp_ms = map
+        .and_then(|m| m.get("message"))
+        .and_then(|m| m.get("timestamp"))
         .and_then(|t| t.as_u64())
-        .unwrap_or_else(now_ms);
+        .unwrap_or(timestamp_ms);
     let id = epsilon_contracts::new_id("ent");
     let entry_kind = match kind {
         Some("message") => {
-            let text = map
-                .and_then(|m| m.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .to_string();
+            // pi stamps the line and the message separately, and the message's own
+            // `timestamp` (epoch millis) is the finer of the two, so it wins where pi wrote
+            // one — see `heal_legacy_message`, which re-reads it. The entry and its message
+            // then carry one instant; a healed transcript whose envelope and message
+            // disagreed would be ordered by one value and displayed with another.
             EntryKind::Message {
-                message: Message::User(UserMessage {
-                    id: epsilon_contracts::new_id("msg"),
-                    timestamp_ms,
-                    content: vec![epsilon_contracts::content::UserContent::Text { text }],
-                }),
+                message: heal_legacy_message(map.and_then(|m| m.get("message")), timestamp_ms),
                 api_request_sha256: None,
             }
         }
@@ -1507,6 +1515,48 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
                 usage: None,
             }
         }
+        // The two entry kinds whose pi shape lines up with an Epsilon variant field for
+        // field, so healing them typed is lossless *and* applied: a pi session's model
+        // switch and thinking-level change take effect on resume instead of sitting in a
+        // `Custom` entry nothing reads. Verified against pi's own fixture lines
+        // (`{"type":"model_change","provider":…,"modelId":…}`,
+        // `{"type":"thinking_level_change","thinkingLevel":"high"}`); a line missing the
+        // field it needs falls through to `Custom` below, which is still lossless.
+        Some("model_change") if map.and_then(|m| m.get("modelId")).is_some() => {
+            EntryKind::ModelChange {
+                provider: map
+                    .and_then(|m| m.get("provider"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                model_id: map
+                    .and_then(|m| m.get("modelId"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            }
+        }
+        Some("thinking_level_change")
+            if map
+                .and_then(|m| m.get("thinkingLevel"))
+                .and_then(|l| l.as_str())
+                .is_some() =>
+        {
+            EntryKind::ThinkingLevelChange {
+                // Kept as pi's word: `ThinkingLevel` is parsed where the level is applied,
+                // so a level this build does not know is visible rather than silently
+                // clamped to `off`.
+                level: map
+                    .and_then(|m| m.get("thinkingLevel"))
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            }
+        }
+        // `label` and `session_info` have Epsilon variants too, but no fixture here shows
+        // pi's v1 spelling of them and both carry id references that a *positional* v1 line
+        // may not be able to resolve; guessing would put a label on the wrong entry, so
+        // they stay `Custom` (lossless, merely unapplied) until a real file settles it.
         _ => EntryKind::Custom {
             custom_type: "legacy".into(),
             data: Some(leg.value.clone()),
@@ -1519,6 +1569,307 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
         timestamp_ms,
         kind: entry_kind,
     }
+}
+
+/// Heal one pi v1 `message` line's `message` object into an Epsilon [`Message`].
+///
+/// The entry-level kind is always `message`; the *role* inside chooses the variant, and
+/// that is the whole point of this function: an importer that ignores the role turns a
+/// transcript of tool calls into a transcript of things the user supposedly said.
+///
+/// Fidelity rules:
+///
+/// - **Content is an array of parts.** pi writes `[{"type":"text","text":...},
+///   {"type":"toolCall",...}]`; Epsilon's own v1 files wrote a bare string. Both are
+///   accepted, because a reader that understands only one of them silently empties the
+///   other — which is the defect this replaces.
+/// - **Nothing unrecognized is dropped.** A part this build cannot type (pi's `image`,
+///   anything newer) is kept verbatim under [`LEGACY_EXTRAS_KEY`] rather than discarded.
+///   A *user* message has no slot for that, so one carrying such a part heals to
+///   [`Message::Custom`] with the whole object: losing the entry's LLM visibility is a
+///   smaller harm than losing its content, and `Custom` is visible to the human log.
+/// - **A role with no equivalent** (pi's `bashExecution`) heals to `Custom` for the same
+///   reason: forcing it into `assistant` would put words in the model's mouth and into
+///   `user` would put them in the user's.
+/// - **Provider, model, stop reason and usage are copied when pi wrote them**, and left
+///   empty/zero when it did not. Inventing a provider would be a worse lie than naming
+///   none; a made-up token count would corrupt cost accounting.
+/// - **The message's own `timestamp` wins over `fallback_ts`** (the entry's): pi writes
+///   epoch milliseconds there and an ISO string on the line, so the message's is the finer
+///   spelling of a nearby instant, and both it and the entry get that one value.
+fn heal_legacy_message(raw: Option<&serde_json::Value>, fallback_ts: u64) -> Message {
+    // A `message` line with no `message` object says "there is a message here" and then
+    // carries nothing; an empty user turn is the only sane reading of it.
+    let Some(msg) = raw.and_then(|m| m.as_object()) else {
+        return Message::User(UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: fallback_ts,
+            content: Vec::new(),
+        });
+    };
+    let ts = msg
+        .get("timestamp")
+        .and_then(|t| t.as_u64())
+        .unwrap_or(fallback_ts);
+    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+    let content = msg.get("content");
+    let (blocks, extras) = legacy_content_blocks(content);
+    let id = || epsilon_contracts::new_id("msg");
+
+    match role {
+        "assistant" => Message::Assistant(epsilon_contracts::message::AssistantMessage {
+            id: id(),
+            timestamp_ms: ts,
+            provider: str_field(msg, "provider").unwrap_or_default(),
+            model_id: str_field(msg, "model").unwrap_or_default(),
+            content: blocks,
+            stop_reason: match msg.get("stopReason").and_then(|s| s.as_str()) {
+                Some("toolUse") => epsilon_contracts::message::StopReason::ToolUse,
+                Some("length") | Some("maxTokens") => {
+                    epsilon_contracts::message::StopReason::MaxTokens
+                }
+                Some("error") => epsilon_contracts::message::StopReason::Error,
+                Some("aborted") => epsilon_contracts::message::StopReason::Aborted,
+                // pi's word for "finished on its own", and the honest reading of a
+                // message that carries no stop reason at all.
+                _ => epsilon_contracts::message::StopReason::EndTurn,
+            },
+            error_message: str_field(msg, "errorMessage"),
+            usage: msg.get("usage").map(legacy_usage).unwrap_or_default(),
+        }),
+        "toolResult" => Message::ToolResult(epsilon_contracts::message::ToolResultMessage {
+            id: id(),
+            timestamp_ms: ts,
+            tool_call_id: str_field(msg, "toolCallId").unwrap_or_default(),
+            tool_name: str_field(msg, "toolName").unwrap_or_default(),
+            content: blocks,
+            // `details` is this variant's own free-form slot, so a part pi wrote that
+            // this build cannot type rides here and stays reachable.
+            details: extras
+                .map(|parts| serde_json::json!({ LEGACY_EXTRAS_KEY: parts }))
+                .unwrap_or(serde_json::Value::Null),
+            usage: None,
+            is_error: msg
+                .get("isError")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false),
+        }),
+        "user" if extras.is_none() => Message::User(UserMessage {
+            id: id(),
+            timestamp_ms: ts,
+            content: blocks.into_iter().map(user_content_from_block).collect(),
+        }),
+        // `user` with an unmappable part, and every role Epsilon has no variant for.
+        // The raw object goes in whole, so `data.role` still names what pi called it.
+        _ => Message::Custom(epsilon_contracts::message::CustomMessage {
+            id: id(),
+            timestamp_ms: ts,
+            custom_type: "legacy".into(),
+            payload: serde_json::json!({"role": role, "message": msg}),
+        }),
+    }
+}
+
+/// Key under which content parts this build cannot type are preserved inside a healed
+/// message.
+const LEGACY_EXTRAS_KEY: &str = "legacy_unmapped_parts";
+
+/// Convert one pi content array (or a v1 bare string) into typed blocks.
+///
+/// The parts both harnesses share become typed blocks; everything else comes back as the
+/// second element, raw, for the caller to keep — pi's `image` is the plausible arrival,
+/// and this build must not be the reason a transcript loses it.
+fn legacy_content_blocks(
+    content: Option<&serde_json::Value>,
+) -> (Vec<ContentBlock>, Option<serde_json::Value>) {
+    let mut parts: Vec<&serde_json::Value> = match content {
+        Some(serde_json::Value::Array(parts)) => parts.iter().collect(),
+        // Epsilon's own v1 spelling.
+        Some(serde_json::Value::String(text)) => {
+            return (vec![ContentBlock::Text { text: text.clone() }], None);
+        }
+        // No content at all is an empty message, not an unrecognized part.
+        None | Some(serde_json::Value::Null) => return (Vec::new(), None),
+        // A shape that is neither array nor string is preserved, not ignored.
+        Some(other) => return (Vec::new(), Some(other.clone())),
+    };
+    let mut blocks = Vec::new();
+    let mut extras = Vec::new();
+    for part in parts.drain(..) {
+        match legacy_block(part) {
+            Some(block) => blocks.push(block),
+            None => extras.push(part.clone()),
+        }
+    }
+    let extras = match extras.len() {
+        0 => None,
+        _ => Some(serde_json::Value::Array(extras)),
+    };
+    (blocks, extras)
+}
+
+/// One content part as a typed block, or `None` when this build cannot express it.
+///
+/// A `text` part with no string or a `toolCall` with no id is `None` too: a typed block
+/// with an empty field would be a quieter kind of loss than a preserved unknown.
+fn legacy_block(part: &serde_json::Value) -> Option<ContentBlock> {
+    match part.get("type").and_then(|t| t.as_str())? {
+        "text" => Some(ContentBlock::Text {
+            text: part.get("text")?.as_str()?.into(),
+        }),
+        // Epsilon models reasoning as first-class content; pi's spelling is a guess we
+        // can afford, because a wrong guess degrades to "unmapped" rather than to loss.
+        "thinking" => Some(ContentBlock::Thinking {
+            text: part.get("thinking")?.as_str()?.into(),
+        }),
+        "toolCall" | "tool_call" => Some(ContentBlock::ToolCall {
+            id: part.get("id")?.as_str()?.into(),
+            name: part.get("name")?.as_str()?.into(),
+            // No arguments means a call with none; an empty object keeps it executable.
+            arguments: part
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        }),
+        // Deliberately includes pi's `image`: Epsilon carries an image only as base64
+        // (`ImageRef { mime, data }`), and guessing the encoding of a shape no fixture
+        // here shows is how a conversion invents data. Preserved instead.
+        _ => None,
+    }
+}
+
+/// Fold one typed block into a user-message block.
+///
+/// [`UserContent`] has no tool-call variant, so the two block kinds a user message cannot
+/// hold become text that names them rather than disappearing; a `user` message carrying
+/// one never reaches here (see [`heal_legacy_message`]), so this is belt and braces.
+fn user_content_from_block(block: ContentBlock) -> UserContent {
+    match block {
+        ContentBlock::Text { text } => UserContent::Text { text },
+        ContentBlock::Image(image) => UserContent::Image(image),
+        ContentBlock::Thinking { text } => UserContent::Text {
+            text: format!("<thinking>\n{text}\n</thinking>"),
+        },
+        ContentBlock::ToolCall {
+            id,
+            name,
+            arguments,
+        } => UserContent::Text {
+            text: format!("<tool_call id=\"{id}\" name=\"{name}\">{arguments}</tool_call>"),
+        },
+    }
+}
+
+/// One optional string field: `None` when absent or not a string.
+fn str_field(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    map.get(key).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+/// pi's camelCase `usage` object as an Epsilon [`Usage`].
+fn legacy_usage(value: &serde_json::Value) -> Usage {
+    let n = |key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    Usage {
+        input: n("input"),
+        output: n("output"),
+        cache_read: n("cacheRead"),
+        cache_write: n("cacheWrite"),
+        total_tokens: n("totalTokens"),
+    }
+}
+
+/// A legacy `timestamp` in either spelling pi and Epsilon have used.
+///
+/// - **ISO-8601 string** — what pi writes (`"2025-12-08T22:41:05.306Z"`), read as UTC with
+///   any numeric offset applied rather than ignored.
+/// - **Number** — what Epsilon's own v1 files wrote. Read as epoch *milliseconds*, or as
+///   epoch *seconds* when it is small enough to be one: pi's own log holds both
+///   (`"timestamp":1765233665292` in the header beside ISO strings in the entries). The
+///   cutoff, 1e11 ms (1973) vs 1e11 s (year 5138), cannot misread a real session stamp.
+///
+/// Unparseable input has no honest answer, so the caller's `now_ms()` default stands: a
+/// wrong timestamp is not a lost transcript, and zero would sort the entry to 1970.
+fn legacy_timestamp_ms(value: &serde_json::Value) -> u64 {
+    if let Some(s) = value.as_str() {
+        return parse_iso8601_ms(s).unwrap_or_else(now_ms);
+    }
+    match value.as_u64() {
+        Some(n) if n < 100_000_000_000 => n.saturating_mul(1000),
+        Some(n) => n,
+        None => now_ms(),
+    }
+}
+
+/// Parse an ISO-8601 timestamp to epoch milliseconds, or `None` if it is not one.
+///
+/// Hand-rolled because the workspace carries no date crate and this direction is the one
+/// nothing else needs (`iso_now` above writes rather than reads; epsilon-core's calendar
+/// helper goes the other way). The day count is Howard Hinnant's `days_from_civil`, the
+/// inverse of the one there.
+///
+/// `YYYY-MM-DDTHH:MM:SS[.frac][Z|±HH:MM]` is what pi writes. Anything else — including a
+/// bare `"1765233665292"`, which `iso_now` can put in a header — names no date, so `None`
+/// lets the caller fall back instead of inventing 1970.
+fn parse_iso8601_ms(s: &str) -> Option<u64> {
+    let b = s.as_bytes();
+    // The date and time fields are fixed-width, so byte slicing is index-safe.
+    if b.len() < 19
+        || b.get(4) != Some(&b'-')
+        || b.get(7) != Some(&b'-')
+        || b.get(10) != Some(&b'T')
+    {
+        return None;
+    }
+    let n = |from: usize, to: usize| s.get(from..to)?.parse::<i64>().ok();
+    let (year, month, day) = (n(0, 4)?, n(5, 7)?, n(8, 10)?);
+    let (hour, min, sec) = (n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    let mut rest = &s[19..];
+    let mut millis = 0;
+    if let Some(frac) = rest.strip_prefix('.') {
+        let digits: String = frac.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        rest = &frac[digits.len()..];
+        // Truncate past the third digit: `.30` is 300 ms, `.3061` is 306 ms.
+        let mut ms = digits;
+        ms.truncate(3);
+        while ms.len() < 3 {
+            ms.push('0');
+        }
+        millis = ms.parse::<i64>().ok()?;
+    }
+    let offset_min = match rest {
+        "" | "Z" | "z" => 0,
+        _ => {
+            let (sign, rest) = match rest.as_bytes().first() {
+                Some(b'+') => (1, &rest[1..]),
+                Some(b'-') => (-1, &rest[1..]),
+                _ => return None,
+            };
+            let (h, m) = rest.split_once(':').unwrap_or((rest, "0"));
+            sign * (h.parse::<i64>().ok()? * 60 + m.parse::<i64>().ok()?)
+        }
+    };
+    let days = days_from_civil(year, month, day);
+    let secs = days * 86_400 + hour * 3600 + min * 60 + sec - offset_min * 60;
+    u64::try_from(secs * 1000 + millis).ok()
+}
+
+/// Days since 1970-01-01 for a Gregorian date (Howard Hinnant's `days_from_civil`).
+///
+/// Exact for every date a session file can hold; 719_468 is the day count from year 0 to
+/// the epoch, the constant epsilon-core's calendar helper uses in the other direction.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400; // [0, 399]
+    let mp = (m + 9) % 12; // Mar=0 … Feb=11
+    let doy = (153 * mp + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
 }
 
 /// pi's v2→v3 rename: `hookMessage`-role messages become `custom`.
