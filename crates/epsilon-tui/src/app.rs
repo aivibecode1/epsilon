@@ -398,9 +398,10 @@ impl SessionBrowser {
     }
 }
 
-/// Lines describing what the last session resume repaired (M75), empty when it was intact.
+/// Lines describing what the last session resume repaired (M75) or kept without understanding —
+/// empty when the session was both intact and entirely known.
 fn repair_lines(agent: &Agent) -> Vec<String> {
-    agent
+    let mut lines: Vec<String> = agent
         .repair_report()
         .map(|r| {
             r.summary()
@@ -408,7 +409,19 @@ fn repair_lines(agent: &Agent) -> Vec<String> {
                 .map(|s| format!("repair: {s}"))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // The one loss a transcript cannot show: a foreign entry kind is kept in the file and skipped
+    // by the model view (M113), so the session reads as complete while something in it is
+    // missing. The store owns the sentence (`SessionStore::preserved_unknown_notice`); this says
+    // it wherever it already says what a resume had to do. No store attached — a plain `--tui`
+    // run, a child agent — means nothing was read, hence nothing to report.
+    if let Some(handle) = agent.session_store()
+        && let Ok(store) = handle.lock()
+        && let Some(notice) = store.preserved_unknown_notice()
+    {
+        lines.push(format!("preserved: {notice}"));
+    }
+    lines
 }
 
 impl App {

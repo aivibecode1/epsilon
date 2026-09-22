@@ -824,6 +824,50 @@ impl SessionStore {
             .collect()
     }
 
+    /// One line naming the entry kinds this store kept without understanding, or `None` when it
+    /// kept none — the sentence a frontend prints after it opens the session.
+    ///
+    /// [`SessionStore::preserved_unknown`] is the fact; this is the sentence, for the same reason
+    /// [`crate::repair::RepairKind::describe`] sits beside [`crate::repair::RepairReport`]: a
+    /// report each frontend has to phrase for itself is a report that ends up unprinted, and a
+    /// preserved entry is invisible by construction — it never reaches the model view, so a
+    /// transcript missing one looks exactly like a complete one.
+    ///
+    /// The kinds are deduplicated **in file order**, because the question the line answers is
+    /// "what is missing from this session" and the answer is a set of kinds, not one line per
+    /// entry. `None` rather than an empty string: "nothing was kept" is the absence of a report,
+    /// and a caller that prints it anyway would announce nothing.
+    pub fn preserved_unknown_notice(&self) -> Option<String> {
+        let kept = self.preserved_unknown();
+        if kept.is_empty() {
+            return None;
+        }
+        // `kept` is already in file order, so first-seen order is file order.
+        let mut kinds: Vec<&str> = Vec::new();
+        for (_, kind) in &kept {
+            if !kinds.contains(&kind.as_str()) {
+                kinds.push(kind.as_str());
+            }
+        }
+        let list = kinds
+            .iter()
+            .map(|kind| format!("`{kind}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let n = kept.len();
+        Some(if n == 1 {
+            format!(
+                "1 entry of a kind this build does not know ({list}) is in the file but not in \
+                 the transcript — kept, not dropped"
+            )
+        } else {
+            format!(
+                "{n} entries of kinds this build does not know ({list}) are in the file but not \
+                 in the transcript — kept, not dropped"
+            )
+        })
+    }
+
     /// Walk back from the leaf collecting the active branch (oldest first).
     ///
     /// Parses the file once; branch walks are infrequent (model view, navigation), so
@@ -1577,52 +1621,41 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
                 usage: None,
             }
         }
-        // The two entry kinds whose pi shape lines up with an Epsilon variant field for
-        // field, so healing them typed is lossless *and* applied: a pi session's model
-        // switch and thinking-level change take effect on resume instead of sitting in a
-        // `Custom` entry nothing reads. Verified against pi's own fixture lines
-        // (`{"type":"model_change","provider":…,"modelId":…}`,
-        // `{"type":"thinking_level_change","thinkingLevel":"high"}`); a line missing the
-        // field it needs falls through to `Custom` below, which is still lossless.
-        Some("model_change") if map.and_then(|m| m.get("modelId")).is_some() => {
-            EntryKind::ModelChange {
-                provider: map
-                    .and_then(|m| m.get("provider"))
-                    .and_then(|p| p.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                model_id: map
-                    .and_then(|m| m.get("modelId"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            }
-        }
-        Some("thinking_level_change")
-            if map
-                .and_then(|m| m.get("thinkingLevel"))
-                .and_then(|l| l.as_str())
-                .is_some() =>
-        {
-            EntryKind::ThinkingLevelChange {
-                // Kept as pi's word: `ThinkingLevel` is parsed where the level is applied,
-                // so a level this build does not know is visible rather than silently
+        // The two entry kinds whose pi shape lines up with an Epsilon variant field for field,
+        // which is what makes healing them typed *faithful* rather than interpretive: nothing is
+        // renamed but the field spelling (`modelId` → `model_id`, `thinkingLevel` → `level`), no
+        // value is reinterpreted, and neither variant has a field pi's line leaves out. Typed,
+        // the entry can be applied by whoever reads the session; `Custom` cannot be applied by
+        // anyone. Verified against pi's own fixture lines
+        // (`references/pi-0.85.1/packages/coding-agent/test/fixtures/before-compaction.jsonl`):
+        // `{"type":"model_change","timestamp":…,"provider":"anthropic","modelId":"claude-3-opus-20240229"}`
+        // and `{"type":"thinking_level_change","timestamp":…,"thinkingLevel":"high"}` — note the
+        // camelCase, which is the fixture's spelling and therefore this reader's field name.
+        //
+        // A line missing a field its variant needs heals to `Custom` below instead of being
+        // half-typed: `ModelChange { provider: "" }` would be a lie that looks like data, and no
+        // reader could tell it from a session that genuinely has no provider.
+        Some("model_change") => match (legacy_str(map, "provider"), legacy_str(map, "modelId")) {
+            (Some(provider), Some(model_id)) => EntryKind::ModelChange {
+                provider: provider.to_string(),
+                model_id: model_id.to_string(),
+            },
+            _ => legacy_custom(leg),
+        },
+        Some("thinking_level_change") => match legacy_str(map, "thinkingLevel") {
+            Some(level) => EntryKind::ThinkingLevelChange {
+                // Kept as pi's word: `ThinkingLevel` is parsed where the level is applied, so a
+                // level this build does not know stays visible rather than being silently
                 // clamped to `off`.
-                level: map
-                    .and_then(|m| m.get("thinkingLevel"))
-                    .and_then(|l| l.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            }
-        }
+                level: level.to_string(),
+            },
+            None => legacy_custom(leg),
+        },
         // `label` and `session_info` have Epsilon variants too, but no fixture here shows
         // pi's v1 spelling of them and both carry id references that a *positional* v1 line
         // may not be able to resolve; guessing would put a label on the wrong entry, so
         // they stay `Custom` (lossless, merely unapplied) until a real file settles it.
-        _ => EntryKind::Custom {
-            custom_type: "legacy".into(),
-            data: Some(leg.value.clone()),
-        },
+        _ => legacy_custom(leg),
     };
     SessionEntry {
         id,
@@ -1825,6 +1858,30 @@ fn user_content_from_block(block: ContentBlock) -> UserContent {
 /// One optional string field: `None` when absent or not a string.
 fn str_field(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
     map.get(key).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+/// The same for a legacy line whose object may not exist at all, borrowed rather than cloned.
+///
+/// Absent, `null` and a non-string are one answer, `None`, because they are one fact to the
+/// mappings that ask: the field is not there to be read. `Some("")` would be a different fact —
+/// present and empty — and a typed variant built from it claims something pi never wrote.
+fn legacy_str<'a>(
+    map: Option<&'a serde_json::Map<String, serde_json::Value>>,
+    key: &str,
+) -> Option<&'a str> {
+    map.and_then(|m| m.get(key)).and_then(|v| v.as_str())
+}
+
+/// The `Custom` fallback for a legacy line this build cannot state exactly: every kind with no
+/// Epsilon variant, and every line missing a field a typed variant requires.
+///
+/// Lossless by construction — the whole line rides in `data` — so the human log stays complete
+/// and the model view skips it; unapplied is the honest outcome where typed would be a guess.
+fn legacy_custom(leg: &LegacyLine) -> EntryKind {
+    EntryKind::Custom {
+        custom_type: "legacy".into(),
+        data: Some(leg.value.clone()),
+    }
 }
 
 /// pi's camelCase `usage` object as an Epsilon [`Usage`].

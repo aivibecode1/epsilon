@@ -877,6 +877,115 @@ fn an_unrecognized_role_and_content_part_survive_the_heal() {
     assert_eq!(result.content.len(), 1, "the known part is still a block");
 }
 
+/// pi's `model_change` heals to the typed entry that names exactly what pi wrote.
+///
+/// The mapping is faithful because it renames nothing but the field spelling: pi's `provider`
+/// stays `provider`, pi's `modelId` becomes `model_id`, and both keep their values. Before it the
+/// line healed to `Custom` — preserved, but unreadable as a model change to anything that opens
+/// the session, which made a pi session's switch inert here.
+#[test]
+fn a_pi_model_change_heals_to_a_typed_model_change() {
+    let dir = tempfile::tempdir().expect("tmp");
+    // pi's own line, from `before-compaction.jsonl`.
+    let entry = heal_pi_line(
+        &dir,
+        r#"{"type":"model_change","timestamp":"2025-12-09T00:08:20.826Z","provider":"anthropic","modelId":"claude-3-opus-20240229"}"#,
+    );
+
+    let EntryKind::ModelChange { provider, model_id } = &entry.kind else {
+        panic!(
+            "a model_change must heal to the typed variant, got {:?}",
+            entry.kind
+        );
+    };
+    assert_eq!(provider, "anthropic");
+    assert_eq!(
+        model_id, "claude-3-opus-20240229",
+        "pi's `modelId` keeps its value under Epsilon's name"
+    );
+    assert_eq!(
+        entry.timestamp_ms, 1_765_238_900_826,
+        "the line's ISO stamp is read, not replaced by the moment of the import"
+    );
+}
+
+/// pi's `thinking_level_change` heals to the typed entry — note the field pi actually writes.
+///
+/// The spelling is `thinkingLevel`, not `level`: read from pi's own fixture rather than guessed,
+/// which is the whole reason this mapping is safe to make.
+#[test]
+fn a_pi_thinking_level_change_heals_to_a_typed_thinking_level_change() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let entry = heal_pi_line(
+        &dir,
+        r#"{"type":"thinking_level_change","timestamp":"2025-12-08T22:45:43.658Z","thinkingLevel":"high"}"#,
+    );
+
+    let EntryKind::ThinkingLevelChange { level } = &entry.kind else {
+        panic!(
+            "a thinking_level_change must heal to the typed variant, got {:?}",
+            entry.kind
+        );
+    };
+    assert_eq!(level, "high");
+    assert_eq!(entry.timestamp_ms, 1_765_233_943_658);
+
+    // pi's first line in that fixture asks for `minimal`, which is *not* the first rung of
+    // Epsilon's ladder — the level travels as pi's word, so a reader can apply or refuse it,
+    // rather than arriving as whatever a default would have produced.
+    let minimal = heal_pi_line(
+        &dir,
+        r#"{"type":"thinking_level_change","timestamp":"2025-12-08T22:45:42.397Z","thinkingLevel":"minimal"}"#,
+    );
+    assert!(
+        matches!(&minimal.kind, EntryKind::ThinkingLevelChange { level } if level == "minimal")
+    );
+}
+
+/// Half a model change is not a model change: with no provider, the line stays `Custom`.
+///
+/// The typed variant has no honest value to put in the missing field — the empty string is the
+/// only candidate, and `ModelChange { provider: "" }` is indistinguishable from a session whose
+/// provider really is blank. That is a lie that looks like data, so the line keeps its whole self
+/// in `Custom` instead: preserved, reachable, and plainly unapplied.
+#[test]
+fn a_model_change_missing_its_provider_stays_custom() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let entry = heal_pi_line(
+        &dir,
+        r#"{"type":"model_change","timestamp":"2025-12-09T00:08:20.826Z","modelId":"claude-3-opus-20240229"}"#,
+    );
+
+    let EntryKind::Custom { custom_type, data } = &entry.kind else {
+        panic!(
+            "a model_change with no provider must not be half-typed, got {:?}",
+            entry.kind
+        );
+    };
+    assert_eq!(custom_type, "legacy");
+    let data = data.as_ref().expect("the preserved line is the payload");
+    assert_eq!(
+        data["modelId"], "claude-3-opus-20240229",
+        "what pi did write is still reachable inside the preserved line"
+    );
+    assert_eq!(data["type"], "model_change");
+
+    // The same rule for a field that is present but not a string: `null` is not a model id, and
+    // reading it as one would be the empty-string lie one step earlier.
+    let nulled = heal_pi_line(
+        &dir,
+        r#"{"type":"model_change","timestamp":"2025-12-09T00:08:20.826Z","provider":"anthropic","modelId":null}"#,
+    );
+    assert!(
+        matches!(
+            &nulled.kind,
+            EntryKind::Custom { custom_type, .. } if custom_type == "legacy"
+        ),
+        "a null model id must stay Custom, got {:?}",
+        nulled.kind
+    );
+}
+
 /// A whole pi-shaped file survives a migration write and reopen without losing anything.
 ///
 /// The in-memory heal is only half the path: `persist_migration` rewrites the file, and the
@@ -1275,6 +1384,82 @@ fn an_unknown_entry_type_is_preserved_and_reported_rather_than_refused() {
     assert_eq!(foreign["kind"]["payload"]["n"], 1, "{rewritten}");
     // The original is untouched by the fork, and still byte-identical.
     assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+}
+
+/// The sentence both frontends print for preserved entries: the count, the kinds deduplicated in
+/// file order, and the plain statement that they are not in the transcript.
+///
+/// `preserved_unknown()` existed and was tested, and no caller called it — which is how a
+/// preserved entry stays a silent gap: the session opens, the transcript looks whole, and the one
+/// thing that knew better was a method nothing printed. The CLI and the TUI both print *this*
+/// line now, so the store owns the wording and the ordering it depends on.
+#[test]
+fn the_preserved_unknown_notice_names_the_count_and_the_kinds_in_file_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let lines = raw_message_lines(&dir, "s.jsonl", &["one"]);
+    let path = dir.path().join("s.jsonl");
+    let first: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    let first_id = first["id"].as_str().unwrap();
+    // Three foreign entries, two kinds, `telemetry_v9` on both sides of `widget_v2`: the notice
+    // must count entries but name kinds, once each, in the order the file lists them.
+    let a = format!(
+        r#"{{"id":"ent_a","seq":1,"parent_id":"{first_id}","timestamp_ms":0,"kind":{{"type":"telemetry_v9"}}}}"#
+    );
+    let b = r#"{"id":"ent_b","seq":2,"parent_id":"ent_a","timestamp_ms":0,"kind":{"type":"widget_v2"}}"#;
+    let c = r#"{"id":"ent_c","seq":3,"parent_id":"ent_b","timestamp_ms":0,"kind":{"type":"telemetry_v9"}}"#;
+    std::fs::write(&path, format!("{}\n{a}\n{b}\n{c}\n", lines[0])).unwrap();
+
+    let store = SessionStore::open(&path).expect("foreign kinds do not close the session");
+    assert_eq!(
+        store.preserved_unknown(),
+        vec![
+            (1u64, "telemetry_v9".to_string()),
+            (2u64, "widget_v2".to_string()),
+            (3u64, "telemetry_v9".to_string()),
+        ],
+        "every preserved entry, in file order"
+    );
+    assert_eq!(
+        store.preserved_unknown_notice().as_deref(),
+        Some(
+            "3 entries of kinds this build does not know (`telemetry_v9`, `widget_v2`) are in \
+             the file but not in the transcript — kept, not dropped"
+        ),
+        "one line: the count, the deduplicated kinds in file order, and where they are not"
+    );
+
+    // One preserved entry reads as one, and a session with nothing preserved says nothing: an
+    // empty notice would be an announcement that nothing happened.
+    let single_dir = tempfile::tempdir().unwrap();
+    let single_lines = raw_message_lines(&single_dir, "one.jsonl", &["hi"]);
+    let single_path = single_dir.path().join("one.jsonl");
+    std::fs::write(
+        &single_path,
+        format!(
+            "{}\n{}\n",
+            single_lines[0],
+            r#"{"id":"ent_solo","seq":1,"parent_id":null,"timestamp_ms":0,"kind":{"type":"from_the_future"}}"#
+        ),
+    )
+    .unwrap();
+    let single = SessionStore::open(&single_path).unwrap();
+    assert_eq!(
+        single.preserved_unknown_notice().as_deref(),
+        Some(
+            "1 entry of a kind this build does not know (`from_the_future`) is in the file but \
+             not in the transcript — kept, not dropped"
+        )
+    );
+
+    // A session with nothing preserved says nothing: an empty notice would be an announcement
+    // that nothing happened.
+    let _clean_lines = raw_message_lines(&dir, "clean.jsonl", &["hi"]);
+    let clean = SessionStore::open(dir.path().join("clean.jsonl")).unwrap();
+    assert_eq!(
+        clean.preserved_unknown_notice(),
+        None,
+        "nothing preserved is the absence of a report, not an empty sentence"
+    );
 }
 
 /// The other half of the rule, and the reason the codec is strict about a known tag: an entry

@@ -1715,6 +1715,13 @@ async fn build_runtime(
             }
             Err(e) => eprintln!("repair warning (continuing): {e}"),
         }
+        // An entry kind this build does not know is preserved, not refused (M113), which leaves
+        // it in the file and out of the transcript by construction: the session opens looking
+        // complete while something in it was silently skipped. Nothing else on this path can
+        // tell the user that, so say it here, beside the repairs and in the same voice.
+        if let Some(notice) = restored.preserved_unknown_notice() {
+            eprintln!("{}: {notice}", rp.display());
+        }
         let msgs: Vec<Message> = restored
             .model_view()
             .map_err(|e| format!("read {}: {e}", rp.display()))?
