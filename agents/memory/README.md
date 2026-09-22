@@ -46,12 +46,18 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-22 (seventh round of the day)** — M113: an unknown entry kind is
-   now **preserved** instead of closing the session (`EntryKind::Unknown`, lenient tag /
-   strict body, `LineDiagnosis::MalformedEntry`, `KNOWN_ENTRY_KINDS` with a drift guard,
-   `preserved_unknown()`); pi's `Label`/`SessionInfo` kinds added. Battery `m113a`: 1,038
-   passed / 0 failed. Verified end-to-end through the CLI on both sides of the rule, before
-   and after the reinstall. Global `epsilon.exe` reinstalled. Cleaned: 32.5 GB free.
+1. **Round closed 2026-09-22 (eighth round of the day)** — M114 (`d54dfb8`): the pi legacy
+   healer reads roles, the content array and both timestamp spellings, and preserves what it
+   cannot map. Verified on pi's own fixture: the 668-character prompt that came back empty
+   before now comes back whole (battery `m114a`, 1,043 tests). Global `epsilon.exe`
+   reinstalled. Cleaned afterwards.
+2. **G19 parts 2 and 3 are next** (both recorded in `audit/11`): the **header** drops fields
+   it does not model (`provider`/`modelId`/`thinkingLevel`/`branchedFrom` vanish on a
+   rewrite — M113's preservation rule applied to the header), and **conversion happens in
+   place on the resume path**, which contradicts the importer plan's own import-as-copy rule.
+   Until then `--resume` on a pi session is *correct but not safe*: faithful transcript,
+   original file gone. `model_change`/`thinking_level_change` also heal into `Custom`
+   (preserved, not applied) — small mapping, deliberately left.
 2. **G19 (P0) — reading a pi session empties it, then rewrites the file in place.** Found by
    *running* the path: `epsilon --resume <pi fixture> --print hi` reports "resumed 369
    entries", exits 0, and line 2's 668-character prompt is now 0 characters.

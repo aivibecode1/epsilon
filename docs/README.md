@@ -62,6 +62,12 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M114 — the healer that read pi's messages and emptied them](milestones/M114-pi-legacy-healing.md):
+  the migration path that makes pi's session files readable read `message.content` as a
+  string while pi writes an **array of parts**, so every message came back empty, every role
+  became a *user* turn, and every ISO timestamp became "now". Found by running it: resuming
+  pi's own fixture reported success and turned a 668-character prompt into nothing. Now roles,
+  parts and both timestamp spellings are read, and anything unmappable is preserved.
 - [M113 — an entry kind this build does not know is kept, not used to close the session](milestones/M113-unknown-kinds-preserved.md):
   a session file carrying a `kind.type` from a newer build used to be **refused whole** — one
   foreign entry cost the entire conversation. It is now parsed as an opaque object, replayed
