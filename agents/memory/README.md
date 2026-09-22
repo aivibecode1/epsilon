@@ -46,14 +46,17 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Rounds closed 2026-09-22 (eighth and ninth)** — M114 (`d54dfb8`) healed pi's messages;
-   **M115 (`5326b2f`) closed the other two parts of G19**: `SessionHeader` keeps the fields
-   this build does not model (`provider`/`modelId`/`thinkingLevel`/`branchedFrom`), and
-   `persist_migration` copies the previous bytes to `<file>.pre-epsilon` once — never
-   overwriting — with both CLI call sites naming the path. Batteries `m114a` (1,043) and
-   `m115b` (1,049, `m115a` failed clippy on a collapsible `if` and was stopped). Verified on
-   pi's own fixture through the installed binary; global `epsilon.exe` reinstalled; disk
-   cleaned to 32.2 GB.
+1. **Rounds closed 2026-09-22 (tenth and eleventh)** — M116 (`6462a44`): the preserved-entry
+   notice is printed by both frontends (one sentence owned by the store), and the
+   `model_change` arm stopped writing `provider: ""` when the field was absent. M117
+   (`4e292a7`): `find` announces the results its cap hides and `ls` gained pi's `limit`
+   (default 500). Batteries `m116a` (1,053) and `m117a` (1,057). Global `epsilon.exe`
+   reinstalled and verified to carry both notice strings; disk cleaned.
+2. **G21 — advertised bounds that do not exist** (`audit/11`): `find`'s description promises
+   "1000 results or 64KB" and **no byte cap exists** (M117 made the count half true); `glob`
+   still stops silently at the walker's `WALK_MAX_ENTRIES`; `ls` has no per-entry byte cap
+   where pi has `DEFAULT_MAX_BYTES`. Either implement each bound or delete the claim — a tool
+   description is read by the model, so a false one is worse than a missing feature.
 2. **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
    *in place*, so the original is kept rather than the conversion avoided. The importer plan's
    import-as-copy rule would make `--resume` produce a new file and leave the original
