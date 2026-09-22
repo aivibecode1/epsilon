@@ -46,16 +46,19 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-22 (eighth round)** — M114 (`d54dfb8`): the pi legacy healer reads
-   roles, the content array and both timestamp spellings, and preserves what it cannot map.
-   Verified on pi's own fixture (the 668-character prompt that came back empty now comes back
-   whole). Battery `m114a`, 1,043 tests. Global `epsilon.exe` reinstalled; disk cleaned.
-2. **In flight this round (delegated): G19 parts 2 and 3.** Part 2 — `SessionHeader` drops
-   fields it does not model, so a rewrite loses `provider`/`modelId`/`thinkingLevel`/
-   `branchedFrom`; fix is the M113 preservation rule applied to the header (a flattened map,
-   with the key-order caveat documented). Part 3 — `persist_migration` rewrites in place with
-   no way back; fix is a one-time `.pre-epsilon` backup beside the file, never overwriting an
-   existing one. Both recorded in `audit/11`'s G19 row.
+1. **Rounds closed 2026-09-22 (eighth and ninth)** — M114 (`d54dfb8`) healed pi's messages;
+   **M115 (`5326b2f`) closed the other two parts of G19**: `SessionHeader` keeps the fields
+   this build does not model (`provider`/`modelId`/`thinkingLevel`/`branchedFrom`), and
+   `persist_migration` copies the previous bytes to `<file>.pre-epsilon` once — never
+   overwriting — with both CLI call sites naming the path. Batteries `m114a` (1,043) and
+   `m115b` (1,049, `m115a` failed clippy on a collapsible `if` and was stopped). Verified on
+   pi's own fixture through the installed binary; global `epsilon.exe` reinstalled; disk
+   cleaned to 32.2 GB.
+2. **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
+   *in place*, so the original is kept rather than the conversion avoided. The importer plan's
+   import-as-copy rule would make `--resume` produce a new file and leave the original
+   untouched — a real UX question (which file am I in now?) that should be decided, not
+   drifted into.
 3. **Surface the preserved entries.** `SessionStore::preserved_unknown()` exists and is
    tested; nothing prints it, so a user opening a session with a foreign entry still learns
    nothing. Wire it where the repair report goes (the CLI resume path and the TUI) — that is
