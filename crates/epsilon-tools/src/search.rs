@@ -70,6 +70,8 @@ pub const GREP_DESC: &str = include_str!("../descriptions/grep.txt");
 pub const GREP_DEFAULT_LIMIT: usize = 100;
 /// Max chars per rendered match line (pi `GREP_MAX_LINE_LENGTH`).
 pub const GREP_MAX_LINE_LENGTH: usize = 500;
+/// Default entry cap for `ls` (pi `ls.ts:23` `DEFAULT_LIMIT`).
+pub const LS_DEFAULT_LIMIT: usize = 500;
 
 /// Regex line search over the workspace walker (git/target/node_modules skipped).
 pub struct GrepTool {
@@ -490,6 +492,11 @@ pub struct LsArgs {
     /// Directory to list (default: workspace root).
     #[serde(default)]
     pub path: Option<String>,
+    /// Maximum number of entries to return (default: 500, pi `DEFAULT_LIMIT`). When the
+    /// limit is reached the result says how many entries were held back and what to pass
+    /// for more.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 pub const LS_DESC: &str = include_str!("../descriptions/ls.txt");
@@ -561,7 +568,17 @@ impl Tool for LsTool {
             .collect();
         entries.sort_by_key(|e| e.file_name());
 
+        // pi `ls.ts:84,114-118`: the caller's `limit` wins, otherwise `DEFAULT_LIMIT` entries
+        // are returned and the drop is announced rather than left to look like the whole
+        // directory.
+        let limit = args.limit.unwrap_or(LS_DEFAULT_LIMIT).max(1);
+        let total = entries.len();
+        let mut limit_reached = false;
         for e in entries {
+            if rows.len() >= limit {
+                limit_reached = true;
+                break;
+            }
             let name = e.file_name().to_string_lossy().to_string();
             let meta = e.metadata().ok();
             match meta {
@@ -573,7 +590,19 @@ impl Tool for LsTool {
         if rows.is_empty() {
             return Ok(ToolOutput::text("(empty directory)"));
         }
-        Ok(ToolOutput::text(rows.join("\n")))
+        let mut text = rows.join("\n");
+        if limit_reached {
+            // pi says "N entries limit reached. Use limit=2N for more" (`ls.ts:146-148`); the
+            // count of what is missing is added because "limit reached" alone does not tell a
+            // reader what they are not seeing.
+            text.push_str(&format!(
+                "\n\n[{limit} entries limit reached: {} more entries in this directory are not \
+                 shown. Use limit={} for more]",
+                total - limit,
+                limit * 2
+            ));
+        }
+        Ok(ToolOutput::text(text))
     }
 }
 

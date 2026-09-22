@@ -102,20 +102,35 @@ impl Tool for FindTool {
             .map_err(|e| ToolFailure::msg(format!("pattern error: {e}")))?;
         let limit = args.limit.unwrap_or(1000).min(1000);
         let norm = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
-        let matches: Vec<String> = util::walk_files(&root)
+        // Every match is counted, then the cap is applied: a capped result has to be able to
+        // say how many it is holding back, and pi's notice names the cap rather than the
+        // total (pi `find.ts:281-285`). Counting costs nothing here — `walk_files` has
+        // already materialized the whole walk.
+        let all: Vec<String> = util::walk_files(&root)
             .iter()
             .map(|p| norm(p))
             .filter(|rel| re.is_match(rel))
-            .take(limit)
             .collect();
-        if matches.is_empty() {
+        if all.is_empty() {
             return Ok(ToolOutput::text("no matches"));
         }
-        Ok(ToolOutput::text(format!(
-            "{}\n[{} file(s)]",
-            matches.join("\n"),
-            matches.len()
-        )))
+        let total = all.len();
+        let shown = total.min(limit);
+        let matches = &all[..shown];
+        let mut text = format!("{}\n[{} file(s)]", matches.join("\n"), shown);
+        if total > shown {
+            // pi says "N results limit reached. Use limit=2N …"; the count of what is missing
+            // is added because "limit reached" alone does not tell a reader what they are not
+            // seeing (the class of silent truncation G19 turned up).
+            text.push_str(&format!(
+                "\n\n[{} results limit reached: {} more file(s) match and are not shown. \
+                 Use limit={} for more, or refine pattern]",
+                limit,
+                total - shown,
+                limit * 2
+            ));
+        }
+        Ok(ToolOutput::text(text))
     }
 }
 
@@ -200,7 +215,23 @@ mod tests {
             fs::write(root.join(format!("f{i}.txt")), "").unwrap();
         }
         let out = run_find("*.txt", &root, Some(2)).await;
-        let lines: Vec<&str> = out.lines().filter(|l| !l.starts_with('[')).collect();
-        assert_eq!(lines.len(), 2, "limit 2 must return 2 files");
+        // The result is `f0…\nf1…\n[2 file(s)]` followed by a blank line and the capped notice,
+        // so the filter stops at that blank line rather than at every bracketed line.
+        let files: Vec<&str> = out.lines().take_while(|l| !l.is_empty()).collect();
+        assert_eq!(files.len(), 3, "2 files plus the [2 file(s)] count line");
+        assert_eq!(files[2], "[2 file(s)]", "got: {out}");
+        // The walker sorts by name, so "the first 2" is f0 and f1 and the cap is exact.
+        assert!(
+            out.contains("f0.txt") && out.contains("f1.txt"),
+            "got: {out}"
+        );
+        assert!(
+            !out.contains("f2.txt") && !out.contains("f3.txt") && !out.contains("f4.txt"),
+            "limit 2 must return only 2 files: {out}"
+        );
+        assert!(
+            out.contains("2 results limit reached: 3 more file(s)"),
+            "the cap is announced with what it hides: {out}"
+        );
     }
 }

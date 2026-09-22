@@ -1,1 +1,3 @@
 List one directory's entries with sizes (directories suffixed `/`). Orientation tool: use glob or grep to search deeper.
+
+Output is truncated to 500 entries, or to `limit` when given; a truncated listing says how many entries were held back.

@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use epsilon_contracts::tool::{Tool, ToolContext, ToolInvocation};
 use epsilon_tools::util;
-use epsilon_tools::{BashTool, EditTool, GlobTool, GrepTool, LsTool, ReadTool, WriteTool};
+use epsilon_tools::{
+    BashTool, EditTool, FindTool, GlobTool, GrepTool, LsTool, ReadTool, WriteTool,
+};
 use tokio_util::sync::CancellationToken;
 
 fn ctx_for(root: &Path) -> ToolContext {
@@ -880,6 +882,110 @@ async fn grep_marks_the_files_it_could_only_search_in_part() {
     assert!(
         hit.contains("searched only the first 262144 bytes of 1 file(s)"),
         "a partial search is reported even when other files matched: {hit}"
+    );
+}
+
+#[tokio::test]
+async fn find_announces_the_results_its_limit_hides() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let find = FindTool::new();
+    for i in 0..5 {
+        std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+    }
+    let out = run(
+        &find,
+        &ctx,
+        serde_json::json!({"pattern": "*.txt", "limit": 2}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.starts_with("f0.txt\nf1.txt\n[2 file(s)]\n\n"),
+        "the cap still caps the listing: {out}"
+    );
+    // pi `find.ts:281-285`: "2 results limit reached. Use limit=4 for more, or refine pattern".
+    // Epsilon's variant also names what the cap is holding back, so the reader knows the list
+    // is not the whole answer.
+    assert!(
+        out.contains("[2 results limit reached: 3 more file(s) match and are not shown."),
+        "a capped find must say what it is not showing: {out}"
+    );
+    assert!(
+        out.contains("Use limit=4 for more, or refine pattern]"),
+        "and what to pass for more: {out}"
+    );
+}
+
+#[tokio::test]
+async fn find_under_its_limit_says_nothing_about_a_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let find = FindTool::new();
+    for i in 0..3 {
+        std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+    }
+    let out = run(
+        &find,
+        &ctx,
+        serde_json::json!({"pattern": "*.txt", "limit": 5}),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("f0.txt"), "{out}");
+    assert!(out.contains("[3 file(s)]"), "{out}");
+    assert!(
+        !out.contains("limit reached"),
+        "a complete result set must not invent a truncation notice: {out}"
+    );
+}
+
+#[tokio::test]
+async fn ls_announces_the_entries_its_limit_hides() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let ls = LsTool::new();
+    for i in 0..5 {
+        std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+    }
+    // pi `ls.ts:13,23,84`: the cap is the caller's `limit`, else DEFAULT_LIMIT = 500.
+    let out = run(&ls, &ctx, serde_json::json!({"limit": 2}))
+        .await
+        .unwrap();
+    assert!(
+        out.starts_with("f0.txt (0 bytes)\nf1.txt (0 bytes)\n\n"),
+        "the cap still caps rows: {out}"
+    );
+    // pi `ls.ts:146-148`: "N entries limit reached. Use limit=2N for more", extended with the
+    // count of what the cap is holding back.
+    assert!(
+        out.contains("[2 entries limit reached: 3 more entries in this directory are not shown."),
+        "a capped ls must say what it is not showing: {out}"
+    );
+    assert!(out.contains("Use limit=4 for more]"), "got: {out}");
+}
+
+#[tokio::test]
+async fn ls_under_its_limit_says_nothing_about_a_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let ls = LsTool::new();
+    for i in 0..3 {
+        std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+    }
+    // The default cap is the one pi declares (`ls.ts:23` DEFAULT_LIMIT = 500).
+    let out = run(
+        &ls,
+        &ctx,
+        serde_json::json!({"limit": epsilon_tools::LS_DEFAULT_LIMIT}),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("f0.txt"), "{out}");
+    assert!(out.contains("f2.txt"), "every entry is listed: {out}");
+    assert!(
+        !out.contains("limit reached"),
+        "a complete listing must not invent a truncation notice: {out}"
     );
 }
 
