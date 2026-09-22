@@ -987,6 +987,201 @@ async fn ls_under_its_limit_says_nothing_about_a_limit() {
         !out.contains("limit reached"),
         "a complete listing must not invent a truncation notice: {out}"
     );
+    assert!(
+        !out.contains("output limit reached"),
+        "and must not invent a byte notice either: {out}"
+    );
+}
+
+/// G21a: `find`'s description advertised a byte budget that no code enforced, so the honest
+/// options were to implement it or delete the claim. It is implemented — a `find` that could
+/// return megabytes of paths floods the context window — and the notice names *which* bound
+/// fired. Real bytes cross the threshold here: 400 entries of ~160 bytes is ~66KB of listing,
+/// far over pi's 50KB `DEFAULT_MAX_BYTES` (`truncate.ts:12`) and far under the 1000-result
+/// default, so the entry cap cannot be what cut it.
+#[tokio::test]
+async fn find_announces_the_byte_budget_when_bytes_cut_the_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let find = FindTool::new();
+    for i in 0..400 {
+        std::fs::write(
+            dir.path()
+                .join(format!("row{i:03} {}.txt", "x".repeat(150))),
+            "",
+        )
+        .unwrap();
+    }
+    // The fixture size is the point: 400 entries of this shape cross the budget.
+    const _: () = assert!(400 * (150 + 9) > epsilon_tools::TOOL_OUTPUT_MAX_BYTES);
+    let out = run(&find, &ctx, serde_json::json!({"pattern": "*.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        out.contains("50.0KB output limit reached"),
+        "the byte bound must name itself: {out}"
+    );
+    assert!(
+        out.contains("more file(s) match and are not shown. Use a narrower pattern"),
+        "and must not advise raising a limit that is not the bound: {out}"
+    );
+    // `[N file(s)]` counts what the reader can see, not what matched: a listing that stopped
+    // at the byte bound claiming 400 entries would be the silently-truncated list again.
+    let count_line = out
+        .lines()
+        .find(|l| l.starts_with('[') && l.ends_with("file(s)]"))
+        .unwrap_or_else(|| panic!("no count line: {out}"));
+    let shown: usize = count_line
+        .trim_start_matches('[')
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        shown < 400,
+        "the count must report the shown entries: {out}"
+    );
+    assert!(
+        count_line.ends_with(&format!("[{} file(s)]", shown)) && shown > 0,
+        "got: {count_line}"
+    );
+}
+
+/// The other half of the rule: a result set under the byte bound is returned unchanged, and
+/// says nothing. Same 160-byte entries as the crossing test, fewer of them.
+#[tokio::test]
+async fn find_under_the_byte_budget_says_nothing_about_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let find = FindTool::new();
+    let names: Vec<String> = (0..200)
+        .map(|i| format!("row{i:03} {}.txt", "x".repeat(150)))
+        .collect();
+    for name in &names {
+        std::fs::write(dir.path().join(name), "").unwrap();
+    }
+    let out = run(&find, &ctx, serde_json::json!({"pattern": "*.txt"}))
+        .await
+        .unwrap();
+    assert!(out.contains(&names[0]), "the entry is listed: {out}");
+    assert!(out.contains("[200 file(s)]"), "got: {out}");
+    assert!(
+        !out.contains("output limit reached"),
+        "200 entries is under the byte budget and must not invent a notice: {out}"
+    );
+}
+
+/// G21b: `glob` stopped at the walker's `WALK_MAX_ENTRIES` budget in silence. This is a
+/// safety valve on the walk, not a result cap the caller asked for, so the notice says that
+/// in words — and the fixture really fills the budget rather than lowering the constant, so
+/// the assertion is calibrated against the shipped 5000.
+#[tokio::test]
+async fn glob_announces_when_the_walk_stops_at_its_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let glob = GlobTool::new();
+    for chunk in 0..25 {
+        let d = dir.path().join(format!("d{chunk:02}"));
+        std::fs::create_dir_all(&d).unwrap();
+        for i in 0..200 {
+            std::fs::write(d.join(format!("f{i:03}.txt")), "").unwrap();
+        }
+    }
+    let out = run(&glob, &ctx, serde_json::json!({"pattern": "*.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        out.contains(&format!("[{} file(s)]", util::WALK_MAX_ENTRIES)),
+        "the walker budget is the cap: {out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "[{} files walked, so this list may be incomplete",
+            util::WALK_MAX_ENTRIES
+        )),
+        "the walk budget must be announced, not silent: {out}"
+    );
+    assert!(
+        out.contains("the walk is a safety bound, not a match limit"),
+        "and said in words a reader understands: {out}"
+    );
+    assert!(
+        out.contains("Search a subdirectory to see the rest"),
+        "with the move that actually helps: {out}"
+    );
+}
+
+/// A walk that finishes inside its budget says nothing — the M117 "silent when nothing was
+/// withheld" rule, applied to the walker's bound.
+#[tokio::test]
+async fn glob_under_the_walk_budget_says_nothing_about_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let glob = GlobTool::new();
+    for i in 0..3 {
+        std::fs::write(dir.path().join(format!("g{i}.txt")), "").unwrap();
+    }
+    let out = run(&glob, &ctx, serde_json::json!({"pattern": "*.txt"}))
+        .await
+        .unwrap();
+    assert!(out.contains("g2.txt"), "{out}");
+    assert!(out.contains("[3 file(s)]"), "got: {out}");
+    assert!(
+        !out.contains("files walked"),
+        "a complete walk must not invent a budget notice: {out}"
+    );
+}
+
+/// G21c: `ls` gained pi's `limit` in M117 but not pi's `DEFAULT_MAX_BYTES`, so a directory of
+/// long entries could still return an unbounded payload. Now it has both, and the notice names
+/// the byte bound because "Use limit=2N" would be advice that cannot work when bytes cut it.
+#[tokio::test]
+async fn ls_announces_the_byte_budget_when_bytes_cut_the_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let ls = LsTool::new();
+    for i in 0..400 {
+        std::fs::write(
+            dir.path()
+                .join(format!("row{i:03} {}.txt", "x".repeat(150))),
+            "",
+        )
+        .unwrap();
+    }
+    let out = run(&ls, &ctx, serde_json::json!({"limit": 400}))
+        .await
+        .unwrap();
+    assert!(
+        out.contains("50.0KB output limit reached"),
+        "the byte bound must name itself: {out}"
+    );
+    assert!(
+        out.contains("entries in this directory are shown"),
+        "and say how much it hid: {out}"
+    );
+    assert!(
+        !out.contains("entries limit reached"),
+        "the entry cap was 400 entries and the byte budget cut first, so the entry notice \
+         would be the wrong explanation: {out}"
+    );
+}
+
+/// A listing under both bounds is returned whole and says nothing about either.
+#[tokio::test]
+async fn ls_under_the_byte_budget_says_nothing_about_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let ls = LsTool::new();
+    for i in 0..3 {
+        std::fs::write(dir.path().join(format!("small{i}.txt")), "").unwrap();
+    }
+    let out = run(&ls, &ctx, serde_json::json!({})).await.unwrap();
+    assert!(out.contains("small2.txt"), "{out}");
+    assert!(
+        !out.contains("output limit reached"),
+        "a complete listing must not invent a byte notice: {out}"
+    );
 }
 
 #[tokio::test]

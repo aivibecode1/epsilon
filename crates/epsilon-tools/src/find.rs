@@ -115,20 +115,39 @@ impl Tool for FindTool {
             return Ok(ToolOutput::text("no matches"));
         }
         let total = all.len();
-        let shown = total.min(limit);
-        let matches = &all[..shown];
-        let mut text = format!("{}\n[{} file(s)]", matches.join("\n"), shown);
-        if total > shown {
-            // pi says "N results limit reached. Use limit=2N …"; the count of what is missing
-            // is added because "limit reached" alone does not tell a reader what they are not
-            // seeing (the class of silent truncation G19 turned up).
-            text.push_str(&format!(
-                "\n\n[{} results limit reached: {} more file(s) match and are not shown. \
-                 Use limit={} for more, or refine pattern]",
-                limit,
-                total - shown,
-                limit * 2
-            ));
+        let count_shown = total.min(limit);
+        // Two independent bounds, and the notice has to name the one that actually cut the
+        // list: "results limit reached … Use limit=N" is advice that does nothing when the
+        // byte budget is what stopped it (pi `find.ts:275-293` applies both, head-truncating
+        // the joined paths at `DEFAULT_MAX_BYTES`).
+        let (listing, byte_shown) =
+            util::truncate_head_bytes(&all[..count_shown], util::TOOL_OUTPUT_MAX_BYTES);
+        let shown = byte_shown;
+        let mut text = format!("{}\n[{} file(s)]", listing, shown);
+        if shown < total {
+            let hidden = total - shown;
+            text.push_str("\n\n[");
+            if shown < count_shown {
+                // The byte bound fired first, so raising `limit` would not show more.
+                text.push_str(&format!(
+                    "{} output limit reached: {} more file(s) match and are not shown. \
+                     Use a narrower pattern to see the rest",
+                    util::format_size(util::TOOL_OUTPUT_MAX_BYTES),
+                    hidden
+                ));
+            } else {
+                // pi says "N results limit reached. Use limit=2N …"; the count of what is
+                // missing is added because "limit reached" alone does not tell a reader what
+                // they are not seeing (the class of silent truncation G19 turned up).
+                text.push_str(&format!(
+                    "{} results limit reached: {} more file(s) match and are not shown. \
+                     Use limit={} for more, or refine pattern",
+                    limit,
+                    hidden,
+                    limit * 2
+                ));
+            }
+            text.push(']');
         }
         Ok(ToolOutput::text(text))
     }
@@ -232,6 +251,61 @@ mod tests {
         assert!(
             out.contains("2 results limit reached: 3 more file(s)"),
             "the cap is announced with what it hides: {out}"
+        );
+    }
+
+    /// G21a: the description advertises a byte budget, so it has to exist, and a result whose
+    /// size crosses it has to say *that* bound rather than the entry count — the reader's next
+    /// move differs (a narrower pattern versus `limit=2N`).
+    ///
+    /// The fixture crosses the threshold in real bytes: 400 entries of ~169 bytes each is
+    /// ~66 KiB of listing, well over [`util::TOOL_OUTPUT_MAX_BYTES`], while 400 is far under
+    /// the 1000-result default, so the count bound cannot be what fires. Asserting the real
+    /// constant also proves this is bytes and not entries.
+    #[tokio::test]
+    async fn announces_the_byte_budget_when_bytes_cut_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        // Sorted by name, so `row000` … `row399` are the order the walker produces.
+        for i in 0..400 {
+            fs::write(root.join(format!("row{i:03} {}.txt", "x".repeat(150))), "").unwrap();
+        }
+        // The fixture size is the point of this test, so it is checked at compile time:
+        // 400 entries of `rowNNN ` + 150 chars + `.txt` + newline cross the budget.
+        const _: () = assert!(400 * (150 + 9) > util::TOOL_OUTPUT_MAX_BYTES);
+        let out = run_find("*.txt", &root, None).await;
+        assert!(
+            out.contains("50.0KB output limit reached"),
+            "the byte bound must name itself: {out}"
+        );
+        assert!(
+            !out.contains("results limit reached"),
+            "400 results is under the 1000 cap, so the count bound did not fire: {out}"
+        );
+        assert!(
+            out.contains("more file(s) match and are not shown. Use a narrower pattern"),
+            "and say what to do instead of raising a limit that is not the bound: {out}"
+        );
+        // The listing itself stopped at the byte bound: the last entry cannot appear.
+        assert!(
+            !out.contains("row399 "),
+            "a byte-capped listing must not contain entries past the cap: {out}"
+        );
+    }
+
+    /// The other half of G21a's rule: a result set under the bound is returned unchanged.
+    #[tokio::test]
+    async fn under_the_byte_budget_says_nothing_about_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        for i in 0..3 {
+            fs::write(root.join(format!("small{i}.txt")), "").unwrap();
+        }
+        let out = run_find("*.txt", &root, None).await;
+        assert!(out.contains("[3 file(s)]"), "got: {out}");
+        assert!(
+            !out.contains("output limit reached"),
+            "a complete result set must not invent a bound notice: {out}"
         );
     }
 }

@@ -33,6 +33,7 @@ pub use shell::CommandVerdict;
 pub use shell::{BashArgs, BashTool};
 pub use task::{TaskArgs, TaskTool};
 pub use todo::{TodoArgs, TodoItemArgs, TodoStatus, TodoTool};
+pub use util::TOOL_OUTPUT_MAX_BYTES;
 pub use webfetch::{WebFetchArgs, WebFetchTool};
 
 /// How Layer-2 OS confinement applies to the built-ins (ADR-005).

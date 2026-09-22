@@ -1,4 +1,4 @@
-//! Search and listing tools: grep, glob, ls.
+//! Search and listing tools: grep, glob, ls, find.
 
 use std::path::Path;
 
@@ -466,6 +466,10 @@ impl Tool for GlobTool {
             .map_err(|e| ToolFailure::msg(format!("pattern error: {e}")))?;
 
         let norm = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        // The walker itself stops at `WALK_MAX_ENTRIES`, so these matches are drawn from at
+        // most that many walked files; the `.take` is the belt to that braces and is what the
+        // notice below tests against. This is a safety valve on the walk, not a result cap:
+        // a reader who hit it did not ask for too much, the directory was too large to walk.
         let matches: Vec<String> = util::walk_files(&root)
             .iter()
             .map(|p| norm(p))
@@ -476,11 +480,21 @@ impl Tool for GlobTool {
         if matches.is_empty() {
             return Ok(ToolOutput::text("no matches"));
         }
-        Ok(ToolOutput::text(format!(
-            "{}\n[{} file(s)]",
-            matches.join("\n"),
-            matches.len()
-        )))
+        let mut text = format!("{}\n[{} file(s)]", matches.join("\n"), matches.len());
+        // M117's rule, applied to the walker's own cap (G21b): a bound that changed the answer
+        // says so. Reaching the cap means the walk stopped mid-directory, so files that were
+        // never visited cannot appear however the pattern is refined — only a narrower search
+        // root brings them back. The wording says that rather than naming an internal constant,
+        // because the reader's next action is "search a subdirectory", not "raise 5000".
+        if matches.len() >= util::WALK_MAX_ENTRIES {
+            text.push_str(&format!(
+                "\n\n[{} files walked, so this list may be incomplete: the walk is a safety \
+                 bound, not a match limit, and stopping it hid whatever it never visited. \
+                 Search a subdirectory to see the rest]",
+                util::WALK_MAX_ENTRIES
+            ));
+        }
+        Ok(ToolOutput::text(text))
     }
 }
 
@@ -493,8 +507,9 @@ pub struct LsArgs {
     #[serde(default)]
     pub path: Option<String>,
     /// Maximum number of entries to return (default: 500, pi `DEFAULT_LIMIT`). When the
-    /// limit is reached the result says how many entries were held back and what to pass
-    /// for more.
+    /// limit is reached the result says how many entries were held back — and names the byte
+    /// budget instead when that is what cut the listing, because raising this one would not
+    /// then show more.
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -590,8 +605,26 @@ impl Tool for LsTool {
         if rows.is_empty() {
             return Ok(ToolOutput::text("(empty directory)"));
         }
-        let mut text = rows.join("\n");
-        if limit_reached {
+        // pi `ls.ts:139-153`: after the entry cap, the joined listing goes through
+        // `truncateHead` at `DEFAULT_MAX_BYTES`; the entry cap is the line cap, so the byte
+        // budget is the only other bound. It is a real one — names and sizes are the payload,
+        // and 500 of them are not bounded by any file size.
+        let (listing, shown) = util::truncate_head_bytes(&rows, util::TOOL_OUTPUT_MAX_BYTES);
+        let bytes_cut = shown < rows.len();
+        let mut text = listing;
+        // One bound is named, the one that actually stopped the listing: telling a reader the
+        // entry cap was reached, when bytes cut inside it, would send them to raise a limit
+        // that is not the binding one (`ls.ts:146-151` names both; this names the true one).
+        if bytes_cut {
+            text.push_str(&format!(
+                "\n\n[{} output limit reached: {} of the {} entries in this directory are \
+                 shown, {} more are not. List a subdirectory to see them]",
+                util::format_size(util::TOOL_OUTPUT_MAX_BYTES),
+                shown,
+                total,
+                total - shown
+            ));
+        } else if limit_reached {
             // pi says "N entries limit reached. Use limit=2N for more" (`ls.ts:146-148`); the
             // count of what is missing is added because "limit reached" alone does not tell a
             // reader what they are not seeing.

@@ -18,6 +18,14 @@ pub const MAX_TOOL_OUTPUT_LINES: usize = 2000;
 pub const MAX_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 /// Walker stops after this many files.
 pub const WALK_MAX_ENTRIES: usize = 5000;
+/// Byte cap for listing-tool results (`find`, `ls`).
+///
+/// This is pi's `DEFAULT_MAX_BYTES` (`tools/truncate.ts:12`), applied by its `find` and `ls`
+/// through `truncateHead` (`find.ts:277`, `ls.ts:141`). It is *not*
+/// [`MAX_TOOL_OUTPUT_BYTES`], which is the head+tail budget for spilling a command's or a
+/// fetch's whole output; a file listing has no useful tail to keep, so it is cut from the
+/// front only and is never spilled.
+pub const TOOL_OUTPUT_MAX_BYTES: usize = 50 * 1024;
 /// Walker never descends deeper than this.
 pub const WALK_MAX_DEPTH: usize = 16;
 
@@ -426,6 +434,30 @@ pub fn format_size(bytes: usize) -> String {
     } else {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     }
+}
+
+/// Keep whole lines from the front until the next one would pass `max_bytes`.
+///
+/// pi's `truncateHead` with `maxLines: Number.MAX_SAFE_INTEGER` — the shape both its `find`
+/// and its `ls` use, where the entry count is capped separately and only the byte budget is
+/// left to enforce. Returns the kept text and the lines it kept, so a caller can say how many
+/// entries the byte bound dropped without counting again. A line is never cut in half: a
+/// single line larger than the whole budget yields an empty result rather than a prefix
+/// (`find` and `ls` build one line per entry, so this is unreachable for paths that fit
+/// `PATH_MAX`, and safer than emitting a mangled path if it ever is not).
+pub fn truncate_head_bytes(lines: &[String], max_bytes: usize) -> (String, usize) {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut bytes = 0usize;
+    for line in lines {
+        // The `+1` is the newline a join re-adds, exactly as pi counts it (`truncate.ts:128`).
+        let cost = line.len() + 1;
+        if bytes + cost > max_bytes {
+            break;
+        }
+        bytes += cost;
+        kept.push(line);
+    }
+    (kept.join("\n"), kept.len())
 }
 
 /// Read one page of a text file with pi's `read`-tool semantics (M95).
@@ -967,6 +999,29 @@ mod tests {
             names.contains(&"keep.log".to_string()),
             "a negated pattern must re-include: {names:?}"
         );
+    }
+
+    /// G21: the byte budget shared by `find` and `ls`, tested on its own so both tools'
+    /// notices rest on one proven unit. The cut is bytes, not entries: 4 lines of 30 bytes do
+    /// not fit 100 bytes, and 3 lines of 30 do.
+    #[test]
+    fn head_bytes_keeps_only_whole_lines_that_fit() {
+        let line30 = "y".repeat(30);
+        let four = vec![line30.clone(); 4];
+        let (kept, shown) = truncate_head_bytes(&four, 100);
+        assert_eq!(
+            shown, 3,
+            "4 lines of 30 bytes + newlines exceed 100: {kept}"
+        );
+        assert_eq!(kept.lines().count(), 3);
+        assert!(!kept.ends_with('\n'), "the join adds no trailing newline");
+
+        let (all, shown_all) = truncate_head_bytes(&four, 4 * 31);
+        assert_eq!(shown_all, 4, "exactly the budget keeps everything: {all}");
+
+        // A first line larger than the whole budget yields nothing rather than a cut path.
+        let (none, shown_none) = truncate_head_bytes(&[line30], 10);
+        assert_eq!((none.as_str(), shown_none), ("", 0));
     }
 
     #[test]
