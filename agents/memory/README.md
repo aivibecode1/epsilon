@@ -66,11 +66,19 @@ not themselves trigger runtime compression.
    resumed session's model. **The consumer is the missing half**; it was deliberately not
    invented. Note for the next agent: the queue item that said "map these" was stale for two
    rounds — check `git blame` before writing code against a note.
-4. **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
+4. **G20's two real defects are in flight this round (delegated)**: `find` truncates silently
+   where pi announces the cap, and `ls` has no `limit` where pi's takes one and reports it.
+   The rest of G20 — Epsilon registering twelve tools where pi's default active set is four —
+   is a **deliberate product divergence**, recorded in `audit/11` so nobody "fixes" it by
+   removing capability to match a count.
+5. **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
    refused at line 2 (`UnknownLineShape`); the v1 path now heals correctly. Plan:
    `audit/evidence/session-format-gap-plan.md`, which also argues import-as-copy.
-5. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
+6. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
    `/tree` is an alias for the active-branch picker, `/fork` is a raw `fs::copy`.
+7. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
+   shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision diagnostic. Needs a
+   design decision (which root wins, what the diagnostic says), not just a patch.
 6. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
    shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision diagnostic.
 7. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
