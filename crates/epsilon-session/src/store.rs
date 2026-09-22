@@ -1,5 +1,6 @@
 //! Session file store: append, branch navigation, and derived model view.
 
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -403,7 +404,23 @@ impl SessionStore {
 
     /// Rewrite the file with the migrated entries plus a current header
     /// (atomic tmp+rename, same discipline as the auth store).
+    ///
+    /// **A conversion leaves the original beside the file**, at the session path with
+    /// `.pre-epsilon` appended (`s.jsonl` → `s.jsonl.pre-epsilon`). A pre-v2 file is
+    /// often the only copy of that conversation in a format its own tool can still read
+    /// — converting it in place is correct and, without this, unrecoverable. The copy is
+    /// written once and never overwritten: an existing `.pre-epsilon` is the true
+    /// original from an earlier conversion, so a second pass over an already-converted
+    /// file must not replace it with a converted copy. A file this build can already read
+    /// converts nothing, so it grows no copy — the ordinary path stays clean.
+    ///
+    /// The copy is taken *after* the new content is complete in the temp file and
+    /// *before* the rename, so a failure on either side leaves nothing behind; a failed
+    /// copy fails the migration rather than converting a file without a way back.
     pub fn persist_migration(&mut self) -> Result<(), StoreError> {
+        // Only a file that was actually migrated has an original worth keeping: this is the
+        // same flag that says the entries in hand are healed ones rather than the file's own.
+        let converting = self.migrated;
         let entries = self.read_all()?;
         let header = self.header.clone().unwrap_or_else(|| SessionHeader {
             kind: SessionHeaderKind::Session,
@@ -412,6 +429,7 @@ impl SessionStore {
             timestamp: iso_now(),
             cwd: String::new(),
             parent_session: None,
+            preserved: BTreeMap::new(),
         });
         let mut header = header;
         header.version = Some(CURRENT_SESSION_VERSION);
@@ -425,6 +443,14 @@ impl SessionStore {
                 out.push('\n');
             }
             std::fs::write(&tmp, out)?;
+        }
+        // Keep the previous bytes before the conversion lands. Skipped when nothing is being
+        // converted, so a current file never grows a sibling it has no use for.
+        if converting && let Err(e) = keep_original_beside(&self.path) {
+            // Fail rather than convert without a way back. The temp file is this call's own
+            // scratch and must not survive the error (the fork's rule).
+            let _ = std::fs::remove_file(&tmp);
+            return Err(StoreError::Io(e));
         }
         std::fs::rename(&tmp, &self.path)?;
         self.file = OpenOptions::new()
@@ -454,6 +480,7 @@ impl SessionStore {
             timestamp: iso_now(),
             cwd: cwd.to_string_lossy().into_owned(),
             parent_session: parent_session.map(str::to_string),
+            preserved: BTreeMap::new(),
         };
         let mut line = serde_json::to_string(&header).map_err(std::io::Error::other)?;
         line.push('\n');
@@ -1106,6 +1133,10 @@ impl SessionStore {
             timestamp: timestamp.clone(),
             cwd: cwd.clone(),
             parent_session: Some(self.path.to_string_lossy().into_owned()),
+            // A fork is a NEW session, so it inherits none of the source's unmodelled
+            // header fields: carrying another session's `provider`/`branchedFrom` into a
+            // file with a fresh id would describe a session that is not this one.
+            preserved: BTreeMap::new(),
         };
         let dest = dest_dir.join(format!(
             "{}_{}.jsonl",
@@ -1285,6 +1316,37 @@ fn summary_message(tag: &str, text: String) -> Message {
             text: format!("<{tag}>\n{text}\n</{tag}>"),
         }],
     })
+}
+
+/// Suffix of the copy [`persist_migration`](SessionStore::persist_migration) keeps of a
+/// converted file, appended to the whole name so the original's own extension survives.
+const PRE_MIGRATION_SUFFIX: &str = ".pre-epsilon";
+
+/// The path [`SessionStore::persist_migration`] keeps this file's previous bytes at.
+///
+/// Public because the *caller* has to be able to name it: a conversion rewrites the user's
+/// file in place, and a message that says "migrated" without saying where the old bytes went
+/// leaves them to find out by looking. The rule lives here rather than in each frontend so
+/// the name a message prints is the name the conversion wrote — a duplicated suffix is how
+/// the two drift apart.
+pub fn original_backup_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(PRE_MIGRATION_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// Copy `path` to [`original_backup_path`], once.
+///
+/// No-op when the copy is already there: it is the true original from an earlier
+/// conversion, and a second migration pass over an already-converted file must not
+/// replace it with a converted copy (which would leave no way back at all). The copy is
+/// never treated as scratch — a name already on disk is left exactly as it is.
+fn keep_original_beside(path: &Path) -> std::io::Result<()> {
+    let backup = original_backup_path(path);
+    if backup.exists() {
+        return Ok(());
+    }
+    std::fs::copy(path, &backup).map(|_| ())
 }
 
 /// ISO-8601 UTC timestamp for new headers (pi's `new Date().toISOString()`).

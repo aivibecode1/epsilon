@@ -1634,7 +1634,15 @@ async fn build_runtime(
         .map_err(|e| format!("open session store: {e}"))?;
     if store.migrated() {
         match store.persist_migration() {
-            Ok(()) => eprintln!("migrated session store to current version"),
+            // Name the backup. Converting an older session rewrites it in place, and the one
+            // thing a user needs to know when that happens to a file another tool wrote is
+            // where the previous bytes went — a `.pre-epsilon` sibling, kept once and never
+            // overwritten. Silence here would be the same class of problem the migration
+            // itself had: something changed the user's file and did not say so.
+            Ok(()) => eprintln!(
+                "migrated session store to current version (previous bytes kept at {})",
+                epsilon_session::original_backup_path(store.path()).display()
+            ),
             Err(e) => eprintln!("migration warning (continuing): {e}"),
         }
     }
@@ -1686,7 +1694,13 @@ async fn build_runtime(
         // it, so the repair pass sees healed entries, never legacy shapes.
         if restored.migrated() {
             match restored.persist_migration() {
-                Ok(()) => eprintln!("migrated {} to current version", rp.display()),
+                // The resume path is where a *foreign* file is most likely to arrive, so the
+                // message names the backup too — see the note on the other call site.
+                Ok(()) => eprintln!(
+                    "migrated {} to current version (previous bytes kept at {})",
+                    rp.display(),
+                    epsilon_session::original_backup_path(restored.path()).display()
+                ),
                 Err(e) => eprintln!("migration warning (continuing): {e}"),
             }
         }

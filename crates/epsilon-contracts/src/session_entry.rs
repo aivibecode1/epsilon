@@ -5,6 +5,8 @@
 //! message entries (Hermes' replay-fidelity invariant). The human transcript is the file;
 //! model-visible history is a *derived view* that shadows compacted ranges.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::agent_event::TurnEndReason;
@@ -59,6 +61,26 @@ pub struct SessionHeader {
     /// (M58). Both remain plain strings so v1/v2 files and both uses stay readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session: Option<String>,
+    /// Every header field this build does not name, kept so a rewritten header still
+    /// carries it — the same rule [`EntryKind::Unknown`] applies to an entry's payload.
+    ///
+    /// A header is *content*: pi's carries `provider`, `modelId`, `thinkingLevel` and
+    /// `branchedFrom`, none of which this build models, and a rewrite that dropped them
+    /// turned a pi session into one pi reads differently — or not at all. Dropping a
+    /// field because we have no name for it is the defect; keeping the value costs a
+    /// map and makes the round trip whole. Nothing here is ever *applied* (this build
+    /// still reads only the fields above), so a preserved field is inert by design.
+    ///
+    /// **Key order is not preserved** — `serde_json`'s map is sorted — so a rewritten
+    /// header is equal as JSON, not equal as bytes. That is the honest limit of
+    /// preservation without a key-order-preserving map in the workspace, and JSON
+    /// object order carries no meaning: the reader sees the same object.
+    ///
+    /// An empty map never appears in a written line: a current header must keep the exact
+    /// shape this build wrote before this field existed (no stray `"preserved":{}`), and
+    /// `tests/` in this crate asserts that byte for byte.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub preserved: BTreeMap<String, serde_json::Value>,
 }
 
 /// Discriminator for [`SessionHeader`] lines.
@@ -475,6 +497,7 @@ mod tests {
             timestamp: "2026-09-04T00:00:00.000Z".into(),
             cwd: "/tmp".into(),
             parent_session: None,
+            preserved: BTreeMap::new(),
         };
         let line = serde_json::to_string(&header).unwrap();
         assert!(line.contains("\"type\":\"session\""));
@@ -497,6 +520,77 @@ mod tests {
             SessionLine::parse(v1).unwrap().unwrap(),
             SessionLine::Header(_)
         ));
+    }
+
+    /// A pi header round-trips with every field this build has no name for still in it.
+    ///
+    /// Measured defect (G19, part 2): rewriting a pi session file turned pi's header into
+    /// Epsilon's, and `provider`, `modelId`, `thinkingLevel` and `branchedFrom` were gone.
+    /// The assertion that matters is the rewritten line against the original **JSON object**:
+    /// a header this build cannot fully interpret must come back whole.
+    #[test]
+    fn a_pi_header_keeps_the_fields_this_build_does_not_model() {
+        let original = r#"{"type":"session","id":"ses_pi","timestamp":"2025-12-09T00:53:29.825Z","cwd":"/Users/badlogic/workspaces/pi-mono","provider":"anthropic","modelId":"claude-opus-4-5","thinkingLevel":"off","branchedFrom":"ses_earlier"}"#;
+        let SessionLine::Header(header) = SessionLine::parse(original).unwrap().unwrap() else {
+            panic!("pi's header line must parse as a header");
+        };
+        assert_eq!(header.version, None, "pi's header carries no version field");
+        assert_eq!(header.id, "ses_pi");
+        assert_eq!(header.cwd, "/Users/badlogic/workspaces/pi-mono");
+        assert_eq!(
+            header.preserved.len(),
+            4,
+            "every unmodelled field landed in the map, and nothing else: {:?}",
+            header.preserved
+        );
+        assert_eq!(
+            header.preserved["modelId"],
+            serde_json::json!("claude-opus-4-5")
+        );
+
+        let rewritten: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&header).unwrap()).unwrap();
+        assert_eq!(
+            rewritten,
+            serde_json::from_str::<serde_json::Value>(original).unwrap(),
+            "the header must keep the fields this build does not understand"
+        );
+    }
+
+    /// A header this build writes is unchanged in shape: known fields only, no `{}` left by
+    /// the preservation map, and no `"version":null` when there is no version to write.
+    ///
+    /// This is what confirms the serde detail rather than assuming it: a struct with a
+    /// flattened map serializes through a flat-map serializer, so `skip_serializing_if` on
+    /// the neighbouring fields and on the map itself has to actually be honoured — the two
+    /// assertions below are that check, on the exact line bytes.
+    #[test]
+    fn a_header_this_build_writes_is_unchanged_in_shape() {
+        let header = SessionHeader {
+            kind: SessionHeaderKind::Session,
+            version: Some(CURRENT_SESSION_VERSION),
+            id: "ses_x".into(),
+            timestamp: "1".into(),
+            cwd: "/tmp".into(),
+            parent_session: None,
+            preserved: BTreeMap::new(),
+        };
+        let line = serde_json::to_string(&header).unwrap();
+        assert_eq!(
+            line, r#"{"type":"session","version":3,"id":"ses_x","timestamp":"1","cwd":"/tmp"}"#,
+            "an empty preservation map must not add a `{{}}`, and an absent parent_session \
+             must stay absent"
+        );
+
+        let v1 = SessionHeader {
+            version: None,
+            ..header
+        };
+        let line = serde_json::to_string(&v1).unwrap();
+        assert_eq!(
+            line, r#"{"type":"session","id":"ses_x","timestamp":"1","cwd":"/tmp"}"#,
+            "a field that is `None` must still be skipped, not written as null"
+        );
     }
 
     #[test]

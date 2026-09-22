@@ -957,6 +957,210 @@ fn a_pi_shaped_file_round_trips_through_persist_migration() {
     );
 }
 
+/// A pi header survives the conversion, on disk, in the rewritten first line.
+///
+/// The other half of part 2: the contracts test proves the type round-trips, and this proves the
+/// *conversion path* uses it — a pi session's `provider`, `modelId`, `thinkingLevel` and
+/// `branchedFrom` are still in the file after `persist_migration`, which is where they were
+/// measured going missing.
+#[test]
+fn converting_a_pi_file_keeps_its_header_fields_on_disk() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("pi-headed.jsonl");
+    let header = r#"{"type":"session","id":"ses_pi","timestamp":"2025-12-09T00:53:29.825Z","cwd":"/tmp/pi","provider":"anthropic","modelId":"claude-opus-4-5","thinkingLevel":"off","branchedFrom":"ses_earlier"}"#;
+    std::fs::write(
+        &path,
+        format!("{header}\n{PI_USER_LINE}\n{PI_ASSISTANT_LINE}\n"),
+    )
+    .expect("write the pi-headed session");
+
+    let mut store = SessionStore::open(&path).expect("open");
+    assert!(store.migrated(), "v1 entries migrate");
+    assert_eq!(
+        store.header().map(|h| h.preserved.len()).unwrap_or(0),
+        4,
+        "the header this build read carries the fields it does not model"
+    );
+    store.persist_migration().expect("convert");
+    drop(store);
+
+    let converted = std::fs::read_to_string(&path).expect("the converted file");
+    let first = converted.lines().next().expect("the header line");
+    let rewritten: serde_json::Value = serde_json::from_str(first).expect("the rewritten header");
+    // The one difference the conversion is *allowed* to make is the version it stamps; every
+    // other field — named or not — must be pi's.
+    let mut expected: serde_json::Value = serde_json::from_str(header).unwrap();
+    expected["version"] = serde_json::json!(CURRENT_SESSION_VERSION);
+    assert_eq!(
+        rewritten, expected,
+        "the rewritten header is the one pi wrote, plus `version`: {first}"
+    );
+    assert_eq!(rewritten["modelId"], serde_json::json!("claude-opus-4-5"));
+    assert_eq!(rewritten["provider"], serde_json::json!("anthropic"));
+    assert_eq!(rewritten["thinkingLevel"], serde_json::json!("off"));
+    assert_eq!(rewritten["branchedFrom"], serde_json::json!("ses_earlier"));
+    assert_eq!(
+        converted.lines().count(),
+        3,
+        "a header plus the two entries: {converted:?}"
+    );
+}
+
+// ---- the conversion keeps the original beside the file ---------------------------------------
+
+/// A pi-shaped session file and the exact bytes it was written with.
+///
+/// Returned together because every test here compares the copy against the *original* bytes,
+/// not against a re-serialization of them: "the backup holds the original" is a claim about
+/// bytes, and the converted file is always a different byte string.
+fn write_pi_shaped_file(dir: &tempfile::TempDir, name: &str) -> (std::path::PathBuf, String) {
+    let path = dir.path().join(name);
+    let body = format!("{PI_USER_LINE}\n{PI_ASSISTANT_LINE}\n");
+    std::fs::write(&path, &body).expect("write the pi-shaped session");
+    (path, body)
+}
+
+/// The copy's path: the session path with `.pre-epsilon` appended.
+fn pre_epsilon_of(path: &std::path::Path) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".pre-epsilon");
+    std::path::PathBuf::from(name)
+}
+
+/// Converting a pi-shaped file leaves the original bytes beside it.
+///
+/// The conversion is right and the rewrite is what makes the file usable at all; what it must
+/// not do is leave the only copy of a pi conversation in a shape pi can no longer read. This is
+/// the assertion that the way back exists, byte for byte — `s.jsonl.pre-epsilon` is the file as
+/// pi wrote it, and the file itself is the converted one.
+#[test]
+fn a_converted_file_keeps_the_original_bytes_beside_it() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let (path, original) = write_pi_shaped_file(&dir, "s.jsonl");
+
+    let mut store = SessionStore::open(&path).expect("open the pi-shaped file");
+    assert!(
+        store.migrated(),
+        "a pi-shaped file is legacy and must migrate"
+    );
+    store.persist_migration().expect("convert the file");
+    drop(store); // release the write lease before reading again (M61)
+
+    let backup = pre_epsilon_of(&path);
+    assert_eq!(
+        std::fs::read(&backup).expect("the conversion must leave a copy beside the file"),
+        original.as_bytes(),
+        "the copy is the file as it was written, not the converted one"
+    );
+    let converted = std::fs::read_to_string(&path).expect("the converted file");
+    assert_ne!(
+        converted, original,
+        "…and the file itself really was converted, so the assertion above is not degenerate"
+    );
+    assert!(
+        converted.contains("\"version\":3"),
+        "the converted file is current: {converted:?}"
+    );
+}
+
+/// A second conversion never replaces the copy that is already there.
+///
+/// The reason is the whole point of "never overwrite": the first pass's copy is the true
+/// original, while a second pass's would be a copy of an already-converted file. Replacing it
+/// would destroy the only way back in the act of appearing to protect it.
+#[test]
+fn an_existing_backup_is_never_replaced_by_a_second_conversion() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let (path, original) = write_pi_shaped_file(&dir, "s.jsonl");
+
+    let mut store = SessionStore::open(&path).expect("open");
+    store.persist_migration().expect("first conversion");
+    drop(store);
+    let backup = pre_epsilon_of(&path);
+    assert_eq!(
+        std::fs::read(&backup).expect("copy"),
+        original.as_bytes(),
+        "precondition: the first conversion wrote the original"
+    );
+
+    // Stand in for a copy from before that first pass — whatever is already at that path is
+    // the original, and nothing here may treat it as scratch.
+    let sentinel = "the original from an earlier conversion\n";
+    std::fs::write(&backup, sentinel).expect("write the sentinel");
+
+    // A second pass over the file the first pass produced: the version goes backwards by hand,
+    // which is the only way a current file is ever migrated again.
+    let converted = std::fs::read_to_string(&path).expect("read the converted file");
+    let older = converted.replacen("\"version\":3", "\"version\":2", 1);
+    std::fs::write(&path, &older).expect("rewrite the header as v2");
+    let mut again = SessionStore::open(&path).expect("reopen");
+    assert!(again.migrated(), "a v2 header migrates forward");
+    again.persist_migration().expect("second conversion");
+    drop(again);
+
+    assert_eq!(
+        std::fs::read_to_string(&backup).expect("copy"),
+        sentinel,
+        "an existing `.pre-epsilon` is the true original and is left exactly as it is"
+    );
+    assert_ne!(
+        std::fs::read(&backup).expect("copy"),
+        older.as_bytes(),
+        "and it was not replaced by a copy of the already-converted file"
+    );
+}
+
+/// A file that needs no migration leaves no copy behind.
+///
+/// The copy exists because conversion destroys a foreign file's only readable copy. A current
+/// session file has no such problem, so the ordinary path leaves no `.pre-epsilon` behind —
+/// including when a caller asks for the rewrite anyway.
+#[test]
+fn a_file_that_needs_no_migration_leaves_no_backup() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open_in(&path, dir.path()).expect("open");
+    store
+        .append(EntryKind::Message {
+            message: user_msg("current session"),
+            api_request_sha256: None,
+        })
+        .expect("append");
+    assert!(!store.migrated(), "a file this build wrote is current");
+    drop(store);
+
+    let mut reopened = SessionStore::open_in(&path, dir.path()).expect("reopen");
+    assert!(!reopened.migrated());
+    let before = std::fs::read(&path).expect("read the current file");
+    // Even a caller that asks for the rewrite anyway gets no copy: nothing was converted, so
+    // there is no original to preserve, and a `.pre-epsilon` beside every session file would
+    // be noise (the copy is for a file this build had to change to read).
+    reopened
+        .persist_migration()
+        .expect("rewrite a current file");
+    drop(reopened);
+    assert_eq!(
+        std::fs::read(&path).expect("read the file again"),
+        before,
+        "a current file rewrites to the same bytes"
+    );
+
+    assert!(
+        !pre_epsilon_of(&path).exists(),
+        "a current file must not grow a `.pre-epsilon` copy"
+    );
+    assert_eq!(
+        std::fs::read_dir(dir.path())
+            .expect("list the session directory")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("pre-epsilon"))
+            .count(),
+        0,
+        "nothing conversion-shaped is left in the directory"
+    );
+}
+
 #[test]
 fn a_session_file_has_one_writer_at_a_time() {
     let dir = tempfile::tempdir().expect("tmp");
@@ -1713,6 +1917,7 @@ fn fork_branch_at_writes_only_the_selected_ancestry_with_fresh_identity() {
             timestamp: "2026-09-18T00-00-00-000Z".into(),
             cwd: source_cwd.to_string_lossy().into_owned(),
             parent_session: None,
+            preserved: std::collections::BTreeMap::new(),
         },
         &source,
     );
@@ -1860,6 +2065,7 @@ fn fork_refuses_an_ancestry_that_does_not_reach_a_root() {
             timestamp: "1".into(),
             cwd: dir.path().to_string_lossy().into_owned(),
             parent_session: None,
+            preserved: std::collections::BTreeMap::new(),
         },
         &[
             message_entry("ent_root", 0, None, 10, user_msg("root")),
@@ -1914,6 +2120,7 @@ fn a_parent_cycle_terminates_the_tolerant_walk_and_is_refused_by_the_fork() {
             timestamp: "1".into(),
             cwd: dir.path().to_string_lossy().into_owned(),
             parent_session: None,
+            preserved: std::collections::BTreeMap::new(),
         },
         &[
             message_entry("ent_a", 0, Some("ent_b"), 10, user_msg("a")),
@@ -1983,6 +2190,7 @@ fn a_seq_that_disagrees_with_line_order_is_a_chain_break_not_a_panic() {
         timestamp: "1".into(),
         cwd: dir.path().to_string_lossy().into_owned(),
         parent_session: None,
+        preserved: std::collections::BTreeMap::new(),
     };
 
     // (a) The mismatched `seq` points PAST the end of the file: ent_b claims seq 7 while
@@ -2077,6 +2285,7 @@ fn a_torn_first_entry_does_not_take_the_header_with_it() {
         timestamp: "2026-09-20T00:00:00Z".to_string(),
         cwd: dir.path().to_string_lossy().into_owned(),
         parent_session: Some("ses_parent".to_string()),
+        preserved: std::collections::BTreeMap::new(),
     };
     let mut body = serde_json::to_string(&header).unwrap();
     body.push('\n');

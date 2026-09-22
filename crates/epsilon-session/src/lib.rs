@@ -16,4 +16,4 @@ mod store;
 pub use discover::{SessionSummary, latest_session, list_sessions, summarize};
 pub use lease::{LeaseOutcome, SessionLease};
 pub use search::{SearchOptions, SessionSearchHit, search_session};
-pub use store::{LineDiagnosis, ModelViewEntry, SessionStore, StoreError};
+pub use store::{LineDiagnosis, ModelViewEntry, SessionStore, StoreError, original_backup_path};
