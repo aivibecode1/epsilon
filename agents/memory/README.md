@@ -59,10 +59,13 @@ not themselves trigger runtime compression.
    import-as-copy rule would make `--resume` produce a new file and leave the original
    untouched — a real UX question (which file am I in now?) that should be decided, not
    drifted into.
-3. **Surface the preserved entries.** `SessionStore::preserved_unknown()` exists and is
-   tested; nothing prints it, so a user opening a session with a foreign entry still learns
-   nothing. Wire it where the repair report goes (the CLI resume path and the TUI) — that is
-   what makes preservation *loud* rather than merely safe.
+3. **Nothing CONSUMES the typed model-switch entries.** M116 made `model_change` and
+   `thinking_level_change` heal faithfully (a provider-less line falls back to `Custom` rather
+   than lying with `""`), and both are typed, durable and reportable — but `model_view()` and
+   `restore_history` ignore them, so a pi session's model switch still does not change the
+   resumed session's model. **The consumer is the missing half**; it was deliberately not
+   invented. Note for the next agent: the queue item that said "map these" was stale for two
+   rounds — check `git blame` before writing code against a note.
 4. **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
    refused at line 2 (`UnknownLineShape`); the v1 path now heals correctly. Plan:
    `audit/evidence/session-format-gap-plan.md`, which also argues import-as-copy.
@@ -77,7 +80,7 @@ not themselves trigger runtime compression.
    platform call.
 9. **A replaced approval dialog is still silent** (`app/event.rs:191-197`), batched with an
    ask FIFO so it costs one battery.
-10. **`model_change`/`thinking_level_change` heal into `Custom`** — preserved, not applied, so
+10. **`label`/`session_info` heal into `Custom`** — preserved, not applied: no pi fixture shows their v1 spelling, and both carry id references a positional v1 line may not resolve.
     a pi session's model switch has no effect when resumed. Small mapping (`provider`/
     `modelId`, `level`), deliberately left rather than half-done.
 11. Then the port's remaining gaps: G2 (resolved containment) and the
