@@ -46,56 +46,41 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Round closed 2026-09-22 (eighth round of the day)** — M114 (`d54dfb8`): the pi legacy
-   healer reads roles, the content array and both timestamp spellings, and preserves what it
-   cannot map. Verified on pi's own fixture: the 668-character prompt that came back empty
-   before now comes back whole (battery `m114a`, 1,043 tests). Global `epsilon.exe`
-   reinstalled. Cleaned afterwards.
-2. **G19 parts 2 and 3 are next** (both recorded in `audit/11`): the **header** drops fields
-   it does not model (`provider`/`modelId`/`thinkingLevel`/`branchedFrom` vanish on a
-   rewrite — M113's preservation rule applied to the header), and **conversion happens in
-   place on the resume path**, which contradicts the importer plan's own import-as-copy rule.
-   Until then `--resume` on a pi session is *correct but not safe*: faithful transcript,
-   original file gone. `model_change`/`thinking_level_change` also heal into `Custom`
-   (preserved, not applied) — small mapping, deliberately left.
-2. **G19 (P0) — reading a pi session empties it, then rewrites the file in place.** Found by
-   *running* the path: `epsilon --resume <pi fixture> --print hi` reports "resumed 369
-   entries", exits 0, and line 2's 668-character prompt is now 0 characters.
-   `heal_legacy_line` reads `content` with `as_str()` (pi sends an array of parts) and
-   `unwrap_or("")` empties it, ignores `message.role` (every message becomes a user turn),
-   and reads `timestamp` as a number (pi writes ISO, so everything is re-dated to now). Full
-   evidence: `audit/evidence/pi-import-empties-messages-2026-09-22.md`; audit row G19.
-   **Fix in flight this round** (delegated): read the role, convert the content array,
-   accept both timestamp spellings, preserve what it cannot interpret. The *write-in-place*
-   half is a separate decision — the importer plan already says import-as-copy, never
-   in-place, and today `--resume` on a foreign file converts and writes it.
-3. **The port's importer gap (slice 4B) is smaller than the plan said.** pi's shipped
-   fixtures are v1-shaped and Epsilon's migration path *already reads them* (369 and 914
-   entries) — the refusal the re-check described applies to pi *v2* files (entries carrying
-   `id`/`parentId`), which was not tested. The plan:
-   `audit/evidence/session-format-gap-plan.md`.
+1. **Round closed 2026-09-22 (eighth round)** — M114 (`d54dfb8`): the pi legacy healer reads
+   roles, the content array and both timestamp spellings, and preserves what it cannot map.
+   Verified on pi's own fixture (the 668-character prompt that came back empty now comes back
+   whole). Battery `m114a`, 1,043 tests. Global `epsilon.exe` reinstalled; disk cleaned.
+2. **In flight this round (delegated): G19 parts 2 and 3.** Part 2 — `SessionHeader` drops
+   fields it does not model, so a rewrite loses `provider`/`modelId`/`thinkingLevel`/
+   `branchedFrom`; fix is the M113 preservation rule applied to the header (a flattened map,
+   with the key-order caveat documented). Part 3 — `persist_migration` rewrites in place with
+   no way back; fix is a one-time `.pre-epsilon` backup beside the file, never overwriting an
+   existing one. Both recorded in `audit/11`'s G19 row.
 3. **Surface the preserved entries.** `SessionStore::preserved_unknown()` exists and is
    tested; nothing prints it, so a user opening a session with a foreign entry still learns
-   nothing. Wire it where the repair report is reported (the CLI resume path and the TUI),
-   which is what makes preservation *loud* rather than merely safe.
-3. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
+   nothing. Wire it where the repair report goes (the CLI resume path and the TUI) — that is
+   what makes preservation *loud* rather than merely safe.
+4. **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
+   refused at line 2 (`UnknownLineShape`); the v1 path now heals correctly. Plan:
+   `audit/evidence/session-format-gap-plan.md`, which also argues import-as-copy.
+5. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
    `/tree` is an alias for the active-branch picker, `/fork` is a raw `fs::copy`.
-4. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
+6. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
    shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision diagnostic.
-3. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
+7. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
    leaves memory and the model view divergent with no signal.
-4. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`):
-   reproduced with the console probe; the fix is a design decision because a pid liveness
-   check wants a platform call.
-5. **A replaced approval dialog is still silent** (`app/event.rs:191-197`), batched with an
+8. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`): reproduced
+   with the console probe; the fix is a design decision because a pid liveness check wants a
+   platform call.
+9. **A replaced approval dialog is still silent** (`app/event.rs:191-197`), batched with an
    ask FIFO so it costs one battery.
-6. **A known `kind.type` with an unreadable body is diagnosed as an unknown type** (M108's
-   Limits): `UnknownEntryType` should mean "genuinely unrecognized", with a separate
-   `MalformedEntry` for the other case.
-7. Then the port's remaining gaps: G2 (resolved containment), SESSION-01b (`/tree`, `/fork`),
-   and the `audit/03-port-plan.md` parity rows.
-8. The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB timeline
-   read by nobody, and `docs/README.md` needs to be the map a newcomer actually follows.
+10. **`model_change`/`thinking_level_change` heal into `Custom`** — preserved, not applied, so
+    a pi session's model switch has no effect when resumed. Small mapping (`provider`/
+    `modelId`, `level`), deliberately left rather than half-done.
+11. Then the port's remaining gaps: G2 (resolved containment) and the
+    `audit/03-port-plan.md` parity rows the re-check ranked.
+12. The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB timeline read
+    by nobody, and `docs/README.md` needs to be the map a newcomer actually follows.
 
 
 
