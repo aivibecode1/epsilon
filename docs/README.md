@@ -62,6 +62,12 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+- [M115 — converting an older session keeps its header and its previous bytes](milestones/M115-header-and-backup.md):
+  the other two halves of G19. A rewrite used to drop every header field this build does not
+  name (`provider`, `modelId`, `thinkingLevel`, `branchedFrom`) — the M113 preservation rule,
+  one layer up — and it rewrote the user's file with no way back. Now the header keeps what it
+  does not model, and the previous bytes are copied to a `.pre-epsilon` sibling once, never
+  overwritten, with the path named in the message.
 - [M114 — the healer that read pi's messages and emptied them](milestones/M114-pi-legacy-healing.md):
   the migration path that makes pi's session files readable read `message.content` as a
   string while pi writes an **array of parts**, so every message came back empty, every role
