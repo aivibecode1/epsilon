@@ -53,6 +53,16 @@ End-to-end, on a real pi file built from pi's own shipped fixture by adding the 
 
 ## Limits
 
+- **One number in the end-to-end comparison is unexplained.** Counting roles in the imported
+  file reconciles exactly with the resume output (88 user + 453 assistant + 391 tool results =
+  932, and `--resume` reports "resumed 932 entries"), and the first user message round-trips
+  character for character. But counting the *source* the same way gives 88 + 453 + **373** tool
+  results — 18 fewer — and the arithmetic over the whole file (1,018 entries imported, 1,019
+  lines) does not tie out with the per-kind counts either. Two candidate explanations, neither
+  checked: my source-side count used `ConvertFrom-Json` per line and may have skipped lines it
+  could not parse, and abandoned branches may be counted on one side and not the other. **This
+  is a measurement gap in the evidence, not a known defect** — but it is recorded rather than
+  smoothed over, because "the numbers roughly match" is how a real 18-entry loss would hide.
 - **Branch selection is not audited here.** The plan asked for a decision about sibling branches
   (which chain becomes the imported session when two entries share a parent) and this run does
   not exercise a branched file — pi's fixture is linear. Whatever rule the importer uses, it is
