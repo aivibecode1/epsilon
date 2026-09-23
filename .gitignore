@@ -6,8 +6,11 @@
 /.tmp-*
 /tmp-*
 
-# Epsilon runtime state (never commit session data or spills)
-/.epsilon/
+# Epsilon runtime state (never commit session data or spills).
+# Unanchored on purpose: a test or a demo run creates `.epsilon/` wherever its working
+# directory is, including inside a crate, and a session file must never be committed
+# because it happened to land there instead of at the repo root.
+.epsilon/
 epsilon.local.toml
 
 # Reference harness sources are read-only research input, not project code
