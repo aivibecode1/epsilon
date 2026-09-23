@@ -327,11 +327,11 @@ fn text_of(value: &Value) -> Vec<String> {
         match value {
             Value::Object(map) => {
                 for (key, child) in map {
-                    if key == "text" || key == "thinking" {
-                        if let Value::String(s) = child {
-                            out.push(s.clone());
-                            continue;
-                        }
+                    if (key == "text" || key == "thinking")
+                        && let Value::String(s) = child
+                    {
+                        out.push(s.clone());
+                        continue;
                     }
                     walk(child, out);
                 }
