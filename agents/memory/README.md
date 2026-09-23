@@ -46,24 +46,29 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Rounds closed 2026-09-22 (tenth through twelfth)** — M116 (`6462a44`): the preserved-entry
-   notice is printed by both frontends (one sentence owned by the store), and the
-   `model_change` arm stopped writing `provider: ""` when the field was absent. M117
-   (`4e292a7`): `find` announces the results its cap hides and `ls` gained pi's `limit`
-   (default 500). **M118 (`0d2110c`)**: `find`'s advertised 64KB byte cap is now real (50 KiB,
-   pi's own `DEFAULT_MAX_BYTES`), `glob` announces its walker budget, and `ls` gained pi's byte
-   cap — each notice naming only the bound that actually fired. Batteries `m116a` (1,053),
-   `m117a` (1,057), `m118b` (1,066). `m118a` was lost mid-run when the session restarted — not
-   evidence, not counted. Global `epsilon.exe` reinstalled.
-2. **A verification trap that has now cost two rounds:** restoring a file with `Copy-Item`
-   keeps the *backup's* mtime, so cargo can skip the recompile and silently run the control
-   build — a negative control then fails or passes for the wrong reason. Touch the restored
-   files (or confirm `Compiling` appears) before believing the run. Worth adding to
-   `AGENTS.md`'s verification rules.
-3. **`glob` still has no byte cap** and makes no claim about one: ~150 KB can reach the model
-   where `find` now stops at 50 KB. Closing it is a `truncate_head_bytes` call, a notice and a
-   test. Also open from M118: `ls` names only one bound, so a reader cannot tell from the notice
-   that the directory also holds more entries than `limit`.
+1. **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
+   preserved-entry notice is printed by both frontends, and the `model_change` arm stopped
+   writing `provider: ""` when the field was absent. M117 (`4e292a7`): `find` announces the
+   results its cap hides and `ls` gained pi's `limit`. M118 (`0d2110c`): the advertised byte
+   caps are real (50 KiB, pi's `DEFAULT_MAX_BYTES`) and `glob`'s walk bound is announced.
+   **M119 (`8c306c3` + `0d0333f`): the pi v2 importer — `epsilon --import <pi-file>` writes
+   `<file>.epsilon.jsonl` beside the source and never touches it; verified on a real pi file
+   (1018 entries, source byte-identical, the copy resumes).** Batteries `m116a` (1,053),
+   `m117a` (1,057), `m118b` (1,066), `m119a` (1,077 across 60 binaries). Global `epsilon.exe`
+   reinstalled and exercised.
+2. **Two process lessons from M119, both worth more than the code:**
+   (a) a delegated agent **failed without reporting** and its work was still good — assess the
+   tree rather than the report, and run the battery on it; but say in the record that the slice
+   had no review. (b) **The first M119 commit missed two untracked files** (`import.rs`, the
+   CLI test) because it staged explicit paths: the tree built and the battery passed, so the
+   evidence was valid, but the commit alone would not have compiled. Run
+   `git status --short --untracked-files=all` **before** staging after any delegated work.
+3. **M119's evidence has one unexplained number**: role counts inside the imported file
+   reconcile with `--resume` (88 user + 453 assistant + 391 tool results = 932), but counting
+   the *source* the same way gives 373 tool results, and the whole-file arithmetic does not tie
+   out. Two candidate causes (a per-line parse that skipped lines; abandoned branches counted
+   on one side), neither checked. **Not a known defect — a measurement gap**; verify before
+   trusting the importer's completeness.
 2. **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
    *in place*, so the original is kept rather than the conversion avoided. The importer plan's
    import-as-copy rule would make `--resume` produce a new file and leave the original
