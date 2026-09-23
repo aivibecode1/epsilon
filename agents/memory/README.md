@@ -46,7 +46,7 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-1. **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
+- **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
    preserved-entry notice is printed by both frontends, and the `model_change` arm stopped
    writing `provider: ""` when the field was absent. M117 (`4e292a7`): `find` announces the
    results its cap hides and `ls` gained pi's `limit`. M118 (`0d2110c`): the advertised byte
@@ -56,14 +56,14 @@ not themselves trigger runtime compression.
    (1018 entries, source byte-identical, the copy resumes).** Batteries `m116a` (1,053),
    `m117a` (1,057), `m118b` (1,066), `m119a` (1,077 across 60 binaries). Global `epsilon.exe`
    reinstalled and exercised.
-2. **Two process lessons from M119, both worth more than the code:**
+- **Two process lessons from M119, both worth more than the code:**
    (a) a delegated agent **failed without reporting** and its work was still good — assess the
    tree rather than the report, and run the battery on it; but say in the record that the slice
    had no review. (b) **The first M119 commit missed two untracked files** (`import.rs`, the
    CLI test) because it staged explicit paths: the tree built and the battery passed, so the
    evidence was valid, but the commit alone would not have compiled. Run
    `git status --short --untracked-files=all` **before** staging after any delegated work.
-3. **M119's unexplained number is settled (2026-09-23): the importer loses nothing — the count
+- **M119's unexplained number is settled (2026-09-23): the importer loses nothing — the count
    came from a file `--resume` had already repaired.** A real reconciliation
    (`crates/epsilon-session/tests/pi_import_reconciliation.rs`: serde_json over every line of both
    files, per `type` and `kind.type`, per role, with the active branch rebuilt from `parentId`)
@@ -77,46 +77,45 @@ not themselves trigger runtime compression.
    `audit/evidence/pi-import-reconciliation-2026-09-23/`. One real loss was found, a **field** and
    not an entry: `thinkingSignature` on thinking parts (1 entry in large-session, 47 in
    before-compaction) has no slot in `ContentBlock::Thinking`.
-2. **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
+- **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
    *in place*, so the original is kept rather than the conversion avoided. The importer plan's
    import-as-copy rule would make `--resume` produce a new file and leave the original
    untouched — a real UX question (which file am I in now?) that should be decided, not
    drifted into.
-3. **Nothing CONSUMES the typed model-switch entries.** M116 made `model_change` and
+- **Nothing CONSUMES the typed model-switch entries.** M116 made `model_change` and
    `thinking_level_change` heal faithfully (a provider-less line falls back to `Custom` rather
    than lying with `""`), and both are typed, durable and reportable — but `model_view()` and
    `restore_history` ignore them, so a pi session's model switch still does not change the
    resumed session's model. **The consumer is the missing half**; it was deliberately not
    invented. Note for the next agent: the queue item that said "map these" was stale for two
    rounds — check `git blame` before writing code against a note.
-4. **G20's two real defects are in flight this round (delegated)**: `find` truncates silently
+- **G20's two real defects are in flight this round (delegated)**: `find` truncates silently
    where pi announces the cap, and `ls` has no `limit` where pi's takes one and reports it.
    The rest of G20 — Epsilon registering twelve tools where pi's default active set is four —
    is a **deliberate product divergence**, recorded in `audit/11` so nobody "fixes" it by
    removing capability to match a count.
-5. **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
+- **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
    refused at line 2 (`UnknownLineShape`); the v1 path now heals correctly. Plan:
    `audit/evidence/session-format-gap-plan.md`, which also argues import-as-copy.
-6. **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
+- **SESSION-01b**: the branch/fork store operations exist and no user path calls them —
    `/tree` is an alias for the active-branch picker, `/fork` is a raw `fs::copy`.
-7. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
+- **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
    shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision diagnostic. Needs a
    design decision (which root wins, what the diagnostic says), not just a patch.
-6. **The skills collision policy is wrong in shipped code**: `skills.rs` says its later-root
    shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision diagnostic.
-7. **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
+- **F07**: `persist` and `pop_last_message` discard their errors, so a failed durable write
    leaves memory and the model view divergent with no signal.
-8. **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`): reproduced
+- **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`): reproduced
    with the console probe; the fix is a design decision because a pid liveness check wants a
    platform call.
-9. **A replaced approval dialog is still silent** (`app/event.rs:191-197`), batched with an
+- **A replaced approval dialog is still silent** (`app/event.rs:191-197`), batched with an
    ask FIFO so it costs one battery.
-10. **`label`/`session_info` heal into `Custom`** — preserved, not applied: no pi fixture shows their v1 spelling, and both carry id references a positional v1 line may not resolve.
+- **`label`/`session_info` heal into `Custom`** — preserved, not applied: no pi fixture shows their v1 spelling, and both carry id references a positional v1 line may not resolve.
     a pi session's model switch has no effect when resumed. Small mapping (`provider`/
     `modelId`, `level`), deliberately left rather than half-done.
-11. Then the port's remaining gaps: G2 (resolved containment) and the
+- **Then the port's remaining gaps: G2 (resolved containment) and the
     `audit/03-port-plan.md` parity rows the re-check ranked.
-12. The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB timeline read
+- **The maintained-doc rewrite is still incomplete: `docs/history.md` is a 57 KB timeline read
     by nobody, and `docs/README.md` needs to be the map a newcomer actually follows.
 
 
