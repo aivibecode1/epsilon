@@ -658,6 +658,27 @@ fn user_text(message: &Message) -> String {
         .collect()
 }
 
+/// Concatenated text of a block list — what a reader of the transcript would see.
+fn blocks_text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The text of any message variant, for assertions over a whole imported view.
+fn message_text(message: &Message) -> String {
+    match message {
+        Message::User(_) => user_text(message),
+        Message::Assistant(assistant) => assistant.text(),
+        Message::ToolResult(result) => blocks_text(&result.content),
+        Message::Custom(custom) => custom.payload.to_string(),
+    }
+}
+
 /// The unmapped content parts a healed tool result preserved, or an empty list.
 fn preserved_parts(message: &Message) -> Vec<serde_json::Value> {
     let Message::ToolResult(result) = message else {
@@ -1307,6 +1328,456 @@ fn each_child_session_leases_its_own_file() {
     assert!(
         SessionStore::open_child_in(&child, dir.path(), "ses_parent").is_err(),
         "the same child file still has one writer"
+    );
+}
+
+// ---- slice 4B: a *current* pi session is imported, and the source is never touched -----------
+
+/// The header pi writes today: `type`/`id`/`timestamp`/`cwd` plus the fields this build has no
+/// name for (`provider`, `modelId`, `thinkingLevel`), all of which must survive into the copy.
+const PI_V2_HEADER: &str = r#"{"type":"session","version":3,"id":"ses_pi2","timestamp":"2025-12-08T22:41:05.000Z","cwd":"/Users/badlogic/workspaces/pi-mono","provider":"anthropic","modelId":"claude-opus-4-5","thinkingLevel":"off"}"#;
+
+/// A pi **v2** file: one line per entry, each carrying `id`/`parentId` and its kind at the top
+/// level — what pi's own `migrateV1ToV2` adds
+/// (`session-format.md`/`session-manager.ts:231-242`), and the shape this build refuses today.
+///
+/// The messages are pi's real shapes from M114's fixture (an ISO `timestamp` on the line, epoch
+/// milliseconds inside the message), with the tree envelope pi wraps around them.
+fn pi_v2_lines() -> Vec<String> {
+    vec![
+        PI_V2_HEADER.to_string(),
+        r#"{"type":"message","id":"e1","parentId":null,"timestamp":"2025-12-08T22:41:05.306Z","message":{"role":"user","content":[{"type":"text","text":"alright, read @packages/coding-agent/src/main.ts in full."}],"timestamp":1765233665292}}"#.to_string(),
+        r#"{"type":"model_change","id":"e2","parentId":"e1","timestamp":"2025-12-08T22:41:06.000Z","provider":"anthropic","modelId":"claude-3-opus-20240229"}"#.to_string(),
+        r#"{"type":"message","id":"e3","parentId":"e2","timestamp":"2025-12-08T22:41:09.389Z","message":{"role":"assistant","content":[{"type":"text","text":"reading it now"},{"type":"toolCall","id":"toolu_012yuiPP1VAfh196GXaAmT8D","name":"read","arguments":{"path":"/Users/badlogic/workspaces/pi-mono/packages/coding-agent/src/main.ts"}}],"provider":"anthropic","model":"claude-opus-4-5","usage":{"input":2775,"output":141,"cacheRead":0,"cacheWrite":0,"totalTokens":2916},"stopReason":"toolUse","timestamp":1765233665294}}"#.to_string(),
+        r#"{"type":"message","id":"e4","parentId":"e3","timestamp":"2025-12-08T22:41:09.394Z","message":{"role":"toolResult","toolCallId":"toolu_012yuiPP1VAfh196GXaAmT8D","toolName":"read","content":[{"type":"text","text":"import { Agent } from \"@mariozechner/pi-agent-core\";"}],"isError":false,"timestamp":1765233665294}}"#.to_string(),
+    ]
+}
+
+/// Write a pi file (any shape) and return its path plus the exact bytes written.
+///
+/// Returned together because the import's central promise is about *bytes*: the source must be
+/// the same file afterwards, not a re-serialization that happens to parse the same.
+fn write_pi_file(
+    dir: &tempfile::TempDir,
+    name: &str,
+    lines: &[String],
+) -> (std::path::PathBuf, Vec<u8>) {
+    let path = dir.path().join(name);
+    let body = format!("{}\n", lines.join("\n"));
+    std::fs::write(&path, &body).expect("write the pi session");
+    (path, body.into_bytes())
+}
+
+/// The output the importer writes beside a source: the source name with `.epsilon.jsonl`.
+fn import_of(path: &std::path::Path) -> std::path::PathBuf {
+    epsilon_session::import_output_path(path)
+}
+
+/// FNV-1a — the same cheap hash the store's id index uses, here over the whole file.
+///
+/// A hash rather than an equality check against a buffer so the two assertions a reader wants
+/// ("the bytes are the same" and "the test is not vacuous") are both cheap and both made of the
+/// file's own content: the before-hash, the after-hash, and the file actually having content.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x1000_0000_01b3);
+    }
+    h
+}
+
+/// A current pi session imports into a new Epsilon session whose messages are *the same
+/// messages* — text, roles, tool call, model switch — chained to a root.
+///
+/// This is the test the slice exists for. Everything it asserts was lost or refused before it:
+/// the file did not open at all (refused at line 2), and the v1 healer that would have taken it
+/// had already been caught turning a 668-character prompt into an empty string (G19). So the
+/// assertion that matters most is the *text* — an importer that produces the right number of
+/// empty entries is the defect, not a lesser version of it.
+#[test]
+fn a_pi_v2_file_imports_into_a_new_session_with_its_messages_intact() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let (source, _before) = write_pi_file(&dir, "pi.jsonl", &pi_v2_lines());
+
+    let report = epsilon_session::import_pi_session(&source).expect("a pi v2 file must import");
+    assert_eq!(
+        report.entries,
+        4,
+        "four entries on pi's active branch: {:?}",
+        report.summary()
+    );
+    assert_eq!(
+        report.preserved_kinds,
+        Vec::<String>::new(),
+        "every kind in this file has a typed home — nothing should have been merely preserved: \
+         {:?}",
+        report.summary()
+    );
+    assert_eq!(report.unmapped_parts, 0, "{:?}", report.summary());
+    assert_eq!(report.abandoned_entries, 0, "{:?}", report.summary());
+    assert_eq!(
+        report.output,
+        import_of(&source),
+        "the output is the name the summary prints"
+    );
+
+    // The copy opens as an ordinary session: it is the whole proof that the import produced a
+    // file this build can actually use, not merely a different file.
+    let imported = SessionStore::open(&report.output).expect("the imported session must open");
+    assert!(
+        !imported.migrated(),
+        "the imported file is current-version, not something that needs healing again"
+    );
+    assert_eq!(imported.len(), 4);
+
+    // The chain reaches a root, in file order, one parent link at a time.
+    let chain = imported.branch_entries().expect("read the active branch");
+    assert_eq!(chain.len(), 4, "the active branch is the whole file");
+    assert_eq!(
+        chain[0].parent_id, None,
+        "the first entry is a root, as pi's `parentId: null` said"
+    );
+    for pair in chain.windows(2) {
+        assert_eq!(
+            pair[1].parent_id.as_deref(),
+            Some(pair[0].id.as_str()),
+            "each entry chains onto the one before it"
+        );
+    }
+
+    // The model-visible view: the user turn, the assistant turn with its tool call, the tool
+    // result. The model switch is *applied* (typed), and — like every non-message kind — holds
+    // no message of its own.
+    let view = imported.model_view().expect("the imported model view");
+    assert_eq!(view.len(), 3, "three message entries: {view:?}");
+    let ModelViewEntry::Message(Message::User(user)) = &view[0] else {
+        panic!("the first entry must be pi's user turn, got {:?}", view[0]);
+    };
+    assert_eq!(
+        user_text(&Message::User(user.clone())),
+        "alright, read @packages/coding-agent/src/main.ts in full.",
+        "the text must survive the import — an empty message here is the G19 defect again"
+    );
+    let ModelViewEntry::Message(Message::Assistant(assistant)) = &view[1] else {
+        panic!(
+            "the second entry must be the assistant turn, got {:?}",
+            view[1]
+        );
+    };
+    let calls: Vec<_> = assistant.tool_calls().collect();
+    assert_eq!(calls.len(), 1, "the tool call survives as a call");
+    assert_eq!(calls[0].1, "read");
+    assert_eq!(
+        calls[0].2["path"],
+        "/Users/badlogic/workspaces/pi-mono/packages/coding-agent/src/main.ts"
+    );
+    let ModelViewEntry::Message(Message::ToolResult(result)) = &view[2] else {
+        panic!("the third entry must be the tool result, got {:?}", view[2]);
+    };
+    assert_eq!(result.tool_name, "read");
+    assert_eq!(result.tool_call_id, calls[0].0);
+    assert!(!result.is_error);
+    assert_eq!(
+        blocks_text(&result.content),
+        "import { Agent } from \"@mariozechner/pi-agent-core\";"
+    );
+
+    // The model switch is a typed entry, not a preserved blob: "preserved but not applied" is
+    // the M114 limit this importer is supposed to close for the kinds it can name.
+    let kinds: Vec<&EntryKind> = chain.iter().map(|entry| &entry.kind).collect();
+    assert!(
+        kinds.iter().any(|kind| matches!(
+            kind,
+            EntryKind::ModelChange { provider, model_id }
+                if provider == "anthropic" && model_id == "claude-3-opus-20240229"
+        )),
+        "pi's model_change must import as a typed ModelChange: {kinds:?}"
+    );
+
+    // Timestamps are pi's, both spellings: the message's epoch milliseconds win over the line's
+    // ISO string, exactly as the v1 healer reads them.
+    assert_eq!(
+        chain[0].timestamp_ms, 1_765_233_665_292,
+        "the import must not re-date the session to the moment it ran"
+    );
+
+    // The header keeps pi's `cwd` and the fields this build does not model, and the copy is a
+    // new session rather than a second file claiming pi's id.
+    let header = imported.header().expect("the imported header");
+    assert_eq!(header.cwd, "/Users/badlogic/workspaces/pi-mono");
+    assert_eq!(
+        header.preserved["modelId"],
+        serde_json::json!("claude-opus-4-5")
+    );
+    assert_ne!(header.id, "ses_pi2", "an import is a new session, not pi's");
+}
+
+/// The import does not touch the file it read — proved by hashing the source before and after.
+///
+/// The defect this replaces rewrote the user's file *in place* on the resume path, so the
+/// original was gone with no way back. An import that leaves the source byte-identical is the
+/// whole safety story for a foreign file: pi can still read it, and the user can still delete
+/// the copy and try again.
+#[test]
+fn the_imported_source_is_byte_identical_afterwards() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let (source, before) = write_pi_file(&dir, "pi.jsonl", &pi_v2_lines());
+    let on_disk = std::fs::read(&source).expect("read the source");
+    assert_eq!(on_disk, before, "the fixture is what the test thinks it is");
+    let hash_before = fnv1a(&on_disk);
+    assert_ne!(hash_before, 0, "and it has content to hash");
+
+    let report = epsilon_session::import_pi_session(&source).expect("import");
+
+    let after = std::fs::read(&source).expect("read the source again");
+    assert_eq!(
+        fnv1a(&after),
+        hash_before,
+        "the source must be byte-identical after an import — no rewrite, no backup, no rename"
+    );
+    assert_eq!(
+        after, before,
+        "…and byte equality is the stronger claim the hash stands in for"
+    );
+    assert!(
+        report.output.exists(),
+        "the copy exists, so the assertion above is not passing because nothing happened"
+    );
+    assert_ne!(
+        std::fs::read(&report.output).expect("read the copy"),
+        before,
+        "and the copy is a different file, not a second copy of the source"
+    );
+}
+
+/// A branch: the imported session is the chain to pi's leaf, and the abandoned sibling is left
+/// in the source — loudly.
+///
+/// **The choice: abandoned siblings are not imported, and are counted in the report.** pi's own
+/// context builder walks the branch from the leaf (`buildSessionContext`, `session-manager.ts:463-468`);
+/// a sibling that is not on that path was already not part of the conversation the session was
+/// having. Importing it anyway would invent a turn the model never saw, on a chain nobody wrote —
+/// and the alternative, dropping it silently, is the failure this repository keeps re-learning.
+/// So it is dropped *out loud*: `abandoned_entries` says how many, and the summary says the source
+/// still holds them.
+///
+/// The leaf here is `e6`, which is *not* the last entry a parent-less walk would find by accident:
+/// `e5` is its sibling, and both share `e4` as a parent.
+#[test]
+fn a_branch_imports_the_chain_to_the_leaf_and_reports_the_abandoned_sibling() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let mut lines = pi_v2_lines();
+    lines.push(
+        r#"{"type":"message","id":"e5","parentId":"e4","timestamp":"2025-12-08T22:42:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I will rewrite main.ts from scratch."}],"timestamp":1765233720000}}"#.to_string(),
+    );
+    lines.push(
+        r#"{"type":"message","id":"e6","parentId":"e4","timestamp":"2025-12-08T22:42:10.000Z","message":{"role":"user","content":[{"type":"text","text":"no — walk me through it instead"}],"timestamp":1765233730000}}"#.to_string(),
+    );
+    let (source, _before) = write_pi_file(&dir, "branched.jsonl", &lines);
+
+    let report = epsilon_session::import_pi_session(&source).expect("import the branched file");
+    assert_eq!(
+        report.abandoned_entries,
+        1,
+        "`e5` is on a branch the active chain does not pass through, and the report must say so: \
+         {:?}",
+        report.summary()
+    );
+    assert!(
+        report
+            .summary()
+            .iter()
+            .any(|line| line.contains("not imported") && line.contains("source still holds them")),
+        "the abandoned entry is reported, not silently dropped: {:?}",
+        report.summary()
+    );
+
+    let imported = SessionStore::open(&report.output).expect("open the import");
+    let chain = imported.branch_entries().expect("the imported chain");
+    assert_eq!(
+        chain.len(),
+        5,
+        "e1..e4 plus the leaf e6 — the sibling e5 is not on this chain"
+    );
+    let view = imported.model_view().expect("model view");
+    let texts: Vec<String> = view
+        .iter()
+        .filter_map(|entry| match entry {
+            ModelViewEntry::Message(message) => Some(message_text(message)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("walk me through it instead")),
+        "the chain reaches the leaf pi ended on: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("rewrite main.ts")),
+        "the abandoned sibling is not in the imported session: {texts:?}"
+    );
+    assert_eq!(
+        chain.last().map(|entry| entry.timestamp_ms),
+        Some(1_765_233_730_000),
+        "the leaf is the last entry pi wrote, not the first unnamed one"
+    );
+}
+
+/// An explicit leaf marker wins over the unnamed-entry rule, when a file carries one.
+///
+/// pi's own header has no such field (`session-manager.ts:32-39`), so this is the branch of the
+/// rule a real pi file never takes — which is exactly why it needs a test: an untested branch
+/// that a future pi (or another tool sharing the envelope) would take is a branch that silently
+/// imports the wrong conversation the day it first matters.
+#[test]
+fn an_explicit_leaf_marker_selects_the_branch_it_names() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let mut lines = pi_v2_lines();
+    lines.push(
+        r#"{"type":"message","id":"e5","parentId":"e4","timestamp":"2025-12-08T22:42:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I will rewrite main.ts from scratch."}],"timestamp":1765233720000}}"#.to_string(),
+    );
+    lines.push(
+        r#"{"type":"message","id":"e6","parentId":"e4","timestamp":"2025-12-08T22:42:10.000Z","message":{"role":"user","content":[{"type":"text","text":"no — walk me through it instead"}],"timestamp":1765233730000}}"#.to_string(),
+    );
+    // The header now points at the *earlier* branch, which file order alone would not choose.
+    lines[0] = PI_V2_HEADER.replace(
+        r#""thinkingLevel":"off""#,
+        r#""thinkingLevel":"off","leafId":"e5""#,
+    );
+    let (source, _before) = write_pi_file(&dir, "marked.jsonl", &lines);
+
+    let report = epsilon_session::import_pi_session(&source).expect("import");
+    let imported = SessionStore::open(&report.output).expect("open the import");
+    let texts: Vec<String> = imported
+        .model_view()
+        .expect("model view")
+        .into_iter()
+        .filter_map(|entry| match entry {
+            ModelViewEntry::Message(message) => Some(message_text(&message)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("rewrite main.ts")),
+        "the marker's branch is the one imported: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("walk me through it")),
+        "…and the other branch is not: {texts:?}"
+    );
+    assert_eq!(report.abandoned_entries, 1, "{:?}", report.summary());
+}
+
+/// A kind this build does not know survives the *new* envelope too.
+///
+/// M113's rule ("an unknown entry kind is kept, not refused") was written for Epsilon's own
+/// envelope. The import is a second envelope and a second chance to lose the same data, so the
+/// rule is re-asserted here on a pi file: the entry lands in the copy with its kind object whole,
+/// the report names it, and the model view skips it — exactly as it would for a future Epsilon's
+/// entry.
+#[test]
+fn an_unknown_kind_in_a_pi_v2_file_is_preserved_and_reported() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let mut lines = pi_v2_lines();
+    // The foreign kind sits **on the chain**: between pi's first user turn and the model switch
+    // that follows it. Anything else would test the branch rule instead of this one, and a kind
+    // this build cannot read must not cost the entries around it their places in the tree.
+    lines[2] = lines[2].replace(r#""parentId":"e1""#, r#""parentId":"e9""#);
+    lines.insert(
+        2,
+        r#"{"type":"telemetry_v9","id":"e9","parentId":"e1","timestamp":"2025-12-08T22:41:07.000Z","payload":{"deep":[1,2,3]},"note":"from a newer pi"}"#.to_string(),
+    );
+    let (source, _before) = write_pi_file(&dir, "future.jsonl", &lines);
+
+    let report = epsilon_session::import_pi_session(&source).expect("import");
+    assert_eq!(
+        report.preserved_kinds,
+        vec!["telemetry_v9".to_string()],
+        "the report names the kind it could only preserve: {:?}",
+        report.summary()
+    );
+    assert_eq!(
+        report.abandoned_entries,
+        0,
+        "the foreign kind is on the chain, so nothing was abandoned: {:?}",
+        report.summary()
+    );
+    assert!(
+        report
+            .summary()
+            .iter()
+            .any(|line| line.contains("`telemetry_v9`")),
+        "…in the summary a user reads: {:?}",
+        report.summary()
+    );
+
+    let imported = SessionStore::open(&report.output).expect("open the import");
+    assert_eq!(imported.len(), 5, "the entry is in the file, not dropped");
+    let preserved = imported
+        .read_all()
+        .expect("read all")
+        .into_iter()
+        .find(|entry| entry.kind.is_unknown() || matches!(entry.kind, EntryKind::Custom { .. }))
+        .expect("the unknown entry must be in the copy, in some preserved form");
+    let EntryKind::Custom { data, .. } = &preserved.kind else {
+        panic!(
+            "a foreign kind is preserved as Custom here, got {:?}",
+            preserved.kind
+        );
+    };
+    let data = data
+        .as_ref()
+        .expect("the preserved entry carries its raw object");
+    assert_eq!(data["type"], "telemetry_v9");
+    assert_eq!(
+        data["payload"]["deep"][2], 3,
+        "every field and value survives"
+    );
+    assert_eq!(data["note"], "from a newer pi");
+    assert_eq!(
+        imported.preserved_unknown_notice(),
+        None,
+        "it is not Epsilon's own unknown-kind path — it was converted, so nothing is unparsed"
+    );
+
+    let view = imported.model_view().expect("model view");
+    assert_eq!(
+        view.len(),
+        3,
+        "a preserved kind contributes no message: {view:?}"
+    );
+}
+
+/// A second import refuses rather than replacing the first one's output.
+///
+/// The same "never overwrite what is already there" rule the `.pre-epsilon` backup follows, for
+/// the same reason: the file on disk may be the only surviving copy of a session, and a repeated
+/// command is not a reason to destroy it.
+#[test]
+fn a_second_import_refuses_to_replace_the_first_output() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let (source, before) = write_pi_file(&dir, "pi.jsonl", &pi_v2_lines());
+
+    epsilon_session::import_pi_session(&source).expect("first import");
+    let output = import_of(&source);
+    let first_copy = std::fs::read(&output).expect("the first import's output");
+
+    let err = epsilon_session::import_pi_session(&source).expect_err("the second must refuse");
+    assert!(
+        err.to_string().contains("already exists"),
+        "the refusal names the reason: {err}"
+    );
+    assert_eq!(
+        std::fs::read(&output).expect("the output is still there"),
+        first_copy,
+        "the first import's output is untouched"
+    );
+    assert_eq!(
+        std::fs::read(&source).expect("the source is still there"),
+        before,
+        "and so is the source"
     );
 }
 

@@ -6,6 +6,8 @@
 //! summarize (DSH's surface-shadowing principle over pi's entry format).
 
 pub mod discover;
+/// Importing a current (v2/v3) pi session file into a new Epsilon session file, as a copy.
+pub mod import;
 mod lease;
 // Wired into the CLI resume path (--resume/--continue) since M19's ponytail-audit
 // follow-up; integration tests cover the crash scenarios.
@@ -14,6 +16,10 @@ pub mod search;
 mod store;
 
 pub use discover::{SessionSummary, latest_session, list_sessions, summarize};
+pub use import::{
+    ImportReport, import_output_path, import_pi_session, is_pi_v2_entry_shape,
+    looks_like_pi_session,
+};
 pub use lease::{LeaseOutcome, SessionLease};
 pub use search::{SearchOptions, SessionSearchHit, search_session};
 pub use store::{LineDiagnosis, ModelViewEntry, SessionStore, StoreError, original_backup_path};

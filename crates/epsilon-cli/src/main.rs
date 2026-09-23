@@ -32,6 +32,7 @@ const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon -p \"task\"       headless run · epsilon --serve [--port N] · epsilon --rpc
   epsilon --demo          scripted offline demo · --list-models [provider]
   epsilon doctor          why is this not working: model, credentials, sandbox, session, trust
+  epsilon --import PI.jsonl   convert a pi session into an Epsilon session beside it
   epsilon auth list       stored provider keys (~/.config/epsilon/auth.json)
   epsilon auth login <provider> [key]   save an API key (prompted if key omitted)
   epsilon auth login <provider> --oauth [--paste]   subscription login (anthropic|openrouter|xai)
@@ -72,6 +73,12 @@ MODES (pick one; the default is the interactive TUI)
                     provider keys present (never their values), confinement and
                     integration availability. The first thing to run when
                     something is not working and you do not yet know why.
+  --import FILE     convert a pi session file into an Epsilon session file **beside
+                    it** (<FILE>.epsilon.jsonl) and exit without starting a turn.
+                    For a current pi file — entries with id/parentId, the kind at
+                    the top level — which --resume cannot open in place. The source
+                    is read and never written: no backup, no rewrite, no rename.
+                    Prints what it imported and anything it could only preserve.
 
 FLAGS
   -m, --model ID        model to run (catalog id, alias, or provider/model)
@@ -91,6 +98,8 @@ FLAGS
                         unattended runs auto-deny.
   -c, --continue        resume the newest session in this workspace
   --resume FILE         resume a specific session file
+  --import FILE         convert a pi session file into <FILE>.epsilon.jsonl beside
+                        it (leaving the pi file untouched), print the summary, exit
   --script FILE         faux-provider script for offline runs
   --mcp NAME=CMD[:A,B]  attach an MCP server over stdio
   -V, --version         print the version
@@ -129,6 +138,7 @@ EXAMPLES
   epsilon --model deepseek-v4-flash -p hi   # pick a model explicitly
   epsilon auth login anthropic --oauth      # subscription login
   epsilon -c -p \"keep going\"                # continue the newest session
+  epsilon --import ~/.pi/agent/sessions/…/s.jsonl   # bring a pi session over
 
 Exit codes: 0 success · 1 run or provider failure · 2 bad usage.";
 
@@ -196,6 +206,11 @@ enum Mode {
     Auth(AuthAction),
     /// M76: diagnose the on-ramp — model, credentials, sandbox, session, trust — and exit.
     Doctor,
+    /// Import a pi session file into a new Epsilon session file beside it, print what it did,
+    /// and exit — no turn, no model, no review loop. Handled before the runtime exists, like
+    /// `doctor` and `auth`: an import is file conversion, and building an agent to do it would
+    /// print a startup banner over the report.
+    Import(PathBuf),
     /// Hidden M16a benchmark: build n synthetic transcript messages, time real draws,
     /// print a report, exit. Not advertised in --help usage beyond this line.
     TuiBench(usize),
@@ -431,6 +446,14 @@ fn parse_args() -> Args {
                     .unwrap_or_else(|| die("--resume requires a session file path"));
                 resume = Resume::Path(PathBuf::from(p));
             }
+            "--import" => {
+                i += 1;
+                let p = raw
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| die("--import requires a pi session file path"));
+                mode = Mode::Import(PathBuf::from(p));
+            }
             "--rpc" => mode = Mode::Rpc,
             "--tui-bench" => {
                 i += 1;
@@ -544,6 +567,11 @@ fn main() {
     // (and building one prints the startup banner over the report).
     if matches!(args.mode, Mode::Doctor) {
         std::process::exit(doctor_mode(&args));
+    }
+    // Same reason, for the same class of command: an import converts a file. It needs no model,
+    // no provider, no workspace and no turn, so it runs before the runtime is built.
+    if let Mode::Import(source) = &args.mode {
+        std::process::exit(import_mode(source));
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1378,6 +1406,7 @@ async fn dispatch(args: Args) -> i32 {
     match &args.mode {
         Mode::Auth(_) => unreachable!("auth subcommands exit inside main() before dispatch"),
         Mode::Doctor => unreachable!("--doctor exits inside main() before the runtime is built"),
+        Mode::Import(_) => unreachable!("--import exits inside main() before the runtime is built"),
         Mode::Demo => demo_mode().await,
 
         Mode::Print(task) => print_mode(&shared, args.auto_approve, task.clone()).await,
@@ -1688,8 +1717,10 @@ async fn build_runtime(
         }
     };
     if let Some(rp) = resume_path {
-        let mut restored = epsilon_session::SessionStore::open(&rp)
-            .map_err(|e| format!("open {}: {e}", rp.display()))?;
+        let mut restored = match epsilon_session::SessionStore::open(&rp) {
+            Ok(store) => store,
+            Err(e) => return Err(resume_open_error(&rp, e)),
+        };
         // M41: a resumed file may predate headers — migrate before repair reads
         // it, so the repair pass sees healed entries, never legacy shapes.
         if restored.migrated() {
@@ -1733,6 +1764,33 @@ async fn build_runtime(
         eprintln!("resumed {} entries from {}", count, rp.display());
     }
     Ok(agent)
+}
+
+/// Why `--resume` could not open this file, phrased for the file that is actually there.
+///
+/// The store's own message for a current pi session is true and useless: "session line #2: valid
+/// JSON that is not an entry, a header or a legacy entry — a shape this build does not know"
+/// names what this build *cannot* read, not what the file *is* or what to do about it. A refusal
+/// a user cannot act on is half a feature, so when the file turns out to be a pi tree the
+/// diagnosis is followed by the exact command that converts it — and by the promise the import
+/// keeps, that the pi file stays untouched.
+fn resume_open_error(path: &std::path::Path, e: epsilon_session::StoreError) -> String {
+    let base = format!("open {}: {e}", path.display());
+    if !epsilon_session::looks_like_pi_session(path) {
+        return base;
+    }
+    let quoted = if path.to_string_lossy().contains(' ') {
+        format!("\"{}\"", path.display())
+    } else {
+        path.display().to_string()
+    };
+    format!(
+        "{base}\n{} is a current pi session (entries carry id/parentId, the kind sits at the \
+         top level), which this build cannot open in place — run:\n  epsilon --import {quoted}\n\
+         that writes an Epsilon session beside it and leaves the pi file exactly as it is; \
+         resume the copy it names",
+        path.display()
+    )
 }
 
 /// Build the user message for `text`, resolving any `@` references into attachments (M74).
@@ -1975,6 +2033,50 @@ fn doctor_mode(args: &Args) -> i32 {
         real_feature: cfg!(feature = "real"),
     };
     epsilon_cli::doctor::run(&inputs)
+}
+
+/// `epsilon --import <pi-file>`: convert a pi session file into an Epsilon session file beside
+/// it, print what happened, and exit.
+///
+/// No runtime, no workspace, no turn — an import reads one file and writes another. The source
+/// never matters to the workspace, which is why this mode ignores `--workspace` entirely.
+///
+/// Two failures get their own sentences rather than a raw I/O error: a source that is not there
+/// (naming the path they typed), and an import that fails on a file which is not pi-shaped at
+/// all — for which the useful next step is the command that *does* open it.
+fn import_mode(source: &Path) -> i32 {
+    if !source.exists() {
+        eprintln!(
+            "no such file: {} — --import takes a pi session file (usually under \
+             ~/.pi/agent/sessions/)",
+            source.display()
+        );
+        return 2;
+    }
+    match epsilon_session::import_pi_session(source) {
+        Ok(report) => {
+            for line in report.summary() {
+                eprintln!("{line}");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("import {}: {e}", source.display());
+            // The failure is already phrased for the file that is there — a pi reader says what
+            // it could not read and where. The one case that leaves a user without a next step
+            // is a file that is not a pi session at all, which is usually an Epsilon session and
+            // has a command of its own.
+            if !epsilon_session::looks_like_pi_session(source) {
+                eprintln!(
+                    "{} does not look like a pi session — if it is an Epsilon session, open it \
+                     with: epsilon --resume {}",
+                    source.display(),
+                    source.display()
+                );
+            }
+            1
+        }
+    }
 }
 
 async fn demo_mode() -> i32 {
@@ -2338,6 +2440,7 @@ mod print_outcome_tests {
             "--yes",
             "--continue",
             "--resume",
+            "--import",
             "--script",
             "--mcp",
             "--version",

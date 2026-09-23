@@ -218,7 +218,7 @@ impl Leaf {
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1395,14 +1395,44 @@ fn keep_original_beside(path: &Path) -> std::io::Result<()> {
 
 /// ISO-8601 UTC timestamp for new headers (pi's `new Date().toISOString()`).
 fn iso_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    // Millis → calendar date without a date crate: format as epoch-millis with
-    // an ISO envelope pi tolerates on read (it never parses the timestamp).
-    format!("{ms}")
+    iso_from_ms(now_ms())
+}
+
+/// Epoch milliseconds as `YYYY-MM-DDTHH:MM:SS.mmmZ` — the spelling pi writes and this build's
+/// [`parse_iso8601_ms`] reads.
+///
+/// No date crate: [`days_from_civil`] goes the other way, so the civil-date conversion here is
+/// its inverse (`civil_from_days`, Howard Hinnant's algorithm), and a round trip through the
+/// two is what the tests pin. The pi importer needs this direction because a header this build
+/// writes carries an ISO string — importing an old session under `now_ms()` would re-date the
+/// header to the moment of the import, which is the defect M114 fixed for entries, one layer
+/// up.
+pub(crate) fn iso_from_ms(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let millis = ms % 1000;
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// Civil date for a day count since 1970-01-01 (Howard Hinnant's `civil_from_days`).
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097); // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11], Mar=0
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 /// One legacy (v1) entry line that failed typed parse, kept raw for migration.
@@ -1493,6 +1523,12 @@ fn parse_entry_lenient(fragment: &str) -> Option<Result<SessionEntry, LegacyLine
 
 /// A JSON object shaped like a v1 transcript entry: `type` + `timestamp` with
 /// no `id`/`seq` (pi's v1 lines predate the tree structure).
+///
+/// The v2 importer's counterpart is [`crate::import::is_pi_v2_entry_shape`]: same
+/// `type` + `timestamp` pair, but *with* an `id`, which is what pi's own
+/// `migrateV1ToV2` adds (`references/pi-0.85.1/…/session-manager.ts:231-242`). Keeping
+/// the two predicates apart is what stops a pi file from being healed in place: v2 heals
+/// into a *new* file, v1 heals in place behind a backup.
 fn is_legacy_entry_shape(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(map) => {
@@ -1571,21 +1607,69 @@ fn parsed_healed_ids(
 /// Epsilon's own v1 files wrote epoch numbers, and both spellings are accepted.
 fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
     let map = leg.value.as_object();
-    let kind = map.and_then(|m| m.get("type")).and_then(|t| t.as_str());
-    let timestamp_ms = map
+    let timestamp_ms = healed_entry_timestamp(map);
+    SessionEntry {
+        id: epsilon_contracts::new_id("ent"),
+        seq: 0,          // reassigned gaplessly by the caller after migration
+        parent_id: None, // chain-linked by the caller after migration
+        timestamp_ms,
+        kind: heal_legacy_kind(&leg.value, timestamp_ms, legacy_compaction_target(map, ids)),
+    }
+}
+
+/// The instant one v1/v2 entry line carries, in epoch milliseconds.
+///
+/// pi stamps a message line twice: an ISO string (or epoch number) on the line and epoch
+/// milliseconds inside the message, milliseconds apart. The millisecond one is the finer
+/// spelling of that instant, so it wins (`heal_legacy_message` reads the same field), and
+/// the entry and its message can never disagree about when the turn happened.
+///
+/// Shared by both healers — v1's migration and the v2 importer — so that "which stamp is
+/// the real one" has one answer rather than two that drift.
+pub(crate) fn healed_entry_timestamp(
+    map: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> u64 {
+    let line_ts = map
         .and_then(|m| m.get("timestamp"))
         .map_or_else(now_ms, legacy_timestamp_ms);
-    // pi stamps a message line twice: an ISO string on the line and epoch milliseconds
-    // inside the message, milliseconds apart. The millisecond one is the finer spelling of
-    // that instant, so it becomes the entry's stamp too (`heal_legacy_message` reads the
-    // same field), and the two can never disagree about when the turn happened.
-    let timestamp_ms = map
-        .and_then(|m| m.get("message"))
+    map.and_then(|m| m.get("message"))
         .and_then(|m| m.get("timestamp"))
         .and_then(|t| t.as_u64())
-        .unwrap_or(timestamp_ms);
-    let id = epsilon_contracts::new_id("ent");
-    let entry_kind = match kind {
+        .unwrap_or(line_ts)
+}
+
+/// Pi's v1 compaction target: a *position* (`firstKeptEntryIndex`) resolved against the ids
+/// assigned so far. `None` when pi wrote no index, or wrote one that lands nowhere.
+fn legacy_compaction_target(
+    map: Option<&serde_json::Map<String, serde_json::Value>>,
+    ids: &[String],
+) -> Option<String> {
+    map.and_then(|m| m.get("firstKeptEntryIndex"))
+        .and_then(|i| i.as_u64())
+        .and_then(|i| ids.get(i as usize).cloned())
+}
+
+/// One pi entry line's `type` tag, as an Epsilon [`EntryKind`].
+///
+/// The single conversion both healers call: v1's in-place migration and the v2 importer. It
+/// exists as one function on purpose — a second converter is how the two drift, and the drift
+/// is not cosmetic: the last one emptied every message while reporting success, because it read
+/// an array of parts with `as_str()` (G19,
+/// `audit/evidence/pi-import-empties-messages-2026-09-22.md`).
+///
+/// `raw` is the whole entry object; `compaction_target` is the already-resolved
+/// `firstKeptEntryId` (v2 hands one over; v1 resolves a position — see
+/// [`legacy_compaction_target`]). Anything this build cannot express heals to
+/// [`EntryKind::Custom`] holding `raw`, so the human log stays complete and nothing is
+/// silently dropped.
+pub(crate) fn heal_legacy_kind(
+    raw: &serde_json::Value,
+    timestamp_ms: u64,
+    compaction_target: Option<String>,
+) -> EntryKind {
+    let map = raw.as_object();
+    let kind = map.and_then(|m| m.get("type")).and_then(|t| t.as_str());
+    match kind {
         Some("message") => {
             // pi stamps the line and the message separately, and the message's own
             // `timestamp` (epoch millis) is the finer of the two, so it wins where pi wrote
@@ -1598,14 +1682,9 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
             }
         }
         Some("compaction") => {
-            // pi v1→v2: `firstKeptEntryIndex` (positional) becomes
-            // `firstKeptEntryId`. Epsilon's shadowing is positional (seq), so
-            // the healed compaction keeps its summary/tokens and the resolved
-            // target rides in `details` for future tooling.
-            let target_id = map
-                .and_then(|m| m.get("firstKeptEntryIndex"))
-                .and_then(|i| i.as_u64())
-                .and_then(|i| ids.get(i as usize).cloned());
+            // pi v1→v2: `firstKeptEntryIndex` (positional) becomes `firstKeptEntryId`. The
+            // healed compaction keeps its summary/tokens and the resolved target rides in
+            // `details` for future tooling, whichever spelling the source used.
             EntryKind::Compaction {
                 summary: map
                     .and_then(|m| m.get("summary"))
@@ -1617,7 +1696,7 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
                     .and_then(|t| t.as_u64())
                     .unwrap_or(0),
                 retained_tail: Vec::new(),
-                details: target_id.map(|id| serde_json::json!({"firstKeptEntryId": id})),
+                details: compaction_target.map(|id| serde_json::json!({"firstKeptEntryId": id})),
                 usage: None,
             }
         }
@@ -1640,7 +1719,7 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
                 provider: provider.to_string(),
                 model_id: model_id.to_string(),
             },
-            _ => legacy_custom(leg),
+            _ => legacy_custom(raw),
         },
         Some("thinking_level_change") => match legacy_str(map, "thinkingLevel") {
             Some(level) => EntryKind::ThinkingLevelChange {
@@ -1649,20 +1728,13 @@ fn heal_legacy_line(leg: &LegacyLine, ids: &[String]) -> SessionEntry {
                 // clamped to `off`.
                 level: level.to_string(),
             },
-            None => legacy_custom(leg),
+            None => legacy_custom(raw),
         },
         // `label` and `session_info` have Epsilon variants too, but no fixture here shows
         // pi's v1 spelling of them and both carry id references that a *positional* v1 line
         // may not be able to resolve; guessing would put a label on the wrong entry, so
         // they stay `Custom` (lossless, merely unapplied) until a real file settles it.
-        _ => legacy_custom(leg),
-    };
-    SessionEntry {
-        id,
-        seq: 0,          // reassigned gaplessly by the caller after migration
-        parent_id: None, // chain-linked by the caller after migration
-        timestamp_ms,
-        kind: entry_kind,
+        _ => legacy_custom(raw),
     }
 }
 
@@ -1767,7 +1839,11 @@ fn heal_legacy_message(raw: Option<&serde_json::Value>, fallback_ts: u64) -> Mes
 
 /// Key under which content parts this build cannot type are preserved inside a healed
 /// message.
-const LEGACY_EXTRAS_KEY: &str = "legacy_unmapped_parts";
+///
+/// Crate-visible because the pi importer counts the preserved parts it wrote — the count a
+/// report prints has to come from the same key the healer used, or the two disagree about
+/// whether anything was lost.
+pub(crate) const LEGACY_EXTRAS_KEY: &str = "legacy_unmapped_parts";
 
 /// Convert one pi content array (or a v1 bare string) into typed blocks.
 ///
@@ -1872,15 +1948,17 @@ fn legacy_str<'a>(
     map.and_then(|m| m.get(key)).and_then(|v| v.as_str())
 }
 
-/// The `Custom` fallback for a legacy line this build cannot state exactly: every kind with no
+/// The `Custom` fallback for a foreign line this build cannot state exactly: every kind with no
 /// Epsilon variant, and every line missing a field a typed variant requires.
 ///
 /// Lossless by construction — the whole line rides in `data` — so the human log stays complete
 /// and the model view skips it; unapplied is the honest outcome where typed would be a guess.
-fn legacy_custom(leg: &LegacyLine) -> EntryKind {
+/// Takes the raw value rather than a [`LegacyLine`] because the v2 importer has no legacy line
+/// to hand: the fallback is shared, so both readers preserve in exactly the same shape.
+fn legacy_custom(raw: &serde_json::Value) -> EntryKind {
     EntryKind::Custom {
         custom_type: "legacy".into(),
-        data: Some(leg.value.clone()),
+        data: Some(raw.clone()),
     }
 }
 
@@ -1907,7 +1985,11 @@ fn legacy_usage(value: &serde_json::Value) -> Usage {
 ///
 /// Unparseable input has no honest answer, so the caller's `now_ms()` default stands: a
 /// wrong timestamp is not a lost transcript, and zero would sort the entry to 1970.
-fn legacy_timestamp_ms(value: &serde_json::Value) -> u64 {
+///
+/// Crate-visible because the pi importer normalises a header's stamp with it: one reader for
+/// "what instant does this field name" is the difference between two readers that agree and
+/// two that drift.
+pub(crate) fn legacy_timestamp_ms(value: &serde_json::Value) -> u64 {
     if let Some(s) = value.as_str() {
         return parse_iso8601_ms(s).unwrap_or_else(now_ms);
     }
@@ -1925,10 +2007,14 @@ fn legacy_timestamp_ms(value: &serde_json::Value) -> u64 {
 /// helper goes the other way). The day count is Howard Hinnant's `days_from_civil`, the
 /// inverse of the one there.
 ///
-/// `YYYY-MM-DDTHH:MM:SS[.frac][Z|±HH:MM]` is what pi writes. Anything else — including a
-/// bare `"1765233665292"`, which `iso_now` can put in a header — names no date, so `None`
-/// lets the caller fall back instead of inventing 1970.
-fn parse_iso8601_ms(s: &str) -> Option<u64> {
+/// `YYYY-MM-DDTHH:MM:SS[.frac][Z|±HH:MM]` is what pi writes, and [`iso_from_ms`] reads back
+/// what [`iso_now`] writes. Anything else — a bare `"1765233665292"`, a hand-edited
+/// `"2026-09-18T00-00-00-000Z"` — names no date, so `None` lets the caller fall back instead of
+/// inventing 1970.
+///
+/// Crate-visible for the pi importer, which has to tell "a timestamp I can keep verbatim" from
+/// one it must re-stamp, and must use the same parser that decision is about.
+pub(crate) fn parse_iso8601_ms(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     // The date and time fields are fixed-width, so byte slicing is index-safe.
     if b.len() < 19
