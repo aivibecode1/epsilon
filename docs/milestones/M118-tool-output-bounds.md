@@ -64,9 +64,16 @@ that names the missing announcement.
 
 ## Limits
 
-- **`glob` still has no byte cap** and makes no claim about one. Its 5000 matches (~150 KB) still
-  reach the model where `find` now stops at 50 KB — an asymmetry this slice flagged instead of
-  silently widening. Closing it is a `truncate_head_bytes` call, a notice and a test.
+- **`glob`'s byte cap landed after this slice, in the two-item follow-up round** (the other item
+  was M119's `thinkingSignature`). It now head-truncates its match list at
+  `util::TOOL_OUTPUT_MAX_BYTES` through the same `util::truncate_head_bytes`, prints `find`'s
+  sentence, and its `[N file(s)]` counts the rows the reader can see. The one thing this slice
+  had not decided is precedence between `glob`'s two bounds, and the follow-up decided it the
+  other way round from `find`: when the **walk** bound fired, the walk notice is the one printed
+  and the byte notice is suppressed, because with the walk stopped early "N more file(s) match —
+  use a narrower pattern to see the rest" is false (the rest was never visited). The byte cap is
+  still *applied* in that case, so the count is honest and the walk notice does not say how many
+  rows the cap hid — the same accepted limit `ls` has below.
 - **`ls` names only one bound.** When bytes cut inside the entry cap the entry notice is
   suppressed, so a reader cannot tell from the notice alone that the directory also holds more
   entries than `limit`.

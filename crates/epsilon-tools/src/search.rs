@@ -480,18 +480,44 @@ impl Tool for GlobTool {
         if matches.is_empty() {
             return Ok(ToolOutput::text("no matches"));
         }
-        let mut text = format!("{}\n[{} file(s)]", matches.join("\n"), matches.len());
-        // M117's rule, applied to the walker's own cap (G21b): a bound that changed the answer
-        // says so. Reaching the cap means the walk stopped mid-directory, so files that were
-        // never visited cannot appear however the pattern is refined — only a narrower search
-        // root brings them back. The wording says that rather than naming an internal constant,
-        // because the reader's next action is "search a subdirectory", not "raise 5000".
-        if matches.len() >= util::WALK_MAX_ENTRIES {
+        let walk_bound_hit = matches.len() >= util::WALK_MAX_ENTRIES;
+        // pi has no `glob` tool, so there is no upstream shape to copy; the cap is `find`'s, and so
+        // is the reason: a match list is a context-window payload, and 5000 paths reach the model
+        // as ~150 KB where `find` stops at 50 KB (M118's flagged asymmetry). Applied the same way —
+        // head-truncated whole lines at `DEFAULT_MAX_BYTES`, exactly as `find.ts:277` /
+        // `ls.ts:139-153` do it through pi's `truncateHead`.
+        let (listing, shown) = util::truncate_head_bytes(&matches, util::TOOL_OUTPUT_MAX_BYTES);
+        let bytes_cut = shown < matches.len();
+        // The count is the rows the reader can see, for the reason M118 gave `find`: a total that
+        // includes results it cannot see is the same lie one line up. Unchanged when nothing was
+        // cut, because then the two are the same number.
+        let mut text = format!("{listing}\n[{shown} file(s)]");
+        // One notice, the bound that actually fired — never both. Which one is not arbitrary:
+        // when the walk stopped early, the byte notice's own claims ("N more file(s) match", "use
+        // a narrower pattern to see the rest") are **false**, because the files it would be
+        // talking about were never visited and no pattern at this root can reach them. The walk
+        // notice's sentence is true in both cases, so it takes precedence; the byte cap is still
+        // applied (the list is cut), and the count above still reports what is shown.
+        if walk_bound_hit {
+            // M117's rule, applied to the walker's own cap (G21b): a bound that changed the answer
+            // says so. Reaching the cap means the walk stopped mid-directory, so files that were
+            // never visited cannot appear however the pattern is refined — only a narrower search
+            // root brings them back. The wording says that rather than naming an internal constant,
+            // because the reader's next action is "search a subdirectory", not "raise 5000".
             text.push_str(&format!(
                 "\n\n[{} files walked, so this list may be incomplete: the walk is a safety \
                  bound, not a match limit, and stopping it hid whatever it never visited. \
                  Search a subdirectory to see the rest]",
                 util::WALK_MAX_ENTRIES
+            ));
+        } else if bytes_cut {
+            // The bound that fired here is the byte budget, so the notice names it and what it
+            // hid; the same sentence `find` prints, because it is the same bound.
+            text.push_str(&format!(
+                "\n\n[{} output limit reached: {} more file(s) match and are not shown. \
+                 Use a narrower pattern to see the rest]",
+                util::format_size(util::TOOL_OUTPUT_MAX_BYTES),
+                matches.len() - shown
             ));
         }
         Ok(ToolOutput::text(text))

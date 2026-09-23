@@ -65,7 +65,7 @@ fn haystacks(message: &Message) -> Vec<(&'static str, String)> {
             for block in &m.content {
                 match block {
                     epsilon_contracts::content::ContentBlock::Text { text: t }
-                    | epsilon_contracts::content::ContentBlock::Thinking { text: t } => {
+                    | epsilon_contracts::content::ContentBlock::Thinking { text: t, .. } => {
                         text.push_str(t);
                     }
                     epsilon_contracts::content::ContentBlock::ToolCall {

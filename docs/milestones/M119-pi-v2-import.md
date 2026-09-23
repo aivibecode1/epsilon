@@ -68,11 +68,17 @@ End-to-end, on a real pi file built from pi's own shipped fixture by adding the 
   had not skipped lines (a real parser gives the source's 88/453/373 exactly), and no entry sat
   on an abandoned branch. The lesson generalises: `--resume` mutates the session it resumes, so
   a file examined *after* a resume is not the artefact the importer produced.
-- **A real loss was found, at field level.** `thinkingSignature` on pi's thinking parts has no
-  slot in `ContentBlock::Thinking`, so it is not carried — 1 entry in `large-session` and 47 in
-  `before-compaction`. Entry, role and every text string arrive; the signature does not. The fix
-  is an optional field with a serde default (wire-compatible) in `epsilon-contracts`, and it is
-  queued rather than applied here.
+- **The field-level loss is closed, in the follow-up round.** `ContentBlock::Thinking` gained an
+  optional `signature` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, so a
+  signature-less block is byte-identical to what this build wrote before the field existed, and a
+  session written before it still parses — pinned by a test that asserts the serialized bytes).
+  `store.rs`'s `legacy_block` carries pi's `thinkingSignature`, and because that is the *one*
+  content-part conversion both readers use, the importer carries it with no second path to drift.
+  The reconciliation test stopped reporting "thinkingSignature: this build has no slot for it" —
+  that sentence would now be the report lying about the code — and compares signature *values*
+  instead, with the source count asserted so an empty mismatch list cannot be vacuous. All 47 of
+  `before-compaction`'s signed parts (and the two whose signature pi wrote as an empty string, a
+  present-and-empty value kept as written) arrive, as does `large-session`'s one.
 - **Abandoned branches are not imported, deliberately and visibly.** On a branched fixture the
   reconciliation reports `on the active chain 3 / abandoned 1` and names the entry left behind:
   the source still holds it, and the leaf rule (an explicit marker if pi wrote one, else the

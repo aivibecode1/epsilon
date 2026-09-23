@@ -609,7 +609,7 @@ fn thinking_of(a: &AssistantMessage) -> String {
     a.content
         .iter()
         .filter_map(|c| match c {
-            epsilon_contracts::content::ContentBlock::Thinking { text } => Some(text.as_str()),
+            epsilon_contracts::content::ContentBlock::Thinking { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

@@ -493,7 +493,7 @@ fn an_anthropic_error_event_after_thinking_keeps_the_thinking() {
         .content
         .iter()
         .filter_map(|b| match b {
-            epsilon_contracts::content::ContentBlock::Thinking { text } => Some(text.as_str()),
+            epsilon_contracts::content::ContentBlock::Thinking { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

@@ -1,0 +1,24 @@
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.65s
+     Running unittests src\lib.rs (target\debug\deps\epsilon_contracts-baab937f1085ece0.exe)
+
+running 1 test
+test content::tests::a_signature_less_thinking_block_serializes_exactly_as_before ... FAILED
+
+failures:
+
+---- content::tests::a_signature_less_thinking_block_serializes_exactly_as_before stdout ----
+
+thread 'content::tests::a_signature_less_thinking_block_serializes_exactly_as_before' (5636) panicked at crates\epsilon-contracts\src\content.rs:121:9:
+assertion `left == right` failed
+  left: "{\"type\":\"thinking\",\"text\":\"weighing options\",\"signature\":null}"
+ right: "{\"type\":\"thinking\",\"text\":\"weighing options\"}"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    content::tests::a_signature_less_thinking_block_serializes_exactly_as_before
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p epsilon-contracts --lib`

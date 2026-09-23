@@ -1,0 +1,34 @@
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+   Compiling epsilon-session v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-session)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.59s
+     Running tests\session_store.rs (target\debug\deps\session_store-e5eb5a9935f6b247.exe)
+
+running 2 tests
+test a_pi_thinking_part_heals_with_its_signature_intact ... FAILED
+test a_healed_thinking_signature_survives_the_store_round_trip ... FAILED
+
+failures:
+
+---- a_pi_thinking_part_heals_with_its_signature_intact stdout ----
+
+thread 'a_pi_thinking_part_heals_with_its_signature_intact' (8504) panicked at crates\epsilon-session\tests\session_store.rs:898:5:
+assertion `left == right` failed: pi's `thinkingSignature` must arrive on the block, not be dropped at the heal
+  left: None
+ right: Some("EpEQCkYIChgCKkCOOc7x0voaSJaoxFkK77OqTCsW")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- a_healed_thinking_signature_survives_the_store_round_trip stdout ----
+
+thread 'a_healed_thinking_signature_survives_the_store_round_trip' (10384) panicked at crates\epsilon-session\tests\session_store.rs:940:5:
+the signature must be on disk, not only in memory: {"type":"session","version":3,"id":"ses_1a0cc2ad5214","timestamp":"2026-09-23T02:49:14.273Z","cwd":""}
+{"id":"ent_1a0cc2ad5210","seq":0,"parent_id":null,"timestamp_ms":1765233665294,"kind":{"type":"message","message":{"role":"assistant","id":"msg_1a0cc2ad5212","timestamp_ms":1765233665294,"provider":"anthropic","model_id":"claude-opus-4-5","content":[{"type":"thinking","text":"The user wants to expand AgentSession."},{"type":"text","text":"I will read the file."}],"stop_reason":"tool_use","error_message":null,"usage":{"input":0,"output":0,"cache_read":0,"cache_write":0,"total_tokens":0}},"api_request_sha256":null}}
+
+
+
+failures:
+    a_healed_thinking_signature_survives_the_store_round_trip
+    a_pi_thinking_part_heals_with_its_signature_intact
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 50 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p epsilon-session --test session_store`

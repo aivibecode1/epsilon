@@ -117,19 +117,23 @@ impl StreamFolder {
                 while msg.content.len() <= index {
                     msg.content.push(crate::content::ContentBlock::Thinking {
                         text: String::new(),
+                        signature: None,
                     });
                 }
                 match msg.content.get_mut(index) {
-                    Some(crate::content::ContentBlock::Thinking { text }) => text.push_str(delta),
+                    Some(crate::content::ContentBlock::Thinking { text, .. }) => {
+                        text.push_str(delta)
+                    }
                     Some(crate::content::ContentBlock::Text { .. }) => {
                         let next = index + 1;
                         while msg.content.len() <= next {
                             msg.content.push(crate::content::ContentBlock::Thinking {
                                 text: String::new(),
+                                signature: None,
                             });
                         }
                         match msg.content.get_mut(next) {
-                            Some(crate::content::ContentBlock::Thinking { text }) => {
+                            Some(crate::content::ContentBlock::Thinking { text, .. }) => {
                                 text.push_str(delta)
                             }
                             Some(crate::content::ContentBlock::Text { .. }) => {
@@ -137,6 +141,11 @@ impl StreamFolder {
                                     next,
                                     crate::content::ContentBlock::Thinking {
                                         text: delta.clone(),
+                                        // No provider stream event carries a signature, so a
+                                        // block folded from deltas has none; the field exists
+                                        // for the values a session file brings in (M119's pi
+                                        // import), not for a guess made here.
+                                        signature: None,
                                     },
                                 );
                             }

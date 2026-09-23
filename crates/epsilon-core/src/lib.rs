@@ -2105,7 +2105,7 @@ impl Agent {
                     .filter(|b| match b {
                         ContentBlock::ToolCall { .. } => false,
                         ContentBlock::Text { text } => !text.is_empty(),
-                        ContentBlock::Thinking { text } => !text.is_empty(),
+                        ContentBlock::Thinking { text, .. } => !text.is_empty(),
                         _ => true,
                     })
                     .cloned()

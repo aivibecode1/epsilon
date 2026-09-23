@@ -104,7 +104,7 @@ fn user_len(c: &UserContent) -> usize {
 
 fn block_len(b: &ContentBlock) -> usize {
     match b {
-        ContentBlock::Text { text } | ContentBlock::Thinking { text } => estimate_tokens(text),
+        ContentBlock::Text { text } | ContentBlock::Thinking { text, .. } => estimate_tokens(text),
         ContentBlock::Image(_) => 512,
         ContentBlock::ToolCall { arguments, .. } => estimate_tokens(&arguments.to_string()) + 8,
     }

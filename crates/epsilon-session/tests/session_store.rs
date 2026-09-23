@@ -842,6 +842,123 @@ fn a_pi_tool_result_entry_heals_as_a_tool_result() {
     );
 }
 
+/// An assistant line in pi's shape whose content holds a reasoning part **with** a provider
+/// signature — exactly the field M119 measured as lost (1 entry in `large-session.jsonl`, 47 in
+/// `before-compaction.jsonl`).
+///
+/// The signature is the head of the one pi's own `before-compaction.jsonl` carries on line 14
+/// (2,760 characters there). Truncated because the value is opaque to this build and its length
+/// is not what is under test — whether it arrives at all is.
+const PI_ASSISTANT_THINKING_LINE: &str = r#"{"type":"message","timestamp":"2025-12-08T22:41:05.306Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user wants to expand AgentSession.","thinkingSignature":"EpEQCkYIChgCKkCOOc7x0voaSJaoxFkK77OqTCsW"},{"type":"text","text":"I will read the file."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-opus-4-5","stopReason":"toolUse","timestamp":1765233665294}}"#;
+
+/// The same shape with **no** `thinkingSignature` on the part: pi writing none is the absence
+/// this field must not invent a value for.
+const PI_ASSISTANT_THINKING_WITHOUT_SIGNATURE_LINE: &str = r#"{"type":"message","timestamp":"2025-12-08T22:41:05.306Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"No signature anywhere."},{"type":"text","text":"Done."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-opus-4-5","stopReason":"endTurn","timestamp":1765233665295}}"#;
+
+/// The reasoning blocks of an assistant message, so an assertion reads as what it checks.
+fn thinking_blocks(message: &Message) -> Vec<&ContentBlock> {
+    let Message::Assistant(assistant) = message else {
+        panic!("expected an assistant message, got {message:?}");
+    };
+    assistant
+        .content
+        .iter()
+        .filter(|block| matches!(block, ContentBlock::Thinking { .. }))
+        .collect()
+}
+
+/// A pi reasoning part heals with its `thinkingSignature` intact, and one without it heals with
+/// no signature rather than a default.
+///
+/// The signature is what Anthropic needs to replay a reasoning block verbatim, so dropping it
+/// made an imported session's reasoning block unreplayable while every text string in it arrived
+/// — the field-level loss M119 found and named. Both halves are asserted here because a healer
+/// that invented `Some("")` for every signature-less part would pass the first one alone.
+#[test]
+fn a_pi_thinking_part_heals_with_its_signature_intact() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let entry = heal_pi_line(&dir, PI_ASSISTANT_THINKING_LINE);
+
+    let EntryKind::Message { message, .. } = &entry.kind else {
+        panic!(
+            "a pi assistant line must heal to a message entry, got {:?}",
+            entry.kind
+        );
+    };
+    let thinking = thinking_blocks(message);
+    assert_eq!(
+        thinking.len(),
+        1,
+        "one thinking part in, one out: {message:?}"
+    );
+    let ContentBlock::Thinking { text, signature } = thinking[0] else {
+        unreachable!("filtered to thinking blocks");
+    };
+    assert_eq!(text, "The user wants to expand AgentSession.");
+    assert_eq!(
+        signature.as_deref(),
+        Some("EpEQCkYIChgCKkCOOc7x0voaSJaoxFkK77OqTCsW"),
+        "pi's `thinkingSignature` must arrive on the block, not be dropped at the heal"
+    );
+    // The text beside it is not displaced by carrying one more field.
+    assert!(
+        matches!(message, Message::Assistant(a) if a.text().contains("I will read the file.")),
+        "{message:?}"
+    );
+
+    let bare = heal_pi_line(&dir, PI_ASSISTANT_THINKING_WITHOUT_SIGNATURE_LINE);
+    let EntryKind::Message { message, .. } = &bare.kind else {
+        panic!("the second pi line must heal to a message entry too");
+    };
+    let thinking = thinking_blocks(message);
+    assert_eq!(thinking.len(), 1);
+    let ContentBlock::Thinking { signature, .. } = thinking[0] else {
+        unreachable!("filtered to thinking blocks");
+    };
+    assert_eq!(
+        *signature, None,
+        "a part pi wrote without a signature must heal without one — absent is not empty"
+    );
+}
+
+/// The signature survives the store: healed from pi's shape, written to disk in this build's
+/// format, read back — the round trip a resumed session actually takes.
+#[test]
+fn a_healed_thinking_signature_survives_the_store_round_trip() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("pi-roundtrip.jsonl");
+    std::fs::write(&path, format!("{PI_ASSISTANT_THINKING_LINE}\n")).expect("write the pi line");
+
+    let mut store = SessionStore::open(&path).expect("a pi-shaped line must open");
+    assert!(store.migrated(), "a pi-shaped line is legacy and must heal");
+    let healed = store.read_all().expect("read the healed entry");
+    assert_eq!(healed.len(), 1);
+    store.persist_migration().expect("write the healed file");
+    drop(store); // release the write lease before reopening (M61)
+
+    let text = std::fs::read_to_string(&path).expect("read the migrated file");
+    assert!(
+        text.contains(r#""signature":"EpEQCkYIChgCKkCOOc7x0voaSJaoxFkK77OqTCsW""#),
+        "the signature must be on disk, not only in memory: {text}"
+    );
+
+    let reopened = SessionStore::open(&path).expect("reopen the migrated file");
+    assert!(!reopened.migrated(), "a migrated file is not legacy");
+    let entries = reopened.read_all().expect("read the migrated entries");
+    let EntryKind::Message { message, .. } = &entries[0].kind else {
+        panic!("the round trip must keep the message kind");
+    };
+    let thinking = thinking_blocks(message);
+    let ContentBlock::Thinking { signature, .. } = thinking[0] else {
+        unreachable!("filtered to thinking blocks");
+    };
+    assert_eq!(
+        signature.as_deref(),
+        Some("EpEQCkYIChgCKkCOOc7x0voaSJaoxFkK77OqTCsW"),
+        "a signature that does not survive the round trip is still a loss, one write later"
+    );
+}
+
 /// An unrecognized role and an unrecognized content part are preserved, not dropped.
 ///
 /// `bashExecution` is pi's fourth message role and has no Epsilon equivalent — the same

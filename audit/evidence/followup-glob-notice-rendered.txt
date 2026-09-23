@@ -1,0 +1,9 @@
+# the glob byte-cap notice, as rendered
+
+# probe: crates/epsilon-tools/tests/builtin_tools.rs, the exact-wording assertion temporarily
+# given a deliberately wrong count (0) so the panic printed the real output; the test file was
+# then restored byte-identically (sha256 E3C0BBD7...8942) and the full focused suite re-run green.
+# command: cargo test -p epsilon-tools --test builtin_tools glob_announces_the_byte_budget_when_bytes_cut_the_list -- --exact
+# fixture: 400 files named "row000 <150 x's>.txt" (~161 bytes each), so 316 rows fit 50 KiB and 84 do not:
+
+[50.0KB output limit reached: 84 more file(s) match and are not shown. Use a narrower pattern to see the rest]

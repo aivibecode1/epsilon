@@ -63,6 +63,19 @@ not themselves trigger runtime compression.
    CLI test) because it staged explicit paths: the tree built and the battery passed, so the
    evidence was valid, but the commit alone would not have compiled. Run
    `git status --short --untracked-files=all` **before** staging after any delegated work.
+- **Two follow-ups queued by earlier rounds landed 2026-09-23** (focused tests green:
+  `cargo test -p epsilon-session -p epsilon-tools -p epsilon-contracts`; the round owner's battery
+  is the evidence of record). (a) **pi's `thinkingSignature` has a slot now**:
+  `ContentBlock::Thinking.signature`, optional and skipped when absent — a signature-less block is
+  byte-identical to what this build wrote before, pinned by a test on the serialized bytes — and
+  carried in `store.rs`'s `legacy_block`, the one content-part conversion both the v1 healer and
+  the pi importer use, so there is no second path. The reconciliation test stopped reporting
+  "no slot for it" (that sentence would now be the report lying) and compares signature values,
+  asserting the source counts (1 in large-session, 49 in before-compaction = 47 non-empty + 2 that
+  pi wrote empty). (b) **`glob` carries `find`'s 50 KiB cap**: same helper, `find`'s notice, count
+  reports rows shown, and the two notices are mutually exclusive — the walk notice wins when the
+  walk bound fired, because "N more match, use a narrower pattern" is false about files never
+  visited (the cap is still applied there).
 - **M119's unexplained number is settled (2026-09-23): the importer loses nothing — the count
    came from a file `--resume` had already repaired.** A real reconciliation
    (`crates/epsilon-session/tests/pi_import_reconciliation.rs`: serde_json over every line of both
@@ -76,7 +89,8 @@ not themselves trigger runtime compression.
    against the import's pre-repair report. Evidence:
    `audit/evidence/pi-import-reconciliation-2026-09-23/`. One real loss was found, a **field** and
    not an entry: `thinkingSignature` on thinking parts (1 entry in large-session, 47 in
-   before-compaction) has no slot in `ContentBlock::Thinking`.
+   before-compaction) had no slot in `ContentBlock::Thinking` — **carried since the follow-up
+   above** (`signature`), so that evidence log is history: it records what the pre-fix code did.
 - **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
    *in place*, so the original is kept rather than the conversion avoided. The importer plan's
    import-as-copy rule would make `--resume` produce a new file and leave the original
@@ -89,10 +103,10 @@ not themselves trigger runtime compression.
    resumed session's model. **The consumer is the missing half**; it was deliberately not
    invented. Note for the next agent: the queue item that said "map these" was stale for two
    rounds — check `git blame` before writing code against a note.
-- **G20's two real defects are in flight this round (delegated)**: `find` truncates silently
-   where pi announces the cap, and `ls` has no `limit` where pi's takes one and reports it.
-   The rest of G20 — Epsilon registering twelve tools where pi's default active set is four —
-   is a **deliberate product divergence**, recorded in `audit/11` so nobody "fixes" it by
+- **G20's two real defects are closed** (M117, `4e292a7`): `find` announces the results its cap
+   hides and that its byte cap exists, and `ls` takes pi's `limit` and reports it. The rest of
+   G20 — Epsilon registering twelve tools where pi's default active set is four — is a
+   **deliberate product divergence**, recorded in `audit/11` so nobody "fixes" it by
    removing capability to match a count.
 - **The pi v2 importer (slice 4B)** — pi files whose entries carry `id`/`parentId` are
    refused at line 2 (`UnknownLineShape`); the v1 path now heals correctly. Plan:

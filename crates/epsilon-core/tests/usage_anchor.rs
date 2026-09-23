@@ -141,7 +141,9 @@ fn visible_chars(history: &[Message]) -> usize {
     fn block(b: &epsilon_contracts::content::ContentBlock) -> usize {
         match b {
             epsilon_contracts::content::ContentBlock::Text { text }
-            | epsilon_contracts::content::ContentBlock::Thinking { text } => text.chars().count(),
+            | epsilon_contracts::content::ContentBlock::Thinking { text, .. } => {
+                text.chars().count()
+            }
             epsilon_contracts::content::ContentBlock::ToolCall { arguments, .. } => {
                 arguments.to_string().chars().count()
             }

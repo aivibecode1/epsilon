@@ -626,6 +626,10 @@ impl HttpEventStream {
         if !self.thinking.is_empty() {
             content.push(ContentBlock::Thinking {
                 text: std::mem::take(&mut self.thinking),
+                // No wire here parses a reasoning signature (Anthropic's `signature_delta` is
+                // not read), so a block built from a live turn has none. The field carries what
+                // a session file brought in, not a value invented at assembly time.
+                signature: None,
             });
         }
         if !self.text.is_empty() {

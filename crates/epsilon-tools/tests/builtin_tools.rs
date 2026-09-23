@@ -1076,6 +1076,12 @@ async fn find_under_the_byte_budget_says_nothing_about_one() {
 /// safety valve on the walk, not a result cap the caller asked for, so the notice says that
 /// in words — and the fixture really fills the budget rather than lowering the constant, so
 /// the assertion is calibrated against the shipped 5000.
+///
+/// 5000 paths of this shape are ~65 KB, so the byte cap fires on this fixture too, and that is
+/// what pins the precedence: the walk notice is the one printed, because when the walk stopped
+/// early the byte notice's own claims ("N more file(s) match", "use a narrower pattern to see
+/// the rest") are false — the rest was never visited. The byte cap is still *applied* (the list
+/// is cut), which is why the count reports the rows shown rather than all 5000.
 #[tokio::test]
 async fn glob_announces_when_the_walk_stops_at_its_budget() {
     let dir = tempfile::tempdir().unwrap();
@@ -1092,10 +1098,6 @@ async fn glob_announces_when_the_walk_stops_at_its_budget() {
         .await
         .unwrap();
     assert!(
-        out.contains(&format!("[{} file(s)]", util::WALK_MAX_ENTRIES)),
-        "the walker budget is the cap: {out}"
-    );
-    assert!(
         out.contains(&format!(
             "[{} files walked, so this list may be incomplete",
             util::WALK_MAX_ENTRIES
@@ -1109,6 +1111,116 @@ async fn glob_announces_when_the_walk_stops_at_its_budget() {
     assert!(
         out.contains("Search a subdirectory to see the rest"),
         "with the move that actually helps: {out}"
+    );
+    assert!(
+        !out.contains("output limit reached"),
+        "the walk bound is what fired here, so the byte notice must not also fire — and its \
+         \"N more file(s) match\" would be false, because the walk never visited them: {out}"
+    );
+    // The byte cap still applied to what was walked: the count is the rows the reader can see,
+    // and it is smaller than the 5000 the walk stopped at.
+    let shown = glob_count_line(&out);
+    assert!(
+        shown > 0 && shown < util::WALK_MAX_ENTRIES,
+        "the count must report the rows shown, not the rows matched: {out}"
+    );
+}
+
+/// The `[N file(s)]` count line of a `glob` result, parsed.
+fn glob_count_line(out: &str) -> usize {
+    let count_line = out
+        .lines()
+        .find(|l| l.starts_with('[') && l.ends_with("file(s)]"))
+        .unwrap_or_else(|| panic!("no count line: {out}"));
+    count_line
+        .trim_start_matches('[')
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap_or_else(|e| panic!("count line is not a number ({e}): {count_line}"))
+}
+
+/// G21's last item, and M118's flagged asymmetry: `glob` had no byte cap, so its 5000 matches
+/// (~150 KB) reached the model where `find` stopped at 50 KB. Same cap, same helper, same
+/// sentence as `find` — and the same two tests.
+///
+/// Real bytes cross the threshold: 400 entries of ~160 bytes is ~65 KB of listing, far over
+/// pi's 50 KB `DEFAULT_MAX_BYTES` (`truncate.ts:12`) and far inside the 5000-file walk budget,
+/// so the walk bound cannot be what fired.
+#[tokio::test]
+async fn glob_announces_the_byte_budget_when_bytes_cut_the_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let glob = GlobTool::new();
+    for i in 0..400 {
+        std::fs::write(
+            dir.path()
+                .join(format!("row{i:03} {}.txt", "x".repeat(150))),
+            "",
+        )
+        .unwrap();
+    }
+    // The fixture size is the point: 400 entries of this shape cross the budget.
+    const _: () = assert!(400 * (150 + 9) > epsilon_tools::TOOL_OUTPUT_MAX_BYTES);
+    let out = run(&glob, &ctx, serde_json::json!({"pattern": "*.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        out.contains("50.0KB output limit reached"),
+        "the byte bound must name itself: {out}"
+    );
+    assert!(
+        out.contains("more file(s) match and are not shown. Use a narrower pattern"),
+        "and must not advise raising a limit that is not the bound: {out}"
+    );
+    assert!(
+        !out.contains("files walked"),
+        "400 files walk inside the budget, so the walk notice would be the wrong explanation \
+         for what stopped this list: {out}"
+    );
+    let shown = glob_count_line(&out);
+    assert!(
+        shown > 0 && shown < 400,
+        "the count must report the shown entries, not the 400 that matched: {out}"
+    );
+    // The whole notice, word for word and count included — it is `find`'s sentence because it is
+    // `find`'s bound, and a fragment match would let the count (or the advice) drift.
+    let hidden = 400 - shown;
+    assert!(
+        out.contains(&format!(
+            "[50.0KB output limit reached: {hidden} more file(s) match and are not shown. \
+             Use a narrower pattern to see the rest]"
+        )),
+        "the notice is not the sentence the description and `find` promise: {out}"
+    );
+}
+
+/// The other half of the rule: a match list under the byte budget is returned unchanged, and
+/// says nothing. Same ~160-byte entries as the crossing test, fewer of them.
+#[tokio::test]
+async fn glob_under_the_byte_budget_says_nothing_about_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let glob = GlobTool::new();
+    let names: Vec<String> = (0..200)
+        .map(|i| format!("row{i:03} {}.txt", "x".repeat(150)))
+        .collect();
+    for name in &names {
+        std::fs::write(dir.path().join(name), "").unwrap();
+    }
+    let out = run(&glob, &ctx, serde_json::json!({"pattern": "*.txt"}))
+        .await
+        .unwrap();
+    assert!(out.contains(&names[0]), "the entry is listed: {out}");
+    assert_eq!(glob_count_line(&out), 200, "got: {out}");
+    assert!(
+        !out.contains("output limit reached"),
+        "200 entries is under the byte budget and must not invent a notice: {out}"
+    );
+    assert!(
+        !out.contains("files walked"),
+        "and the walk finished inside its budget as well: {out}"
     );
 }
 

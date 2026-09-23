@@ -93,7 +93,7 @@ impl ProviderWire for OpenAiResponsesWire {
                                     "content": [{"type": "output_text", "text": text}],
                                 }));
                             }
-                            ContentBlock::Thinking { text } => {
+                            ContentBlock::Thinking { text, .. } => {
                                 input.push(json!({
                                     "type": "reasoning",
                                     "summary": [{"type": "summary_text", "text": text}],

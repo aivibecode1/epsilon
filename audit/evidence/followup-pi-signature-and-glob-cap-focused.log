@@ -1,0 +1,328 @@
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+   Compiling epsilon-session v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-session)
+   Compiling epsilon-llm v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-llm)
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+   Compiling epsilon-safety v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-safety)
+   Compiling epsilon-lsp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-lsp)
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.86s
+     Running unittests src\lib.rs (target\debug\deps\epsilon_contracts-754d42b24fedf68e.exe)
+
+running 34 tests
+test agent_event::tests::sticky_merge_prefers_worse_reasons ... ok
+test content::tests::text_constructor_works ... ok
+test message::tests::assistant_helpers_work ... ok
+test message::tests::custom_is_not_llm_visible ... ok
+test content::tests::a_signature_less_thinking_block_serializes_exactly_as_before ... ok
+test content::tests::a_thinking_signature_round_trips ... ok
+test content::tests::roundtrips_tagged_variants ... ok
+test agent_event::tests::agent_events_roundtrip ... ok
+test message::tests::stop_reason_semantics ... ok
+test message::tests::thinking_level_accepts_pis_xhigh_spelling_on_input_only ... ok
+test message::tests::thinking_level_ladder_wraps_parses_and_serializes ... ok
+test message::tests::usage_add_accumulates ... ok
+test session_entry::tests::a_header_this_build_writes_is_unchanged_in_shape ... ok
+test message::tests::roundtrips_all_roles ... ok
+test session_entry::tests::a_kind_without_a_tag_is_refused ... ok
+test session_entry::tests::a_known_kind_with_an_unreadable_body_is_an_error_not_a_preservation ... ok
+test session_entry::tests::a_pi_header_keeps_the_fields_this_build_does_not_model ... ok
+test session_entry::tests::an_unknown_kind_keeps_every_field_and_value ... ok
+test ids::tests::ids_are_prefix_unique_and_monotonic ... ok
+test session_entry::tests::compaction_entry_carries_retained_tail ... ok
+test session_entry::tests::entry_roundtrips_as_one_jsonl_line ... ok
+test session_entry::tests::header_line_parses_and_reports_version ... ok
+test session_entry::tests::label_and_session_info_keep_their_optional_fields ... ok
+test stream::tests::double_start_is_protocol_error ... ok
+test session_entry::tests::the_known_kind_list_covers_every_variant ... ok
+test stream::tests::folds_text_and_tool_call ... ok
+test stream::tests::truncated_arguments_stay_detectable_as_null ... ok
+test tool::tests::a_tool_that_names_no_resource_is_a_barrier ... ok
+test tool::tests::an_object_passes_validation ... ok
+test tool::tests::an_unreadable_payload_is_quoted_back_to_the_model ... ok
+test tool::tests::other_shapes_still_say_what_was_expected ... ok
+test tool::tests::the_quoted_payload_is_bounded ... ok
+test turn::tests::turn_update_defaults_keep_everything ... ok
+test turn::tests::defaults_match_the_pre_hook_loop ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target\debug\deps\epsilon_session-21f0ded47f944c7a.exe)
+
+running 18 tests
+test import::tests::the_output_name_keeps_the_source_name_whole ... ok
+test import::tests::the_tree_predicate_accepts_pi_entries_only ... ok
+test discover::tests::missing_directory_lists_nothing ... ok
+test lease::tests::a_dead_holders_lock_is_stolen_after_the_stale_window ... ok
+test lease::tests::held_reports_the_holder_pid ... ok
+test discover::tests::title_falls_back_to_the_file_stem ... ok
+test lease::tests::lease_is_exclusive_and_released_on_drop ... ok
+test search::tests::case_insensitive_with_snippet_context ... ok
+test search::tests::empty_query_and_misses_return_nothing ... ok
+test search::tests::finds_user_assistant_and_tool_hits_newest_first ... ok
+test search::tests::skips_non_message_entries ... ok
+test search::tests::limit_caps_results ... ok
+test search::tests::snippet_after_expanding_lowercase_char_does_not_panic ... ok
+test discover::tests::summaries_read_bounded_heads_and_tails ... ok
+test discover::tests::latest_session_is_newest_and_honours_the_cwd_filter ... ok
+test discover::tests::listing_is_newest_first_and_skips_foreign_files ... ok
+test lease::tests::dropping_a_lease_stops_the_heartbeat_and_removes_the_lock ... ok
+test lease::tests::a_live_holder_is_never_stolen_from ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests\pi_import_reconciliation.rs (target\debug\deps\pi_import_reconciliation-fd91c5cbb9d85f25.exe)
+
+running 5 tests
+test reconcile_an_external_pair ... ok
+test abandoned_branches_are_reported_not_imported ... ok
+test the_m119_gap_is_resume_repair_not_import_loss ... ok
+test pi_import_carries_every_source_entry ... ok
+test per_kind_counts_tie_out_on_both_sides ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+
+     Running tests\session_store.rs (target\debug\deps\session_store-0ee55ca2f15e23fb.exe)
+
+running 52 tests
+test a_known_kind_with_an_unreadable_body_is_refused_as_damage_not_as_foreign ... ok
+test a_branch_imports_the_chain_to_the_leaf_and_reports_the_abandoned_sibling ... ok
+test a_branch_summary_lands_once_on_the_new_branch_and_never_on_the_abandoned_one ... ok
+test a_file_that_needs_no_migration_leaves_no_backup ... ok
+test a_model_change_missing_its_provider_stays_custom ... ok
+test a_converted_file_keeps_the_original_bytes_beside_it ... ok
+test a_pi_model_change_heals_to_a_typed_model_change ... ok
+test a_parent_cycle_terminates_the_tolerant_walk_and_is_refused_by_the_fork ... ok
+test a_pi_assistant_entry_heals_with_its_tool_call_intact ... ok
+test a_healed_thinking_signature_survives_the_store_round_trip ... ok
+test a_pi_tool_result_entry_heals_as_a_tool_result ... ok
+test a_pi_user_entry_heals_with_its_text_role_and_timestamp_intact ... ok
+test a_repair_reports_its_kinds_and_marks_what_it_synthesized ... ok
+test a_second_compaction_replaces_the_superseded_projection ... ok
+test a_pi_thinking_level_change_heals_to_a_typed_thinking_level_change ... ok
+test a_pi_thinking_part_heals_with_its_signature_intact ... ok
+test a_pi_shaped_file_round_trips_through_persist_migration ... ok
+test a_pi_v2_file_imports_into_a_new_session_with_its_messages_intact ... ok
+test a_second_import_refuses_to_replace_the_first_output ... ok
+test a_session_file_has_one_writer_at_a_time ... ok
+test an_empty_branch_summary_is_appended_but_not_projected ... ok
+test a_torn_first_entry_does_not_take_the_header_with_it ... ok
+test an_explicit_leaf_marker_selects_the_branch_it_names ... ok
+test a_seq_that_disagrees_with_line_order_is_a_chain_break_not_a_panic ... ok
+test branch_with_summary_maps_pis_target_shapes_exactly ... ok
+test append_read_roundtrip_preserves_entries ... ok
+test an_unknown_kind_in_a_pi_v2_file_is_preserved_and_reported ... ok
+test an_unrecognized_role_and_content_part_survive_the_heal ... ok
+test an_existing_backup_is_never_replaced_by_a_second_conversion ... ok
+test a_torn_tail_is_still_tolerated ... ok
+test an_unknown_entry_type_is_preserved_and_reported_rather_than_refused ... ok
+test dangling_tool_calls_get_synthetic_results_and_turn_end ... ok
+test child_sessions_record_their_parent_link ... ok
+test crash_truncated_final_line_is_detected_and_truncated ... ok
+test each_child_session_leases_its_own_file ... ok
+test lease_blocks_second_writer_until_released ... ok
+test fork_refuses_an_ancestry_that_does_not_reach_a_root ... ok
+test converting_a_pi_file_keeps_its_header_fields_on_disk ... ok
+test model_view_shadows_compacted_ranges_but_file_keeps_them ... ok
+test new_file_starts_with_current_header ... ok
+test mid_file_corruption_plus_torn_tail_still_reports_line ... ok
+test a_complete_but_unknown_final_line_is_refused_not_truncated ... ok
+test navigate_and_branch_work ... ok
+test fork_branch_at_writes_only_the_selected_ancestry_with_fresh_identity ... ok
+test mid_file_corruption_reports_line_and_preserves_file ... ok
+test the_imported_source_is_byte_identical_afterwards ... ok
+test popping_the_last_entry_keeps_the_header_and_the_read_cache_in_step ... ok
+test resetting_the_leaf_makes_the_next_append_a_new_root_and_reopens_faithfully ... ok
+test old_headerless_file_opens_as_v1_and_appends_header_lazily ... ok
+test v1_file_with_legacy_shapes_migrates_in_memory ... ok
+test the_line_diagnoses_are_distinguishable_from_each_other ... ok
+test the_preserved_unknown_notice_names_the_count_and_the_kinds_in_file_order ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running unittests src\lib.rs (target\debug\deps\epsilon_tools-55502a22c5dd9899.exe)
+
+running 100 tests
+test checkpoint::tests::blob_names_are_stable_and_content_dependent ... ok
+test checkpoint::tests::a_path_outside_the_workspace_is_skipped_rather_than_stored ... ok
+test checkpoint::tests::a_file_that_did_not_exist_is_restored_by_removing_it ... ok
+test checkpoint::tests::a_recorded_file_can_be_restored_byte_for_byte ... ok
+test checkpoint::tests::a_restore_recreates_a_file_that_was_deleted_after_capture ... ok
+test checkpoint::tests::identical_content_is_stored_once ... ok
+test checkpoint::tests::a_restore_refuses_an_entry_it_cannot_verify ... ok
+test checkpoint::tests::an_oversized_file_is_skipped_with_a_reason_that_reaches_the_ledger ... ok
+test edit_match::tests::a_paraphrased_middle_matches_on_its_anchors ... ok
+test checkpoint::tests::reverting_a_file_that_never_existed_still_removes_it ... ok
+test edit_match::tests::a_two_line_anchor_pair_is_not_enough_to_guess ... ok
+test checkpoint::tests::a_restore_refuses_to_clobber_a_file_that_changed_since_capture ... ok
+test edit_match::tests::ambiguity_still_wins_over_a_looser_stage ... ok
+test edit_match::tests::ambiguous_exact_reports_count_even_when_loose_stage_unique ... ok
+test edit_match::tests::blank_lines_around_the_block_are_ignored ... ok
+test edit_match::tests::eol_detection_and_restore_round_trip ... ok
+test edit_match::tests::anchors_that_are_only_superficially_alike_do_not_match ... ok
+test edit_match::tests::a_loose_match_over_a_huge_span_is_refused_not_applied ... ok
+test edit_match::tests::exact_match_on_lf_files_is_unchanged_behavior ... ok
+test edit_match::tests::replace_all_applies_to_variable_height_spans ... ok
+test edit_match::tests::escaped_newlines_in_the_arguments_match_real_newlines ... ok
+test edit_match::tests::genuinely_different_text_is_not_found ... ok
+test edit_match::tests::replace_all_hits_every_occurrence ... ok
+test edit_match::tests::similarity_and_distance_are_what_they_claim ... ok
+test edit_match::tests::the_guard_boundary_is_inclusive_of_opencodes_rule ... ok
+test edit_match::tests::trailing_whitespace_differences_still_match ... ok
+test edit_match::tests::window_splice_preserves_trailing_newline ... ok
+test edit_match::tests::wrong_indentation_still_matches_flexibly ... ok
+test edit_match::tests::the_refusal_covers_the_character_rule_as_well_as_the_line_rule ... ok
+test find::tests::resource_key_covers_default_and_explicit_search_directories ... ok
+test edit_match::tests::a_fixed_width_stage_reports_no_span_numbers_because_there_are_none ... ok
+test checkpoint::tests::the_ledger_is_monotonic_and_lists_the_newest_state_per_path ... ok
+test image::tests::detects_still_png_rejects_animated ... ok
+test image::tests::detects_jpeg_gif_webp_bmp_and_rejects_other ... ok
+test find::tests::bare_pattern_matches_at_any_depth ... ok
+test find::tests::respects_limit ... ok
+test find::tests::under_the_byte_budget_says_nothing_about_one ... ok
+test read_log::tests::a_file_that_does_not_exist_yet_may_be_created ... ok
+test read_log::tests::a_line_longer_than_the_byte_budget_is_the_only_window_left_open ... ok
+test read_log::tests::a_page_of_a_larger_file_cannot_justify_a_full_overwrite ... ok
+test read_log::tests::a_file_that_changed_underneath_is_refused_with_both_sizes ... ok
+test read_log::tests::a_partial_read_cannot_justify_a_full_overwrite ... ok
+test read_log::tests::an_unchanged_file_may_be_written ... ok
+test read_log::tests::an_existing_file_nobody_read_is_not_overwritten_blind ... ok
+test checkpoint::tests::reverting_a_skipped_capture_refuses_instead_of_deleting_the_file ... ok
+test read_log::tests::our_own_write_is_not_downgraded_by_a_later_page_read ... ok
+test read_log::tests::edits_are_guarded_too ... ok
+test read_log::tests::coverage_of_one_content_does_not_cover_another ... ok
+test read_log::tests::our_own_write_does_not_look_like_someone_elses_change ... ok
+test read_log::tests::retired_observation_scopes_are_reclaimed_on_access ... ok
+test shell::shell_argv_tests::the_windows_shell_skips_the_user_profile ... ok
+test shell::verdict_tests::a_non_zero_exit_is_a_command_outcome_never_a_confinement_one ... ok
+test shell::verdict_tests::the_enforcement_vocabulary_cannot_be_empty_partial ... ok
+test shell::verdict_tests::zero_and_signals_are_their_own_answers ... ok
+test read_log::tests::pages_extend_coverage_only_when_they_are_contiguous ... ok
+test skill::tests::a_known_skill_returns_its_body_without_the_frontmatter ... ok
+test skill::tests::an_empty_name_is_rejected_with_guidance ... ok
+test checkpoint::tests::the_store_evicts_old_blobs_when_it_grows_past_its_ceiling ... ok
+test skill::tests::a_name_differing_only_in_case_or_padding_still_loads ... ok
+test skill::tests::an_empty_body_is_a_failure_rather_than_a_silent_blank ... ok
+test skill::tests::the_description_discourages_speculative_loads ... ok
+test skill::tests::names_are_reported_in_a_stable_order ... ok
+test task::tests::background_true_starts_the_child_and_reports_running ... ok
+test task::tests::defaults_subagent_type_to_default ... ok
+test skill::tests::an_unclosed_frontmatter_block_is_returned_whole ... ok
+test skill::tests::an_unknown_name_is_answered_with_the_real_list ... ok
+test task::tests::isolated_host_failure_surfaces_naming_type ... ok
+test task::tests::isolated_host_receives_subagent_type_verbatim ... ok
+test task::tests::model_is_optional_and_advertised_in_the_schema ... ok
+test task::tests::model_parameter_reaches_the_host_and_the_result_names_it ... ok
+test task::tests::rejects_empty_description_and_prompt ... ok
+test task::tests::renders_envelope_with_description_and_prompt ... ok
+test task::tests::resume_with_a_prompt_forwards_the_task_id ... ok
+test task::tests::task_id_alone_is_a_status_probe_not_a_new_run ... ok
+test todo::tests::empty_list_is_a_valid_clear_signal ... ok
+test task::tests::unknown_task_id_error_reaches_the_model ... ok
+test util::diff_tests::identical_inputs_produce_no_output ... ok
+test util::diff_tests::pure_deletion ... ok
+test todo::tests::renders_checklist_with_counts_and_details ... ok
+test util::diff_tests::pure_insertion ... ok
+test util::diff_tests::simple_replacement ... ok
+test todo::tests::rejects_empty_content_and_oversized_lists ... ok
+test util::tests::head_bytes_keeps_only_whole_lines_that_fit ... ok
+test util::tests::lexical_traversal_is_contained ... ok
+test search::tests::glob_translation_covers_dialect ... ok
+test util::tests::a_failed_spill_is_reported_instead_of_promised ... ok
+test util::tests::truncate_spills_and_notes_locator ... ok
+test util::tests::every_retained_window_is_char_boundary_safe ... ok
+test util::tests::keeps_the_head_and_the_tail_of_a_long_log ... ok
+test webfetch::tests::accepts_http_and_https ... ok
+test webfetch::tests::max_chars_truncation_shape ... ok
+test util::tests::spill_files_are_created_exclusively_under_a_private_dir ... ok
+test webfetch::tests::status_error_formats_snippet ... ok
+test webfetch::tests::rejects_non_http_scheme ... ok
+test util::tests::walk_files_actually_honours_gitignore ... ok
+test webfetch::tests::spill_helper_reused ... ok
+test util::tests::walker_skips_ignored_dirs_but_keeps_hidden_files ... ok
+test mutation::tests::different_paths_run_concurrently ... ok
+test mutation::tests::serializes_same_path ... ok
+test find::tests::announces_the_byte_budget_when_bytes_cut_the_list ... ok
+
+test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests\builtin_tools.rs (target\debug\deps\builtin_tools-5f955dfa6ca2f0ce.exe)
+
+running 57 tests
+test a_refused_command_is_marked_as_confinement_and_produces_no_verdict ... ok
+test a_call_asking_for_danger_full_access_is_refused_before_anything_runs ... ok
+test a_page_that_ends_on_a_blank_line_keeps_that_line ... ok
+test a_small_explicit_limit_reports_how_many_lines_remain ... ok
+test a_later_over_cap_line_still_shows_the_page_and_still_refuses_the_overwrite ... ok
+test a_partial_read_cannot_justify_overwriting_the_whole_file ... ok
+test a_write_carries_what_the_language_server_thinks_of_it ... ok
+test a_write_after_something_else_changed_the_file_is_refused ... ok
+test a_multibyte_character_is_never_cut_by_the_page_boundary ... ok
+test a_write_is_unchanged_when_no_server_can_answer ... ok
+test an_over_cap_single_line_points_at_bash_and_leaves_the_write_open ... ok
+test an_edit_after_a_change_is_refused_but_an_unchanged_edit_is_not ... ok
+test an_edit_carries_the_diagnostics_too ... ok
+test creating_a_file_needs_no_history_but_blind_overwrites_do_not_happen ... ok
+test edit_refuses_capped_source_without_losing_tail ... ok
+test edit_matches_on_anchors_and_refuses_a_disproportionate_span ... ok
+test edit_falls_back_to_line_trimmed_and_indent_flexible_matching ... ok
+test edit_matches_lf_args_against_crlf_files_and_preserves_crlf ... ok
+test edit_source_multibyte_split_at_limit_is_refused ... ok
+test edit_source_one_byte_over_limit_is_refused ... ok
+test edit_source_invalid_utf8_is_refused ... ok
+test find_under_its_limit_says_nothing_about_a_limit ... ok
+test find_announces_the_results_its_limit_hides ... ok
+test edit_source_at_and_below_limit_is_complete ... ok
+test find_under_the_byte_budget_says_nothing_about_one ... ok
+test a_non_zero_exit_is_a_command_outcome_never_a_confinement_one ... ok
+test glob_under_the_walk_budget_says_nothing_about_one ... ok
+test glob_under_the_byte_budget_says_nothing_about_one ... ok
+test grep_glob_ls_find_seeded_content ... ok
+test find_announces_the_byte_budget_when_bytes_cut_the_list ... ok
+test ls_announces_the_entries_its_limit_hides ... ok
+test grep_marks_the_files_it_could_only_search_in_part ... ok
+test ls_under_its_limit_says_nothing_about_a_limit ... ok
+test ls_under_the_byte_budget_says_nothing_about_one ... ok
+test observations_are_not_inherited_from_another_agent ... ok
+test observations_partial_reads_and_failed_edits_do_not_refresh_siblings ... ok
+test glob_announces_the_byte_budget_when_bytes_cut_the_list ... ok
+test observations_stay_stale_after_a_sibling_write_until_reread ... ok
+test observations_sibling_edits_invalidate_only_the_changed_path ... ok
+test a_call_may_narrow_its_own_sandbox_mode_to_read_only ... ok
+test read_past_the_end_errors_and_an_empty_file_reads_ok_empty ... ok
+test read_returns_image_attachments_for_images ... ok
+test read_returns_numbered_lines_and_rejects_escapes ... ok
+test the_permissions_and_justification_arguments_must_travel_together ... ok
+test read_pages_past_the_byte_prefix_to_the_marker ... ok
+test util_walker_respects_skip_list ... ok
+test widening_beyond_the_session_mode_is_refused_with_a_hint ... ok
+test with_confinement_off_a_narrowing_request_is_refused_rather_than_lied_about ... ok
+test paging_to_the_end_grants_the_overwrite_but_a_skipped_page_does_not ... ok
+test workspace_escape_refused_in_write_and_edit ... ok
+test write_creates_then_edit_modifies_with_safety ... ok
+test bash_timeout_kills_long_commands ... ok
+test ls_announces_the_byte_budget_when_bytes_cut_the_listing ... ok
+test bash_runs_powershell_with_exit_codes_and_caps ... ok
+test the_result_reports_how_completely_the_boundary_held ... ok
+test oversized_outputs_spill_with_locator ... ok
+test glob_announces_when_the_walk_stops_at_its_budget ... ok
+
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.97s
+
+   Doc-tests epsilon_contracts
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests epsilon_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests epsilon_tools
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

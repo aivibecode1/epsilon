@@ -1892,6 +1892,19 @@ fn legacy_block(part: &serde_json::Value) -> Option<ContentBlock> {
         // can afford, because a wrong guess degrades to "unmapped" rather than to loss.
         "thinking" => Some(ContentBlock::Thinking {
             text: part.get("thinking")?.as_str()?.into(),
+            // The provider signature rides along when pi wrote one. This is the *one* helper both
+            // readers convert a content part through — `heal_legacy_message` serves the v1
+            // migration and `heal_pi_entry_kind` serves the v2 import (`import.rs`) — so carrying
+            // it here is what makes the importer carry it, with no second conversion to drift.
+            //
+            // Absent and empty stay apart, as everywhere else in this file: pi writing
+            // `"thinkingSignature": ""` is a part that has a signature and it is empty, and a
+            // reader that turned that into `None` would be editing the source rather than
+            // reading it.
+            signature: part
+                .get("thinkingSignature")
+                .and_then(|s| s.as_str())
+                .map(str::to_string),
         }),
         "toolCall" | "tool_call" => Some(ContentBlock::ToolCall {
             id: part.get("id")?.as_str()?.into(),
@@ -1918,7 +1931,7 @@ fn user_content_from_block(block: ContentBlock) -> UserContent {
     match block {
         ContentBlock::Text { text } => UserContent::Text { text },
         ContentBlock::Image(image) => UserContent::Image(image),
-        ContentBlock::Thinking { text } => UserContent::Text {
+        ContentBlock::Thinking { text, .. } => UserContent::Text {
             text: format!("<thinking>\n{text}\n</thinking>"),
         },
         ContentBlock::ToolCall {

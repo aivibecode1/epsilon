@@ -27,6 +27,11 @@
 //! 3. **Unmatched entries, named.** Every source entry without a counterpart in the import, and
 //!    every imported entry without a source, is listed with its id, type and line so a reader
 //!    can look it up instead of trusting a total.
+//! 4. **Signatures, value for value.** pi's `thinkingSignature` on a thinking part against this
+//!    build's `signature` on the block it heals to. M119 measured this as the one *field*-level
+//!    loss (1 entry in `large-session`, 47 in `before-compaction`); the field exists now, so the
+//!    comparison is of values, and the source count is asserted so an empty mismatch list cannot
+//!    be vacuous.
 //!
 //! `references/` is not committed, so every test here skips — loudly — when pi's fixtures are
 //! absent, the same rule the terminal integration test follows for `EPSILON_BIN`. Point
@@ -175,9 +180,17 @@ struct Recon {
     link_breaks: usize,
     /// Matched pairs whose text content differs (every string under a `text` key, sorted).
     text_mismatches: Vec<Unmatched>,
-    /// Entries carrying a `thinkingSignature` this build has no field for — the one *field*-level
-    /// loss the fixtures show. Named so it cannot be read as an entry-level one.
-    lost_signatures: Vec<Unmatched>,
+    /// How many signature values the source's thinking parts carried (`thinkingSignature`, empty
+    /// string included) — the count that says the field check below is not vacuous.
+    source_signatures: usize,
+    /// Matched pairs whose signature values differ: pi's `thinkingSignature` on a `thinking` part
+    /// against this build's `signature` on the block it heals to.
+    ///
+    /// This was a `lost_signatures` count while `ContentBlock::Thinking` had no slot for the field
+    /// (M119's finding: 1 entry in `large-session`, 47 in `before-compaction`). The slot exists
+    /// now, so a count of what "cannot be carried" would be the report lying about the code: it
+    /// compares the values instead, and an empty mismatch list is the field's whole round trip.
+    signature_mismatches: Vec<Unmatched>,
 }
 
 impl Recon {
@@ -227,11 +240,13 @@ impl Recon {
             out.push_str(&format!("    text differs:  {u}\n"));
         }
         out.push_str(&format!(
-            "  field loss       thinkingSignature this build has no slot for: {} entry/entries\n",
-            self.lost_signatures.len()
+            "  signatures       thinkingSignature on the source's thinking parts: {}   mismatched \
+             against the import: {}\n",
+            self.source_signatures,
+            self.signature_mismatches.len()
         ));
-        for u in &self.lost_signatures {
-            out.push_str(&format!("    field dropped: {u}\n"));
+        for u in &self.signature_mismatches {
+            out.push_str(&format!("    signature differs: {u}\n"));
         }
         out
     }
@@ -345,30 +360,39 @@ fn text_of(value: &Value) -> Vec<String> {
     out
 }
 
-/// How many thinking parts of this message carry a non-empty `thinkingSignature`.
+/// The provider-signature values a message's content array carries, in part order.
 ///
 /// pi writes one per reasoning block — an opaque provider signature Anthropic needs to replay the
-/// block. [`epsilon_contracts::ContentBlock::Thinking`] has no field for it, so it is the one
-/// thing this importer does not carry: a *field*, not an entry, which is why it is counted and
-/// named separately instead of being folded into the entry totals.
-fn signatures_in(entry: &Value) -> usize {
-    entry
-        .get("message")
+/// block — as `thinkingSignature` on a `{"type":"thinking",…}` part; this build heals that part to
+/// a thinking block that spells the value `signature`. The same walk therefore serves both sides
+/// with the key as the only difference.
+///
+/// Values are taken as written, the empty string included: pi writing an empty signature is a part
+/// that has one, and a comparison that dropped empties could not tell "carried faithfully" from
+/// "tidied away". A part with no key contributes nothing, which is how "pi wrote none" is spelled
+/// on either side.
+fn signature_values(message: Option<&Value>, key: &str) -> Vec<String> {
+    message
         .and_then(|m| m.get("content"))
         .and_then(Value::as_array)
         .map(|parts| {
             parts
                 .iter()
-                .filter(|part| {
-                    part.get("type").and_then(Value::as_str) == Some("thinking")
-                        && part
-                            .get("thinkingSignature")
-                            .and_then(Value::as_str)
-                            .is_some_and(|signature| !signature.is_empty())
-                })
-                .count()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("thinking"))
+                .filter_map(|part| part.get(key).and_then(Value::as_str).map(str::to_string))
+                .collect()
         })
-        .unwrap_or(0)
+        .unwrap_or_default()
+}
+
+/// A signature as a report prints it: the first few characters, so a table stays readable while a
+/// mismatch still shows *which* value differed (the real ones are up to 2,760 characters of
+/// base64).
+fn brief(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| value.chars().take(12).collect())
+        .collect()
 }
 
 /// The active chain of a pi archive: the leaf walked back to its root, as *file indices*, oldest
@@ -517,7 +541,8 @@ fn reconcile(source: &Path, imported: &Path) -> Recon {
     let mut unmatched_source = Vec::new();
     let mut unmatched_imported = Vec::new();
     let mut text_mismatches = Vec::new();
-    let mut lost_signatures = Vec::new();
+    let mut source_signatures = 0usize;
+    let mut signature_mismatches = Vec::new();
     for (position, &idx) in chain.iter().enumerate() {
         let entry = &entries[idx];
         let label = source_label(&entry.value);
@@ -553,17 +578,29 @@ fn reconcile(source: &Path, imported: &Path) -> Recon {
                             abandoned: false,
                         });
                     }
-                    let signatures = signatures_in(&entry.value);
-                    if signatures > 0 {
-                        lost_signatures.push(Unmatched {
-                            line: entry.line,
-                            id: entry.id.clone(),
-                            label: format!(
-                                "{label} — {signatures} thinking part(s) with a provider signature \
-                                 this build has no field for"
-                            ),
-                            abandoned: false,
-                        });
+                    // The same "custom" exclusion as the text check: a custom entry keeps pi's
+                    // payload verbatim, so its parts are spelled pi's way on both sides.
+                    if label != "message/custom" {
+                        let signatures =
+                            signature_values(entry.value.get("message"), "thinkingSignature");
+                        source_signatures += signatures.len();
+                        let imported = signature_values(
+                            other.get("kind").and_then(|k| k.get("message")),
+                            "signature",
+                        );
+                        if signatures != imported {
+                            signature_mismatches.push(Unmatched {
+                                line: entry.line,
+                                id: entry.id.clone(),
+                                label: format!(
+                                    "{label} — pi's `thinkingSignature` {:?} against this build's \
+                                     `signature` {:?}",
+                                    brief(&signatures),
+                                    brief(&imported)
+                                ),
+                                abandoned: false,
+                            });
+                        }
                     }
                 }
             }
@@ -623,7 +660,8 @@ fn reconcile(source: &Path, imported: &Path) -> Recon {
         unmatched_imported,
         link_breaks,
         text_mismatches,
-        lost_signatures,
+        source_signatures,
+        signature_mismatches,
     }
 }
 
@@ -665,6 +703,12 @@ fn ensure_import(source: &Path, expected_entries: usize) -> String {
 /// Runs against both of pi's fixtures: `large-session.jsonl` (1,018 entries) is the file M119
 /// measured, and `before-compaction.jsonl` (1,002 entries, with compaction, `bashExecution` and
 /// unknown-to-this-build shapes) is the second file that tells a systematic rule from a one-off.
+///
+/// The signature counts are asserted, not merely printed: M119 measured 1 and 47 *non-empty*
+/// `thinkingSignature` values (one per entry), and `before-compaction` also holds two parts whose
+/// signature pi wrote as an empty string — carried too, because present-and-empty is a different
+/// fact from absent. Without a floor here, "0 mismatches" would also pass on a fixture that never
+/// exercised the field at all.
 #[test]
 fn pi_import_carries_every_source_entry() {
     let fixtures = fixtures_dir();
@@ -675,6 +719,8 @@ fn pi_import_carries_every_source_entry() {
         );
         return;
     }
+    // pi's own numbers: M119's 1 and 47 non-empty signatures, plus the two empty ones.
+    let expected_signatures = [("large-session", 1usize), ("before-compaction", 49)];
     for name in ["large-session", "before-compaction"] {
         let v1 = fixtures.join(format!("{name}.jsonl"));
         if !v1.is_file() {
@@ -700,6 +746,24 @@ fn pi_import_carries_every_source_entry() {
         assert!(
             recon.text_mismatches.is_empty(),
             "matched entries whose content differs:\n{}",
+            recon.render()
+        );
+        // The field M119 found missing: pi's `thinkingSignature` reaches this build's thinking
+        // blocks, value for value, on entries the source really carries one on.
+        assert_eq!(
+            recon.source_signatures,
+            expected_signatures
+                .iter()
+                .find(|(fixture, _)| *fixture == name)
+                .expect("every fixture in this loop has an expected signature count")
+                .1,
+            "the fixture's own signature count moved — the field check would be weaker than it \
+             reads:\n{}",
+            recon.render()
+        );
+        assert!(
+            recon.signature_mismatches.is_empty(),
+            "signatures the source carries and the import does not (or the other way round):\n{}",
             recon.render()
         );
         assert_eq!(
@@ -751,6 +815,14 @@ fn the_m119_gap_is_resume_repair_not_import_loss() {
     );
     assert_eq!(fresh.source_roles.get("toolResult"), Some(&373));
     assert_eq!(fresh.imported_roles.get("tool_result"), Some(&373));
+    // `large-session` carries exactly one signature, and it is on this chain: the fresh import
+    // after the repair pass below must still hold it.
+    assert_eq!(fresh.source_signatures, 1);
+    assert!(
+        fresh.signature_mismatches.is_empty(),
+        "the one signature `large-session` carries did not reach the import:\n{}",
+        fresh.render()
+    );
 
     // What `--resume` does before it prints "resumed N entries from …".
     let mut store = epsilon_session::SessionStore::open(&imported).expect("open the import");
