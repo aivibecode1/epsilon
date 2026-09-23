@@ -63,12 +63,20 @@ not themselves trigger runtime compression.
    CLI test) because it staged explicit paths: the tree built and the battery passed, so the
    evidence was valid, but the commit alone would not have compiled. Run
    `git status --short --untracked-files=all` **before** staging after any delegated work.
-3. **M119's evidence has one unexplained number**: role counts inside the imported file
-   reconcile with `--resume` (88 user + 453 assistant + 391 tool results = 932), but counting
-   the *source* the same way gives 373 tool results, and the whole-file arithmetic does not tie
-   out. Two candidate causes (a per-line parse that skipped lines; abandoned branches counted
-   on one side), neither checked. **Not a known defect — a measurement gap**; verify before
-   trusting the importer's completeness.
+3. **M119's unexplained number is settled (2026-09-23): the importer loses nothing — the count
+   came from a file `--resume` had already repaired.** A real reconciliation
+   (`crates/epsilon-session/tests/pi_import_reconciliation.rs`: serde_json over every line of both
+   files, per `type` and `kind.type`, per role, with the active branch rebuilt from `parentId`)
+   gives source 1,018 = imported 1,018 entries with **0 unmatched, 0 abandoned** on
+   `large-session.jsonl`, and 1,002 = 1,002 on `before-compaction.jsonl`. The 932 / 391 / 1,037
+   numbers are the *post-resume* file: `--resume` repairs before it prints, appending 18 synthetic
+   tool results (`details.repair = "dangling_tool_call"`) for the fixture's 18 dangling tool calls
+   plus one `turn_end` — 1,018 + 19 = 1,037, and 914 messages + 18 = 932. The CLI says it itself
+   ("repaired …: 18 tool call(s) had no result"); the old artefact was counting that repaired file
+   against the import's pre-repair report. Evidence:
+   `audit/evidence/pi-import-reconciliation-2026-09-23/`. One real loss was found, a **field** and
+   not an entry: `thinkingSignature` on thinking parts (1 entry in large-session, 47 in
+   before-compaction) has no slot in `ContentBlock::Thinking`.
 2. **G19's one remaining item is a behaviour change, not a bug:** conversion still happens
    *in place*, so the original is kept rather than the conversion avoided. The importer plan's
    import-as-copy rule would make `--resume` produce a new file and leave the original

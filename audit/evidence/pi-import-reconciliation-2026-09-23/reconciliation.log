@@ -1,0 +1,236 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running tests\pi_import_reconciliation.rs (D:\epsilon-target-m119\debug\deps\pi_import_reconciliation-384b1f99e6ae9d0f.exe)
+
+running 5 tests
+test abandoned_branches_are_reported_not_imported ... === branched ===
+  lines            source 5   imported 4 (incl. header line)
+  entries          source 4   imported 3
+  source    by type:
+    message                4
+  source    by message.role:
+    assistant              3
+    user                   1
+  imported  by kind.type:
+    message                3
+  imported  by message.role:
+    assistant              2
+    user                   1
+  branch           on the active chain 3   abandoned 1
+  chain links      broken 0
+  unmatched        source 1   imported 0
+    source-only:   line 4 id d message/assistant [off the active chain — not imported by design]
+  field loss       thinkingSignature this build has no slot for: 0 entry/entries
+
+  imported 3 entries into D:\epsilon-m119-recon\branched.v2.jsonl.epsilon.jsonl (from D:\epsilon-m119-recon\branched.v2.jsonl)
+  the source was not modified — delete it yourself once you are happy with the copy
+  not imported: 1 entry/entries on a branch the active chain does not pass through — the source still holds them, and the leaf rule (explicit marker, else the last unnamed entry) chose this chain
+ok
+test per_kind_counts_tie_out_on_both_sides ... ok
+test pi_import_carries_every_source_entry ... === large-session: reconciling the import already at D:\epsilon-m119-recon\large-session.v2.jsonl.epsilon.jsonl ===
+  lines            source 1019   imported 1019 (incl. header line)
+  entries          source 1018   imported 1018
+  source    by type:
+    message                914
+    model_change           1
+    thinking_level_change  103
+  source    by message.role:
+    assistant              453
+    toolResult             373
+    user                   88
+  imported  by kind.type:
+    message                914
+    model_change           1
+    thinking_level_change  103
+  imported  by message.role:
+    assistant              453
+    tool_result            373
+    user                   88
+  branch           on the active chain 1018   abandoned 0
+  chain links      broken 0
+  unmatched        source 0   imported 0
+  field loss       thinkingSignature this build has no slot for: 1 entry/entries
+    field dropped: line 492 id e0492 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+
+=== before-compaction: reconciling the import already at D:\epsilon-m119-recon\before-compaction.v2.jsonl.epsilon.jsonl ===
+  lines            source 1003   imported 1003 (incl. header line)
+  entries          source 1002   imported 1002
+  source    by type:
+    compaction             2
+    message                990
+    model_change           5
+    thinking_level_change  5
+  source    by message.role:
+    assistant              484
+    bashExecution          3
+    toolResult             448
+    user                   55
+  imported  by kind.type:
+    compaction             2
+    message                990
+    model_change           5
+    thinking_level_change  5
+  imported  by message.role:
+    assistant              484
+    custom                 3
+    tool_result            448
+    user                   55
+  branch           on the active chain 1002   abandoned 0
+  chain links      broken 0
+  unmatched        source 0   imported 0
+  field loss       thinkingSignature this build has no slot for: 47 entry/entries
+    field dropped: line 14 id e0014 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 16 id e0016 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 20 id e0020 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 24 id e0024 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 32 id e0032 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 44 id e0044 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 58 id e0058 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 93 id e0093 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 197 id e0197 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 295 id e0295 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 364 id e0364 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 372 id e0372 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 376 id e0376 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 388 id e0388 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 409 id e0409 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 431 id e0431 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 445 id e0445 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 461 id e0461 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 525 id e0525 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 547 id e0547 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 551 id e0551 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 553 id e0553 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 607 id e0607 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 620 id e0620 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 631 id e0631 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 642 id e0642 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 644 id e0644 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 646 id e0646 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 648 id e0648 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 656 id e0656 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 666 id e0666 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 680 id e0680 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 708 id e0708 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 717 id e0717 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 777 id e0777 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 781 id e0781 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 792 id e0792 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 850 id e0850 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 852 id e0852 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 871 id e0871 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 883 id e0883 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 922 id e0922 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 942 id e0942 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 958 id e0958 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 960 id e0960 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 999 id e0999 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+    field dropped: line 1001 id e1001 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+
+ok
+SKIP: EPSILON_RECONCILE_PAIR is not set (`source.jsonl;imported.jsonl`)
+test reconcile_an_external_pair ... ok
+test the_m119_gap_is_resume_repair_not_import_loss ... === large-session, after the `--resume` repair pass ===
+import reported 1018 entries; repair added 18 tool result(s) and a turn-end marker; model view 932
+  lines            source 1019   imported 1038 (incl. header line)
+  entries          source 1018   imported 1037
+  source    by type:
+    message                914
+    model_change           1
+    thinking_level_change  103
+  source    by message.role:
+    assistant              453
+    toolResult             373
+    user                   88
+  imported  by kind.type:
+    message                932
+    model_change           1
+    thinking_level_change  103
+    turn_end               1
+  imported  by message.role:
+    assistant              453
+    tool_result            391
+    user                   88
+  branch           on the active chain 1018   abandoned 0
+  chain links      broken 0
+  unmatched        source 0   imported 19
+    imported-only: line 1019 id ent_1a0cbd83c34796 message/tool_result
+    imported-only: line 1020 id ent_1a0cbd83c35798 message/tool_result
+    imported-only: line 1021 id ent_1a0cbd83c3579a message/tool_result
+    imported-only: line 1022 id ent_1a0cbd83c3579c message/tool_result
+    imported-only: line 1023 id ent_1a0cbd83c3579e message/tool_result
+    imported-only: line 1024 id ent_1a0cbd83c357a0 message/tool_result
+    imported-only: line 1025 id ent_1a0cbd83c357a2 message/tool_result
+    imported-only: line 1026 id ent_1a0cbd83c357a4 message/tool_result
+    imported-only: line 1027 id ent_1a0cbd83c357a6 message/tool_result
+    imported-only: line 1028 id ent_1a0cbd83c357a8 message/tool_result
+    imported-only: line 1029 id ent_1a0cbd83c357aa message/tool_result
+    imported-only: line 1030 id ent_1a0cbd83c357ac message/tool_result
+    imported-only: line 1031 id ent_1a0cbd83c357ae message/tool_result
+    imported-only: line 1032 id ent_1a0cbd83c357b0 message/tool_result
+    imported-only: line 1033 id ent_1a0cbd83c357b2 message/tool_result
+    imported-only: line 1034 id ent_1a0cbd83c357b4 message/tool_result
+    imported-only: line 1035 id ent_1a0cbd83c357b6 message/tool_result
+    imported-only: line 1036 id ent_1a0cbd83c357b8 message/tool_result
+    imported-only: line 1037 id ent_1a0cbd83c357b9 turn_end
+  field loss       thinkingSignature this build has no slot for: 1 entry/entries
+    field dropped: line 492 id e0492 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+
+ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+
+
+===== real binary: epsilon --resume on the CLI import =====
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests\pi_import_reconciliation.rs (D:\epsilon-target-m119\debug\deps\pi_import_reconciliation-384b1f99e6ae9d0f.exe)
+
+running 1 test
+=== D:\epsilon-m119-recon\large-session.v2.jsonl vs D:\epsilon-m119-recon\resume-check.jsonl ===
+  lines            source 1019   imported 1038 (incl. header line)
+  entries          source 1018   imported 1037
+  source    by type:
+    message                914
+    model_change           1
+    thinking_level_change  103
+  source    by message.role:
+    assistant              453
+    toolResult             373
+    user                   88
+  imported  by kind.type:
+    message                932
+    model_change           1
+    thinking_level_change  103
+    turn_end               1
+  imported  by message.role:
+    assistant              453
+    tool_result            391
+    user                   88
+  branch           on the active chain 1018   abandoned 0
+  chain links      broken 0
+  unmatched        source 0   imported 19
+    imported-only: line 1019 id ent_1a0cbd2c0fd1 message/tool_result
+    imported-only: line 1020 id ent_1a0cbd2c0fd3 message/tool_result
+    imported-only: line 1021 id ent_1a0cbd2c0fd5 message/tool_result
+    imported-only: line 1022 id ent_1a0cbd2c0fe7 message/tool_result
+    imported-only: line 1023 id ent_1a0cbd2c0fe9 message/tool_result
+    imported-only: line 1024 id ent_1a0cbd2c0feb message/tool_result
+    imported-only: line 1025 id ent_1a0cbd2c0fed message/tool_result
+    imported-only: line 1026 id ent_1a0cbd2c0fef message/tool_result
+    imported-only: line 1027 id ent_1a0cbd2c0fe11 message/tool_result
+    imported-only: line 1028 id ent_1a0cbd2c0fe13 message/tool_result
+    imported-only: line 1029 id ent_1a0cbd2c0fe15 message/tool_result
+    imported-only: line 1030 id ent_1a0cbd2c0fe17 message/tool_result
+    imported-only: line 1031 id ent_1a0cbd2c0fe19 message/tool_result
+    imported-only: line 1032 id ent_1a0cbd2c0fe1b message/tool_result
+    imported-only: line 1033 id ent_1a0cbd2c0fe1d message/tool_result
+    imported-only: line 1034 id ent_1a0cbd2c0fe1f message/tool_result
+    imported-only: line 1035 id ent_1a0cbd2c0fe21 message/tool_result
+    imported-only: line 1036 id ent_1a0cbd2c0fe23 message/tool_result
+    imported-only: line 1037 id ent_1a0cbd2c0fe24 turn_end
+  field loss       thinkingSignature this build has no slot for: 1 entry/entries
+    field dropped: line 492 id e0492 message/assistant — 1 thinking part(s) with a provider signature this build has no field for
+
+test reconcile_an_external_pair ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.12s
+

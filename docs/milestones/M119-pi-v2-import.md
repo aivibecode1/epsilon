@@ -53,23 +53,32 @@ End-to-end, on a real pi file built from pi's own shipped fixture by adding the 
 
 ## Limits
 
-- **The unexplained number is now explained, and the importer is complete.** The follow-up
-  reconciliation (`crates/epsilon-session/tests/pi_import_reconciliation.rs`, M120) parses both
-  files properly instead of counting lines with a shell one-liner, and reports **`unmatched
-  source 0`** on both real pi files — every entry on the source's active chain has a counterpart
-  in the import. The 373-vs-391 discrepancy was a measurement artefact of the ad-hoc PowerShell
-  count, as guessed. What looked like a surplus is the other direction: the imported file
-  carries entries with no source counterpart (the session layer's own `turn_end` and expanded
-  `thinking_level_change`), which is the *forward* direction of a conversion and not a loss.
+- **The unexplained number is settled: the importer drops nothing, and the old measurement was
+  taken from a file `--resume` had already rewritten.** The follow-up reconciliation (M120,
+  `crates/epsilon-session/tests/pi_import_reconciliation.rs`) parses both files properly and
+  reports a **fresh import as entry-for-entry identical to the source** — 1018/1018 and
+  1002/1002 entries, the same per-kind counts (message, model_change, thinking_level_change,
+  compaction), the same roles modulo spelling (`toolResult` → `tool_result`), `unmatched` **0 in
+  both directions on both fixtures**, and both sources sha256-identical after the import.
+  The 391 / 932 / 1037 figures came from the *same file after* `--resume`, whose repair pass runs
+  before it prints its summary: `repair_on_open` appends **18 synthetic tool results** (one per
+  never-answered `edit` call, each carrying `details.repair = "dangling_tool_call"`) and one
+  `TurnEnd`, and `store.append` writes and flushes them into the resumed file. 1018 + 18 + 1 =
+  1037; 914 + 18 = 932. **Both explanations I first recorded here were wrong** — the shell count
+  had not skipped lines (a real parser gives the source's 88/453/373 exactly), and no entry sat
+  on an abandoned branch. The lesson generalises: `--resume` mutates the session it resumes, so
+  a file examined *after* a resume is not the artefact the importer produced.
+- **A real loss was found, at field level.** `thinkingSignature` on pi's thinking parts has no
+  slot in `ContentBlock::Thinking`, so it is not carried — 1 entry in `large-session` and 47 in
+  `before-compaction`. Entry, role and every text string arrive; the signature does not. The fix
+  is an optional field with a serde default (wire-compatible) in `epsilon-contracts`, and it is
+  queued rather than applied here.
 - **Abandoned branches are not imported, deliberately and visibly.** On a branched fixture the
   reconciliation reports `on the active chain 3 / abandoned 1` and names the entry left behind:
   the source still holds it, and the leaf rule (an explicit marker if pi wrote one, else the
   last unnamed entry) chose the chain that was imported. That is a design decision recorded
-  here, not a count absorbed quietly — but it is worth stating in user-facing terms someday,
-  because "import" giving you one branch of a branched session is a thing a user can be
-  surprised by.
-- **Branch selection is otherwise unaudited.** pi's shipped fixtures are linear, so the leaf
-  rule is exercised only by the synthetic branched case the reconciliation builds.
+  here rather than a count absorbed quietly — but "import" giving you one branch of a branched
+  session is a thing a user can be surprised by, and it is not yet said anywhere user-facing.
 - **`label`/`session_info` still heal to `Custom`**, and an unknown kind inside a v2 file is
   preserved rather than refused (the M113 rule carries over) — but only the kinds pi's fixture
   contains were exercised.
