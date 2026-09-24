@@ -68,11 +68,19 @@ not themselves trigger runtime compression.
   (`render_cache.rs:273-292`) sets `invalidate_all` when the key changes, and the key *does* include
   `expand_all` (`CacheKey::of`, `:281`), while `logical_lines` consults `state.is_open` on every
   rebuild (`:112`). So a global flip does invalidate and does re-derive each card's openness; the
-  cache is not the cause. What remains: either the two short cards hold explicit entries by the time
-  of the second press, or the fixture's arithmetic (`all_open_rows - 4`) is wrong for the rows those
-  cards actually give back when they cap — the next step is still to print `app.card_open`,
-  `prefs.expand_outputs` and `total_rows` after **each** press, which distinguishes those two in one
-  run.
+  cache is not the cause.
+  **PROBED in round 40 — the fixture's premise is what fails, not the code.** A temporary print just
+  before the assertion gave, after the second press:
+  `expand_all=false  card_open=[(3, true)]  total_rows=32  all_open_rows=32`.
+  So the global did flip, exactly one card holds an explicit entry (the long one, kept open as
+  intended), and **the frame's row count is unchanged** — the two short cards give back **zero** rows
+  when they cap, where the fixture's comment assumes 4 ("4 rows capped and 6 open"). Two candidates
+  remain and the print distinguishes neither: the short cards' bodies fit inside the cap (so capping
+  them costs nothing), or they have no body at all and were never affected by the global toggle.
+  **Next step: print each card's row count** (`ui::card::rows` per line id) rather than the total —
+  that says which of the two it is, and only then is it safe to decide whether the assertion or the
+  cap is wrong. Do **not** simply relax the assertion to 32: that is changing a test to match its own
+  output, which is only honest once the reason for 32 is known.
   **State: uncommitted WIP in three files** — the author's `app/golden.rs` + `render_cache.rs` (do NOT
   revert: they fix an earlier E0277 in this same test) and my `app/keys.rs`. `cargo test -p
   epsilon-tui` is **266 passed / 1 failed**. Nothing committed.
