@@ -616,7 +616,9 @@ async fn the_approval_dialog_is_six_rows_and_wears_the_danger_border() {
         danger_rows.len(),
         6,
         "the permission dialog must be six rows tall — two frame edges and four \
-         of body; found {danger_rows:?} in:\n{screen}"
+         of body — all of them in the danger accent. Found {danger_rows:?}; one \
+         row means the frame is drawn in some other colour and only the `n deny` \
+         key is danger, which is what the border_focus() version looked like:\n{screen}"
     );
     assert_eq!(
         danger_rows,
