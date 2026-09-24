@@ -46,6 +46,20 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
+- **M121 (`9af3c39`) closed** pi's `thinkingSignature` loss (carried; 49 values verified through a
+  real import on the installed binary) and gave `glob` the 50 KiB byte cap. Battery `m121a`:
+  1,088 passed across 61 binaries.
+- **IN FLIGHT, UNCOMMITTED (2026-09-23 late) — F07 plus `find`'s walk bound.** A delegated slice
+  fixed the discarded durable-write results in `epsilon-core` and was to announce `find`'s walker
+  truncation. Files: `crates/epsilon-core/src/lib.rs`, `crates/epsilon-core/tests/loop_scenarios.rs`,
+  `crates/epsilon-session/src/lib.rs`, `crates/epsilon-session/src/store.rs`. **Focused tests pass**
+  (`cargo test -p epsilon-core -p epsilon-session`: 144 + 3 + 4 + 10 + 4 + 4, 0 failed, including a
+  new `failed_summarization_does_not_commit_and_is_reported_once`). **The subagent went inactive
+  without reporting**, so there is no inventory of the *other* discarded store results it promised,
+  no negative controls, and no commit message: read the diff before committing, and ask whether
+  `find`'s notice actually landed. Battery `m122a` was started on these bytes.
+- **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files) was
+  modified by something other than this task. Preserve it; do not fold it into a milestone commit.
 - **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
    preserved-entry notice is printed by both frontends, and the `model_change` arm stopped
    writing `provider: ""` when the field was absent. M117 (`4e292a7`): `find` announces the
