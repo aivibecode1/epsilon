@@ -244,6 +244,45 @@ async fn an_undersized_terminal_names_a_pending_approval() {
     );
 }
 
+/// The refusal notice names the floor the layout actually enforces.
+///
+/// It used to say "enlarge the terminal (need 60×12)" while
+/// `Regions::too_small` refuses below `MIN_WIDTH`×`MIN_HEIGHT` (44×10). A user
+/// who obeyed the sentence could resize to 60×12, still see no dialog, and have
+/// no way to tell whether the harness was broken or the number was wrong. The
+/// message is formatted from the constants now, so the two cannot drift again.
+#[tokio::test]
+async fn the_approval_refusal_names_the_layouts_real_floor() {
+    let (mut app, agent, _receivers) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let _response = park_ask(&mut app, &approvals, "floor-test").await;
+    // No frame has painted the ask, which is the state the refusal is for.
+    assert!(app.approval_painted_id.is_none());
+    assert!(!handle_key(&mut app, &agent, key(KeyCode::Char('y'))));
+
+    let notice = app
+        .ui
+        .lines()
+        .iter()
+        .map(|l| l.text.clone())
+        .find(|t| t.contains("approval is not visible"))
+        .unwrap_or_else(|| panic!("no refusal notice: {:?}", app.ui.lines()));
+    let floor = format!(
+        "{}×{}",
+        crate::ui::layout::MIN_WIDTH,
+        crate::ui::layout::MIN_HEIGHT
+    );
+    assert!(
+        notice.contains(&floor),
+        "the notice must name the floor the layout enforces ({floor}): {notice:?}"
+    );
+    assert!(
+        !notice.contains("60×12"),
+        "the notice still names a size the layout does not want: {notice:?}"
+    );
+    drop(app.pending_ask.take());
+}
+
 /// M94 review: an ask that arrives while `/timeline` is open must be visible.
 /// The timeline widget clears its own centre, so a dialog painted before it
 /// was wiped out while y/a/n/Esc still routed to it (Esc silently denied).
@@ -266,8 +305,7 @@ async fn a_pending_approval_is_drawn_over_the_timeline() {
         "the timeline covered the approval dialog: {screen}"
     );
     assert!(
-        rows.iter()
-            .any(|r| r.contains("capability") && r.contains("bash")),
+        rows.iter().any(|r| r.contains("cap") && r.contains("bash")),
         "the dialog body is buried: {screen}"
     );
 
@@ -1526,6 +1564,172 @@ async fn ctrl_b_ctrl_f_move_cursor_by_char() {
     assert_eq!(app.cursor_chars, 2);
     handle_key(&mut app, &agent, ctrl(KeyCode::Char('f')));
     assert_eq!(app.cursor_chars, 3);
+}
+
+// ---- the context figure the header prints ------------------------------------
+//
+// `Metrics::context_used` used to be `latest_prompt_tokens` — the prompt size of
+// the last call — and it was rendered as a bare `42%/200k`, which reads as window
+// occupancy. On turn 1 those agree; afterwards the last prompt is only a prefix of
+// the conversation, so the row under-reported while looking authoritative. The
+// estimate now comes from `Agent::estimated_context_tokens` (the number the
+// compaction trigger decides on) and the fragment names its own subject.
+
+/// Run one turn through the real agent and fold every event the loop would fold.
+///
+/// Returns the events folded, so a test can assert the turn actually happened
+/// rather than discovering an empty transcript in a confusing way.
+async fn run_one_turn(app: &mut App, agent: &Arc<Agent>, text: &str) {
+    let mut events = agent.subscribe();
+    let message = Message::User(UserMessage {
+        id: epsilon_contracts::new_id("msg"),
+        timestamp_ms: 0,
+        content: vec![epsilon_contracts::content::UserContent::Text {
+            text: text.to_string(),
+        }],
+    });
+    agent.run(message).await.expect("the faux run must succeed");
+    while let Ok(ev) = events.try_recv() {
+        apply_with_scroll(app, &ev);
+    }
+}
+
+/// The frame-boundary mirror the event loop performs, without a terminal.
+///
+/// `drive` owns a `DefaultTerminal`, so this is the one line of it a test can
+/// re-state: everything else in this test is the production path.
+fn mirror_at_frame_boundary(app: &mut App, agent: &Agent) {
+    app.mirror_context_size(agent);
+}
+
+/// A catalog model with a known window, so a printed share has a denominator.
+///
+/// Read from the catalog rather than written into the test: the window is the
+/// model registry's business, and a test that hardcoded `200_000` would pass
+/// against a stale copy of it.
+fn model_with_a_window() -> (String, u64) {
+    let id = "glm-4.7-flash".to_string();
+    let info = epsilon_llm::catalog::lookup_model(&id)
+        .unwrap_or_else(|| panic!("{id} is not in the catalog; pick another pinned model"));
+    assert!(info.context_window > 0, "{id} has no window to report");
+    (id, info.context_window)
+}
+
+/// The share the header should print for a context size, in the gauge's own terms.
+///
+/// Restates `Metrics::context_gauge`'s rule rather than calling it, so the test
+/// is about what the user sees: a number that rounds to nothing prints `<1%`,
+/// and anything larger prints whole percent.
+fn expected_share(tokens: u64, window: u64) -> String {
+    let percent = tokens as f64 * 100.0 / window as f64;
+    if percent > 0.0 && percent < 0.5 {
+        "<1%".to_string()
+    } else {
+        format!("{}%", percent.round() as u64)
+    }
+}
+
+#[test]
+fn the_context_figure_is_the_session_and_not_the_last_prompt() {
+    // The defect, on the production draw path. The last provider call reported a
+    // 100-token prompt while the session holds 82% of the window, so the two
+    // candidate numbers are three orders of magnitude apart and the rendered row
+    // can only match one of them. The old gauge printed `0%/200k` here — a true
+    // statement about one request, presented as the state of the session.
+    //
+    // The figures are placed through the state API rather than by running a
+    // turn, deliberately: the *magnitude* of the session estimate is the core's
+    // business (it is anchored to whatever a provider billed), and a test that
+    // needed a provider to report a particular number would be testing the
+    // provider. The wiring that carries the real number is asserted below.
+    let (model, window) = model_with_a_window();
+    let mut app = App::over_ui(UiState::new(), model);
+    app.ui.context_now = window * 82 / 100;
+
+    let rows = render_rows(&mut app, 120, 30);
+    let header = &rows[0];
+    let gauge = format!("ctx 82%/{}", crate::ui::format::format_tokens(window));
+    assert!(
+        header.contains(&gauge),
+        "the header must read the mirrored session context, expected {gauge:?} \
+         and never the last prompt's 0%: {header:?}"
+    );
+    assert!(
+        header.contains("ctx "),
+        "a bare percentage reads as a different measurement: {header:?}"
+    );
+}
+
+#[test]
+fn a_context_that_is_measured_but_tiny_does_not_read_as_empty() {
+    // 150 tokens of a 200k window is 0.075%, which rounds to `0%` — the exact
+    // string the gauge avoids when nothing is known at all. A reader cannot tell
+    // an empty context from an early one, and on a wide window the first several
+    // turns all land in this range.
+    let (model, window) = model_with_a_window();
+    let mut app = App::over_ui(UiState::new(), model.clone());
+    app.ui.context_now = 150;
+    let rows = render_rows(&mut app, 120, 30);
+    assert!(
+        rows[0].contains("ctx <1%"),
+        "a small measured context must not print as 0% ({window} window): {:?}",
+        rows[0]
+    );
+
+    // With nothing measured at all it still says unknown, never zero.
+    let mut fresh = App::over_ui(UiState::new(), model);
+    let rows = render_rows(&mut fresh, 120, 30);
+    assert!(
+        rows[0].contains("?/"),
+        "an unmeasured context must read as unknown: {:?}",
+        rows[0]
+    );
+}
+
+#[tokio::test]
+async fn a_real_frame_draws_the_context_the_agent_reports() {
+    // The other half of the property: the frame's number really is the agent's,
+    // carried across the seam by `mirror_context_size`. This is the wiring a
+    // widget test cannot see — a correct gauge fed a stale number renders a
+    // perfect frame that says the wrong thing.
+    let (mut app, agent, _receivers) = test_app();
+    let (model, window) = model_with_a_window();
+    app.model_id = model;
+
+    run_one_turn(&mut app, &agent, "explain the layout module").await;
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.kind == crate::state::LineKind::Assistant),
+        "the turn produced no assistant row, so the frame proves nothing: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    mirror_at_frame_boundary(&mut app, &agent);
+
+    let session = agent.estimated_context_tokens() as u64;
+    assert_eq!(
+        app.ui.context_now, session,
+        "the frame's input must be the agent's own estimate"
+    );
+    assert!(
+        session > 0,
+        "a turn that produced usage must leave a measurable context"
+    );
+    let rows = render_rows(&mut app, 120, 30);
+    // The exact denominator text comes from the module's own formatter, so this
+    // is about which *number* is drawn rather than about how a window prints.
+    let gauge = format!(
+        "ctx {}/{}",
+        expected_share(session, window),
+        crate::ui::format::format_tokens(window)
+    );
+    assert!(
+        rows[0].contains(&gauge),
+        "the header must print what the agent reports ({session} of {window}), \
+         expected {gauge:?}: {:?}",
+        rows[0]
+    );
 }
 
 // ---- M30: sticky scroll (pi followEnd semantics) ----------------------------------

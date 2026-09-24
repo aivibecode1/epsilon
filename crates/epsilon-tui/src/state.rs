@@ -164,6 +164,29 @@ pub struct UiState {
     /// above — this pair is the fix for G16.
     latest_cache_read: u64,
     latest_prompt_tokens: u64,
+    /// Estimated tokens the next request will carry: the whole session's context,
+    /// mirrored from `Agent::estimated_context_tokens` once per frame.
+    ///
+    /// Not [`UiState::latest_prompt_tokens`], which is the size of the last
+    /// *request* and therefore only ever a prefix of the conversation. The
+    /// header's gauge reads this one, so it agrees with the compaction trigger;
+    /// see `Metrics::context_used` for the defect that distinction fixes.
+    ///
+    /// Crate-visible because the draw path holds no agent: the loop mirrors it
+    /// ([`crate::app::App::mirror_context_size`]) and `app.rs` reads it, so a
+    /// test can aim the header at a context size without running a run.
+    pub(crate) context_now: u64,
+    /// `true` once the session has been compacted and no fresh count has arrived,
+    /// cleared by the first reply that reports one.
+    ///
+    /// The context gauge prints `?` in exactly that window, but it derives that
+    /// from [`UiState::latest_prompt_tokens`] being zero rather than from this
+    /// flag — which is why there is no `is_compacted()` accessor any more. The
+    /// accessor had one caller, the header's `compacted` field, and both were
+    /// dead: the two arms that read the field printed the same string. The flag
+    /// stays as the record of *why* the count is zero, which is what a
+    /// `… compacted` row would read if the transcript ever wants one.
+    #[allow(dead_code, reason = "the `?` window is derived from the token count")]
     compacted: bool,
 }
 
@@ -233,6 +256,13 @@ impl UiState {
 
     /// True right after a compaction pass, before the next provider response reports
     /// fresh token counts (pi shows `?` for context % in exactly this window).
+    ///
+    /// Deliberately not an accessor on the header's side any more: the header
+    /// prints `?` because it has no measurement, and it learns that from
+    /// [`UiState::latest_prompt_tokens`] being zero. A second way to ask the same
+    /// question is a second answer that can disagree with the first — which is
+    /// exactly what the removed `Metrics::compacted` did.
+    #[cfg(test)]
     pub fn is_compacted(&self) -> bool {
         self.compacted
     }

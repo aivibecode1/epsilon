@@ -502,6 +502,227 @@ fn a_pending_tool_call_gets_the_pending_band_where_the_terminal_has_one() {
 }
 
 #[test]
+fn the_advertised_scroll_key_scrolls_the_real_frame() {
+    // The footer now advertises PageUp/PageDown. A hint is a promise about what
+    // a key *does*, so the promise is checked through `handle_key` and the
+    // production draw path rather than against the handler's own source: if the
+    // footer naming the key were the only change, this fails with the transcript
+    // still showing its tail.
+    let (mut app, agent, _receivers) = test_app();
+    // The chord comes from the binding table, which is where the footer got it.
+    let pageup = app
+        .keybindings
+        .key_text("app.transcript.pageUp")
+        .expect("the scroll key must resolve, or the footer is advertising nothing");
+    assert_eq!(pageup, "pageup", "the default scroll chord moved");
+
+    for index in 0..60 {
+        app.ui.push_notice(format!("ROW-{index:03}"));
+    }
+    let before = render_rows(&mut app, 60, 20);
+    assert!(before.join("\n").contains("ROW-059"), "{before:#?}");
+    assert_eq!(app.scroll_from_bottom, 0, "a fresh frame follows the tail");
+
+    assert!(!super::keys::handle_key(
+        &mut app,
+        &agent,
+        KeyEvent {
+            code: KeyCode::PageUp,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    ));
+    let screen = render_rows(&mut app, 60, 20).join("\n");
+    assert!(
+        !screen.contains("ROW-059"),
+        "the frame still shows the tail after {pageup}: the advertised key did not scroll"
+    );
+    assert!(screen.contains("ROW-"), "the transcript vanished: {screen}");
+}
+
+// ---- the approval dialog: its size, and the colour it says it uses -----------
+//
+// `draw_dialog`'s own doc comment claimed a danger treatment while the code
+// passed `focused: true` and got the same accent every other overlay uses, and
+// the box was eleven rows for a yes/no where the layout reference asks 5–7. Both
+// are properties of the drawn frame, so both are read back from the drawn frame:
+// a text-only assertion cannot see a border colour, and a test that asked
+// `draw_dialog` for its height would be asking the code under test to grade
+// itself.
+
+/// The columns the dialog's frame occupies, across every row it is drawn on.
+///
+/// Found by looking for the colour the frame is supposed to have. Scanning a
+/// single row for "the first styled cell" finds the *transcript* beside the
+/// dialog instead — the panel is centred, so the columns around it are not
+/// blank, they are the screen it is covering — and the top row is interrupted by
+/// the title, which is drawn in the title's style. Taking the extremes over all
+/// the frame's rows gives the rectangle's edges whatever the title does.
+fn frame_columns(
+    buffer: &ratatui::buffer::Buffer,
+    rows: &[u16],
+    width: u16,
+    colour: ratatui::style::Color,
+) -> (u16, u16) {
+    let mut left = u16::MAX;
+    let mut right = 0u16;
+    for &row in rows {
+        for x in 0..width {
+            if buffer[(x, row)].style().fg == Some(colour) {
+                left = left.min(x);
+                right = right.max(x);
+            }
+        }
+    }
+    assert!(
+        left != u16::MAX,
+        "none of the rows {rows:?} carries the dialog's colour: it is not drawn in it"
+    );
+    assert!(
+        left < right,
+        "the frame's edges must be apart: {left}..={right}"
+    );
+    (left, right)
+}
+
+#[tokio::test]
+async fn the_approval_dialog_is_six_rows_and_wears_the_danger_border() {
+    let (mut app, _agent, _receivers) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    let approvals = ChannelApprovalUi::new();
+    let _response = park_ask(&mut app, &approvals, "req-shape").await;
+
+    let (buffer, rows) = render_buffer(&mut app, 100, 24);
+    let screen = rows.join("\n");
+    let danger = app.theme.danger().fg.expect("the danger role has a colour");
+    let focus = app
+        .theme
+        .border_focus()
+        .fg
+        .expect("the focus role has a colour");
+    assert_ne!(
+        danger, focus,
+        "the two accents must differ for this test to mean anything"
+    );
+
+    // 1. The frame is the danger colour and not the focus accent, on every one
+    //    of its edges. This is the assertion the pre-fix dialog failed: it drew
+    //    `border_focus()` and claimed otherwise in its doc comment.
+    let danger_rows: Vec<u16> = (0..24)
+        .filter(|&y| (0..100u16).any(|x| buffer[(x, y)].style().fg == Some(danger)))
+        .collect();
+    assert_eq!(
+        danger_rows.len(),
+        6,
+        "the permission dialog must be six rows tall — two frame edges and four \
+         of body; found {danger_rows:?} in:\n{screen}"
+    );
+    assert_eq!(
+        danger_rows,
+        (danger_rows[0]..danger_rows[0] + 6).collect::<Vec<u16>>(),
+        "the dialog's rows must be contiguous: {danger_rows:?}"
+    );
+    let (left, right) = frame_columns(&buffer, &danger_rows, 100, danger);
+    let top = danger_rows[0];
+    let bottom = danger_rows[5];
+    // The corners are the frame, one at each end of each edge.
+    for (row, name) in [(top, "top"), (bottom, "bottom")] {
+        for x in [left, right] {
+            assert_eq!(
+                buffer[(x, row)].style().fg,
+                Some(danger),
+                "the {name} edge's corner at column {x} is not in the danger accent: {:?}",
+                rows[row as usize]
+            );
+        }
+    }
+    // The side rails too: a frame is four edges, and a test that read only the
+    // top and bottom would pass for a dialog drawn with the wrong sides.
+    for row in &danger_rows[1..5] {
+        for x in [left, right] {
+            assert_eq!(
+                buffer[(x, *row)].style().fg,
+                Some(danger),
+                "column {x} of row {row} must be a danger-coloured rail: {:?}",
+                rows[*row as usize]
+            );
+        }
+    }
+    // And the rectangle is the width the prompt layout asks for, not a stray
+    // band: `Width::PROMPT` is three fifths of the screen, floored at 46 — at 100
+    // columns the share wins; the floor is what a narrow terminal keeps.
+    assert_eq!(
+        right - left + 1,
+        100 * 3 / 5,
+        "the dialog's width must be the prompt width: {left}..={right}"
+    );
+
+    // 2. The body still says everything a decision needs, on those six rows.
+    assert!(screen.contains("permission required"), "{screen}");
+    assert!(screen.contains("cap"), "{screen}");
+    assert!(screen.contains("bash"), "{screen}");
+    assert!(
+        screen.contains("rm -rf build"),
+        "the detail line must show what will run: {screen}"
+    );
+    assert!(
+        !screen.contains(r#"{"command""#),
+        "the detail line must be the command, not the JSON object holding it: {screen}"
+    );
+    for key in [
+        "y allow once",
+        "a always (session)",
+        "n deny",
+        "e deny + guidance",
+    ] {
+        assert!(
+            screen.contains(key),
+            "the dialog must offer `{key}`: {screen}"
+        );
+    }
+    // 3. Nothing below the dialog is the dialog: the box does not bleed.
+    assert!(
+        rows[danger_rows[5] as usize + 1..]
+            .iter()
+            .all(|r| !r.contains("permission required")),
+        "the dialog leaked past its bottom edge: {screen}"
+    );
+}
+
+#[test]
+fn a_detail_object_prints_the_field_that_decides_the_question() {
+    // The dialog's one row of detail is worth more as the command than as the
+    // object containing it: on the PROMPT width the JSON's punctuation is most of
+    // what fits.
+    assert_eq!(
+        summarize_detail(&serde_json::json!({ "command": "rm -rf build" })),
+        "rm -rf build"
+    );
+    assert_eq!(
+        summarize_detail(&serde_json::json!({ "path": "src/lib.rs", "offset": 40 })),
+        "src/lib.rs"
+    );
+    assert_eq!(
+        summarize_detail(&serde_json::json!({ "query": "openai" })),
+        "openai"
+    );
+    assert_eq!(
+        summarize_detail(&serde_json::json!("plain text")),
+        "plain text"
+    );
+    // No known field: the object itself, truncated, rather than a guess.
+    let other = summarize_detail(&serde_json::json!({ "count": 3 }));
+    assert!(other.contains("count"), "{other}");
+    let long = summarize_detail(&serde_json::json!({ "unknown": "x".repeat(400) }));
+    assert!(
+        long.ends_with('…'),
+        "a long detail must be truncated: {long}"
+    );
+    assert!(long.chars().count() <= 97, "{} chars", long.chars().count());
+}
+
+#[test]
 fn the_one_rule_sits_between_the_transcript_and_the_composer() {
     // Where the surviving rule lives, on a frame whose transcript is full. The
     // old layout drew this row AND a second rule under the header; the point of

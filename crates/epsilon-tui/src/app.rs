@@ -200,7 +200,32 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// The one line a permission dialog shows for a request's `detail`.
+///
+/// The dialog has a single row for "what is about to happen", and the answer a
+/// reader needs is almost always one field of the JSON: the command, the path,
+/// the URL. Printing the object instead costs the row and buries the answer —
+/// `{"command":"rm -rf build"}` spends twelve columns on punctuation before the
+/// part that decides the question, so on a 46-column panel the thing being
+/// approved is the part that gets cut.
+///
+/// Preference order, not a schema: the first field present wins, and an object
+/// with none of them falls back to the JSON. Nothing is invented for a missing
+/// field, and the fallback is the raw object rather than a paraphrase, because
+/// the value of this line is that it is the request.
 fn summarize_detail(detail: &serde_json::Value) -> String {
+    /// Fields that answer "what will this do", most specific first.
+    const NAMED: [&str; 5] = ["command", "path", "file", "query", "url"];
+    if let Some(object) = detail.as_object() {
+        for key in NAMED {
+            if let Some(value) = object.get(key).and_then(|v| v.as_str()) {
+                return value.to_string();
+            }
+        }
+    }
+    if let Some(text) = detail.as_str() {
+        return text.to_string();
+    }
     let s = detail.to_string();
     if s.chars().count() <= 96 {
         s
@@ -2896,10 +2921,29 @@ impl App {
     /// When the registry publishes no cache price and the session moved cache tokens, the
     /// total is a **lower bound**, and `Metrics::cost_is_floor` says so — the header prints
     /// `$0.42+` rather than a precise-looking number that is wrong (G18).
+    ///
+    /// # The context number, and why it is not the last prompt
+    ///
+    /// `context_used` is the **session context**, mirrored from
+    /// `Agent::estimated_context_tokens` — the same figure the compaction trigger reads, so
+    /// the gauge and the loop cannot disagree about how full the context is. It is not
+    /// `latest_prompt_tokens`: that is the size of the last *request*, which on turn 1 is
+    /// the whole conversation and thereafter is only its prefix. Printing it as a share of
+    /// the window was the fabrication this field replaced — it is always smaller than the
+    /// context, so it always flattered.
+    ///
+    /// The mirror is taken once per frame by the event loop
+    /// (`App::mirror_context_size`), not read here, because the draw path holds no agent:
+    /// `App` is the frame's whole input, and a widget that reached for the loop's state
+    /// would be a widget no test could aim.
+    ///
+    /// `prompt_tokens_last` stays the provider's number and stays the cache rate's
+    /// denominator: a hit rate is a claim about one call, and both halves of it have to
+    /// come from that call.
     fn metrics(&self) -> crate::ui::metrics::Metrics {
         let (tokens_in, tokens_out) = self.ui.usage();
         let (cache_read_session, cache_write_session) = self.ui.cache_usage();
-        // The rate's numerator comes from the SAME call as `context_used`, not from the
+        // The rate's numerator comes from the SAME call as its denominator, not from the
         // session totals above (G16).
         let cache_read_last = self.ui.latest_cache_read();
         let latest_prompt = self.ui.latest_prompt_tokens();
@@ -2925,20 +2969,47 @@ impl App {
         });
         let cost_micro_usd = cost.as_ref().map(crate::ui::cost::CostBreakdown::total);
         let cost_is_floor = cost.as_ref().is_some_and(|c| c.is_floor());
+        // A frame that has not mirrored yet — the first one, or a bench frame —
+        // still reports the provider's own count when there is one. This is a
+        // fallback for a missing estimate, not a maximum: on every frame the loop
+        // has drawn, the estimate is the measured prompt plus whatever was
+        // appended since, so it is the larger of the two and this branch is dead.
+        // An estimate is never *smaller* than the prompt it was anchored to, so
+        // seeding from `latest_prompt` cannot overstate anything.
+        let context_now = if self.ui.context_now > 0 {
+            self.ui.context_now
+        } else {
+            latest_prompt
+        };
         crate::ui::metrics::Metrics {
             model_label: epsilon_llm::catalog::display_label(&self.model_id).to_string(),
             offline: self.model_id.starts_with("faux"),
-            context_used: (latest_prompt > 0).then_some(latest_prompt),
+            context_used: (context_now > 0).then_some(context_now),
             context_window: info.as_ref().map(|i| i.context_window).filter(|w| *w > 0),
             tokens_in,
             tokens_out,
             cache_read_session,
             cache_write_session,
             cache_read_last,
+            prompt_tokens_last: (latest_prompt > 0).then_some(latest_prompt),
             cost_micro_usd,
             cost_is_floor,
-            compacted: self.ui.is_compacted(),
         }
+    }
+
+    /// Mirror the agent's context estimate onto the frame's input.
+    ///
+    /// The draw path takes `&mut App` and nothing else, which is what lets every
+    /// screen be assembled in a test with no agent. The estimate therefore has
+    /// to arrive *through* the app, and this is the one place it does — called
+    /// by the event loop immediately before it draws, so the number on the row
+    /// describes the same history the transcript beneath it is about to show.
+    ///
+    /// Cheap enough for that position: the estimate is a provider-anchored
+    /// figure plus a heuristic over what has been appended since, and it is
+    /// taken once per frame rather than once per header fragment.
+    pub(crate) fn mirror_context_size(&mut self, agent: &Agent) {
+        self.ui.context_now = agent.estimated_context_tokens() as u64;
     }
 
     /// Footer hints for the current state.
@@ -2948,8 +3019,12 @@ impl App {
             Hints::approval()
         } else if self.overlay_open() {
             // Overlays own the keyboard; the footer points at their own keys
-            // rather than advertising send/stop, which would not work.
+            // rather than advertising send/stop, which would not work. These are
+            // literal because an overlay is a list, not a bound action: there is
+            // no binding id for "move the highlight", so there is nothing for
+            // the table to resolve and nothing for it to get wrong.
             Hints {
+                mode: Some("list".into()),
                 keys: vec![
                     ("type".into(), "filter".into()),
                     ("↑↓".into(), "move".into()),
@@ -2959,9 +3034,9 @@ impl App {
                 ..Hints::default()
             }
         } else if self.ui.running() {
-            Hints::running(self.steer_queue_len)
+            Hints::running(&self.keybindings, self.steer_queue_len)
         } else {
-            Hints::idle()
+            Hints::idle(&self.keybindings)
         };
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
@@ -3038,6 +3113,7 @@ fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         },
         title: &title,
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
 
@@ -3098,6 +3174,7 @@ fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         },
         title: &title,
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
 
@@ -3167,6 +3244,7 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         },
         title: &title,
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
 
@@ -3372,6 +3450,7 @@ fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         },
         title: "commands",
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
 
@@ -3442,6 +3521,7 @@ fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatui::layout::
         area,
         title: "files",
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
     let theme = &app.theme;
@@ -3496,6 +3576,7 @@ fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
         area: overlay::centered(outer, width, height),
         title: "timeline",
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
 
@@ -3573,6 +3654,7 @@ fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) 
         area,
         title: "commands",
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
 
@@ -3604,20 +3686,38 @@ fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_area: Rect) 
 /// decides whether the agent may do something. It is drawn with the *danger*
 /// accent rather than the ordinary focus accent, because "this owned the
 /// keyboard" and "this can authorize a write" are different statements, and
-/// telling them apart at a glance is the point.
+/// telling them apart at a glance is the point. That is now true of the code as
+/// well as of this comment: the frame's colour is passed in
+/// ([`crate::ui::overlay::Panel::border`]) instead of being inherited from
+/// `focused: true`, which yielded the same accent every other overlay uses.
 ///
-/// The body answers three questions in the order they are asked: what capability,
-/// against what, and with what arguments.
+/// **Six rows, not eleven.** The dialog is a yes/no with one line of detail, and
+/// a tall box for a small question reads as more consequential than it is —
+/// which is the opposite of what the danger colour is for. The skill's own rule
+/// is 5–7 rows for a confirm prompt (`references/layout.md`); the body keeps the
+/// capability, the one line that says what will actually happen, and the four
+/// decision keys, and drops the blank separator and the `pattern` field, which
+/// restated what the detail line already shows.
 fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
+    /// Interior rows the body needs: capability, detail, and the two key lines.
+    ///
+    /// Stated once and used for the height, so the box cannot be given a size the
+    /// body does not fill — an oversized dialog is how the eleven-row version
+    /// happened.
+    const BODY_ROWS: u16 = 4;
+    const CHROME_ROWS: u16 = 2;
+
     let width = Width::PROMPT.resolve(outer);
-    let height = 11u16.min(outer.height);
+    let height = (BODY_ROWS + CHROME_ROWS).min(outer.height);
     let panel = Panel {
         theme: &app.theme,
         area: overlay::centered(outer, width, height),
         title: "permission required",
         focused: true,
+        // The one overlay that is not merely asking a question.
+        border: Some(app.theme.danger()),
     };
     let inner = panel.open(f);
     let theme = &app.theme;
@@ -3626,32 +3726,38 @@ fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
         Some(ask) => {
             let req = &ask.request;
             // A labelled field, then its value: the label is dim so a reader
-            // scanning for the answer skips it, and the value is not.
+            // scanning for the answer skips it, and the value is not. The label
+            // column is five wide — wide enough for `cap`, narrow enough that the
+            // decision keys below keep their descriptions inside the panel.
             let field = |label: &str, value: String| {
                 Line::from(vec![
-                    Span::styled(format!("{label:<10}"), theme.faint()),
+                    Span::styled(format!("{label:<5}"), theme.faint()),
                     Span::styled(value, theme.text()),
                 ])
             };
+            // The detail is the line the skill asks for: what will actually
+            // happen. For a shell call that is the command, not a JSON object
+            // with the command buried in it — see [`summarize_detail`].
+            let detail = summarize_detail(&req.detail);
             vec![
-                field("capability", req.capability.clone()),
-                field("pattern", req.pattern.clone()),
-                field("detail", summarize_detail(&req.detail)),
-                Line::from(""),
+                field("cap", req.capability.clone()),
+                field("what", detail),
                 Line::from(vec![
                     Span::styled("y", theme.success()),
                     Span::styled(" allow once", theme.dim()),
-                    Span::styled("    a", theme.success()),
-                    Span::styled(" always this session", theme.dim()),
+                    Span::styled("   a", theme.success()),
+                    Span::styled(" always (session)", theme.dim()),
                 ]),
                 Line::from(vec![
                     Span::styled("n", theme.danger()),
                     Span::styled(" deny", theme.dim()),
-                    Span::styled("          e", theme.danger()),
-                    Span::styled(" deny with guidance", theme.dim()),
+                    Span::styled("         e", theme.danger()),
+                    Span::styled(" deny + guidance", theme.dim()),
                 ]),
             ]
         }
+        // Reached only when the ask was taken between the draw call and here,
+        // which the caller's `is_some` check makes a one-frame race.
         None => vec![Line::from(Span::styled("resolving…", theme.dim()))],
     };
 
@@ -3678,6 +3784,7 @@ fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
         area: overlay::centered(outer, width, height),
         title: &title,
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
     let theme = &app.theme;
@@ -3750,6 +3857,7 @@ fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         },
         title: "connect — pick a provider",
         focused: true,
+        border: None,
     };
     let inner = panel.open(f);
     let theme = &app.theme;

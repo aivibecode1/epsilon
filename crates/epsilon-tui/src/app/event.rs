@@ -156,6 +156,12 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         // draw once per batch, and every streaming frame re-wraps the whole
         // in-flight answer — the cost that made long answers feel frozen.
         if dirty && std::time::Instant::now() >= frame_due {
+            // The header's context figure is the agent's estimate of the next
+            // request, and the draw path holds no agent — so it is mirrored here,
+            // on the frame boundary, rather than read by a widget. Taking it here
+            // rather than when an event arrives is what makes the number describe
+            // the same history the frame is about to show.
+            app.mirror_context_size(&agent);
             let _ = terminal.draw(|f| draw(f, &mut app));
             dirty = false;
             frame_due = std::time::Instant::now() + FRAME_MIN;

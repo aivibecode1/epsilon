@@ -101,6 +101,18 @@ pub struct Panel<'a> {
     pub title: &'a str,
     /// `true` when the overlay owns the keyboard.
     pub focused: bool,
+    /// An explicit frame colour, overriding what [`Panel::focused`] implies.
+    ///
+    /// "This owns the keyboard" and "this can authorize a write" are different
+    /// statements, and the permission dialog is the case where they come apart:
+    /// it does own the keyboard, and what it needs to say is the second thing.
+    /// Before this field existed the dialog had no way to say it — it passed
+    /// `focused: true` and got the accent, while its own doc comment claimed a
+    /// danger treatment that nothing applied.
+    ///
+    /// `None` keeps the default: the focus accent when focused, the resting
+    /// border otherwise.
+    pub border: Option<ratatui::style::Style>,
 }
 
 impl Panel<'_> {
@@ -109,11 +121,15 @@ impl Panel<'_> {
         f.render_widget(Clear, self.area);
         let glyphs: &Glyphs = &self.theme.glyphs;
         let width = self.area.width as usize;
-        let border = if self.focused {
-            self.theme.border_focus()
-        } else {
-            self.theme.border()
-        };
+        // An explicit colour wins: a dialog that can authorize a write says so
+        // with its frame, and no value of `focused` can express that.
+        let border = self.border.unwrap_or_else(|| {
+            if self.focused {
+                self.theme.border_focus()
+            } else {
+                self.theme.border()
+            }
+        });
 
         // Build the frame by hand rather than with `Block`: it is a rounded,
         // titled edge with no nesting, and drawing the three pieces directly
@@ -282,6 +298,7 @@ mod tests {
                     area,
                     title: "models",
                     focused: true,
+                    border: None,
                 };
                 let inner = panel.open(f);
                 assert_eq!(inner.x, 2);
@@ -315,6 +332,7 @@ mod tests {
                         area,
                         title: "pick a model",
                         focused: false,
+                        border: None,
                     }
                     .open(f);
                 })
@@ -340,6 +358,7 @@ mod tests {
                         area,
                         title: "t",
                         focused: false,
+                        border: None,
                     }
                     .open(f);
                 })

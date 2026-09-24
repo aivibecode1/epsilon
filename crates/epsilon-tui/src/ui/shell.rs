@@ -148,10 +148,13 @@ mod tests {
                 tokens_out: 3_400,
                 cache_read_session: 36_000,
                 cache_read_last: 36_000,
+                prompt_tokens_last: Some(48_000),
                 cost_micro_usd: Some(12_345),
                 ..Metrics::default()
             },
-            hints: Hints::idle(),
+            hints: Hints::idle(&crate::keybindings::KeybindingsManager::from_map(
+                std::collections::HashMap::new(),
+            )),
             draft: vec![String::new()],
             caret: (0, 0),
             composer_focused: true,

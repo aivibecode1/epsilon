@@ -264,9 +264,16 @@ pub(crate) fn handle_approval_key(app: &mut App, key: KeyEvent) -> bool {
     // NEW ask is seated (the channel is FIFO; parallel tool calls park several)
     // and before the next draw must not answer what no frame has shown.
     if app.approval_painted_id.as_deref() != Some(ask_id.as_str()) {
-        app.ui.push_notice(
-            "approval is not visible yet — it appears on the next frame; enlarge the terminal (need 60×12) if it does not",
-        );
+        // The floor is stated from the layout constants, not from a literal:
+        // this sentence said "need 60×12" while `Regions::too_small` refused at
+        // 44×10, so it named a size the layout did not want and told a reader
+        // who obeyed it nothing about why the dialog was still missing.
+        app.ui.push_notice(format!(
+            "approval is not visible yet — it appears on the next frame; \
+             enlarge the terminal to at least {}×{} if it does not",
+            crate::ui::layout::MIN_WIDTH,
+            crate::ui::layout::MIN_HEIGHT,
+        ));
         return false;
     }
     // Guidance mode: Enter answers the ask too (DenyWithGuidance). Gated by the
@@ -836,7 +843,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 true
             }
         }
-        KeyCode::Enter => {
+        KeyCode::Enter if app.keybindings.matches("tui.input.submit", &key) => {
             if app.at_open {
                 app.apply_at_selection(true);
                 return false;
@@ -1043,11 +1050,17 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.recall(false);
             false
         }
-        KeyCode::PageUp => {
+        // Transcript scrolling (M-unstaged): the chords are bindings rather than
+        // `KeyCode::PageUp` arms so the footer can name the key that scrolls
+        // without hardcoding the same literal a second time — and so a user who
+        // prefers `ctrl+u`/`ctrl+d` can say so. The arm is a guard on purpose:
+        // a rebound key falls through to the arms below instead of being
+        // swallowed by a keycode this handler no longer owns.
+        _ if app.keybindings.matches("app.transcript.pageUp", &key) => {
             app.scroll_from_bottom = app.scroll_from_bottom.saturating_add(10);
             false
         }
-        KeyCode::PageDown => {
+        _ if app.keybindings.matches("app.transcript.pageDown", &key) => {
             app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(10);
             false
         }
