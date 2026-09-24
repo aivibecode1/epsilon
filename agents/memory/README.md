@@ -46,24 +46,24 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **IN FLIGHT AND RED (round 33): tool cards + a real coloured diff** (the audit's D12, the largest
-  remaining TUI item). A delegated agent is implementing: a new `crates/epsilon-tui/src/ui/card.rs`,
-  plus changes to `app.rs`, `app/keys.rs`, `render_cache.rs`, `state.rs`, `ui/mod.rs`, `ui/theme.rs`
-  (~1,979 insertions when last inspected; `ui/card.rs` is new). **`cargo test -p epsilon-tui` is
-  still RED, but the author is running and converging** — as of round 34: **261 passed / 4 failed**
-  (was 252/5), and each failure names a precise defect rather than a missing feature:
-  `app::golden::an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (the added line's `+`
-  sign is not in the success colour — it prints the card's `✓` in that column),
-  `app::golden::the_diff_is_not_run_through_the_markdown_parser`,
-  `render_cache::tests::a_restaled_card_is_rebuilt_when_named_and_kept_when_not`,
-  `state::tests::edit_result_with_a_diff_commits_a_parsed_diff_card` (line numbering: a context line
-  advances both files, an addition only the new one). **Nothing was committed** — committing red
-  work is worse than leaving it in the tree. If the author has died, those four are the todo list;
-  do not stage `ui/card.rs` blindly — it is untracked, and M119's lesson is that
-  `git status --short --untracked-files=all` comes BEFORE staging.
-  The intent, the reference implementations to follow (pi `diff.ts:26-66`/`:124-141`, opencode
-  `permission.tsx:38-78`) and the required test standard (cells from `render_buffer` → `draw`) are
-  in the delegation brief and in `audit/evidence/tui-design-audit-2026-09-23.md` item D12.
+- **M126 (`933837b` + `dae8300`) landed the tool cards and the real diff** — the audit's D12 and the
+  largest remaining TUI item. New `crates/epsilon-tui/src/ui/card.rs`: a *row* budget for the body
+  (12, so a wrapping line cannot exceed the cap by wrapping), unified below a named width and split
+  above it, line numbers only above a column budget, colour never the sole signal (the gutter sign and
+  the line numbers carry added-vs-removed under `NO_COLOR`), per-card expansion with the global
+  toggle kept as "expand all". Tests read cells from `render_buffer` → `draw`, including
+  `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose`, which asserts the sign column's
+  **colour in the rendered frame**. The slice converged in public: 252 passing/5 red → 261/4 → green;
+  `epsilon-tui` is now **267 passed / 0 failed** and the tree was clean at the end of round 35.
+  **Still owed for it:** the battery (`m126a` failed fmt, fixed in `dae8300`, and failed two
+  frame-dump tests the author later removed — so `m126a` is not evidence), the independent read-only
+  review, and the `epsilon.exe` reinstall. The author never reported.
+  Reference implementations followed: pi `diff.ts:26-66`/`:124-141`, opencode `permission.tsx:38-78`;
+  the required test standard is in `audit/evidence/tui-design-audit-2026-09-23.md` item D12.
+  **Process note worth keeping:** the slice's red-to-green convergence was visible across two rounds
+  (252/5 → 261/4 → 267/0) because the author was still working while the parent committed; the
+  parent's `git add crates/epsilon-tui` then swept the author's *later* edits into `dae8300` without
+  saying so. When a delegated author is still running, stage **named files**, not a directory.
 - **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
   exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
   eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
