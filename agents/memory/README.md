@@ -46,6 +46,21 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
+- **IN FLIGHT AND RED (round 33): tool cards + a real coloured diff** (the audit's D12, the largest
+  remaining TUI item). A delegated agent is implementing: a new `crates/epsilon-tui/src/ui/card.rs`,
+  plus changes to `app.rs`, `app/keys.rs`, `render_cache.rs`, `state.rs`, `ui/mod.rs`, `ui/theme.rs`
+  (~674 insertions when last inspected). **`cargo test -p epsilon-tui` currently FAILS** — five red:
+  `render_cache::tests::a_restaled_card_is_rebuilt_when_named_and_kept_when_not`,
+  `render_cache::tests::changing_which_cards_are_open_invalidates_the_cache`,
+  `state::tests::a_diff_line_the_parser_does_not_know_is_kept_not_dropped`,
+  `state::tests::a_hunk_header_sets_the_line_numbers_it_declares`,
+  `state::tests::edit_result_with_a_diff_commits_a_parsed_diff_card`. **Nothing was committed** —
+  committing red work is worse than leaving it in the tree. The agent was still running when the
+  round ended: let it finish, or finish it, but do not stage `ui/card.rs` blindly — it is untracked,
+  and M119's lesson is that `git status --short --untracked-files=all` comes BEFORE staging.
+  The intent, the reference implementations to follow (pi `diff.ts:26-66`/`:124-141`, opencode
+  `permission.tsx:38-78`) and the required test standard (cells from `render_buffer` → `draw`) are
+  in the delegation brief and in `audit/evidence/tui-design-audit-2026-09-23.md` item D12.
 - **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
   exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
   eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
