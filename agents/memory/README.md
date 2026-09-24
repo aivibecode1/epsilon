@@ -46,24 +46,30 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **M126 (`933837b` + `dae8300`) — COMMITTED BUT NOT YET VERIFIED; the tree is RED and an author is
-  still repairing it.** Round 35 chased a moving target and this note replaces a snapshot that had
-  already expired. What is true now: the tool-card/diff feature is in git (new
-  `crates/epsilon-tui/src/ui/card.rs`, a *row* budget for the body so a wrapping line cannot exceed
-  the cap, unified below a named width and split above, line numbers only above a column budget,
-  colour never the sole signal, per-card expansion with the global toggle kept as expand-all); the
-  working tree is **dirty** (`app/golden.rs`, `render_cache.rs`) with the author's ongoing fixes; and
-  `cargo test -p epsilon-tui` is **265 passed / 2 failed** as of the last check, after passing 267/0
-  at an earlier instant and failing to compile at another. **`m126a`, `m126b` and `m126c` are all
-  FAILED and none is evidence** — the first on fmt (fixed), the second and third on the author's
-  in-flight edits and on a leftover `"DEBUG …"` assertion that a revert of mine restored.
-  **Two process mistakes of mine are the reason this round has no verified landing:** I staged the
-  whole `crates/epsilon-tui` directory twice while the author was still working, which swept its
-  half-finished edits into commits and then, when I reverted two files, restored a state whose test
-  target does not compile while throwing away the fixes that were in them. **When a delegated author
-  is still running: stage NAMED FILES, never a directory, and do not revert its work-in-progress.**
-  Next round: confirm the author has stopped, freeze a green state, then battery + reinstall (every
-  part of this is user-visible) + the independent review this slice has never had.
+- **M126's ONE remaining failure, diagnosed exactly (round 36) — do not guess at it, decide the
+  semantics.** `app::golden::ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` fails at
+  `crates/epsilon-tui/src/app/golden.rs:1388` ("the hand-opened card must still be open with the
+  global toggle off"). The cause is that **one key does both jobs**:
+  `app/keys.rs:1157-1173` (the `app.tools.expand` handler, Ctrl+X) flips the global
+  `prefs.expand_outputs` **and** records a per-card override for the selected card —
+  `app.set_card_open(id, !was_open)` — on every press. On the test's *second* press `was_open` is
+  true, so it records that card as explicitly **closed**, while the test's reading (spelled out in
+  its own comment at `:1375-1380`) is that the second press turns the **global** off and leaves a
+  hand-opened card open. `RenderState::is_open` (`render_cache.rs:68-73`) is *correct* — explicit
+  wins over global — so the defect is in the handler, not the cache. **The decision to make:** is
+  Ctrl+X "toggle everything" with per-card state coming from a *different* gesture, or is it
+  "toggle the selected card, and the global only when nothing is selected"? The current code is the
+  second and the test asserts the first. Choose one, make both agree, and say which in the code
+  comment - this is a user-facing convention, not a test bug to paper over. **Do not skip the test
+  and do not delete it.**
+- **The tree is dirty and red because of the above.** `crates/epsilon-tui/src/app/golden.rs` and
+  `render_cache.rs` carry the author's newest edits (they fix an earlier E0277 in this very test),
+  so **reverting them re-breaks the build** - that is my round-35 mistake and it must not be
+  repeated. `cargo test -p epsilon-tui` reads **266 passed / 1 failed**. The rest of the tool-card
+  slice is committed (`933837b`, `dae8300`) and its other 266 tests pass, including the frame-level
+  diff-colour assertion; so the shipped feature works and the *override interaction* is the gap.
+  Next round: decide the semantics, fix the handler, commit by **named file**, then battery +
+  reinstall (all user-visible) + the independent review this slice still has never had.
   Reference implementations followed: pi `diff.ts:26-66`/`:124-141`, opencode `permission.tsx:38-78`;
   the required test standard is in `audit/evidence/tui-design-audit-2026-09-23.md` item D12.
   **Process note worth keeping:** the slice's red-to-green convergence was visible across two rounds
