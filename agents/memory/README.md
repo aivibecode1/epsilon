@@ -64,6 +64,15 @@ not themselves trigger runtime compression.
   `changing_which_cards_are_open_invalidates_the_cache` test was failing in earlier rounds in the same
   area, and `RenderState::key()` is `(expand_all, expanded)`. Before changing anything, print
   `app.card_open`, `prefs.expand_outputs` and `total_rows` at each press.
+  **REFUTED in round 39 — do not re-run this lead.** `RenderCache::reconcile`
+  (`render_cache.rs:273-292`) sets `invalidate_all` when the key changes, and the key *does* include
+  `expand_all` (`CacheKey::of`, `:281`), while `logical_lines` consults `state.is_open` on every
+  rebuild (`:112`). So a global flip does invalidate and does re-derive each card's openness; the
+  cache is not the cause. What remains: either the two short cards hold explicit entries by the time
+  of the second press, or the fixture's arithmetic (`all_open_rows - 4`) is wrong for the rows those
+  cards actually give back when they cap — the next step is still to print `app.card_open`,
+  `prefs.expand_outputs` and `total_rows` after **each** press, which distinguishes those two in one
+  run.
   **State: uncommitted WIP in three files** — the author's `app/golden.rs` + `render_cache.rs` (do NOT
   revert: they fix an earlier E0277 in this same test) and my `app/keys.rs`. `cargo test -p
   epsilon-tui` is **266 passed / 1 failed**. Nothing committed.
