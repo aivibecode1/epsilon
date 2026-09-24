@@ -70,23 +70,30 @@ not themselves trigger runtime compression.
   other discarded store results, no author negative controls and no independent review; the parent
   fixed three clippy errors and a formatting failure it never saw. Treat its list of sites as
   **incomplete** until someone greps again.
-- **RESOLVED 2026-09-24 (uncommitted, working tree): the battery hang is diagnosed and fixed.**
+- **RESOLVED and CLOSED (M124, `6202b3a`): the battery hang is diagnosed and fixed.**
   `an_aborted_turn_lost_to_the_store_refuses_the_next_request` hung because its fault arithmetic
   was written for the *pre-F07* loop: `set_write_fault_for_tests(.., 1)` fails the **first** append
   — the prompt — and since F07 that failure returns out of `Agent::run` before the provider is
   called, so the test's `entered_rx.wait_for(..)` (no timeout) waited forever on a watch that could
-  never flip. Fix: the fault seam gained an **occurrence** argument
+  never flip. The third argument is a COUNT of failures, not an occurrence, so the seam could not
+  express "fail the second append" at all — that is why the obvious fix did not exist. Fix: the
+  seam gained an **occurrence** argument
   (`crates/epsilon-session/src/store.rs`: `set_write_fault_for_tests(op, msg, occurrence, times)`,
   plus `appends()` / `write_fault_pending_for_tests()`), the salvage test arms occurrence 2 and
-  signals on the **delta** so the abort lands on the arm that keeps partial text, and every wait on
-  the agent under test in `loop_scenarios.rs` is now bounded (`run_bounded`, 30s; 10s entry/delta
-  waits). Negative controls: old arithmetic → fails in 10.0s naming the missing provider entry;
-  timeout removed → hangs past 45s. Verified: `cargo test -p epsilon-core -p epsilon-session` all
-  green (144 lib + 35 loop_scenarios + 52 session_store …), fmt and clippy clean.
-  **Still open for the parent:** M122/M123 still need their battery and the `epsilon.exe`
-  reinstall; `docs/user/sessions.md:34` and the audit/ledger F07 rows still describe the *pre-fix*
-  swallow; and `pi_import_reconciliation` failed once in a combined run and passed on every re-run
-  (unexplained flake, worth a second look).
+  asserts its own sequence, it signals on the **delta** so the abort lands on the arm that keeps
+  partial text, and every wait on the agent under test in `loop_scenarios.rs` is now bounded
+  (`run_bounded`, 30s; 10s entry/delta waits). Negative controls: old arithmetic → fails in 10.0s
+  naming the missing provider entry; timeout removed → hangs past 45s.
+  **Battery m124a now PASSES**: all five gates exit 0, 1,098 passed / 0 failed / 1 ignored across
+  61 binaries (`audit/evidence/gate-m124a.log`), covering M122 + M123 + M124 together. The
+  `epsilon.exe` reinstall was started on those bytes. `docs/user/sessions.md` was corrected in the
+  same commit.
+  **Still open:** the `audit/`/defect-ledger F07 rows still describe the pre-fix swallow (only the
+  user doc was fixed); **`serve` mode silently discards a failed-persist turn** —
+  `crates/epsilon-cli/src/main.rs:1982` `let _ = agent.run(message)` with nothing subscribed to
+  notices — which is exactly the F07 acceptance surface and deserves its own slice; and
+  `pi_import_reconciliation::pi_import_carries_every_source_entry` failed once in a combined run
+  and passed on every re-run (unexplained flake, worth a second look).
 - **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files) was
   modified by something other than this task. Preserve it; do not fold it into a milestone commit.
 - **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
