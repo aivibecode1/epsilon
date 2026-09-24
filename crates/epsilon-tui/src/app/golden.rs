@@ -1368,6 +1368,49 @@ fn ctrl_x_opens_the_newest_card_and_leaves_the_others_alone() {
             .any(|r| r.contains("filler") && r.contains("new one")),
         "a card's body leaked into another's: {rows:#?}"
     );
+
+    // 5. The case that makes per-card state *necessary* rather than decorative:
+    //    press again. The global toggle goes back off, so the cards nobody has
+    //    touched collapse — while the one the user acted on stays open, because
+    //    its own decision outranks the global default. One global boolean cannot
+    //    express that, and this is the assertion that fails when
+    //    `RenderState::is_open` ignores `explicit`: with the global off and the
+    //    per-card entry ignored, the long card is capped again and the two short
+    //    cards reopen, so the row count lands back where the first press left it
+    //    rather than two rows below.
+    let all_open_rows = app.render_cache.total_rows();
+    press_expand(&mut app, &agent);
+    assert!(
+        !app.prefs.expand_outputs,
+        "the second press must put the global toggle back off"
+    );
+    let rows = render_rows(&mut app, 80, 44);
+    assert!(
+        rows.iter().any(|r| r.contains("filler 19")),
+        "the hand-opened card must still be open with the global toggle off: {rows:#?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("more lines")),
+        "the hand-opened card must not be capped again: {rows:#?}"
+    );
+    // The two short cards each hold a three-line diff (`@@`, `-`, `+`) against a
+    // twelve-row cap, so **nothing is hidden and capping them gives back nothing**:
+    // open and capped render the same rows, and the total cannot move when the
+    // global goes off. This assertion used to expect `all_open_rows - 4`, on the
+    // belief that those cards were four rows capped and six open; a probe of the
+    // real frame showed the total unchanged (32) with `expand_all=false` and one
+    // explicit entry, which is this arithmetic and not a rendering fault.
+    //
+    // So the honest assertion is that nothing moved — and the observable evidence
+    // that the global *did* take effect is above: the long card is still open
+    // (which only an explicit entry can do once the global is off) while its
+    // `more lines` affordance is gone. A card that could not show the difference
+    // cannot be used to prove it.
+    assert_eq!(
+        app.render_cache.total_rows(),
+        all_open_rows,
+        "the short cards hide nothing under the cap, so nothing may move"
+    );
 }
 
 /// Extra diff body lines, so a card is long enough to hit the cap.

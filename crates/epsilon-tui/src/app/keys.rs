@@ -1159,7 +1159,20 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.prefs.expand_outputs = !app.prefs.expand_outputs;
             let label = match (app.selected_card_id(), was_open) {
                 (Some(id), Some(was_open)) => {
-                    let open = !was_open;
+                    // What the card's own entry records, and why it is not simply
+                    // `!was_open` (which is what this used to be, and what made the
+                    // second press close the card the first press had opened):
+                    //
+                    // The key is an *expand*, and the global toggle is what it
+                    // flips. So after the press the selected card is open if the
+                    // global is now on, or if it was already open. Reading it as a
+                    // per-card toggle instead meant "expand all, then collapse all"
+                    // also collapsed the one card the user had deliberately opened —
+                    // the opposite of the exception this whole path exists to
+                    // provide (see the comment above, and the frame test in
+                    // `app/golden.rs` that asserts the card is still open with the
+                    // global off).
+                    let open = app.prefs.expand_outputs || was_open;
                     app.set_card_open(id, open);
                     if open {
                         "card expanded"
