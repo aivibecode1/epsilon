@@ -50,13 +50,24 @@ passed (was 234). fmt and clippy clean.
 
 ## Limits
 
-- **The author of this slice never reported.** It was still running when its round ended, so this
-  was verified by running the suite and reading the diff — there are **no negative controls from
-  the author** for any of the three items, which every other recent slice has carried. The
-  independent read-only review the milestone workflow asks for is still owed.
-- **The footer still cannot show a key that is unbound** — it shows the chord the table holds, and
-  a binding the user clears silently disappears from the hint rather than saying it is unbound.
+- **The context figure is an estimate before the first provider reply.** The provider-anchored path
+  is exact; the pre-first-reply path is `chars/4` and can be off by the factor `epsilon-core`'s own
+  comment warns about (a resumed session especially). It is narrower than the number it replaced,
+  never wider, and never rounded up — **but the row does not say "estimate"**, and it should.
+- **The new scroll hints cost two hints at 80 columns.** `ctrl+j newline` and `ctrl+p palette` no
+  longer fit; the near end yields first. The trade is deliberate and asserted
+  (`what_survives_a_narrow_row_is_the_hint_that_cannot_be_guessed`), not accidental.
+- **Up/Down history recall is still unadvertised.** The audit lists it, but it has no binding id —
+  `KeyCode::Up` is handled directly in the composer. PageUp/PageDown got ids precisely so their hint
+  cannot drift from their handler; history should get the same treatment.
+- **The author of this slice reported after the commit**, so the first commit's message says it never
+  reported. It did: the report arrived with **five negative controls** (each restored byte-identically
+  and touched), the item-4 decision and its reasoning, and three disclosures now recorded above. Two
+  refinements it made after the first commit landed in `fe1888c`, and `m125a` ran on the code as it
+  stood before those two files changed — the delta is a dead-accessor deletion and a test message, no
+  behaviour, but the ordering is stated rather than glossed.
+- **The independent read-only review the milestone workflow asks for is still owed.**
 - **The audit's larger items remain**: tool cards with a real coloured diff (today a diff is
   uncoloured markdown prose behind a global toggle), a light theme (`Color::White` is still body
-  text), a frozen-view signal and jump-to-live, `NO_COLOR` glyph separation for the remaining
-  roles, and OSC 52 for `/copy` over SSH.
+  text), a frozen-view signal and jump-to-live, `NO_COLOR` glyph separation for the remaining roles,
+  and OSC 52 for `/copy` over SSH.
