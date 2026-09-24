@@ -46,18 +46,24 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **M126 (`933837b` + `dae8300`) landed the tool cards and the real diff** — the audit's D12 and the
-  largest remaining TUI item. New `crates/epsilon-tui/src/ui/card.rs`: a *row* budget for the body
-  (12, so a wrapping line cannot exceed the cap by wrapping), unified below a named width and split
-  above it, line numbers only above a column budget, colour never the sole signal (the gutter sign and
-  the line numbers carry added-vs-removed under `NO_COLOR`), per-card expansion with the global
-  toggle kept as "expand all". Tests read cells from `render_buffer` → `draw`, including
-  `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose`, which asserts the sign column's
-  **colour in the rendered frame**. The slice converged in public: 252 passing/5 red → 261/4 → green;
-  `epsilon-tui` is now **267 passed / 0 failed** and the tree was clean at the end of round 35.
-  **Still owed for it:** the battery (`m126a` failed fmt, fixed in `dae8300`, and failed two
-  frame-dump tests the author later removed — so `m126a` is not evidence), the independent read-only
-  review, and the `epsilon.exe` reinstall. The author never reported.
+- **M126 (`933837b` + `dae8300`) — COMMITTED BUT NOT YET VERIFIED; the tree is RED and an author is
+  still repairing it.** Round 35 chased a moving target and this note replaces a snapshot that had
+  already expired. What is true now: the tool-card/diff feature is in git (new
+  `crates/epsilon-tui/src/ui/card.rs`, a *row* budget for the body so a wrapping line cannot exceed
+  the cap, unified below a named width and split above, line numbers only above a column budget,
+  colour never the sole signal, per-card expansion with the global toggle kept as expand-all); the
+  working tree is **dirty** (`app/golden.rs`, `render_cache.rs`) with the author's ongoing fixes; and
+  `cargo test -p epsilon-tui` is **265 passed / 2 failed** as of the last check, after passing 267/0
+  at an earlier instant and failing to compile at another. **`m126a`, `m126b` and `m126c` are all
+  FAILED and none is evidence** — the first on fmt (fixed), the second and third on the author's
+  in-flight edits and on a leftover `"DEBUG …"` assertion that a revert of mine restored.
+  **Two process mistakes of mine are the reason this round has no verified landing:** I staged the
+  whole `crates/epsilon-tui` directory twice while the author was still working, which swept its
+  half-finished edits into commits and then, when I reverted two files, restored a state whose test
+  target does not compile while throwing away the fixes that were in them. **When a delegated author
+  is still running: stage NAMED FILES, never a directory, and do not revert its work-in-progress.**
+  Next round: confirm the author has stopped, freeze a green state, then battery + reinstall (every
+  part of this is user-visible) + the independent review this slice has never had.
   Reference implementations followed: pi `diff.ts:26-66`/`:124-141`, opencode `permission.tsx:38-78`;
   the required test standard is in `audit/evidence/tui-design-audit-2026-09-23.md` item D12.
   **Process note worth keeping:** the slice's red-to-green convergence was visible across two rounds
