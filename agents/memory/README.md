@@ -52,15 +52,21 @@ not themselves trigger runtime compression.
   first press had opened. `app/keys.rs` (`app.tools.expand`) carries the reasoning in a comment. The
   fixture settled it: press 1 records the selected card open *alongside* the global, press 2 must
   leave it open while the others follow the global off.
-  That fixed the two assertions that were failing ("the hand-opened card must still be open",
-  "must not be capped again"), and the test now fails **only** on the last one, the row arithmetic:
-  `assert_eq!(app.render_cache.total_rows(), all_open_rows - 4, "the untouched cards must collapse
-  while the hand-opened one stays open")`. So the remaining disagreement is about **how many rows a
-  collapsing card gives back** — the author's comment computes 4 for the pair (4 capped vs 6 open),
-  and the frame says otherwise. That is an arithmetic/measurement question, not a semantics one, and
-  the next step is to print the actual delta rather than argue about it.
-  **State: uncommitted WIP in three files** — the author's `app/golden.rs` + `render_cache.rs` (do not
+  That fixed the two assertions that were failing ("the hand-opened card must still be open", "must
+  not be capped again").
+- **M126's remaining failure, MEASURED (round 38) — my earlier framing of it was wrong.**
+  `app/golden.rs:1401`, `assert_eq!(app.render_cache.total_rows(), all_open_rows - 4)`, gives
+  **left 32, right 28**: `total_rows` after the second press is *exactly what it was after the
+  first*, so **nothing collapsed at all**. The question is not "how many rows does a collapsing card
+  give back" but **why the untouched cards do not follow the global toggle back off**.
+  Check first, as a hypothesis and not a finding: the render cache's invalidation key may not cover
+  the global toggle's effect on cards holding no explicit entry — the author's own
+  `changing_which_cards_are_open_invalidates_the_cache` test was failing in earlier rounds in the same
+  area, and `RenderState::key()` is `(expand_all, expanded)`. Before changing anything, print
+  `app.card_open`, `prefs.expand_outputs` and `total_rows` at each press.
+  **State: uncommitted WIP in three files** — the author's `app/golden.rs` + `render_cache.rs` (do NOT
   revert: they fix an earlier E0277 in this same test) and my `app/keys.rs`. `cargo test -p
+  epsilon-tui` is **266 passed / 1 failed**. Nothing committed.
 - **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
   exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
   eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
