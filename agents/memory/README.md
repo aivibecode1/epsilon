@@ -49,15 +49,34 @@ not themselves trigger runtime compression.
 - **M121 (`9af3c39`) closed** pi's `thinkingSignature` loss (carried; 49 values verified through a
   real import on the installed binary) and gave `glob` the 50 KiB byte cap. Battery `m121a`:
   1,088 passed across 61 binaries.
-- **IN FLIGHT, UNCOMMITTED (2026-09-23 late) — F07 plus `find`'s walk bound.** A delegated slice
-  fixed the discarded durable-write results in `epsilon-core` and was to announce `find`'s walker
-  truncation. Files: `crates/epsilon-core/src/lib.rs`, `crates/epsilon-core/tests/loop_scenarios.rs`,
-  `crates/epsilon-session/src/lib.rs`, `crates/epsilon-session/src/store.rs`. **Focused tests pass**
-  (`cargo test -p epsilon-core -p epsilon-session`: 144 + 3 + 4 + 10 + 4 + 4, 0 failed, including a
-  new `failed_summarization_does_not_commit_and_is_reported_once`). **The subagent went inactive
-  without reporting**, so there is no inventory of the *other* discarded store results it promised,
-  no negative controls, and no commit message: read the diff before committing, and ask whether
-  `find`'s notice actually landed. Battery `m122a` was started on these bytes.
+- **TUI REDESIGN IS THE OWNER'S STATED PRIORITY** (2026-09-23): *"The TUI is extremely poor in
+  terms of design and usability compared to the references."* The audit is
+  `audit/evidence/tui-design-audit-2026-09-23.md` — **read it before touching `epsilon-tui`**. Its
+  headline: `ui::transcript::decorate`/`row_style` (gutter, `▎`, per-role glyphs, filled bands)
+  had **no production caller**, so the design existed, was tested, and was never drawn.
+  **M123 (`2024ef4`) fixed its items 1 and 2**: `RenderCache` carries each row's `LineKind`
+  (`RenderedLine.kind` + `visible_rows_with_kinds`), `draw_transcript` decorates every visible row,
+  the doubled `❯ > ` prefix is gone, and the transcript rule was cut (rules 2 → 1; 80×24
+  transcript 19 → 20 rows). Its tests read **cells from the real draw path** (`render_buffer` →
+  `draw`) — the property the old suite lacked — with four negative controls restored
+  byte-identically and touched. **Remaining, in the audit's order:** (3) footer honesty — it
+  advertises `? help`, which is not a bound key, and hides PageUp/Down, history, Ctrl+O;
+  (4) a context percentage that is the last prompt's size rendered as window occupancy;
+  (5) approval dialog 11 rows → ~6 and the danger border its comment already claims; then tool
+  cards with a real coloured diff, a light theme (`Color::White` is body text today), jump-to-live
+  + scroll position, `NO_COLOR` glyph separation, and OSC 52.
+- **M122 (`15c6198`) landed F07**: the turn loop no longer discards durable-write failures. Written
+  by a delegated agent that went **inactive without reporting**, so it carries no inventory of the
+  other discarded store results, no author negative controls and no independent review; the parent
+  fixed three clippy errors and a formatting failure it never saw. Treat its list of sites as
+  **incomplete** until someone greps again.
+- **UNRESOLVED at close of 2026-09-23: the battery for M122+M123 was STOPPED.** In
+  `target/gate-m123a.log`: fmt and clippy green, the three new F07 tests **passing**, then
+  `an_aborted_turn_lost_to_the_store_refuses_the_next_request` **running over 60 seconds** — a
+  possible hang the F07 change may have introduced by reporting a failure on a path that used to
+  swallow it. **Diagnose that test first next round**, then complete a battery for both commits and
+  reinstall `epsilon.exe` (M123 changes what the installed binary draws — the reinstall was NOT
+  done).
 - **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files) was
   modified by something other than this task. Preserve it; do not fold it into a milestone commit.
 - **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
