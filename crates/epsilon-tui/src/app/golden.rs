@@ -935,7 +935,7 @@ fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     // different reason: the colours did not exist (everything was one foreground
     // through the markdown parser), the sign gutter did not exist, and the line
     // numbers did not exist.
-    let diff = "@@ -4,7 +4,9 @@\n fn draw() {\n-    let rows = cache.rows();\n+    let rows = cache.rows(width);\n";
+    let diff = "@@ -4,6 +4,7 @@\n fn draw() {\n-    let rows = cache.rows();\n+    let rows = cache.rows(width);\n";
     let mut app = edit_app(diff, ThemeColorMode::Ansi16);
     let ok = app.theme.success().fg.expect("a success colour");
     let danger = app.theme.danger().fg.expect("a danger colour");
@@ -944,15 +944,18 @@ fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
     let (buffer, rows) = render_buffer(&mut app, 80, 24);
     let added_row = row_of(&rows, "let rows = cache.rows(width);");
     let removed_row = row_of(&rows, "let rows = cache.rows();");
-    let hunk_row = row_of(&rows, "@@ -4,7 +4,9 @@");
+    let hunk_row = row_of(&rows, "@@ -4,6 +4,7 @@");
     let context_row = row_of(&rows, "fn draw() {");
     // 1. The sign gutter, on the row it belongs to, before the line number.
     //
-    //    The numbers differ between the two sides and that is correct: the hunk
-    //    header puts both files at 4, the context line advances both to 5, the
-    //    removal takes the old file's 5 and the addition the new file's 6. A column
-    //    that printed the same number on both sides would agree with a reader's
-    //    intuition and disagree with the file.
+    //    Both sides are numbered 5, and that is the format working: the hunk says
+    //    `-4,6 +4,7`, so the old file's fifth line is the changed one and the new
+    //    file's fifth line is its replacement. The two files stay level until an
+    //    addition or a removal makes them diverge — which is what the numbers are
+    //    *for*, and why a one-for-one replacement agrees on both sides rather than
+    //    showing two different numbers. A diff where the counts do not match its
+    //    header (an earlier version of this fixture) is numbered wrongly, which is
+    //    why the header is derived here rather than made up.
     assert!(
         rows[added_row].contains("+ 5 "),
         "an added line needs its `+` gutter and the new file's number: {:?}",
@@ -1141,7 +1144,7 @@ fn a_diff_still_reads_with_no_colour_and_ascii_glyphs() {
     //
     // The theme is pinned to `None` *and* to `ASCII` here, which is the console
     // that `NO_COLOR=1 EPSILON_ASCII=1` gets.
-    let diff = "@@ -4,7 +4,9 @@\n fn draw() {\n-    let rows = cache.rows();\n+    let rows = cache.rows(width);\n";
+    let diff = "@@ -4,6 +4,7 @@\n fn draw() {\n-    let rows = cache.rows();\n+    let rows = cache.rows(width);\n";
     let mut app = bench_app(UiState::new());
     app.theme = Theme::new(ThemeColorMode::None, crate::ui::theme::ASCII);
     app.ui
@@ -1150,7 +1153,10 @@ fn a_diff_still_reads_with_no_colour_and_ascii_glyphs() {
     let (buffer, rows) = render_buffer(&mut app, 80, 24);
     let added_row = row_of(&rows, "cache.rows(width)");
     let removed_row = row_of(&rows, "cache.rows();");
-    assert_ne!(added_row, removed_row, "the two sides must be separate rows");
+    assert_ne!(
+        added_row, removed_row,
+        "the two sides must be separate rows"
+    );
 
     // The signs, and only the signs, say which side is which. In ASCII the card's
     // own status glyph is `+` too, which is why the body sign is located from the

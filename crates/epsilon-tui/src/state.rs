@@ -1067,14 +1067,33 @@ fn todo_head(details: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// The detail line a pending card shows: what this call is about to do.
+///
+/// The **field that identifies the call**, in the order a reader would ask for it:
+/// the command a shell will run, the path a file tool will touch, the pattern a
+/// search will look for. `args.to_string()` is the fallback for a tool whose shape
+/// this does not know. A tool card that printed `{"path":"src/app.rs"}` for an
+/// obvious `edit` is why this is not simply the JSON: that is a data dump rather
+/// than a summary, and "tool calls as raw JSON dumps" is what the skill's card rule
+/// names as the thing not to do.
 fn summarize_args(args: &serde_json::Value) -> String {
-    match args.get("command").and_then(|v| v.as_str()) {
-        Some(cmd) => cmd.to_string(),
-        None => {
-            let s = args.to_string();
-            truncate(&s, 80)
+    for key in [
+        "command",
+        "path",
+        "file_path",
+        "filePath",
+        "pattern",
+        "query",
+        "url",
+        "prompt",
+    ] {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str())
+            && !value.trim().is_empty()
+        {
+            return value.to_string();
         }
     }
+    truncate(&args.to_string(), 80)
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1518,6 +1537,45 @@ mod tests {
         );
         assert_eq!(cards[1].status, CardStatus::Ok);
         assert_eq!(cards[1].name, "bash");
+    }
+
+    #[test]
+    fn a_pending_card_shows_what_the_call_is_about_to_do() {
+        // The detail line is the card body, so it is what a reader sees while a
+        // call is pending. `{"path":"src/app.rs"}` is a data dump, not a summary —
+        // the skill's own card rule names "tool calls as raw JSON dumps" as the
+        // thing a card exists to replace, and the first frame dump of this slice
+        // printed exactly that for an obvious `edit`.
+        assert_eq!(
+            summarize_args(&serde_json::json!({ "command": "cargo test" })),
+            "cargo test"
+        );
+        assert_eq!(
+            summarize_args(&serde_json::json!({ "path": "src/app.rs" })),
+            "src/app.rs"
+        );
+        assert_eq!(
+            summarize_args(&serde_json::json!({ "filePath": "/tmp/a.rs" })),
+            "/tmp/a.rs"
+        );
+        assert_eq!(
+            summarize_args(&serde_json::json!({ "pattern": "fn draw" })),
+            "fn draw"
+        );
+        // A shape this does not know still shows *something* rather than an empty
+        // body, and it is truncated so one argument cannot become the whole card.
+        let other = summarize_args(&serde_json::json!({ "weird": "x".repeat(200) }));
+        assert!(other.contains("weird"), "{other}");
+        assert!(
+            other.ends_with('…'),
+            "an unknown shape must be truncated: {other}"
+        );
+        // An empty known field falls through to the next candidate rather than
+        // printing a blank body.
+        assert_eq!(
+            summarize_args(&serde_json::json!({ "command": "", "path": "b.rs" })),
+            "b.rs"
+        );
     }
 
     #[test]
