@@ -46,9 +46,23 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **M121 (`9af3c39`) closed** pi's `thinkingSignature` loss (carried; 49 values verified through a
-  real import on the installed binary) and gave `glob` the 50 KiB byte cap. Battery `m121a`:
-  1,088 passed across 61 binaries.
+- **IN FLIGHT, UNCOMMITTED (round 31): TUI audit items 3, 4 and 5.** A delegated agent is
+  implementing, in `crates/epsilon-tui`: **(3)** footer hints built from the *live* binding table
+  instead of literals — `Hints::idle()` advertises `? help`, which is not a bound key, while
+  PageUp/Down, history and Ctrl+O go unmentioned — plus the false `need 60×12` string in
+  `app/keys.rs` (the real floor is `MIN_WIDTH=44`/`MIN_HEIGHT=10` in `ui/layout.rs`); **(4)** the
+  fabricated context percentage (`Metrics::context_used` is the last prompt's size rendered as
+  window occupancy; the honest label or the real session estimate is the agent's call to explain,
+  and `context_gauge`'s two identical `None` arms are dead); **(5)** the approval dialog at 11 rows
+  → ~6 with the danger border its own doc comment already claims (`ui/overlay.rs` `Panel` always
+  uses `border_focus()`). Files touched when last inspected: `app.rs`, `app/golden.rs`,
+  `app/keys.rs`, `app/tests.rs`, `keybindings.rs`, `ui/footer.rs`, `ui/metrics.rs`,
+  `ui/overlay.rs`, `ui/shell.rs`. **The round ended before its battery, its commit or its report
+  arrived** — treat the work as unverified: run `cargo test -p epsilon-tui`, then the battery, then
+  commit, then reinstall (all three items are user-visible).
+- **M124 (`6202b3a`) closed the hang**, and battery `m124a` **PASSES**: all five gates exit 0,
+  **1,098 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m124a.log`),
+  covering M122 + M123 + M124 together. The `serve`-mode gap below is the next F07 item.
 - **TUI REDESIGN IS THE OWNER'S STATED PRIORITY** (2026-09-23): *"The TUI is extremely poor in
   terms of design and usability compared to the references."* The audit is
   `audit/evidence/tui-design-audit-2026-09-23.md` — **read it before touching `epsilon-tui`**. Its
