@@ -46,20 +46,22 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **IN FLIGHT, UNCOMMITTED (round 31): TUI audit items 3, 4 and 5.** A delegated agent is
-  implementing, in `crates/epsilon-tui`: **(3)** footer hints built from the *live* binding table
-  instead of literals — `Hints::idle()` advertises `? help`, which is not a bound key, while
-  PageUp/Down, history and Ctrl+O go unmentioned — plus the false `need 60×12` string in
-  `app/keys.rs` (the real floor is `MIN_WIDTH=44`/`MIN_HEIGHT=10` in `ui/layout.rs`); **(4)** the
-  fabricated context percentage (`Metrics::context_used` is the last prompt's size rendered as
-  window occupancy; the honest label or the real session estimate is the agent's call to explain,
-  and `context_gauge`'s two identical `None` arms are dead); **(5)** the approval dialog at 11 rows
-  → ~6 with the danger border its own doc comment already claims (`ui/overlay.rs` `Panel` always
-  uses `border_focus()`). Files touched when last inspected: `app.rs`, `app/golden.rs`,
-  `app/keys.rs`, `app/tests.rs`, `keybindings.rs`, `ui/footer.rs`, `ui/metrics.rs`,
-  `ui/overlay.rs`, `ui/shell.rs`. **The round ended before its battery, its commit or its report
-  arrived** — treat the work as unverified: run `cargo test -p epsilon-tui`, then the battery, then
-  commit, then reinstall (all three items are user-visible).
+- **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
+  exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
+  eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
+  table** (the old literal advertised `? help`, which is not a bound key, and hid PageUp/Down,
+  history, Ctrl+O), the false `need 60×12` message formats from `MIN_WIDTH`/`MIN_HEIGHT` instead of
+  contradicting them, the header's context number is the **session context** — the same number the
+  compaction trigger reads — instead of the last call's prompt size (which "agrees on turn 1 and
+  diverges in the flattering direction afterwards"), and the approval dialog is ~6 rows with the
+  danger border its comment had always claimed. Record: `docs/milestones/M125-tui-honesty.md`.
+  **Owed: it had NO author negative controls and no independent review** (the delegated author never
+  reported; the parent verified by running the suite and reading the diff), and the reinstall.
+- **TUI audit items still open** (in the audit's order): tool cards with a real coloured diff (a
+  diff is uncoloured markdown prose behind a global toggle today), a light theme (`Color::White` is
+  body text), a frozen-view signal + jump-to-live (scrolling up during a run is silent, `G` does
+  nothing, no scroll position indicator), `NO_COLOR` glyph separation for the remaining roles, and
+  OSC 52 for `/copy` over SSH.
 - **M124 (`6202b3a`) closed the hang**, and battery `m124a` **PASSES**: all five gates exit 0,
   **1,098 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m124a.log`),
   covering M122 + M123 + M124 together. The `serve`-mode gap below is the next F07 item.
