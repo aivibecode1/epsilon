@@ -46,36 +46,21 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **M126's ONE remaining failure, diagnosed exactly (round 36) — do not guess at it, decide the
-  semantics.** `app::golden::ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` fails at
-  `crates/epsilon-tui/src/app/golden.rs:1388` ("the hand-opened card must still be open with the
-  global toggle off"). The cause is that **one key does both jobs**:
-  `app/keys.rs:1157-1173` (the `app.tools.expand` handler, Ctrl+X) flips the global
-  `prefs.expand_outputs` **and** records a per-card override for the selected card —
-  `app.set_card_open(id, !was_open)` — on every press. On the test's *second* press `was_open` is
-  true, so it records that card as explicitly **closed**, while the test's reading (spelled out in
-  its own comment at `:1375-1380`) is that the second press turns the **global** off and leaves a
-  hand-opened card open. `RenderState::is_open` (`render_cache.rs:68-73`) is *correct* — explicit
-  wins over global — so the defect is in the handler, not the cache. **The decision to make:** is
-  Ctrl+X "toggle everything" with per-card state coming from a *different* gesture, or is it
-  "toggle the selected card, and the global only when nothing is selected"? The current code is the
-  second and the test asserts the first. Choose one, make both agree, and say which in the code
-  comment - this is a user-facing convention, not a test bug to paper over. **Do not skip the test
-  and do not delete it.**
-- **The tree is dirty and red because of the above.** `crates/epsilon-tui/src/app/golden.rs` and
-  `render_cache.rs` carry the author's newest edits (they fix an earlier E0277 in this very test),
-  so **reverting them re-breaks the build** - that is my round-35 mistake and it must not be
-  repeated. `cargo test -p epsilon-tui` reads **266 passed / 1 failed**. The rest of the tool-card
-  slice is committed (`933837b`, `dae8300`) and its other 266 tests pass, including the frame-level
-  diff-colour assertion; so the shipped feature works and the *override interaction* is the gap.
-  Next round: decide the semantics, fix the handler, commit by **named file**, then battery +
-  reinstall (all user-visible) + the independent review this slice still has never had.
-  Reference implementations followed: pi `diff.ts:26-66`/`:124-141`, opencode `permission.tsx:38-78`;
-  the required test standard is in `audit/evidence/tui-design-audit-2026-09-23.md` item D12.
-  **Process note worth keeping:** the slice's red-to-green convergence was visible across two rounds
-  (252/5 → 261/4 → 267/0) because the author was still working while the parent committed; the
-  parent's `git add crates/epsilon-tui` then swept the author's *later* edits into `dae8300` without
-  saying so. When a delegated author is still running, stage **named files**, not a directory.
+- **M126's remaining failure, narrowed (round 37).** I decided the convention and made the change:
+  **Ctrl+X flips the global, and the selected card's own entry records "open if the global is now on,
+  or it already was"** — not `!was_open`, which is what made the second press close the card the
+  first press had opened. `app/keys.rs` (`app.tools.expand`) carries the reasoning in a comment. The
+  fixture settled it: press 1 records the selected card open *alongside* the global, press 2 must
+  leave it open while the others follow the global off.
+  That fixed the two assertions that were failing ("the hand-opened card must still be open",
+  "must not be capped again"), and the test now fails **only** on the last one, the row arithmetic:
+  `assert_eq!(app.render_cache.total_rows(), all_open_rows - 4, "the untouched cards must collapse
+  while the hand-opened one stays open")`. So the remaining disagreement is about **how many rows a
+  collapsing card gives back** — the author's comment computes 4 for the pair (4 capped vs 6 open),
+  and the frame says otherwise. That is an arithmetic/measurement question, not a semantics one, and
+  the next step is to print the actual delta rather than argue about it.
+  **State: uncommitted WIP in three files** — the author's `app/golden.rs` + `render_cache.rs` (do not
+  revert: they fix an earlier E0277 in this same test) and my `app/keys.rs`. `cargo test -p
 - **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
   exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
   eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
