@@ -398,18 +398,23 @@ fn a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour()
         !app.theme.has_surfaces(),
         "NO_COLOR must not claim filled bands"
     );
+    // M126: the call is a **card** now, so the row to find is its title line —
+    // `▸ bash · pending` — and the command it is about to run is the body under
+    // it. Mutated from `tool-call bash cargo test`, which is the flat row this
+    // slice replaced.
     let call_row = rows
         .iter()
-        .position(|r| r.contains("tool-call bash cargo test"))
-        .unwrap_or_else(|| panic!("the tool call never reached the screen: {rows:#?}"));
+        .position(|r| r.contains("bash · pending"))
+        .unwrap_or_else(|| panic!("the tool card never reached the screen: {rows:#?}"));
     let notice_row = rows
         .iter()
         .position(|r| r.contains("run finished"))
         .unwrap_or_else(|| panic!("the notice never reached the screen: {rows:#?}"));
 
+    // The gutter glyph and the card's own status glyph, in that order.
     assert!(
-        rows[call_row].starts_with("▸ ▸ "),
-        "tool-call row {call_row} must carry the call gutter and marker: {:?}",
+        rows[call_row].starts_with("▸ ▸ bash · pending"),
+        "tool-card row {call_row} must carry the call gutter and the card title: {:?}",
         rows[call_row]
     );
     assert!(
@@ -435,10 +440,11 @@ fn a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour()
         Some(ratatui::style::Color::Reset),
         "a banded call on a no-surface theme would be an approximation"
     );
+    // The card's body is the command, so a pending call still says what it will do.
     assert!(
-        rows[call_row].contains("▸ tool-call bash"),
-        "the role marker must survive the loss of colour: {:?}",
-        rows[call_row]
+        rows[call_row + 1].contains("cargo test -p epsilon-tui"),
+        "the pending card's body must name the call: {:?}",
+        rows[call_row + 1]
     );
 }
 
@@ -477,27 +483,31 @@ fn a_pending_tool_call_gets_the_pending_band_where_the_terminal_has_one() {
     let (buffer, rows) = render_buffer(&mut app, 80, 24);
     let call_row = rows
         .iter()
-        .position(|r| r.contains("tool-call edit"))
-        .unwrap_or_else(|| panic!("the tool call never reached the screen: {rows:#?}"));
+        .position(|r| r.contains("edit · pending"))
+        .unwrap_or_else(|| panic!("the tool card never reached the screen: {rows:#?}"));
     assert!(
-        rows[call_row].starts_with("▸ ▸ "),
-        "the call must carry its gutter marker: {:?}",
+        rows[call_row].starts_with("▸ ▸ edit · pending"),
+        "the card must carry its gutter marker and its own status glyph: {:?}",
         rows[call_row]
     );
-    for x in [0u16, 2, 40, 79] {
-        assert_eq!(
-            cell(&buffer, x, call_row as u16).style().bg,
-            pending,
-            "column {x} of the pending call is not on the pending surface: {:?}",
-            cell(&buffer, x, call_row as u16).style()
-        );
+    // Both rows of the card carry its band: the title and the body are one object,
+    // and a band that stopped under the title would read as two.
+    for row in [call_row, call_row + 1] {
+        for x in [0u16, 2, 40, 79] {
+            assert_eq!(
+                cell(&buffer, x, row as u16).style().bg,
+                pending,
+                "column {x} of card row {row} is not on the pending surface: {:?}",
+                cell(&buffer, x, row as u16).style()
+            );
+        }
     }
-    // Bands belong to the rows that carry them: the blank rows around the call
-    // are not painted as part of it.
+    // Bands belong to the rows that carry them: the blank row below the card is
+    // not painted as part of it.
     assert_ne!(
-        cell(&buffer, 40, call_row as u16 + 1).style().bg,
+        cell(&buffer, 40, call_row as u16 + 2).style().bg,
         pending,
-        "the band leaked onto the row below the call"
+        "the band leaked onto the row below the card"
     );
 }
 
@@ -765,4 +775,597 @@ fn the_one_rule_sits_between_the_transcript_and_the_composer() {
         "the transcript must reach the composer with no rule between them: {:?}",
         rows[composer_row - 1]
     );
+}
+
+// ---- M126: tool cards and the diff, seen on a real frame ----------------------
+//
+// The audit's finding was literal: a diff arrived on screen as **prose**. An
+// `edit` result was `format!("{name} → diff:\n{diff}")` pushed through the
+// markdown parser, so a `-` line became a bullet, a `+` line became a bullet, and
+// `---` became a horizontal rule drawn across the card. Nothing about that was
+// visible to a test that read the render cache, and a test that called the diff
+// renderer directly would have proved only that the renderer worked — the same
+// blind spot that hid the transcript's dead decoration for months. Everything
+// below drives `draw(app)` and reads the **cells**.
+
+/// One `edit` result with a diff, applied the way a session applies it.
+fn edit_app(diff: &str, mode: ThemeColorMode) -> App {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, mode);
+    app.ui
+        .apply(&crate::state::agent_event_edit_result(diff, false));
+    app
+}
+
+/// A diff of `n` removed lines and `n` added ones, longer than the card's cap.
+fn long_diff(n: usize) -> String {
+    let mut out = format!("@@ -1,{n} +1,{n} @@\n");
+    for i in 0..n {
+        out.push_str(&format!("-old line {i}\n"));
+    }
+    for i in 0..n {
+        out.push_str(&format!("+new line {i}\n"));
+    }
+    out
+}
+
+/// The row of the frame holding `needle`, or a panic naming what was on screen.
+fn row_of(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|r| r.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} never reached the screen: {rows:#?}"))
+}
+
+/// The column one of a card body's own characters starts at.
+///
+/// Found in the rendered row rather than assumed, so these assertions stay about
+/// colour instead of about arithmetic that a copy change would silently move.
+fn card_text_origin(row: &str, needle: &str) -> usize {
+    row.find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} is not on this row: {row:?}"))
+}
+
+/// The columns of one card body row: where its sign is, and where its text is.
+///
+/// Both are found from a distinctive word in the row's body rather than from the
+/// row's first `+`/`-`: a card row begins with the *card's own* status glyph, and
+/// in the ASCII repertoire that glyph is `+`. Searching for the sign from column
+/// zero therefore finds the card's marker and reports the number column as the
+/// sign. Measuring the body first and walking back to its sign avoids that
+/// entirely, and does not depend on how wide the number column happens to be.
+///
+/// The answer is in **display columns**, not bytes: `✓` is one cell and three
+/// bytes, so a byte offset taken after it sits two columns to the right of the
+/// cell it names, and `Buffer::cell(x, y)` indexes by cell.
+fn sign_and_body(row: &str, body: &str) -> (usize, usize) {
+    let body_byte = card_text_origin(row, body);
+    let sign_byte = row[..body_byte]
+        .rfind(['+', '-'])
+        .unwrap_or_else(|| panic!("no sign before {body:?} on this row: {row:?}"));
+    (
+        crate::ui::layout::display_width(&row[..sign_byte]),
+        crate::ui::layout::display_width(&row[..body_byte]),
+    )
+}
+
+/// Press `ctrl+x`.
+///
+/// The chord comes from the binding table, and the row under test is the newest
+/// card — which is the row `App::selected_card_id` picks and therefore the row the
+/// key acts on. `handle_key` is the production entry point, so a test cannot open a
+/// card by calling the state mutator directly and then claim the key works.
+fn press_expand(app: &mut App, agent: &std::sync::Arc<Agent>) {
+    let chord = app
+        .keybindings
+        .key_text("app.tools.expand")
+        .expect("app.tools.expand must resolve");
+    assert_eq!(chord, "ctrl+x", "the default expand chord moved");
+    assert!(
+        !super::keys::handle_key(
+            app,
+            agent,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        ),
+        "`{chord}` must not quit the app"
+    );
+}
+
+#[test]
+fn a_tool_result_is_a_card_whose_title_carries_name_status_and_duration() {
+    // The card contract: `name · status · duration` on the title line, so the
+    // reader knows what happened without reading the body. Read from the frame
+    // because a title is a property of what was drawn, not of what was built.
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    app.ui.apply(&crate::state::agent_event_tool_result(
+        "bash",
+        "all tests pass",
+        false,
+    ));
+
+    let rows = render_rows(&mut app, 80, 24);
+    let title_row = row_of(&rows, "bash · ok");
+    let title = &rows[title_row];
+    // Gutter glyph, then the card's own status glyph, then the title.
+    assert!(
+        title.starts_with("✓ ✓ bash · ok · "),
+        "the title line must carry name, status and duration: {title:?}"
+    );
+    // The duration is a real number with a unit, not a placeholder. A card that
+    // printed `0s` for every fast call would look broken, which is why the unit is
+    // milliseconds at this scale.
+    let tail = title.trim_end().trim_start_matches("✓ ✓ bash · ok · ");
+    assert!(
+        tail.ends_with("ms"),
+        "the duration must be milliseconds for a fast call: {tail:?}"
+    );
+    assert!(
+        tail[..tail.len() - 2].chars().all(|c| c.is_ascii_digit()),
+        "the duration must be a number: {tail:?}"
+    );
+    // The body is the tool's own output, under the title.
+    assert!(
+        rows[title_row + 1].contains("all tests pass"),
+        "the card body must follow its title: {:?}",
+        rows[title_row + 1]
+    );
+}
+
+#[test]
+fn a_failed_tool_result_says_failed_on_its_title() {
+    // Status is a word as well as a colour: `NO_COLOR` and a 16-colour terminal
+    // both drop the colour, and a card that then said nothing about the failure
+    // would be the audit's "colour alone carries meaning" defect.
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::None);
+    app.ui
+        .apply(&crate::state::agent_event_tool_result("bash", "boom", true));
+
+    let rows = render_rows(&mut app, 80, 24);
+    let title = &rows[row_of(&rows, "bash · failed")];
+    assert!(
+        title.starts_with("✗ ✗ bash · failed"),
+        "a failed call must say so in words and glyphs: {title:?}"
+    );
+}
+
+#[test]
+fn an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose() {
+    // The heart of the slice. Each of these assertions fails on the old code for a
+    // different reason: the colours did not exist (everything was one foreground
+    // through the markdown parser), the sign gutter did not exist, and the line
+    // numbers did not exist.
+    let diff = "@@ -4,7 +4,9 @@\n fn draw() {\n-    let rows = cache.rows();\n+    let rows = cache.rows(width);\n";
+    let mut app = edit_app(diff, ThemeColorMode::Ansi16);
+    let ok = app.theme.success().fg.expect("a success colour");
+    let danger = app.theme.danger().fg.expect("a danger colour");
+    let accent = app.theme.accent().fg.expect("a hunk-header colour");
+
+    let (buffer, rows) = render_buffer(&mut app, 80, 24);
+    let added_row = row_of(&rows, "let rows = cache.rows(width);");
+    let removed_row = row_of(&rows, "let rows = cache.rows();");
+    let hunk_row = row_of(&rows, "@@ -4,7 +4,9 @@");
+    let context_row = row_of(&rows, "fn draw() {");
+    // 1. The sign gutter, on the row it belongs to, before the line number.
+    //
+    //    The numbers differ between the two sides and that is correct: the hunk
+    //    header puts both files at 4, the context line advances both to 5, the
+    //    removal takes the old file's 5 and the addition the new file's 6. A column
+    //    that printed the same number on both sides would agree with a reader's
+    //    intuition and disagree with the file.
+    assert!(
+        rows[added_row].contains("+ 5 "),
+        "an added line needs its `+` gutter and the new file's number: {:?}",
+        rows[added_row]
+    );
+    assert!(
+        rows[removed_row].contains("- 5 "),
+        "a removed line needs its `-` gutter and the old file's number: {:?}",
+        rows[removed_row]
+    );
+    assert!(
+        !rows[context_row].contains("+ ") && !rows[context_row].contains("- "),
+        "a context line takes neither sign: {:?}",
+        rows[context_row]
+    );
+
+    // 2. Per-line colour, on the **frame**: the sign and the line are the side's
+    //    colour together, which is the skill's rule (a colourblind reader needs
+    //    the character to survive; a sighted one needs the whole line marked).
+    //
+    //    The number column between the sign and the body is drawn faint on
+    //    purpose — it is a coordinate, not part of the change — so the columns
+    //    asserted are the sign's and the first column of the line itself.
+    let (sign_col, text_col) = sign_and_body(&rows[added_row], "let rows");
+    let number_col = sign_col + 2;
+    assert_eq!(
+        (sign_col, text_col),
+        (2, 6),
+        "the sign is the third cell and the body follows `+ 5 `: {:?}",
+        rows[added_row]
+    );
+    for (column, what) in [(sign_col, "the sign"), (text_col, "the line")] {
+        assert_eq!(
+            cell(&buffer, column as u16, added_row as u16).style().fg,
+            Some(ok),
+            "column {column} ({what}) of the added line is not in the success colour: {:?}",
+            rows[added_row]
+        );
+    }
+    let (removed_sign, removed_text) = sign_and_body(&rows[removed_row], "let rows");
+    for (column, what) in [(removed_sign, "the sign"), (removed_text, "the line")] {
+        assert_eq!(
+            cell(&buffer, column as u16, removed_row as u16).style().fg,
+            Some(danger),
+            "column {column} ({what}) of the removed line is not in the danger colour: {:?}",
+            rows[removed_row]
+        );
+    }
+    // The number is the metadata column and keeps the faint colour on both sides.
+    assert_ne!(
+        cell(&buffer, number_col as u16, added_row as u16)
+            .style()
+            .fg,
+        Some(ok),
+        "the line number must stay metadata, not take the added line's colour"
+    );
+    // The context line is neither: it is the dim "unchanged" style, so a diff does
+    // not read as two colours fighting down the whole card.
+    let context_col = card_text_origin(&rows[context_row], "fn draw");
+    assert_ne!(
+        cell(&buffer, context_col as u16, context_row as u16)
+            .style()
+            .fg,
+        Some(ok)
+    );
+    assert_ne!(
+        cell(&buffer, context_col as u16, context_row as u16)
+            .style()
+            .fg,
+        Some(danger)
+    );
+    // The hunk header has its own role, so a reader can find where a hunk starts
+    // without reading the numbers.
+    let hunk_col = card_text_origin(&rows[hunk_row], "@@");
+    assert_eq!(
+        cell(&buffer, hunk_col as u16, hunk_row as u16).style().fg,
+        Some(accent),
+        "the hunk header must be drawn in the accent: {:?}",
+        rows[hunk_row]
+    );
+
+    // 3. The changed span is marked as well, in inverse video, so a one-word edit
+    //    on a long line does not read as a whole new line.
+    let reversed_at = |row: usize| {
+        (0..80u16)
+            .filter(|&x| {
+                cell(&buffer, x, row as u16)
+                    .style()
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::REVERSED)
+            })
+            .count()
+    };
+    assert!(
+        reversed_at(added_row) > 0 && reversed_at(removed_row) > 0,
+        "the changed span of a one-for-one edit must be highlighted on both sides"
+    );
+    // …and only over the part that changed: `rows(width)` is a suffix, so the
+    // prefix `let rows = cache.rows` must not be reversed. Counting the reversed
+    // cells against the line's own length is what makes that checkable.
+    let line_len = "    let rows = cache.rows(width);".chars().count();
+    assert!(
+        reversed_at(added_row) < line_len,
+        "the highlight covered the whole line rather than the change"
+    );
+}
+
+#[test]
+fn the_diff_is_not_run_through_the_markdown_parser() {
+    // The defect, stated positively. Marks that only the markdown parser produces:
+    // a `-`/`+` line becomes a bullet (`  • `), and `---` becomes a horizontal
+    // rule drawn across the card. Neither may appear in a diff card.
+    //
+    // The file headers here sit *before* the hunk, which is where they really are
+    // in a git diff — that is the `DiffKind::Meta` path, not the add/remove path,
+    // and the earlier version of this fixture put them inside the hunk by mistake.
+    let diff = "--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,3 @@\n unchanged\n-old\n+new\n---\n-and another\n+replacement\n";
+    let mut app = edit_app(diff, ThemeColorMode::Ansi16);
+    let rows = render_rows(&mut app, 80, 24);
+    let joined = rows.join("\n");
+    // The transcript's exact width is not assumed here: only the rows of *this*
+    // card are examined, and a card's rows are the ones carrying its ✓ gutter —
+    // the welcome screen's bullet is a different role entirely.
+    //
+    // The card's last row is the `… N more lines` affordance, which carries the
+    // `•` of a *system* row because that is what a capped card's tail is. So the
+    // slice stops before it: this test is about how a diff's own rows are drawn.
+    let title_row = row_of(&rows, "edit · ok");
+    let card = rows[title_row..]
+        .iter()
+        .take_while(|r| r.starts_with('✓'))
+        .take_while(|r| !r.contains("more lines"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        card.contains("@@ -1,3 +1,3 @@"),
+        "the card's rows were not found: {joined}"
+    );
+    assert!(
+        !card.contains('•'),
+        "a diff line became a markdown bullet: {card}"
+    );
+    // A `---` line becomes a markdown *horizontal rule* — and the rule glyph is
+    // the theme's box-drawing character, not an ASCII dash. So the question is
+    // whether the card contains any box-drawing line at all; the literal `---`
+    // text is the file header being shown as it arrived, which is the point.
+    let rule = app.theme.glyphs.horizontal.chars().next().expect("a glyph");
+    assert_ne!(rule, '-', "an ASCII repertoire cannot carry this assertion");
+    assert!(
+        !card.contains(rule),
+        "a `---` line was drawn as a markdown rule: {card}"
+    );
+    assert!(
+        card.contains("--- a/f.rs"),
+        "the file header must be shown as it arrived: {card}"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("--- a/f.rs"))
+            && rows.iter().any(|r| r.contains("+++ b/f.rs")),
+        "the file header lines are part of the diff and must be shown as they came: {joined}"
+    );
+    // The second `---` is *inside* the hunk and is a removed line, so it takes the
+    // sign gutter rather than being mistaken for a file header. Its number is the
+    // old file's third line: the context line advanced both files to 2, the `-old`
+    // took 2 and advanced the old file to 3.
+    assert!(
+        rows.iter().any(|r| r.contains("- 3 --")),
+        "a `---` line inside a hunk is a removal and must be drawn as one: {joined}"
+    );
+    // And the hunk line is on its own row rather than joined to its neighbour. The
+    // card's rows are padded out to the body width, so the comparison trims.
+    assert!(
+        rows[row_of(&rows, "@@ -1,3 +1,3 @@")].starts_with("✓ @@ -1,3 +1,3 @@"),
+        "the hunk header must be its own row, prefixed by the card's gutter: {:?}",
+        rows[row_of(&rows, "@@ -1,3 +1,3 @@")]
+    );
+}
+
+#[test]
+fn a_diff_still_reads_with_no_colour_and_ascii_glyphs() {
+    // The property the whole card design rests on: colour reinforces the diff, it
+    // never carries it. With `NO_COLOR` **and** the ASCII repertoire — the least
+    // capable terminal the product supports — added and removed lines must still
+    // be told apart, and told apart by the gutter rather than by position.
+    //
+    // The theme is pinned to `None` *and* to `ASCII` here, which is the console
+    // that `NO_COLOR=1 EPSILON_ASCII=1` gets.
+    let diff = "@@ -4,7 +4,9 @@\n fn draw() {\n-    let rows = cache.rows();\n+    let rows = cache.rows(width);\n";
+    let mut app = bench_app(UiState::new());
+    app.theme = Theme::new(ThemeColorMode::None, crate::ui::theme::ASCII);
+    app.ui
+        .apply(&crate::state::agent_event_edit_result(diff, false));
+
+    let (buffer, rows) = render_buffer(&mut app, 80, 24);
+    let added_row = row_of(&rows, "cache.rows(width)");
+    let removed_row = row_of(&rows, "cache.rows();");
+    assert_ne!(added_row, removed_row, "the two sides must be separate rows");
+
+    // The signs, and only the signs, say which side is which. In ASCII the card's
+    // own status glyph is `+` too, which is why the body sign is located from the
+    // body rather than from column zero.
+    let (added_sign, added_text) = sign_and_body(&rows[added_row], "let rows");
+    let (removed_sign, removed_text) = sign_and_body(&rows[removed_row], "let rows");
+    assert_eq!(
+        rows[added_row].chars().nth(added_sign),
+        Some('+'),
+        "an added line keeps its `+` without colour: {:?}",
+        rows[added_row]
+    );
+    assert_eq!(
+        rows[removed_row].chars().nth(removed_sign),
+        Some('-'),
+        "a removed line keeps its `-` without colour: {:?}",
+        rows[removed_row]
+    );
+    // And the text is still there to read, at the column the sign introduced.
+    assert!(added_text > added_sign && removed_text > removed_sign);
+
+    // No colour anywhere on either side — including the changed span's inverse
+    // video, which is deliberately not emitted here: on a terminal with no colour
+    // a reversed block is just a different-looking background, and the sign already
+    // carries the meaning on its own.
+    for row in [added_row, removed_row] {
+        for x in 0..80u16 {
+            assert_eq!(
+                cell(&buffer, x, row as u16).style().fg,
+                Some(ratatui::style::Color::Reset),
+                "row {row} column {x} emitted colour under NO_COLOR"
+            );
+        }
+    }
+    // The line numbers survive with the signs, so a reader whose eye runs down the
+    // number column rather than across the signs still sees two different files.
+    assert!(
+        rows[added_row].contains("+ 5 ") && rows[removed_row].contains("- 5 "),
+        "the numbers must survive with the signs: {:?} / {:?}",
+        rows[added_row],
+        rows[removed_row]
+    );
+}
+
+#[test]
+fn a_long_diff_is_capped_and_says_which_key_opens_it() {
+    // The cap, and the honesty of the affordance: it names the **real** key, and
+    // the number it prints is the number of rows the reader is not seeing.
+    let mut app = edit_app(&long_diff(20), ThemeColorMode::Ansi16);
+    let key = app
+        .keybindings
+        .key_text("app.tools.expand")
+        .expect("app.tools.expand must resolve, or the card names a dead key");
+    assert_eq!(key, "ctrl+x", "the default expand chord moved");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let affordance = rows
+        .iter()
+        .find(|r| r.contains("more lines"))
+        .unwrap_or_else(|| panic!("the card was not capped: {rows:#?}"));
+    assert!(
+        affordance.contains(&format!("({key} to open)")),
+        "the affordance must name the key that opens the card: {affordance:?}"
+    );
+    // The count is the rows the card is hiding: 1 hunk + 20 removed + 20 added =
+    // 41 body rows, of which `BODY_ROWS` are shown and the affordance line is one
+    // more. Pinned to the constant rather than to a literal, so moving the cap
+    // moves this assertion with it.
+    let body_rows = 41;
+    let hidden = body_rows - crate::ui::card::BODY_ROWS;
+    assert!(
+        affordance.contains(&format!("… {hidden} more lines")),
+        "the affordance must print the true number of hidden rows ({hidden}): {affordance:?}"
+    );
+    // The cap really caps: no `+new line 19` on screen.
+    assert!(
+        !rows.iter().any(|r| r.contains("new line 19")),
+        "the card drew its whole 41-row body: {rows:#?}"
+    );
+    // And the affordance names a key that does what it says. The frame here is
+    // tall enough for the whole opened card: a card that opens *below* the window
+    // is indistinguishable from one that did not open, and the mistake this pins
+    // is the test's own (asserting on a row the viewport cuts off).
+    let (mut app2, agent, _receivers) = test_app();
+    app2.ui.apply(&crate::state::agent_event_edit_result(
+        &long_diff(20),
+        false,
+    ));
+    let before = render_rows(&mut app2, 100, 60)
+        .iter()
+        .any(|r| r.contains("new line 19"));
+    assert!(!before, "the frame starts capped");
+    assert!(!super::keys::handle_key(
+        &mut app2,
+        &agent,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)
+    ));
+    let opened = render_rows(&mut app2, 100, 60)
+        .iter()
+        .any(|r| r.contains("new line 19"));
+    assert!(
+        opened,
+        "`{key}` did not open the card its own affordance advertised"
+    );
+}
+
+#[test]
+fn ctrl_x_opens_the_newest_card_and_leaves_the_others_alone() {
+    // Per-card expansion, on a real frame. Under the old global boolean, opening
+    // one card opened every card — the audit's "a user cannot open one card
+    // without opening every card". The other cards here carry a marker of their
+    // own, so "the others were left alone" is checkable rather than assumed.
+    //
+    // What the key does, stated once and pinned here: it flips the **global**
+    // expand-all toggle (the binding's meaning since M13, kept because a user
+    // relies on it) *and* records the newest card's own state, so the card the
+    // reader is looking at always changes. The per-card entries are what make the
+    // feature possible at all — a card the user opens while the global toggle is
+    // off stays open, and one they close while it is on stays closed.
+    let (mut app, agent, _receivers) = test_app();
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // Two short cards, each with a body of its own …
+    for i in 0..2 {
+        app.ui.apply(&crate::state::agent_event_edit_result(
+            &format!("@@ -1,1 +1,1 @@\n-old one {i}\n+new one {i}\n"),
+            false,
+        ));
+    }
+    // … and one long card, newest, whose body the cap actually hides. The card
+    // count is small on purpose: an opened card must stay inside the window, or
+    // "it did not open" and "the viewport cut it off" look the same.
+    let mut long = String::from("@@ -1,1 +1,1 @@\n-old visible\n+new visible\n");
+    for i in 0..20 {
+        long.push_str(&format!("+filler {i}\n"));
+    }
+    app.ui
+        .apply(&crate::state::agent_event_edit_result(&long, false));
+
+    let rows = render_rows(&mut app, 80, 44);
+    assert!(
+        rows.iter().any(|r| r.contains("more lines")),
+        "the long card must be capped before the key is pressed: {rows:#?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("filler 19")),
+        "the capped card must not already be showing its hidden rows: {rows:#?}"
+    );
+    assert_eq!(
+        app.card_open.len(),
+        0,
+        "nothing has been opened by hand yet"
+    );
+
+    // One keystroke, on the newest card.
+    let before_press = (
+        app.prefs.expand_outputs,
+        app.selected_card_id(),
+        app.card_open.clone(),
+    );
+    press_expand(&mut app, &agent);
+    assert_eq!(
+        (app.prefs.expand_outputs, app.card_open.clone()),
+        (true, vec![(before_press.1.expect("a card"), true)]),
+        "before the press the app was {before_press:?}; after it, expand_outputs \
+         and the recorded card must both have moved"
+    );
+    // 1. The global toggle still exists and still flips — the user who relies on
+    //    "expand everything" has not had it taken away.
+    assert!(
+        app.prefs.expand_outputs,
+        "the global expand-all toggle must still be wired to the key"
+    );
+    // 2. The selected card is open, and the frame proves it: its hidden rows are
+    //    on screen.
+    let rows = render_rows(&mut app, 80, 44);
+    assert!(
+        rows.iter().any(|r| r.contains("filler 19")),
+        "the card the key acted on did not open (card_open={:?}, total_rows={}): {rows:#?}",
+        app.card_open,
+        app.render_cache.total_rows()
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("more lines")),
+        "an open card still claims rows are hidden: {rows:#?}"
+    );
+    // 3. Exactly one card's state was recorded by hand, and it is the newest: the
+    //    other cards were not touched through this path at all. (They follow the
+    //    global toggle, which is what "expand all" has always meant.)
+    assert_eq!(
+        app.card_open.len(),
+        1,
+        "one press must record one card's own state: {:?}",
+        app.card_open
+    );
+    let newest = app.selected_card_id().expect("the newest card");
+    assert_eq!(
+        app.card_open[0].0, newest,
+        "the card recorded must be the one the affordance pointed at"
+    );
+    // 4. The other cards' own bodies are still theirs alone: the short cards are
+    //    on screen with their own rows, and none of them acquired the long card's.
+    assert!(
+        rows.iter().any(|r| r.contains("new one 1")),
+        "the short cards must still be on screen: {rows:#?}"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.contains("filler") && r.contains("new one")),
+        "a card's body leaked into another's: {rows:#?}"
+    );
+}
+
+/// Extra diff body lines, so a card is long enough to hit the cap.
+#[allow(dead_code, reason = "kept beside the fixtures it describes")]
+fn filler(n: usize) -> String {
+    (0..n).map(|i| format!("+filler {i}\n")).collect::<String>()
 }

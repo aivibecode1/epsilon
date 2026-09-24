@@ -1140,14 +1140,37 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         // M13 card polish: expand/collapse truncated tool outputs. Originally a
         // bare `x` (M13), which made the letter x untypable in the editor —
         // M29 fix: it needs Ctrl+X like every other non-typing key.
+        //
+        // M126: the key now does both of the things a reader could mean by it, and
+        // says which. The **global** toggle still means expand-all, so a user who
+        // The **global** toggle still means expand-all, so a user who relies on it
+        // keeps it; on top of that the newest card with a body gets its own state
+        // recorded, which is what makes one card openable without opening every
+        // card. Per-card state is the *exception* to the global toggle: a card the
+        // user opened by hand stays open when the global toggle is later turned
+        // off, and one they closed stays closed.
+        //
+        // The card's own state is read **before** the global is flipped. Read
+        // after, `card_is_open` would already be answering from the new global
+        // value, the key would "helpfully" record the opposite of what it just
+        // showed, and pressing it would look like it did nothing at all.
         _ if app.keybindings.matches("app.tools.expand", &key) => {
+            let was_open = app.selected_card_id().map(|id| app.card_is_open(id, true));
             app.prefs.expand_outputs = !app.prefs.expand_outputs;
-            let state = if app.prefs.expand_outputs {
-                "expanded"
-            } else {
-                "collapsed"
+            let label = match (app.selected_card_id(), was_open) {
+                (Some(id), Some(was_open)) => {
+                    let open = !was_open;
+                    app.set_card_open(id, open);
+                    if open {
+                        "card expanded"
+                    } else {
+                        "card collapsed"
+                    }
+                }
+                _ if app.prefs.expand_outputs => "all cards expanded",
+                _ => "all cards collapsed",
             };
-            app.notice(format!("tool outputs {state} (Ctrl+X toggles)"));
+            app.notice(format!("{label} (Ctrl+X toggles)"));
             false
         }
         KeyCode::Char(c) => {

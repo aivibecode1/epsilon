@@ -1,0 +1,668 @@
+//! Tool cards, and the one thing in this crate that must never be prose: a diff.
+//!
+//! # Why this module exists
+//!
+//! A tool call used to be one flat row — `tool-call bash {"command":"cargo test"}` —
+//! and a tool result `{name} → {truncated body}`. The state that actually matters
+//! was implied rather than carried: nothing said *pending*, nothing said how long
+//! the call took, and an `edit` result rendered its diff by pushing
+//! `format!("{name} → diff:\n{diff}")` through the **markdown** parser. So the
+//! audit's finding was literal: a diff arrived on screen as prose. `- let x = 1;`
+//! became a bullet-list item (a line starting with `-` is a list in CommonMark)
+//! and `---` became a horizontal rule across the card.
+//!
+//! A card is therefore two things a flat row cannot be:
+//!
+//! ```text
+//! ▸ edit · pending                                      <- title: name, status, time
+//!   src/ui/layout.rs                                    <- body: the detail line
+//!
+//! ✓ edit · ok · 12ms                                    <- the result card
+//!   @@ -4,7 +4,9 @@                                     <- hunk header, accent
+//!    12 fn draw(f: &mut Frame) {                        <- context, dim
+//!   -13     let rows = cache.rows();                    <- removed, danger
+//!   +13     let rows = cache.rows(width);               <- added, success
+//!   … 43 more lines (ctrl+x to open)
+//! ```
+//!
+//! * **A title line** carrying the tool's name, its status and its duration, so
+//!   the reader knows what happened without parsing the body.
+//! * **A body** capped at [`BODY_ROWS`], with an explicit affordance naming the
+//!   key that opens it — and a diff body that is *rendered*, not parsed.
+//!
+//! # Colour is never the only signal
+//!
+//! The `+`/`-` sign and the line number carry added/removed on their own; colour
+//! reinforces them. That is what keeps the diff readable under `NO_COLOR` and on a
+//! 16-colour terminal, and it is why the *numbers* are what gets dropped when the
+//! card is narrow while the sign always stays: a clipped number is worse than no
+//! number, while a missing sign makes two different things identical.
+//!
+//! The diff deliberately uses no background bands at all. The transcript's
+//! `surface_ok`/`surface_err` already say whether the call as a whole succeeded,
+//! and a second band behind every diff line is the "four signals for one state"
+//! the skill's clutter audit cuts first. Per-side colour plus the sign is the
+//! whole treatment, which is also what pi does (`components/diff.ts:104-141`) —
+//! and it means nothing here has to ask [`Theme::has_surfaces`], because nothing
+//! here would use a band if it had one.
+//!
+//! # Split or unified
+//!
+//! [`SPLIT_MIN_WIDTH`] is 120 body columns, and the reasoning is one line long: a
+//! split diff halves the width, so below ~120 columns each side is under 55 cells
+//! and ordinary Rust (`        let rendered = self.rendered.get(&id);`) wraps — at
+//! which point four wrapped rows are showing what two unified rows would have. A
+//! unified diff that fits beats a split one that wraps. The threshold is checked
+//! against the **body** width rather than the frame width, because the body is
+//! what gets halved.
+
+use ratatui::style::{Modifier, Style};
+
+use crate::state::{Card, CardBody, CardStatus, Diff, DiffKind, DiffLine};
+use crate::ui::theme::{Glyphs, Theme};
+
+/// Rows a card body may occupy before it is capped and an affordance is appended.
+///
+/// Twelve is the skill's number (`references/ai-harness.md`: "Cap the card at
+/// roughly 12 visible lines"), and it is a *row* budget rather than a line count:
+/// a long line that wraps costs its wrapped rows, so a body can never overflow
+/// the cap by wrapping under it.
+pub const BODY_ROWS: usize = 12;
+
+/// Below this body width a diff is drawn unified, at or above it split.
+pub const SPLIT_MIN_WIDTH: usize = 120;
+
+/// Columns a pair of line numbers needs (two digits of sign, two of number, two
+/// of padding) before they are worth printing at all.
+pub const MIN_NUMBER_WIDTH: usize = 8;
+
+/// One rendered card row: styled spans, already wrapped/cut to the width it was
+/// built for.
+pub type CardRow = Vec<(String, Style)>;
+
+/// The title line: `▸ edit · pending`, `✓ edit · ok · 12ms`.
+///
+/// The glyph comes from the theme's existing vocabulary (`tool_call`, `tick`,
+/// `cross`) rather than from a second one invented here, and the status **word**
+/// is beside it so a reader who cannot see the colour still reads the state.
+pub fn title(card: &Card, theme: &Theme) -> String {
+    let (glyph, word) = status_word(card.status, &theme.glyphs);
+    match card.elapsed_ms() {
+        Some(ms) => format!("{glyph} {} · {word} · {}", card.name, ms_text(ms)),
+        None => format!("{glyph} {} · {word}", card.name),
+    }
+}
+
+/// The glyph *and* the word for one status. Both, always: the glyph is what a
+/// glance catches and the word is what survives a font that cannot draw it.
+fn status_word(status: CardStatus, glyphs: &Glyphs) -> (&'static str, &'static str) {
+    match status {
+        CardStatus::Pending | CardStatus::Running => (glyphs.tool_call, "pending"),
+        CardStatus::Ok => (glyphs.tick, "ok"),
+        CardStatus::Failed => (glyphs.cross, "failed"),
+        CardStatus::Denied => (glyphs.cross, "denied"),
+    }
+}
+
+/// A duration in the shortest honest unit. Sub-second work is the common case for
+/// a tool card, so `412ms` beats the whole-second `0s` a general formatter would
+/// print for nearly every call — which reads as a field that does not work.
+pub fn ms_text(ms: u64) -> String {
+    if ms < 10_000 {
+        format!("{ms}ms")
+    } else if ms < 600_000 {
+        format!("{}s", (ms + 500) / 1000)
+    } else {
+        crate::ui::format::format_duration(std::time::Duration::from_millis(ms))
+    }
+}
+
+/// The affordance that names the key which opens a capped body.
+///
+/// `key` is resolved from the live binding table by the caller
+/// ([`crate::keybindings::KeybindingsManager::key_text`]), so a rebound
+/// `app.tools.expand` moves this text with it. `None` means the binding does not
+/// resolve; the affordance then states the count and promises nothing, because a
+/// hint naming a dead key is worse than a bare count.
+pub fn more_lines(remaining: usize, key: Option<&str>) -> String {
+    match key {
+        Some(key) => format!("… {remaining} more lines ({key} to open)"),
+        None => format!("… {remaining} more lines"),
+    }
+}
+
+/// Every row of a card: the title, then the body, capped at `budget`.
+///
+/// `expanded` is this card's *effective* state — the global "expand all" toggle
+/// already folded in by the caller — and the rows come back wrapped to `width`,
+/// so the caller only decides whether it has room for them.
+///
+/// An expanded card is **not capped at all**, rather than capped at a bigger
+/// number: the affordance the cap produces is the promise that the key shows the
+/// rest, and a second, larger cap would print `… 6 more lines (ctrl+x to open)`
+/// under a card that is already open, telling the reader to press the key they
+/// just pressed. The transcript is virtualized, so a long body costs the rows it
+/// draws and nothing else.
+pub fn rows(
+    card: &Card,
+    expanded: bool,
+    width: usize,
+    budget: usize,
+    theme: &Theme,
+    more_key: Option<&str>,
+) -> Vec<CardRow> {
+    let body = match &card.body {
+        CardBody::Diff(diff) => diff_rows(diff, width, theme),
+        CardBody::Prompt(text) => prompt_rows(text, expanded, theme),
+        CardBody::Text(text) => vec![vec![(sanitize(text), theme.dim())]],
+    };
+    let mut rows: Vec<CardRow> = vec![vec![(title(card, theme), theme.text())]];
+    // The budgets the skill asks for are *visible* rows, so the wrap happens first
+    // and the cap counts what the reader would actually see.
+    let wrapped: Vec<CardRow> = body
+        .into_iter()
+        .flat_map(|row| crate::wrap::wrap_line(&row, width))
+        .collect();
+    let budget = if expanded { usize::MAX } else { budget };
+    rows.extend(cap(
+        wrapped,
+        budget,
+        theme,
+        more_key,
+        crate::ui::transcript::GUTTER,
+    ));
+    rows
+}
+
+/// A pending call: what is about to run.
+fn prompt_rows(text: &str, expanded: bool, theme: &Theme) -> Vec<CardRow> {
+    let body = sanitize(text);
+    if expanded {
+        return body
+            .lines()
+            .map(|l| vec![(l.to_string(), theme.text())])
+            .collect();
+    }
+    // Collapsed: the detail that names the call, on one row. A ten-line heredoc is
+    // not what a reader is looking for in a pending card, and the count under the
+    // cap says the rest is there.
+    let first = body.lines().next().unwrap_or("").to_string();
+    vec![vec![(first, theme.text())]]
+}
+
+/// Cap a body at `budget` rows, appending the "how much is left" affordance.
+///
+/// The affordance sits *outside* the cap, so a capped card is `budget + 1` rows
+/// and the number it prints is the true count of rows the reader cannot see.
+fn cap(
+    rows: Vec<CardRow>,
+    budget: usize,
+    theme: &Theme,
+    more_key: Option<&str>,
+    indent: usize,
+) -> Vec<CardRow> {
+    if budget == 0 || rows.len() <= budget {
+        return rows;
+    }
+    let remaining = rows.len() - budget;
+    let mut out: Vec<CardRow> = rows.into_iter().take(budget).collect();
+    out.push(vec![(
+        format!("{}{}", " ".repeat(indent), more_lines(remaining, more_key)),
+        theme.faint(),
+    )]);
+    out
+}
+
+// ---- the diff ----------------------------------------------------------------
+
+fn diff_rows(diff: &Diff, width: usize, theme: &Theme) -> Vec<CardRow> {
+    if width >= SPLIT_MIN_WIDTH {
+        split_rows(diff, width, theme)
+    } else {
+        unified_rows(diff, width, theme)
+    }
+}
+
+/// The unified view: one row per diff line, ` 12   content`, `-13   let x = 1;`.
+fn unified_rows(diff: &Diff, width: usize, theme: &Theme) -> Vec<CardRow> {
+    let numbers = diff.unified_numbers_fit(width);
+    let mut out = Vec::with_capacity(diff.lines.len());
+    for run in runs(&diff.lines) {
+        match run {
+            Run::Meta(line) => out.push(meta_row(line, theme)),
+            Run::Context(line) => out.push(unified_context(line, numbers, width, theme)),
+            Run::Change { removed, added } => {
+                // Intra-line highlighting is meaningful for exactly one removed
+                // line paired with one added one: that is a small edit of a line.
+                // More on either side and the reader is comparing blocks, not
+                // words — which is pi's rule too (`diff.ts:113-134`).
+                let pair = intra_pair(&removed, &added);
+                for line in &removed {
+                    out.push(unified_line(line, numbers, width, theme, pair.as_ref()));
+                }
+                for line in &added {
+                    out.push(unified_line(line, numbers, width, theme, pair.as_ref()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A hunk header or a line the parser did not recognise (`\ No newline at end of
+/// file`), printed as the diff carried it.
+fn meta_row(line: &DiffLine, theme: &Theme) -> CardRow {
+    let style = match line.kind {
+        DiffKind::Hunk => theme.accent(),
+        _ => theme.faint(),
+    };
+    vec![(sanitize(&line.text), style)]
+}
+
+/// One row of the unified view.
+fn unified_line(
+    line: &DiffLine,
+    numbers: bool,
+    width: usize,
+    theme: &Theme,
+    pair: Option<&IntraPair>,
+) -> CardRow {
+    let base = side_style(line.kind, theme);
+    let lead = sign(line.kind, &theme.glyphs);
+    let number = if numbers {
+        number_text(line.number, theme)
+    } else {
+        Vec::new()
+    };
+    let head_width: usize = 2 + number.iter().map(|(t, _)| cols(t)).sum::<usize>();
+    let body_width = width.saturating_sub(head_width);
+    let content = match (line.kind, pair) {
+        (DiffKind::Remove, Some(pair)) => emphasize(&pair.removed, base, body_width),
+        (DiffKind::Add, Some(pair)) => emphasize(&pair.added, base, body_width),
+        _ => vec![(
+            cut(&sanitize(&line.text), body_width),
+            base.add_modifier(emphasis(line.kind)),
+        )],
+    };
+    let mut row: CardRow = vec![(format!("{lead} "), base)];
+    row.extend(number);
+    row.extend(content);
+    pad_to(row, width, base)
+}
+
+/// A context row: the sign column is blank, so the eye can run down the signs.
+fn unified_context(line: &DiffLine, numbers: bool, width: usize, theme: &Theme) -> CardRow {
+    let base = theme.dim_strong();
+    let number = if numbers {
+        number_text(line.number, theme)
+    } else {
+        Vec::new()
+    };
+    let head_width: usize = 2 + number.iter().map(|(t, _)| cols(t)).sum::<usize>();
+    let body_width = width.saturating_sub(head_width);
+    let mut row: CardRow = vec![("  ".to_string(), base)];
+    row.extend(number);
+    row.push((cut(&sanitize(&line.text), body_width), base));
+    pad_to(row, width, base)
+}
+
+/// The split view: old side then new side, one row per paired diff line.
+fn split_rows(diff: &Diff, width: usize, theme: &Theme) -> Vec<CardRow> {
+    let left_width = width / 2;
+    let right_width = width - left_width;
+    let numbers = diff.split_numbers_fit(left_width);
+    let mut out = Vec::with_capacity(diff.lines.len());
+    for run in runs(&diff.lines) {
+        match run {
+            Run::Meta(line) => out.push(meta_row(line, theme)),
+            Run::Context(line) => {
+                out.push(context_split(line, numbers, left_width, right_width, theme));
+            }
+            Run::Change { removed, added } => {
+                let pair = intra_pair(&removed, &added);
+                for i in 0..removed.len().max(added.len()) {
+                    let old = removed.get(i).copied();
+                    let new = added.get(i).copied();
+                    let highlighted = pair.as_ref().map(|p| (&p.removed, &p.added));
+                    let mut row = split_column(
+                        old,
+                        highlighted.map(|(r, _)| r),
+                        DiffKind::Remove,
+                        numbers,
+                        left_width,
+                        theme,
+                    );
+                    row.extend(split_column(
+                        new,
+                        highlighted.map(|(_, a)| a),
+                        DiffKind::Add,
+                        numbers,
+                        right_width,
+                        theme,
+                    ));
+                    out.push(row);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A context line in the split view: the same text on both sides.
+fn context_split(
+    line: &DiffLine,
+    numbers: bool,
+    left_width: usize,
+    right_width: usize,
+    theme: &Theme,
+) -> CardRow {
+    let mut row = split_column(
+        Some(line),
+        None,
+        DiffKind::Context,
+        numbers,
+        left_width,
+        theme,
+    );
+    row.extend(split_column(
+        Some(line),
+        None,
+        DiffKind::Context,
+        numbers,
+        right_width,
+        theme,
+    ));
+    row
+}
+
+/// One half of the split view: sign, number, then the line cut to fit.
+///
+/// A side with no line of its own is drawn blank but still occupies its columns —
+/// an empty half is what makes a split diff readable, because it is where "this
+/// line has no counterpart" is said.
+fn split_column(
+    line: Option<&DiffLine>,
+    highlight: Option<&Vec<(String, Style)>>,
+    expect: DiffKind,
+    numbers: bool,
+    width: usize,
+    theme: &Theme,
+) -> CardRow {
+    let kind = line.map(|l| l.kind).unwrap_or(expect);
+    let base = match line {
+        Some(_) => side_style(kind, theme),
+        None => theme.faint(),
+    };
+    let lead = if line.is_some() {
+        sign(kind, &theme.glyphs)
+    } else {
+        " "
+    };
+    let number = if numbers {
+        number_text(line.and_then(|l| l.number), theme)
+    } else {
+        Vec::new()
+    };
+    let head_width: usize = 2 + number.iter().map(|(t, _)| cols(t)).sum::<usize>();
+    let body_width = width.saturating_sub(head_width);
+    let content = match (line, highlight) {
+        (Some(_), Some(spans)) => emphasize(spans, base, body_width),
+        (Some(l), None) => vec![(
+            cut(&sanitize(&l.text), body_width),
+            base.add_modifier(emphasis(kind)),
+        )],
+        (None, _) => vec![(String::new(), base)],
+    };
+    let mut row: CardRow = vec![(format!("{lead} "), base)];
+    row.extend(number);
+    row.extend(content);
+    pad_to(row, width, base)
+}
+
+/// The line number column, padded so the body starts at the same cell on every
+/// row. `Diff::number_width` is what makes that possible.
+fn number_text(number: Option<usize>, theme: &Theme) -> CardRow {
+    match number {
+        Some(n) => vec![(format!("{n} "), theme.faint())],
+        None => vec![("  ".to_string(), theme.faint())],
+    }
+}
+
+/// The style for a diff line's kind. Only these three are ever used, so the diff
+/// cannot quietly acquire a fourth colour.
+fn side_style(kind: DiffKind, theme: &Theme) -> Style {
+    match kind {
+        DiffKind::Add => theme.success(),
+        DiffKind::Remove => theme.danger(),
+        _ => theme.dim_strong(),
+    }
+}
+
+/// The sign that introduces a row: `+` for an addition, `-` for a removal, a
+/// space for context, and always from the glyph repertoire so a legacy console
+/// gets an ASCII character rather than mojibake.
+fn sign(kind: DiffKind, glyphs: &Glyphs) -> &'static str {
+    match kind {
+        DiffKind::Add => glyphs.plus,
+        DiffKind::Remove => glyphs.minus,
+        _ => " ",
+    }
+}
+/// The modifier that carries a line's kind when colour cannot. Context is dimmed;
+/// added and removed are *not* "the other one in a different colour", so nothing
+/// distinguishes them but the sign — which is the point.
+fn emphasis(kind: DiffKind) -> Modifier {
+    match kind {
+        DiffKind::Add | DiffKind::Remove => Modifier::empty(),
+        _ => Modifier::DIM,
+    }
+}
+
+/// Pad a row out to `width` with the row's own style, so a removed line's colour
+/// runs to the edge of its column rather than stopping at the last character and
+/// leaving a ragged right edge down the card.
+fn pad_to(mut row: CardRow, width: usize, style: Style) -> CardRow {
+    let used: usize = row.iter().map(|(t, _)| cols(t)).sum();
+    if used < width {
+        row.push((" ".repeat(width - used), style));
+    }
+    row
+}
+
+// ---- runs --------------------------------------------------------------------
+
+/// Consecutive removals followed by consecutive additions are one *change*; a
+/// lone added line is a change with an empty old side.
+enum Run<'a> {
+    Meta(&'a DiffLine),
+    Context(&'a DiffLine),
+    Change {
+        removed: Vec<&'a DiffLine>,
+        added: Vec<&'a DiffLine>,
+    },
+}
+
+fn runs(lines: &[DiffLine]) -> Vec<Run<'_>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        match lines[i].kind {
+            DiffKind::Remove => {
+                let start = i;
+                while i < lines.len() && lines[i].kind == DiffKind::Remove {
+                    i += 1;
+                }
+                let removed: Vec<&DiffLine> = lines[start..i].iter().collect();
+                let adds = i;
+                while i < lines.len() && lines[i].kind == DiffKind::Add {
+                    i += 1;
+                }
+                out.push(Run::Change {
+                    removed,
+                    added: lines[adds..i].iter().collect(),
+                });
+            }
+            DiffKind::Add => {
+                out.push(Run::Change {
+                    removed: Vec::new(),
+                    added: vec![&lines[i]],
+                });
+                i += 1;
+            }
+            DiffKind::Context => {
+                out.push(Run::Context(&lines[i]));
+                i += 1;
+            }
+            _ => {
+                out.push(Run::Meta(&lines[i]));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+// ---- intra-line highlighting -------------------------------------------------
+
+/// The changed span of a one-for-one edit, as (removed spans, added spans).
+///
+/// Word-level over the *tokens* of the two changed fragments, which is what keeps
+/// this honest: pairing whole lines would highlight the indentation and every
+/// unchanged identifier around a one-word edit, which reads as "all of this
+/// changed" — the opposite of the signal, and the inverse of what the reader needs
+/// when the line is long and the edit is small. pi strips the leading whitespace
+/// of the first changed part for the same reason (`components/diff.ts:26-66`).
+struct IntraPair {
+    removed: Vec<(String, Style)>,
+    added: Vec<(String, Style)>,
+}
+
+fn intra_pair(removed: &[&DiffLine], added: &[&DiffLine]) -> Option<IntraPair> {
+    if removed.len() != 1 || added.len() != 1 {
+        return None;
+    }
+    let old = sanitize(&removed[0].text);
+    let new = sanitize(&added[0].text);
+    if old == new {
+        return None;
+    }
+    let (o, n) = changed_spans(&old, &new);
+    let inverse = Style::default().add_modifier(Modifier::REVERSED);
+    let plain = Style::default();
+    if o.1.is_empty() && n.1.is_empty() {
+        return None;
+    }
+    Some(IntraPair {
+        removed: vec![(o.0, plain), (o.1, inverse), (o.2, plain)],
+        added: vec![(n.0, plain), (n.1, inverse), (n.2, plain)],
+    })
+}
+
+/// Split two changed fragments into (prefix, changed, suffix) over whole tokens.
+///
+/// Whole tokens, so `let` is never "half changed" into `letx`; and the longest
+/// common prefix and suffix rather than a full LCS, because the input here is two
+/// *single lines* — the interesting case is a small edit in the middle of a long
+/// line, and that is exactly what a prefix/suffix split isolates.
+fn changed_spans(old: &str, new: &str) -> ((String, String, String), (String, String, String)) {
+    let o = split_tokens(old);
+    let n = split_tokens(new);
+    let mut head = 0;
+    while head < o.len() && head < n.len() && o[head] == n[head] {
+        head += 1;
+    }
+    let mut tail = 0;
+    while tail < o.len() - head
+        && tail < n.len() - head
+        && o[o.len() - 1 - tail] == n[n.len() - 1 - tail]
+    {
+        tail += 1;
+    }
+    let build = |v: &[String]| {
+        (
+            v[..head].concat(),
+            v[head..v.len() - tail].concat(),
+            v[v.len() - tail..].concat(),
+        )
+    };
+    (build(&o), build(&n))
+}
+
+/// Split into word tokens and whitespace runs, keeping both: whitespace is what
+/// makes the concatenation back into a line exact.
+fn split_tokens(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_ws: Option<bool> = None;
+    for ch in s.chars() {
+        let ws = ch.is_whitespace();
+        if cur_ws.is_some_and(|w| w != ws) {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur_ws = Some(ws);
+        cur.push(ch);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Render a highlighted half: changed spans keep the side's colour and gain
+/// `REVERSED`, which is visible on a terminal with no colour at all and on a
+/// 16-colour one — the same reason pi uses inverse video (`diff.ts:45`).
+fn emphasize(spans: &[(String, Style)], base: Style, width: usize) -> CardRow {
+    let mut out: Vec<(String, Style)> = Vec::new();
+    let mut left = width;
+    for (text, style) in spans {
+        if left == 0 {
+            break;
+        }
+        let text = cut(text, left);
+        left = left.saturating_sub(cols(&text));
+        let style = if style.add_modifier.contains(Modifier::REVERSED) {
+            base.add_modifier(Modifier::REVERSED)
+        } else {
+            base
+        };
+        out.push((text, style));
+    }
+    out
+}
+
+// ---- helpers -----------------------------------------------------------------
+
+/// Tabs become spaces and a lone `\r` is dropped, once, before anything measures
+/// a line: a tab is one `char` and up to eight columns, so a width computed over
+/// raw text is wrong in the direction that wraps rows.
+pub fn sanitize(text: &str) -> String {
+    text.replace('\t', "   ").replace('\r', "")
+}
+
+/// Cut to `width` columns, appending `…` when something was dropped.
+pub fn cut(text: &str, width: usize) -> String {
+    if cols(text) <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let w = cols(&ch.to_string());
+        if used + w > width.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('…');
+    out
+}
+
+/// Display columns, never `chars().count()`: `界` is one `char` and two cells.
+fn cols(text: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    text.width()
+}

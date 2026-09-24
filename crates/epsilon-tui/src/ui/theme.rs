@@ -93,6 +93,11 @@ pub struct Glyphs {
     pub tick: &'static str,
     /// A failed step.
     pub cross: &'static str,
+    /// A line a diff adds. Part of the glyph table rather than a literal `"+"` in
+    /// the diff renderer, like every other character the UI draws.
+    pub plus: &'static str,
+    /// A line a diff removes.
+    pub minus: &'static str,
     /// A warning.
     pub warn: &'static str,
     /// Spinner frames, advanced on a timer while work is in flight.
@@ -114,6 +119,8 @@ pub const UNICODE: Glyphs = Glyphs {
     tool_call: "▸",
     tick: "✓",
     cross: "✗",
+    plus: "+",
+    minus: "-",
     warn: "!",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
@@ -133,6 +140,8 @@ pub const ASCII: Glyphs = Glyphs {
     tool_call: "\\",
     tick: "+",
     cross: "x",
+    plus: "+",
+    minus: "-",
     warn: "!",
     spinner: &["|", "/", "-", "\\"],
 };

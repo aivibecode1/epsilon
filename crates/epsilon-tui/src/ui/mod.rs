@@ -21,11 +21,13 @@
 //! | [`format`] | Number, cost, duration and path formatting |
 //! | [`header`] | Run state + live measurements |
 //! | [`transcript`] | Gutter, role separation, first-run screen |
+//! | [`card`] | Tool cards and the diff renderer |
 //! | [`composer`] | The draft, the caret, the rule above it |
 //! | [`footer`] | The keys that work right now, and where the session lives |
 //! | [`overlay`] | Modal chrome: panels, prompts, list rows |
 //! | [`shell`] | Assembling one frame from application state |
 
+pub mod card;
 pub mod composer;
 pub mod cost;
 pub mod footer;

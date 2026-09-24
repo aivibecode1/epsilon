@@ -293,6 +293,20 @@ pub(crate) struct App {
     spinner_phase: usize,
     /// M16a: markdown+wrap happens once per line here, never in the draw loop.
     render_cache: crate::render_cache::RenderCache,
+    /// M126: per-card expansion, keyed by [`crate::state::TranscriptLine`] id.
+    ///
+    /// The global `prefs.expand_outputs` toggle survives beside it and still means
+    /// **expand all** — a user who relies on it keeps it. These entries are the
+    /// *exceptions* to it: a card the user opened while the global was off stays
+    /// open, and a card they closed while it was on stays closed. That is why the
+    /// map holds `false` as well as `true`; a set of "opened" ids could not
+    /// express the second case and the key would silently re-expand it.
+    card_open: Vec<(u64, bool)>,
+    /// M126: line ids whose cached rows are stale — a card whose status or
+    /// duration moved under a stable id (its result landed). Rebuilt on the next
+    /// reconcile and then cleared, so a busy run re-renders the one card that
+    /// changed rather than the conversation.
+    card_restale: Vec<u64>,
     /// M16a: picker rows cached per (filter, sources) tuple; rebuilt only when one
     /// of those changes, never on Up/Down.
     picker_rows: Option<Vec<crate::picker::PickerRow>>,
@@ -597,6 +611,8 @@ impl App {
             run_started_at: None,
             spinner_phase: 0,
             render_cache: crate::render_cache::RenderCache::new(),
+            card_open: Vec::new(),
+            card_restale: Vec::new(),
             picker_rows: None,
             kill_ring: crate::kill_ring::KillRing::new(),
             last_kill_was_contiguous: false,
@@ -2668,6 +2684,11 @@ pub(crate) use event::drive;
 fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     let before = app.ui.lines().len();
     app.ui.apply(ev);
+    // A card settles *inside* its line: the result marks the call's own row
+    // finished, so neither the row count nor its id changes and the cache would
+    // happily keep serving "pending" for a call that has returned. Naming the
+    // finished cards is how the cache learns they moved.
+    app.restale_finished_cards();
     match ev {
         AgentEvent::AgentStart => app.run_started_at = Some(std::time::Instant::now()),
         AgentEvent::AgentEnd { .. } => app.run_started_at = None,
@@ -2883,6 +2904,86 @@ impl App {
     #[allow(dead_code, reason = "the draw path reads the field directly")]
     pub fn theme(&self) -> &crate::ui::theme::Theme {
         &self.theme
+    }
+
+    // ---- M126: per-card expansion -------------------------------------------
+
+    /// Whether one card renders its whole body.
+    ///
+    /// The user's own decision if they made one, the global toggle otherwise. The
+    /// global toggle has to stay authoritative for cards nobody has touched, or
+    /// "expand all" would only ever work on the cards that were already open.
+    fn card_is_open(&self, id: u64, has_body: bool) -> bool {
+        if !has_body {
+            return false;
+        }
+        self.card_open
+            .iter()
+            .find(|(card_id, _)| *card_id == id)
+            .map(|(_, open)| *open)
+            .unwrap_or(self.prefs.expand_outputs)
+    }
+
+    /// The card `Ctrl+X` acts on when it is not the global toggle's turn.
+    ///
+    /// The **newest** card with a body: the reader is at the bottom of a live
+    /// transcript, so the most recent tool call is the one they just watched run.
+    /// `None` when no card has a body, and then the key is purely the global
+    /// toggle it always was.
+    fn selected_card_id(&self) -> Option<u64> {
+        self.ui
+            .lines()
+            .iter()
+            .rev()
+            .find(|l| l.card.as_ref().is_some_and(|c| c.has_body()))
+            .map(|l| l.id)
+    }
+
+    /// Flip one card's own expansion state, remembering the decision.
+    ///
+    /// Marks the card's rows stale so exactly that card is rebuilt: the opened
+    /// body is measured, wrapped and laid out against the *current* width, which a
+    /// cached row from a narrower frame could not be.
+    fn set_card_open(&mut self, id: u64, open: bool) {
+        match self
+            .card_open
+            .iter_mut()
+            .find(|(card_id, _)| *card_id == id)
+        {
+            Some(entry) => entry.1 = open,
+            None => self.card_open.push((id, open)),
+        }
+        if !self.card_restale.contains(&id) {
+            self.card_restale.push(id);
+        }
+    }
+
+    /// The key text a capped card names in its `… N more lines (… to open)` row.
+    ///
+    /// Resolved from the live binding table here rather than inside the card
+    /// renderer: a widget that read the keybindings manager would be a widget no
+    /// test could aim, and resolving it is the whole point — a rebound
+    /// `app.tools.expand` moves this text with it.
+    fn expand_key(&self) -> Option<String> {
+        self.keybindings.key_text("app.tools.expand")
+    }
+
+    /// Mark every finished card's rows as stale.
+    ///
+    /// Called by the event loop after each event is applied. A card's id is stable
+    /// across its own status change — that is what lets the reader's open/closed
+    /// choice survive the result landing — so the cache cannot notice the change
+    /// from the id alone and has to be told. Listing every finished card is
+    /// deliberate: the list is small, the rebuild happens once per card, and
+    /// "which card changed" is not a question the reducer is asked to answer.
+    pub(crate) fn restale_finished_cards(&mut self) {
+        for line in self.ui.lines() {
+            if line.card.as_ref().is_some_and(|c| c.ended_at_ms.is_some())
+                && !self.card_restale.contains(&line.id)
+            {
+                self.card_restale.push(line.id);
+            }
+        }
     }
 
     /// Run state for the header.
@@ -3297,7 +3398,14 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
 /// on a truecolor terminal, the band that reaches the right edge. That order is
 /// deliberate — decoration sits OUTSIDE the cache, so switching colour mode (or
 /// losing `NO_COLOR`) never invalidates a rendered row and the cache key stays
-/// `(width, expand_outputs)`.
+/// `(width, render state)`.
+///
+/// M126 adds the second half of that key: **which cards are open**. It is part of
+/// the key rather than a render-time lookup because a card's rows depend on it —
+/// an open card is taller, it is wrapped differently, and serving the collapsed
+/// rows under an open state is the one bug the key exists to prevent. The state is
+/// cheap to compare (a bool, a short list and one string) and changes only when
+/// the user presses a key.
 fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     // Body width: the frame minus the gutter the decoration adds back. Wrapping
     // to the full frame width and then prefixing two columns is how a transcript
@@ -3305,12 +3413,18 @@ fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     // two and shifts everything below it.
     let frame_width = area.width as usize;
     let body_width = frame_width.saturating_sub(crate::ui::transcript::GUTTER);
-    app.render_cache.reconcile(
-        app.ui.lines(),
-        body_width,
-        app.prefs.expand_outputs,
-        &app.theme,
-    );
+    // Taken rather than borrowed: the stale set is consumed by the reconcile that
+    // rebuilds those rows, and a card left on the list would rebuild every frame
+    // after. Taking it first is also what keeps the borrows below disjoint.
+    let restale = std::mem::take(&mut app.card_restale);
+    let more_key = app.expand_key();
+    let state = crate::render_cache::RenderState {
+        expand_all: app.prefs.expand_outputs,
+        expanded: &app.card_open,
+        more_key: more_key.as_deref(),
+    };
+    app.render_cache
+        .reconcile(app.ui.lines(), body_width, &state, &app.theme, &restale);
     let total = app.render_cache.total_rows();
     let visible = area.height as usize;
 

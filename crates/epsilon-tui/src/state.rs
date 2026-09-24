@@ -101,6 +101,254 @@ pub struct TranscriptLine {
     pub code: bool,
     /// Raw markdown source for assistant rows (expanded by the renderer).
     pub md: Option<String>,
+    /// The tool card this row is, when it is one.
+    ///
+    /// A card is not a decoration on top of `text`: its title is *derived* from
+    /// name + status + duration and its body is a structured payload (a diff, a
+    /// pending call's detail, a result). Keeping it structured is what stops a
+    /// diff from being handed to the markdown parser, which is how it came to be
+    /// rendered as prose in the first place.
+    pub card: Option<Card>,
+}
+
+/// What a tool call did, as far as the transcript knows.
+///
+/// `Running` is reached from `ToolExecutionStart` and is the state a call is in
+/// while the tool works; `Pending` is a call the model asked for whose execution
+/// has not been announced yet. They print the same word because they mean the
+/// same thing to the reader — this is not finished — and the distinction exists
+/// because the transcript, not the renderer, is where that fact belongs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardStatus {
+    /// Requested, not yet announced as executing.
+    Pending,
+    /// Executing now.
+    Running,
+    /// Finished without an error.
+    Ok,
+    /// Finished with an error result.
+    Failed,
+    /// Refused by the permission gate.
+    Denied,
+}
+
+/// A tool call or result as a card: a title line, then a body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Card {
+    /// The tool's name, as the model called it.
+    pub name: String,
+    /// Where the call stands.
+    pub status: CardStatus,
+    /// The tool call this card belongs to, so a result can settle the call's own
+    /// status and duration rather than leaving a second, permanently-pending row.
+    pub tool_call_id: String,
+    /// When the call was requested, in Unix milliseconds.
+    pub started_at_ms: u64,
+    /// When it finished, in Unix milliseconds. `None` while it is still running,
+    /// which is also what makes the duration live rather than absent.
+    pub ended_at_ms: Option<u64>,
+    /// The card's body.
+    pub body: CardBody,
+}
+
+impl Card {
+    /// The time the card displays, or `None` while the call is still running.
+    ///
+    /// Only a **finished** card carries a number, and it is `ended - started`. The
+    /// alternative — `now - started` for a live call — looks like a stopwatch and
+    /// behaves like one only if the row is rebuilt every frame, which it is not:
+    /// rows are cached until something invalidates them, so a live duration would
+    /// freeze at whatever value the frame that created the row happened to see and
+    /// then jump when the card was finally rebuilt. A number that is sometimes
+    /// live and sometimes stale is worse than no number, and "still running" is
+    /// already what the status word says.
+    pub fn elapsed_ms(&self) -> Option<u64> {
+        let end = self.ended_at_ms?;
+        Some(end.saturating_sub(self.started_at_ms))
+    }
+
+    /// Whether this card has a body worth opening.
+    pub fn has_body(&self) -> bool {
+        match &self.body {
+            CardBody::Diff(d) => !d.lines.is_empty(),
+            CardBody::Prompt(t) | CardBody::Text(t) => !t.trim().is_empty(),
+        }
+    }
+}
+
+/// What a card's body holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CardBody {
+    /// A unified diff, parsed once at commit time.
+    Diff(Diff),
+    /// What a pending call is about to do (the command, the path, the pattern).
+    Prompt(String),
+    /// A tool's own output.
+    Text(String),
+}
+
+/// A parsed unified diff.
+///
+/// Parsed once, when the result is committed, and rendered by
+/// [`crate::ui::card`] — never by the markdown parser, which is what turned
+/// `- let x = 1;` into a bullet and `---` into a horizontal rule.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Diff {
+    /// Lines in the order the tool produced them.
+    pub lines: Vec<DiffLine>,
+    /// Widest line number in the diff, in digits. Carried so both views can pad
+    /// their number column without re-measuring the whole diff per row.
+    pub number_width: usize,
+}
+
+/// One line of a unified diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLine {
+    /// Added, removed, context, file/hunk header, or a line the format does not
+    /// define (`\ No newline at end of file`).
+    pub kind: DiffKind,
+    /// The line's text with its diff prefix removed.
+    pub text: String,
+    /// The number this line has in the file it belongs to: the new file for an
+    /// addition and for context, the old file for a removal — which is what makes
+    /// the number column meaningful rather than a row counter.
+    pub number: Option<usize>,
+}
+
+/// The kind of one diff line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffKind {
+    /// `+`, a line the change adds.
+    Add,
+    /// `-`, a line the change removes.
+    Remove,
+    /// ` `, unchanged and shown for context.
+    Context,
+    /// `@@ -a,b +c,d @@`, the header that opens a hunk.
+    Hunk,
+    /// A file header (`--- a/f.rs`, `+++ b/f.rs`, `diff --git …`) or anything the
+    /// format does not define. Printed as it came, because a diff that drops the
+    /// lines it did not understand is a diff that lies about what changed.
+    Meta,
+}
+
+impl Diff {
+    /// Whether line numbers fit the unified view at `width` body columns.
+    ///
+    /// The numbers are the first thing to go when the card is narrow: the sign is
+    /// what colour is standing in for, and a clipped number is worse than none.
+    pub fn unified_numbers_fit(&self, width: usize) -> bool {
+        width >= crate::ui::card::MIN_NUMBER_WIDTH + self.number_width + 2
+    }
+
+    /// Whether line numbers fit one half of the split view at `width` columns.
+    pub fn split_numbers_fit(&self, width: usize) -> bool {
+        width >= crate::ui::card::MIN_NUMBER_WIDTH + self.number_width + 2
+    }
+
+    /// The `+a -b` summary a card title can carry.
+    pub fn counts(&self) -> (usize, usize) {
+        self.lines
+            .iter()
+            .fold((0, 0), |(add, del), l| match l.kind {
+                DiffKind::Add => (add + 1, del),
+                DiffKind::Remove => (add, del + 1),
+                _ => (add, del),
+            })
+    }
+}
+
+/// Parse a unified diff into lines with their kinds and numbers.
+///
+/// Deliberately tolerant: a line the format does not define becomes
+/// [`DiffKind::Meta`] and is printed as it arrived. A diff is evidence, and a
+/// parser that silently dropped what it could not classify would hide part of the
+/// change.
+///
+/// # Line numbers
+///
+/// Numbers follow the format rather than the reader's intuition: a context line
+/// advances both files, an addition advances the new file and a removal the old
+/// one. So a one-for-one replacement is numbered `5` on the removed side and `6` on
+/// the added one, because after five lines of context the new file's sixth line is
+/// where the addition lands. That asymmetry is what makes the number column agree
+/// with what an editor would show, and it is the reason the numbers are worth
+/// printing at all.
+pub fn parse_diff(text: &str) -> Diff {
+    let mut lines: Vec<DiffLine> = Vec::new();
+    let mut old_no = 0usize;
+    let mut new_no = 0usize;
+    let mut in_hunk = false;
+    for raw in text.lines() {
+        let raw = raw.trim_end_matches('\r');
+        if let Some(hunk) = parse_hunk_header(raw) {
+            old_no = hunk.0;
+            new_no = hunk.1;
+            in_hunk = true;
+            lines.push(DiffLine {
+                kind: DiffKind::Hunk,
+                text: raw.to_string(),
+                number: None,
+            });
+            continue;
+        }
+        if !in_hunk {
+            lines.push(DiffLine {
+                kind: DiffKind::Meta,
+                text: raw.to_string(),
+                number: None,
+            });
+            continue;
+        }
+        let (kind, number, text) = match raw.as_bytes().first() {
+            Some(b'+') => {
+                let n = new_no;
+                new_no += 1;
+                (DiffKind::Add, Some(n), raw[1..].to_string())
+            }
+            Some(b'-') => {
+                let n = old_no;
+                old_no += 1;
+                (DiffKind::Remove, Some(n), raw[1..].to_string())
+            }
+            Some(b' ') => {
+                let n = new_no;
+                old_no += 1;
+                new_no += 1;
+                (DiffKind::Context, Some(n), raw[1..].to_string())
+            }
+            // `\ No newline at end of file`: part of the diff, not a line of either
+            // file. Read as context it would be numbered as though it were code and
+            // drawn in the "unchanged" colour, which is a claim about the file that
+            // the diff does not make.
+            Some(b'\\') => (DiffKind::Meta, None, raw.to_string()),
+            // Anything else the format does not define: kept, not numbered.
+            _ => (DiffKind::Context, Some(new_no), raw.to_string()),
+        };
+        lines.push(DiffLine { kind, text, number });
+    }
+    let number_width = lines
+        .iter()
+        .filter_map(|l| l.number)
+        .max()
+        .map(|n| n.to_string().len())
+        .unwrap_or(0);
+    Diff {
+        lines,
+        number_width,
+    }
+}
+
+/// `@@ -old,count +new,count @@` → (old start, new start).
+fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
+    let rest = line.strip_prefix("@@")?;
+    let end = rest.find("@@")?;
+    let mut parts = rest[..end].split_whitespace();
+    let old = parts.next()?.strip_prefix('-')?;
+    let new = parts.next()?.strip_prefix('+')?;
+    let start =
+        |s: &str| -> Option<usize> { s.split(',').next().unwrap_or(s).parse::<usize>().ok() };
+    Some((start(old)?, start(new)?))
 }
 
 impl TranscriptLine {
@@ -118,6 +366,7 @@ impl TranscriptLine {
             full,
             code,
             md,
+            card: None,
         }
     }
 
@@ -254,6 +503,95 @@ impl UiState {
         self.latest_cache_read
     }
 
+    /// Commit a tool call the model asked for as a **card**.
+    ///
+    /// Replaces the flat `tool-call {name} {args}` row. The call and its result
+    /// are two cards rather than one — that is the shape the event stream has, a
+    /// call can outlive the frame that drew it, and a call whose result never
+    /// arrives must still be able to say *pending* — but they share a
+    /// `tool_call_id`, so the result settles the call's own card instead of
+    /// leaving a permanently-pending row for the reader to scroll past.
+    fn push_tool_call(
+        &mut self,
+        tool_call_id: &str,
+        name: &str,
+        args: &serde_json::Value,
+        now: u64,
+    ) {
+        let detail = summarize_args(args);
+        self.push_line(TranscriptLine {
+            card: Some(Card {
+                name: name.to_string(),
+                status: CardStatus::Pending,
+                tool_call_id: tool_call_id.to_string(),
+                started_at_ms: now,
+                ended_at_ms: None,
+                body: CardBody::Prompt(detail),
+            }),
+            ..TranscriptLine::plain(LineKind::ToolCall, format!("{name} {args}"))
+        });
+    }
+
+    /// Commit a tool result as a card, settling the matching call's card.
+    ///
+    /// The diff path is why this is not one line: a result carrying
+    /// `details.diff` becomes a **parsed diff**, rendered by [`crate::ui::card`].
+    /// It used to become the string `format!("{name} → diff:\n{diff}")` pushed
+    /// through the markdown parser, which is how a diff ended up on screen as a
+    /// bullet list with a horizontal rule where its hunk separator should have
+    /// been.
+    fn push_tool_result(&mut self, t: &epsilon_contracts::message::ToolResultMessage, now: u64) {
+        let body = tool_result_text(t);
+        let status = if t.is_error {
+            CardStatus::Failed
+        } else {
+            CardStatus::Ok
+        };
+        // Settle the call's own card first: it is the row the reader is looking at
+        // when the answer lands, and a row still saying "pending" after its result
+        // has arrived is a row that lies.
+        self.settle_call(&t.tool_call_id, status, now);
+        let card_body = match edit_diff(t) {
+            Some(diff) => CardBody::Diff(parse_diff(&diff)),
+            None => CardBody::Text(body.clone()),
+        };
+        let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
+        self.push_line(TranscriptLine {
+            card: Some(Card {
+                name: t.tool_name.clone(),
+                status,
+                tool_call_id: t.tool_call_id.clone(),
+                started_at_ms: now,
+                ended_at_ms: Some(now),
+                body: card_body,
+            }),
+            ..TranscriptLine::expandable(
+                if t.is_error {
+                    LineKind::ToolResultErr
+                } else {
+                    LineKind::ToolResultOk
+                },
+                head,
+                format!("{} → {body}", t.tool_name),
+            )
+        });
+    }
+
+    /// Mark the card for `tool_call_id` finished, if one is still open.
+    fn settle_call(&mut self, tool_call_id: &str, status: CardStatus, now: u64) {
+        let Some(line) = self.lines.iter_mut().rev().find(|l| {
+            l.card
+                .as_ref()
+                .is_some_and(|c| c.tool_call_id == tool_call_id && c.ended_at_ms.is_none())
+        }) else {
+            return;
+        };
+        if let Some(card) = line.card.as_mut() {
+            card.status = status;
+            card.ended_at_ms = Some(now);
+        }
+    }
+
     /// Local echo of submitted input; distinct from replayed transcript messages.
     ///
     /// The text is stored **without** a marker. The prompt glyph is a rendering
@@ -291,6 +629,12 @@ impl UiState {
         self.cache_write = 0;
         self.latest_prompt_tokens = 0;
         self.compacted = false;
+        // A replayed session has no per-call timings to recover — the store keeps
+        // messages, not wall-clock spans — so every card hydrated here is stamped
+        // with the same instant: its call and its result share a start, and the
+        // duration reads `0ms` rather than an invented number. The alternative is
+        // a card that claims a duration the store never recorded.
+        let now = now_ms();
         for msg in messages {
             match msg {
                 Message::User(u) => {
@@ -323,11 +667,8 @@ impl UiState {
                     if !text.is_empty() {
                         self.push_line(TranscriptLine::assistant_md(text));
                     }
-                    for (_, name, args) in a.tool_calls() {
-                        self.push_line(TranscriptLine::plain(
-                            LineKind::ToolCall,
-                            format!("tool-call {} {}", name, summarize_args(args)),
-                        ));
+                    for (id, name, args) in a.tool_calls() {
+                        self.push_tool_call(id, name, args, now);
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
@@ -341,16 +682,7 @@ impl UiState {
                     }
                 }
                 Message::ToolResult(t) => {
-                    let body = t
-                        .content
-                        .iter()
-                        .filter_map(|c| match c {
-                            epsilon_contracts::content::ContentBlock::Text { text } => {
-                                Some(text.as_str())
-                            }
-                            _ => None,
-                        })
-                        .collect::<String>();
+                    let body = tool_result_text(t);
                     if t.tool_name == "todo"
                         && let Some(head) = todo_head(&t.details)
                     {
@@ -373,24 +705,7 @@ impl UiState {
                         ));
                         continue;
                     }
-                    let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
-                    let full = if t.tool_name == "edit"
-                        && let Some(diff) = t.details.get("diff").and_then(|d| d.as_str())
-                        && !diff.is_empty()
-                    {
-                        format!("{} → diff:\n{diff}", t.tool_name)
-                    } else {
-                        format!("{} → {body}", t.tool_name)
-                    };
-                    self.push_line(TranscriptLine::expandable(
-                        if t.is_error {
-                            LineKind::ToolResultErr
-                        } else {
-                            LineKind::ToolResultOk
-                        },
-                        head,
-                        full,
-                    ));
+                    self.push_tool_result(t, now);
                 }
                 Message::Custom(c) => {
                     self.push_line(TranscriptLine::plain(
@@ -407,6 +722,10 @@ impl UiState {
 
     /// Reduce one lifecycle event into the model.
     pub fn apply(&mut self, ev: &AgentEvent) {
+        // One clock read per event, not per card: two cards committed by the same
+        // event (a call and the result that settles it) must be able to compare
+        // their stamps, and two `SystemTime::now()` calls in a row can differ.
+        let now = now_ms();
         match ev {
             AgentEvent::AgentStart => {
                 self.running = true;
@@ -443,11 +762,8 @@ impl UiState {
                         // styled rows (via the M16a render cache — once per message).
                         self.push_line(TranscriptLine::assistant_md(text));
                     }
-                    for (_, name, args) in a.tool_calls() {
-                        self.push_line(TranscriptLine::plain(
-                            LineKind::ToolCall,
-                            format!("tool-call {} {}", name, summarize_args(args)),
-                        ));
+                    for (id, name, args) in a.tool_calls() {
+                        self.push_tool_call(id, name, args, now);
                     }
                     if a.stop_reason == StopReason::Error
                         && let Some(err) = a.error_message.as_deref()
@@ -478,16 +794,7 @@ impl UiState {
                     }
                 }
                 Message::ToolResult(t) => {
-                    let body = t
-                        .content
-                        .iter()
-                        .filter_map(|c| match c {
-                            epsilon_contracts::content::ContentBlock::Text { text } => {
-                                Some(text.as_str())
-                            }
-                            _ => None,
-                        })
-                        .collect::<String>();
+                    let body = tool_result_text(t);
                     // M30: todo results render their checklist (opencode's todo
                     // block) — short lists fully visible, long ones summarized.
                     if t.tool_name == "todo"
@@ -516,32 +823,34 @@ impl UiState {
                         self.status = "tool done".into();
                         return;
                     }
-                    let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
-                    // M30: edit results with a diff show the unified diff when
-                    // expanded (Ctrl+X), giving the user a clear before/after view.
-                    let full = if t.tool_name == "edit"
-                        && let Some(diff) = t.details.get("diff").and_then(|d| d.as_str())
-                        && !diff.is_empty()
-                    {
-                        format!("{} → diff:\n{diff}", t.tool_name)
-                    } else {
-                        format!("{} → {}", t.tool_name, body)
-                    };
-                    self.push_line(TranscriptLine::expandable(
-                        if t.is_error {
-                            LineKind::ToolResultErr
-                        } else {
-                            LineKind::ToolResultOk
-                        },
-                        head,
-                        full,
-                    ));
+                    // M30 / M126: an edit's diff is a *diff*, not prose. It is
+                    // parsed here and rendered by `ui::card` with a sign gutter,
+                    // per-side colour and line numbers — never handed to the
+                    // markdown parser, which is what turned `- let x = 1;` into a
+                    // bullet and a `---` separator into a rule across the card.
+                    self.push_tool_result(t, now);
                     self.status = "tool done".into();
                 }
                 _ => {}
             },
-            AgentEvent::ToolExecutionStart { tool_name, .. } => {
+            AgentEvent::ToolExecutionStart {
+                tool_call_id,
+                tool_name,
+                ..
+            } => {
                 self.status = format!("running {tool_name}…");
+                // The card was committed when the assistant message ended; this is
+                // the event that says it actually started. Marking it here keeps
+                // `pending` for "asked for, not yet running", which is the state a
+                // permission prompt leaves a call in.
+                if let Some(line) = self.lines.iter_mut().rev().find(|l| {
+                    l.card
+                        .as_ref()
+                        .is_some_and(|c| c.tool_call_id == *tool_call_id)
+                }) && let Some(card) = line.card.as_mut()
+                {
+                    card.status = CardStatus::Running;
+                }
             }
             AgentEvent::ToolExecutionUpdate {
                 tool_name, partial, ..
@@ -627,6 +936,89 @@ impl UiState {
     fn push_line(&mut self, line: TranscriptLine) {
         self.lines.push(line);
     }
+}
+
+/// `now` in Unix milliseconds.
+///
+/// Wall-clock rather than `Instant` because the value is stored on a transcript
+/// card and a card outlives the process that drew it: a resumed session rebuilt
+/// from history has no `Instant` to compare against, and a zero would render as
+/// `0ms` — a duration that looks measured and is not.
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// A tool result as the event stream delivers it.
+///
+/// Crate-visible for tests that need a *card* rather than a hand-built
+/// `TranscriptLine`: the card's title, its diff and its duration are decided by
+/// the reducer, and a fixture that wrote them out by hand would keep passing after
+/// the reducer stopped producing them.
+#[cfg(test)]
+pub(crate) fn agent_event_tool_result(tool_name: &str, body: &str, is_error: bool) -> AgentEvent {
+    AgentEvent::MessageEnd {
+        message: Box::new(Message::ToolResult(
+            epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::ids::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: format!("tc_{tool_name}"),
+                tool_name: tool_name.to_string(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(body)],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error,
+            },
+        )),
+    }
+}
+
+/// The same, for a result that carries a unified diff in `details.diff` — the
+/// shape an `edit` tool returns and the one the diff renderer exists for.
+#[cfg(test)]
+pub(crate) fn agent_event_edit_result(diff: &str, is_error: bool) -> AgentEvent {
+    AgentEvent::MessageEnd {
+        message: Box::new(Message::ToolResult(
+            epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::ids::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_edit".into(),
+                tool_name: "edit".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(
+                    "edited a.rs (1 replacement(s))",
+                )],
+                details: serde_json::json!({ "diff": diff }),
+                usage: None,
+                is_error,
+            },
+        )),
+    }
+}
+
+/// The text a tool result carries, concatenated across its blocks.
+fn tool_result_text(t: &epsilon_contracts::message::ToolResultMessage) -> String {
+    t.content
+        .iter()
+        .filter_map(|c| match c {
+            epsilon_contracts::content::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>()
+}
+
+/// The unified diff an `edit` result carries, when it carries one.
+///
+/// Named rather than inlined because "is this a diff" is asked in three places
+/// (hydration, the live reducer, and the review question "why is an edit
+/// special"), and three copies of the same `details.get("diff")` is how they drift.
+fn edit_diff(t: &epsilon_contracts::message::ToolResultMessage) -> Option<String> {
+    let diff = t.details.get("diff")?.as_str()?;
+    if diff.trim().is_empty() {
+        return None;
+    }
+    Some(diff.to_string())
 }
 
 fn thinking_of(a: &AssistantMessage) -> String {
@@ -989,10 +1381,17 @@ mod tests {
         assert!(line.text.starts_with("todo → "));
     }
 
-    // ---- M30: edit diff preview rows -----------------------------------------------
+    // ---- M30/M126: the edit diff as a *parsed* diff --------------------------
 
     #[test]
-    fn edit_result_with_diff_shows_diff_when_expanded() {
+    fn edit_result_with_a_diff_commits_a_parsed_diff_card() {
+        // Mutated by M126: the assertion used to be `full.contains("@@")`, i.e. the
+        // raw diff text parked in the `full` field for the markdown parser to chew
+        // on. That is exactly how a diff came to be rendered as prose — a line
+        // starting `-` is a list item in CommonMark and `---` is a rule, so a hunk
+        // separator was drawn as a horizontal rule across the card. The diff is now
+        // parsed into lines with kinds and numbers, which is what the renderer
+        // draws from; `full` keeps the plain body so nothing else regresses.
         let mut st = UiState::new();
         st.apply(&AgentEvent::MessageEnd {
             message: Box::new(Message::ToolResult(ToolResultMessage {
@@ -1007,12 +1406,145 @@ mod tests {
             })),
         });
         let line = &st.lines()[0];
-        // Head stays short — the diff is hidden until Ctrl+X.
+        // Head stays short — the diff body is capped until Ctrl+X.
         assert!(line.text.starts_with("edit → "), "head: {:?}", line.text);
-        let full = line.full.as_deref().expect("full must exist");
-        assert!(full.contains("@@"), "full should contain the diff: {full}");
-        assert!(full.contains("-new"));
-        assert!(full.contains("+new"));
+        let card = line.card.as_ref().expect("an edit result is a card");
+        let CardBody::Diff(diff) = &card.body else {
+            panic!("an edit with details.diff must carry a parsed diff");
+        };
+        let kinds: Vec<DiffKind> = diff.lines.iter().map(|l| l.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                DiffKind::Hunk,
+                DiffKind::Context,
+                DiffKind::Remove,
+                DiffKind::Add
+            ],
+            "the diff's structure must survive the parse: {:?}",
+            diff.lines
+        );
+        assert_eq!(
+            diff.lines.iter().map(|l| l.number).collect::<Vec<_>>(),
+            vec![None, Some(1), Some(2), Some(2)],
+            "a context line advances both files; an addition advances only the new \
+             one, so the removal is numbered 1 and the addition 2"
+        );
+        assert_eq!(diff.counts(), (1, 1), "one added, one removed");
+        assert_eq!(card.status, CardStatus::Ok);
+    }
+
+    #[test]
+    fn a_hunk_header_sets_the_line_numbers_it_declares() {
+        // `@@ -10,2 +20,2 @@` means the old file's next line is 10 and the new
+        // file's is 20. A card that numbered from 1 would put a plausible-looking
+        // wrong number beside every line, which is worse than no number at all.
+        //
+        // The two sides' counters advance independently, so the removal is 11 (ten
+        // context lines then it) and the addition is 21 — the two files are at
+        // different places, which is exactly what a hunk header says.
+        let diff = parse_diff("@@ -10,2 +20,2 @@\n context\n-gone\n+here\n");
+        let numbers: Vec<(DiffKind, Option<usize>)> =
+            diff.lines.iter().map(|l| (l.kind, l.number)).collect();
+        assert_eq!(
+            numbers,
+            vec![
+                (DiffKind::Hunk, None),
+                (DiffKind::Context, Some(20)),
+                (DiffKind::Remove, Some(11)),
+                (DiffKind::Add, Some(21)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_diff_line_the_parser_does_not_know_is_kept_not_dropped() {
+        // `\ No newline at end of file` is the common case, and a diff is
+        // evidence: dropping what the format does not define would hide part of
+        // the change. It is printed as it arrived and is not numbered.
+        let diff = parse_diff("@@ -1,1 +1,1 @@\n-old\n+new\n\\ No newline at end of file\n");
+        let last = diff.lines.last().expect("the marker line survives");
+        assert_eq!(last.kind, DiffKind::Meta);
+        assert!(last.text.contains("No newline"), "{last:?}");
+        assert_eq!(last.number, None);
+    }
+
+    #[test]
+    fn a_tool_call_and_its_result_are_two_cards_but_one_call() {
+        // The shape the event stream has, and the shape a reader needs: the call
+        // is on screen (saying what is about to run) before the result exists, and
+        // the result settles the call's own row rather than leaving a permanently
+        // pending one to scroll past.
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(assistant(
+                "",
+                vec![("tc_7", "bash")],
+                Usage::default(),
+            ))),
+        });
+        st.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc_7".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({"command": "cargo test"}),
+        });
+        assert_eq!(
+            st.lines()[0].card.as_ref().unwrap().status,
+            CardStatus::Running
+        );
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_7".into(),
+                tool_name: "bash".into(),
+                content: vec![ContentBlock::text("ok")],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let cards: Vec<&Card> = st.lines().iter().filter_map(|l| l.card.as_ref()).collect();
+        assert_eq!(cards.len(), 2, "the call row and the result row");
+        assert_eq!(cards[0].tool_call_id, "tc_7");
+        assert_eq!(
+            cards[0].status,
+            CardStatus::Ok,
+            "the result must settle the call's own row"
+        );
+        assert!(
+            cards[0].ended_at_ms.is_some(),
+            "a settled call has a duration"
+        );
+        assert_eq!(cards[1].status, CardStatus::Ok);
+        assert_eq!(cards[1].name, "bash");
+    }
+
+    #[test]
+    fn only_a_finished_card_carries_a_duration() {
+        // The bug the first frame test caught: a pending card printed the time
+        // since it was requested, which grew only when the row happened to be
+        // rebuilt — so it was sometimes live, sometimes stale, and always a number
+        // the user would read as "how long this took".
+        let card = Card {
+            name: "bash".into(),
+            status: CardStatus::Pending,
+            tool_call_id: "tc_1".into(),
+            started_at_ms: now_ms(),
+            ended_at_ms: None,
+            body: CardBody::Text("running".into()),
+        };
+        assert_eq!(
+            card.elapsed_ms(),
+            None,
+            "a running call has no duration yet"
+        );
+        let done = Card {
+            ended_at_ms: Some(card.started_at_ms + 412),
+            status: CardStatus::Ok,
+            ..card
+        };
+        assert_eq!(done.elapsed_ms(), Some(412));
     }
 
     #[test]
@@ -1036,6 +1568,14 @@ mod tests {
         assert!(
             !full.contains("@@"),
             "no diff in full when details.diff is absent"
+        );
+        // M126: the body is the tool's own output, not a diff with nothing in it —
+        // an empty `Diff` body would draw a card with a title and no content.
+        let card = line.card.as_ref().expect("a tool result is a card");
+        assert!(
+            matches!(&card.body, CardBody::Text(t) if t.contains("edited b.rs")),
+            "an edit with no diff carries its body as text: {:?}",
+            card.body
         );
     }
 

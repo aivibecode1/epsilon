@@ -32,12 +32,58 @@ pub struct RenderedLine {
     pub rows: Vec<Vec<(String, Style)>>,
 }
 
+/// Everything a rendered row depends on besides its own text.
+///
+/// This is the cache key, in one place. It used to be a bare `expand_outputs`
+/// boolean, which was complete while expansion was one global toggle; per-card
+/// expansion means the *set* of open cards is part of the answer now, so it has to
+/// be represented here rather than being read from the app at render time — a row
+/// cached under one set of open cards and served under another is the one bug this
+/// type exists to make impossible.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderState<'a> {
+    /// The global "expand all" toggle (`app.tools.expand`). It means *expand all*,
+    /// not "the only way to expand": a card the user opened individually stays
+    /// open when this is off.
+    pub expand_all: bool,
+    /// Ids of cards the user opened individually; ids the user closed individually
+    /// while [`Self::expand_all`] was on live in [`Self::collapsed`].
+    pub expanded: &'a [(u64, bool)],
+    /// The key that opens a card, resolved from the live binding table. `None`
+    /// when the binding does not resolve, and then the affordance promises nothing.
+    pub more_key: Option<&'a str>,
+}
+
+impl RenderState<'_> {
+    /// Whether an individual card has been opened or closed by hand.
+    pub fn explicit(&self, id: u64) -> Option<bool> {
+        self.expanded
+            .iter()
+            .find(|(card_id, _)| *card_id == id)
+            .map(|(_, open)| *open)
+    }
+
+    /// Whether one card renders its whole body: the user's own decision if they
+    /// made one, the global toggle otherwise.
+    pub fn is_open(&self, id: u64, has_body: bool) -> bool {
+        if !has_body {
+            return false;
+        }
+        self.explicit(id).unwrap_or(self.expand_all)
+    }
+
+    /// A short description of the key, for cache-invalidation errors and tests.
+    pub fn key(&self) -> (bool, Vec<(u64, bool)>) {
+        (self.expand_all, self.expanded.to_vec())
+    }
+}
+
 impl RenderedLine {
-    fn build(line: &TranscriptLine, width: usize, expand_outputs: bool, theme: &Theme) -> Self {
+    fn build(line: &TranscriptLine, width: usize, state: &RenderState<'_>, theme: &Theme) -> Self {
         // Each LOGICAL line wraps independently (headings/fences never merge across
         // paragraphs); their wrapped rows concatenate into this line's screen rows.
         let mut rows = Vec::new();
-        for logical in logical_lines(line, expand_outputs, theme) {
+        for logical in logical_lines(line, state, theme, width) {
             rows.extend(wrap::wrap_line(&logical, width));
         }
         if rows.is_empty() {
@@ -51,14 +97,32 @@ impl RenderedLine {
 }
 
 /// The styled logical lines of one transcript row BEFORE wrapping (prefix + body).
-/// Markdown rows expand here — once per line id, never per frame.
+/// Markdown rows and tool cards expand here — once per line id, never per frame.
 fn logical_lines(
     line: &TranscriptLine,
-    expand_outputs: bool,
+    state: &RenderState<'_>,
     theme: &Theme,
+    width: usize,
 ) -> Vec<Vec<(String, Style)>> {
+    // A tool card is a card: a title line carrying name, status and duration, then
+    // a body capped with an explicit "open it" affordance. It may never take the
+    // `full` path below — `full` for an edit result is the raw diff text, and
+    // handing a diff to the markdown parser is exactly the defect this replaces.
+    if let Some(card) = line.card.as_ref() {
+        let open = state.is_open(line.id, card.has_body());
+        return crate::ui::card::rows(
+            card,
+            open,
+            width,
+            crate::ui::card::BODY_ROWS,
+            theme,
+            state.more_key,
+        );
+    }
     // Expandable rows show their full payload when toggled (M13 behavior preserved).
-    if expand_outputs && let Some(full) = line.full.as_ref() {
+    if state.expand_all
+        && let Some(full) = line.full.as_ref()
+    {
         return vec![vec![(full.clone(), style_for(line.kind, theme))]];
     }
     if line.code {
@@ -129,14 +193,46 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
     }
 }
 
+/// The exact state a cached row was rendered under.
+///
+/// Not `RenderState` itself: that borrows the open-card list and the resolved key
+/// string, and a cache cannot hold either. This is the owned snapshot kept for the
+/// comparison that decides whether anything has to be rebuilt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheKey {
+    expand_all: bool,
+    open_cards: Vec<(u64, bool)>,
+    more_key: Option<String>,
+}
+
+impl CacheKey {
+    fn of(state: &RenderState<'_>) -> Self {
+        Self {
+            expand_all: state.expand_all,
+            open_cards: state.expanded.to_vec(),
+            more_key: state.more_key.map(str::to_string),
+        }
+    }
+}
+
 /// Width-keyed cache: id → rendered rows, plus prefix sums for O(log n) windowing.
 ///
 /// Eviction is structural: entries whose id no longer exists in the live transcript
 /// (`/clear`) drop on the next reconcile; entries for surviving ids stay valid across
 /// frames because ids are content-stable.
+///
+/// The **render state** is the other half of the key. Three things invalidate a
+/// cached row: the width, a change to the open/closed set, and a line whose content
+/// changed. The first two are detected wholesale (a resize, or an expansion toggle
+/// from the key handler, both of which are rare); the third is detected when the
+/// caller says which lines changed, which is how a card's status going from
+/// `pending` to `ok` re-renders that card and nothing else.
 pub struct RenderCache {
     width: usize,
-    expand_outputs: bool,
+    /// The state every cached row was rendered under. `None` before the first
+    /// reconcile, which is what makes "no state yet" distinguishable from "the
+    /// default state" rather than equal to it.
+    state: Option<CacheKey>,
     rendered: HashMap<u64, RenderedLine>,
     /// Parallel to `UiState.lines` after `reconcile`: cumulative row counts.
     offsets: Vec<usize>,
@@ -155,7 +251,7 @@ impl RenderCache {
     pub fn new() -> Self {
         Self {
             width: 0,
-            expand_outputs: false,
+            state: None,
             rendered: HashMap::new(),
             offsets: Vec::new(),
             total_rows: 0,
@@ -165,19 +261,25 @@ impl RenderCache {
 
     /// Bring cache bookkeeping in line with the current transcript state.
     ///
-    /// Renders any unseen lines (the only markdown/wrap work in the system) and
+    /// Renders any unseen lines (the only markdown/card/wrap work in the system) and
     /// maintains the offset table incrementally: the common id-prefix with the last
-    /// reconcile is reused untouched (transcripts are append-only except `/clear`),
-    /// so an idle session's steady-state reconcile cost is O(1), independent of
-    /// transcript length.
+    /// reconcile is reused untouched (transcripts are append-only except `/clear`
+    /// and except a card changing status in place), so an idle session's
+    /// steady-state reconcile cost is O(1), independent of transcript length.
+    ///
+    /// `restale` names the line ids whose content changed under a stable id — the
+    /// card whose result just landed, in practice. Only those entries are dropped,
+    /// so a busy run does not rebuild the conversation every time a tool finishes.
     pub fn reconcile(
         &mut self,
         lines: &[TranscriptLine],
         width: usize,
-        expand_outputs: bool,
+        state: &RenderState<'_>,
         theme: &Theme,
+        restale: &[u64],
     ) {
-        let invalidate_all = width != self.width || expand_outputs != self.expand_outputs;
+        let key = CacheKey::of(state);
+        let invalidate_all = width != self.width || self.state.as_ref() != Some(&key);
         if invalidate_all {
             self.rendered.clear();
             self.offsets.clear();
@@ -186,15 +288,27 @@ impl RenderCache {
             // before the incremental append below.
             self.offsets.push(0);
             self.width = width;
-            self.expand_outputs = expand_outputs;
+            self.state = Some(key);
+        }
+        if !restale.is_empty() {
+            for id in restale {
+                self.rendered.remove(id);
+            }
         }
 
-        // Reuse the common prefix of already-reconciled lines.
+        // Reuse the common prefix of already-reconciled lines — but only while the
+        // rows are still there. An id whose entry was just dropped by `restale` is
+        // still in `reconciled_ids`, and counting it as reusable is how a card whose
+        // result landed would keep its old rows for ever (or, worse, vanish: the
+        // `retain` below drops entries with no rows, and nothing would rebuild them
+        // because the reuse count had already skipped past them).
         let reuse = self
             .reconciled_ids
             .iter()
             .zip(lines.iter())
-            .take_while(|(cached, line)| **cached == line.id)
+            .take_while(|(cached, line)| {
+                **cached == line.id && self.rendered.contains_key(&line.id)
+            })
             .count();
         self.reconciled_ids.truncate(reuse);
         self.offsets.truncate(reuse + 1);
@@ -203,7 +317,7 @@ impl RenderCache {
         for line in &lines[reuse..] {
             self.rendered
                 .entry(line.id)
-                .or_insert_with(|| RenderedLine::build(line, width, expand_outputs, theme));
+                .or_insert_with(|| RenderedLine::build(line, width, state, theme));
             let h = self.rendered[&line.id].rows.len();
             total += h;
             self.reconciled_ids.push(line.id);
@@ -296,6 +410,9 @@ impl RenderCache {
 }
 
 /// Convenience: full pipeline for tests and benches — reconcile then take a window.
+///
+/// `expand_outputs` is the *global* toggle; a test that wants one card open passes
+/// it through [`RenderState`] directly instead.
 pub fn snapshot_rows(
     lines: &[TranscriptLine],
     width: usize,
@@ -320,8 +437,28 @@ pub fn snapshot_rows_with_kinds(
     theme: &Theme,
 ) -> Vec<(LineKind, Line<'static>)> {
     let mut cache = RenderCache::new();
-    cache.reconcile(lines, width, expand_outputs, theme);
+    let state = RenderState {
+        expand_all: expand_outputs,
+        expanded: &[],
+        more_key: None,
+    };
+    cache.reconcile(lines, width, &state, theme, &[]);
     cache.visible_rows_with_kinds(skip, visible)
+}
+
+/// [`snapshot_rows`] under an explicit render state: the shape a test needs to
+/// open one card and leave the others collapsed.
+pub fn snapshot_rows_in(
+    lines: &[TranscriptLine],
+    width: usize,
+    state: &RenderState<'_>,
+    skip: usize,
+    visible: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut cache = RenderCache::new();
+    cache.reconcile(lines, width, state, theme, &[]);
+    cache.visible_rows(skip, visible)
 }
 
 #[cfg(test)]
@@ -343,14 +480,59 @@ mod tests {
         TranscriptLine::plain(kind, text)
     }
 
+    /// The default render state: global expansion off, no per-card decisions.
+    fn state(expand_all: bool) -> RenderState<'static> {
+        RenderState {
+            expand_all,
+            expanded: &[],
+            more_key: Some("ctrl+x"),
+        }
+    }
+
+    /// One card, committed through the real reducer so its title is the one a
+    /// session would draw rather than a fixture that agrees with the test.
+    fn edit_card(diff: &str, expanded: bool) -> (TranscriptLine, RenderState<'static>) {
+        let mut ui = crate::state::UiState::new();
+        ui.apply(&crate::state::agent_event_edit_result(diff, false));
+        let line = ui.lines().first().expect("the card").clone();
+        let open: &'static [(u64, bool)] = Box::leak(vec![(line.id, expanded)].into_boxed_slice());
+        (
+            line,
+            RenderState {
+                expand_all: false,
+                expanded: open,
+                more_key: Some("ctrl+x"),
+            },
+        )
+    }
+
+    fn text_of(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<String>()
+    }
+
+    /// A unified diff of `n` changed lines, for the cap tests.
+    fn long_diff(n: usize) -> String {
+        let mut out = format!("@@ -1,{n} +1,{n} @@\n");
+        for i in 0..n {
+            out.push_str(&format!("-old line {i}\n"));
+        }
+        for i in 0..n {
+            out.push_str(&format!("+new line {i}\n"));
+        }
+        out
+    }
+
     #[test]
     fn assistant_markdown_renders_once_and_stays_cached() {
         let lines = vec![TranscriptLine::assistant_md("# Title\n\nbody text")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false, &theme());
+        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
         assert_eq!(cache.len(), 1);
         // Same state again: no new renders (len unchanged), offsets stable.
-        cache.reconcile(&lines, 80, false, &theme());
+        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.total_rows(), 2, "heading + paragraph");
     }
@@ -362,15 +544,9 @@ mod tests {
             lines.push(plain(LineKind::System, format!("system line {i}")));
         }
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false, &theme());
+        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
         let mid = cache.visible_rows(20, 5);
         assert_eq!(mid.len(), 5);
-        let text_of = |l: &Line<'_>| {
-            l.spans
-                .iter()
-                .map(|s| s.content.to_string())
-                .collect::<String>()
-        };
         assert_eq!(text_of(&mid[0]), "• system line 20");
         assert_eq!(text_of(&mid[4]), "• system line 24");
     }
@@ -384,18 +560,12 @@ mod tests {
             plain(LineKind::System, "after"),
         ];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 30, false, &theme());
+        cache.reconcile(&lines, 30, &state(false), &theme(), &[]);
         assert!(cache.total_rows() > 3, "tool line must wrap");
         // Window starting AT the tool line: its first wrapped row carries the ✓
         // mark (prefix and body are one logical line), later rows are continuations.
         let rows = cache.visible_rows(1, 2);
         assert_eq!(rows.len(), 2);
-        let text_of = |l: &Line<'_>| {
-            l.spans
-                .iter()
-                .map(|s| s.content.to_string())
-                .collect::<String>()
-        };
         let first = text_of(&rows[0]);
         assert!(
             first.starts_with("✓ "),
@@ -411,9 +581,9 @@ mod tests {
     fn clear_then_reappend_drops_stale_entries() {
         let mut lines = vec![plain(LineKind::System, "one")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false, &theme());
+        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
         lines = vec![plain(LineKind::System, "fresh")];
-        cache.reconcile(&lines, 80, false, &theme());
+        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
         assert_eq!(cache.len(), 1, "stale id evicted");
         assert_eq!(cache.total_rows(), 1);
     }
@@ -422,9 +592,9 @@ mod tests {
     fn width_change_invalidates_everything() {
         let lines = vec![plain(LineKind::System, "some text")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, false, &theme());
+        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
         let before = cache.len();
-        cache.reconcile(&lines, 40, false, &theme());
+        cache.reconcile(&lines, 40, &state(false), &theme(), &[]);
         assert_eq!(before, 1);
         assert_eq!(cache.len(), 1, "rebuilt once at the new width");
     }
@@ -438,13 +608,110 @@ mod tests {
             format!("bash → {long}"),
         )];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 60, false, &theme());
+        cache.reconcile(&lines, 60, &state(false), &theme(), &[]);
         let collapsed_rows = cache.total_rows();
-        cache.reconcile(&lines, 60, true, &theme());
+        cache.reconcile(&lines, 60, &state(true), &theme(), &[]);
         assert!(
             cache.total_rows() > collapsed_rows,
             "expanded payload must produce more rows"
         );
+    }
+
+    /// M126: a changed open/closed set is part of the cache key.
+    ///
+    /// The negative control for the whole per-card feature: if `RenderState` were
+    /// not compared, the cache would keep serving the collapsed rows of a card the
+    /// user has opened, and the frame would look like the key did nothing.
+    ///
+    /// The diff is deliberately longer than [`crate::ui::card::BODY_ROWS`], so the
+    /// open and collapsed bodies differ by the *cap* rather than by nothing.
+    #[test]
+    fn changing_which_cards_are_open_invalidates_the_cache() {
+        let long_diff = long_diff(13);
+        let (line, _) = edit_card(&long_diff, false);
+        let id = line.id;
+        let mut cache = RenderCache::new();
+        cache.reconcile(
+            std::slice::from_ref(&line),
+            60,
+            &state(false),
+            &theme(),
+            &[],
+        );
+        let collapsed = cache.total_rows();
+        cache.reconcile(
+            std::slice::from_ref(&line),
+            60,
+            &RenderState {
+                expand_all: false,
+                expanded: &[(id, true)],
+                more_key: Some("ctrl+x"),
+            },
+            &theme(),
+            &[],
+        );
+        let opened = cache.total_rows();
+        assert_eq!(
+            collapsed,
+            crate::ui::card::BODY_ROWS + 2,
+            "the collapsed card is the cap plus its title and its affordance"
+        );
+        assert!(
+            opened > collapsed,
+            "an opened card must render more rows than a capped one: {collapsed} -> {opened}"
+        );
+    }
+
+    /// M126: a card whose status moved is rebuilt when it is named, and only then.
+    #[test]
+    fn a_restaled_card_is_rebuilt_when_named_and_kept_when_not() {
+        let diff = "@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let (line, _) = edit_card(diff, false);
+        let mut cache = RenderCache::new();
+        cache.reconcile(
+            std::slice::from_ref(&line),
+            40,
+            &state(false),
+            &theme(),
+            &[],
+        );
+        let rows = |cache: &RenderCache| {
+            cache
+                .rendered
+                .get(&line.id)
+                .expect("the card was rendered")
+                .rows
+                .iter()
+                .map(|r| r.iter().map(|(t, _)| t.as_str()).collect::<String>())
+                .collect::<Vec<_>>()
+        };
+        let cached = rows(&cache);
+
+        // Whatever the id, an un-named card keeps the very same rows: this is what
+        // makes a long transcript O(1) to reconcile per frame. Compared by the
+        // rows rather than by the whole entry, because a rebuild re-reads the clock
+        // for the card's duration and two builds of the same card can differ by a
+        // millisecond of wall time.
+        cache.reconcile(
+            std::slice::from_ref(&line),
+            40,
+            &state(false),
+            &theme(),
+            &[],
+        );
+        assert_eq!(rows(&cache), cached, "an un-named card must not be rebuilt");
+
+        // Naming it drops the entry, so the next read rebuilds from the card.
+        let before = cache.len();
+        cache.reconcile(
+            std::slice::from_ref(&line),
+            40,
+            &state(false),
+            &theme(),
+            &[line.id],
+        );
+        assert_eq!(rows(&cache), cached, "rebuilt from the same card");
+        assert_eq!(cache.len(), before, "nothing else was touched");
     }
 
     #[test]
@@ -476,12 +743,6 @@ mod tests {
             TranscriptLine::plain(LineKind::System, "run finished"),
         ];
         let rows = snapshot_rows(&lines, 80, false, 0, 10, &theme());
-        let text_of = |l: &Line<'_>| {
-            l.spans
-                .iter()
-                .map(|s| s.content.to_string())
-                .collect::<String>()
-        };
         assert_eq!(text_of(&rows[0]), "❯ hello");
         assert_eq!(text_of(&rows[1]), "✗ bash → boom");
         assert_eq!(text_of(&rows[2]), "▸ tool-call bash {ls}");
@@ -504,20 +765,43 @@ mod tests {
         // draw path cannot decorate, which is the defect this whole change fixes.
         assert_eq!(rows[0].0, LineKind::ToolCall);
         assert_eq!(rows[1].0, LineKind::System);
-        let text_of = |(_, l): &(LineKind, Line<'_>)| {
-            l.spans
-                .iter()
-                .map(|s| s.content.to_string())
-                .collect::<String>()
-        };
-        let call = text_of(&rows[0]);
-        let notice = text_of(&rows[1]);
+        let call = text_of(&rows[0].1);
+        let notice = text_of(&rows[1].1);
         assert_eq!(call, "\\ tool-call bash {cargo test}");
         assert_eq!(notice, "* run finished");
         assert_ne!(
             crate::ui::transcript::row_style(&theme, LineKind::ToolCall).0,
             crate::ui::transcript::row_style(&theme, LineKind::System).0,
             "the gutter glyphs must differ when colour cannot carry the role"
+        );
+    }
+
+    // ---- M126: the card path -------------------------------------------------
+
+    /// A tool call's rows never come from `text`: the title is rebuilt from the
+    /// card, so a stale `text` cannot leak into the frame.
+    #[test]
+    fn a_tool_card_renders_its_title_and_body_not_its_text_field() {
+        let (line, _) = edit_card("@@ -1,1 +1,1 @@\n-old\n+new\n", false);
+        assert!(
+            line.text.starts_with("edit → "),
+            "the legacy text field stays populated for non-card consumers"
+        );
+        let rows = snapshot_rows(std::slice::from_ref(&line), 60, false, 0, 20, &theme());
+        let joined = rows.iter().map(text_of).collect::<Vec<_>>().join("\n");
+        assert!(
+            joined.contains("edit · ok"),
+            "the title must carry the name and the status: {joined}"
+        );
+        assert!(
+            !joined.contains("→"),
+            "the card must not fall back to the `name → body` row: {joined}"
+        );
+        // The sign gutter is what survives `NO_COLOR`, so it is asserted on the
+        // text rather than on the colour: `+`/`-` then the line number.
+        assert!(
+            joined.contains("- 1 old") && joined.contains("+ 1 new"),
+            "the diff body must be drawn with its sign gutter and line numbers: {joined}"
         );
     }
 }
