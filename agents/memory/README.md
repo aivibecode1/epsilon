@@ -46,44 +46,7 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **M126's remaining failure, narrowed (round 37).** I decided the convention and made the change:
-  **Ctrl+X flips the global, and the selected card's own entry records "open if the global is now on,
-  or it already was"** — not `!was_open`, which is what made the second press close the card the
-  first press had opened. `app/keys.rs` (`app.tools.expand`) carries the reasoning in a comment. The
-  fixture settled it: press 1 records the selected card open *alongside* the global, press 2 must
-  leave it open while the others follow the global off.
-  That fixed the two assertions that were failing ("the hand-opened card must still be open", "must
-  not be capped again").
-- **M126's remaining failure, MEASURED (round 38) — my earlier framing of it was wrong.**
-  `app/golden.rs:1401`, `assert_eq!(app.render_cache.total_rows(), all_open_rows - 4)`, gives
-  **left 32, right 28**: `total_rows` after the second press is *exactly what it was after the
-  first*, so **nothing collapsed at all**. The question is not "how many rows does a collapsing card
-  give back" but **why the untouched cards do not follow the global toggle back off**.
-  Check first, as a hypothesis and not a finding: the render cache's invalidation key may not cover
-  the global toggle's effect on cards holding no explicit entry — the author's own
-  `changing_which_cards_are_open_invalidates_the_cache` test was failing in earlier rounds in the same
-  area, and `RenderState::key()` is `(expand_all, expanded)`. Before changing anything, print
-  `app.card_open`, `prefs.expand_outputs` and `total_rows` at each press.
-  **REFUTED in round 39 — do not re-run this lead.** `RenderCache::reconcile`
-  (`render_cache.rs:273-292`) sets `invalidate_all` when the key changes, and the key *does* include
-  `expand_all` (`CacheKey::of`, `:281`), while `logical_lines` consults `state.is_open` on every
-  rebuild (`:112`). So a global flip does invalidate and does re-derive each card's openness; the
-  cache is not the cause.
-  **PROBED in round 40 — the fixture's premise is what fails, not the code.** A temporary print just
-  before the assertion gave, after the second press:
-  `expand_all=false  card_open=[(3, true)]  total_rows=32  all_open_rows=32`.
-  So the global did flip, exactly one card holds an explicit entry (the long one, kept open as
-  intended), and **the frame's row count is unchanged** — the two short cards give back **zero** rows
-  when they cap, where the fixture's comment assumes 4 ("4 rows capped and 6 open"). Two candidates
-  remain and the print distinguishes neither: the short cards' bodies fit inside the cap (so capping
-  them costs nothing), or they have no body at all and were never affected by the global toggle.
-  **Next step: print each card's row count** (`ui::card::rows` per line id) rather than the total —
-  that says which of the two it is, and only then is it safe to decide whether the assertion or the
-  cap is wrong. Do **not** simply relax the assertion to 32: that is changing a test to match its own
-  output, which is only honest once the reason for 32 is known.
-  **State: uncommitted WIP in three files** — the author's `app/golden.rs` + `render_cache.rs` (do NOT
-  revert: they fix an earlier E0277 in this same test) and my `app/keys.rs`. `cargo test -p
-  epsilon-tui` is **266 passed / 1 failed**. Nothing committed.
+- **M126 CLOSED (`933837b`, `9ae64a2`) — tool cards and a real diff, battery `m126d` PASSES:** all
 - **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
   exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
   eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
