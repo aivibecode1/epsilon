@@ -238,8 +238,14 @@ impl UiState {
     }
 
     /// Local echo of submitted input; distinct from replayed transcript messages.
+    ///
+    /// The text is stored **without** a marker. The prompt glyph is a rendering
+    /// decision (`render_cache::row_marker` draws `❯` from the theme, and
+    /// `transcript::decorate` adds the `▎` gutter); a `"> "` stored here renders
+    /// as a second marker beside both, and puts a character where the gutter
+    /// glyph belongs.
     pub fn push_local_input(&mut self, text: &str) {
-        self.push_line(TranscriptLine::plain(LineKind::User, format!("> {text}")));
+        self.push_line(TranscriptLine::plain(LineKind::User, text));
     }
 
     /// Runtime notice (run failures, lag warnings) rendered as a system row.
@@ -285,7 +291,8 @@ impl UiState {
                     if text.trim().is_empty() {
                         continue;
                     }
-                    self.push_line(TranscriptLine::plain(LineKind::User, format!("> {}", text)));
+                    // No `"> "` prefix: see `push_local_input`.
+                    self.push_line(TranscriptLine::plain(LineKind::User, text));
                 }
                 Message::Assistant(a) => {
                     let thinking = thinking_of(a);
@@ -879,10 +886,12 @@ mod tests {
     }
 
     #[test]
-    fn local_input_echoes_with_prompt_prefix() {
+    fn local_input_echoes_without_a_stored_marker() {
+        // The marker is the renderer's job (`❯` from the cache, `▎` from the
+        // gutter). Storing one here produced `❯ > hello` on screen.
         let mut st = UiState::new();
         st.push_local_input("fix the tests");
-        assert_eq!(st.lines()[0].text, "> fix the tests");
+        assert_eq!(st.lines()[0].text, "fix the tests");
         assert_eq!(st.lines()[0].kind, LineKind::User);
     }
 

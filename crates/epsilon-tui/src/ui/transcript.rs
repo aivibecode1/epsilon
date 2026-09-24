@@ -56,7 +56,7 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             Style::default(),
         ),
         LineKind::ToolCall => (
-            glyphs.bullet.to_string(),
+            glyphs.tool_call.to_string(),
             theme.warn(),
             theme.warn(),
             theme.surface_pending(),
@@ -73,6 +73,11 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             theme.danger(),
             theme.surface_err(),
         ),
+        // A lifecycle notice is not a tool call. They shared `glyphs.bullet`, so
+        // on a terminal with no surfaces — or with `NO_COLOR` set — a pending call
+        // and a notice were the same pixels. The bullet is the notice's now; the
+        // call owns `glyphs.tool_call`, and the row's own marker repeats it in the
+        // body position so the distinction survives at a glance.
         LineKind::System => (
             glyphs.bullet.to_string(),
             theme.faint(),
@@ -88,6 +93,17 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
 /// adds the two-column gutter and, where the terminal supports it, the band that
 /// runs to the right edge. Doing it here rather than in the cache keeps the cache
 /// independent of the theme, so switching colour mode does not invalidate it.
+///
+/// `width` is the **whole row**, not the body: a band has to reach the terminal
+/// edge to read as a block of speech rather than as a highlight on the text, so
+/// the fill is `width - gutter - body`. Callers therefore wrap the body to
+/// `width - GUTTER` and pass the frame width here; wrapping to `width` and then
+/// prefixing two columns is how a transcript row ends up over the edge and wraps.
+///
+/// This is the production path: `app::draw_transcript` runs every visible row
+/// through it. It used to be called only by this module's tests, which is exactly
+/// how the gutter and the bands came to be missing from the screen while the
+/// suite reported them covered.
 pub fn decorate(
     theme: &Theme,
     kind: LineKind,
@@ -96,8 +112,14 @@ pub fn decorate(
 ) -> Line<'static> {
     let (glyph, gutter_style, _body_style, band) = row_style(theme, kind);
     let mut spans = Vec::with_capacity(body.len() + 2);
-    let padded = format!("{glyph:<GUTTER$}");
-    spans.push(Span::styled(padded, gutter_style));
+    // Measured, not `format!("{glyph:<GUTTER$}")`: a width counted in `char`s is
+    // wrong the moment a repertoire holds a double-width glyph, and the gutter is
+    // the one column every row of the transcript aligns on.
+    let glyph_width = crate::ui::layout::display_width(&glyph);
+    spans.push(Span::styled(
+        format!("{glyph}{}", " ".repeat(GUTTER.saturating_sub(glyph_width))),
+        gutter_style,
+    ));
     spans.extend(body);
     if band != Style::default() {
         // The band has to reach the right edge, or it reads as a highlight on
@@ -203,15 +225,18 @@ mod tests {
             gutters.push((kind, glyph));
         }
         // User, tool call, tool ok, tool error and system each have a marker;
-        // assistant prose deliberately has none, and thinking has a rule.
+        // assistant prose deliberately has none, and thinking has a rule. The
+        // call and the notice are the pair that used to share `*` — with colour
+        // gone, that made a pending call and a lifecycle notice the same pixels.
         assert_eq!(gutters[0].1, ">"); // user
         assert_eq!(gutters[1].1, " "); // assistant: no marker, by design
         assert_eq!(gutters[2].1, "|"); // thinking
-        assert_eq!(gutters[3].1, "*"); // tool call
+        assert_eq!(gutters[3].1, "\\"); // tool call
         assert_eq!(gutters[4].1, "+"); // ok
         assert_eq!(gutters[5].1, "x"); // error
         assert_eq!(gutters[6].1, "*"); // system notice
         assert_ne!(gutters[0].1, gutters[5].1);
+        assert_ne!(gutters[3].1, gutters[6].1);
     }
 
     #[test]

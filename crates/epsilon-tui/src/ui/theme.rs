@@ -85,6 +85,10 @@ pub struct Glyphs {
     pub caret: &'static str,
     /// The marker for the session the user is looking at.
     pub cursor_bar: &'static str,
+    /// The prompt marker that introduces a row the user typed.
+    pub prompt: &'static str,
+    /// The marker that introduces a tool call, before it has a result.
+    pub tool_call: &'static str,
     /// A completed step.
     pub tick: &'static str,
     /// A failed step.
@@ -106,6 +110,8 @@ pub const UNICODE: Glyphs = Glyphs {
     bullet: "•",
     caret: "▌",
     cursor_bar: "▎",
+    prompt: "❯",
+    tool_call: "▸",
     tick: "✓",
     cross: "✗",
     warn: "!",
@@ -123,6 +129,8 @@ pub const ASCII: Glyphs = Glyphs {
     bullet: "*",
     caret: "_",
     cursor_bar: ">",
+    prompt: ">",
+    tool_call: "\\",
     tick: "+",
     cross: "x",
     warn: "!",
@@ -534,6 +542,8 @@ mod tests {
         check(ASCII.bullet);
         check(ASCII.caret);
         check(ASCII.cursor_bar);
+        check(ASCII.prompt);
+        check(ASCII.tool_call);
         for frame in ASCII.spinner {
             check(frame);
         }

@@ -88,7 +88,10 @@ where
         draw_transcript(f, regions.transcript);
     }
 
-    composer::draw_rule(f, regions.transcript_rule, theme);
+    // One rule, and it is the composer's. It was two — the second sat between the
+    // header and the transcript, drawn by this same function in this same style,
+    // so neither line said what it divided while the pair cost a row of
+    // conversation at every terminal size.
     composer::draw(
         f,
         regions.composer,
@@ -194,14 +197,15 @@ mod tests {
                 footer.contains("enter") || footer.contains("send"),
                 "{w}x{h} footer: {footer:?}"
             );
-            // Exactly two full-width rules, between the three stacked regions.
-            // ilter must never see an empty row: ''.chars().all(..) is
-            // vacuously true, which once made this count every blank row too.
+            // Exactly one full-width rule, between the composer and the footer.
+            // There used to be two, and `filter` must never see an empty row:
+            // ''.chars().all(..) is vacuously true, which once made this count
+            // every blank row too.
             let rules = rows
                 .iter()
                 .filter(|r| !r.is_empty() && r.chars().all(|c| c == '-'))
                 .count();
-            assert_eq!(rules, 2, "{w}x{h} drew {rules} rules: {rows:#?}");
+            assert_eq!(rules, 1, "{w}x{h} drew {rules} rules: {rows:#?}");
         }
     }
 

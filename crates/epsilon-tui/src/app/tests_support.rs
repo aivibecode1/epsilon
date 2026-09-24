@@ -72,6 +72,20 @@ pub fn row_text(buffer: &ratatui::buffer::Buffer, y: u16, width: u16) -> String 
 /// that renders correctly in isolation but cannot be assembled into a frame is
 /// caught here rather than by a user.
 pub fn render_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    render_buffer(app, width, height).1
+}
+
+/// The same draw, but keep the buffer.
+///
+/// Style is not visible in the text: a filled band, a gutter glyph's colour and a
+/// row's modifiers live on the cells. A test that only reads the text back cannot
+/// tell a decorated frame from an undecorated one, which is how the transcript's
+/// whole decoration system stayed dead code behind a green suite.
+pub fn render_buffer(
+    app: &mut App,
+    width: u16,
+    height: u16,
+) -> (ratatui::buffer::Buffer, Vec<String>) {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -79,8 +93,9 @@ pub fn render_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
     terminal
         .draw(|frame| draw(frame, app))
         .expect("the draw path must not panic");
-    let buffer = terminal.backend().buffer();
-    (0..height).map(|y| row_text(buffer, y, width)).collect()
+    let buffer = terminal.backend().buffer().clone();
+    let rows = (0..height).map(|y| row_text(&buffer, y, width)).collect();
+    (buffer, rows)
 }
 
 /// Park one ask on the shared queue and hand it to the app, exactly like the run

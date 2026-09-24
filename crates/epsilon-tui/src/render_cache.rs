@@ -24,6 +24,10 @@ use crate::wrap;
 /// One logical transcript line rendered into `width`-wide screen rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedLine {
+    /// The role the rows came from. Carried alongside them because the draw path
+    /// decorates per kind and a wrapped logical line yields *several* rows that
+    /// all share one kind — the row offset table cannot recover it.
+    pub kind: LineKind,
     /// Wrapped rows (already prefixed/styled); total height = `rows.len()`.
     pub rows: Vec<Vec<(String, Style)>>,
 }
@@ -39,7 +43,10 @@ impl RenderedLine {
         if rows.is_empty() {
             rows.push(Vec::new());
         }
-        Self { rows }
+        Self {
+            kind: line.kind,
+            rows,
+        }
     }
 }
 
@@ -68,23 +75,41 @@ fn logical_lines(
             })
             .collect();
     }
-    match line.kind {
-        LineKind::User => vec![vec![
-            ("❯ ".to_string(), style_for(LineKind::User, theme)),
-            (line.text.clone(), style_for(LineKind::User, theme)),
-        ]],
-        LineKind::ToolResultOk | LineKind::ToolResultErr => {
-            let mark = if line.kind == LineKind::ToolResultErr {
-                "✗ "
-            } else {
-                "✓ "
-            };
-            vec![vec![
-                (mark.to_string(), style_for(line.kind, theme)),
-                (line.text.clone(), style_for(line.kind, theme)),
-            ]]
-        }
-        _ => vec![vec![(line.text.clone(), style_for(line.kind, theme))]],
+    let marker = row_marker(line.kind, theme);
+    if marker.is_empty() {
+        vec![vec![(line.text.clone(), style_for(line.kind, theme))]]
+    } else {
+        vec![vec![
+            (marker, style_for(line.kind, theme)),
+            (line.text.clone(), style_for(line.kind, theme)),
+        ]]
+    }
+}
+
+/// The marker that introduces a row's own text, inside the gutter.
+///
+/// Not every role gets one: assistant prose is what the page is *for* and reads
+/// better undecorated, and the reasoning rule is already carried by the gutter.
+/// Every marker here (and the absence of one) comes from [`Theme`], so a console
+/// with a legacy code page gets characters it can actually draw.
+///
+/// The user row is the one prefix the cache owns. `state::push_local_input` used
+/// to store its own `"> "` as part of the text, which rendered as `❯ > hello` —
+/// two markers, four columns, and a `>` sitting where the `▎` gutter belongs.
+fn row_marker(kind: LineKind, theme: &Theme) -> String {
+    let glyphs = &theme.glyphs;
+    match kind {
+        LineKind::User => format!("{} ", glyphs.prompt),
+        // A pending call needs its own marker, not the result's tick: the reader
+        // has to tell "about to run" from "ran" without reading the text, and on
+        // a terminal with no surfaces the glyph is all there is.
+        LineKind::ToolCall => format!("{} ", glyphs.tool_call),
+        LineKind::ToolResultOk => format!("{} ", glyphs.tick),
+        LineKind::ToolResultErr => format!("{} ", glyphs.cross),
+        // A notice is not the same event as a tool call and must not share its
+        // marker: with `NO_COLOR` or 16 colours the two would be the same pixels.
+        LineKind::System => format!("{} ", glyphs.bullet),
+        LineKind::Assistant | LineKind::Thinking => String::new(),
     }
 }
 
@@ -200,7 +225,35 @@ impl RenderCache {
     ///
     /// Only this window is cloned out of the cache — scrolling through a huge session
     /// costs the same as a tiny one.
+    ///
+    /// The draw path wants the kinds as well
+    /// ([`Self::visible_rows_with_kinds`]); this plain form is for callers that
+    /// only need the pixels.
     pub fn visible_rows(&self, skip: usize, visible: usize) -> Vec<Line<'static>> {
+        self.visible_rows_with_kinds(skip, visible)
+            .into_iter()
+            .map(|(_kind, line)| line)
+            .collect()
+    }
+
+    /// The same window, each row paired with the [`LineKind`] it came from.
+    ///
+    /// The draw path needs the kind to pick the row's gutter and band, and the
+    /// kind is not recoverable from a materialized `Line`. It is carried out of
+    /// the cache rather than re-derived from `ui.lines()` by index, because a
+    /// logical line wraps into *several* screen rows: row index and line index
+    /// stop agreeing the moment anything wraps.
+    ///
+    /// Decoration deliberately stays outside this call, so the cache key does
+    /// not have to gain the theme (see [`RenderCache::reconcile`]). The body
+    /// styles here do come from the theme — they always have — but only the
+    /// *wrap width* and the expand toggle change the cached structure, and
+    /// neither of those is a theme property.
+    pub fn visible_rows_with_kinds(
+        &self,
+        skip: usize,
+        visible: usize,
+    ) -> Vec<(LineKind, Line<'static>)> {
         let mut out = Vec::with_capacity(visible.min(self.total_rows));
         if visible == 0 || self.reconciled_ids.is_empty() {
             return out;
@@ -225,7 +278,7 @@ impl RenderCache {
                     .iter()
                     .map(|(t, s)| Span::styled(t.clone(), *s))
                     .collect();
-                out.push(Line::from(spans));
+                out.push((rendered.kind, Line::from(spans)));
             }
         }
         out
@@ -251,19 +304,39 @@ pub fn snapshot_rows(
     visible: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
+    snapshot_rows_with_kinds(lines, width, expand_outputs, skip, visible, theme)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect()
+}
+
+/// [`snapshot_rows`], keeping the kind of the row each line came from.
+pub fn snapshot_rows_with_kinds(
+    lines: &[TranscriptLine],
+    width: usize,
+    expand_outputs: bool,
+    skip: usize,
+    visible: usize,
+    theme: &Theme,
+) -> Vec<(LineKind, Line<'static>)> {
     let mut cache = RenderCache::new();
     cache.reconcile(lines, width, expand_outputs, theme);
-    cache.visible_rows(skip, visible)
+    cache.visible_rows_with_kinds(skip, visible)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// One theme for the suite: the cache does not key on it, and tests that
-    /// care about styling assert through `ui::transcript` instead.
+    /// One theme for the suite, in the Unicode repertoire production uses by
+    /// default. It is also what decides each row's leading marker, via
+    /// [`row_marker`] — the rows carry a `LineKind` and the marker table turns it
+    /// into a glyph, so a change to that vocabulary moves these assertions.
     fn theme() -> Theme {
-        Theme::new(crate::ui::theme::ColorMode::Ansi16, crate::ui::theme::ASCII)
+        Theme::new(
+            crate::ui::theme::ColorMode::Ansi16,
+            crate::ui::theme::UNICODE,
+        )
     }
 
     fn plain(kind: LineKind, text: impl Into<String>) -> TranscriptLine {
@@ -298,8 +371,8 @@ mod tests {
                 .map(|s| s.content.to_string())
                 .collect::<String>()
         };
-        assert_eq!(text_of(&mid[0]), "system line 20");
-        assert_eq!(text_of(&mid[4]), "system line 24");
+        assert_eq!(text_of(&mid[0]), "• system line 20");
+        assert_eq!(text_of(&mid[4]), "• system line 24");
     }
 
     #[test]
@@ -375,14 +448,32 @@ mod tests {
     }
 
     #[test]
-    fn user_prefix_and_tool_marks_survive_the_cache_path() {
+    fn a_user_row_carries_one_marker_not_two() {
+        // The regression this pins: `state::push_local_input` used to store
+        // `"> hello"` and the cache prepend `"❯ "`, so the row rendered as
+        // `❯ > hello` — two markers, four columns, and a `>` sitting where the
+        // `▎` gutter belongs. The text is now stored marker-free, so the single
+        // surviving marker is the theme's prompt glyph.
+        //
+        // The stored text is built by `push_local_input` itself, not typed in
+        // here: a fixture with the `"> "` written out by hand would keep passing
+        // after the real one came back.
+        let mut ui = crate::state::UiState::new();
+        ui.push_local_input("hello");
+        let user = ui.lines().first().expect("the echo").clone();
+        assert_eq!(
+            user.text, "hello",
+            "the marker is the renderer's job; storing one doubles it"
+        );
         let lines = vec![
-            plain(LineKind::User, "> hello"),
+            user,
             TranscriptLine::expandable(
                 LineKind::ToolResultErr,
                 "bash → boom".to_string(),
                 "bash → boom".to_string(),
             ),
+            TranscriptLine::plain(LineKind::ToolCall, "tool-call bash {ls}"),
+            TranscriptLine::plain(LineKind::System, "run finished"),
         ];
         let rows = snapshot_rows(&lines, 80, false, 0, 10, &theme());
         let text_of = |l: &Line<'_>| {
@@ -391,7 +482,42 @@ mod tests {
                 .map(|s| s.content.to_string())
                 .collect::<String>()
         };
-        assert_eq!(text_of(&rows[0]), "❯ > hello");
+        assert_eq!(text_of(&rows[0]), "❯ hello");
         assert_eq!(text_of(&rows[1]), "✗ bash → boom");
+        assert_eq!(text_of(&rows[2]), "▸ tool-call bash {ls}");
+        assert_eq!(text_of(&rows[3]), "• run finished");
+    }
+
+    #[test]
+    fn a_tool_call_and_a_notice_are_distinguishable_without_colour() {
+        // With `NO_COLOR` and the ASCII repertoire — the least capable terminal we
+        // support — a pending call and a lifecycle notice must not be the same
+        // pixels. They shared `glyphs.bullet` before this, in *every* mode.
+        let theme = Theme::new(crate::ui::theme::ColorMode::None, crate::ui::theme::ASCII);
+        let lines = vec![
+            TranscriptLine::plain(LineKind::ToolCall, "tool-call bash {cargo test}"),
+            TranscriptLine::plain(LineKind::System, "run finished"),
+        ];
+        let rows = snapshot_rows_with_kinds(&lines, 80, false, 0, 10, &theme);
+        assert_eq!(rows.len(), 2);
+        // Each row must come back still knowing what it is: without the kind the
+        // draw path cannot decorate, which is the defect this whole change fixes.
+        assert_eq!(rows[0].0, LineKind::ToolCall);
+        assert_eq!(rows[1].0, LineKind::System);
+        let text_of = |(_, l): &(LineKind, Line<'_>)| {
+            l.spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect::<String>()
+        };
+        let call = text_of(&rows[0]);
+        let notice = text_of(&rows[1]);
+        assert_eq!(call, "\\ tool-call bash {cargo test}");
+        assert_eq!(notice, "* run finished");
+        assert_ne!(
+            crate::ui::transcript::row_style(&theme, LineKind::ToolCall).0,
+            crate::ui::transcript::row_style(&theme, LineKind::System).0,
+            "the gutter glyphs must differ when colour cannot carry the role"
+        );
     }
 }

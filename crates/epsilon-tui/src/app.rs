@@ -22,7 +22,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::state::UiState;
+use crate::state::{LineKind, UiState};
 
 /// Async provider-listing hook injected by the CLI when built with `--features real`
 /// (M13; provider-name arg since M20): takes a PROVIDER name (`"anthropic"`,
@@ -3213,44 +3213,84 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
 /// M16a virtualized draw: reconcile the render cache (renders ONLY unseen lines),
 /// then materialize just the visible window. Per-frame cost is O(visible), not
 /// O(transcript).
+///
+/// The last step is decoration: each visible row comes out of the cache as a bare
+/// body, and [`crate::ui::transcript::decorate`] adds the two-column gutter and,
+/// on a truecolor terminal, the band that reaches the right edge. That order is
+/// deliberate — decoration sits OUTSIDE the cache, so switching colour mode (or
+/// losing `NO_COLOR`) never invalidates a rendered row and the cache key stays
+/// `(width, expand_outputs)`.
 fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let width = area.width.saturating_sub(1) as usize; // 1-col slack, no h-scroll
-    app.render_cache
-        .reconcile(app.ui.lines(), width, app.prefs.expand_outputs, &app.theme);
+    // Body width: the frame minus the gutter the decoration adds back. Wrapping
+    // to the full frame width and then prefixing two columns is how a transcript
+    // row ends up two cells over the edge and wraps, which turns one line into
+    // two and shifts everything below it.
+    let frame_width = area.width as usize;
+    let body_width = frame_width.saturating_sub(crate::ui::transcript::GUTTER);
+    app.render_cache.reconcile(
+        app.ui.lines(),
+        body_width,
+        app.prefs.expand_outputs,
+        &app.theme,
+    );
     let total = app.render_cache.total_rows();
     let visible = area.height as usize;
 
     // Keep thinking/prose and explicit newlines separate; slice the combined
     // history + live tail in screen rows, including tails taller than the viewport.
-    let mut tail_rows = Vec::new();
-    for (text, style) in [
-        (app.ui.streaming_thinking(), app.theme.thinking()),
-        (app.ui.streaming_text(), app.theme.assistant()),
+    // The tail is not a transcript line yet, so its kind is decided here: it is
+    // the assistant's own prose (or its reasoning) arriving token by token.
+    let mut tail_rows: Vec<(LineKind, Line<'static>)> = Vec::new();
+    for (text, style, kind) in [
+        (
+            app.ui.streaming_thinking(),
+            app.theme.thinking(),
+            LineKind::Thinking,
+        ),
+        (
+            app.ui.streaming_text(),
+            app.theme.assistant(),
+            LineKind::Assistant,
+        ),
     ] {
         if !text.is_empty() {
             for line in text.split('\n') {
-                tail_rows.extend(crate::wrap::wrap_line(&[(line.to_string(), style)], width));
+                for wrapped in crate::wrap::wrap_line(&[(line.to_string(), style)], body_width) {
+                    tail_rows.push((
+                        kind,
+                        Line::from(
+                            wrapped
+                                .into_iter()
+                                .map(|(text, style)| Span::styled(text, style))
+                                .collect::<Vec<_>>(),
+                        ),
+                    ));
+                }
             }
         }
     }
     let skip =
         crate::scroll::transcript_skip(total + tail_rows.len(), visible, app.scroll_from_bottom);
-    let mut rows = app.render_cache.visible_rows(skip, visible);
+    let mut rows = app.render_cache.visible_rows_with_kinds(skip, visible);
     let remaining = visible.saturating_sub(rows.len());
-    for wrapped in tail_rows
-        .into_iter()
-        .skip(skip.saturating_sub(total))
-        .take(remaining)
-    {
-        rows.push(Line::from(
-            wrapped
-                .into_iter()
-                .map(|(text, style)| Span::styled(text, style))
-                .collect::<Vec<_>>(),
-        ));
-    }
+    rows.extend(
+        tail_rows
+            .into_iter()
+            .skip(skip.saturating_sub(total))
+            .take(remaining),
+    );
 
-    // visible_rows already applied the viewport offset.
+    // visible_rows already applied the viewport offset; decoration runs on the
+    // rows that survived, and pads to the FRAME width, not the body width, so a
+    // banded row reaches the terminal edge.
+    let rows: Vec<Line<'static>> = rows
+        .into_iter()
+        .map(|(kind, line)| {
+            let body: Vec<Span<'static>> = line.spans;
+            crate::ui::transcript::decorate(&app.theme, kind, body, frame_width)
+        })
+        .collect();
+
     let para = Paragraph::new(rows);
     f.render_widget(para, area);
 }

@@ -9,18 +9,23 @@
 //! ```text
 //! ┌──────────────────────────────────────────────────────────────┐
 //! │ status ···················· metrics (model, tokens, cache…)  │  header
-//! ├──────────────────────────────────────────────────────────────┤  rule
 //! │                                                              │
 //! │ transcript — conversation, tool cards, notices               │  body (fills)
 //! │                                                              │
 //! ├──────────────────────────────────────────────────────────────┤  rule
 //! │ ❯ composer                                                   │  1..=8
-//! ├──────────────────────────────────────────────────────────────┤  rule
 //! │ keys that work right now                     location · model│  footer
 //! └──────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! Two rules keep this honest as the window narrows:
+//! **One rule, not two.** It sits above the composer and means "everything below
+//! this line takes keystrokes". There used to be a second one between the header
+//! and the transcript, drawn by the same function in the same style, dividing
+//! nothing the reader could name while costing a row of conversation at every
+//! size — two of twenty-four rows at 80×24. One fold says where the transcript
+//! stops; two say it twice.
+//!
+//! Two invariants keep this honest as the window narrows:
 //!
 //! * **Chrome yields before content.** The composer gives up rows first, then
 //!   the footer's optional half, then the header's metrics. The transcript is
@@ -40,22 +45,26 @@ pub const MIN_HEIGHT: u16 = 10;
 pub const COMPOSER_MAX_ROWS: u16 = 8;
 /// The composer never takes more than this fraction of the screen.
 pub const COMPOSER_MAX_SHARE: u16 = 3;
-/// Rows the chrome always owns: the header, and the two rules. The footer is
-/// counted with them because it is never optional either.
-pub const CHROME_ROWS: u16 = 4;
+/// Rows the chrome always owns: the header, the composer's rule, and the footer.
+/// The footer is counted with them because it is never optional either.
+///
+/// This was 4 while the transcript had a rule of its own. Cutting that rule is
+/// where the recovered row went; the constant moved with it so the arithmetic
+/// here and in the tests cannot drift apart.
+pub const CHROME_ROWS: u16 = 3;
 
 /// The regions of one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Regions {
     /// Status on the left, live metrics on the right.
     pub header: Rect,
-    /// The conversation.
+    /// The conversation. Runs straight down to [`Regions::composer_rule`]: there
+    /// is deliberately no second divider above it.
     pub transcript: Rect,
-    /// The divider between the transcript and the composer.
-    pub transcript_rule: Rect,
     /// Where the user types.
     pub composer: Rect,
-    /// The divider between the composer and the key hints.
+    /// The divider between the composer and the key hints — and, read from the
+    /// other side, the line that says where the transcript stops.
     pub composer_rule: Rect,
     /// Keys that work right now, and where the session lives.
     pub footer: Rect,
@@ -68,21 +77,13 @@ impl Regions {
     /// wrapped by the caller: the layout decides how much of that it can afford,
     /// because only the layout knows the screen height.
     pub fn split(area: Rect, composer_rows: u16) -> Self {
-        // Chrome first: three one-row bands, plus the composer's own rows.
+        // Chrome first: two one-row bands, plus the composer's own rows.
         let composer = composer_rows.clamp(1, Self::composer_cap(area.height));
         // `Min(1)` rather than `Fill`: with `Fill` a very short screen hands the
         // transcript a zero-height rectangle and the body silently disappears.
-        let [
-            header,
-            transcript,
-            transcript_rule,
-            composer_area,
-            composer_rule,
-            footer,
-        ] = Layout::vertical([
+        let [header, transcript, composer_area, composer_rule, footer] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(1),
-            Constraint::Length(1),
             Constraint::Length(composer),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -91,7 +92,6 @@ impl Regions {
         Self {
             header,
             transcript,
-            transcript_rule,
             composer: composer_area,
             composer_rule,
             footer,
@@ -130,13 +130,43 @@ mod tests {
     fn regions_tile_the_frame_without_gaps_or_overlap() {
         for (w, h) in [(44, 10), (80, 24), (100, 30), (160, 48)] {
             let r = Regions::split(area(w, h), 1);
-            let expected = 1 + r.transcript.height + 1 + r.composer.height + 1 + 1;
+            // header + transcript + composer + ONE rule + footer. The transcript
+            // rule was removed deliberately: this is the arithmetic that proves
+            // its row went to the transcript rather than going missing.
+            let expected = 1 + r.transcript.height + r.composer.height + 1 + 1;
             assert_eq!(expected, h, "{w}x{h} left {expected} rows unaccounted");
             assert_eq!(r.header.y, 0);
-            assert_eq!(r.transcript.y, 1);
+            assert_eq!(r.transcript.y, r.header.bottom());
+            assert_eq!(
+                r.transcript.bottom(),
+                r.composer.y,
+                "{w}x{h}: the transcript must run into the composer with no rule between"
+            );
+            assert_eq!(
+                r.composer_rule.y,
+                r.composer.bottom(),
+                "{w}x{h}: the one rule sits below the composer, not above it"
+            );
             assert_eq!(r.footer.y + 1, h, "footer must sit on the last row");
             assert_eq!(r.header.width, w);
         }
+    }
+
+    #[test]
+    fn cutting_the_transcript_rule_gave_its_row_to_the_transcript() {
+        // The reviewable evidence that the removed rule was intentional rather
+        // than lost: at every supported size the transcript is exactly one row
+        // taller than a layout with two rules would have allowed, and the frame
+        // still tiles completely.
+        for (w, h) in [(44, 10), (80, 24), (100, 30), (160, 48)] {
+            let r = Regions::split(area(w, h), 1);
+            assert_eq!(
+                r.transcript.height,
+                h - CHROME_ROWS - r.composer.height,
+                "{w}x{h}: transcript height no longer matches the chrome budget"
+            );
+        }
+        assert_eq!(CHROME_ROWS, 3, "one header, one rule, one footer");
     }
 
     #[test]
