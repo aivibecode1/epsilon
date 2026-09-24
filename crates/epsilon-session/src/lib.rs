@@ -22,4 +22,6 @@ pub use import::{
 };
 pub use lease::{LeaseOutcome, SessionLease};
 pub use search::{SearchOptions, SessionSearchHit, search_session};
-pub use store::{LineDiagnosis, ModelViewEntry, SessionStore, StoreError, original_backup_path};
+pub use store::{
+    FaultOp, LineDiagnosis, ModelViewEntry, SessionStore, StoreError, original_backup_path,
+};

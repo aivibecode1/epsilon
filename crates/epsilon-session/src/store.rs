@@ -285,6 +285,60 @@ pub struct SessionStore {
     /// when the store goes away. Readers never open a store (session discovery
     /// parses the file directly), so reads stay unconstrained.
     _lease: SessionLease,
+    /// Armed fault plan (F07): the next matching write fails with this message instead of
+    /// touching the file, index or cache. Empty — the state production code is always in —
+    /// leaves the write path exactly as it was.
+    ///
+    /// This is the store-level fault-injection seam M86's `Limits` said the append-failure
+    /// branches needed and did not have. It exists because a *durable write failure* is not
+    /// reachable by any honest test on this machine: the handle is already open, so a
+    /// read-only file, a revoked directory permission and a non-writable attribute all still
+    /// accept writes through it. Injecting at the write path is the only way to test what the
+    /// caller does when the disk says no — see [`SessionStore::set_write_fault_for_tests`].
+    ///
+    /// A list, not one slot: a scenario can need two different writes to fail in one run
+    /// (a prompt append and the overflow retry's pop, say), and arming the second must not
+    /// silently disarm the first.
+    faults: Vec<WriteFault>,
+}
+
+/// A pending injected write failure ([`SessionStore::set_write_fault_for_tests`]).
+#[derive(Debug, Clone)]
+struct WriteFault {
+    /// Which write the injection applies to.
+    op: FaultOp,
+    /// The operation's own error text.
+    message: String,
+    /// How many more matching operations fail. `usize::MAX` sticks for the store's life.
+    remaining: usize,
+}
+
+/// Which write [`SessionStore::set_write_fault_for_tests`] injects a failure into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaultOp {
+    /// [`SessionStore::append`] — the write every durable-commit path goes through.
+    Append,
+    /// [`SessionStore::pop_last`] — the overflow-retry discard.
+    PopLast,
+}
+
+impl WriteFault {
+    /// Apply the plan armed for `op`, consuming one failure when one matches.
+    ///
+    /// `None` means "let the real write happen": no plan for this operation, or one that has
+    /// spent its failures. A spent plan is removed, so a test that arms one failure cannot
+    /// leave the store failing for the assertions after it — and plans for other operations
+    /// are left alone, so arming the pop does not disarm the append.
+    fn take_for(faults: &mut Vec<WriteFault>, op: FaultOp) -> Option<StoreError> {
+        let at = faults.iter().position(|f| f.op == op)?;
+        faults[at].remaining = faults[at].remaining.saturating_sub(1);
+        let spent = faults[at].remaining == 0;
+        let message = faults[at].message.clone();
+        if spent {
+            faults.remove(at);
+        }
+        Some(StoreError::Io(std::io::Error::other(message)))
+    }
 }
 
 impl SessionStore {
@@ -370,6 +424,7 @@ impl SessionStore {
             migrated: false,
             cached_entries: Vec::new(),
             _lease: lease,
+            faults: Vec::new(),
         };
         if !store.reindex()? {
             store.truncate_to_index()?;
@@ -400,6 +455,41 @@ impl SessionStore {
     /// Call [`SessionStore::persist_migration`] to write the result back.
     pub fn migrated(&self) -> bool {
         self.migrated
+    }
+
+    /// Arm an injected write failure for the next `times` matching writes (F07).
+    ///
+    /// The seam M86's `Limits` recorded as missing: a caller's handling of a *failed durable
+    /// write* cannot be tested by making the file unwritable, because the store's handle is
+    /// already open and a read-only file, a revoked directory permission and a non-writable
+    /// attribute all still accept writes through an open handle. Injecting at the write path
+    /// is the only honest way to reach those branches.
+    ///
+    /// The injection is **before the write and after nothing**: the file, the index, the leaf
+    /// and the read cache are left exactly as they were, so an injected failure has the shape
+    /// of a write that never started — which is what a store that refuses a write reports, not
+    /// a half-written line. The `Err` is a [`StoreError::Io`] whose message is `message`, so a
+    /// test can assert on the text a caller would have to relay.
+    ///
+    /// `times` failures are consumed in order: `1` fails exactly one write (`usize::MAX` keeps
+    /// failing). Writes to the *other* operation are never affected, and arming a second
+    /// operation does not disarm the first, so one run can have both an append and a pop fail.
+    ///
+    /// Test-facing by construction — nothing in the product calls it, and an empty list (the
+    /// value every store is born with) is the entire production behaviour.
+    #[doc(hidden)]
+    pub fn set_write_fault_for_tests(&mut self, op: FaultOp, message: &str, times: usize) {
+        self.faults.push(WriteFault {
+            op,
+            message: message.to_string(),
+            remaining: times,
+        });
+    }
+
+    /// Disarm every injected write failure ([`SessionStore::set_write_fault_for_tests`]).
+    #[doc(hidden)]
+    pub fn clear_write_fault_for_tests(&mut self) {
+        self.faults.clear();
     }
 
     /// Rewrite the file with the migrated entries plus a current header
@@ -761,6 +851,9 @@ impl SessionStore {
     /// first (lazy creation — `open` only stamps brand-new files, so a resumed
     /// empty file and a fresh file converge on the same bytes).
     pub fn append(&mut self, kind: EntryKind) -> Result<SessionEntry, StoreError> {
+        if let Some(e) = WriteFault::take_for(&mut self.faults, FaultOp::Append) {
+            return Err(e);
+        }
         if self.header.is_none() {
             let cwd = std::env::current_dir().unwrap_or_default();
             self.write_header(&cwd, None)?;
@@ -930,6 +1023,9 @@ impl SessionStore {
     /// store starts lying about its own contents — the index, the read-through cache
     /// (see `cached_entries`), and the file.
     pub fn pop_last(&mut self) -> Result<Option<SessionEntry>, StoreError> {
+        if let Some(e) = WriteFault::take_for(&mut self.faults, FaultOp::PopLast) {
+            return Err(e);
+        }
         if self.next_seq == 0 {
             return Ok(None);
         }

@@ -419,6 +419,15 @@ fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
+/// The `RunError` for a session-store mutex poisoned by a panic (F07).
+///
+/// One constructor for the three write paths (`persist`, `pop_last_message`, compaction's
+/// append), so a poisoned lock reads the same wherever it is reported rather than becoming a
+/// per-call-site sentence no test can pin.
+fn store_lock_failure() -> RunError {
+    RunError::Internal("session store poisoned".into())
+}
+
 /// Errors a run can surface to its caller.
 #[derive(Debug)]
 pub enum RunError {
@@ -438,6 +447,24 @@ impl std::fmt::Display for RunError {
 }
 
 impl std::error::Error for RunError {}
+
+/// Clears the run-scoped state [`Agent::run`] sets when that run ends — however it ends (F07).
+///
+/// A plain local with a `Drop` rather than two cleanup statements at the end of `run()`: the
+/// function now has early `?` returns, and the cleanup they used to skip is what keeps the agent
+/// runnable at all.
+struct RunGuard<'a> {
+    agent: &'a Agent,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.agent.run_token.lock() {
+            *slot = None;
+        }
+        self.agent.running.store(false, Ordering::SeqCst);
+    }
+}
 
 /// The agent: owns the transcript, the queues, and the event bus.
 pub struct Agent {
@@ -477,6 +504,15 @@ pub struct Agent {
     /// Durable mirror of this agent's transcript; compaction entries land here and the
     /// provider context switches to the store's shadowed model view when attached.
     session_store: Mutex<Option<Arc<Mutex<SessionStore>>>>,
+    /// The durable write that failed on this attached store, if one did (F07).
+    ///
+    /// Set by [`Agent::durable_write_failed`] and read by [`Agent::try_context_view`], which
+    /// refuses to serve the store's projection afterwards: a projection missing a message the
+    /// loop believes it recorded is exactly the divergence F07 is about, and the alternative —
+    /// quietly carrying on, or quietly falling back to runtime history — is the "silently
+    /// alternate authoritative sources" the ledger forbids. Cleared when a store is attached:
+    /// the request path's source is a different file, and this latch is a statement about one.
+    durable_write_failure: Mutex<Option<String>>,
     /// Set when an overflow-triggered compaction already retried this run.
     overflow_retried: AtomicBool,
     /// Set when a pressure-triggered compaction pass failed this run (provider error,
@@ -583,6 +619,7 @@ impl Agent {
             doom_streaks: Mutex::new(HashMap::new()),
             workspace_root,
             session_store: Mutex::new(None),
+            durable_write_failure: Mutex::new(None),
             overflow_retried: AtomicBool::new(false),
             compact_suppressed: AtomicBool::new(false),
             agents: Mutex::new(Vec::new()),
@@ -882,6 +919,12 @@ impl Agent {
         if let Ok(mut slot) = self.session_store.lock() {
             *slot = Some(store);
         }
+        // A new store is a different file, so a failure recorded against the old one no longer
+        // describes what requests would be built from (F07). The epoch bump below is the same
+        // idea for run-scoped replacements.
+        if let Ok(mut slot) = self.durable_write_failure.lock() {
+            *slot = None;
+        }
         // The provider view's source just changed (CORE-02): a run-scoped replacement
         // built against the previous source must not outlive it, or the rest of the run
         // would keep reading a pre-swap view — the same class of staleness a committed
@@ -980,28 +1023,78 @@ impl Agent {
     }
 
     /// Append a message to the durable mirror when one is attached.
-    fn persist(&self, m: &Message) {
-        if let Some(store) = self.store()
-            && let Ok(mut st) = store.lock()
-        {
-            let _ = st.append(EntryKind::Message {
-                message: m.clone(),
-                api_request_sha256: None,
-            });
+    ///
+    /// Fallible, and deliberately loud (F07). The provider request reads the store's
+    /// *projection*, so a durable append that fails while runtime history keeps the message
+    /// leaves the two views describing different conversations: the assistant believes the turn
+    /// was recorded and the next request is built from a transcript that does not contain it.
+    /// The old code discarded the result (`let _ = st.append(..)`), which is exactly the silent
+    /// divergence F07 names.
+    ///
+    /// On failure this emits an [`AgentEvent::Notice`] — every frontend renders notices, and the
+    /// `Err` alone would reach only the callers that look at it (the TUI discards `run()`'s
+    /// result, so an error nobody prints is not a report) — and returns [`RunError::Internal`]
+    /// for the caller to propagate. Callers that can propagate stop the run; see `run()`'s
+    /// prompt append and `run_inner`'s call sites.
+    fn persist(&self, m: &Message) -> Result<(), RunError> {
+        let Some(store) = self.store() else {
+            return Ok(()); // no durable mirror attached: nothing can diverge
+        };
+        let mut st = store.lock().map_err(|_| store_lock_failure())?;
+        st.append(EntryKind::Message {
+            message: m.clone(),
+            api_request_sha256: None,
+        })
+        .map_err(|e| self.durable_write_failed(format!("append: {e}")))?;
+        Ok(())
+    }
+
+    /// Record a failed durable write: announce it, remember it, and return the run error.
+    ///
+    /// The notice is what makes the failure visible — the TUI prints notices and throws away the
+    /// `Err`, so a silent `Err` would be the same invisible failure in a different shape. The
+    /// sentence names the consequence the user needs ("the session may be missing a turn") and
+    /// what to do next, rather than only the operation that failed.
+    ///
+    /// The latch closes the second half of F07. Stopping the run is only possible on the paths
+    /// that return a `Result`, and four of them cannot (the abort/EOF salvage arms return the
+    /// message, not an error). A later request on this agent must not be built from a store view
+    /// that is now missing a message the loop believes it recorded, so [`Agent::try_context_view`]
+    /// asks this latch first and fails closed. The next provider request therefore never runs
+    /// against a transcript that disagrees with the loop's own record.
+    fn durable_write_failed(&self, what: String) -> RunError {
+        let detail = format!(
+            "the session file could not record this turn ({what}). The turn is in this \
+             session's memory but not on disk: a resume, or the next request, may be missing it. \
+             Check the disk and the session file, then retry the turn."
+        );
+        self.emit(AgentEvent::Notice {
+            text: detail.clone(),
+        });
+        if let Ok(mut slot) = self.durable_write_failure.lock() {
+            *slot = Some(what);
         }
+        RunError::Internal(detail)
     }
 
     /// Remove the most recently pushed message (overflow-retry discards failed attempts).
-    fn pop_last_message(&self) {
+    ///
+    /// Both views must lose the message together for the same reason [`Agent::persist`] exists:
+    /// the store's projection is what the next request is built from, so a pop that fails on the
+    /// store while runtime history drops the message leaves the store *ahead* — still carrying
+    /// the attempt the loop just discarded as oversized, which the retry would send again.
+    fn pop_last_message(&self) -> Result<(), RunError> {
         if let Ok(mut h) = self.history.lock() {
             h.pop();
         }
         if let Ok(store) = self.session_store.lock()
             && let Some(st) = store.as_ref()
-            && let Ok(mut s) = st.lock()
         {
-            let _ = s.pop_last();
+            let mut s = st.lock().map_err(|_| store_lock_failure())?;
+            s.pop_last()
+                .map_err(|e| self.durable_write_failed(format!("pop last: {e}")))?;
         }
+        Ok(())
     }
 
     /// Current transcript snapshot (all roles, including harness-only messages).
@@ -1009,11 +1102,11 @@ impl Agent {
         self.history.lock().map(|h| h.clone()).unwrap_or_default()
     }
 
-    fn push_message(&self, m: &Message) {
+    fn push_message(&self, m: &Message) -> Result<(), RunError> {
         if let Ok(mut h) = self.history.lock() {
             h.push(m.clone());
         }
-        self.persist(m);
+        self.persist(m)
     }
 
     /// What the session resume had to repair, if anything (M75): the *kinds*, so a frontend can
@@ -1061,7 +1154,7 @@ impl Agent {
     /// executed — a pretend success would be worse than the invalid transcript.
     ///
     /// Returns how many calls were closed.
-    fn close_dangling_tool_calls(&self) -> usize {
+    fn close_dangling_tool_calls(&self) -> Result<usize, RunError> {
         let mut pending: Vec<(String, String)> = Vec::new();
         for m in self.history() {
             match m {
@@ -1075,7 +1168,7 @@ impl Agent {
             }
         }
         if pending.is_empty() {
-            return 0;
+            return Ok(0);
         }
         let closed = pending.len();
         for (id, name) in pending {
@@ -1092,9 +1185,9 @@ impl Agent {
                 usage: None,
                 is_error: true,
             });
-            self.push_message(&m);
+            self.push_message(&m)?;
         }
-        closed
+        Ok(closed)
     }
 
     fn emit(&self, ev: AgentEvent) {
@@ -1134,9 +1227,25 @@ impl Agent {
     /// would refuse. Two implementations of this read (one lenient, one strict) is exactly
     /// how the two could ever disagree.
     ///
+    /// A failed durable write poisons this read for the rest of the attached store's life
+    /// (F07). The store's projection is what requests are built from, so once a write it should
+    /// have recorded has failed, the projection is missing a message runtime history holds —
+    /// and serving it would hand the provider a transcript that silently disagrees with the
+    /// loop's own record. Refusing is the honest answer: the caller reports a run error, and
+    /// the user has already been told by the notice the failure emitted.
+    ///
     /// Read-only by construction: the store lock is held for the read and nothing
     /// here can write it (ADR-007 — hooks never touch the write path).
     fn try_context_view(&self) -> Result<Vec<Message>, RunError> {
+        if let Ok(slot) = self.durable_write_failure.lock()
+            && let Some(what) = slot.as_deref()
+        {
+            return Err(RunError::Internal(format!(
+                "the session file is missing a turn this session recorded ({what}), so no \
+                 request can be built from it. The transcript in memory is intact; resume \
+                 this session after checking the disk to see what was lost."
+            )));
+        }
         match self.store() {
             Some(store) => {
                 let st = store
@@ -1172,6 +1281,12 @@ impl Agent {
         if self.running.swap(true, Ordering::SeqCst) {
             return Err(RunError::AlreadyRunning);
         }
+        // F07: the early failure paths below (a dangling-call repair that cannot be recorded, a
+        // prompt that cannot be appended) return before the old cleanup at the end of this
+        // function, which would have left `running` set and every later run answering
+        // `AlreadyRunning` — a durable-write failure would have looked like a wedged agent. The
+        // guard runs the same cleanup on every exit, including those.
+        let _cleanup = RunGuard { agent: self };
 
         // Fresh run-scoped token (M12): tools observe it via ToolContext; abort ends
         // the run cooperatively instead of only via process exit.
@@ -1191,7 +1306,10 @@ impl Agent {
         // *reopened* file (`epsilon_session::repair::repair_on_open`); this is the same shape in a
         // live process, where the next request would otherwise carry a tool call nothing answered
         // — structurally invalid for strict wires, and a 400 rather than a puzzle to solve later.
-        let closed = self.close_dangling_tool_calls();
+        //
+        // `?` since F07: closing a dangling call is a durable append, and a run must not start on
+        // a store that just failed to record one. The guard below still has to undo `running`.
+        let closed = self.close_dangling_tool_calls()?;
         if closed > 0 {
             self.emit(AgentEvent::Notice {
                 text: format!("closed {closed} tool call(s) left unanswered by the previous run"),
@@ -1202,21 +1320,19 @@ impl Agent {
         // every later run in a long-lived TUI/server session.
         self.overflow_retried.store(false, Ordering::SeqCst);
         self.compact_suppressed.store(false, Ordering::SeqCst);
-        self.push_message(&prompt);
+        // F07: the prompt's own append is the first durable write of the run, and a turn whose
+        // prompt never reached the file must not start — the store's projection would be missing
+        // the very message the run is answering.
+        self.push_message(&prompt)?;
         self.emit(AgentEvent::AgentStart);
 
         let outcome = self.run_inner(prompt).await;
-
-        if let Ok(mut slot) = self.run_token.lock() {
-            *slot = None;
-        }
         self.emit(AgentEvent::AgentEnd {
             messages: outcome
                 .as_ref()
                 .map(|o| o.produced.clone())
                 .unwrap_or_default(),
         });
-        self.running.store(false, Ordering::SeqCst);
         outcome
     }
 
@@ -1345,8 +1461,12 @@ impl Agent {
                 }
 
                 // Drain point: inject queued messages before the next model call.
+                //
+                // `?` since F07: a queued message the store refused is a message the model
+                // would not see on the next request even though the loop believes it recorded
+                // it. Stopping here is the only answer that does not send a divergent view.
                 for m in pending.drain(..) {
-                    self.push_message(&m);
+                    self.push_message(&m)?;
                     Agent::append_to_turn_context(&mut turn_context, &m);
                     produced.push(m);
                 }
@@ -1424,8 +1544,10 @@ impl Agent {
                 {
                     // Discard the failed attempt, shrink, and retry this turn. The replacement
                     // must drop it too, or runtime history and the run's context would
-                    // disagree by one message.
-                    self.pop_last_message();
+                    // disagree by one message. F07: a pop the store refused leaves the store
+                    // *ahead* (still holding the oversized attempt), so the retry stops here
+                    // instead of re-sending it — `?` is the whole point of the fallible pop.
+                    self.pop_last_message()?;
                     produced.pop();
                     if let Some(ctx) = turn_context.as_mut() {
                         ctx.pop();
@@ -1536,7 +1658,11 @@ impl Agent {
                     self.emit(AgentEvent::MessageStart {
                         message: Box::new(m.clone()),
                     });
-                    self.push_message(&m);
+                    // F07: stop rather than continue with a result the store does not have.
+                    // The results were already computed, but the next request is built from the
+                    // store's projection — carrying on would announce a tool outcome to the user
+                    // that the model's transcript does not contain.
+                    self.push_message(&m)?;
                     // ...and the run's context carries them like any transcript message (pi
                     // appends each result to `currentContext.messages` as it completes), so a
                     // replacement installed earlier keeps tracking the turn's output.
@@ -2020,9 +2146,7 @@ impl Agent {
         // requests read the store's projection, so committing only one of the two views
         // would leave them disagreeing (the F07 append-failure shape).
         if let Some(store) = self.store() {
-            let mut st = store
-                .lock()
-                .map_err(|_| RunError::Internal("store poisoned".into()))?;
+            let mut st = store.lock().map_err(|_| store_lock_failure())?;
             if let Err(e) = st.append(EntryKind::Compaction {
                 summary: summary.clone(),
                 tokens_before: estimate_messages_before as u64,
@@ -2030,6 +2154,10 @@ impl Agent {
                 details: Some(serde_json::json!({ "pruned_tool_results": pruned_count })),
                 usage: None,
             }) {
+                // F07: nothing has diverged yet — memory is untouched and the caller reports the
+                // failure — but the store just refused a durable write, so a later request must
+                // not be built from it on the assumption that writes work.
+                self.durable_write_failed(format!("compaction append: {e}"));
                 return Ok(CompactionOutcome::Failed(format!(
                     "compaction entry could not be appended: {e}"
                 )));
@@ -2042,11 +2170,15 @@ impl Agent {
                 // Poisoned history: the durable entry was already appended. Drop it again
                 // so the two views cannot disagree — with a store attached the provider
                 // request reads the store's projection, and it must describe the same
-                // transcript runtime history holds.
+                // transcript runtime history holds. F07: when that undo itself fails the
+                // views DO disagree (the store keeps a compaction runtime history never
+                // applied), so the failure is reported rather than discarded, exactly as
+                // for an append that fails outright.
                 if let Some(store) = self.store()
                     && let Ok(mut st) = store.lock()
+                    && let Err(e) = st.pop_last()
                 {
-                    let _ = st.pop_last();
+                    self.durable_write_failed(format!("compaction rollback pop: {e}"));
                 }
                 return Err(RunError::Internal("history poisoned".into()));
             }
@@ -2281,7 +2413,7 @@ impl Agent {
                 // so a resumed conversation lost the interrupted answer (pi persists
                 // assistant message-end events; `agent-session.ts:639-656`).
                 let message = self.aborted_message(None);
-                self.push_message(&Message::Assistant(message.clone()));
+                self.push_message(&Message::Assistant(message.clone()))?;
                 self.emit(AgentEvent::MessageEnd {
                     message: Box::new(Message::Assistant(message.clone())),
                 });
@@ -2303,7 +2435,7 @@ impl Agent {
                     // Same lifecycle as the connect-time abort above: the folded-so-far
                     // text is real output and must survive in the transcript.
                     let message = self.aborted_message(folder.partial());
-                    self.push_message(&Message::Assistant(message.clone()));
+                    self.push_message(&Message::Assistant(message.clone()))?;
                     self.emit(AgentEvent::MessageEnd {
                         message: Box::new(Message::Assistant(message.clone())),
                     });
@@ -2341,7 +2473,7 @@ impl Agent {
                                     covered,
                                 );
                             }
-                            self.push_message(&Message::Assistant(message.clone()));
+                            self.push_message(&Message::Assistant(message.clone()))?;
                             self.emit(AgentEvent::MessageEnd {
                                 message: Box::new(Message::Assistant(message.clone())),
                             });
@@ -2390,7 +2522,7 @@ impl Agent {
                                 "provider stream ended without a terminal frame — partial \\
                                  output kept",
                             );
-                            self.push_message(&Message::Assistant(message.clone()));
+                            self.push_message(&Message::Assistant(message.clone()))?;
                             self.emit(AgentEvent::MessageEnd {
                                 message: Box::new(Message::Assistant(message.clone())),
                             });

@@ -10,6 +10,7 @@ use epsilon_contracts::message::{Message, UserMessage};
 use epsilon_core::testing::{EchoTool, FailTool, SlowProvider};
 use epsilon_core::{AutoAllow, LoopLimits, RunError, ToolRegistry};
 use epsilon_llm::FauxProvider;
+use epsilon_session::ModelViewEntry;
 
 fn user_msg(text: &str) -> Message {
     Message::User(UserMessage {
@@ -69,6 +70,27 @@ fn agent_with(
 
 fn echo_call(id: &str, text: &str) -> epsilon_llm::FauxStep {
     epsilon_llm::FauxStep::call(id, "echo", serde_json::json!({ "text": text }))
+}
+
+/// The [`AgentEvent::Notice`] texts a subscription collected, drained destructively.
+///
+/// The caller subscribes **before** the run: notice events reach a live broadcast channel, not a
+/// log, so a subscriber created afterwards sees nothing. Every F07 test that asserts on a notice
+/// therefore subscribes first and drains here.
+fn notices_from(rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>) -> Vec<String> {
+    let mut out = Vec::new();
+    loop {
+        match rx.try_recv() {
+            Ok(ev) => {
+                if let AgentEvent::Notice { text } = &*ev {
+                    out.push(text.clone());
+                }
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    out
 }
 
 struct ObserveScope {
@@ -2398,5 +2420,307 @@ async fn detaching_the_store_mid_run_invalidates_the_replacement() {
     assert!(
         agent.session_store().is_none(),
         "the detach really dropped the store"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// F07 — a durable write that fails is reported, and the views never diverge in
+// silence. The failure is injected at the store's write path
+// (`SessionStore::set_write_fault_for_tests`): a real one cannot be staged here,
+// because the store's handle is already open and a read-only file, a revoked
+// directory permission and a non-writable attribute all still accept writes
+// through it.
+// ---------------------------------------------------------------------------
+
+/// A prompt whose durable append fails must not start a run: the store's projection is what
+/// the provider request is built from, so a turn whose prompt never reached the file would be
+/// answered from a transcript that does not contain the question.
+///
+/// The `Notice` assertion is the one that matters most: this is the only report a TUI user
+/// gets. The TUI discards `run()`'s `Err` (`crates/epsilon-tui/src/app.rs`), so before the
+/// notice existed a failed durable write was invisible to the person who would have to retype
+/// the turn.
+#[tokio::test]
+async fn a_failed_durable_append_is_reported_and_no_request_is_built_from_the_old_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1);
+    let store = Arc::new(Mutex::new(store));
+    let handle = Arc::clone(&store);
+
+    // The script would answer if the run ever reached the provider.
+    let provider = FauxProvider::new(vec![epsilon_llm::FauxStep::say("answered anyway")]);
+    let recorded = provider.recorded_requests_handle();
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.attach_session_store(store);
+    let mut rx = agent.subscribe();
+
+    let err = agent
+        .run(user_msg("hello"))
+        .await
+        .expect_err("a run whose prompt cannot be recorded must not start");
+    let text = err.to_string();
+    assert!(
+        text.contains("could not record this turn") && text.contains("disk full"),
+        "the error must name the failure and its cause: {text}"
+    );
+
+    // (a) The user learns. The notice is the only report a TUI user gets.
+    let notices = notices_from(&mut rx);
+    assert_eq!(notices.len(), 1, "exactly one report: {notices:?}");
+    assert!(
+        notices[0].contains("not on disk") && notices[0].contains("may be missing it"),
+        "the notice says the session may be missing the turn, not just that a write failed: {}",
+        notices[0]
+    );
+
+    // (b) No request was built from the store's older view — the run stopped before the
+    // provider was called at all.
+    assert!(
+        recorded.lock().unwrap().is_empty(),
+        "the provider must never be asked to answer a question the store does not hold"
+    );
+    // The prompt is in memory (what the user typed is not lost) and NOT in the store.
+    assert_eq!(agent.history().len(), 1, "the prompt survives in memory");
+    assert!(
+        handle.lock().unwrap().model_view().unwrap().is_empty(),
+        "the store's view is the older transcript, which is why no request may use it"
+    );
+
+    // (c) The run did not wedge the agent: the guard reset the run-scoped state even though
+    // `run()` returned early.
+    assert!(
+        !agent.is_running(),
+        "a failed durable write must not leave the agent looking busy forever"
+    );
+}
+
+/// The other half of F07: the next request is refused rather than built from a store whose
+/// projection is missing a turn the loop believes it recorded.
+///
+/// This is the *abort-salvage* path on purpose. Four of the durable writes sit in `select!` arms
+/// that return the assistant message rather than a `Result`, so they cannot stop the run the way
+/// the prompt and tool-result appends do; without the latch those are exactly the writes that
+/// would leave the two views disagreeing with nobody told. Cancel mid-stream (the abort message
+/// is a real assistant turn, so losing it loses a turn), let its append fail, and then ask for
+/// another run: the store is missing the answer the transcript holds, and no request may be
+/// built from it.
+#[tokio::test]
+async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
+    use epsilon_contracts::message::{AssistantMessage, StopReason, Usage};
+    use epsilon_contracts::stream::StreamEvent;
+
+    struct HangAfterStartStream {
+        events: std::collections::VecDeque<epsilon_contracts::stream::StreamEvent>,
+    }
+
+    #[async_trait]
+    impl epsilon_llm::EventStream for HangAfterStartStream {
+        async fn next(&mut self) -> Option<epsilon_contracts::stream::StreamEvent> {
+            if let Some(ev) = self.events.pop_front() {
+                Some(ev)
+            } else {
+                std::future::pending().await
+            }
+        }
+    }
+
+    /// Signals when the provider has actually been entered, so the test never depends on a
+    /// sleep to know the stream is live.
+    struct HangAfterStartProvider {
+        entered: tokio::sync::watch::Sender<bool>,
+    }
+
+    #[async_trait]
+    impl epsilon_llm::StreamFn for HangAfterStartProvider {
+        async fn stream(
+            &self,
+            _model: &epsilon_llm::ModelRef,
+            _ctx: epsilon_llm::LlmContext,
+        ) -> epsilon_llm::BoxEventStream {
+            let partial = AssistantMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                provider: "test".into(),
+                model_id: "hang-1".into(),
+                content: vec![],
+                stop_reason: StopReason::EndTurn,
+                error_message: None,
+                usage: Usage::default(),
+            };
+            let stream = Box::new(HangAfterStartStream {
+                events: [
+                    StreamEvent::Start { partial },
+                    StreamEvent::TextDelta {
+                        index: 0,
+                        delta: "half an answer".into(),
+                    },
+                ]
+                .into_iter()
+                .collect(),
+            });
+            let _ = self.entered.send(true);
+            stream
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
+    // The prompt is recorded; the aborted turn's own append is what fails.
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1);
+    let store = Arc::new(Mutex::new(store));
+    let handle = Arc::clone(&store);
+    let (entered_tx, mut entered_rx) = tokio::sync::watch::channel(false);
+
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(HangAfterStartProvider {
+            entered: entered_tx,
+        })),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.attach_session_store(store);
+    let mut rx = agent.subscribe();
+
+    // The first persist (the prompt) consumes the fault, so the salvage append is the one that
+    // fails — the store ends up holding the prompt but not the answer.
+    let run = tokio::spawn({
+        let agent = Arc::clone(&agent);
+        async move { agent.run(user_msg("go")).await }
+    });
+    entered_rx
+        .wait_for(|entered| *entered)
+        .await
+        .expect("the provider was entered");
+    assert!(agent.abort_current_run(), "the run is live");
+    let err = run
+        .await
+        .unwrap()
+        .expect_err("the aborted turn could not be recorded, so the run reports it");
+    assert!(
+        err.to_string().contains("could not record this turn"),
+        "the run's own error names the durable failure: {err}"
+    );
+    let notices = notices_from(&mut rx);
+    assert!(
+        notices.iter().any(|n| n.contains("not on disk")),
+        "and the user is told the session may be missing the turn: {notices:?}"
+    );
+
+    // The divergence is real and visible from the store: the prompt, no answer.
+    assert_eq!(
+        handle.lock().unwrap().len(),
+        1,
+        "the prompt was recorded; the aborted turn was not"
+    );
+    assert!(
+        agent
+            .history()
+            .iter()
+            .any(|m| matches!(m, Message::Assistant(a) if a.text() == "half an answer")),
+        "the transcript in memory still has the answer the store lost"
+    );
+
+    // The next request is refused: building it from the store would hand the model a transcript
+    // that disagrees with the loop's own record — the exact F07 divergence.
+    let err = agent
+        .run(user_msg("next question"))
+        .await
+        .expect_err("no request may be built from a store missing a recorded turn");
+    assert!(
+        err.to_string()
+            .contains("missing a turn this session recorded"),
+        "the refusal names the divergence rather than a generic store error: {err}"
+    );
+}
+
+/// `pop_last` is the overflow-retry discard, and its failure used to be discarded too
+/// (`let _ = s.pop_last()`). The pop is what removes the oversized attempt from the store; when
+/// the store refuses it, the retry would re-send exactly the request the compaction was
+/// supposed to fix. So the run stops instead — and says why.
+///
+/// This is the one durable-write failure whose two views diverge in a way the test can see from
+/// the store alone: the loop discarded the failed attempt from its own transcript, and the store
+/// still holds it. That divergence is why the report cannot be a log line nobody reads.
+#[tokio::test]
+async fn a_failed_store_pop_stops_the_overflow_retry_and_is_reported() {
+    // An oversized-request refusal is the only path that pops. The summarizer is its own
+    // provider, so the main script stays exactly two steps: the overflowed turn, and the retry
+    // that must never happen.
+    let provider = FauxProvider::new(vec![
+        epsilon_llm::FauxStep::Error {
+            message: "context window exceeded (faux): 200000 > 128000".into(),
+        },
+        epsilon_llm::FauxStep::say("after recovery"),
+    ]);
+    let recorded = provider.recorded_requests_handle();
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(provider)),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.set_summarizer(Arc::new(epsilon_llm::PanicGuard(FauxProvider::new(vec![
+        epsilon_llm::FauxStep::say("## Objective\nsummarized state"),
+    ]))));
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::PopLast, "disk full on pop", 1);
+    let store = Arc::new(Mutex::new(store));
+    let handle = Arc::clone(&store);
+    agent.attach_session_store(store);
+    let mut rx = agent.subscribe();
+
+    let err = agent
+        .run(user_msg("hello"))
+        .await
+        .expect_err("a pop the store refused stops the overflow retry");
+    let text = err.to_string();
+    assert!(
+        text.contains("disk full on pop"),
+        "the error carries the store's own reason: {text}"
+    );
+    let notices = notices_from(&mut rx);
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("not on disk") && n.contains("disk full on pop")),
+        "the failed pop is announced like every other durable-write failure: {notices:?}"
+    );
+    assert_eq!(
+        recorded.lock().unwrap().len(),
+        1,
+        "the retry never ran: only the overflowed attempt reached the provider"
+    );
+    // What the store kept is the divergence: the loop dropped the failed attempt from its own
+    // transcript, and the store still offers it to the next request.
+    let kept = handle.lock().unwrap();
+    assert!(
+        kept.model_view()
+            .unwrap()
+            .iter()
+            .any(|v| matches!(v, ModelViewEntry::Message(Message::Assistant(a)) if a.stop_reason == epsilon_contracts::message::StopReason::Error)),
+        "the store still holds the discarded attempt, which is why the run had to stop"
+    );
+    assert!(
+        !agent
+            .history()
+            .iter()
+            .any(|m| matches!(m, Message::Assistant(a) if a.stop_reason == epsilon_contracts::message::StopReason::Error)),
+        "and the loop's own transcript did discard it — the two views disagree, which is the \
+         report's whole point"
     );
 }
