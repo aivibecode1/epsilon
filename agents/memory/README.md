@@ -70,13 +70,23 @@ not themselves trigger runtime compression.
   other discarded store results, no author negative controls and no independent review; the parent
   fixed three clippy errors and a formatting failure it never saw. Treat its list of sites as
   **incomplete** until someone greps again.
-- **UNRESOLVED at close of 2026-09-23: the battery for M122+M123 was STOPPED.** In
-  `target/gate-m123a.log`: fmt and clippy green, the three new F07 tests **passing**, then
-  `an_aborted_turn_lost_to_the_store_refuses_the_next_request` **running over 60 seconds** — a
-  possible hang the F07 change may have introduced by reporting a failure on a path that used to
-  swallow it. **Diagnose that test first next round**, then complete a battery for both commits and
-  reinstall `epsilon.exe` (M123 changes what the installed binary draws — the reinstall was NOT
-  done).
+- **RESOLVED 2026-09-24 (uncommitted, working tree): the battery hang is diagnosed and fixed.**
+  `an_aborted_turn_lost_to_the_store_refuses_the_next_request` hung because its fault arithmetic
+  was written for the *pre-F07* loop: `set_write_fault_for_tests(.., 1)` fails the **first** append
+  — the prompt — and since F07 that failure returns out of `Agent::run` before the provider is
+  called, so the test's `entered_rx.wait_for(..)` (no timeout) waited forever on a watch that could
+  never flip. Fix: the fault seam gained an **occurrence** argument
+  (`crates/epsilon-session/src/store.rs`: `set_write_fault_for_tests(op, msg, occurrence, times)`,
+  plus `appends()` / `write_fault_pending_for_tests()`), the salvage test arms occurrence 2 and
+  signals on the **delta** so the abort lands on the arm that keeps partial text, and every wait on
+  the agent under test in `loop_scenarios.rs` is now bounded (`run_bounded`, 30s; 10s entry/delta
+  waits). Negative controls: old arithmetic → fails in 10.0s naming the missing provider entry;
+  timeout removed → hangs past 45s. Verified: `cargo test -p epsilon-core -p epsilon-session` all
+  green (144 lib + 35 loop_scenarios + 52 session_store …), fmt and clippy clean.
+  **Still open for the parent:** M122/M123 still need their battery and the `epsilon.exe`
+  reinstall; `docs/user/sessions.md:34` and the audit/ledger F07 rows still describe the *pre-fix*
+  swallow; and `pi_import_reconciliation` failed once in a combined run and passed on every re-run
+  (unexplained flake, worth a second look).
 - **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files) was
   modified by something other than this task. Preserve it; do not fold it into a milestone commit.
 - **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the

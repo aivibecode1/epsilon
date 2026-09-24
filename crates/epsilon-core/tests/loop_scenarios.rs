@@ -93,6 +93,30 @@ fn notices_from(rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>) -> V
     out
 }
 
+/// Await a spawned run with a ceiling, naming what was being waited for when it expires
+/// (`what`), and failing fast rather than hanging the battery.
+///
+/// This is the floor, not the signal. The tests below still decide *when* to abort from the
+/// agent's own state — a provider-entry watch, a `SlowProvider` stall — because a sleep that
+/// guesses when the run is live is a race, and a race in a test is a flake the next reader
+/// inherits. What a timeout adds is the other half: when the state a test waits for never
+/// arrives, the wait ends in a failure that names it. An unbounded wait on the agent under test
+/// is one regression away from freezing the whole suite — F07's aborted-turn salvage test hung
+/// for 420 seconds at exactly such a wait when a durable append began failing one write earlier
+/// than the test assumed, and a hang tells you nothing while a ten-second failure names the bug.
+async fn run_bounded(
+    run: tokio::task::JoinHandle<Result<epsilon_core::RunOutcome, RunError>>,
+    what: &str,
+) -> Result<epsilon_core::RunOutcome, RunError> {
+    match tokio::time::timeout(std::time::Duration::from_secs(30), run).await {
+        Ok(joined) => joined.expect("the run task must not panic"),
+        Err(_) => panic!(
+            "the run did not finish within 30s while waiting for {what}: a run that neither \
+             returns nor ends is a wedge, so this fails the test instead of holding the battery"
+        ),
+    }
+}
+
 struct ObserveScope {
     descriptor: epsilon_contracts::tool::ToolDescriptor,
     seen: Arc<Mutex<Vec<Arc<()>>>>,
@@ -537,7 +561,12 @@ async fn concurrent_runs_are_rejected() {
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     let second = agent.run(user_msg("two")).await;
 
-    first.await.unwrap().unwrap();
+    // Bounded like every other await on the agent under test in this file: this one waits on a
+    // run that is *expected* to be the live one, so the only thing an unbounded await could add
+    // is a hang if the second run's `AlreadyRunning` refusal ever stopped being the outcome.
+    run_bounded(first, "the first of two concurrent runs to end")
+        .await
+        .unwrap();
     assert!(matches!(second.unwrap_err(), RunError::AlreadyRunning));
 }
 
@@ -712,8 +741,12 @@ async fn abort_during_stream_creation_ends_run_aborted() {
         async move { agent.run(user_msg("go")).await }
     });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(agent.abort_current_run());
-    let outcome = handle.await.unwrap().unwrap();
+    assert!(
+        agent.abort_current_run(),
+        "the run must still be live when the abort lands: it is stalled in stream creation, so \
+         the only way this fails is the run having already ended"
+    );
+    let outcome = run_bounded(handle, "the aborted run to end").await.unwrap();
     assert_eq!(outcome.reason, TurnEndReason::Aborted);
     // In-band abort message closes the turn; nothing from the provider arrived.
     let last = outcome.produced.last().expect("abort message produced");
@@ -795,8 +828,14 @@ async fn abort_mid_stream_preserves_partial_text() {
         async move { agent.run(user_msg("go")).await }
     });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(agent.abort_current_run());
-    let outcome = handle.await.unwrap().unwrap();
+    assert!(
+        agent.abort_current_run(),
+        "the run must still be live when the abort lands: the provider hangs after its first \
+         delta, so the only way this fails is the run having already ended"
+    );
+    let outcome = run_bounded(handle, "the aborted mid-stream run to end")
+        .await
+        .unwrap();
     assert_eq!(outcome.reason, TurnEndReason::Aborted);
     let last = outcome.produced.last().expect("abort message produced");
     match last {
@@ -890,8 +929,17 @@ async fn abort_mid_stream_commits_the_terminal_message_to_history_and_store() {
         async move { agent.run(user_msg("go")).await }
     });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(agent.abort_current_run());
-    let outcome = run.await.unwrap().unwrap();
+    assert!(
+        agent.abort_current_run(),
+        "the run must still be live when the abort lands: the provider hangs after its first \
+         delta, so the only way this fails is the run having already ended"
+    );
+    let outcome = run_bounded(
+        run,
+        "the aborted mid-stream run to commit its terminal message",
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.reason, TurnEndReason::Aborted);
 
     // Exactly one terminal assistant message, in runtime history...
@@ -1006,8 +1054,13 @@ async fn abort_mid_batch_refuses_calls_that_have_not_started() {
     });
     // Long enough for the first call to be in flight, then cancel.
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    assert!(agent.abort_current_run());
-    let outcome = run.await.unwrap().unwrap();
+    assert!(
+        agent.abort_current_run(),
+        "the first slow call (400ms) must still be running when the abort lands"
+    );
+    let outcome = run_bounded(run, "the mid-batch abort to end")
+        .await
+        .unwrap();
     assert_eq!(outcome.reason, TurnEndReason::Aborted);
 
     assert_eq!(
@@ -2445,7 +2498,8 @@ async fn a_failed_durable_append_is_reported_and_no_request_is_built_from_the_ol
     let dir = tempfile::tempdir().unwrap();
     let mut store =
         epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
-    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1);
+    // Occurrence 1: the first append — the prompt — is the write this test is about.
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1, 1);
     let store = Arc::new(Mutex::new(store));
     let handle = Arc::clone(&store);
 
@@ -2517,13 +2571,31 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
     use epsilon_contracts::message::{AssistantMessage, StopReason, Usage};
     use epsilon_contracts::stream::StreamEvent;
 
-    struct HangAfterStartStream {
+    /// The provider's stream: two events, then a hang, signalling the delta on its way out.
+    ///
+    /// The signal has to be the *delta*, not the stream's construction: the run applies `Start`
+    /// first and only then can the inner select — the arm that records the partial text — be the
+    /// one an abort lands on. Abort after the stream exists but before the delta is folded and the
+    /// run ends Aborted all the same, but the salvaged message is empty, and this test is about a
+    /// *turn* being lost, so it needs the text the store failed to record.
+    ///
+    /// `next()` is the run's own await, which is what makes the signal exact: the sender runs
+    /// inside the run's poll, so the run cannot be scheduled again between the flip and the
+    /// hand-over of the delta. By the time the test's watch wakes and the abort lands, the run is
+    /// parked in the select that polls the delta and the cancellation token — the token first
+    /// (both selects are `biased`), so the arm that keeps partial text is the one that runs.
+    struct SignalDeltaStream {
         events: std::collections::VecDeque<epsilon_contracts::stream::StreamEvent>,
+        foldable: tokio::sync::watch::Sender<bool>,
     }
 
     #[async_trait]
-    impl epsilon_llm::EventStream for HangAfterStartStream {
+    impl epsilon_llm::EventStream for SignalDeltaStream {
         async fn next(&mut self) -> Option<epsilon_contracts::stream::StreamEvent> {
+            use epsilon_contracts::stream::StreamEvent;
+            if matches!(self.events.front(), Some(StreamEvent::TextDelta { .. })) {
+                let _ = self.foldable.send(true);
+            }
             if let Some(ev) = self.events.pop_front() {
                 Some(ev)
             } else {
@@ -2533,9 +2605,10 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
     }
 
     /// Signals when the provider has actually been entered, so the test never depends on a
-    /// sleep to know the stream is live.
+    /// sleep to know the run reached its first request; the delta arm signals separately.
     struct HangAfterStartProvider {
         entered: tokio::sync::watch::Sender<bool>,
+        foldable: tokio::sync::watch::Sender<bool>,
     }
 
     #[async_trait]
@@ -2555,7 +2628,7 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
                 error_message: None,
                 usage: Usage::default(),
             };
-            let stream = Box::new(HangAfterStartStream {
+            let stream = Box::new(SignalDeltaStream {
                 events: [
                     StreamEvent::Start { partial },
                     StreamEvent::TextDelta {
@@ -2565,6 +2638,7 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
                 ]
                 .into_iter()
                 .collect(),
+                foldable: self.foldable.clone(),
             });
             let _ = self.entered.send(true);
             stream
@@ -2574,16 +2648,31 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
     let dir = tempfile::tempdir().unwrap();
     let mut store =
         epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
-    // The prompt is recorded; the aborted turn's own append is what fails.
-    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1);
+    // The write this test is about is the SECOND append of the run. `set_write_fault_for_tests`
+    // takes an occurrence and a count — `times` alone cannot aim at a later write, because a
+    // count starting at the first append can only fail the prompt first, and since F07 a failed
+    // prompt append ends the run before the provider is ever called. So: let the prompt's append
+    // through (`occurrence: 2`), fail the very next one once (`times: 1`) — the salvage write.
+    // `appends()` around the run proves the sequence instead of assuming it, so a write inserted
+    // between the prompt and the stream fails this test at its own assertion rather than silently
+    // moving the fault onto a write whose caller does not care.
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 2, 1);
+    assert_eq!(
+        store.appends(),
+        0,
+        "arming a fault must not itself write: an append here would take the position the \
+         occurrence argument is counting"
+    );
     let store = Arc::new(Mutex::new(store));
     let handle = Arc::clone(&store);
     let (entered_tx, mut entered_rx) = tokio::sync::watch::channel(false);
+    let (foldable_tx, mut foldable_rx) = tokio::sync::watch::channel(false);
 
     let agent = epsilon_core::Agent::new(
         LoopLimits::default(),
         Arc::new(epsilon_llm::PanicGuard(HangAfterStartProvider {
             entered: entered_tx,
+            foldable: foldable_tx,
         })),
         Arc::new(ToolRegistry::new()),
         Arc::new(AutoAllow),
@@ -2592,25 +2681,69 @@ async fn an_aborted_turn_lost_to_the_store_refuses_the_next_request() {
     agent.attach_session_store(store);
     let mut rx = agent.subscribe();
 
-    // The first persist (the prompt) consumes the fault, so the salvage append is the one that
-    // fails — the store ends up holding the prompt but not the answer.
+    // The prompt's append succeeds (the fault's occurrence is the append after it), so the run
+    // reaches the provider — the salvage append is the one that fails, and the store ends up
+    // holding the prompt but not the answer.
     let run = tokio::spawn({
         let agent = Arc::clone(&agent);
         async move { agent.run(user_msg("go")).await }
     });
-    entered_rx
-        .wait_for(|entered| *entered)
-        .await
-        .expect("the provider was entered");
+    // Bounded: satisfied when the provider is entered. A run that dies before its first request —
+    // which is what F07's prompt-append `?` does, and what an append fault aimed one write too
+    // early does — never enters the provider, so the watch never flips, and an unbounded
+    // `wait_for` waits forever instead of failing. It cost a 420-second battery round: a hang
+    // tells the next reader nothing, a failure in ten seconds names the write that went wrong.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        entered_rx
+            .wait_for(|entered| *entered)
+            .await
+            .expect("the provider entry watch is never dropped while the run lives")
+    })
+    .await
+    .expect(
+        "the provider was never entered: the run ended before its first request. The fault is \
+         armed for the append after the prompt, so a run that stops first means a durable append \
+         now ends the run earlier than this test assumes (F07) and the fault is aimed at the \
+         wrong write",
+    );
+    // Then wait for the delta to be on its way out (see `SignalDeltaStream`): at this point the
+    // run is parked in the select that keeps partial text, so the abort cannot land on the
+    // connect-time arm and salvage an empty message instead.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        foldable_rx
+            .wait_for(|folded| *folded)
+            .await
+            .expect("the delta watch is never dropped while the run lives")
+    })
+    .await
+    .expect("the provider was entered but never handed over its first delta");
     assert!(agent.abort_current_run(), "the run is live");
-    let err = run
-        .await
-        .unwrap()
-        .expect_err("the aborted turn could not be recorded, so the run reports it");
+    let err = run_bounded(
+        run,
+        "the aborted turn's failed salvage append to end the run",
+    )
+    .await
+    .expect_err("the aborted turn could not be recorded, so the run reports it");
     assert!(
         err.to_string().contains("could not record this turn"),
         "the run's own error names the durable failure: {err}"
     );
+    // The sequence the fault plan claims, asserted rather than assumed: the prompt append that
+    // succeeded, the salvage append that failed, and no third writer — and no armed failure left
+    // unspent, which would mean the abort never reached the salvage path at all.
+    {
+        let st = handle.lock().unwrap();
+        assert_eq!(
+            st.appends(),
+            2,
+            "one append for the prompt and one for the aborted turn's answer, in that order"
+        );
+        assert!(
+            !st.write_fault_pending_for_tests(),
+            "the armed failure was spent, so the write that failed was the salvage append and not \
+             some earlier one"
+        );
+    }
     let notices = notices_from(&mut rx);
     assert!(
         notices.iter().any(|n| n.contains("not on disk")),
@@ -2678,7 +2811,9 @@ async fn a_failed_store_pop_stops_the_overflow_retry_and_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let mut store =
         epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
-    store.set_write_fault_for_tests(epsilon_session::FaultOp::PopLast, "disk full on pop", 1);
+    // Occurrence 1: the pop this test is about is the only pop of the run; the appends around it
+    // are a different operation and are never affected by a `FaultOp::PopLast` plan.
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::PopLast, "disk full on pop", 1, 1);
     let store = Arc::new(Mutex::new(store));
     let handle = Arc::clone(&store);
     agent.attach_session_store(store);

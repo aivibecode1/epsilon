@@ -300,6 +300,17 @@ pub struct SessionStore {
     /// (a prompt append and the overflow retry's pop, say), and arming the second must not
     /// silently disarm the first.
     faults: Vec<WriteFault>,
+    /// [`SessionStore::append`] calls made on this store, refused ones included
+    /// ([`SessionStore::appends`]).
+    ///
+    /// Exists because a fault is armed as a *count* of matching writes, so aiming one at "the
+    /// write that happens second" is a claim about how many appends the caller makes first —
+    /// and a claim a test could only assert from inside the store. Without this, a write
+    /// inserted ahead of the one under test moves the fault onto the wrong append and the
+    /// scenario proves nothing while still passing or hanging (the F07 salvage test cost the
+    /// battery a 420-second round for exactly that reason). One `usize` in the struct every
+    /// store carries; the append path pays an increment.
+    appends: usize,
 }
 
 /// A pending injected write failure ([`SessionStore::set_write_fault_for_tests`]).
@@ -309,8 +320,19 @@ struct WriteFault {
     op: FaultOp,
     /// The operation's own error text.
     message: String,
+    /// Which matching write starts failing, counting from `1`. The first `occurrence - 1` are
+    /// let through untouched.
+    ///
+    /// This is what makes "the *second* append fails" expressible, and the F07 salvage test is
+    /// why it has to be: the prompt append happens before every other write of a run, so a plan
+    /// that starts at the first append always kills the run at the prompt (F07 makes a failed
+    /// prompt append fatal) and never reaches the write under test. A count of failures cannot
+    /// say that; a position can.
+    occurrence: usize,
     /// How many more matching operations fail. `usize::MAX` sticks for the store's life.
     remaining: usize,
+    /// Matching operations already seen, so [`WriteFault::occurrence`] can be honoured.
+    seen: usize,
 }
 
 /// Which write [`SessionStore::set_write_fault_for_tests`] injects a failure into.
@@ -329,8 +351,17 @@ impl WriteFault {
     /// spent its failures. A spent plan is removed, so a test that arms one failure cannot
     /// leave the store failing for the assertions after it — and plans for other operations
     /// are left alone, so arming the pop does not disarm the append.
+    ///
+    /// A plan is *counted* for every matching write and *fires* from its `occurrence` on: the
+    /// positions before it are the ones a test needs to succeed for the run to reach the write
+    /// it is aiming at. The counter therefore advances whether or not the write fails, which is
+    /// the whole point — an earlier write must not shift the target.
     fn take_for(faults: &mut Vec<WriteFault>, op: FaultOp) -> Option<StoreError> {
         let at = faults.iter().position(|f| f.op == op)?;
+        faults[at].seen += 1;
+        if faults[at].seen < faults[at].occurrence {
+            return None;
+        }
         faults[at].remaining = faults[at].remaining.saturating_sub(1);
         let spent = faults[at].remaining == 0;
         let message = faults[at].message.clone();
@@ -425,6 +456,7 @@ impl SessionStore {
             cached_entries: Vec::new(),
             _lease: lease,
             faults: Vec::new(),
+            appends: 0,
         };
         if !store.reindex()? {
             store.truncate_to_index()?;
@@ -457,7 +489,8 @@ impl SessionStore {
         self.migrated
     }
 
-    /// Arm an injected write failure for the next `times` matching writes (F07).
+    /// Arm an injected write failure starting at the `occurrence`-th matching write, for `times`
+    /// writes (F07).
     ///
     /// The seam M86's `Limits` recorded as missing: a caller's handling of a *failed durable
     /// write* cannot be tested by making the file unwritable, because the store's handle is
@@ -471,18 +504,39 @@ impl SessionStore {
     /// a half-written line. The `Err` is a [`StoreError::Io`] whose message is `message`, so a
     /// test can assert on the text a caller would have to relay.
     ///
-    /// `times` failures are consumed in order: `1` fails exactly one write (`usize::MAX` keeps
-    /// failing). Writes to the *other* operation are never affected, and arming a second
-    /// operation does not disarm the first, so one run can have both an append and a pop fail.
+    /// `occurrence` is **which** matching write is the first to fail, counting from `1`, and
+    /// `times` is **how many** fail from there (`usize::MAX` keeps failing). The first
+    /// `occurrence - 1` matching writes are let through untouched, which is what makes a failure
+    /// aimed at a *later* write expressible at all: every run appends its prompt before anything
+    /// else, and since F07 a failed prompt append ends the run, so a plan that starts at the
+    /// first append can never reach the second — the F07 salvage test needs "the second append
+    /// fails, the first succeeds", and only the position can say that. `times: 0` arms nothing.
+    ///
+    /// Writes to the *other* operation are never affected, and arming a second operation does not
+    /// disarm the first, so one run can have both an append and a pop fail.
     ///
     /// Test-facing by construction — nothing in the product calls it, and an empty list (the
     /// value every store is born with) is the entire production behaviour.
     #[doc(hidden)]
-    pub fn set_write_fault_for_tests(&mut self, op: FaultOp, message: &str, times: usize) {
+    pub fn set_write_fault_for_tests(
+        &mut self,
+        op: FaultOp,
+        message: &str,
+        occurrence: usize,
+        times: usize,
+    ) {
+        if times == 0 {
+            // Arm nothing at all: a plan that can never fire would otherwise sit in the list
+            // forever, making `write_fault_pending_for_tests` report a pending failure that
+            // cannot happen — the opposite of what that check is for.
+            return;
+        }
         self.faults.push(WriteFault {
             op,
             message: message.to_string(),
+            occurrence,
             remaining: times,
+            seen: 0,
         });
     }
 
@@ -490,6 +544,25 @@ impl SessionStore {
     #[doc(hidden)]
     pub fn clear_write_fault_for_tests(&mut self) {
         self.faults.clear();
+    }
+
+    /// How many [`SessionStore::append`] calls this store has seen, refused ones included
+    /// (F07's test seam).
+    ///
+    /// Counts *attempts*, not lines on disk, so it is the position an `occurrence` argument
+    /// names: a test that arms a failure for "the second append" asserts this counter to prove
+    /// the write it aimed at is the write that happened, rather than assuming the caller makes
+    /// exactly one append first.
+    #[doc(hidden)]
+    pub fn appends(&self) -> usize {
+        self.appends
+    }
+
+    /// Whether an armed fault is still pending — i.e. the caller never made the write it was
+    /// armed for, so the failure a test expected never happened.
+    #[doc(hidden)]
+    pub fn write_fault_pending_for_tests(&self) -> bool {
+        !self.faults.is_empty()
     }
 
     /// Rewrite the file with the migrated entries plus a current header
@@ -851,6 +924,9 @@ impl SessionStore {
     /// first (lazy creation — `open` only stamps brand-new files, so a resumed
     /// empty file and a fresh file converge on the same bytes).
     pub fn append(&mut self, kind: EntryKind) -> Result<SessionEntry, StoreError> {
+        // Counted before the fault check: the seam counts *attempts*, which is what a `times`
+        // argument is spent against (F07 — see [`SessionStore::appends`]).
+        self.appends += 1;
         if let Some(e) = WriteFault::take_for(&mut self.faults, FaultOp::Append) {
             return Err(e);
         }

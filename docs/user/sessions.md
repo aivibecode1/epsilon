@@ -30,9 +30,12 @@ stale lock (crashed process) is stealable.
 ## Compaction and current limitations
 
 Compaction appends summary entries rather than deleting old messages. However,
-successive summaries accumulate in the current durable model projection (F04),
-failed summaries can replace context (F06), and core can ignore append errors (F07).
-The append-only design alone does not guarantee correct recovery.
+successive summaries accumulate in the current durable model projection (F04) and
+failed summaries can replace context (F06). A durable append that fails is **no longer
+ignored**: the turn ends before the provider is called, the failure is reported as a
+notice, and later requests refuse to build a request from a session missing a turn the
+loop recorded (F07, fixed in M122). The append-only design alone does not guarantee
+correct recovery.
 
 ## Recovery from damage
 
