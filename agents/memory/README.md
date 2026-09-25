@@ -46,20 +46,38 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **Battery m127a FAILED (round 44) on a test that is not robust to concurrent runs — the "flake" now
-  has a signature.** `epsilon-session --test pi_import_reconciliation` died with `rename into
-  C:\Users\Hp\AppData\Local\Temp\epsilon-pi-reconciliation\large-session.v2.jsonl: The system cannot
-  find the file specified. (os error 2)`. Two rounds ago the same test failed once in a combined run
-  and then passed 5/5 on every re-run — this is that failure, and the cause is visible: the test builds
-  fixtures under a **fixed shared path** (`%TEMP%\epsilon-pi-reconciliation`, overridable by
-  `EPSILON_RECONCILE_DIR`), so two runs at once — my battery and the still-running delegated author's
-  `cargo test` — rename and delete each other's files. **Fix it by giving each run its own directory**
-  (`tempfile::tempdir()` or a per-process suffix); retrying is not a fix. fmt and clippy were green;
-  the log is `target/gate-m127a.log`; the demo/check gates did not report.
-  **M127 itself is committed and its crate is green** (`da19b9b` + the theme switch): a light palette
-  selectable by a switch, frozen-view state and jump-to-live in the footer bound through the live
-  binding table, `cargo test -p epsilon-tui` 282 passed / 0 failed. **Owed: a battery on frozen bytes
-  with no author running, the reinstall, and the independent review.**
+- **IN FLIGHT (rounds 46–48): the last two audit items — `NO_COLOR` glyph separation and OSC 52 for
+  `/copy`.** A delegated agent is working in `crates/epsilon-tui` (untracked
+  `src/app/scratch_dump_tests.rs`, modified `app.rs`, `theme.rs`/`footer.rs`/`clipboard` in play).
+  **The tree does NOT compile as of round 48** and the breakage is the agent's, not the parent's:
+  `missing field osc_pending in initializer of app::App`, then `cannot find module or crate base64`
+  in the lib. Two things to decide or check when it stops:
+  1. **The `base64` dependency is a judgement call the parent owns.** `AGENTS.md` says "No new
+     dependency without a stated reason tied to an ADR or milestone need", and deps are pinned EXACT.
+     OSC 52 needs the payload base64-encoded; a ~30-line encoder with no dependency is a legitimate
+     alternative for a single call site, and the repo has hand-rolled a civil-date conversion before
+     for exactly this reason. Either decision needs its reason written down.
+  2. **The scratch file must not be committed.** `src/app/scratch_dump_tests.rs` is an untracked
+     module; the last delegated author's `zz_frame_dump_*` tests are still in `app/golden.rs` and were
+     named in `audit/evidence/m126-m127-review.md` finding **F5** as artefacts to remove.
+- **B1 IS FIXED IN THE WORKING TREE, UNVERIFIED (round 48).** The review's sharpest blocker — every
+  result card reporting `0ms` because `state.rs` stamped its start and end with the same `now` — is
+  fixed in `crates/epsilon-tui/src/state.rs`: `settle_call` now **returns** the pending card's
+  `started_at_ms`, the result card inherits it, and a result whose call is not in the transcript falls
+  back to `now` rather than inventing an elapsed time. **It could not be verified**: the crate does not
+  compile because of the agent's in-flight work above, so `cargo test -p epsilon-tui` never ran on it.
+  **Do not commit it until the tree is green**, and note the review's second half of B1: the golden
+  test named for that property asserts only that the tail ends in `ms`, so **it must be tightened to
+  require `ms > 0`** or the fix is unpinned.
+- **Blockers B2–B5 from `audit/evidence/m126-m127-review.md` are still open** (the light palette's
+  ANSI-16 quiet roles are `DarkGray`, the same as dark, under a comment forbidding it; `EPSILON_THEME`
+  with a bad value falls through to the config file instead of dark; `parse_diff`'s doc states the
+  opposite of its pinned test; the split diff at ≥120 columns has never been drawn by a test).
+  **The m127a reconciliation flake those notes used to describe is fixed**: M128 (`c63858e`) gives each
+  run a per-process directory, so two concurrent runs cannot eat each other's fixtures, and
+  `EPSILON_RECONCILE_DIR` still overrides. Battery `m128a` passed — all five gates, 1,148 passed /
+  0 failed / 2 ignored across 61 binaries — and the independent review the M126/M127 slices owed is
+  delivered at `audit/evidence/m126-m127-review.md`.
 - **M126 CLOSED (`933837b`, `9ae64a2`) — tool cards and a real diff, battery `m126d` PASSES:** all
   five gates exit 0, **1,131 passed / 0 failed / 1 ignored across 61 binaries** (fifteen more than
   M125's 1,116); `epsilon-tui` 267 tests. Record: `docs/milestones/M126-tool-cards-and-diffs.md`. The
