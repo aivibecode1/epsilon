@@ -43,9 +43,10 @@ Failures arrive in-band as a `Done { stop_reason }`, so the loop has exactly one
 error shape to handle. Ported from pi.
 
 **Provider wire** — The HTTP protocol a model backend speaks. Epsilon implements
-three directly (no SDK crate in between): Anthropic Messages, OpenAI-compatible
-`/chat/completions`, and Google `streamGenerateContent`. Routing reads each catalog
-row's declared `wire` field, never guesses from the model id string.
+eight directly (no SDK crate in between): Anthropic Messages, OpenAI-compatible
+`/chat/completions`, OpenAI Responses, Google `streamGenerateContent`, Google Vertex,
+Mistral Conversations, Bedrock Converse, and the GitHub Copilot family router. Routing
+reads each catalog row's declared `wire` field, never guesses from the model id string.
 
 **Catalog** — The bundled table of known models (`epsilon-llm/src/catalog/`),
 generated from [models.dev](https://models.dev) by `scripts/regen_catalog.py`. Each
@@ -125,7 +126,8 @@ content hash, so silent edits cannot smuggle new behavior past you.
 
 **Auth store** — `epsilon auth login <provider>` writes your key once to
 `~/.config/epsilon/auth.json` (opencode's schema). Stored keys win over environment
-variables; both work. Nothing else in Epsilon stores credentials.
+variables; both work. It is also where `--oauth` logins keep their credentials and
+refresh tokens, so it is the one file to delete when you want Epsilon to forget you.
 
 ## Sessions and memory
 
@@ -191,14 +193,17 @@ Shift+F2 to cycle) and recents sit above the full list. Two-stage flow and favor
 from opencode; cycling semantics from pi.
 
 **Kill ring** — The editor's cut/copy memory (Ctrl+W kills a word, Ctrl+Y yanks it
-back, Alt+Y cycles through saved kills). Emacs behavior, ported in M16b.
+back, and repeated Ctrl+Y cycles through the saved kills — there is no Alt+Y binding).
+Emacs behavior, ported in M16b.
 
 **Paste marker** — Pasting a large block into the editor inserts a short marker
 (`[paste #1 +40 lines]`) that expands to the real text only on submit, keeping the
 editor usable.
 
 **Compact** — `/compact` in the TUI. Asks the compaction engine to summarize older
-ranges now, instead of waiting for the 80% auto-trigger. Complements auto-compact, same shadow-view result.
+ranges now instead of waiting for the automatic trigger — the active model's context
+window minus a reserve, or a fixed threshold when the window is unknown (M64).
+Complements auto-compact, same shadow-view result.
 
 **Timeline** — `/timeline` (alias `/branch`) lists session branches as
 `branch_entries()` rows (seq, lane, kind, 80-char snippet). Selecting one jumps

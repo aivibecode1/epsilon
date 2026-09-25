@@ -8,9 +8,11 @@ backend. Default shell execution refuses when no backend exists. Linux needs
 `bwrap`; shell/LSP/MCP/extension programs must be installed when used. See
 [permissions](permissions.md).
 
-The audit ran the source demo and compilation, not a fresh-clone install. The current
-baseline has failed gates and file-safety defects; do not treat it as a release.
-Run the commands below from the repository root, after reviewing that baseline.
+This is a development build, not a release: it is not certified on Linux or macOS beyond
+CI compiling it, and the defects still open are tracked in
+[the defect ledger](../../audit/02-defect-ledger.md). What the recorded verification does and
+does not prove is in [the current assessment](../../audit/11-current-assessment.md); read that
+before trusting a claim here. Run the commands below from the repository root.
 
 ```sh
 cargo install --path crates/epsilon-cli --force     # installs `epsilon` into ~/.cargo/bin

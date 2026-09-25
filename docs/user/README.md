@@ -3,8 +3,10 @@
 Product guides. The installed binary is its own reference: `epsilon --help` prints every
 mode, flag, environment variable and file path, and is kept in one place in the source
 (`crates/epsilon-cli/src/main.rs`, the `HELP` constant). When these guides and the binary
-disagree, inspect the implementation and known audit findings: the help text itself
-has documented overclaims about plan mode and tracing.
+disagree, inspect the implementation and the known audit findings — the help text is not a
+specification. Two drifts are known: its `--plan` line still describes the older ruleset (it
+does not say that `bash` and `shell` are denied outright), and `RUST_LOG` is advertised with
+no tracing subscriber in the binary.
 
 | Guide | You want to… |
 |---|---|

@@ -98,9 +98,9 @@ after   typed '@Cargo' → composer '• @Cargo'   popup rows 7   first row '▎
         typed '@argo'  → composer '• @argo'    popup rows 7   first row '▎ Cargo.lock'
 ```
 
-Raw runs: [`at-popup-prefix-Cargo.json`](at-popup-prefix-Cargo.json) (before),
-[`at-popup-postfix-Cargo.json`](at-popup-postfix-Cargo.json) and
-[`at-popup-postfix-argo.json`](at-popup-postfix-argo.json) (after).
+Raw runs: [`at-popup-prefix-Cargo.json`](../../audit/evidence/at-popup-prefix-Cargo.json) (before),
+[`at-popup-postfix-Cargo.json`](../../audit/evidence/at-popup-postfix-Cargo.json) and
+[`at-popup-postfix-argo.json`](../../audit/evidence/at-popup-postfix-argo.json) (after).
 
 Global `epsilon.exe`: **reinstall required, and done after this fix** — the M109 install was
 stopped mid-build when the probe found this, so the regression never reached the owner's

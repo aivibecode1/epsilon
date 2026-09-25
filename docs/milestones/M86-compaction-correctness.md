@@ -95,6 +95,6 @@ test failed with "one terminal message survives the abort".
   projection rule itself.
 - Independent review (read-only, no builds) returned no blockers; its four minor
   findings and three notes, with dispositions, are recorded in
-  [the review record](../audit/evidence/m86-88-review.md) — the doc-order and
+  [the review record](../../audit/evidence/m86-88-review.md) — the doc-order and
   poisoned-history findings were fixed here, the coverage gaps and event-shape
   asymmetry are documented rather than papered over.

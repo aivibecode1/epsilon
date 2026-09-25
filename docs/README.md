@@ -62,11 +62,12 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
-**This list is not the timeline.** Every milestone has a log in [`milestones/`](milestones)
-and a row in [`history.md`](history.md); this list is the subset a reader is most likely to
-want first, newest at the top. It is kept current from M126 forward. **M116–M125 are the
-known gap** — their logs and timeline rows exist, but nobody has written the one-line
-pointers here, and that is drift rather than a claim that nothing landed.
+**This list is not the timeline.** Every milestone has a row in [`history.md`](history.md) except
+M80 — whose checkpoint work is recorded inside [`M81`](milestones/M81-observation-ownership.md)
+rather than reconstructed — and almost every one has a log in [`milestones/`](milestones). Where
+no log was written the pointer below goes to the timeline row, which is then the whole record:
+M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
+first, newest at the top, and it is kept current from M83 forward.
 
 - [M133 — `serve` mode stops discarding a run it refused](milestones/M133-serve-mode-reports.md):
   the last place a durable-write failure was still silent. The server's boot task did
@@ -80,14 +81,6 @@ pointers here, and that is drift rather than a claim that nothing landed.
   test provably cannot see the duplication, two glyph-table entries with no reader anywhere, and a
   lock that reported `Access is denied` for a transient Windows sharing violation — wrong twice over,
   since it is neither a permission failure nor permanent.
-- [M129 — OSC 52 for `/copy`, the glyph fallback that was only promised, and a real card duration](milestones/M129-osc52-and-glyph-fallback.md):
-  over SSH, `/copy` printed a success notice while copying nothing; `theme.rs` promised a band-less
-  gutter fallback that no branch implemented, so under `NO_COLOR` an answer and its reasoning were the
-  same pixels; and every card reported `0ms` because the result stamped its start and end with the
-  same `now`.
-- [M128 — each reconciliation run gets its own directory](docs/history.md):
-  the test that failed once and passed on every re-run had a cause: a **fixed shared path**, so two
-  runs at once renamed and deleted each other's fixtures.
 - [M130 — the review's four remaining blockers, and the production bug the third one hid](milestones/M130-review-blockers.md):
   the light palette's ANSI-16 quiet roles were the dark palette's `DarkGray` under a comment forbidding
   it — in the mode that is the *default* on a console that does not advertise itself, which is the user
@@ -95,6 +88,14 @@ pointers here, and that is drift rather than a claim that nothing landed.
   dark; `parse_diff`'s doc contradicted its own pinned test; and the split diff at ≥120 columns had
   never been drawn by a test, which is how the two halves were found landing on top of each other.
   Answers [`audit/evidence/m126-m127-review.md`](../audit/evidence/m126-m127-review.md).
+- [M129 — OSC 52 for `/copy`, the glyph fallback that was only promised, and a real card duration](milestones/M129-osc52-and-glyph-fallback.md):
+  over SSH, `/copy` printed a success notice while copying nothing; `theme.rs` promised a band-less
+  gutter fallback that no branch implemented, so under `NO_COLOR` an answer and its reasoning were the
+  same pixels; and every card reported `0ms` because the result stamped its start and end with the
+  same `now`.
+- [M128 — each reconciliation run gets its own directory](history.md):
+  the test that failed once and passed on every re-run had a cause: a **fixed shared path**, so two
+  runs at once renamed and deleted each other's fixtures.
 - [M127 — a light theme, and a transcript that says when it is frozen](milestones/M127-light-theme-and-frozen-view.md):
   `Color::White` as body text is the one thing this project's own standard forbids, and on a light
   terminal the prose was near-invisible. A selectable light palette (a switch, never background
@@ -105,6 +106,73 @@ pointers here, and that is drift rather than a claim that nothing landed.
   often, rendered unreadable. Cards with a row-budgeted body, unified below a named width and split
   above it, line numbers only above a column budget, and colour never the only signal. The stubborn
   assertion turned out to be the *fixture's* arithmetic, not the product's.
+- [M125 — an honest footer, a true context number, and an approval box that fits](milestones/M125-tui-honesty.md):
+  the footer advertised `? help`, which is not a bound key at all — it is text the composer parses
+  into a command, so the hint named a key that did nothing until the reader pressed it *and* Enter —
+  while PageUp/PageDown, history and Ctrl+O went unmentioned. Hints are now resolved from the **live
+  binding table**, so a dead hint is not representable. The header showed the last call's prompt size
+  as window occupancy — a true number and the wrong one, agreeing on turn 1 and diverging flatteringly
+  after — and now shows the session context the compaction trigger itself reads.
+- [M124 — the test that hung for ever, and the seam that could not express the fault](history.md):
+  the battery stopped on a test that ran past 420 seconds. `set_write_fault_for_tests`'s third
+  argument was a **count of failures, not an occurrence**, so it could not say "fail the second
+  append"; and since M122 a failed prompt persist ends the run before the provider is entered, so the
+  test waited for ever on a watch that could never flip. The seam gained an occurrence, the test now
+  asserts its own sequence, and five joins are bounded so a wait that cannot resolve fails instead of
+  hanging a round.
+- [M123 — the transcript decoration existed, was tested, and had never been drawn](history.md):
+  `ui::transcript::decorate` and `row_style` — the two-column gutter, the user marker, the per-role
+  glyphs, the filled bands — had **no production caller**, only tests in the same file, while the real
+  draw path emitted plain per-kind text through `RenderCache`. The suite reported decoration as
+  covered and the user saw none of it. Tests for anything visual now read **cells from the real draw
+  path**, the standard M127 and M129 were then held to.
+- [M122 — the turn loop stops discarding durable-write failures](history.md): F07 — two store
+  mutations threw their results away, so a failed durable write left memory and the model view
+  silently divergent: the loop believed a turn was recorded while the transcript the next request is
+  built from did not contain it. Both now report, so the user learns the session may be missing a
+  turn. Written by a delegated author that never reported, so its inventory of the other discarded
+  sites is incomplete rather than exhaustive.
+- [M121 — carry pi's thinking signature, and cap `glob`'s output](milestones/M121-thinking-signature-and-glob-cap.md):
+  `ContentBlock::Thinking` had no slot for pi's `thinkingSignature`, so 49 occurrences in one fixture
+  and 1 in another were dropped on import; it now rides the **one** content-part conversion both
+  readers use, which is why the importer needed no change — the payoff of M119 reusing the healing
+  path instead of writing a second converter. `glob` gained the 50 KiB cap M118 left it, and decides
+  the opposite way from `find` about which bound speaks: when the **walk** stopped, the byte notice's
+  claims are false about files it never visited.
+- [M120 — reconcile an import against its source, and settle M119's stray number](history.md):
+  M119's evidence left one figure unexplained (373 tool results in the source, 391 in the import) and
+  said so rather than smoothing it over, which is what made the follow-up possible. A real
+  reconciliation proved a fresh import is **entry-for-entry identical** to its source — 1,018 =
+  1,018, zero unmatched in either direction — and that the stray figures came from a file `--resume`
+  had already repaired: it appends 18 synthetic tool results plus a `TurnEnd` before printing its
+  summary. The lesson outlives the number: `--resume` mutates the session it resumes.
+- [M119 — import pi's current session files](milestones/M119-pi-v2-import.md): a *current* pi file,
+  whose entries carry the `id`/`parentId` envelope pi's own `migrateV1ToV2` adds, was refused at line
+  2 — M114/M115 had made only the v1 files readable. `epsilon --import <pi-file>` converts one into
+  `<file>.epsilon.jsonl` **beside** the source, leaving the source byte-identical, and the refusal it
+  replaces now prints the exact command to run: a refusal a user cannot act on is half a feature. One
+  converter, not two — it reuses the v1 healing path, because a second converter is how the two drift
+  and one of them starts emptying messages again.
+- [M118 — make the advertised bounds real, and announce the silent one](milestones/M118-tool-output-bounds.md):
+  one rule applied three times: a tool must not have a bound it does not announce, and must not
+  announce a bound it does not have. `find`'s description promised "1000 results or 64KB" and enforced
+  neither byte — the cap is now real (50 KiB, pi's own `DEFAULT_MAX_BYTES`) and the description says
+  50KB; `glob` stopped at the walker's budget in silence; `ls` gained pi's byte cap. Each notice names
+  **only the bound that actually fired**, because sending a reader to raise a limit that is not what
+  stopped them is worse than saying nothing.
+- [M117 — `find` announces what it withholds, and `ls` gains pi's limit](milestones/M117-find-and-ls-bounds.md):
+  the two *defects* inside G20's divergence, separated from the one deliberate choice (this harness's
+  active tool set is its own). `find` stopped at its cap and returned a list that looked complete; it
+  now appends pi's notice with the count of what is hidden. `ls` had no bound it could report and now
+  takes pi's `limit` (default 500) and says so. Both notices are silent when nothing was withheld — a
+  notice that fires when nothing is hidden trains the reader to ignore it.
+- [M116 — preservation became loud, and a typed field stopped lying](milestones/M116-preserved-notice-and-typed-model-change.md):
+  the notice `preserved_unknown()` had always been able to produce was printed by nobody, so a session
+  with a foreign entry opened with a quiet gap and no explanation; both frontends now say it in one
+  sentence owned by the store. The same round found the `model_change` arm was half-typed: the guard
+  required only `modelId`, so a provider-less line healed to `ModelChange { provider: "" }` — an empty
+  string in a typed field, which looks like data. Both fields must now be strings, or the line heals to
+  `Custom`.
 - [M115 — converting an older session keeps its header and its previous bytes](milestones/M115-header-and-backup.md):
   the other two halves of G19. A rewrite used to drop every header field this build does not
   name (`provider`, `modelId`, `thinkingLevel`, `branchedFrom`) — the M113 preservation rule,
@@ -164,6 +232,14 @@ pointers here, and that is drift rather than a claim that nothing landed.
   figure inflated every turn and pinned at `cache 100%`. The test named for the right
   property passed because it modelled the gauge wrongly — the numerator now comes from
   the same call as the denominator.
+- [M105 — a repair keeps the session's identity, and a pop keeps its cache](milestones/M105-session-repair-integrity.md):
+  two silent session-store defects, both reachable only after something has already gone wrong. A
+  repair cut a crash-truncated file back to the last *indexed* entry — zero bytes when nothing was
+  indexed — while the in-memory header still answered `Some`, so the next append skipped the header it
+  believed was there and the session reopened headerless: fresh ids, no cwd, and for a delegated child
+  no parent link. Separately, `pop_last` — which the loop calls for real to discard a message that
+  overflowed the window — popped the index but not the read-through entry cache, and because the active
+  branch resolves its leaf through those reads, the branch came back **empty**.
 - [M104 — a restore verifies the file before overwriting it](milestones/M104-restore-verifies-the-file.md)
   *(reconstructed)*: reverting a checkpoint over a file the user edited after the snapshot
   silently discarded their work. Restore now refuses when the bytes on disk are not the

@@ -1,10 +1,27 @@
 # Changelog
 
-All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/milestones/`.
+All notable changes to Epsilon, grouped by milestone. Most milestones have a dev log in
+`docs/milestones/`; where one was not written, the timeline row in `docs/history.md` is the record.
 
 ## [Unreleased]
 
 ### Added
+- **`serve` mode reports a run it refused (M133).** The server's boot task did
+  `let _ = agent.run(message).await;` with nothing subscribed to the agent's notices, so when a durable
+  write failed and the turn was refused, both the error and core's own `Notice` vanished and the
+  operator saw only the serving banner. It now prints on the server's log, with the same
+  `serve: admitted run failed:` prefix the `/prompt` route already uses. A client is still told nothing
+  *during its own prompt* — a `Notice` is a broadcast event rather than a replay log, and the boot task
+  starts before the listener binds — so the failure reaches it as the next request's refusal, a limit
+  the helper's own doc comment states rather than implies.
+- **A lock lost to a transient sharing violation is retried, not reported as a permission error
+  (M132).** `acquire_auth_lock` retried on `AlreadyExists` and returned immediately on every other
+  error, including `ACCESS_DENIED` — which on Windows is what the second caller gets while the first is
+  mid-delete of the lock path. Two processes saving at once (the CLI and the TUI, the case its own test
+  is named for) were told "Access is denied", wrong twice over: it is neither a permission failure nor
+  permanent. M131, the review round that preceded it, changed no user-visible behaviour — its findings
+  were a footer comment claiming a survival order the code did not have, one rule implemented twice,
+  and eight doc defects.
 - **The TUI design audit's own items (M125–M130).** The owner's report that the TUI was "extremely
   poor in terms of design and usability compared to the references" traced to decoration that existed,
   was tested, and had **no production caller** — so none of it was ever on screen. Now: the transcript
@@ -24,6 +41,14 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
   silence, and claiming otherwise was the defect. Also in M129: `NO_COLOR` glyph separation (an answer
   and its reasoning trace were the same pixels) and a real card duration (every result card reported
   `0ms` because it stamped its start and end with the same `now`).
+
+> **Coverage.** This is a curated record of user-visible changes, not a complete one: M125 forward at
+> the top, M11–M82 below, and **nothing for M83–M124** — the audit, port-fidelity and hardening
+> rounds. That is a choice rather than a loss. The file stopped being updated at M82 and resumed with
+> the M125–M130 entries, while [`docs/history.md`](docs/history.md) already carries a finding-level row
+> for every milestone in between and [`docs/milestones/`](docs/milestones) the dev log each row was
+> written from. A second-hand summary composed here now would be a third copy of that record, in the
+> place a reader trusts most.
 
 ### Added
 - **Plan-mode enforcement (M82).** `--plan` denied `git commit*` patterns that core never matched

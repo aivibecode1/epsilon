@@ -23,16 +23,23 @@ docs/              everything else, indexed by docs/README.md
   research/        studies of the reference harnesses and gap analyses
   glossary.md      vocabulary
   handoff/         task handoffs
-scripts/           gate.sh (the verification battery), rpc_probe.py (headless client
-                   smoke test), regen_catalog.py
+agents/            agent working memory: open-work notes, evidence pointers, next steps
+.agents/skills/    repo-local skills — the proven procedure for each kind of work
+.github/           CI: the full gate battery on Windows, confinement on Linux, MSRV check
+assets/            the logo the root README embeds
+scripts/           gate.sh and gate.ps1 (the verification battery, one per platform),
+                   console-probe.py (drives the built TUI in a real console window),
+                   rpc_probe.py (headless client smoke test), regen_catalog.py
 crates/            the 12 workspace crates (eleven from ADR-014; epsilon-lsp joined in M79)
 references/        the four reference harnesses — research input, never committed
 ```
 
 Rules that follow from it:
 
-- **The root holds entry points only.** Four markdown files, one directory of code, one of
-  documentation, one of reviews. Anything with a "when you need it" audience lives under `docs/`.
+- **The root holds entry points only.** Three markdown files and a `LICENSE`; everything else is a
+  directory with one job (`crates/`, `docs/`, `audit/`, `scripts/`, `agents/`, `assets/`, and the
+  dot-directories holding CI and the repo-local skills). Anything with a "when you need it"
+  audience lives under `docs/`.
 - **`audit/` is a dated snapshot, not a living document.** It is allowed to name defects that are
   still open and to contradict the code, because its value is that it records what was true at a
   point in time. New audits get new files; old ones are not edited into agreement with the code.

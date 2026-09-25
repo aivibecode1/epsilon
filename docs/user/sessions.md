@@ -27,15 +27,18 @@ A cross-process **lease** (heartbeat-enforced) is intended to admit a single wri
 `epsilon` attaching to the same session is refused and names the current holder; a genuinely
 stale lock (crashed process) is stealable.
 
-## Compaction and current limitations
+## Compaction, and what it guarantees
 
-Compaction appends summary entries rather than deleting old messages. However,
-successive summaries accumulate in the current durable model projection (F04) and
-failed summaries can replace context (F06). A durable append that fails is **no longer
-ignored**: the turn ends before the provider is called, the failure is reported as a
-notice, and later requests refuse to build a request from a session missing a turn the
-loop recorded (F07, fixed in M122). The append-only design alone does not guarantee
-correct recovery.
+Compaction appends summary entries rather than deleting old messages, so the transcript keeps
+every line while the model sees the compacted projection. That projection **replaces** the
+summary it supersedes instead of stacking on top of it, and a summary is committed only when it
+is usable — a non-failure stop reason, non-empty text, and an append that reached the disk (F04
+and F06, fixed in M86). A cancelled run that salvaged a partial answer commits it like a
+completed turn (F17, the same milestone). A durable append that fails is also **not** ignored:
+the turn ends before the provider is called, the failure is reported as a notice, and later
+requests refuse to build a request from a session missing a turn the loop recorded (F07, fixed
+in M122; the `serve` path that still swallowed it, in M133). The append-only design alone does
+not guarantee correct recovery.
 
 ## Recovery from damage
 
@@ -43,24 +46,28 @@ Repair runs when a session opens:
 
 - A transcript ending mid-tool-call gets the missing results synthesized so the file stays
   valid for the next run.
-- Many malformed or incompatible entries receive typed refusal, but unusable final
-  entries and a final second header can be mistaken for torn writes and truncated
-  (F08). A header followed by a torn first entry can lose its header during repair.
-  See F08 in [the defect ledger](../../audit/02-defect-ledger.md) for the
-  source evidence and required preservation guarantees.
+- A truncated final line is repaired. A **complete** line this build cannot read is not: it is
+  refused with a typed diagnosis and the file is left byte-identical, because position no longer
+  decides whether data survives (F08, fixed in M108).
+- An entry kind from a newer Epsilon is kept rather than used to close the session: it is carried
+  on the next write, left out of the model view, and reported when the session opens (M113, M116).
+- The header is the floor of any truncation, so a header followed by a torn first entry keeps its
+  header — and with it the session's ids, its working directory and, for a delegated child, its
+  parent link (M105).
 
 Practical guidance:
 
-- Back up `.epsilon/sessions/` privately before reopening damaged files; opening can
-  mutate a tail. Never assume unknown final content will be preserved.
-- Local cancellation can leave returned partial text absent from history (F17).
-  Resume is not proof that all displayed text was persisted.
+- Back up `.epsilon/sessions/` privately before reopening damaged files: a genuinely torn tail
+  is still repaired in place, and only your own copy proves what was there.
 - `/tree` currently shows the active branch; `/fork` copies the file without switching
   to it. These are not complete pi session workflows.
 
 ## Checkpoints (revert)
 
-File-level checkpoints exist for undoing tool edits, but restore-safety issues are **open
-audit findings (F15)** — before relying on checkpoint restore, read
-[`../../audit/02-defect-ledger.md`](../../audit/02-defect-ledger.md). Keep sessions under
-private backup for recovery; do not commit sensitive session transcripts to a public repository.
+Pre-edit file checkpoints are recorded, and the store refuses to restore one it cannot verify: a
+restore compares **content**, not timestamps, and a file whose bytes differ from the capture is
+left alone rather than overwritten (F15, fixed in M100 and M104 — the two halves were deleting a
+file it could not restore, and clobbering edits made after the snapshot). What does not exist yet
+is a *user-facing* revert: nothing outside the tests calls the restore path, so treat checkpoints
+as an internal record rather than an undo key. Keep sessions under private backup for recovery;
+do not commit sensitive session transcripts to a public repository.

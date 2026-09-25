@@ -8,7 +8,7 @@ failed and `unwrap_or("")` produced an empty message. The same branch ignored
 `message.role`, so every role became a *user* turn, and read `timestamp` as a number when
 pi writes an ISO string, so every entry was re-dated to the moment of the import.
 
-Running it is what found it ([G19](file:///dev/null), evidence
+Running it is what found it (G19, evidence
 [`../../audit/evidence/pi-import-empties-messages-2026-09-22.md`](../../audit/evidence/pi-import-empties-messages-2026-09-22.md)):
 resuming pi's own fixture reported "resumed 369 entries", exit 0, and turned a
 668-character prompt into nothing. The port's headline interop claim was, in practice,
