@@ -46,57 +46,19 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **IN FLIGHT (rounds 46–48): the last two audit items — `NO_COLOR` glyph separation and OSC 52 for
-  `/copy`.** A delegated agent is working in `crates/epsilon-tui` (untracked
-  `src/app/scratch_dump_tests.rs`, modified `app.rs`, `theme.rs`/`footer.rs`/`clipboard` in play).
-  **The tree did not compile during rounds 47–48** and the breakage was the agent's — first
-  `missing field osc_pending in initializer of app::App`, then `cannot find module or crate base64`
-  in the lib. **It compiles and is green again as of round 49** (see the status line below); the two
-  items here are what the slice still owes:
-  1. **The `base64` dependency is a judgement call the parent owns.** `AGENTS.md` says "No new
-     dependency without a stated reason tied to an ADR or milestone need", and deps are pinned EXACT.
-     OSC 52 needs the payload base64-encoded; a ~30-line encoder with no dependency is a legitimate
-     alternative for a single call site, and the repo has hand-rolled a civil-date conversion before
-     for exactly this reason. Either decision needs its reason written down.
-  2. **The scratch file must not be committed.** `src/app/scratch_dump_tests.rs` is an untracked
-     module; the last delegated author's `zz_frame_dump_*` tests are still in `app/golden.rs` and were
-     named in `audit/evidence/m126-m127-review.md` finding **F5** as artefacts to remove.
-     **Round 49: it is worse than untracked — `app.rs` declares it as a module and it owns
-     `push_line_for_test`, which other tests call**, so removing the declaration breaks the build
-     (`no method named push_line_for_test`). It cannot simply be excluded from a commit: delete the
-     file and move the helper somewhere honest before this slice lands, or it ships as a second
-     F5-shaped artefact. Its one test is `#[ignore]`d and is the agent's tool for the *unfinished*
-     glyph-separation half (`ui/theme.rs` is still untouched).
-  **Round 49 status: the OSC 52 half is done and the tree is GREEN at 298 passed / 0 failed / 1
-  ignored.** New `crates/epsilon-tui/src/clipboard.rs` emits the sequence, with
-  `a_failed_terminal_write_is_not_reported_as_a_copy` pinning the property that mattered most — a
-  terminal that ignores OSC 52 must not yield a success notice. `base64` was added as a **workspace
-  dependency**; the parent's judgement is to **accept it**: OSC 52 is a wire format with a normative
-  alphabet, and hand-rolling it risks exactly the silent-encoding bug whose failure mode here is
-  "copies nothing, reports success". The reason goes in the milestone doc when the slice lands.
-- **B1 IS FIXED IN THE WORKING TREE, UNVERIFIED (round 48).** The review's sharpest blocker — every
-  result card reporting `0ms` because `state.rs` stamped its start and end with the same `now` — is
-  fixed in `crates/epsilon-tui/src/state.rs`: `settle_call` now **returns** the pending card's
-  `started_at_ms`, the result card inherits it, and a result whose call is not in the transcript falls
-  back to `now` rather than inventing an elapsed time. **It could not be verified**: the crate does not
-  compile because of the agent's in-flight work above, so `cargo test -p epsilon-tui` never ran on it.
-  **Do not commit it until the tree is green**, and note the review's second half of B1: the golden
-  test named for that property asserts only that the tail ends in `ms`, so **it must be tightened to
-  require `ms > 0`** or the fix is unpinned.
-- **IN FLIGHT (round 52): blockers B2–B5 from `audit/evidence/m126-m127-review.md`.** A delegated agent
-  is fixing the light palette's ANSI-16 quiet roles (B2), the `EPSILON_THEME` fall-through (B3),
-  `parse_diff`'s doc contradicting its pinned test (B4), and the never-drawn split diff at ≥120 columns
-  (B5). Files in play: `crates/epsilon-tui/src/ui/theme.rs`, `ui/card.rs`, `state.rs`, `render_cache.rs`,
-  `app/golden.rs`, `crates/epsilon-cli/src/main.rs`.
-  **Last measured: `301 passed / 1 failed`, and the failure is a REGRESSION with a measured cause, not
-  an armed control** — `app::golden::an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (M126's
-  own pinned frame-level assertion, which passed before this slice) now fails at `golden.rs:1362` with
-  `left: (2, 10)`, `right: (2, 6)`: the sign is still at cell 2, but the diff's **body moved four columns
-  right**, i.e. something the slice changed in `ui/card.rs` altered the rendered diff layout at 80
-  columns. The assertion's own message says what it expects ("the body follows `+ 5 `"). So this is a
-  genuine behaviour change that must be either intended-and-re-documented or reverted — **do not commit
-  until the crate is green**, and do not assume a control this time: the numbers say the layout moved.
-  The author was still running when this was measured, so it may yet resolve it.
+- **IN FLIGHT (round 55): the review's findings F1–F7.** A delegated agent is answering the seven findings
+  from `audit/evidence/m126-m127-review.md` (the footer's false 60-column claim, the card-open precedence
+  implemented twice, the two glyph-table entries with no reader, the duplicated doc lines in `theme.rs`,
+  the `zz_*`/`filler` author artefacts, doc hygiene, and `fg_of`'s `None`-vs-`Reset`). Files in play:
+  `ui/footer.rs`, `ui/header.rs`, `ui/layout.rs`, `ui/theme.rs`, `app.rs`, `app/golden.rs`,
+  `app/tests.rs`, `CHANGELOG.md`.
+  **Last measured: `307 passed / 1 failed`, and the failure is the agent's OWN new guard** —
+  `app::tests::the_card_open_rule_is_borrowed_and_not_restated`, the test it wrote for F2, failing before
+  the fix lands (TDD order), **not a regression**: the count rose from 302 to 307, so nothing that passed
+  before is broken. `cargo clippy -p epsilon-tui --all-targets -- -D warnings` is clean.
+  **Do not commit until the crate is green**, then battery + reinstall (the footer and the theme are
+  user-visible). Earlier in the slice the agent left a probe at `crates/epsilon-tui/tests/zz_f1_probe.rs`
+  and removed it again — check no scratch file remains before staging, and stage **named files**.
 - **M129 CLOSED** (battery `m129c`: all five gates exit 0, **1,165 passed / 0 failed / 1 ignored across
   61 binaries**; installed; docs and history row landed). The slice landed
   the audit's last two items and the review's B1:
