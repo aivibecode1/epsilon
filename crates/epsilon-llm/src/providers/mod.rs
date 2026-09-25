@@ -23,6 +23,10 @@ use openai_responses::OpenAiResponsesWire;
 
 use std::collections::{BTreeMap, VecDeque};
 
+// `Response::chunk()` is an inherent reqwest method, but the boxed `Stream` field is not:
+// `.next()` is `futures_util::StreamExt`. Without this the `real` feature does not compile.
+use futures_util::StreamExt;
+
 use epsilon_contracts::content::ContentBlock;
 use epsilon_contracts::message::{AssistantMessage, StopReason, Usage};
 use epsilon_contracts::stream::StreamEvent;
@@ -758,7 +762,17 @@ fn stream_idle_limit() -> std::time::Duration {
 /// One live provider stream: the HTTP response body being decoded incrementally.
 struct WireStream {
     wire: Box<dyn ProviderWire>,
-    inner: reqwest::Response,
+    /// The response body as a byte stream rather than a `reqwest::Response`.
+    ///
+    /// F03 needed a test, and there was no way to write one: this was a concrete
+    /// `reqwest::Response`, so a fixture could only be exercised over a real socket, and
+    /// every existing test drives the *codecs* directly and never this type. It is now a
+    /// boxed byte stream — `Response::bytes_stream()` is exactly `Stream<Item =
+    /// Result<Bytes>>`, so production pays one `.boxed()` and the chunk-partition
+    /// behaviour becomes drivable from a `Vec` of chunks in a unit test.
+    inner: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = Option<reqwest::Result<bytes::Bytes>>> + Send>,
+    >,
     decoder: SseDecoder,
     /// StreamFolder needs `Start` before any delta; emit it on first wire batch.
     started: bool,
@@ -777,6 +791,18 @@ struct WireStream {
 
 impl WireStream {
     /// Feed received bytes; return the first newly produced event, queueing the rest.
+    ///
+    /// The loop must run to the end of the *chunk*, not stop at the first event-producing
+    /// line. F03: it used to `return` from inside the loop, so a provider that delivered a
+    /// whole response in one TCP chunk had every frame after the first left sitting in
+    /// `line_buf` — and `next()` never re-checked `line_buf` before awaiting the next chunk,
+    /// so those frames were not merely delayed. If the body then ended, the stream ended
+    /// cleanly and the frames were simply gone. The visible symptom is a truncated answer
+    /// that the harness reports as a *success*.
+    ///
+    /// So: drain every complete line in the chunk, push every event onto `queued`, and hand
+    /// back one. `next()` already drains `queued` before it awaits, so the rest come out on
+    /// the following calls without touching the network.
     fn ingest(&mut self, chunk: &[u8]) -> Option<StreamEvent> {
         self.line_buf.extend_from_slice(chunk);
         while let Some(pos) = self.line_buf.iter().position(|b| *b == b'\n') {
@@ -806,16 +832,11 @@ impl WireStream {
                 } else {
                     self.started = true;
                 }
-                let first = if batch.is_empty() {
-                    None
-                } else {
-                    Some(batch.remove(0))
-                };
+                // Queue the whole batch, keep going. Returning here is the bug.
                 self.queued.extend(batch);
-                return first;
             }
         }
-        None
+        self.queued.pop_front()
     }
 }
 
@@ -834,11 +855,14 @@ impl EventStream for WireStream {
             // turn forever. Silence longer than the limit is a network failure as
             // far as the retry policy is concerned — the message says "timed out"
             // so `retry::classify` routes it to `FailureKind::Network`.
-            let chunk = if self.idle_limit.is_zero() {
-                self.inner.chunk().await
+            // `StreamExt::next` yields `Option<Item>`; `timeout` wraps that in a
+            // `Result`. Flatten both levels into the same `Option<Result<Bytes, _>>`
+            // the old `Response::chunk()` returned, so every arm below is unchanged.
+            let chunk: Option<Result<bytes::Bytes, reqwest::Error>> = if self.idle_limit.is_zero() {
+                self.inner.next().await.flatten()
             } else {
-                match tokio::time::timeout(self.idle_limit, self.inner.chunk()).await {
-                    Ok(result) => result,
+                match tokio::time::timeout(self.idle_limit, self.inner.next()).await {
+                    Ok(inner) => inner.flatten(),
                     Err(_elapsed) => {
                         self.finished = true;
                         let message = self.st.stall_message(self.idle_limit.as_secs());
@@ -847,17 +871,17 @@ impl EventStream for WireStream {
                 }
             };
             match chunk {
-                Ok(Some(chunk)) => {
+                Some(Ok(chunk)) => {
                     if let Some(ev) = self.ingest(&chunk) {
                         self.finished |= matches!(ev, StreamEvent::Done { .. });
                         return Some(ev);
                     }
                 }
-                Ok(None) => {
-                    // Body exhausted: flush a trailing unterminated frame or unterminated
-                    // SSE data line (DeepSeek sometimes ends without a trailing
-                    // newline), then deliver any queued events or the buffered partial,
-                    // and only then fail honestly.
+                // Body exhausted (stream yielded `None` or ended): flush a trailing
+                // unterminated frame or unterminated SSE data line (DeepSeek sometimes
+                // ends without a trailing newline), then deliver any queued events or the
+                // buffered partial, and only then fail honestly.
+                None => {
                     if let Some(ev) = self.queued.pop_front() {
                         self.finished |= matches!(ev, StreamEvent::Done { .. });
                         return Some(ev);
@@ -968,7 +992,7 @@ impl EventStream for WireStream {
                         ),
                     });
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     // M62: a socket that dies mid-answer must not take the answer
                     // with it — keep what was decoded and flag the turn as failed.
                     self.finished = true;
@@ -1248,7 +1272,10 @@ pub async fn try_stream_direct(
     let st = HttpEventStream::new(model_id, "", wire.finalize_usage_from_tail());
     Ok(Box::new(WireStream {
         wire,
-        inner: response,
+        inner: Box::pin(futures_util::StreamExt::chain(
+            response.bytes_stream().map(Some),
+            futures_util::stream::once(std::future::ready(None)),
+        )),
         decoder: SseDecoder::new(),
         started: false,
         line_buf: Vec::new(),
@@ -1412,7 +1439,10 @@ impl StreamFn for DirectProvider {
         let st = HttpEventStream::new(&model.id, "", wire.finalize_usage_from_tail());
         Box::new(WireStream {
             wire,
-            inner: response,
+            inner: Box::pin(futures_util::StreamExt::chain(
+                response.bytes_stream().map(Some),
+                futures_util::stream::once(std::future::ready(None)),
+            )),
             decoder: SseDecoder::new(),
             started: false,
             line_buf: Vec::new(),
@@ -1506,5 +1536,143 @@ mod http_stream_tests {
         };
         let _batch = wire.on_event(&ev, &mut st).expect("batch");
         assert_eq!(st.text, "hi");
+    }
+
+    // ---- M137 / F03: several SSE frames arriving in ONE HTTP chunk ----
+
+    /// Build a `WireStream` over a fixed list of byte chunks, so a test can choose
+    /// exactly how the network framed the response. This is the seam F03 needed and
+    /// did not have: the field used to be a concrete `reqwest::Response`, so no test
+    /// could put more than one SSE frame in a single chunk without a live socket.
+    fn wire_over(chunks: Vec<&'static str>) -> WireStream {
+        use futures_util::stream;
+        let body: Vec<Option<Result<bytes::Bytes, reqwest::Error>>> = chunks
+            .into_iter()
+            .map(|c| Some(Ok(bytes::Bytes::from_static(c.as_bytes()))))
+            .collect();
+        WireStream {
+            wire: Box::new(OpenAiCompatWire {
+                base_url: "https://api.openai.com/v1".into(),
+                env_key: Some("OPENAI_API_KEY".into()),
+            }),
+            // Mirror production exactly: chunks as `Some(..)`, then one `None` for
+            // end-of-body, so the stream under test is shaped like the real one.
+            inner: Box::pin(futures_util::StreamExt::chain(
+                stream::iter(body),
+                stream::once(std::future::ready(None)),
+            )),
+            decoder: SseDecoder::new(),
+            started: false,
+            line_buf: Vec::new(),
+            st: HttpEventStream::new("gpt-x", "openai", false),
+            queued: VecDeque::new(),
+            finished: false,
+            // No watchdog: these tests are about framing, not about silence, and a
+            // timeout here could only turn a framing bug into a flaky one.
+            idle_limit: std::time::Duration::ZERO,
+        }
+    }
+
+    fn sse(data: &str) -> String {
+        format!("data: {data}\n\n")
+    }
+
+    /// The F03 defect. A provider is free to send a whole short response in one TCP
+    /// chunk; the decoder must yield *every* frame in it. Before the fix, `ingest`
+    /// returned from inside the line loop after the first event-producing line, and
+    /// `next()` never re-checked `line_buf` before awaiting the next chunk — so frames
+    /// 2..n were never read. Since the body then ended, the stream ended cleanly and the
+    /// harness reported a truncated answer as a *success*.
+    #[tokio::test]
+    async fn every_frame_in_one_chunk_is_delivered_not_just_the_first() {
+        let whole = format!(
+            "{}{}{}",
+            sse(r#"{"choices":[{"delta":{"content":"one "}}]}"#),
+            sse(r#"{"choices":[{"delta":{"content":"two "}}]}"#),
+            sse(r#"{"choices":[{"delta":{"content":"three"}}]}"#),
+        );
+        // One chunk. One write. Three frames.
+        let mut ws = wire_over(vec![Box::leak(whole.into_boxed_str())]);
+
+        let mut text = String::new();
+        let mut saw_done = false;
+        // Bounded loop: if the stream never ends, the test fails rather than hangs.
+        for _ in 0..32 {
+            let Some(ev) = ws.next().await else { break };
+            match ev {
+                StreamEvent::TextDelta { delta, .. } => text.push_str(&delta),
+                StreamEvent::Done { .. } => {
+                    saw_done = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(
+            text, "one two three",
+            "every frame in a single chunk must reach the consumer, in order"
+        );
+        assert!(saw_done, "and the terminal frame must still arrive");
+    }
+
+    /// The same bytes, delivered one frame per chunk, must produce the identical result.
+    ///
+    /// This is the pair that makes the first test meaningful: if the chunked path and the
+    /// single-chunk path disagree, the framing is still wrong somewhere. A fix that only
+    /// made the single-chunk case pass would fail here.
+    #[tokio::test]
+    async fn one_frame_per_chunk_gives_the_same_answer_as_one_big_chunk() {
+        let frames = [
+            r#"{"choices":[{"delta":{"content":"one "}}]}"#,
+            r#"{"choices":[{"delta":{"content":"two "}}]}"#,
+            r#"{"choices":[{"delta":{"content":"three"}}]}"#,
+        ];
+        let boxed: Vec<&'static str> = frames
+            .iter()
+            .map(|f| {
+                let s = sse(f);
+                Box::leak(s.into_boxed_str()) as &'static str
+            })
+            .collect();
+        let mut ws = wire_over(boxed);
+
+        let mut text = String::new();
+        for _ in 0..32 {
+            let Some(ev) = ws.next().await else { break };
+            match ev {
+                StreamEvent::TextDelta { delta, .. } => text.push_str(&delta),
+                StreamEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(text, "one two three", "the chunked path must agree");
+    }
+
+    /// A frame split *mid-line* across two chunks is the case that already worked
+    /// (that is what the `line_buf` reassembly is for) and must keep working after the
+    /// loop stopped returning early. Without this, a fix that dropped the reassembly
+    /// entirely would pass the two tests above.
+    #[tokio::test]
+    async fn a_frame_split_mid_line_still_reassembles() {
+        let frame = sse(r#"{"choices":[{"delta":{"content":"split me"}}]}"#);
+        let (a, b) = frame.split_at(20);
+        let a: &'static str = Box::leak(a.to_string().into_boxed_str());
+        let b: &'static str = Box::leak(b.to_string().into_boxed_str());
+        let mut ws = wire_over(vec![a, b]);
+
+        let mut text = String::new();
+        for _ in 0..32 {
+            let Some(ev) = ws.next().await else { break };
+            match ev {
+                StreamEvent::TextDelta { delta, .. } => text.push_str(&delta),
+                StreamEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            text, "split me",
+            "a line split across chunks must still decode once complete"
+        );
     }
 }

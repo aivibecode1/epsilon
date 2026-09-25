@@ -28,6 +28,32 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   and leave cargo running.
 - **Deleting tests must be reconciled out loud** in the milestone: state the per-crate
   delta and the arithmetic behind it.
+- **A green `cargo test -p <crate>` can be lying.** `crates/epsilon-llm/src/lib.rs` gates
+  `pub mod providers` on `#[cfg(feature = "real")]`, so `cargo test -p epsilon-llm` collects
+  **71** tests while `--features real` collects **109**. The 38 omitted are the whole
+  provider-stream surface. `real` IS a default feature, so `cargo test --workspace` and
+  `gate.ps1` run them — but a per-crate command without the flag prints
+  `test result: ok` and silently drops a third of the crate. Always pass
+  `--features real` for `epsilon-llm`. The 71-vs-109 count gap is the tell.
+- **Check the test COUNT, not just `test result: ok`.** A filter or feature gate that matches
+  nothing still exits 0. Grep the `test result` line for a non-zero passed count.
+- **`cargo build` is not evidence for `real`-gated code.** All of `providers` is behind the
+  feature, so a plain build compiles none of what a `providers` change touches. Compile with
+  `--features real` before believing anything. (M137's first "BUILD=0" proved nothing.)
+- **The `patch` tool can write a literal CR into a byte literal.** Patching a Rust string
+  containing `\r` through the tool may split `b"\r\n"` across lines and corrupt the file; the
+  error surfaces later and elsewhere. Repair byte-exactly with python `open(p,"rb")`, not
+  another patch.
+- **`execute_code` breaks on multi-line Rust string literals** (`SyntaxError: unterminated
+  string literal`). Use the `patch` tool directly for multi-line Rust.
+- **The `patch` tool's syntax check reports spurious "Rust 2015" errors** (let-chains,
+  `async fn`) on files cargo compiles fine — its checker ignores the edition. Trust cargo.
+- **`cargo test ... | tail` masks the real exit code.** Redirect to a file and `echo $?`
+  immediately, or a failing run reads as a passing one.
+- **Foreground `cargo` caps out at 420 s.** A cold external target makes clippy exceed that;
+  run the battery in the background and poll the log.
+- **The gate log is gitignored.** `gate.ps1` writes `target/gate-<label>.log`; copy it to
+  `audit/evidence/` *before* `cargo clean` or the evidence is gone.
 
 ## What just landed (2026-09-25)
 
@@ -40,6 +66,12 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   PASS. Rejected a pid-liveness probe on purpose: it needs `unsafe` here to learn less than the
   heartbeat already reports. **Its remaining gap is the silence, not the refusal** — the TUI shows
   no progress during the wait, and that needs a callback the session crate cannot own.
+- **M137** — F03 closed: several SSE frames in one HTTP chunk no longer lose all but the first (a
+  silent P1 truncation reported as success). `ingest` drains the chunk; the body became a boxed byte
+  stream because the concrete `Response` had made chunk framing untestable — **that is why the
+  defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
+  1.12.1) — ADR-017 amendment. **Next slice should close the silence M136 left**: the TUI shows no
+  progress while the lease wait runs.
 
 ## Traps that have cost real time
 

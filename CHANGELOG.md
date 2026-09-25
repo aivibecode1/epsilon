@@ -18,6 +18,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   are user-visible strings in `epsilon --help`; no behaviour changed.
 
 ### Fixed
+- **A reply split across several server-sent frames in one network chunk is no longer truncated
+  (M137).** When a provider sent a short answer in a single chunk, Epsilon showed only the first
+  frame's text and reported the rest as a **successful** completion — no error, no warning. Three
+  tests cover it, including the case that fails if the fix only works one way.
 - **Reopening a session you just closed no longer fails for 30 seconds (M136).** Kill a TUI, open it
   again, and the harness would report that another instance is already writing the session and exit —
   because the process you just killed is exactly the one that was not heartbeating its lock, and the

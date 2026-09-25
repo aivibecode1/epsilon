@@ -72,6 +72,10 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M137 — several SSE frames in one network chunk no longer lose all but the first](milestones/M137-every-frame-in-one-chunk-reaches-the-user.md):
+  a short answer delivered in one chunk showed only the first frame and was reported as a
+  **successful** completion. Also: why it survived (the stream layer had no test seam at all), and
+  why `cargo test -p epsilon-llm` without `--features real` silently runs 38 fewer tests.
 - [M136 — reopening a session you just closed no longer fails for 30 seconds](milestones/M136-the-lease-waits-instead-of-refusing.md):
   kill the TUI, open it again, and the harness said another instance owned the session and exited —
   because the process you just killed is precisely the one that was *not* heartbeating its lock. The

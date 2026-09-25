@@ -597,6 +597,38 @@ stud-shape rebuilds every attached brick. Mitigated by the freeze policy in ADR-
 
 ---
 
+## ADR-017 amendment (M137): declaring `bytes` instead of smuggling its type
+
+**Context.** F03's fix turned `WireStream.inner` from a concrete `reqwest::Response`
+into a boxed byte stream, so the chunk-framing behaviour became testable from a
+`Vec<Bytes>`. The stream's item type is `bytes::Bytes`, and Rust will not let a crate
+name a transitive dependency.
+
+**Decision.** Declare `bytes = "=1.12.1"` in `[workspace.dependencies]` and in
+`crates/epsilon-llm/Cargo.toml`.
+
+**Why this and not something cleverer.** Three alternatives were tried or considered
+and all are worse:
+
+- *Inference gymnastics* (deriving the item type off `bytes_stream()`'s `impl Stream`,
+  or leaving the field to be inferred at each construction site). Both were actually
+  attempted during this milestone. They compile no better than naming the type,
+  because the type still has to appear in the field declaration, and they cost a
+  reader three lines of type theory to avoid a five-line manifest entry.
+- *An ADR for a genuinely new crate.* Not applicable — this is not new code.
+
+The decisive point is that `bytes 1.12.1` was **already in `Cargo.lock` and already
+compiled into the binary** through reqwest. Declaring it adds zero compilation and
+zero attack surface; it only makes an existing type nameable. The dependency policy
+exists to stop unreviewed code entering the tree, and this entry is reviewed code that
+was already there. Pinning it exact keeps that guarantee.
+
+**Consequence.** Two direct dependencies where there was one, and one more line in the
+lockfile's direct-dependency set. The upside is a testable streaming layer, which is
+the difference between a defect that survives years (F03) and one that cannot.
+
+---
+
 ## ADR-017: Build order and debug tooling (lego-brick methodology)
 
 **Decision.**

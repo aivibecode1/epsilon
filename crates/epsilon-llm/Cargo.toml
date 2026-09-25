@@ -13,6 +13,7 @@ serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
+bytes = { workspace = true }
 toml = { workspace = true }
 # M49: SigV4 signing for Bedrock (HMAC-SHA256 over the workspace sha2 pin —
 # no new `hmac` crate; the three-line construction lives in `auth.rs`).

@@ -148,6 +148,31 @@ the first, and if the body then ends, `next()` returns `None` and the stream end
 "EOF can claim success" half of the finding, reachable with no slow server at all. No code change; this
 is the verification. Record: [open-items-at-head-2026-09-25.md](evidence/open-items-at-head-2026-09-25.md) §1.1.
 
+**CLOSED 2026-09-25 (M137).** `ingest` now drains every complete line in a chunk and queues the
+whole batch, handing back one event; the stranded-lines path is gone. The body also became a boxed
+byte stream, because a concrete `reqwest::Response` made the chunk-partition behaviour untestable —
+which is *why* the defect survived: every wire test drove the codecs directly and the layer that
+decides how bytes are grouped had no test at all. Evidence:
+[gate-m137.log](evidence/gate-m137.log) and
+[m137-negative-control.txt](evidence/m137-negative-control.txt) — the control reproduces
+`left: "one "` against `right: "one two three"`, i.e. two of three frames gone with a terminal
+`Done` and no error. Three tests: multi-frame-per-chunk, the same bytes one-frame-per-chunk (so a
+change that only broke the single-chunk path fails), and a line split mid-frame (so a change that
+dropped reassembly fails). `bytes` was added as a declared direct dependency (already compiled via
+reqwest, same 1.12.1 in the lockfile) — ADR-017 amendment.
+
+**Residual, not fixed:** no real-socket reproduction, no end-to-end `tool_calls` delta split across
+frames, and no `retry_stream` interaction case. Full list in
+[docs/milestones/M137-every-frame-in-one-chunk-reaches-the-user.md](../docs/milestones/M137-every-frame-in-one-chunk-reaches-the-user.md)
+under "What nothing exercises".
+
+**Collateral finding worth more than the fix:** `cargo test -p epsilon-llm` collects 71 tests;
+`--features real` collects 109. The 38 omitted are the entire provider-stream surface, because
+`lib.rs` gates `pub mod providers` on `#[cfg(feature = "real")]`. `real` is a default feature so the
+workspace battery runs them, but a per-crate invocation without the flag prints `test result: ok`
+while silently dropping a third of the crate. M137's three new tests would have been dead code under
+that habit.
+
 ## F04 — Make durable compaction replace superseded model context
 
 **CLOSED 2026-09 (M86; the branch variant in M90).** What was wrong: a second compaction

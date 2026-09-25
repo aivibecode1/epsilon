@@ -36,6 +36,11 @@ futures-util = "=0.3.31"
 # `rustls` enables TLS for https (default-tls) — without it every https request
 # fails with "no TLS backend" / network error (root cause of blank replies).
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
+# Already in the tree via reqwest (same 1.12.1 in Cargo.lock — declaring it adds no new
+# compilation, it only makes the type nameable). Needed because M137's F03 fix turns
+# `WireStream`'s body into a boxed `Stream`, whose item type is `bytes::Bytes`, and
+# Rust will not let a crate name a transitive dependency. See the ADR-017 amendment.
+bytes = "=1.12.1"
 tempfile = "=3.23.0"
 regex = "=1.13.1"
 schemars = { version = "=1.2.2", features = ["derive"] }
