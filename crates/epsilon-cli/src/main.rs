@@ -1416,6 +1416,7 @@ async fn dispatch(args: Args) -> i32 {
         confinement: args.confinement.clone(),
         lsp: args.lsp,
         model_id,
+        model_explicit: args.model_id.is_some(),
         resume: args.resume.clone(),
         project,
         project_trusted: trusted_now,
@@ -1477,6 +1478,7 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
+        model_explicit: shared.model_explicit,
         resume: &shared.resume,
         project: &shared.project,
         project_trusted: shared.project_trusted,
@@ -1619,6 +1621,10 @@ struct SharedRun {
     confinement: epsilon_tools::Confinement,
     lsp: epsilon_tools::Lsp,
     model_id: String,
+    /// Whether the user named a model on this invocation (M139). Distinguishes a
+    /// deliberate `--model` from a project/config default, which is what decides
+    /// whether a resumed session's own model may take over.
+    model_explicit: bool,
     resume: Resume,
     project: epsilon_cli::runtime::ProjectConfig,
     /// M39: config-hash trust at startup (`Changed` ⇒ false). Modes pass it
@@ -1644,6 +1650,14 @@ struct RunParams<'a> {
     confinement: &'a epsilon_tools::Confinement,
     lsp: epsilon_tools::Lsp,
     model_id: &'a str,
+    /// Whether the user named a model on THIS invocation (`--model`).
+    ///
+    /// M139 needs this to decide precedence, and `model_id` alone cannot say it: by the
+    /// time `build_runtime` runs, `model_id` is already the *resolved* id, which is
+    /// equally true whether it came from the flag, the project file, the saved config,
+    /// or a default. Only the flag is a deliberate instruction for this run; the rest
+    /// are standing preferences a resumed session may legitimately override.
+    model_explicit: bool,
     resume: &'a Resume,
     project: &'a epsilon_cli::runtime::ProjectConfig,
     /// M39: config-hash trust from dispatch (`Changed` ⇒ false). Gates the
@@ -1662,6 +1676,7 @@ async fn build_runtime(
         confinement,
         lsp,
         model_id,
+        model_explicit,
         resume,
         project,
         project_trusted,
@@ -1854,8 +1869,59 @@ async fn build_runtime(
         let count = msgs.len();
         agent.restore_history(msgs);
         eprintln!("resumed {} entries from {}", count, rp.display());
+        // M139: a model switch recorded in the session used to be read by nobody, so a
+        // resumed conversation silently came back on the launch model. Apply it here —
+        // and only here, because this is the point where the session is known and the
+        // agent still exists.
+        //
+        // Precedence, and it is not arbitrary: an explicit `--model` on THIS invocation
+        // is a deliberate instruction for this run, while the session's model is a
+        // remembered default. So flag > session > project/config, which is exactly the
+        // order `candidate_raw` already builds above — the session slots in only when the
+        // user expressed no preference of their own.
+        if let Some(resumed) = resumed_model_to_use(model_explicit, &restored, model_id) {
+            let (provider, session_model) = resumed;
+            if session_model != model_id {
+                eprintln!(
+                    "resumed session was last used on {provider}/{session_model}; continuing there \
+                     (pass --model to override)"
+                );
+                agent.set_model_id(session_model);
+            }
+        }
     }
     Ok(agent)
+}
+
+/// Which model a resumed run should continue on, and why. `None` means "keep the launch
+/// model" — the caller then changes nothing.
+///
+/// Extracted from `build_runtime` so the precedence is testable without standing up a
+/// workspace, a provider and a registry. A closure copy of the same rule inside a test
+/// would have tested the copy; this tests the rule the product actually runs.
+///
+/// The precedence is the whole content of the function: an explicit `--model` is a
+/// deliberate instruction for *this* invocation, while the session's model is a
+/// remembered default. So the session may only take over when the user said nothing.
+fn resumed_model_to_use(
+    model_explicit: bool,
+    store: &epsilon_session::SessionStore,
+    launch_model: &str,
+) -> Option<(String, String)> {
+    if model_explicit {
+        return None;
+    }
+    let settings = store.context_settings().ok()?;
+    let (provider, session_model) = settings.model?;
+    if session_model == launch_model {
+        return None;
+    }
+    // Resolve through the catalog so a session that recorded an alias or a partial id
+    // still lands on a real row; fall back to the raw id for a custom model the catalog
+    // does not know, which pi also accepts.
+    let resolved = epsilon_llm::catalog::resolve_model_for_run(&session_model)
+        .map_or_else(|| session_model.clone(), |r| r.info.id.to_string());
+    Some((provider, resolved))
 }
 
 /// Tell the user that a session lease is being waited out, and for roughly how much longer.
@@ -1963,6 +2029,7 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
+        model_explicit: shared.model_explicit,
         resume: &shared.resume,
         project: &shared.project,
         project_trusted: shared.project_trusted,
@@ -2102,6 +2169,7 @@ async fn tui_mode(
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
+        model_explicit: shared.model_explicit,
         resume: &shared.resume,
         project: &shared.project,
         project_trusted: shared.project_trusted,
@@ -2141,6 +2209,7 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
+        model_explicit: shared.model_explicit,
         resume: &shared.resume,
         project: &shared.project,
         project_trusted: shared.project_trusted,
@@ -2415,6 +2484,7 @@ action = "allow"
             confinement: &epsilon_tools::Confinement::Off,
             lsp: epsilon_tools::Lsp::Off,
             model_id: "test-1",
+            model_explicit: false,
             resume: &Resume::No,
             project: &project,
             project_trusted: true,
@@ -2991,6 +3061,66 @@ mod print_outcome_tests {
             Some(expected),
             "{variable}={raw:?} must select {expected:?} — a typo falls back to the \
              default, not through to the config key"
+        );
+    }
+    // ---- M139: model precedence on resume ----
+
+    /// Build a session whose last entry is a `model_change` to `session_model`, and return
+    /// the store. The lease is dropped at the end of this function so the caller can open
+    /// it again without contending with itself.
+    fn store_with_model_change(
+        dir: &std::path::Path,
+        session_model: &str,
+    ) -> epsilon_session::SessionStore {
+        let path = dir.join("resume.jsonl");
+        let mut store = epsilon_session::SessionStore::open_in(&path, dir).expect("store");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                provider: "testprov".into(),
+                model_id: session_model.into(),
+            })
+            .expect("append model_change");
+        drop(store);
+        epsilon_session::SessionStore::open_in(&path, dir).expect("reopen")
+    }
+
+    /// The flag wins. This is the regression that would be silent and unnerving: the user
+    /// explicitly names a model, gets overridden anyway, and has no way to notice.
+    #[test]
+    fn an_explicit_model_is_never_overridden_by_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_model_change(dir.path(), "some-other-model");
+        assert_eq!(
+            resumed_model_to_use(true, &store, "faux-1"),
+            None,
+            "a --model flag must survive a resume untouched"
+        );
+    }
+
+    /// With no flag, the session's model is what the user was last using.
+    #[test]
+    fn the_sessions_model_takes_over_when_no_flag_was_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_model_change(dir.path(), "some-other-model");
+        let chosen = resumed_model_to_use(false, &store, "faux-1")
+            .expect("the session's model should be adopted when the user named none");
+        assert_eq!(chosen.0, "testprov");
+        assert_eq!(
+            chosen.1, "some-other-model",
+            "an id the catalog does not know is kept verbatim, as pi does for custom models"
+        );
+    }
+
+    /// A session whose model already matches the launch model changes nothing — no
+    /// announcement, no pointless `set_model_id`.
+    #[test]
+    fn a_matching_model_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_model_change(dir.path(), "faux-1");
+        assert_eq!(
+            resumed_model_to_use(false, &store, "faux-1"),
+            None,
+            "no change means no change, and no confusing announcement"
         );
     }
 }

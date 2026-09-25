@@ -41,6 +41,31 @@ pub enum ModelViewEntry {
     },
 }
 
+/// The model and thinking level a resumed session should come back on.
+///
+/// Port of pi's `getSessionContextSettings`
+/// (`references/pi-0.85.1/packages/coding-agent/src/core/session-manager.ts:362-374`).
+/// The type exists because `model_change` / `thinking_level_change` entries were durable
+/// and typed but had **no reader**: they round-tripped perfectly and were then dropped,
+/// so a session came back on whatever model the launch flag named. A defect that only
+/// appears on resume, after a switch that worked, reads as intended behaviour.
+///
+/// The `Option` on `model` is pi's `null` and means something specific: the path never
+/// ran a model. It is not "no preference" and must never be collapsed into a default,
+/// or a caller cannot tell an unrun session from one that wants a different model.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SessionContextSettings {
+    /// Last model seen on the selected path, from a `model_change` **or** an assistant
+    /// message. `None` when the path has neither.
+    pub model: Option<(String, String)>,
+    /// Thinking level for the resumed session.
+    ///
+    /// `None` only before [`SessionStore::context_settings`] has run; the walk always
+    /// yields a value, defaulting to pi's `"off"`, so a caller can distinguish "off"
+    /// from "never set" without a second field.
+    pub thinking_level: Option<String>,
+}
+
 /// Why one line of a session file could not be taken as an entry (M75).
 ///
 /// The distinction this type exists to make: "this file is damaged" and "this file was written by
@@ -1516,7 +1541,6 @@ impl SessionStore {
         // Messages buffer until we know whether a later compaction shadows them
         // (compaction entries shadow everything *before* them since the prior boundary).
         let mut pending: Vec<ModelViewEntry> = Vec::new();
-
         for e in &branch {
             match &e.kind {
                 EntryKind::Message { message, .. } => {
@@ -1562,6 +1586,58 @@ impl SessionStore {
         }
         out.extend(pending);
         Ok(out)
+    }
+
+    /// Which model and thinking level a resumed session should come back on.
+    ///
+    /// Port of pi's `getSessionContextSettings`
+    /// (`session-manager.ts:362-374`). Three properties of the original are load-bearing
+    /// and each is easy to get wrong in a port:
+    ///
+    /// 1. **It walks the SELECTED PATH**, not the file. `branch_entries()` is what makes
+    ///    "switch model, branch back, get the earlier model" work: the answer belongs to
+    ///    the branch, not to the session.
+    /// 2. **There is no `break`.** The last change on the path wins. A port that returns
+    ///    the first `model_change` gets the wrong answer for any session that switched
+    ///    twice, which is the normal case after a correction.
+    /// 3. **An assistant message sets the model too.** This is the one a
+    ///    `model_change`-only implementation misses entirely, and it is what lets a
+    ///    session that never had a `model_change` entry — written by an older build, or
+    ///    simply never switched — still come back on the model it actually used.
+    ///
+    /// `thinking_level` defaults to pi's `"off"` when the path never says otherwise, so
+    /// the caller distinguishes "off" from "never recorded" by `Some`/`None` on the
+    /// model and by the value itself here.
+    pub fn context_settings(&self) -> Result<SessionContextSettings, StoreError> {
+        let branch = self.branch_entries()?;
+        let mut model: Option<(String, String)> = None;
+        // pi initialises to "off" (`session-manager.ts:364`) and only overwrites on an
+        // entry, so a path with no thinking entry is explicitly off, not unknown.
+        let mut thinking_level = "off".to_string();
+
+        for e in &branch {
+            match &e.kind {
+                EntryKind::ModelChange {
+                    provider, model_id, ..
+                } => {
+                    model = Some((provider.clone(), model_id.clone()));
+                }
+                EntryKind::ThinkingLevelChange { level, .. } => {
+                    thinking_level = level.clone();
+                }
+                // pi's third arm: `entry.type === "message" && role === "assistant"`.
+                EntryKind::Message {
+                    message: Message::Assistant(a),
+                    ..
+                } => model = Some((a.provider.clone(), a.model_id.clone())),
+                _ => {}
+            }
+        }
+
+        Ok(SessionContextSettings {
+            model,
+            thinking_level: Some(thinking_level),
+        })
     }
 
     /// Append a typed turn-end marker (Epsilon addition; sticky reason lives in the log).

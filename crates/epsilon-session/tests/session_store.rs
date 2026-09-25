@@ -3188,3 +3188,164 @@ fn popping_the_last_entry_keeps_the_header_and_the_read_cache_in_step() {
     assert!(reopened.is_empty());
     assert_eq!(reopened.version(), CURRENT_SESSION_VERSION);
 }
+
+// ---- M139: context settings survive a restart (pi `getSessionContextSettings`) ----
+
+/// An assistant message on a specific model, built from the file's existing helper so
+/// the two cannot drift apart as `AssistantMessage` gains fields.
+fn assistant_on(provider: &str, model_id: &str) -> Message {
+    match assistant_msg("hi") {
+        Message::Assistant(mut a) => {
+            a.provider = provider.into();
+            a.model_id = model_id.into();
+            Message::Assistant(a)
+        }
+        other => other,
+    }
+}
+
+/// The last `model_change` on the path wins.
+///
+/// A port that returns the FIRST one passes every single-switch session and fails the
+/// moment a user corrects themselves — which is the normal case, not the edge case.
+#[test]
+fn the_last_model_change_on_the_path_wins() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("switched.jsonl");
+    let mut store = SessionStore::open_in(&path, tmp.path()).expect("store");
+
+    store
+        .append(EntryKind::ModelChange {
+            provider: "anthropic".into(),
+            model_id: "claude-3-opus".into(),
+        })
+        .expect("first");
+    store
+        .append(EntryKind::ModelChange {
+            provider: "anthropic".into(),
+            model_id: "claude-sonnet-4".into(),
+        })
+        .expect("second");
+
+    let settings = store.context_settings().expect("settings");
+    assert_eq!(
+        settings.model,
+        Some(("anthropic".into(), "claude-sonnet-4".into())),
+        "the second switch is the one in force"
+    );
+}
+
+/// An assistant message sets the model too, so a session that never had a
+/// `model_change` at all still comes back on the model it actually used.
+///
+/// This is pi's third arm (`session-manager.ts:370-371`) and the case a
+/// `model_change`-only implementation gets entirely wrong: it returns `None` here and
+/// the caller falls back to the launch default, which is the original bug in a new coat.
+#[test]
+fn an_assistant_message_alone_names_the_model() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("never-switched.jsonl");
+    let mut store = SessionStore::open_in(&path, tmp.path()).expect("store");
+
+    store
+        .append(EntryKind::Message {
+            message: assistant_on("testprov", "gpt-x"),
+            api_request_sha256: None,
+        })
+        .expect("append");
+
+    let settings = store.context_settings().expect("settings");
+    assert_eq!(
+        settings.model,
+        Some(("testprov".into(), "gpt-x".into())),
+        "a session that never switched must still report the model it ran"
+    );
+}
+
+/// A path with neither a `model_change` nor an assistant message reports `None`.
+///
+/// pi returns `null` here, and the distinction is load-bearing: `None` means "this
+/// conversation never ran", not "no preference". Collapsing it into a default makes the
+/// two indistinguishable to the caller.
+#[test]
+fn a_path_with_no_model_at_all_reports_none_not_a_default() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("empty.jsonl");
+    let mut store = SessionStore::open_in(&path, tmp.path()).expect("store");
+    store
+        .append(EntryKind::ThinkingLevelChange {
+            level: "high".into(),
+        })
+        .expect("append");
+
+    let settings = store.context_settings().expect("settings");
+    assert_eq!(
+        settings.model, None,
+        "a thinking-level change is not a model change"
+    );
+    assert_eq!(
+        settings.thinking_level.as_deref(),
+        Some("high"),
+        "and the level it did record must still come back"
+    );
+}
+
+/// `thinking_level` defaults to pi's `"off"` and a later entry overrides it.
+#[test]
+fn the_thinking_level_defaults_to_off_and_a_later_entry_wins() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("thinking.jsonl");
+    let mut store = SessionStore::open_in(&path, tmp.path()).expect("store");
+
+    let unset = store.context_settings().expect("settings");
+    assert_eq!(
+        unset.thinking_level.as_deref(),
+        Some("off"),
+        "pi initialises to off, so 'off' and 'never set' stay distinguishable"
+    );
+
+    store
+        .append(EntryKind::ThinkingLevelChange {
+            level: "low".into(),
+        })
+        .expect("first");
+    store
+        .append(EntryKind::ThinkingLevelChange {
+            level: "xhigh".into(),
+        })
+        .expect("second");
+
+    let settings = store.context_settings().expect("settings");
+    assert_eq!(
+        settings.thinking_level.as_deref(),
+        Some("xhigh"),
+        "the last level on the path is the one in force"
+    );
+}
+
+/// The settings survive closing and reopening the file — which is the whole point.
+///
+/// A reader that only worked on a live store would pass every test above and still
+/// revert the model on restart, which is the defect this milestone exists to close.
+#[test]
+fn the_settings_survive_a_close_and_reopen() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = tmp.path().join("persist.jsonl");
+    {
+        let mut store = SessionStore::open_in(&path, tmp.path()).expect("store");
+        store
+            .append(EntryKind::ModelChange {
+                provider: "google".into(),
+                model_id: "gemini-3-pro".into(),
+            })
+            .expect("append");
+    } // the lease is released here, as on a clean exit
+
+    let reopened = SessionStore::open_in(&path, tmp.path()).expect("reopen");
+    let settings = reopened.context_settings().expect("settings");
+    assert_eq!(
+        settings.model,
+        Some(("google".into(), "gemini-3-pro".into())),
+        "a model switch must outlive the process that made it"
+    );
+}

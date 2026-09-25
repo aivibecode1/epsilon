@@ -25,6 +25,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   elapsed, ~27s left (another process may still be writing it)`.
 
 ### Fixed
+- **Switching models now survives closing the session (M139).** `--model` and a mid-session model
+  change were recorded in the session file but read by nobody, so resuming a conversation quietly
+  reverted to the launch model. Epsilon now continues on the model the session last used — and
+  says so. An explicit `--model` still wins, because a flag is an instruction for this run while the
+  session's model is a remembered default.
 - **A reply split across several server-sent frames in one network chunk is no longer truncated
   (M137).** When a provider sent a short answer in a single chunk, Epsilon showed only the first
   frame's text and reported the rest as a **successful** completion — no error, no warning. Three

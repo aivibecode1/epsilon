@@ -71,6 +71,13 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   stream because the concrete `Response` had made chunk framing untestable — **that is why the
   defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
   1.12.1) — ADR-017 amendment.
+- **M139** — a model switch now survives closing the session. `model_change` was written faithfully
+  and read by nobody (`ModelChange` appeared only in the decoder, the search index and tests), so a
+  resume silently reverted to the launch model. Fixed by porting pi's `getSessionContextSettings`
+  and wiring its result into `build_runtime`. **Two gotchas worth keeping:** the precedence needs an
+  explicit `model_explicit` on `RunParams`/`SharedRun` (a `false` literal there breaks *every* mode),
+  and a test appended to the end of `main.rs` lands **outside** the `#[cfg(test)]` module and is
+  compiled into the release binary.
 - **M138** — the M136 silence is gone for the CLI: `acquire_with_progress` reports each poll of
   the lease wait, and startup redraws one stderr line with a countdown and the reason. The
   callback is `Fn` returning `()` so a frontend can draw the wait but never change the outcome.
@@ -135,11 +142,12 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   `/help` (`app.rs:1212-1230`) close it. Carried here from the retired
   `metrics-and-reader-honesty` note; it is the smallest slice that directly serves the owner's
   "visibility into the harness's own operation" requirement.
-- **A pi session's model switch still does nothing on resume.** M116 made `model_change` and
-  `thinking_level_change` heal faithfully and they are typed and durable, but `model_view()` and
-  `restore_history` ignore them, so a resumed session keeps the model it was launched with. The
-  consumer is the missing half (a small `provider`/`modelId` + `level` mapping) and it was
-  deliberately left rather than half-done.
+- ~~A pi session's model switch does nothing on resume.~~ **Closed by M139.** `context_settings()`
+  is pi's `getSessionContextSettings` over `branch_entries()`, and `resumed_model_to_use` applies it
+  when the user passed no `--model`. The rule a faithful port must not drop: an **assistant message
+  also names the model** (`session-manager.ts:362-374`, third arm), so a session with no
+  `model_change` at all still restores. `thinking_level` is produced by the same walk but **not yet
+  applied to the agent** — the next slice, not a bug.
 - **The skills collision policy contradicts pi in shipped code**: `crates/epsilon-tui/src/skills.rs`
   says its later-root shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision
   diagnostic (`skills.ts:432-439`). A design decision (which root wins, what the diagnostic says)
