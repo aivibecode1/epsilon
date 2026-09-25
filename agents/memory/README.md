@@ -230,6 +230,9 @@ not themselves trigger runtime compression.
   user doc was fixed); and
   `pi_import_reconciliation::pi_import_carries_every_source_entry` failed once in a combined run
   and passed on every re-run (unexplained flake, worth a second look).
+- **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files, ~420
+  lines) was modified by something other than this task, and is still dirty. Preserve it; never `git add`
+  that directory, and do not fold it into a milestone commit.
 - **DOCUMENTATION GAPS CLOSED (`ffff7e2`), AND THE ROOT CAUSE OF THE STALE CLAIMS FOUND.** The docs map
   now carries a pointer for every milestone M83–M133 (each with its *finding*, not its feature), the
   changelog's M83–M124 hole is a stated blockquote rather than a backfill (**decided**, with four measured
