@@ -1545,17 +1545,55 @@ fn list_models(provider_filter: Option<&str>) {
 ///
 /// An unrecognised value falls back to the default rather than failing, the same
 /// rule `epsilon_core::config` follows for every other key: a config typo must
-/// not stop the TUI from starting.
+/// not stop the TUI from starting. The fallback is [`ThemeMode::Dark`] — *not*
+/// "try the next source" — and that distinction is the whole point of the
+/// environment being checked here rather than by the TUI's own detector. A user
+/// who typed `EPSILON_THEME=solarized` meant to say something about the palette,
+/// and the surprising outcome is not "dark, and here is why" but "the *other*
+/// palette, because of a config key they had forgotten about". `--light` is still
+/// the escape hatch, and it is checked first.
 fn resolve_theme_mode(light_flag: bool) -> Option<epsilon_tui::ThemeMode> {
+    let from_env = std::env::var(epsilon_tui::ui::theme::THEME_ENV).unwrap_or_default();
+    resolve_theme_mode_from(light_flag, explicit_theme_mode(&from_env), || {
+        epsilon_core::config::load_config_string("tui", "theme")
+            .and_then(|value| epsilon_tui::ThemeMode::from_name(&value))
+    })
+}
+
+/// Precedence over already-read inputs, so the rule can be tested without
+/// mutating the test process's environment.
+///
+/// `env` is the result of reading `EPSILON_THEME`, not the raw string, because
+/// "unset" and "set to something unrecognised" have to be different answers:
+/// `None` means the user said nothing and the config is next, while
+/// `Some(ThemeMode::Dark)` is the documented fallback for a value that names
+/// neither variant. Treating the two the same is the defect this function exists
+/// to make unrepeatable.
+fn resolve_theme_mode_from(
+    light_flag: bool,
+    env: Option<epsilon_tui::ThemeMode>,
+    config: impl FnOnce() -> Option<epsilon_tui::ThemeMode>,
+) -> Option<epsilon_tui::ThemeMode> {
     if light_flag {
         return Some(epsilon_tui::ThemeMode::Light);
     }
-    let from_env = std::env::var(epsilon_tui::ui::theme::THEME_ENV).unwrap_or_default();
-    if let Some(mode) = epsilon_tui::ThemeMode::from_name(&from_env) {
+    if let Some(mode) = env {
         return Some(mode);
     }
-    epsilon_core::config::load_config_string("tui", "theme")
-        .and_then(|value| epsilon_tui::ThemeMode::from_name(&value))
+    config()
+}
+
+/// The mode `EPSILON_THEME` asks for, with a typo resolving to the documented
+/// default rather than to "unset".
+///
+/// Empty (or absent) is the only input that returns `None`: an empty variable is
+/// indistinguishable from one that was never set, which is how shells and
+/// `.env` files behave anyway.
+fn explicit_theme_mode(value: &str) -> Option<epsilon_tui::ThemeMode> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    Some(epsilon_tui::ThemeMode::from_name(value).unwrap_or_default())
 }
 
 fn default_steps() -> Vec<FauxStep> {
@@ -2512,14 +2550,117 @@ mod print_outcome_tests {
             resolve_theme_mode(true),
             Some(epsilon_tui::ThemeMode::Light)
         );
-        // Without the flag the answer depends on this shell's `EPSILON_THEME` and
-        // on the user's config, so the assertion is the type of the answer rather
-        // than its value: either nothing was configured (the TUI detects), or a
-        // real palette was named. A malformed value must never become a third
-        // state the TUI has to defend against.
-        assert!(matches!(
+        // Without the flag the answer is **decided**, not merely typed: this test
+        // used to assert `None | Dark | Light`, which is every possible answer and
+        // therefore no answer at all. `EPSILON_THEME` set here means the
+        // environment's value is the answer (unset means the config key is, and the
+        // test below reads that key rather than assuming CI has none).
+        let raw = std::env::var(epsilon_tui::ui::theme::THEME_ENV).unwrap_or_default();
+        let answer = resolve_theme_mode(false);
+        if raw.trim().is_empty() {
+            let from_config = epsilon_core::config::load_config_string("tui", "theme")
+                .and_then(|value| epsilon_tui::ThemeMode::from_name(&value));
+            assert_eq!(answer, from_config, "unset, so the config key decides");
+        } else {
+            assert_eq!(
+                answer,
+                explicit_theme_mode(&raw),
+                "`{raw}` is set, so it decides — and a malformed value is dark"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_theme_value_falls_back_to_dark_not_to_the_config() {
+        // B3. `--help` and two doc comments promise that `EPSILON_THEME=solarized`
+        // ends up *dark*. "Dark" has to mean the palette, not "ask the next source
+        // in the list": falling through to `[tui] theme` means a typo silently
+        // selects **light** for a user whose config says light, which is the
+        // opposite of the documented answer and the opposite of what they typed.
+        //
+        // `Dark` and `None` are different readings of that promise and this test
+        // only accepts one of them — the existing `the_light_flag_…` test asserted
+        // `None | Dark | Light` and so passed under either.
+        assert_eq!(
+            explicit_theme_mode("solarized"),
+            Some(epsilon_tui::ThemeMode::Dark),
+            "a typo must be resolved here, not deferred to the config"
+        );
+        // So a config that *does* name light cannot win against a populated
+        // environment variable, whichever way it is populated. This is the exact
+        // configuration from the review, and the closure is never called.
+        let light_config = || Some(epsilon_tui::ThemeMode::Light);
+        assert_eq!(
+            resolve_theme_mode_from(false, explicit_theme_mode("solarized"), light_config),
+            Some(epsilon_tui::ThemeMode::Dark),
+            "EPSILON_THEME=solarized + `[tui] theme = \"light\"` must be dark"
+        );
+        assert_eq!(
+            resolve_theme_mode_from(false, explicit_theme_mode("light"), light_config),
+            Some(epsilon_tui::ThemeMode::Light)
+        );
+        assert_eq!(
+            resolve_theme_mode_from(false, explicit_theme_mode("dark"), light_config),
+            Some(epsilon_tui::ThemeMode::Dark)
+        );
+        // `--light` still wins over a populated environment.
+        assert_eq!(
+            resolve_theme_mode_from(true, explicit_theme_mode("dark"), light_config),
+            Some(epsilon_tui::ThemeMode::Light)
+        );
+        // And an *unset* (or empty) variable is the one case that does defer — the
+        // user said nothing, so the config is the most explicit thing left. An
+        // empty variable is indistinguishable from an unset one, which is how
+        // shells and `.env` files behave anyway.
+        assert_eq!(explicit_theme_mode("   "), None);
+        assert_eq!(
+            resolve_theme_mode_from(false, explicit_theme_mode(""), light_config),
+            Some(epsilon_tui::ThemeMode::Light),
+            "an unset EPSILON_THEME must still honour the config key"
+        );
+    }
+
+    /// B3's second half: the promise `resolve_theme_mode` makes about the
+    /// *environment* is the one the review found broken, so it is the one that has
+    /// to be tested through the environment.
+    ///
+    /// A test process may not write `EPSILON_THEME` — `std::env::set_var` is
+    /// `unsafe` from Rust 1.85 and the workspace forbids `unsafe_code` on the
+    /// command line, where no local `allow` can overrule it — so the variable is
+    /// read from the environment the test binary was *started* with, and this test
+    /// asserts the exact decision for whatever that is:
+    ///
+    /// ```text
+    /// EPSILON_THEME= cargo      test -p epsilon-cli --bin epsilon theme
+    /// EPSILON_THEME=solarized   cargo test -p epsilon-cli --bin epsilon theme
+    /// EPSILON_THEME=light       cargo test -p epsilon-cli --bin epsilon theme
+    /// ```
+    ///
+    /// All three pass on the fixed code and the first two fail on the old one,
+    /// which is the negative control the review's version of this test could not
+    /// produce: with `solarized` set, the old `from_name`-then-config wiring returns
+    /// `None` (or the config's answer) where the documentation promises `Dark`.
+    /// Writing the assertion against the variable rather than a constant is what
+    /// makes the same test correct in an environment that sets nothing.
+    #[test]
+    fn the_environment_value_decides_including_a_malformed_one() {
+        let variable = epsilon_tui::ui::theme::THEME_ENV;
+        let raw = std::env::var(variable).unwrap_or_default();
+        if raw.trim().is_empty() {
+            // Nothing set: the config is the next source, and asserting *that*
+            // keeps this test meaningful in a CI shell with no EPSILON_THEME.
+            let from_config = epsilon_core::config::load_config_string("tui", "theme")
+                .and_then(|value| epsilon_tui::ThemeMode::from_name(&value));
+            assert_eq!(resolve_theme_mode(false), from_config);
+            return;
+        }
+        let expected =
+            epsilon_tui::ThemeMode::from_name(&raw).unwrap_or(epsilon_tui::ThemeMode::Dark);
+        assert_eq!(
             resolve_theme_mode(false),
-            None | Some(epsilon_tui::ThemeMode::Dark) | Some(epsilon_tui::ThemeMode::Light)
-        ));
+            Some(expected),
+            "{variable}={raw:?} must select {expected:?} — a typo falls back to the \
+             default, not through to the config key"
+        );
     }
 }
