@@ -227,9 +227,7 @@ not themselves trigger runtime compression.
   `epsilon.exe` reinstall was started on those bytes. `docs/user/sessions.md` was corrected in the
   same commit.
   **Still open:** the `audit/`/defect-ledger F07 rows still describe the pre-fix swallow (only the
-  user doc was fixed); **`serve` mode silently discards a failed-persist turn** —
-  `crates/epsilon-cli/src/main.rs:1982` `let _ = agent.run(message)` with nothing subscribed to
-  notices — which is exactly the F07 acceptance surface and deserves its own slice; and
+  user doc was fixed); and
   `pi_import_reconciliation::pi_import_carries_every_source_entry` failed once in a combined run
   and passed on every re-run (unexplained flake, worth a second look).
 - **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files) was
