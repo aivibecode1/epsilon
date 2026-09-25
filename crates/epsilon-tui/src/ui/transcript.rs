@@ -296,9 +296,9 @@ mod tests {
             "the fallback must be a different glyph, not the same one"
         );
         assert_ne!(thinking_plain, thinking_rich);
-        for (name, rich_glyph, plain_glyph) in [
-            ("assistant", &assistant_rich, &assistant_plain),
-            ("thinking", &thinking_rich, &thinking_plain),
+        for (name, plain_glyph) in [
+            ("assistant", &assistant_plain),
+            ("thinking", &thinking_plain),
         ] {
             assert!(
                 !plain_glyph.trim().is_empty(),

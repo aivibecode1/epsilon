@@ -449,6 +449,108 @@ fn a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour()
 }
 
 #[test]
+fn an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour() {
+    // The other half of the `NO_COLOR` story, on the production draw path. A
+    // filled band is truecolor-only, so off truecolor the assistant row and the
+    // thinking row had nothing to tell them apart: `Emphasis::Plain` collapses to
+    // `Style::default()` under `NO_COLOR` as well, leaving two blank gutter cells
+    // and two runs of identical plain prose. `Theme::has_surfaces` promises a
+    // gutter-glyph fallback for exactly this; this is the frame that promise is
+    // about, because a `row_style` assertion alone cannot see the cache, the
+    // decoration and the paragraph agreeing.
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::None);
+    let assistant = "the answer is B because the first option wraps at 60 columns";
+    let thinking = "weighing the two options before answering";
+    // The live path: `streaming_thinking` is what a `MessageUpdate` fills, and
+    // `MessageEnd` is what turns it into a Thinking row. Present in every real
+    // session that shows reasoning at all.
+    let message = Message::Assistant(epsilon_contracts::message::AssistantMessage {
+        id: "msg_golden_roles".into(),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![
+            epsilon_contracts::content::ContentBlock::Thinking {
+                text: thinking.into(),
+                signature: None,
+            },
+            epsilon_contracts::content::ContentBlock::text(assistant.to_string()),
+        ],
+        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+        error_message: None,
+        usage: epsilon_contracts::message::Usage::default(),
+    });
+    // Two apps fed the identical events, so the only difference between the two
+    // frames below is the theme.
+    let mut rich = bench_app(UiState::new());
+    pin_theme(&mut rich, ThemeColorMode::Truecolor);
+    for target in [&mut app, &mut rich] {
+        target
+            .ui
+            .apply(&epsilon_contracts::agent_event::AgentEvent::MessageUpdate {
+                message: Box::new(message.clone()),
+            });
+        target
+            .ui
+            .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+                message: Box::new(message.clone()),
+            });
+    }
+    assert!(app.ui.lines().iter().any(|l| l.kind == LineKind::Thinking));
+
+    let (buffer, rows) = render_buffer(&mut app, 80, 24);
+    assert!(!app.theme.has_surfaces(), "NO_COLOR claims filled bands");
+    let answer_row = rows
+        .iter()
+        .position(|r| r.contains("the answer is B"))
+        .unwrap_or_else(|| panic!("the answer never reached the screen: {rows:#?}"));
+    let reasoning_row = rows
+        .iter()
+        .position(|r| r.contains("weighing the two options"))
+        .unwrap_or_else(|| panic!("the reasoning never reached the screen: {rows:#?}"));
+
+    // The fallback markers, named rather than merely "different": `pin_theme`
+    // pins the Unicode repertoire, so these are the glyphs a real terminal gets.
+    assert!(
+        rows[answer_row].starts_with("• the answer"),
+        "the answer's row must carry its own gutter marker: {:?}",
+        rows[answer_row]
+    );
+    assert!(
+        rows[reasoning_row].starts_with("≡ weighing"),
+        "the reasoning row must carry its own gutter marker: {:?}",
+        rows[reasoning_row]
+    );
+    assert_ne!(
+        cell(&buffer, 0, answer_row as u16).symbol(),
+        cell(&buffer, 0, reasoning_row as u16).symbol(),
+        "with colour off, the answer and its reasoning are the same pixels"
+    );
+    // And the same distinction holds on a terminal that *can* show bands — the
+    // two roles are separated by the band there, and must still not collide.
+    let rich_rows = render_rows(&mut rich, 80, 24);
+    let rich_answer = rich_rows
+        .iter()
+        .position(|r| r.contains("the answer is B"))
+        .unwrap_or_else(|| panic!("the answer never reached the screen: {rich_rows:#?}"));
+    let rich_reasoning = rich_rows
+        .iter()
+        .position(|r| r.contains("weighing the two options"))
+        .unwrap_or_else(|| panic!("the reasoning never reached the screen: {rich_rows:#?}"));
+    assert!(
+        rich_rows[rich_answer].starts_with("  the answer"),
+        "a banded answer needs no marker: {:?}",
+        rich_rows[rich_answer]
+    );
+    assert!(
+        rich_rows[rich_reasoning].starts_with("│ weighing"),
+        "the reasoning keeps its rule: {:?}",
+        rich_rows[rich_reasoning]
+    );
+}
+
+#[test]
 fn a_pending_tool_call_gets_the_pending_band_where_the_terminal_has_one() {
     // The other half of the same decoration: on a terminal that can show filled
     // bands, the call is on `surface_pending()`. This is the negative control for
