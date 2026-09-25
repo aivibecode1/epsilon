@@ -49,6 +49,15 @@ use std::time::{Duration, SystemTime};
 /// *crashed* session stays wedged — not how long a busy one may run.
 pub const STALE_AFTER: Duration = Duration::from_secs(30);
 
+/// How long [`SessionLease::acquire`] waits before reporting `Held` (M136).
+///
+/// Deliberately equal to [`STALE_AFTER`]: the wait exists to let a *dead* holder's
+/// lock go stale, so any shorter and the ordinary restart case would still be
+/// refused. Naming it separately, rather than reusing `STALE_AFTER` at the call
+/// site, is so that "wait at least as long as staleness" is a visible invariant
+/// with a test on it rather than a coincidence two constants happen to share.
+pub const ACQUIRE_WAIT: Duration = STALE_AFTER;
+
 /// How often a live holder re-touches its lock file. Comfortably below
 /// [`STALE_AFTER`] so ordinary scheduling jitter can never make a working
 /// process look dead.
@@ -92,7 +101,7 @@ impl SessionLease {
     /// end of the wait — a genuine second writer, which the caller must still
     /// refuse.
     pub fn acquire(session_path: &Path) -> std::io::Result<LeaseOutcome> {
-        Self::acquire_with(session_path, STALE_AFTER, HEARTBEAT, STALE_AFTER)
+        Self::acquire_with(session_path, STALE_AFTER, HEARTBEAT, ACQUIRE_WAIT)
     }
 
     /// Acquire without waiting at all: report `Held` the moment anyone else has it.
@@ -111,15 +120,39 @@ impl SessionLease {
         heartbeat: Duration,
         wait: Duration,
     ) -> std::io::Result<LeaseOutcome> {
+        Self::acquire_with_progress(session_path, stale_after, heartbeat, wait, |_, _| {})
+    }
+
+    /// [`SessionLease::acquire_with`], plus a progress callback.
+    ///
+    /// M136 made acquisition *wait* rather than refuse, and left the user with a
+    /// blank screen for up to 30 seconds — the same "nothing is happening" shape as
+    /// the freeze this harness is otherwise fixing. The session crate cannot own
+    /// that display (it is a library, and `epsilon-tui` cannot be its dependency),
+    /// so it reports what it is doing and lets the frontend draw it.
+    ///
+    /// `on_wait` is called once per poll with `(waited, remaining)`. It is a
+    /// progress report, not a hook: returning `()` means the caller cannot
+    /// influence the outcome, which is deliberate — a frontend must not be able to
+    /// shorten or extend a correctness window.
+    ///
+    /// Callers that do not care pass `|_, _| {}`; that is what every test and
+    /// every non-interactive path does, so the default costs nothing.
+    pub fn acquire_with_progress(
+        session_path: &Path,
+        stale_after: Duration,
+        heartbeat: Duration,
+        wait: Duration,
+        on_wait: impl Fn(Duration, Duration),
+    ) -> std::io::Result<LeaseOutcome> {
         let lock_path = session_path.with_extension("lock");
         let started = std::time::Instant::now();
 
         // One pass: is the lock free, stale, or freshly held? Re-reading on every
         // pass is what lets a holder that exits mid-wait be noticed immediately
-        // rather than after the remainder of the window.
-        // One pass over the lock: free, stale, or freshly held. Written as a named
-        // shape rather than a nested `Option<Option<String>>` because the nesting
-        // is exactly what makes the call site wrong — `Some(x)` hands back `x`, so
+        // rather than after the remainder of the window. Written as a named shape
+        // rather than a nested `Option<Option<String>>` because the nesting is
+        // exactly what makes the call site wrong — `Some(x)` hands back `x`, so
         // `if let Some(holder) = …` silently drops the inner Option and every
         // reader has to re-derive which layer is which.
         enum LockState {
@@ -157,6 +190,9 @@ impl SessionLease {
                     }
                     // Never sleep past the deadline: a 30s wait must not become 30.1s.
                     let remaining = wait.saturating_sub(elapsed);
+                    // Report before sleeping, so the first notice appears at once
+                    // rather than one poll interval into a wait the user cannot see.
+                    on_wait(elapsed, remaining);
                     std::thread::sleep(remaining.min(WAIT_POLL));
                 }
             }
@@ -536,6 +572,86 @@ mod tests {
             started.elapsed() < Duration::from_secs(3),
             "and taken promptly, not at the deadline ({:?})",
             started.elapsed()
+        );
+    }
+
+    /// The progress callback fires while waiting, with a *decreasing* remaining time.
+    ///
+    /// M138. M136 made the wait real and silent, so this is the assertion that the user
+    /// is no longer staring at a blank screen: the callback is what the CLI draws, and
+    /// if it never fires the feature does not exist.
+    #[test]
+    fn the_wait_reports_progress_with_a_shrinking_countdown() {
+        use std::sync::{Arc, Mutex};
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("wait.jsonl");
+        std::fs::write(&session, b"").expect("seed");
+
+        // A dead holder's lock: fresh mtime, a pid that does not exist. The wait is for
+        // a lock that will *become* stale, which is exactly the M136 restart case.
+        std::fs::write(session.with_extension("lock"), b"pid=999999\n").expect("lock");
+        let stale = Duration::from_millis(300);
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let outcome = SessionLease::acquire_with_progress(
+            &session,
+            stale,
+            Duration::from_millis(50),
+            stale,
+            move |waited, remaining| sink.lock().expect("lock").push((waited, remaining)),
+        )
+        .expect("acquire");
+
+        assert!(
+            matches!(outcome, LeaseOutcome::Acquired(_)),
+            "a dead holder's lock must be taken once it goes stale"
+        );
+        let polls = seen.lock().expect("lock").clone();
+        assert!(
+            polls.len() >= 2,
+            "expected several progress reports across a 300ms wait, got {}",
+            polls.len()
+        );
+        // A countdown that goes *up* is a lie, and would be the natural bug here.
+        for pair in polls.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1,
+                "remaining time must not increase: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert!(
+            polls.iter().all(|(w, r)| *r <= stale && *w <= stale),
+            "every report must stay inside the declared budget"
+        );
+    }
+
+    /// The other half, and the one that protects normal startup: a free lock must not
+    /// make the CLI print a waiting notice. Without this, a "helpful" progress line
+    /// would appear on every single launch.
+    #[test]
+    fn an_uncontended_acquire_never_reports_a_wait() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("free.jsonl");
+        // `Cell`, not a plain `mut` binding: the callback is `Fn` by design — a
+        // progress reporter has no business needing mutable capture — so the counter
+        // is interior mutability. That constraint is itself part of the contract.
+        let calls = std::cell::Cell::new(0);
+        let outcome = SessionLease::acquire_with_progress(
+            &session,
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_secs(30),
+            |_, _| calls.set(calls.get() + 1),
+        )
+        .expect("acquire");
+        assert!(matches!(outcome, LeaseOutcome::Acquired(_)));
+        assert_eq!(
+            calls.get(),
+            0,
+            "a free lock must not make the CLI print a waiting notice"
         );
     }
 }

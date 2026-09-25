@@ -72,6 +72,10 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M138 — the lease wait is visible, not a blank screen](milestones/M138-the-lease-wait-is-visible.md):
+  M136 replaced a 30-second *refusal* with a 30-second *wait* — correct, and still wrong, because
+  the user saw nothing while it happened. One redrawn line, a countdown, and the reason. The next
+  step is the TUI alternate screen, which still erases it.
 - [M137 — several SSE frames in one network chunk no longer lose all but the first](milestones/M137-every-frame-in-one-chunk-reaches-the-user.md):
   a short answer delivered in one chunk showed only the first frame and was reported as a
   **successful** completion. Also: why it survived (the stream layer had no test seam at all), and

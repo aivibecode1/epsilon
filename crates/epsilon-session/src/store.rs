@@ -413,7 +413,40 @@ impl SessionStore {
     /// Open with an explicit working directory for the new-file header
     /// (pi records the session cwd at creation). Pass the real workspace root.
     pub fn open_in(path: impl AsRef<Path>, cwd: &Path) -> Result<Self, StoreError> {
-        Self::open_with_parent(path, cwd, None)
+        Self::open_with_parent(path, cwd, None, |_, _| {})
+    }
+
+    /// [`SessionStore::open_in`], reporting each poll of the lease wait through
+    /// `on_wait(waited, remaining)`.
+    pub fn open_in_with_progress(
+        path: impl AsRef<Path>,
+        cwd: &Path,
+        on_wait: impl Fn(std::time::Duration, std::time::Duration),
+    ) -> Result<Self, StoreError> {
+        Self::open_with_parent(path, cwd, None, on_wait)
+    }
+
+    /// [`SessionStore::open`], reporting each poll of the lease wait through
+    /// `on_wait(waited, remaining)`.
+    ///
+    /// M138: after M136 the wait became invisible. It is bounded and it ends, but
+    /// a blank terminal for 30 seconds is indistinguishable from a hang, and a
+    /// hang is the exact complaint this harness was taken over over. The frontend
+    /// owns the display; this only tells it the wait is real and progressing.
+    ///
+    /// The callback cannot change the outcome — see
+    /// [`SessionLease::acquire_with_progress`]. A frontend that wants a spinner
+    /// passes one; a caller that wants a quiet machine passes `|_, _| {}`.
+    pub fn open_with_progress(
+        path: impl AsRef<Path>,
+        on_wait: impl Fn(std::time::Duration, std::time::Duration),
+    ) -> Result<Self, StoreError> {
+        Self::open_with_parent(
+            path,
+            &std::env::current_dir().unwrap_or_default(),
+            None,
+            on_wait,
+        )
     }
 
     /// [`SessionStore::open_in`] with the parent-session link a NEW file's header
@@ -430,7 +463,7 @@ impl SessionStore {
         cwd: &Path,
         parent_session: &str,
     ) -> Result<Self, StoreError> {
-        Self::open_with_parent(path, cwd, Some(parent_session))
+        Self::open_with_parent(path, cwd, Some(parent_session), |_, _| {})
     }
 
     /// Shared constructor: `parent` lands in the header of a brand-new file.
@@ -438,6 +471,7 @@ impl SessionStore {
         path: impl AsRef<Path>,
         cwd: &Path,
         parent: Option<&str>,
+        on_wait: impl Fn(std::time::Duration, std::time::Duration),
     ) -> Result<Self, StoreError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
@@ -453,7 +487,13 @@ impl SessionStore {
         // for up to 30 seconds. `waited` is carried into the error so the message
         // can say how long we tried, which is the difference between a user who
         // understands the refusal and a user who thinks the tool is broken.
-        let lease = match SessionLease::acquire(&path)? {
+        let lease = match SessionLease::acquire_with_progress(
+            &path,
+            crate::lease::STALE_AFTER,
+            crate::lease::HEARTBEAT,
+            crate::lease::ACQUIRE_WAIT,
+            on_wait,
+        )? {
             LeaseOutcome::Acquired(lease) => lease,
             LeaseOutcome::Held { holder, waited } => {
                 return Err(StoreError::Leased {

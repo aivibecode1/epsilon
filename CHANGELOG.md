@@ -17,6 +17,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   boundary), so `git commit` is refused as one instance of that rather than by pattern. Both
   are user-visible strings in `epsilon --help`; no behaviour changed.
 
+### Added
+- **Reopening a session you just closed now says it is waiting, and how long is left (M138).** M136
+  made the lease wait out a crashed holder instead of refusing — correct, but it replaced a clear
+  error with up to 30 seconds of nothing on screen, which is the same shape of problem as the
+  reported TUI freeze. Startup now redraws one line: `waiting for this session to be released — 3s
+  elapsed, ~27s left (another process may still be writing it)`.
+
 ### Fixed
 - **A reply split across several server-sent frames in one network chunk is no longer truncated
   (M137).** When a provider sent a short answer in a single chunk, Epsilon showed only the first

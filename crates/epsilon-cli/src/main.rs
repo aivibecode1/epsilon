@@ -1746,8 +1746,12 @@ async fn build_runtime(
         gate,
         workspace.to_path_buf(),
     );
-    let mut store = epsilon_session::SessionStore::open_in(workspace.join(session_file), workspace)
-        .map_err(|e| format!("open session store: {e}"))?;
+    let mut store = epsilon_session::SessionStore::open_in_with_progress(
+        workspace.join(session_file),
+        workspace,
+        lease_wait_notice,
+    )
+    .map_err(|e| format!("open session store: {e}"))?;
     if store.migrated() {
         match store.persist_migration() {
             // Name the backup. Converting an older session rewrites it in place, and the one
@@ -1804,10 +1808,11 @@ async fn build_runtime(
         }
     };
     if let Some(rp) = resume_path {
-        let mut restored = match epsilon_session::SessionStore::open(&rp) {
-            Ok(store) => store,
-            Err(e) => return Err(resume_open_error(&rp, e)),
-        };
+        let mut restored =
+            match epsilon_session::SessionStore::open_with_progress(&rp, lease_wait_notice) {
+                Ok(store) => store,
+                Err(e) => return Err(resume_open_error(&rp, e)),
+            };
         // M41: a resumed file may predate headers — migrate before repair reads
         // it, so the repair pass sees healed entries, never legacy shapes.
         if restored.migrated() {
@@ -1851,6 +1856,56 @@ async fn build_runtime(
         eprintln!("resumed {} entries from {}", count, rp.display());
     }
     Ok(agent)
+}
+
+/// Tell the user that a session lease is being waited out, and for roughly how much longer.
+///
+/// M138. M136 stopped the refusal, so a killed TUI no longer locks the next launch
+/// out for 30 seconds — but it replaced a clear error with a silent wait, and a
+/// silent wait is the same shape of failure the owner reported about this harness:
+/// the screen does nothing while work is happening underneath.
+///
+/// Design notes, because a progress line in a terminal is easy to get wrong:
+///
+/// - **stderr, not stdout.** Every other startup note here uses `eprintln!`, so a
+///   caller piping stdout does not get control characters in its data, and nothing
+///   else in the process is drawing at this point.
+/// - **One line, redrawn in place.** `\r` plus clear-to-end-of-line stops the notice
+///   becoming a 20-line scrollback of near-identical text. That works in both CMD
+///   and PowerShell, which is the whole platform matrix here. It is not a
+///   TTY-sniffing progress bar.
+/// - **Not a spinner.** A spinner needs a timer thread and a redraw loop; this runs
+///   on a blocking path before the async runtime is doing anything. A countdown
+///   that changes about once a second is enough to prove liveness, and costs nothing.
+/// - **Says why.** "another process may still be writing it" is the fact the user
+///   needs. The pid, if there is one, is in the error they get if the wait runs out.
+fn lease_wait_notice(waited: std::time::Duration, remaining: std::time::Duration) {
+    let mut err = std::io::stderr();
+    write_lease_wait(&mut err, waited, remaining);
+}
+
+/// One lease-wait progress line, written to `w`.
+///
+/// Split out from [`lease_wait_notice`] so the rendering is testable. The defect M138
+/// fixes is "nothing appears on the screen", and a function that writes straight to the
+/// process's stderr cannot be asserted on by any test. Here it can: the test builds the
+/// same bytes the user would see and checks the countdown, the carriage return, and the
+/// clear-to-end-of-line that stops each redraw leaving a stale tail behind.
+fn write_lease_wait(
+    w: &mut impl std::io::Write,
+    waited: std::time::Duration,
+    remaining: std::time::Duration,
+) {
+    let waited = waited.as_secs();
+    let remaining = remaining.as_secs_f64().ceil() as u64;
+    // `\r` redraws in place; `\x1b[K` clears to end of line. Both are understood by
+    // CMD and PowerShell's console host, which is the whole platform matrix here.
+    let _ = write!(
+        w,
+        "\r  waiting for this session to be released — {waited}s elapsed, ~{remaining}s left \
+         (another process may still be writing it)   \x1b[K"
+    );
+    let _ = w.flush();
 }
 
 /// Why `--resume` could not open this file, phrased for the file that is actually there.
@@ -2601,6 +2656,57 @@ mod mask_tests {
         assert_eq!(masked.chars().count(), 5); // … + last 4 chars
 
         assert_eq!(mask_key("ééé"), "****"); // 4 or fewer chars: hidden fully
+    }
+}
+
+#[cfg(test)]
+mod lease_wait_notice_tests {
+    use super::*;
+
+    fn render(waited: u64, remaining: f64) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        write_lease_wait(
+            &mut buf,
+            std::time::Duration::from_secs(waited),
+            std::time::Duration::from_secs_f64(remaining),
+        );
+        String::from_utf8(buf).expect("notice is utf-8")
+    }
+
+    /// The user-visible defect M138 fixes is a blank screen, so assert on the bytes the
+    /// user would actually see: a redrawn line carrying a real countdown and a reason.
+    #[test]
+    fn the_notice_shows_a_countdown_and_why_it_is_waiting() {
+        let out = render(3, 27.0);
+        assert!(
+            out.starts_with('\r'),
+            "each poll must redraw in place, not append a line: {out:?}"
+        );
+        assert!(out.contains("3s elapsed"), "{out:?}");
+        assert!(out.contains("~27s left"), "{out:?}");
+        assert!(
+            out.contains("another process may still be writing it"),
+            "the user must be told why, not just that something is slow: {out:?}"
+        );
+    }
+
+    /// Clear-to-end-of-line is what stops each redraw leaving the previous, longer
+    /// countdown visible as a stale tail. Dropping the `\x1b[K` is the natural
+    /// simplification and it produces garbage a user reads as wrong numbers.
+    #[test]
+    fn the_notice_clears_the_previous_polls_tail() {
+        assert!(
+            render(1, 29.0).ends_with("\x1b[K"),
+            "a shorter message must clear what the previous longer one drew"
+        );
+    }
+
+    /// Sub-second remainders round UP. A countdown showing `0s left` while 400ms remain
+    /// reads as "finished" when it has not, which is the confusion this line removes.
+    #[test]
+    fn a_sub_second_remainder_rounds_up_not_down() {
+        let out = render(0, 0.4);
+        assert!(out.contains("~1s left"), "{out:?}");
     }
 }
 

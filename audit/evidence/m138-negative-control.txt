@@ -1,0 +1,79 @@
+M138 NEGATIVE CONTROL — the progress callback removed, the silence reproduced
+=============================================================================
+
+Defect under test
+-----------------
+M136 stopped the session lease from *refusing* a crashed holder's lock, replacing a
+30-second error with a 30-second wait. That fixed the refusal and left a worse
+complaint: a blank terminal for half a minute while work happens underneath — the
+same shape of failure the owner reported about the Windows TUI. M138 reports the
+wait so the user can see it.
+
+Why a control was needed
+------------------------
+The callback, its wiring through `SessionStore`, and the CLI's rendering of it were
+all added in this milestone. New code plus new tests in the same commit proves
+nothing on its own: the tests would pass against an implementation whose callback
+was never invoked, because they can only check what the callback receives.
+
+The control
+-----------
+One line removed from `SessionLease::acquire_with_progress`, in the wait loop:
+
+                    // CONTROL (M138): do not report progress.
+                    std::thread::sleep(remaining.min(WAIT_POLL));
+
+Everything else is untouched: the wait still happens, the lock is still taken once
+stale, and the outcome is identical. The ONLY thing removed is the user's ability to
+see any of it — which is precisely the defect.
+
+Command
+-------
+    export CARGO_TARGET_DIR="C:/Users/Hp/AppData/Local/Temp/eps-m138-target"
+    export CARGO_BUILD_JOBS=1
+    cargo test -p epsilon-session --lib lease
+
+Expected failure
+----------------
+    lease::tests::the_wait_reports_progress_with_a_shrinking_countdown
+    expected several progress reports across a 300ms wait, got 0
+
+Observed
+--------
+    CONTROL_EXIT=101
+    test lease::tests::the_wait_reports_progress_with_a_shrinking_countdown ... FAILED
+    test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out
+
+Reading the result
+------------------
+`got 0`. Not "the countdown was wrong", not "the message was malformed" — the user
+would have been shown *nothing at all*, for the whole wait, which is the defect in its
+purest form. The other nine lease tests pass, and that is the informative part: the
+control breaks the reporting and nothing else, so the fix is additive to the
+correctness guarantee M136 established rather than a trade against it. In particular
+`a_waiting_acquirer_still_refuses_a_heartbeating_holder` and
+`a_dead_holders_lock_is_stolen_after_the_stale_window` both still pass — the wait
+still works, it just stopped being visible.
+
+Note what the control does NOT cover, recorded honestly: the three CLI tests
+(`lease_wait_notice_tests`) assert the *rendered bytes* and cannot be broken by
+removing the callback, because they call `write_lease_wait` directly. That is
+deliberate — the control proves the callback fires, and the render tests prove the
+bytes are right, and the seam between them is the `&mut impl Write` parameter. What
+is NOT covered is the end-to-end path (a real held lock through the real CLI
+producing those bytes on a real console); that is listed under "What nothing
+exercises" in the milestone.
+
+Restoration
+-----------
+The callback line was restored:
+
+                    // Report before sleeping, so the first notice appears at once
+                    // rather than one poll interval into a wait the user cannot see.
+                    on_wait(elapsed, remaining);
+
+    $ cargo test -p epsilon-session --lib lease
+    EXIT=0
+    test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out
+
+The final battery (`m138`) was run against these restored bytes.

@@ -70,8 +70,13 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   silent P1 truncation reported as success). `ingest` drains the chunk; the body became a boxed byte
   stream because the concrete `Response` had made chunk framing untestable — **that is why the
   defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
-  1.12.1) — ADR-017 amendment. **Next slice should close the silence M136 left**: the TUI shows no
-  progress while the lease wait runs.
+  1.12.1) — ADR-017 amendment.
+- **M138** — the M136 silence is gone for the CLI: `acquire_with_progress` reports each poll of
+  the lease wait, and startup redraws one stderr line with a countdown and the reason. The
+  callback is `Fn` returning `()` so a frontend can draw the wait but never change the outcome.
+  **Its remaining gap is the TUI**: the alternate screen erases the notice, which needs the state
+  threaded into the app — and per the repo's own rule that claim has to be *measured* with
+  `scripts/console-probe.py`, not asserted from code.
 
 ## Traps that have cost real time
 
