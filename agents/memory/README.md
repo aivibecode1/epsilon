@@ -83,20 +83,58 @@ not themselves trigger runtime compression.
   **Do not commit it until the tree is green**, and note the review's second half of B1: the golden
   test named for that property asserts only that the tail ends in `ms`, so **it must be tightened to
   require `ms > 0`** or the fix is unpinned.
-- **M129 COMMITTED (`17cddb7` + the clippy fix) BUT NOT VERIFIED — its battery fails on one
-  environment-sensitive test.** The slice landed: OSC 52 for `/copy` with
+- **M129 COMMITTED (`17cddb7`, `554dfec`, `3b2b9c8`) — battery `m129c` in flight.** The slice landed
+  the audit's last two items and the review's B1:
+  - **OSC 52 for `/copy`** (`crates/epsilon-tui/src/clipboard.rs`, new). Native first, terminal second;
+    a local terminal with a working clipboard deliberately does **not** emit the sequence, because a
+    redundant one races the native write for the same clipboard. `ESC ] 52 ; c ; <base64> BEL`, wrapped
+    in the tmux/screen passthrough envelope and **only** the wrapped form; refused rather than truncated
+    past pi's `MAX_ENCODED = 100_000`; parked on `App::osc_pending` and written through
+    `terminal.backend_mut()` **after** `terminal.draw` returns, so it never lands inside a frame. The
+    notice says **"sent via the terminal"** rather than "copied", because OSC 52 is a request: a
+    terminal that ignores it (iTerm2 ships it off) says nothing, and claiming otherwise is exactly the
+    audit's defect.
+  - **`NO_COLOR` glyph separation**, and a **false claim made true**: `theme.rs:744` promised "widgets
+    that rely on a band for legibility must fall back to a gutter glyph when `has_surfaces()` is false"
+    and **no such branch existed** — all seven `LineKind`s returned the same glyph in every mode, so an
+    answer and its reasoning trace were the same pixels. The old test passed because it asserted a
+    hardcoded `" "`/`"|"` rather than distinctness. Now `assistant`/`thinking` have their own glyphs in
+    both repertoires plus the fallback branch: Unicode `* answer` / `≡ reasoning`, ASCII `*` / `=`.
+  - **B1's card duration** (my fix): `settle_call` returns the pending card's `started_at_ms`.
+  - **`base64`**: already a workspace dependency at `=0.23.1` for M43, so the direct edge cost one line
+    in `Cargo.lock` and no new build — which makes the acceptance decision cheaper than it looked.
+  - **`scratch_dump_tests.rs` retired**: it did *not* own a shared helper (that was
+    `tests_support::render_rows`, in its own module); deleting the file and its `mod` was enough.
+  `cargo test -p epsilon-tui` **300 passed / 0 failed / 0 ignored**; `cargo check -p epsilon-cli` and
+  `cargo clippy -p epsilon-tui --all-targets -- -D warnings` both clean.
+  **Still owed: the `epsilon.exe` reinstall** (`/copy` and the transcript glyphs are user-visible), the
+  M129 milestone doc and history row, and blockers **B2–B5**.
+- **`m129b`'s single test failure was NOT a flake and NOT environment-sensitive — it was my battery
+  reading the tree while the delegated author had that test's own negative control armed** (it had
+  reverted `decide()`'s trigger in place from `remote || !local` to `!local`). The test reads no
+  environment at all: `remote` is a **parameter** of `decide()`, which is exactly why the native result
+  and the remote flag are parameters — every branch is reachable on every machine. **A control is
+  indistinguishable from a bug to anyone reading the tree while it is armed**; that is a hazard of the
+  negative-control method this repo mandates, and the defence is that controls stay short-lived and
+  announced. The slice landed: OSC 52 for `/copy` with
   `a_failed_terminal_write_is_not_reported_as_a_copy`, `NO_COLOR` glyph separation for the remaining
   roles, the B1 card-duration fix, `base64` accepted as a workspace dependency (reason in the commit),
   and the delegated author's load-bearing `scratch_dump_tests.rs` retired (it owned a helper other tests
   called, so it could not simply be excluded). `cargo test -p epsilon-tui` is **299 passed / 0 failed**
   and clippy is clean on the crate.
-  **`m129a` failed clippy** (a `let…else` I wrote for B1) — fixed, and `m129b` then failed the test gate
-  on exactly one test: `clipboard::tests::a_remote_session_sends_the_sequence_even_when_the_native_write_worked`,
-  which **passes in a focused run and fails under the battery**. That is an environment-sensitive test —
-  the same class as the reconciliation flake M128 fixed (a test that only passes under one runner's
-  conditions), and the first thing to look at next: it most likely reads or mutates process environment
-  (a remote-session variable) and therefore depends on either the gate script's environment or on
-  not running in parallel with whatever else touches it.
+  **`m129b`'s single test failure was NOT a flake and NOT environment-sensitive — it was my battery
+  reading the tree while the delegated author had that test's own negative control armed** (it had
+  reverted `decide()`'s trigger in place from `remote || !local` to `!local`). The test reads no
+  environment at all: `remote` is a **parameter** of `decide()`, which is exactly why the native result
+  and the remote flag are parameters — every branch is reachable on every machine. The only environment
+  readers in the module are `is_remote()` and `Multiplexer::detect()`, called from `app.rs` at the
+  `/copy` call site. **A control is indistinguishable from a bug to anyone reading the tree while it is
+  armed**; that is a hazard of the negative-control method this repo mandates, and the defence is that
+  controls stay short-lived. Corrected here so no later round chases the phantom.
+  **The scratch module was also mis-described:** it did *not* own a shared helper — its helper was
+  `tests_support::render_rows`, which lives in its own module — so deleting the file and its `mod`
+  declaration was enough. The note that it "could not simply be excluded" was wrong, and the round-49
+  build break was caused by removing the declaration while the file still held a *different* re-export.
   **Do not treat M129 as verified, and do not reinstate `target/` for it** — the reinstall is also
   still owed (`/copy` and the transcript glyphs are user-visible).
 - **Blockers B2–B5 from `audit/evidence/m126-m127-review.md` are still open** (the light palette's
