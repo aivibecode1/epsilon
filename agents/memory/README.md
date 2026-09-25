@@ -83,6 +83,22 @@ not themselves trigger runtime compression.
   **Do not commit it until the tree is green**, and note the review's second half of B1: the golden
   test named for that property asserts only that the tail ends in `ms`, so **it must be tightened to
   require `ms > 0`** or the fix is unpinned.
+- **M129 COMMITTED (`17cddb7` + the clippy fix) BUT NOT VERIFIED — its battery fails on one
+  environment-sensitive test.** The slice landed: OSC 52 for `/copy` with
+  `a_failed_terminal_write_is_not_reported_as_a_copy`, `NO_COLOR` glyph separation for the remaining
+  roles, the B1 card-duration fix, `base64` accepted as a workspace dependency (reason in the commit),
+  and the delegated author's load-bearing `scratch_dump_tests.rs` retired (it owned a helper other tests
+  called, so it could not simply be excluded). `cargo test -p epsilon-tui` is **299 passed / 0 failed**
+  and clippy is clean on the crate.
+  **`m129a` failed clippy** (a `let…else` I wrote for B1) — fixed, and `m129b` then failed the test gate
+  on exactly one test: `clipboard::tests::a_remote_session_sends_the_sequence_even_when_the_native_write_worked`,
+  which **passes in a focused run and fails under the battery**. That is an environment-sensitive test —
+  the same class as the reconciliation flake M128 fixed (a test that only passes under one runner's
+  conditions), and the first thing to look at next: it most likely reads or mutates process environment
+  (a remote-session variable) and therefore depends on either the gate script's environment or on
+  not running in parallel with whatever else touches it.
+  **Do not treat M129 as verified, and do not reinstate `target/` for it** — the reinstall is also
+  still owed (`/copy` and the transcript glyphs are user-visible).
 - **Blockers B2–B5 from `audit/evidence/m126-m127-review.md` are still open** (the light palette's
   ANSI-16 quiet roles are `DarkGray`, the same as dark, under a comment forbidding it; `EPSILON_THEME`
   with a bad value falls through to the config file instead of dark; `parse_diff`'s doc states the
