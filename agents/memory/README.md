@@ -46,18 +46,20 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **IN FLIGHT (round 42): TUI audit D8 (light theme) + D11 (frozen signal / jump-to-live).** A
-  delegated agent is working in `crates/epsilon-tui`: `ui/theme.rs` (a `Palette::LIGHT` plus a way to
-  select it — the skill says ship a light palette and a switch, **not** runtime background detection),
-  and the scroll affordances (`app/keys.rs`, `keybindings.rs`, `ui/footer.rs`, `app.rs`,
-  `app/composer_viewport_tests.rs`). **Uncommitted.** Last measured: `cargo test -p epsilon-tui`
-  **281 passed / 1 failed** (+14 tests on M126's 267), failing at
-  `app::golden::paging_up_a_running_view_shows_it_is_frozen_and_where` — so the theme half may be done
-  and the frozen-view half is mid-flight. Mid-round it briefly did **not compile** (a test-support
-  module importing `app::LiveFetcher`, `app::TuiConfig`, `app::run`, `build_app`, `draw_frame` before
-  they existed), then recovered; treat further breakage as the author still editing.
-  **Do not commit any of it until `cargo test -p epsilon-tui` is green**, then battery + reinstall
-  (both items are user-visible).
+- **Battery m127a FAILED (round 44) on a test that is not robust to concurrent runs — the "flake" now
+  has a signature.** `epsilon-session --test pi_import_reconciliation` died with `rename into
+  C:\Users\Hp\AppData\Local\Temp\epsilon-pi-reconciliation\large-session.v2.jsonl: The system cannot
+  find the file specified. (os error 2)`. Two rounds ago the same test failed once in a combined run
+  and then passed 5/5 on every re-run — this is that failure, and the cause is visible: the test builds
+  fixtures under a **fixed shared path** (`%TEMP%\epsilon-pi-reconciliation`, overridable by
+  `EPSILON_RECONCILE_DIR`), so two runs at once — my battery and the still-running delegated author's
+  `cargo test` — rename and delete each other's files. **Fix it by giving each run its own directory**
+  (`tempfile::tempdir()` or a per-process suffix); retrying is not a fix. fmt and clippy were green;
+  the log is `target/gate-m127a.log`; the demo/check gates did not report.
+  **M127 itself is committed and its crate is green** (`da19b9b` + the theme switch): a light palette
+  selectable by a switch, frozen-view state and jump-to-live in the footer bound through the live
+  binding table, `cargo test -p epsilon-tui` 282 passed / 0 failed. **Owed: a battery on frozen bytes
+  with no author running, the reinstall, and the independent review.**
 - **M126 CLOSED (`933837b`, `9ae64a2`) — tool cards and a real diff, battery `m126d` PASSES:** all
   five gates exit 0, **1,131 passed / 0 failed / 1 ignored across 61 binaries** (fifteen more than
   M125's 1,116); `epsilon-tui` 267 tests. Record: `docs/milestones/M126-tool-cards-and-diffs.md`. The
