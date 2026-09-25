@@ -41,7 +41,7 @@ update exists to correct.
 | F00 | FIXED | P1, prerequisite | Current verification baseline fails — **fixed 2026-09-17, gates green** (05) | E | 0.5–1 day / low |
 | F01 | CLOSED | P0 | Editing a capped buffer overwrites the complete file — **fixed 2026-09-17** (05); the read-coverage rule that licensed the wholesale overwrite was made structural in **M95**, and a second route to the same defect (an `edit` promoting a partial read) in **M135** | S, high confidence | 0.5–1 day / low |
 | F02 | CLOSED† | P0 | Read observations are shared between agents — **M81** gave every agent its own observation token and invalidated a sibling's cached observation; residual: F09 alias identity (see the row) | S, high | 2–4 days / medium |
-| F03 | OPEN | P1 | SSE buffering depends on HTTP chunk boundaries; EOF can claim success | S, high | 3–5 days / medium |
+| F03 | CLOSED | P1 | SSE buffering depends on HTTP chunk boundaries; EOF can claim success — **M137**: `ingest` now drains every complete line from each chunk instead of returning after the first, and the body became a boxed byte stream because the concrete `Response` had made chunk framing untestable | E (M137 negative control: `"one "` instead of `"one two three"`) | 3–5 days / medium |
 | F04 | CLOSED† | P1 | Repeated durable compaction accumulates old summaries/tails — **M86** replaces the superseded projection; **M90** ran the alternate-branch variant | E (M86 battery + RED) | 2–4 days / medium |
 | F05 | OPEN | P1 | Failed shell checks are recorded as passing verification | S, high | 1–3 days / medium |
 | F06 | CLOSED† | P1 | Failed or cancelled summarization can replace valid context — **M86** commits only on a non-failure stop, usable text and a durable append | E (M86 RED + battery) | 2–3 days / medium |
@@ -59,6 +59,7 @@ update exists to correct.
 | F18 | FIXED | P1 | Resumed child task is not marked running before dispatch — **fixed 2026-09-18 (M93); frozen-candidate battery owed** (see the F18 section) | S, high | 1–2 days / low |
 | F19 | PARTIAL | P2 | Product/docs/parity claims exceed actual workflows — regressions fixed in **ffff7e2**; other claims not swept here (see the row) | S plus E baseline | 3–5 days docs; workflow work separate / low |
 | F20 | CLOSED | P1 | Abort did not stop new calls starting inside the running batch — **M88** checks the run token in `run_one`, before any call starts | E (M88 battery + the pre-fix RED in the same log) | 1–2 days / low |
+| F21 | CLOSED | P1 | The header's context gauge, cache hit rate and cost were computed from a double-counted cached prefix on every provider except Anthropic and Mistral — **M140** subtracts cache reads and writes from `input` in `seed_usage_compat`, and the Responses wire no longer discards `input_tokens_details`. The three numbers were *present but wrong*: rate low, gauge high, cost charged twice; on Responses, a confident `cache 0%` where the header means `—` for unknown | E (M140 control: 5 failed / 1 passed) | 1 day / low |
 
 ## F00 — Restore the baseline without weakening its assertions
 

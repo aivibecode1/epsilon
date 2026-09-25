@@ -72,6 +72,9 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M140 — the header counted the cached prefix twice](milestones/M140-the-header-counted-the-cached-prefix-twice.md):
+  the three numbers the owner asked for were present but wrong on most providers, in three different
+  directions. Present-but-wrong is worse than absent, because a missing number gets noticed.
 - [M139 — switching models survives closing the session](milestones/M139-a-model-switch-survives-a-restart.md):
   the entries were written faithfully and read by nobody. Also the third rule of pi's
   `getSessionContextSettings` that a `model_change`-only port drops: an assistant message names

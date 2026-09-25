@@ -316,12 +316,24 @@ fn short_model(model: &str) -> &str {
 }
 
 /// Normalize Responses `usage` (`input_tokens` / `output_tokens` /
-/// `total_tokens`) into the compat key shape `seed_usage_compat` reads.
-fn responses_usage(usage: &serde_json::Value) -> serde_json::Value {
+/// `input_tokens`) into the compat key shape `seed_usage_compat` reads, together with the
+/// cache counts this API nests one level deeper (`input_tokens_details`).
+///
+/// M140: `input_tokens_details` was previously dropped here, so on this wire `cache_read`
+/// was always 0 — the header showed a confident `cache 0%` and the cached prefix was
+/// billed at the full input rate with no floor marker. pi carries the same object and
+/// subtracts both counts (`openai-responses-shared.ts:567`).
+pub(crate) fn responses_usage(usage: &serde_json::Value) -> serde_json::Value {
     json!({
         "input_tokens": usage.get("input_tokens").cloned().unwrap_or(json!(0)),
         "output_tokens": usage.get("output_tokens").cloned().unwrap_or(json!(0)),
         "total_tokens": usage.get("total_tokens").cloned().unwrap_or(json!(0)),
+        // Forwarded verbatim; `seed_usage_compat` reads the cached and written counts out
+        // of it. Absent on a reply with no cache activity, which the decoder tolerates.
+        "prompt_tokens_details": usage.get("input_tokens_details").cloned().unwrap_or(json!({
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+        })),
     })
 }
 

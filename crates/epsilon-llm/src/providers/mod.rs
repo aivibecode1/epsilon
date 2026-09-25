@@ -281,22 +281,55 @@ impl HttpEventStream {
 
     /// Compat providers (OpenAI chunk.usage / Gemini usageMetadata): key-shape
     /// tolerant extraction into our Usage.
+    ///
+    /// The cached prefix is removed from `input`, because the wire format counts it in
+    /// both places. pi states the rule in two places and cites the providers:
+    ///
+    /// > OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
+    /// > — `openai-responses-shared.ts:567`; the same subtraction at
+    /// > `openai-completions.ts:1534`, with the per-provider key shapes
+    /// > (`prompt_tokens_details.cached_tokens` for OpenAI/OpenRouter,
+    /// > `prompt_cache_hit_tokens` for DeepSeek, top-level `cached_tokens` for Kimi)
+    /// > and the reason cache *writes* are not folded into the read count.
+    ///
+    /// Leaving the prefix in `input` is not a cosmetic disagreement. Three separate
+    /// numbers downstream all read the buckets as disjoint, and each goes wrong in a way
+    /// the user cannot see: the cache hit rate falls (its denominator is inflated), the
+    /// context gauge rises (the anchor is the inflated prompt), and the cost rises twice
+    /// over (the same tokens are charged at the input rate *and* at the cache-read rate).
+    ///
+    /// `saturating_sub` on each term, rather than one subtraction of the sum, because a
+    /// provider may report a cached count larger than the prompt — a proxy aggregating
+    /// several requests into one usage block will. Plain `u64` arithmetic wraps to about
+    /// 1.8e19 there, and the header would print a garbage percentage rather than fail.
     pub(crate) fn seed_usage_compat(&mut self, usage: &serde_json::Value) {
         let get_u64 = |keys: &[&str]| {
             keys.iter()
                 .find_map(|k| usage.get(*k).and_then(|v| v.as_u64()))
                 .unwrap_or(0)
         };
+        let cache_read = usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                usage
+                    .get("prompt_cache_hit_tokens")
+                    .and_then(|v| v.as_u64())
+            })
+            .or_else(|| usage.get("cached_tokens").and_then(|v| v.as_u64()))
+            .unwrap_or_else(|| get_u64(&["cache_read_input_tokens", "cachedContentTokenCount"]));
+        let cache_write = usage
+            .pointer("/prompt_tokens_details/cache_write_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| get_u64(&["cache_creation_input_tokens"]));
+        let prompt = get_u64(&["prompt_tokens", "input_tokens", "promptTokenCount"]);
         let u = Usage {
-            input: get_u64(&["prompt_tokens", "input_tokens", "promptTokenCount"]),
+            input: prompt
+                .saturating_sub(cache_read)
+                .saturating_sub(cache_write),
             output: get_u64(&["completion_tokens", "output_tokens", "candidatesTokenCount"]),
-            cache_read: usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or_else(|| {
-                    get_u64(&["cache_read_input_tokens", "cachedContentTokenCount"])
-                }),
-            cache_write: get_u64(&["cache_creation_input_tokens"]),
+            cache_read,
+            cache_write,
             total_tokens: get_u64(&["total_tokens", "totalTokenCount"]),
         };
         if u.input + u.output > 0 {
@@ -1482,6 +1515,41 @@ pub mod test_support {
                 .unwrap_or(line_bytes.strip_suffix(b"\n").unwrap_or(&line_bytes));
             Some(String::from_utf8_lossy(trimmed).into_owned())
         }
+    }
+
+    /// Run a raw provider `usage` block through the shared compat decoder and return the
+    /// [`Usage`] it produced.
+    ///
+    /// Exposed because the usage arithmetic is the one part of a provider adapter that no
+    /// end-to-end test can reach: it happens mid-stream, on a JSON object, long before
+    /// any `AssistantMessage` exists. Every provider that is not Anthropic, Bedrock or
+    /// Mistral funnels through this one function, so a test here covers OpenAI, DeepSeek,
+    /// Groq, xAI, OpenRouter, Gemini and the Responses API at once.
+    ///
+    /// M140: the `input` bucket must exclude the cached prefix. See
+    /// [`crate::providers::HttpEventStream::seed_usage_compat`] for why.
+    pub fn compat_usage_from_json(usage: &serde_json::Value) -> epsilon_contracts::message::Usage {
+        let mut st = super::HttpEventStream::new("test-model", "test", false);
+        st.seed_usage_compat(usage);
+        st.usage_tail
+            .expect("a usage block with tokens yields a tail")
+    }
+
+    /// Run a raw OpenAI Responses `usage` object through the Responses-specific
+    /// reshaping and the compat decoder, returning the resulting [`Usage`].
+    ///
+    /// M140: the Responses wire carries its cache counts inside `input_tokens_details`,
+    /// one level deeper than the compat shape. The reshaping step must forward that
+    /// object, or the cached prefix silently disappears — `cache_read` is 0, the header
+    /// prints a confident `cache 0%`, and the full prompt is billed at the input rate
+    /// with no floor marker to suggest anything is missing.
+    pub fn responses_usage_from_json(
+        usage: &serde_json::Value,
+    ) -> epsilon_contracts::message::Usage {
+        let mut st = super::HttpEventStream::new("test-model", "test", false);
+        st.seed_usage_compat(&super::openai_responses::responses_usage(usage));
+        st.usage_tail
+            .expect("a usage block with tokens yields a tail")
     }
 }
 

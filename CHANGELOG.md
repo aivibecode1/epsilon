@@ -25,6 +25,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   elapsed, ~27s left (another process may still be writing it)`.
 
 ### Fixed
+- **The context gauge, cache hit rate and cost no longer count the cached prefix twice (M140).**
+  All three numbers were on screen and, on every provider except Anthropic and Mistral, wrong — the
+  cache rate read low, the context gauge read high, and the cost was charged at the full input rate
+  *and* again at the cache-read rate. On the OpenAI Responses API the cached count was dropped
+  entirely, so the header showed a confident `cache 0%` where it should have shown that it did not
+  know. Providers count the cached prefix inside the prompt total; Epsilon now subtracts it, as pi
+  does, and no longer discards the Responses wire's cache details.
 - **Switching models now survives closing the session (M139).** `--model` and a mid-session model
   change were recorded in the session file but read by nobody, so resuming a conversation quietly
   reverted to the launch model. Epsilon now continues on the model the session last used — and
