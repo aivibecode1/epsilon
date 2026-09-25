@@ -94,6 +94,12 @@ FLAGS
                                      read-only where the backend can do it)
                           off        no confinement at all — trusted automation only
   --plan                read-only run: write/edit denied, git commit/push blocked
+  --light               draw the TUI for a light terminal background. There is no
+                        reliable way to detect one (COLORTERM describes colour
+                        depth, OSC 11 needs a round-trip the terminal may not
+                        answer), so the palette is selected: this flag, else
+                        EPSILON_THEME=light, else [tui] theme in
+                        ~/.config/epsilon/config.toml, else dark.
   --yes                 unattended runs auto-APPROVE permission asks. Without it,
                         unattended runs auto-deny.
   -c, --continue        resume the newest session in this workspace
@@ -111,6 +117,9 @@ ENVIRONMENT
                         OPENROUTER_API_KEY, MOONSHOT_API_KEY, ZAI_API_KEY,
                         GROQ_API_KEY). Stored credentials win over env vars.
   RUST_LOG              tracing filter for diagnostics
+  EPSILON_THEME         TUI palette: `dark` (default) or `light`, for a terminal
+                        with a light background. `--light` overrides it; an
+                        unrecognised value falls back to dark.
   EPSILON_STREAM_IDLE_SECS
                         seconds of stream silence before a turn fails as a network
                         error (default 120, 0 disables)
@@ -172,6 +181,10 @@ struct Args {
     /// `--yes`: headless runs auto-APPROVE gated asks instead of the safe default
     /// (auto-deny). Explicit opt-in for trusted automation.
     auto_approve: bool,
+    /// `--light` (D8): draw for a light terminal background. `false` means the
+    /// flag was absent, not that dark was asked for — `EPSILON_THEME` and the
+    /// config are still consulted, which is what lets a user set it once.
+    light: bool,
 }
 
 /// Session-restore selection (M12).
@@ -311,6 +324,7 @@ fn parse_args() -> Args {
             resume: Resume::default(),
             plan_mode: false,
             auto_approve: false,
+            light: false,
         };
     }
     let mut mode = Mode::Tui(None); // M14: plain `epsilon` opens the interactive TUI
@@ -324,6 +338,8 @@ fn parse_args() -> Args {
     let mut plan_mode = false;
     // --yes: unattended runs approve gated asks (explicit opt-in; default is deny).
     let mut auto_approve = false;
+    // --light: draw for a light terminal background (D8).
+    let mut light = false;
     let mut provider: Option<Provider> = None;
     let mut resume = Resume::default();
     // None = not given on the command line; resolution falls back to the saved
@@ -436,6 +452,7 @@ fn parse_args() -> Args {
             "--doctor" => mode = Mode::Doctor,
             "--demo" => mode = Mode::Demo,
             "--plan" => plan_mode = true,
+            "--light" => light = true,
             "--yes" => auto_approve = true,
             "-c" | "--continue" => resume = Resume::Latest,
             "--resume" => {
@@ -506,6 +523,7 @@ fn parse_args() -> Args {
         resume,
         plan_mode,
         auto_approve,
+        light,
     }
 }
 
@@ -1410,7 +1428,9 @@ async fn dispatch(args: Args) -> i32 {
         Mode::Demo => demo_mode().await,
 
         Mode::Print(task) => print_mode(&shared, args.auto_approve, task.clone()).await,
-        Mode::Tui(initial) => tui_mode(&shared, initial.clone()).await,
+        Mode::Tui(initial) => {
+            tui_mode(&shared, initial.clone(), resolve_theme_mode(args.light)).await
+        }
         Mode::Serve(initial) => serve_mode(&shared, initial.clone(), args.port).await,
         Mode::Rpc => rpc_mode(&shared).await,
         Mode::ListModels(provider_filter) => {
@@ -1509,6 +1529,34 @@ fn list_models(provider_filter: Option<&str>) {
         );
         std::process::exit(2);
     }
+}
+
+/// Which palette the TUI should draw with (D8).
+///
+/// Precedence, most explicit first: `--light` on the command line, then
+/// `EPSILON_THEME`, then `[tui] theme` in `~/.config/epsilon/config.toml`. `None`
+/// means none of them said anything, and the TUI's own detector supplies the
+/// default.
+///
+/// `--light` is a flag rather than `--theme <dark|light>` because the failure it
+/// fixes is one-directional: the default is already dark, and the user who needs
+/// this is the one staring at unreadable text on a white terminal. A value flag
+/// would make them spell out the thing they are trying to leave.
+///
+/// An unrecognised value falls back to the default rather than failing, the same
+/// rule `epsilon_core::config` follows for every other key: a config typo must
+/// not stop the TUI from starting.
+fn resolve_theme_mode(light_flag: bool) -> Option<epsilon_tui::ThemeMode> {
+    if light_flag {
+        return Some(epsilon_tui::ThemeMode::Light);
+    }
+    let from_env = std::env::var(epsilon_tui::ui::theme::THEME_ENV).unwrap_or_default();
+    if let Some(mode) = epsilon_tui::ThemeMode::from_name(&from_env) {
+        return Some(mode);
+    }
+    let from_config = epsilon_core::config::load_config_string("tui", "theme")
+        .and_then(|value| epsilon_tui::ThemeMode::from_name(&value));
+    from_config
 }
 
 fn default_steps() -> Vec<FauxStep> {
@@ -1909,7 +1957,11 @@ fn print_outcome(outcome: &epsilon_core::RunOutcome) -> (Option<String>, Option<
 }
 
 /// Interactive ratatui frontend (M9b).
-async fn tui_mode(shared: &SharedRun, initial_task: Option<String>) -> i32 {
+async fn tui_mode(
+    shared: &SharedRun,
+    initial_task: Option<String>,
+    theme_mode: Option<epsilon_tui::ThemeMode>,
+) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
     // Composition happens here; the TUI crate stays a pure frontend.
     let agent = build_runtime(RunParams {
@@ -1937,6 +1989,7 @@ async fn tui_mode(shared: &SharedRun, initial_task: Option<String>) -> i32 {
                 live: live_fetcher(),
                 startup_notices: shared.startup_notices.clone(),
                 trust_review_pending: shared.trust_review_pending,
+                theme_mode,
             })
             .await
         }

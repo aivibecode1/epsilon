@@ -37,6 +37,7 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         live,
         startup_notices,
         trust_review_pending,
+        theme_mode,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
@@ -45,6 +46,10 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         tokio::sync::mpsc::unbounded_channel::<(String, Result<Vec<String>, String>)>();
     let (oauth_tx, mut oauth_rx) = tokio::sync::mpsc::unbounded_channel::<OauthUiEvent>();
     let mut app = App::new(model_id, fetched_tx, notices_tx, oauth_tx);
+    // D8: the palette was resolved by the CLI; `App::new` detected the rest.
+    if let Some(mode) = theme_mode {
+        app.theme.set_palette(mode);
+    }
     app.live = live;
     // M16b: seed the recall ring from the persisted global history so Up works
     // across restarts.
