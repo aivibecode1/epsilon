@@ -37,14 +37,35 @@ Battery `m128a`: **all five gates exit 0, 1,148 passed / 0 failed / 2 ignored ac
 
 ## Limits
 
-- **No author negative controls are recorded here.** The author was still writing them up when the
-  slice was committed; the badge and flag tests exist, but the revert-and-watch-it-fail evidence does
-  not. The independent read-only review is owed too.
-- **The header's own colours were not re-audited under the light palette** — the body text, statuses
-  and badges were, and the metrics row was checked for distinguishability rather than redesigned.
+- **The transcript window was measured from the wrong rectangle, and a control found it.** The fourth
+  control — feeding `draw_transcript` the whole frame instead of the transcript region — failed two
+  *pre-existing* tests, because the code really did slice a `Rect::height`-row window while painting
+  only `transcript.height` rows. At 60×20 that is a 20-row window in a 16-row region, so a
+  tail-following view sat four rows above the tail it claimed to follow **and painted over the
+  composer's rows**. Fixed by `App::transcript_window` / `measure_transcript_window` — one place that
+  knows the split the shell will perform. A control that fails an old test is a bug report, not a
+  control artefact, and this is why running one against *neighbouring* behaviour is worth the minutes.
+- **The header's own colours were not re-audited under the light palette.** The metrics row was
+  checked for distinguishability only; `?/1.0M` is the audit's separate item 4, untouched.
+- **No mid-session `/theme` toggle.** `Theme::set_palette` returns the palette it replaced, so a
+  `/theme` command is a small follow-up — but repainting a full-screen band mid-session is a different
+  review from choosing a palette at startup.
 - **`NO_COLOR` glyph separation for the remaining roles is still open** (the audit's last item), as is
   **OSC 52** for `/copy` over SSH, where the command currently reports success while copying nothing.
 - **One commit lesson, recorded because it nearly shipped:** `HEAD` was not self-consistent for a
   round — the dirty `main.rs` carried a `let_and_return` fix, so the clippy gate would have failed on
   the commit alone, while the passing battery built the *working tree* that contained it. Fixing it
   meant committing the file, not re-running the battery.
+
+## Negative controls (four, each restored byte-identically and touched)
+
+| Control | What failed |
+|---|---|
+| `Theme::colors()` hardcoded to `DARK` | `the_light_palette_changes_the_body_text_the_frame_draws`, `body_text_is_never_a_hardcoded_white_or_black`, `the_palette_is_selected_by_name_and_survives_a_bad_one` |
+| the badge built but **not drawn** | `the_badge_is_drawn_onto_the_row_with_the_warn_colour`, `a_frozen_view_says_so_and_names_the_way_back`, `the_position_badge_is_the_only_thing_that_distinguishes_frozen_from_live`, `paging_up_a_running_view_shows_it_is_frozen_and_where` |
+| the jump-to-live arm deleted from `handle_key` | `the_jump_to_live_key_returns_the_view_to_the_tail` |
+| the viewport measured as the whole frame | `a_long_transcript_never_pushes_the_composer_off_the_screen` and `the_advertised_scroll_key_scrolls_the_real_frame` (**both pre-existing**) plus the two D11 frame tests |
+
+The second is the one that matters most: without a cell-level assertion, deleting the badge from `draw`
+would have failed only string-level tests — exactly how M123's decoration stayed built, tested and
+never drawn.
