@@ -88,13 +88,15 @@ not themselves trigger runtime compression.
   `parse_diff`'s doc contradicting its pinned test (B4), and the never-drawn split diff at ≥120 columns
   (B5). Files in play: `crates/epsilon-tui/src/ui/theme.rs`, `ui/card.rs`, `state.rs`, `render_cache.rs`,
   `app/golden.rs`, `crates/epsilon-cli/src/main.rs`.
-  **Last measured: `301 passed / 1 failed`, and the failure is a REGRESSION, not a new test** —
-  `app::golden::an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` is M126's own pinned
-  frame-level assertion (the one that reads the sign column's colour out of the drawn buffer) and it
-  passed before this slice started. **Do not commit until the crate is green**: either the agent's
-  change to `ui/card.rs`/`state.rs` altered the diff's rendering, or a control is armed in place.
-  Announce-and-restore discipline is in the brief, so ask the author which it is rather than guessing —
-  a control left armed and a real regression look identical from the tree.
+  **Last measured: `301 passed / 1 failed`, and the failure is a REGRESSION with a measured cause, not
+  an armed control** — `app::golden::an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (M126's
+  own pinned frame-level assertion, which passed before this slice) now fails at `golden.rs:1362` with
+  `left: (2, 10)`, `right: (2, 6)`: the sign is still at cell 2, but the diff's **body moved four columns
+  right**, i.e. something the slice changed in `ui/card.rs` altered the rendered diff layout at 80
+  columns. The assertion's own message says what it expects ("the body follows `+ 5 `"). So this is a
+  genuine behaviour change that must be either intended-and-re-documented or reverted — **do not commit
+  until the crate is green**, and do not assume a control this time: the numbers say the layout moved.
+  The author was still running when this was measured, so it may yet resolve it.
 - **M129 CLOSED** (battery `m129c`: all five gates exit 0, **1,165 passed / 0 failed / 1 ignored across
   61 binaries**; installed; docs and history row landed). The slice landed
   the audit's last two items and the review's B1:
