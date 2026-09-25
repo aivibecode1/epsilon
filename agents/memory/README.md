@@ -230,6 +230,21 @@ not themselves trigger runtime compression.
   user doc was fixed); and
   `pi_import_reconciliation::pi_import_carries_every_source_entry` failed once in a combined run
   and passed on every re-run (unexplained flake, worth a second look).
+- **IN FLIGHT (round 63), AND ITS SCOPE GREW PAST THE BRIEF — do not commit unread.** A delegated agent was
+  asked to correct `audit/02-defect-ledger.md` (the root cause of the stale claims: F04/F06/F07/F08/F15/F17
+  still listed open although later milestones closed all but F16), amend ADR-018 (which still says
+  "Epsilon never stores credentials"), fix the ADR's precedence to match the code, and handle two one-line
+  CLI drifts (`--plan`'s help after M82, and `RUST_LOG` with no tracing subscriber in any manifest).
+  It has since touched **`docs/design/epsilon-architecture.md` as well** — the guide the previous audit
+  called **stale wholesale**, with the explicit warning that patching lines would leave a half-current
+  guide and that the honest fixes are a full re-derivation pass or a dated "audit-era snapshot" header.
+  Files in play: `audit/02-defect-ledger.md`, `docs/design/epsilon-decisions.md`,
+  `docs/design/epsilon-architecture.md`, `docs/user/{README,configuration,troubleshooting}.md`,
+  `CHANGELOG.md`, `crates/epsilon-cli/src/main.rs`. `cargo check -p epsilon-cli` was **Finished** at the
+  last check, so the code half compiles.
+  **Before committing:** read the architecture-guide diff specifically — a wholesale rewrite needs review,
+  not a rubber stamp, and the acceptable outcomes are a genuine re-derivation or a dated header, not
+  scattered line patches presented as current. Then battery + reinstall if the CLI strings changed.
 - **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files, ~420
   lines) was modified by something other than this task, and is still dirty. Preserve it; never `git add`
   that directory, and do not fold it into a milestone commit.
