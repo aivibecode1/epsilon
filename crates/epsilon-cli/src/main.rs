@@ -1993,6 +1993,41 @@ fn print_outcome(outcome: &epsilon_core::RunOutcome) -> (Option<String>, Option<
     (text, Some(diagnostic))
 }
 
+/// What an admitted `serve` run that failed must print, or `None` when it succeeded.
+///
+/// F07's last surface. The TUI reports a failed durable write as a notice plus `run failed`
+/// (`app.rs`'s `spawn_run`) and `-p` reports it on stderr with exit 1 (`print_mode`); the
+/// server's boot task called `let _ = agent.run(message).await`, so on that path the notice and
+/// the `Err` were both discarded and the person on the other end of the server learned nothing.
+///
+/// **Why this is stderr and not a frame on `/events`.** The `Notice` core emits is a broadcast
+/// event, and a broadcast reaches only receivers alive at the moment it is sent — it is a live
+/// stream, not a log, so it is not replayed to whoever subscribes later. The boot task starts
+/// before the listener is bound (line below), so at that instant the server has no subscriber at
+/// all and the notice is dropped on the floor; a client cannot have connected yet, because there
+/// is not yet a socket to connect to. The protocol therefore has no channel that can carry this
+/// failure to a client, and inventing one (a replay buffer, a sticky error in `/state`) is a
+/// server redesign, not a report. What the server does have is its own log, which is where the
+/// sibling failure on this path already goes — the `/prompt` route's `eprintln!("serve: admitted
+/// run failed: …")` in `epsilon-server` — so this uses it, in the same shape, rather than leaving
+/// the failure silent. A failure *during* a client's own prompt still reaches that client, as the
+/// `409` its next `/prompt` gets when the F07 latch refuses a request built from a store that is
+/// missing a turn.
+///
+/// Pure — it decides the line and prints nothing — so what an operator would see is assertable
+/// without a terminal or a child process. The `serve:` prefix matches the server's own reports,
+/// and the error's `Display` already carries the notice's whole sentence ("the session file could
+/// not record this turn … may be missing it"), so the log line names the consequence, not just
+/// the syscall.
+fn admitted_run_failure(
+    run: &Result<epsilon_core::RunOutcome, epsilon_core::RunError>,
+) -> Option<String> {
+    match run {
+        Ok(_) => None,
+        Err(e) => Some(format!("serve: admitted run failed: {e}")),
+    }
+}
+
 /// Interactive ratatui frontend (M9b).
 async fn tui_mode(
     shared: &SharedRun,
@@ -2069,7 +2104,14 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         tokio::spawn({
             let agent = Arc::clone(&agent);
             async move {
-                let _ = agent.run(message).await;
+                let run = agent.run(message).await;
+                // `let _ =` here was the defect (F07): a run that failed because the session
+                // file refused a write left this server reporting nothing at all. The notice the
+                // failure emits reaches no client — see `admitted_run_failure`, which is why the
+                // server's own log carries it instead.
+                if let Some(line) = admitted_run_failure(&run) {
+                    eprintln!("{line}");
+                }
             }
         });
     }
@@ -2352,6 +2394,171 @@ action = "allow"
             "project allow cannot override plan deny"
         );
         assert!(!workspace.path().join("new.txt").exists());
+    }
+
+    fn user_msg(text: &str) -> Message {
+        Message::User(epsilon_contracts::message::UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![epsilon_contracts::content::UserContent::Text { text: text.into() }],
+        })
+    }
+
+    /// The `Notice` texts a subscription collected, drained destructively.
+    ///
+    /// Subscribe **before** the run: a notice is a live broadcast event, not a log, so a
+    /// subscriber created afterwards sees nothing at all.
+    fn notices_from(rx: &mut tokio::sync::broadcast::Receiver<Arc<AgentEvent>>) -> Vec<String> {
+        let mut out = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(ev) => {
+                    if let AgentEvent::Notice { text } = &*ev {
+                        out.push(text.clone());
+                    }
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
+    /// F07 on the server path: a run refused because the session file would not record it is
+    /// **reported**, not discarded with the notice.
+    ///
+    /// The defect this pins was one call site — `serve_mode`'s boot task did
+    /// `let _ = agent.run(message).await` — and it was invisible because the failure has two
+    /// halves and each half went nowhere: the `Err` was thrown away, and the `Notice` core emits
+    /// had no live subscriber (the task starts before the listener is bound, so no client can be
+    /// connected). The run below is a real one, refused by a real
+    /// [`epsilon_session::SessionStore`] write fault, so the error text under assertion is the
+    /// sentence core actually builds rather than a string this test invented.
+    ///
+    /// **What this proves and what it does not.** It proves the reporting *layer*: given the
+    /// failure the boot task receives, the line the server prints names it — and that a later
+    /// run's latched refusal is reported the same way, so no `/prompt` from then on is answered
+    /// with silence. It cannot prove the call site calls it from here: driving a store failure
+    /// through `serve_mode` is not possible in this process (that function builds its own agent
+    /// and its own store, and — as `epsilon-session`'s own note says — a store that already holds
+    /// an open handle still accepts writes through a read-only file, a revoked directory
+    /// permission and a non-writable attribute, so the fault has to be injected). The call site
+    /// is held instead by `the_serve_boot_task_reports_a_failed_run_instead_of_discarding_it`
+    /// below, which reads it. Neither test alone is enough, which is why there are two.
+    #[tokio::test]
+    async fn a_durable_write_failure_on_the_serve_path_reaches_the_server_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store =
+            epsilon_session::SessionStore::open_in(dir.path().join("serve.jsonl"), dir.path())
+                .unwrap();
+        // Occurrence 1 is the run's first append — the prompt. A prompt the store refuses ends
+        // the run before the provider is entered (F07), which is the failure the boot task sees.
+        store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1, 1);
+        let store = Arc::new(std::sync::Mutex::new(store));
+        let handle = Arc::clone(&store);
+
+        let provider = FauxProvider::new(vec![FauxStep::say("answered anyway")]);
+        let recorded = provider.recorded_requests_handle();
+        let agent = Agent::new(
+            LoopLimits::default(),
+            Arc::new(PanicGuard(provider)),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(epsilon_core::AutoAllow),
+            dir.path().to_path_buf(),
+        );
+        agent.attach_session_store(store);
+        let mut rx = agent.subscribe();
+
+        // Exactly what `serve_mode`'s boot task now does with the result.
+        let run = agent.run(user_msg("hello")).await;
+        let reported = admitted_run_failure(&run).unwrap_or_else(|| {
+            panic!(
+                "a run whose durable write failed must not be discarded: the server has to \
+                 report it, and this one produced no line ({run:?})"
+            )
+        });
+        assert!(
+            reported.starts_with("serve: admitted run failed: "),
+            "the line must carry the server's own prefix, like the /prompt route's report: {reported}"
+        );
+        assert!(
+            reported.contains("could not record this turn") && reported.contains("disk full"),
+            "the report must name the failure and the disk's own reason: {reported}"
+        );
+        assert!(
+            reported.contains("not on disk") && reported.contains("may be missing it"),
+            "the report must name the consequence the user acts on, not just the syscall: {reported}"
+        );
+
+        // The notice half, and why the log is load-bearing here: the report above holds no
+        // receiver, so if the server did not log it this sentence reached nobody at all.
+        let notices = notices_from(&mut rx);
+        assert_eq!(notices.len(), 1, "exactly one report: {notices:?}");
+        assert!(
+            notices[0].contains("could not record this turn"),
+            "the notice the log relays is core's own: {notices:?}"
+        );
+
+        // The session is now latched: the store is missing a turn, so no later request may be
+        // built from it (F07's second half). That refusal is a failure of the *next* run, which
+        // is why the first assertion here is that it, too, reaches the server's log — a client
+        // that prompts from now on gets its `409`/error from the same report, never silence.
+        let again = agent.run(user_msg("second")).await;
+        let refusal = admitted_run_failure(&again).unwrap_or_else(|| {
+            panic!("the latched refusal must be reported too, not swallowed: {again:?}")
+        });
+        assert!(
+            refusal.contains("missing a turn") && refusal.contains("checking the disk"),
+            "the refusal has to say what to do next: {refusal}"
+        );
+
+        // The store and the loop really did diverge here: the prompt is in memory and not on
+        // disk, which is what "the session may be missing a turn" means. Asserted so a future
+        // edit cannot make this test green by making the fault a no-op.
+        assert_eq!(agent.history().len(), 2, "both prompts survive in memory");
+        assert_eq!(
+            handle.lock().unwrap().model_view().unwrap().len(),
+            1,
+            "the store holds only the turn that reached the disk"
+        );
+        assert!(
+            recorded.lock().unwrap().is_empty(),
+            "no request may be built from a store that is missing a turn"
+        );
+    }
+
+    /// What keeps the test above honest: it reads the boot task and requires it to report.
+    ///
+    /// The lesson is F2's, learned on `card_is_open`: a behavioural test of a *reporting* layer
+    /// passes just as happily when the call site goes back to discarding the result, because the
+    /// layer it exercises has not changed. What was wrong was that `serve_mode` dropped the
+    /// failure, so this asserts the shape that was wrong — the run's result is handed to the
+    /// reporter — and fails on the day `let _ = agent.run(` is written again.
+    #[test]
+    fn the_serve_boot_task_reports_a_failed_run_instead_of_discarding_it() {
+        let source = include_str!("main.rs");
+        const GONE: &str = "`serve_mode` is gone, so this guard is reading nothing: find where the \
+                            server's initial task runs the agent and hold that instead";
+        let after = source
+            .split_once("async fn serve_mode(")
+            .unwrap_or_else(|| panic!("{GONE}"))
+            .1;
+        // Up to the end of the function: the first line that closes it at column zero.
+        let body: String = after
+            .lines()
+            .take_while(|line| *line != "}")
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            body.contains("admitted_run_failure(&run)"),
+            "the server's boot task must report the run's failure through the same path the rest \
+             of the server logs: {body}"
+        );
+        assert!(
+            !body.contains("let _ = agent.run("),
+            "the run's result is being discarded again — that is the F07 defect on this path: \
+             {body}"
+        );
     }
 }
 
