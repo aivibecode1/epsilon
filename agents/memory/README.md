@@ -46,7 +46,26 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
+- **IN FLIGHT (round 42): TUI audit D8 (light theme) + D11 (frozen signal / jump-to-live).** A
+  delegated agent is working in `crates/epsilon-tui`: `ui/theme.rs` (a `Palette::LIGHT` plus a way to
+  select it — the skill says ship a light palette and a switch, **not** runtime background detection),
+  and the scroll affordances (`app/keys.rs`, `keybindings.rs`, `ui/footer.rs`, `app.rs`,
+  `app/composer_viewport_tests.rs`). **Uncommitted.** Last measured: `cargo test -p epsilon-tui`
+  **281 passed / 1 failed** (+14 tests on M126's 267), failing at
+  `app::golden::paging_up_a_running_view_shows_it_is_frozen_and_where` — so the theme half may be done
+  and the frozen-view half is mid-flight. Mid-round it briefly did **not compile** (a test-support
+  module importing `app::LiveFetcher`, `app::TuiConfig`, `app::run`, `build_app`, `draw_frame` before
+  they existed), then recovered; treat further breakage as the author still editing.
+  **Do not commit any of it until `cargo test -p epsilon-tui` is green**, then battery + reinstall
+  (both items are user-visible).
 - **M126 CLOSED (`933837b`, `9ae64a2`) — tool cards and a real diff, battery `m126d` PASSES:** all
+  five gates exit 0, **1,131 passed / 0 failed / 1 ignored across 61 binaries** (fifteen more than
+  M125's 1,116); `epsilon-tui` 267 tests. Record: `docs/milestones/M126-tool-cards-and-diffs.md`. The
+  one stubborn assertion was **the fixture's arithmetic, not the product**: its "short cards" hold a
+  three-line diff against a twelve-row cap, so nothing is hidden and capping them gives back zero rows
+  — the old `all_open_rows - 4` could never hold. Lesson recorded there: three wrong theories over four
+  rounds (wrong question → refuted cache lead → print the numbers), so **print before theorising**.
+  **Owed: the independent read-only review this slice has never had.**
 - **M125 (`5070781`) closed TUI audit items 3, 4 and 5**, battery **m125a PASSES**: all five gates
   exit 0, **1,116 passed / 0 failed / 1 ignored across 61 binaries** (`audit/evidence/gate-m125a.log`),
   eighteen more than M124's 1,098. The footer's hints are now **derived from the live binding
