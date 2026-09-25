@@ -53,11 +53,26 @@ fn fixtures_dir() -> PathBuf {
 }
 
 /// Where the generated pi v2 sources and their imports live: `EPSILON_RECONCILE_DIR` when set,
-/// else a fixed directory under the system temp dir.
+/// else a directory of this process's own under the system temp dir.
+///
+/// The default used to be the **fixed** `epsilon-pi-reconciliation`, and that made the suite
+/// unusable whenever two runs overlapped: a battery and a delegated agent's `cargo test` would both
+/// write `large-session.v2.jsonl` and its `.epsilon.jsonl` import there, and each would rename and
+/// delete the other's files. It surfaced as
+/// `rename into …\large-session.v2.jsonl: The system cannot find the file specified. (os error 2)`
+/// and, before the message was noticed, as an unexplained one-off failure that passed on re-run.
+///
+/// The process id is the right discriminator rather than a random suffix: the failures come from
+/// different *processes* racing for one path, while the threads inside one process share the
+/// fixtures they are meant to share and are serialized by the test harness anyway. `thread::current()
+/// .id()` would be stable per run but is not `Display`-able without a `Debug` format, and a random
+/// suffix would leave debris to accumulate with no way to tell whose it was.
 fn work_dir() -> PathBuf {
     let dir = std::env::var_os("EPSILON_RECONCILE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("epsilon-pi-reconciliation"));
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!("epsilon-pi-reconciliation-{}", std::process::id()))
+        });
     std::fs::create_dir_all(&dir).expect("create reconciliation directory");
     dir
 }
