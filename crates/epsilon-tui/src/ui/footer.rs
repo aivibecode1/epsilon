@@ -176,13 +176,25 @@ impl Hints {
     /// app does not have. What changed is stated by the position badge, which
     /// lives on this row and nowhere else ([`View::badge`]).
     ///
-    /// **Order is survival.** The existing narrow-row test in this module pinned
-    /// the rule the hard way: the hint pushed *first* is the one a 60-column row
-    /// beside a workspace path keeps. The exit is pushed first for that reason —
-    /// it is the one key on this row the reader cannot infer from the screen,
-    /// because a frozen view looks exactly like a slow model. At 80 columns both
-    /// hints print; at 60 the position and the exit survive and "further back" is
-    /// what gives way.
+    /// **Order is survival, and what survives on a realistic row is the exit —
+    /// not the second hint.** A narrow row is decided in three steps, in this
+    /// order: the location and branch take what they need ([`Priority::Right`],
+    /// so the hints are the half that yields); the mode word is pushed first and
+    /// therefore cut last, which is why the row still says which keyboard it
+    /// belongs to; and the badge is emitted whole or not at all, because a
+    /// truncated `^ 12/40` is a wrong total rather than a shorter badge
+    /// ([`side_by_side`]'s `whole_span`).
+    ///
+    /// The exit is pushed before "further back" because it is the one key on this
+    /// row the reader cannot infer from the screen: a frozen view looks exactly
+    /// like a slow model. The measured consequence is worth stating, because the
+    /// obvious reading of "the first one survives" is not what happens at every
+    /// width: with a realistic location — `~/Desktop/My Agent Space/Epsilon · main`
+    /// is 39 columns — a 60-column row prints `insert ^ 12/40 · g j`, so the exit
+    /// hint is *cut*, and `further back` is what the reader loses outright. The
+    /// badge is the part of the row that is never half-shown. The test below pins
+    /// this at 60 columns rather than at 80, where everything fits and the rule
+    /// cannot be observed at all.
     ///
     /// PageDown (toward live) is deliberately not listed while frozen: it is the
     /// same journey as the exit taken incrementally, and it is the first thing a
@@ -276,6 +288,9 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
     if let Some(mode) = &hints.mode {
         left.push(Span::styled(mode.clone(), theme.accent()));
     }
+    // The badge's own span index, so the two places that know about it cannot
+    // drift: it is the span `left` held at this point, and it is protected whole.
+    let mut whole_span = None;
     // Where the view is, immediately after the mode and before the keys: it
     // qualifies both. `warn` rather than `accent` because a view that stopped
     // following the run is a state to notice, not a brand colour — and on a
@@ -284,6 +299,7 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
         if !left.is_empty() {
             left.push(Span::raw(" "));
         }
+        whole_span = Some(left.len());
         left.push(Span::styled(badge, theme.warn()));
     }
     for (key, action) in hints.keys.iter() {
@@ -306,7 +322,15 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
         right.push(Span::styled(branch.clone(), theme.faint()));
     }
 
-    let line = side_by_side(left, right, area.width as usize, Priority::Right);
+    // `whole_span` protects the badge (see above); the hints after it cut as they
+    // always did, which is what makes the *order* in `Hints::frozen` matter.
+    let line = side_by_side(
+        left,
+        right,
+        area.width as usize,
+        Priority::Right,
+        whole_span,
+    );
     let line = clamp_line(line, area.width as usize);
     f.render_widget(line, area);
 }
@@ -484,6 +508,103 @@ mod tests {
         assert!(
             narrow.contains("scroll back"),
             "80 columns dropped the scroll hints, which no other row mentions: {narrow:?}"
+        );
+    }
+
+    #[test]
+    fn the_position_badge_is_never_half_written_at_any_width() {
+        // The finding this answers was a comment claiming the *position* survives
+        // 60 columns. Measured, the 60-column claim turned out to be the easy
+        // half — the badge fits there even with no protection at all — and the
+        // defect was one width-band lower, where the trim cuts *inside* the
+        // fraction and the row says `^ 12` or `^ 1` for a 40-row transcript.
+        // A wrong total is worse than a missing badge: absent information is
+        // noticed, and a wrong number is not.
+        //
+        // So the assertion is the invariant rather than one width: across every
+        // width down to where the row stops being a row, the badge is either
+        // whole or gone. The arm that proves it discriminates is a `None` in
+        // `draw`'s `whole_span`, and it produces `^`, `^ 1`, `^ 12`, `^ 12/` and
+        // `^ 12/4` in exactly this sweep.
+        let hints = Hints {
+            location: Some("~/work/api".into()),
+            branch: Some("main".into()),
+            ..Hints::idle_at(&defaults(), frozen_view())
+        };
+        let badge = ascii_badge(&frozen_view());
+        let (marker, count) = badge.split_once(' ').expect("badge is `marker count`");
+        let mut half_written = Vec::new();
+        for width in 26u16..=60 {
+            let line = render(width, &hints);
+            assert!(
+                crate::ui::layout::display_width(&line) <= width as usize,
+                "width {width} overflowed: {line:?}"
+            );
+            if let Some(at) = line.find(marker) {
+                let tail = &line[at + marker.len()..];
+                if !tail.trim_start().starts_with(count) {
+                    half_written.push(format!("{width}: {line:?}"));
+                }
+            }
+        }
+        assert!(
+            half_written.is_empty(),
+            "the badge states a position, so part of it is a wrong one: {half_written:#?}"
+        );
+    }
+
+    #[test]
+    fn the_frozen_row_at_sixty_columns_keeps_the_position_and_the_exit() {
+        // The finding this replaces promised 60-column survival from an *idle* row
+        // rendered at 80: both halves were wrong, because the row a narrow
+        // terminal degrades is the frozen one — the widest footer state there is
+        // (badge + exit + paging) — and 80 columns is a width at which every hint
+        // already fits, so the test could not see the rule it named.
+        //
+        // What it pins now is the row a reader at 60 columns actually gets, and
+        // the division of labour is worth stating: that the badge is never *half*
+        // written is the sweep above; that it is here at all, beside a realistic
+        // location, is this test.
+        let bindings = defaults();
+        let hints = Hints {
+            // Realistic on purpose: 39 columns with the branch. A short
+            // placeholder path would leave the hints room they do not have on a
+            // real screen and make this pass for the wrong reason.
+            location: Some("~/Desktop/My Agent Space/Epsilon".into()),
+            branch: Some("main".into()),
+            ..Hints::idle_at(&bindings, frozen_view())
+        };
+        let line = render(60, &hints);
+
+        // The position survives, whole, which is what a `whole_span` buys here: on
+        // this row it fits beside the location.
+        assert!(
+            line.contains(&ascii_badge(&frozen_view())),
+            "60 columns lost the position the frozen row exists to state: {line:?}"
+        );
+        // The whole row may not wrap, which is the property the fix must not
+        // trade away for the badge.
+        assert!(
+            crate::ui::layout::display_width(&line) <= 60,
+            "the frozen row overflowed: {line:?}"
+        );
+        // What actually gives way at this width, asserted rather than asserted
+        // *about*: the last hint is gone from the row. This is the half of the old
+        // comment that was simply false — it said the position and the exit
+        // survive, and measured, the exit's own text does not.
+        assert!(
+            !line.contains("scroll back"),
+            "60 columns kept both hints, so this test is not exercising the trim: {line:?}"
+        );
+        // And the exit is the hint that outlived the other one — the order in
+        // `Hints::frozen` is the reason, and this is the assertion that fails if
+        // the two pushes are ever swapped. Its *key* is asserted rather than its
+        // whole action text, because the exit's own words are cut too and by a
+        // number this test would otherwise be pinning twice over.
+        let live = bindings.key_text("app.transcript.live").expect("bound");
+        assert!(
+            line.contains(&format!("· {live} ")),
+            "the exit key must be the one on the row: {line:?}"
         );
     }
 

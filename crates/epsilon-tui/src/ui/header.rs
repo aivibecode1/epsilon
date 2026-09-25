@@ -65,7 +65,11 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, state: &RunState, metr
     }
     let left = state_spans(theme, state);
     let right = metric_spans(theme, metrics);
-    let line = side_by_side(left, right, area.width as usize, Priority::Left);
+    // No span here is protected whole: a metric trimmed to part of itself reads
+    // as a smaller measurement, which is why the *order* is what keeps the model
+    // name on the row. The footer's `^ 12/40` is the one value in the UI whose
+    // fragments mean different things, and the only caller that asks for it.
+    let line = side_by_side(left, right, area.width as usize, Priority::Left, None);
     let line = clamp_line(line, area.width as usize);
     f.render_widget(line, area);
 }

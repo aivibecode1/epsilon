@@ -5,6 +5,27 @@ All notable changes to Epsilon. Milestones map 1:1 to dev logs in `docs/mileston
 ## [Unreleased]
 
 ### Added
+- **The TUI design audit's own items (M125–M130).** The owner's report that the TUI was "extremely
+  poor in terms of design and usability compared to the references" traced to decoration that existed,
+  was tested, and had **no production caller** — so none of it was ever on screen. Now: the transcript
+  gutter, per-role markers and filled bands are drawn on the real path; the footer's key hints are
+  resolved from the live binding table (the old row advertised `? help`, which was not a bound key,
+  and hid PageUp/PageDown, history and Ctrl+O); the header's context figure is the session context the
+  compaction trigger actually reads, not the last call's prompt size; the approval dialog is ~6 rows
+  with the danger border its own comment had always claimed. Tool calls are **cards** — a title with
+  name, status and duration, and an edit's diff rendered as a diff (gutter, line numbers, per-line
+  colour, never colour alone) instead of the literal `"{name} → diff:\n{diff}"` pushed through the
+  markdown parser. A **light palette** (`--light`, `EPSILON_THEME=light`, `[tui] theme`), and a
+  transcript that **says when it is frozen**: a position badge (`↑ 12/40`) and a jump-to-live key,
+  both bound through the live table so neither hint can drift from its handler.
+- **`/copy` over SSH (M129).** It used the native clipboard only, so on a remote session it printed a
+  success notice while copying nothing. It now also emits OSC 52, native first and terminal second,
+  and the notice says **"sent via the terminal"** — OSC 52 is a request a terminal may ignore in
+  silence, and claiming otherwise was the defect. Also in M129: `NO_COLOR` glyph separation (an answer
+  and its reasoning trace were the same pixels) and a real card duration (every result card reported
+  `0ms` because it stamped its start and end with the same `now`).
+
+### Added
 - **Plan-mode enforcement (M82).** `--plan` denied `git commit*` patterns that core never matched
   (preflight authorizes the command head only) and *replaced* project rules, so a project read-deny
   evaporated and bash ran unimpeded. The plan ruleset now denies `bash` and `shell` outright —

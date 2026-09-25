@@ -62,6 +62,29 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
+**This list is not the timeline.** It was last kept current at M115 and the rows below
+it stop there, so M116–M125 have milestone logs in [`milestones/`](milestones) and rows
+in [`history.md`](history.md) without a pointer here. The three newest entries were added
+when a review found the two slices of M126/M127 unlinked from this map; the gap between
+them is drift, not a claim that nothing landed.
+
+- [M130 — the review's four remaining blockers, and the production bug the third one hid](milestones/M130-review-blockers.md):
+  the light palette's ANSI-16 quiet roles were the dark palette's `DarkGray` under a comment forbidding
+  it — in the mode that is the *default* on a console that does not advertise itself, which is the user
+  `--light` exists for; an unrecognised `EPSILON_THEME` fell through to the config file rather than to
+  dark; `parse_diff`'s doc contradicted its own pinned test; and the split diff at ≥120 columns had
+  never been drawn by a test, which is how the two halves were found landing on top of each other.
+  Answers [`audit/evidence/m126-m127-review.md`](../audit/evidence/m126-m127-review.md).
+- [M127 — a light theme, and a transcript that says when it is frozen](milestones/M127-light-theme-and-frozen-view.md):
+  `Color::White` as body text is the one thing this project's own standard forbids, and on a light
+  terminal the prose was near-invisible. A selectable light palette (a switch, never background
+  sniffing) plus the frozen-view signal: a position badge and a jump-to-live key bound through the same
+  table as its hint, so the two cannot disagree.
+- [M126 — tool cards, a real diff, and four rounds spent on one assertion](milestones/M126-tool-cards-and-diffs.md):
+  a tool call was one flat line and an edit's diff was prose — the artefact a coding agent shows most
+  often, rendered unreadable. Cards with a row-budgeted body, unified below a named width and split
+  above it, line numbers only above a column budget, and colour never the only signal. The stubborn
+  assertion turned out to be the *fixture's* arithmetic, not the product's.
 - [M115 — converting an older session keeps its header and its previous bytes](milestones/M115-header-and-backup.md):
   the other two halves of G19. A rewrite used to drop every header field this build does not
   name (`provider`, `modelId`, `thinkingLevel`, `branchedFrom`) — the M113 preservation rule,

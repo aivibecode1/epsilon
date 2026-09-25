@@ -3017,15 +3017,25 @@ impl App {
     /// The user's own decision if they made one, the global toggle otherwise. The
     /// global toggle has to stay authoritative for cards nobody has touched, or
     /// "expand all" would only ever work on the cards that were already open.
+    ///
+    /// **This defers to [`crate::render_cache::RenderState::is_open`] rather than
+    /// restating it.** The two answer the same question about the same card — one
+    /// decides what is *drawn*, the other what a keypress *records* — and the
+    /// whole per-card convention lives in their agreement: press `ctrl+x` twice
+    /// and the card the first press opened must still be open after the second,
+    /// which is only coherent while both halves read one rule. A second copy that
+    /// agreed today is exactly the copy that would stop agreeing on the day
+    /// somebody adds a third source of truth to one of them.
     fn card_is_open(&self, id: u64, has_body: bool) -> bool {
-        if !has_body {
-            return false;
+        crate::render_cache::RenderState {
+            expand_all: self.prefs.expand_outputs,
+            expanded: &self.card_open,
+            // The key text is the renderer's business, not the rule's: it is
+            // `None` here because nothing in this decision reads it, and a
+            // resolved chord would only be a second thing that could disagree.
+            more_key: None,
         }
-        self.card_open
-            .iter()
-            .find(|(card_id, _)| *card_id == id)
-            .map(|(_, open)| *open)
-            .unwrap_or(self.prefs.expand_outputs)
+        .is_open(id, has_body)
     }
 
     /// The card `Ctrl+X` acts on when it is not the global toggle's turn.

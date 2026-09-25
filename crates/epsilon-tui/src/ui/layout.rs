@@ -121,6 +121,7 @@ pub fn too_small_message(width: u16, height: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::text::Span;
 
     fn area(width: u16, height: u16) -> Rect {
         Rect::new(0, 0, width, height)
@@ -209,6 +210,80 @@ mod tests {
         assert!(message.contains("44×10"), "{message}");
         assert!(message.contains("30×8"), "{message}");
     }
+
+    /// The left half the footer composes: mode, badge, then the hints.
+    ///
+    /// The badge is the span the real caller protects, and it is the middle one:
+    /// the mode is pushed before it and the hints are pushed after, so a count of
+    /// "spans to keep whole" from either end would protect the wrong one. That is
+    /// why the parameter is an index.
+    fn badge_row(badge: &'static str) -> (Vec<ratatui::text::Span<'static>>, Option<usize>) {
+        (
+            vec![
+                Span::raw("insert"),
+                Span::raw(" "),
+                Span::raw(badge),
+                Span::raw(" · "),
+                Span::raw("g jump to live"),
+            ],
+            Some(2),
+        )
+    }
+
+    /// The whole row as text, and where its right half begins.
+    ///
+    /// The right half is cut from its far end too once the left has taken its
+    /// share, so an assertion about *what the left kept* must not read the
+    /// location's tail as if it were the hints'.
+    fn row_parts(location: &'static str, badge: &'static str, width: usize) -> (String, String) {
+        let (left, whole) = badge_row(badge);
+        let line = side_by_side(
+            left,
+            vec![Span::raw(location)],
+            width,
+            Priority::Right,
+            whole,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let split = text.find(location).unwrap_or(text.len());
+        (text[..split].to_string(), text[split..].to_string())
+    }
+
+    #[test]
+    fn a_protected_span_is_kept_whole_or_dropped_whole() {
+        // The defect this exists for, in the shape the footer produces it: a
+        // *fraction* cut near its end keeps the numerator and loses the
+        // denominator, so `^ 12/40` would render as `^ 12` — a position that is
+        // wrong about the total rather than merely shorter. A badge whose size
+        // does not fit whole is dropped, and what it did not use goes to the spans
+        // before it rather than to a partial badge. The location is short here on
+        // purpose: this is a test about the left half's trim, and a location that
+        // eats the row would be testing the right half's.
+        let location = "~/api · main";
+
+        // 27 columns: the location takes its 12, the hints give way, and the
+        // badge is **still whole** — which is what reserving its width before the
+        // two halves are decided buys. Without the reservation the location's
+        // share starved the left half down to the badge's own 7 columns and then
+        // past them, for no reason a reader could see on the row.
+        let (left, right) = row_parts(location, "^ 12/40", 27);
+        assert_eq!(
+            left, "insert ^ 12/40 ",
+            "the badge must be kept whole: {left:?}"
+        );
+        assert!(right.starts_with(location), "{right:?}");
+
+        // 18 columns: 6 of them left after the location and the gap, where
+        // `insert ` (7) plus the badge (7) cannot fit. The badge is absent — and
+        // absent, not `^ 12` — while the mode it outlived is still there to say
+        // which keyboard the row belongs to.
+        let (left, _) = row_parts(location, "^ 12/40", 18);
+        assert!(
+            !left.contains("12") && !left.contains('^'),
+            "a partial badge is a wrong number, not a shorter one: {left:?}"
+        );
+        assert!(left.starts_with("insert"), "{left:?}");
+    }
 }
 
 /// How many terminal columns a string occupies.
@@ -238,11 +313,25 @@ pub fn display_width(text: &str) -> usize {
 ///
 /// Neither side is ever half-drawn: trimming happens at a span boundary, so a
 /// styled value cannot come apart mid-glyph.
+///
+/// `whole_span` is the escape hatch for a value whose *fragments mean different
+/// things* — the same reason a half-glyph is refused, one level up. The footer's
+/// frozen badge is the case: `^ 12/40` cut to `^ 12` is not a shorter badge, it
+/// is a **wrong number**, because the part that says "of how many" is what its
+/// last characters carried. The span at that index is emitted entire or not at
+/// all, and the spans around it cut as they always did; `None` — every caller but
+/// the footer — changes nothing.
+///
+/// An index rather than a count because the index is what the caller actually
+/// knows: the badge is one span in the middle of the left half, with the mode in
+/// front of it and the hints behind, and how many of either there are is not the
+/// caller's business.
 pub fn side_by_side(
     left: Vec<ratatui::text::Span<'static>>,
     right: Vec<ratatui::text::Span<'static>>,
     width: usize,
     priority: Priority,
+    whole_span: Option<usize>,
 ) -> ratatui::text::Line<'static> {
     use ratatui::text::{Line, Span};
 
@@ -259,6 +348,16 @@ pub fn side_by_side(
     // from a width that was planned before a cut changed the text.
     let (lw, rw) = (measure(&left), measure(&right));
     let room = width.saturating_sub(GAP);
+    // The protected span is reserved *before* the shares are decided, and that
+    // ordering is the point rather than an implementation detail: the `Right`
+    // formula below hands the left half whatever the location left over, so a
+    // location can take the row down to nothing and the badge would be dropped
+    // for want of a column while the location itself was short enough to give it
+    // one. Reserving first makes the badge's fate depend on the width of the row,
+    // not on which half happened to be measured first.
+    let reserved = whole_span
+        .and_then(|i| left.get(i))
+        .map_or(0, |s| display_width(&s.content).min(room));
     let (mut lw, mut rw) = if lw + rw <= room {
         (lw, rw)
     } else {
@@ -269,10 +368,14 @@ pub fn side_by_side(
             Priority::Right => (lw.min(room.saturating_sub(rw.min(room))), rw.min(room)),
         }
     };
+    if reserved > 0 {
+        lw = lw.max(reserved);
+        rw = rw.min(room.saturating_sub(lw));
+    }
 
     let mut left = match priority {
         Priority::Left => cut_keeping_tail(left, lw),
-        Priority::Right => cut(left, lw),
+        Priority::Right => cut_keeping_whole(left, lw, whole_span),
     };
     // Re-measure what survived. A span can be dropped whole, and `cut` never
     // emits a partial wide glyph, so the emitted width can be under budget.
@@ -411,6 +514,47 @@ pub fn cut(
             out.push(ratatui::text::Span::styled(taken, span.style));
         }
     }
+    out
+}
+
+/// [`cut`], except that the span at `whole` is emitted entire or not at all.
+///
+/// The one case it exists for is the footer's position badge, which is a
+/// *fraction*: `^ 12/40` is a position and `^ 12` is a lie about one, while no
+/// badge at all is merely less information. So the protected span is emitted only
+/// when its full width fits the columns still free where it sits; otherwise it is
+/// skipped and everything after it is offered the room — which is why a dropped
+/// badge does not take the hints down with it.
+///
+/// "Where it sits" is the whole subtlety, and it is why this is a running budget
+/// and not a reservation: asking for the badge's width up front would let it keep
+/// its place on a row too narrow for the mode word in front of it, and a row that
+/// reads `^ 12/40` with no mode says less than one that reads `insert` — the one
+/// thing it dropped is the one thing that explained the badge.
+fn cut_keeping_whole(
+    spans: Vec<ratatui::text::Span<'static>>,
+    width: usize,
+    whole: Option<usize>,
+) -> Vec<ratatui::text::Span<'static>> {
+    let Some(index) = whole.filter(|i| *i < spans.len()) else {
+        return cut(spans, width);
+    };
+    let mut spans = spans;
+    let guarded = spans.remove(index);
+    let guarded_width = display_width(&guarded.content);
+    let before = cut(spans[..index].to_vec(), width.saturating_sub(guarded_width));
+    if before.len() < index {
+        // The value does not fit beside the spans that introduce it — the `insert`
+        // that says which keyboard the row belongs to, and the blank between them.
+        // It is dropped *whole* rather than shortened, and the room it did not use
+        // goes to the spans after it rather than being spent on a prefix that
+        // would read as a footer with its subject missing.
+        return cut(spans, width);
+    }
+    let spent: usize = before.iter().map(|s| display_width(&s.content)).sum();
+    let mut out = before;
+    out.push(guarded);
+    out.extend(cut(spans[index..].to_vec(), width - spent - guarded_width));
     out
 }
 

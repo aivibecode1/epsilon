@@ -172,8 +172,6 @@ pub struct Glyphs {
     pub vertical: &'static str,
     /// The dot that marks a transcript entry.
     pub bullet: &'static str,
-    /// The caret drawn at the streaming tail.
-    pub caret: &'static str,
     /// The marker for the session the user is looking at.
     pub cursor_bar: &'static str,
     /// Assistant prose, where no filled band is available.
@@ -202,8 +200,6 @@ pub struct Glyphs {
     pub plus: &'static str,
     /// A line a diff removes.
     pub minus: &'static str,
-    /// A warning.
-    pub warn: &'static str,
     /// How far back a frozen transcript view is: the marker in the footer's
     /// position badge (`↑ 12/40`, `^ 12/40`). Part of the glyph table like every
     /// other character the UI draws, so a legacy code page gets `^`.
@@ -221,7 +217,6 @@ pub const UNICODE: Glyphs = Glyphs {
     horizontal: "─",
     vertical: "│",
     bullet: "•",
-    caret: "▌",
     cursor_bar: "▎",
     assistant: "•",
     thinking: "≡",
@@ -231,7 +226,6 @@ pub const UNICODE: Glyphs = Glyphs {
     cross: "✗",
     plus: "+",
     minus: "-",
-    warn: "!",
     back: "↑",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
@@ -245,7 +239,6 @@ pub const ASCII: Glyphs = Glyphs {
     horizontal: "-",
     vertical: "|",
     bullet: "*",
-    caret: "_",
     cursor_bar: ">",
     assistant: "*",
     thinking: "=",
@@ -255,7 +248,6 @@ pub const ASCII: Glyphs = Glyphs {
     cross: "x",
     plus: "+",
     minus: "-",
-    warn: "!",
     back: "^",
     spinner: &["|", "/", "-", "\\"],
 };
@@ -272,6 +264,61 @@ impl Glyphs {
         } else {
             UNICODE
         }
+    }
+
+    /// Every single-glyph field of this table, so a check can be exhaustive.
+    ///
+    /// The ASCII test below used to name its fields one per line, which is how
+    /// the table grew `caret` and `warn` entries that no widget ever read: a list
+    /// written by hand covers what its author remembered, and a glyph nobody
+    /// draws is invisible to both the compiler and that list. Adding a field here
+    /// is now the only way to add one to the table, so the next glyph cannot
+    /// arrive unchecked — and the reader of that list is the same list.
+    pub const ALL: &'static [&'static str] = &[
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right",
+        "horizontal",
+        "vertical",
+        "bullet",
+        "cursor_bar",
+        "assistant",
+        "thinking",
+        "prompt",
+        "tool_call",
+        "tick",
+        "cross",
+        "plus",
+        "minus",
+        "back",
+    ];
+
+    /// This table's glyphs by name, for a caller that has to check all of them.
+    pub fn named(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        Self::ALL.iter().map(move |name| {
+            let glyph = match *name {
+                "top_left" => self.top_left,
+                "top_right" => self.top_right,
+                "bottom_left" => self.bottom_left,
+                "bottom_right" => self.bottom_right,
+                "horizontal" => self.horizontal,
+                "vertical" => self.vertical,
+                "bullet" => self.bullet,
+                "cursor_bar" => self.cursor_bar,
+                "assistant" => self.assistant,
+                "thinking" => self.thinking,
+                "prompt" => self.prompt,
+                "tool_call" => self.tool_call,
+                "tick" => self.tick,
+                "cross" => self.cross,
+                "plus" => self.plus,
+                "minus" => self.minus,
+                "back" => self.back,
+                other => panic!("`{other}` is in `Glyphs::ALL` with no reader: a name there is a promise that a glyph is checked, and this is the arm that keeps it"),
+            };
+            (*name, glyph)
+        })
     }
 
     /// Draw a horizontal rule of `width` cells.
@@ -600,11 +647,13 @@ impl Theme {
     /// Switch palettes, returning the theme that was in force so a caller can
     /// report the change.
     ///
-    /// This rebuilds styles rather than recolouring the screen: the theme is
-    /// `Copy` and every widget resolves roles through it at draw time, so the
-    /// next frame is already in the new palette and the render cache — which is
-    /// keyed by width and render state, deliberately not by the theme — stays
-    /// valid. Nothing is patched a cell at a time.
+    /// This swaps which table roles resolve from; it does not repaint anything.
+    /// The theme is `Copy` and every widget resolves roles through it at draw
+    /// time, so the next frame is already in the new palette — and the render
+    /// cache, which is keyed by width and render state and deliberately not by the
+    /// theme, stays valid rather than being invalidated by a colour change it does
+    /// not hold. Nothing is patched a cell at a time, and nothing waits for a
+    /// repaint: the rows on screen change when the next frame draws them.
     pub fn set_palette(&mut self, palette: ThemeMode) -> ThemeMode {
         std::mem::replace(&mut self.palette, palette)
     }
@@ -684,18 +733,15 @@ impl Theme {
     }
 
     /// Secondary information: hints, timestamps, units.
-    /// Secondary information: hints, timestamps, units.
     pub fn dim(&self) -> Style {
         self.role(Role::text_dim, Emphasis::Plain)
     }
 
     /// Tertiary information: labels, separators, anything skippable.
-    /// Tertiary information: labels, separators, anything skippable.
     pub fn faint(&self) -> Style {
         self.role(Role::text_faint, Emphasis::Plain)
     }
 
-    /// A dim role with extra emphasis.
     /// A dim role with extra emphasis.
     pub fn dim_strong(&self) -> Style {
         self.role(Role::text_dim, Emphasis::Strong)
@@ -713,7 +759,6 @@ impl Theme {
     }
 
     /// Reasoning traces, which should read as background.
-    /// Reasoning traces, which should read as background.
     pub fn thinking(&self) -> Style {
         self.role(Role::thinking, Emphasis::Muted)
     }
@@ -725,7 +770,6 @@ impl Theme {
     }
 
     /// A failed action, or a destructive option.
-    /// A failed action, or a destructive option.
     pub fn danger(&self) -> Style {
         self.role(Role::danger, Emphasis::Plain)
     }
@@ -735,7 +779,6 @@ impl Theme {
         self.role(Role::warn, Emphasis::Plain)
     }
 
-    /// The one color that says "this is the primary affordance".
     /// The one colour that says: this is the primary affordance.
     pub fn accent(&self) -> Style {
         self.role(Role::accent, Emphasis::Plain)
@@ -753,12 +796,10 @@ impl Theme {
     }
 
     /// Resting borders.
-    /// Resting borders.
     pub fn border(&self) -> Style {
         self.role(Role::border, Emphasis::Plain)
     }
 
-    /// The border of whatever currently owns the keyboard.
     /// The border of whatever currently owns the keyboard.
     pub fn border_focus(&self) -> Style {
         self.role(Role::border_focus, Emphasis::Focus)
@@ -817,14 +858,12 @@ impl Theme {
     // Borders around every message turn a conversation into a form; a filled
     // band reads as one block of speech and costs no columns.
 
-    // Filled bands. Deliberately close to a dark terminal background: a band
     /// The band behind a user message.
     pub fn surface_user(&self) -> Style {
         self.surface(Role::surface_user)
     }
 
     /// The band behind a tool call that is still waiting for a decision.
-    /// The band behind a tool call that is still waiting.
     pub fn surface_pending(&self) -> Style {
         self.surface(Role::surface_pending)
     }
@@ -873,23 +912,52 @@ mod tests {
         // A legacy code page renders box-drawing characters as mojibake, so the
         // ASCII repertoire is the one guarantee we can actually make.
         let check = |s: &str| assert!(s.is_ascii(), "{s:?} is not ASCII");
-        check(ASCII.top_left);
-        check(ASCII.top_right);
-        check(ASCII.bottom_left);
-        check(ASCII.bottom_right);
-        check(ASCII.horizontal);
-        check(ASCII.vertical);
-        check(ASCII.bullet);
-        check(ASCII.caret);
-        check(ASCII.cursor_bar);
-        check(ASCII.assistant);
-        check(ASCII.thinking);
-        check(ASCII.prompt);
-        check(ASCII.tool_call);
-        check(ASCII.back);
+        // Every field of the table, by construction: `Glyphs::named` walks the one
+        // list of them, so a glyph added there and forgotten here cannot happen.
+        // The name is unused because `named`'s own match is what proves the list
+        // and the struct agree — a name with no field panics there, not here.
+        let mut seen = 0usize;
+        for (_name, glyph) in ASCII.named() {
+            check(glyph);
+            seen += 1;
+        }
+        assert_eq!(seen, Glyphs::ALL.len(), "every glyph must be checked");
+        assert!(seen >= 15, "the table lost fields: {seen} checked");
         for frame in ASCII.spinner {
             check(frame);
         }
+    }
+
+    #[test]
+    fn no_doc_comment_line_is_written_twice() {
+        // There were seven of these, and they arrived the way this class always
+        // does: a doc block gets copied onto the item below it, and a repeated
+        // line reads as emphasis rather than as a mistake — which is why seven
+        // survived a slice, a review and a fix round that only removed one of
+        // them. This file is the palette's ADR-shaped record, so a duplicated line
+        // is a duplicated *decision*, and the guard is cheaper than noticing.
+        let source = include_str!("theme.rs");
+        let mut seen: std::collections::HashMap<&str, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (index, line) in source.lines().enumerate() {
+            let Some(doc) = line.trim_start().strip_prefix("///") else {
+                continue;
+            };
+            let text = doc.trim();
+            if text.is_empty() {
+                continue;
+            }
+            seen.entry(text).or_default().push(index + 1);
+        }
+        let repeated: Vec<String> = seen
+            .iter()
+            .filter(|(_, at)| at.len() > 1)
+            .map(|(text, at)| format!("{text:?} at lines {at:?}"))
+            .collect();
+        assert!(
+            repeated.is_empty(),
+            "a doc line written more than once reads as emphasis and is a copy: {repeated:#?}"
+        );
     }
 
     #[test]

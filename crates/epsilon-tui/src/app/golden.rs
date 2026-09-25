@@ -828,6 +828,13 @@ fn a_live_frame_never_advertises_the_frozen_position() {
 /// question is what colour the reader's eye lands on, and that has to come from
 /// the same cells the reader sees. Every needle used with this helper is ASCII,
 /// so the row's byte offset is also its column.
+///
+/// `None` — a cell nothing styled — is reported as [`ratatui::style::Color::Reset`]
+/// because every caller compares two *drawn* frames, where the only question is
+/// whether the two values differ. A caller asking whether a cell was left
+/// untouched has to read `Cell::style().fg` itself, as the `NO_COLOR` loops do:
+/// collapsed here, "nothing was emitted" and "`Reset` was emitted" are the same
+/// answer, and they are different facts about the code under test.
 fn fg_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> ratatui::style::Color {
     let rows = crate::ui::layout::screen_text(buffer);
     for (y, row) in rows.split('\n').enumerate() {
@@ -1560,12 +1567,19 @@ fn a_diff_still_reads_with_no_colour_and_ascii_glyphs() {
     // video, which is deliberately not emitted here: on a terminal with no colour
     // a reversed block is just a different-looking background, and the sign already
     // carries the meaning on its own.
+    //
+    // The assertion cites `None | Some(Reset)` the way the `NO_COLOR` role test
+    // above does, and for a reason worth stating: the contract is "no *hue*". The
+    // same loop used to demand `Some(Color::Reset)` literally, which is a claim
+    // about ratatui as much as about us — `Buffer::empty` already fills every cell
+    // with `Reset`, so a cell this code never styled satisfies it. Reading both
+    // values is what makes the assertion about the drawing.
     for row in [added_row, removed_row] {
         for x in 0..80u16 {
-            assert_eq!(
-                cell(&buffer, x, row as u16).style().fg,
-                Some(ratatui::style::Color::Reset),
-                "row {row} column {x} emitted colour under NO_COLOR"
+            let fg = cell(&buffer, x, row as u16).style().fg;
+            assert!(
+                matches!(fg, None | Some(ratatui::style::Color::Reset)),
+                "row {row} column {x} emitted a hue under NO_COLOR: {fg:?}"
             );
         }
     }
@@ -1964,10 +1978,10 @@ fn ctrl_x_opens_the_newest_card_and_leaves_the_others_alone() {
     // … and one long card, newest, whose body the cap actually hides. The card
     // count is small on purpose: an opened card must stay inside the window, or
     // "it did not open" and "the viewport cut it off" look the same.
-    let mut long = String::from("@@ -1,1 +1,1 @@\n-old visible\n+new visible\n");
-    for i in 0..20 {
-        long.push_str(&format!("+filler {i}\n"));
-    }
+    let long = format!(
+        "@@ -1,1 +1,1 @@\n-old visible\n+new visible\n{}",
+        filler(20)
+    );
     app.ui
         .apply(&crate::state::agent_event_edit_result(&long, false));
 
@@ -2090,7 +2104,12 @@ fn ctrl_x_opens_the_newest_card_and_leaves_the_others_alone() {
 }
 
 /// Extra diff body lines, so a card is long enough to hit the cap.
-#[allow(dead_code, reason = "kept beside the fixtures it describes")]
+///
+/// Kept beside the fixtures it describes and *used* by them: it was already here
+/// under an `#[allow(dead_code)]` that said as much while the one test that wanted
+/// it built the same twenty lines inline with a loop of its own. A helper nothing
+/// calls is a fixture nobody reads — and the `allow` is what let the two drift
+/// apart without a warning.
 fn filler(n: usize) -> String {
     (0..n).map(|i| format!("+filler {i}\n")).collect::<String>()
 }

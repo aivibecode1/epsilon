@@ -917,6 +917,112 @@ fn remapped_quit_via_keybindings_manager() {
     ));
 }
 
+/// The two halves of the per-card convention must answer the same question.
+///
+/// `RenderState::is_open` decides what is **drawn**; `App::card_is_open` decides
+/// what a keypress **records**. The whole per-card feature lives in their
+/// agreement — press `ctrl+x` twice and the card the first press opened has to
+/// still be open after the second, which only holds while both read one rule.
+/// They were two copies of that rule, identical on the day they were written and
+/// free to drift apart afterwards, so this walks every input the rule depends on
+/// and asserts the two answers are the same answer.
+#[tokio::test]
+async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    // Bodies, so `has_body` is exercised both ways: this is the input a card's
+    // openness is allowed to consult first.
+    app.ui.apply(&crate::state::agent_event_edit_result(
+        "@@ -1,1 +1,1 @@\n-old one\n+new one\n",
+        false,
+    ));
+    app.ui.push_notice("and a row that is not a card at all");
+    let ids: Vec<u64> = app.ui.lines().iter().map(|l| l.id).collect();
+    assert!(
+        ids.len() >= 2,
+        "the fixture must hold more than the card: {ids:?}"
+    );
+    let bodyness: Vec<(u64, bool)> = ids
+        .iter()
+        .map(|id| {
+            (
+                *id,
+                app.ui
+                    .lines()
+                    .iter()
+                    .find(|l| l.id == *id)
+                    .and_then(|l| l.card.as_ref())
+                    .is_some_and(|c| c.has_body()),
+            )
+        })
+        .collect();
+    assert!(
+        bodyness.iter().any(|(_, has)| *has) && bodyness.iter().any(|(_, has)| !*has),
+        "the fixture must hold a card with a body and a row without one: {bodyness:?}"
+    );
+
+    let card_open: Vec<(u64, bool)> = vec![(ids[0], true), (ids[1], false)];
+    let mut checked = 0usize;
+    for expand_all in [false, true] {
+        for entries in [Vec::new(), card_open.clone(), vec![(ids[0], false)]] {
+            app.prefs.expand_outputs = expand_all;
+            app.card_open = entries.clone();
+            // The exact construction the draw path uses, minus the key text —
+            // which no branch of the rule reads.
+            let drawn = crate::render_cache::RenderState {
+                expand_all: app.prefs.expand_outputs,
+                expanded: &app.card_open,
+                more_key: None,
+            };
+            for (id, has_body) in &bodyness {
+                assert_eq!(
+                    app.card_is_open(*id, *has_body),
+                    drawn.is_open(*id, *has_body),
+                    "expand_all={expand_all} entries={entries:?} card={id} \
+                     has_body={has_body}: a keypress and a frame disagree about the same card"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 12, "the sweep stopped covering: {checked} checks");
+}
+
+/// The rule is stated in one place, and this is what keeps it that way.
+///
+/// The agreement test below passes for a second copy of the rule too — which is
+/// exactly why the copy was invisible for a whole slice: two implementations that
+/// agree on the day they are written cannot be told apart by running them. The
+/// thing that can be checked is the thing that was wrong: whether the *rule* is
+/// stated here or borrowed. So this reads the function and asks it to delegate,
+/// and it fails on the day someone writes the expression out again.
+#[test]
+fn the_card_open_rule_is_borrowed_and_not_restated() {
+    let source = include_str!("../app.rs");
+    let after = source
+        .split_once("fn card_is_open(&self, id: u64, has_body: bool) -> bool {")
+        .unwrap_or_else(|| panic!("`card_is_open` is gone; the draw path and the key path now \
+                                   decide this independently and nothing says they agree"))
+        .1;
+    // Up to the end of the item: the first line that closes it at column zero.
+    let body: String = after
+        .lines()
+        .take_while(|line| *line != "    }" && *line != "}")
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        body.contains(".is_open(id, has_body)"),
+        "`card_is_open` must call the renderer's rule, not state its own: {body}"
+    );
+    // The delegation unavoidably *names* the two inputs — that is what building a
+    // `RenderState` is — so this does not forbid them. It forbids the shape of a
+    // second implementation: a lookup that decides for itself, which is the
+    // `find(..).map(..).unwrap_or(..)` chain both copies used to be.
+    assert!(
+        !body.contains("unwrap_or"),
+        "the rule's own default has been restated here instead of borrowed: {body}"
+    );
+}
+
 #[tokio::test]
 async fn x_toggles_expand_and_quit_requests_exit() {
     let (mut app, agent, (_f, _n)) = test_app();
