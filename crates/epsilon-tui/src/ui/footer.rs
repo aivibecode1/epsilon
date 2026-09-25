@@ -624,6 +624,31 @@ mod tests {
     }
 
     #[test]
+    fn the_badge_is_drawn_onto_the_row_with_the_warn_colour() {
+        // The pixels, not the string: `Hints` carrying a view and `View::badge`
+        // returning text are both satisfiable while nothing draws either. This is
+        // the assertion that fails if the badge is dropped from `draw`.
+        let hints = Hints::idle_at(&defaults(), frozen_view());
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let mut terminal = Terminal::new(TestBackend::new(60, 1)).expect("test terminal");
+        terminal
+            .draw(|f| draw(f, f.area(), &theme, &hints))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let row = crate::ui::layout::row_text(buffer, 0, 60);
+        let badge = ascii_badge(&frozen_view());
+        let x = row
+            .find(&badge)
+            .unwrap_or_else(|| panic!("the badge {badge:?} is not on the row: {row:?}"));
+        let cell = &buffer[(x as u16, 0)];
+        assert_eq!(
+            cell.style().fg,
+            Some(ratatui::style::Color::Yellow),
+            "the badge must not be styled like the hints beside it"
+        );
+    }
+
+    #[test]
     fn the_position_counts_what_is_below_the_window_not_what_is_above() {
         // "12/40" has to mean something a reader can act on. Rows *below* is that
         // number: `g` returns to live, and every one of those rows is what the

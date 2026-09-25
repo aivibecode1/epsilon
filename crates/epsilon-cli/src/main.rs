@@ -1554,9 +1554,8 @@ fn resolve_theme_mode(light_flag: bool) -> Option<epsilon_tui::ThemeMode> {
     if let Some(mode) = epsilon_tui::ThemeMode::from_name(&from_env) {
         return Some(mode);
     }
-    let from_config = epsilon_core::config::load_config_string("tui", "theme")
-        .and_then(|value| epsilon_tui::ThemeMode::from_name(&value));
-    from_config
+    epsilon_core::config::load_config_string("tui", "theme")
+        .and_then(|value| epsilon_tui::ThemeMode::from_name(&value))
 }
 
 fn default_steps() -> Vec<FauxStep> {
@@ -2490,6 +2489,7 @@ mod print_outcome_tests {
             "--workspace",
             "--sandbox",
             "--plan",
+            "--light",
             "--yes",
             "--continue",
             "--resume",
@@ -2501,5 +2501,25 @@ mod print_outcome_tests {
         ] {
             assert!(h.contains(flag), "help is missing {flag}");
         }
+    }
+
+    #[test]
+    fn the_light_flag_selects_the_light_palette_regardless_of_the_environment() {
+        // The one branch that cannot come from the environment, and the one the
+        // user reaches for when the default is unreadable: `--light` wins, and it
+        // resolves to a palette rather than to a string the TUI parses again.
+        assert_eq!(
+            resolve_theme_mode(true),
+            Some(epsilon_tui::ThemeMode::Light)
+        );
+        // Without the flag the answer depends on this shell's `EPSILON_THEME` and
+        // on the user's config, so the assertion is the type of the answer rather
+        // than its value: either nothing was configured (the TUI detects), or a
+        // real palette was named. A malformed value must never become a third
+        // state the TUI has to defend against.
+        assert!(matches!(
+            resolve_theme_mode(false),
+            None | Some(epsilon_tui::ThemeMode::Dark) | Some(epsilon_tui::ThemeMode::Light)
+        ));
     }
 }
