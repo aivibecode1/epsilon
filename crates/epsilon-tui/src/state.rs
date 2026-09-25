@@ -267,13 +267,28 @@ impl Diff {
 ///
 /// # Line numbers
 ///
-/// Numbers follow the format rather than the reader's intuition: a context line
-/// advances both files, an addition advances the new file and a removal the old
-/// one. So a one-for-one replacement is numbered `5` on the removed side and `6` on
-/// the added one, because after five lines of context the new file's sixth line is
-/// where the addition lands. That asymmetry is what makes the number column agree
-/// with what an editor would show, and it is the reason the numbers are worth
-/// printing at all.
+/// Each line carries the number it has **in the file it belongs to**: a context
+/// line advances both counters, an addition advances the new file's, a removal the
+/// old one's. The number printed beside a line is that counter's value *before* it
+/// advances, so it names the line the reader is looking at rather than the one
+/// after it.
+///
+/// Two consequences are worth stating, because both look like off-by-one bugs
+/// until you follow the counters:
+///
+/// * A one-for-one replacement is numbered with the **same** number on both sides
+///   whenever the two files are level — after five lines of context, the removed
+///   line is the old file's `6` and the added line is the new file's `6`, because
+///   the removal does not touch the new file's counter and the addition does not
+///   touch the old one's. That agreement is the format working, not the parser
+///   forgetting to increment: an editor diffing the two files shows those same two
+///   numbers. (`edit_result_with_a_diff_commits_a_parsed_diff_card` below and the
+///   golden frame `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose`
+///   both pin it; both would fail against the `5`/`6` this doc used to claim.)
+/// * The two sides *do* diverge the moment a run of additions or removals is
+///   longer than the other side's, and they diverge permanently from a hunk whose
+///   header starts the files at different lines (`@@ -10,2 +20,2 @@`) — see
+///   `a_hunk_header_sets_the_line_numbers_it_declares`.
 pub fn parse_diff(text: &str) -> Diff {
     let mut lines: Vec<DiffLine> = Vec::new();
     let mut old_no = 0usize;

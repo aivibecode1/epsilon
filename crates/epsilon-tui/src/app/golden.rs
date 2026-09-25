@@ -1580,6 +1580,303 @@ fn a_diff_still_reads_with_no_colour_and_ascii_glyphs() {
 }
 
 #[test]
+fn the_split_diff_draws_both_sides_at_a_wide_frame() {
+    // B5, and the reason it is a *coverage* blocker rather than a bug: every diff
+    // test in this file renders at 80 columns and the cache test at 60, so
+    // `split_rows` — reached at `SPLIT_MIN_WIDTH` = 120 body columns (`card.rs`)
+    // and live in production at every wider terminal — had never been drawn by
+    // anything. The geometry checks out by hand; "I read it and it looks right" is
+    // what B1 also looked like.
+    //
+    // The body width at 140 columns is 138 (the frame minus the 2-cell gutter), so
+    // each half is 69. Every assertion below is a **cell**, read from the same
+    // buffer the reader would see.
+    const FRAME_WIDTH: u16 = 140;
+    const BODY_WIDTH: usize = FRAME_WIDTH as usize - 2;
+    let diff = "@@ -1,2 +1,2 @@\n unchanged = true;\n-old = 1;\n+new = 2;\n+inserted = 3;\n";
+    let mut app = edit_app(diff, ThemeColorMode::Truecolor);
+    let (buffer, rows) = render_buffer(&mut app, FRAME_WIDTH, 24);
+    let ok = app.theme.success().fg.expect("a success colour");
+    let danger = app.theme.danger().fg.expect("a danger colour");
+    let faint = app.theme.faint().fg.expect("a faint colour");
+
+    let unchanged = row_of(&rows, "unchanged = true;");
+    let replaced = row_of(&rows, "old = 1;");
+    let added = row_of(&rows, "new = 2;");
+    let inserted = row_of(&rows, "inserted = 3;");
+
+    // 1. The row is one row, not two: a split diff exists to show a replacement
+    //    *beside* itself, and a parser or renderer that put the halves on
+    //    consecutive rows would satisfy every 80-column test in this file.
+    assert_eq!(
+        replaced, added,
+        "a one-for-one replacement must share one row: {:?} then {:?}",
+        rows[replaced], rows[added]
+    );
+    assert!(
+        rows[replaced].contains("old = 1;") && rows[replaced].contains("new = 2;"),
+        "both sides of the change must be on that row: {:?}",
+        rows[replaced]
+    );
+
+    // 2. Both halves' positions and both halves' sign columns. The *absolute*
+    //    column is not asserted where it would be a fact about chrome — every
+    //    column below comes from a word in the row, via the buffer — but the
+    //    relation between the halves is the half-width arithmetic this coverage gap
+    //    was about, so that is asserted exactly.
+    //
+    //    Each half is `- 2 ` then the body: the sign is three cells before its
+    //    body, the number one cell after the sign.
+    let locate = |needle: &str| {
+        column_of(&buffer, replaced as u16, FRAME_WIDTH, needle)
+            .unwrap_or_else(|| panic!("{needle:?} never reached the frame: {:?}", rows[replaced]))
+    };
+    let (left_body, right_body) = (locate("old = 1;"), locate("new = 2;"));
+    let (left_sign, right_sign) = (left_body - 4, right_body - 4);
+    assert_eq!(
+        cell(&buffer, left_sign as u16, replaced as u16).symbol(),
+        "-",
+        "the left half must be signed as a removal, with its number after it: {:?}",
+        rows[replaced]
+    );
+    assert!(
+        cell(&buffer, right_sign as u16, replaced as u16)
+            .symbol()
+            .starts_with('+'),
+        "the right half must be signed as an addition: {:?}",
+        rows[replaced]
+    );
+    // The right half of a split diff is a *column* of the same row, half the body
+    // away from the left one, and the card's own sign/number chrome (`- 2 `) is the
+    // same four cells inside each half. An off-by-one in `left_width = width / 2` /
+    // `width - left_width` shows up here and nowhere in the 80-column tests, which
+    // never take this branch.
+    let half = BODY_WIDTH / 2;
+    assert_eq!(
+        right_body,
+        left_body + half,
+        "the right half's body must begin exactly {half} columns after the left \
+         half's — and its sign column the same distance further along: signs at \
+         {left_sign}/{right_sign} on {:?}",
+        rows[replaced]
+    );
+    assert_eq!(
+        right_sign,
+        left_sign + half,
+        "…which is the same statement about the signs: {:?}",
+        rows[replaced]
+    );
+    // The numbers, as cells: 2 on both sides — the two files are level at this
+    // point, which is the property `state.rs::parse_diff`'s docs describe.
+    for (column, side) in [(left_sign + 2, "removed"), (right_sign + 2, "added")] {
+        assert!(
+            cell(&buffer, column as u16, replaced as u16)
+                .symbol()
+                .starts_with('2'),
+            "the {side} line is its file's second: {:?}",
+            rows[replaced]
+        );
+    }
+
+    // 3. Per-side colour, on the frame, both halves: the success colour on the
+    //    right and the danger colour on the left, at the sign *and* at the body.
+    //    A side that inherited the other's colour would still read correctly in
+    //    text and wrongly in every terminal that has colour at all.
+    for (column, what) in [
+        (left_sign, "the removed sign"),
+        (left_body, "the removed line"),
+    ] {
+        assert_eq!(
+            cell(&buffer, column as u16, replaced as u16).style().fg,
+            Some(danger),
+            "column {column} ({what}) is not in the danger colour: {:?}",
+            rows[replaced]
+        );
+    }
+    for (column, what) in [
+        (right_sign, "the added sign"),
+        (right_body, "the added line"),
+    ] {
+        assert_eq!(
+            cell(&buffer, column as u16, replaced as u16).style().fg,
+            Some(ok),
+            "column {column} ({what}) is not in the success colour: {:?}",
+            rows[replaced]
+        );
+    }
+
+    // 4. The blank half, which is what a split diff is *for*: a line with no
+    //    counterpart leaves its side empty rather than absent, so the columns stay
+    //    aligned and "nothing here" is said rather than implied. The added-only
+    //    line is the case: its right half is signed, and its left half is blank, in
+    //    the faint role, with no change colour anywhere in its columns.
+    let inserted_sign = column_of(&buffer, inserted as u16, FRAME_WIDTH, "+ 3")
+        .unwrap_or_else(|| panic!("the added-only line has no sign: {:?}", rows[inserted]));
+    assert_eq!(
+        inserted_sign, right_sign,
+        "the added-only line's sign belongs in the right half's sign column: {:?}",
+        rows[inserted]
+    );
+    assert_eq!(
+        inserted_sign, right_sign,
+        "the added-only line's sign belongs in the right half's sign column: {:?}",
+        rows[inserted]
+    );
+    // The left half owns `[left_sign, left_sign + half)` — a half starting at its
+    // own body's sign column, the same origin the two halves are measured from.
+    let reversed: String = row_cells(&buffer, inserted as u16, FRAME_WIDTH)
+        .into_iter()
+        .filter(|(column, _)| *column >= left_sign && *column < left_sign + half)
+        .map(|(_, ch)| ch)
+        .collect();
+    assert!(
+        reversed.trim().is_empty(),
+        "the added-only line's left half must be blank — that blank half is what \
+         says 'this line has no counterpart': {:?}",
+        rows[inserted]
+    );
+    // Every cell that half owns, read from the buffer: the missing side must be
+    // drawn in the faint role and never in either change colour. The sign column is
+    // included on purpose — a blank half that kept the removal's red would be the
+    // worst of both readings.
+    for column in left_sign..left_sign + half {
+        let fg = cell(&buffer, column as u16, inserted as u16).style().fg;
+        assert_ne!(
+            fg,
+            Some(ok),
+            "column {column} of the blank half borrowed the added line's colour: {:?}",
+            rows[inserted]
+        );
+        assert_ne!(
+            fg,
+            Some(danger),
+            "column {column} of the blank half borrowed a removal colour: {:?}",
+            rows[inserted]
+        );
+        assert!(
+            fg == Some(faint) || fg.is_none(),
+            "column {column} of the blank half is {fg:?}, not the faint role: {:?}",
+            rows[inserted]
+        );
+    }
+
+    // 5. Context lines are the same text on both sides, so a reader can trust that
+    //    the two halves show the same file at the same place — and a context line
+    //    takes neither sign, exactly as in the unified view.
+    let occurrences: Vec<usize> = row_cells(&buffer, unchanged as u16, FRAME_WIDTH)
+        .windows("unchanged = true;".len())
+        .filter(|window| {
+            window
+                .iter()
+                .map(|(_, ch)| *ch)
+                .eq("unchanged = true;".chars())
+        })
+        .map(|window| window[0].0)
+        .collect();
+    assert_eq!(
+        occurrences.len(),
+        2,
+        "a context line is drawn once per side, and a split diff shows both: {:?}",
+        rows[unchanged]
+    );
+    assert_eq!(
+        occurrences[0], left_body,
+        "the left half shows the context line where the removed line sits: {:?}",
+        rows[unchanged]
+    );
+    assert_eq!(
+        occurrences[1],
+        occurrences[0] + half,
+        "and the right half shows it exactly one half-width later: {:?}",
+        rows[unchanged]
+    );
+    for column in occurrences {
+        for sign_column in [column - 4, column - 3] {
+            let symbol = cell(&buffer, sign_column as u16, unchanged as u16).symbol();
+            assert!(
+                symbol.trim().is_empty(),
+                "a context line takes neither sign, found {symbol:?} at column \
+                 {sign_column}: {:?}",
+                rows[unchanged]
+            );
+        }
+    }
+
+    // 6. And every row fits the frame, which is the property this whole file
+    //    exists for and the one a padding error would break: the split path pads
+    //    each half to its own width (`pad_to`), so `left + right` has to be exactly
+    //    the body width rather than approximately it.
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(
+            crate::ui::layout::display_width(row),
+            FRAME_WIDTH as usize,
+            "row {index} is {} cells wide, not the frame's {FRAME_WIDTH}: {row:?}",
+            crate::ui::layout::display_width(row)
+        );
+    }
+    // The frame really is in split mode — a 138-column body against a 120-column
+    // threshold — and the unified fallback would have put the halves on separate
+    // rows, which the `replaced == added` assertion above would already have
+    // caught. Stated directly so a future edit to `SPLIT_MIN_WIDTH` fails here
+    // with the reason rather than turning this test into an 80-column test.
+    assert!(
+        BODY_WIDTH >= crate::ui::card::SPLIT_MIN_WIDTH,
+        "this test's frame must be in split mode: {BODY_WIDTH} body columns against \
+         a {}-column threshold",
+        crate::ui::card::SPLIT_MIN_WIDTH
+    );
+}
+
+/// Every character of a drawn row, in order, with its **cell column**.
+///
+/// Read from the buffer rather than from the row's text, and that distinction cost
+/// a debugging round: ratatui coalesces a run of identical adjacent cells into one
+/// cell whose symbol repeats (`Cell::symbol` is documented to hold one or more
+/// graphemes, and `layout::row_text` warns about exactly this), so a row holding
+/// 106 spaces is *142 characters* and 140 columns. Counting characters, or
+/// computing a column from a byte offset into the printed row, therefore reports a
+/// column up to 60 cells away from the one the reader sees — which is what made the
+/// first version of the split test measure the right half starting 13 columns after
+/// the left instead of 69.
+///
+/// This is the only sound way to ask where something is on a split row, because the
+/// two halves are separated by exactly such a padding run.
+///
+/// Not a general-purpose helper: a wide glyph contributes its leading cell's column
+/// once, so callers ask for ASCII needles, which is what every needle here is.
+fn row_cells(buffer: &ratatui::buffer::Buffer, row: u16, width: u16) -> Vec<(usize, char)> {
+    let mut out = Vec::new();
+    let mut column = 0usize;
+    for x in 0..width {
+        let symbol = buffer[(x, row)].symbol();
+        for ch in symbol.chars() {
+            out.push((column, ch));
+        }
+        column += crate::ui::layout::display_width(symbol).max(1);
+    }
+    out
+}
+
+/// The cell column where `needle` starts on a drawn row.
+///
+/// The needle is located in the concatenated symbols — which is what `contains`
+/// does against the printed row — and the answer is the column of the first cell
+/// the match starts in, which is the correction the printed row cannot give.
+fn column_of(
+    buffer: &ratatui::buffer::Buffer,
+    row: u16,
+    width: u16,
+    needle: &str,
+) -> Option<usize> {
+    let cells = row_cells(buffer, row, width);
+    let text: String = cells.iter().map(|(_, ch)| *ch).collect();
+    let byte = text.find(needle)?;
+    cells
+        .get(text[..byte].chars().count())
+        .map(|(column, _)| *column)
+}
+
+#[test]
 fn a_long_diff_is_capped_and_says_which_key_opens_it() {
     // The cap, and the honesty of the affordance: it names the **real** key, and
     // the number it prints is the number of rows the reader is not seeing.

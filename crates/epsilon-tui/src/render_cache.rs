@@ -82,9 +82,26 @@ impl RenderedLine {
     fn build(line: &TranscriptLine, width: usize, state: &RenderState<'_>, theme: &Theme) -> Self {
         // Each LOGICAL line wraps independently (headings/fences never merge across
         // paragraphs); their wrapped rows concatenate into this line's screen rows.
+        //
+        // A row that already fits is not re-wrapped, and the reason is not
+        // performance. [`logical_lines`] hands back rows that a renderer has already
+        // cut *and padded* to the width — a tool card's diff rows are the case —
+        // and `wrap::wrap_line` is not idempotent on those: it drops trailing
+        // whitespace and collapses a whitespace run to one space, which is right for
+        // prose ("screen convention", `wrap.rs`) and wrong for a row whose alignment
+        // *is* the padding. The split diff is that row: two halves each padded to its
+        // own column, and re-wrapping collapsed the left half's 56 spaces to one — a
+        // 138-cell row became 25 cells, the right half landed 13 columns after the
+        // left instead of 69, and the blank half that says "this line has no
+        // counterpart" disappeared. No 80-column diff test could see it, because
+        // only a 120-column body takes the split branch.
         let mut rows = Vec::new();
         for logical in logical_lines(line, state, theme, width) {
-            rows.extend(wrap::wrap_line(&logical, width));
+            if crate::ui::card::row_width(&logical) <= width {
+                rows.push(logical);
+            } else {
+                rows.extend(wrap::wrap_line(&logical, width));
+            }
         }
         if rows.is_empty() {
             rows.push(Vec::new());

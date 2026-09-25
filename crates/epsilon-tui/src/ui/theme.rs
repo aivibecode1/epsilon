@@ -40,12 +40,15 @@
 //!    dark one, so neither may be a default. `Color::Reset` is not a color, it is
 //!    "whatever this terminal draws normal text in", which is the one ANSI value
 //!    guaranteed to contrast with the background the user chose. The same
-//!    reasoning covers `text_dim`/`text_faint`: the quiet roles keep their
-//!    truecolor values and lean on `DIM` for their *look*, because every ANSI
-//!    slot that would read as "quiet grey" is invisible on one of the two
-//!    backgrounds. Filled bands are withheld entirely off truecolor
-//!    ([`Theme::has_surfaces`]) rather than approximated with a background that
-//!    collides with the user's own theme.
+//!    reasoning covers the *quiet* roles (`text_dim`, `text_faint`, `thinking`,
+//!    `code_block`, `border`): on truecolor they keep their dimmer `rgb` values
+//!    and are quiet by color, and on ANSI-16 the light palette resolves them to
+//!    `Reset` too and carries "quiet" with `DIM`, because every ANSI slot that
+//!    would read as "quiet grey" is invisible on one of the two backgrounds
+//!    (bright black on white, black on black). Which roles those are is a column
+//!    of the palette tables — [`Slot::quiet`] — and not a comment. Filled bands
+//!    are withheld entirely off truecolor ([`Theme::has_surfaces`]) rather than
+//!    approximated with a background that collides with the user's own theme.
 //! 4. **A palette is selected, never sniffed.** There is no reliable
 //!    cross-platform way to ask a terminal whether its background is light:
 //!    `COLORTERM` and `WT_SESSION` describe color *depth*, and the one live query
@@ -296,10 +299,43 @@ impl Glyphs {
 pub(crate) struct Slot {
     pub(crate) rgb: (u8, u8, u8),
     pub(crate) ansi: Color,
+    /// Whether the role reads as *background material* rather than as content.
+    ///
+    /// The only place this is used is the ANSI-16 fallback: on a 24-bit terminal
+    /// the `rgb` value carries the muting, but the 16 ANSI slots are decided by
+    /// the user's terminal, and the slots that read as "quiet grey" on one
+    /// background are close to invisible on the other (`DarkGray` is bright black
+    /// on white; `Black` is invisible on black). A quiet role therefore falls back
+    /// to the terminal's own foreground plus [`Modifier::DIM`], which is quiet on
+    /// *whatever* background the user chose. See [`Theme::role`].
+    pub(crate) quiet: bool,
 }
 
+impl Slot {
+    /// The modifier that carries a quiet role when the color cannot.
+    ///
+    /// Empty off ANSI-16, deliberately: on a 24-bit terminal `rgb` *is* the
+    /// muting (a dimmer grey), and dimming it a second time would make the
+    /// truecolor palettes depend on this fallback. With color off entirely the
+    /// emphasis argument has already said what to do, and this returns empty so
+    /// the two mechanisms cannot both fire.
+    pub(crate) fn quiet_modifier(self, mode: ColorMode) -> Modifier {
+        match (self.quiet, mode) {
+            (true, ColorMode::Ansi16) => Modifier::DIM,
+            _ => Modifier::empty(),
+        }
+    }
+}
+
+/// Build a palette table, its role index, and the list of every role.
+///
+/// `quiet` is declared per row rather than inferred from the name, and the macro
+/// makes it a required field: a role added without deciding whether it is content
+/// or background material does not compile. That matters because the decision is
+/// invisible on the machine most of this is developed on — a truecolor terminal
+/// never reads the field.
 macro_rules! palette {
-    ($($name:ident: $rgb:expr, $ansi:expr;)*) => {
+    ($($name:ident: $rgb:expr, $ansi:expr, $quiet:expr;)*) => {
         /// The colors, chosen once and mapped to whatever the terminal supports.
         ///
         /// Roles are semantic. Two roles sharing a color usually means they are
@@ -324,10 +360,19 @@ macro_rules! palette {
             $($name,)*
         }
 
+        impl Role {
+            /// Every role in the table, for the tests that have to cover all of
+            /// them — generated here so a role added above cannot be forgotten by
+            /// a hand-written list. A role no test can name is a role nothing
+            /// checks, which is how the light palette's `ansi` column went
+            /// uninspected while a comment promised it was safe.
+            pub const ALL: &'static [Role] = &[$(Role::$name,)*];
+        }
+
         impl Palette {
             /// The dark palette, which is what most terminals are.
             pub(crate) const DARK: Self = Self {
-                $($name: Slot { rgb: $rgb, ansi: $ansi },)*
+                $($name: Slot { rgb: $rgb, ansi: $ansi, quiet: $quiet },)*
             };
 
             /// The slot a role resolves to.
@@ -340,45 +385,47 @@ macro_rules! palette {
     };
 }
 palette! {
-    // Structure: borders, rules, and chrome the eye should skip over.
-    border:        (0x3b, 0x40, 0x4a), Color::DarkGray;
+    // Structure: borders, rules, and chrome the eye should skip over. The border
+    // is quiet: it is a hairline, not a box.
+    border:        (0x3b, 0x40, 0x4a), Color::DarkGray, true;
 
-    border_focus:  (0x62, 0x9d, 0xf5), Color::Cyan;
+    border_focus:  (0x62, 0x9d, 0xf5), Color::Cyan, false;
     // Text. `Color::Reset` on the ANSI side, never `White`: the terminal's own
     // default foreground is the only ANSI value guaranteed to contrast with
     // whatever background the user set (see decision 3 in the module docs).
-    text:          (0xd7, 0xdb, 0xe2), Color::Reset;
+    text:          (0xd7, 0xdb, 0xe2), Color::Reset, false;
 
-    text_dim:      (0x8a, 0x92, 0xa3), Color::DarkGray;
+    text_dim:      (0x8a, 0x92, 0xa3), Color::DarkGray, true;
 
-    text_faint:    (0x5a, 0x62, 0x72), Color::DarkGray;
+    text_faint:    (0x5a, 0x62, 0x72), Color::DarkGray, true;
     // Who is speaking.
-    user:          (0x7d, 0xd3, 0xfc), Color::Cyan;
+    user:          (0x7d, 0xd3, 0xfc), Color::Cyan, false;
 
-    assistant:     (0xd7, 0xdb, 0xe2), Color::Reset;
+    assistant:     (0xd7, 0xdb, 0xe2), Color::Reset, false;
 
-    thinking:      (0x8a, 0x92, 0xa3), Color::DarkGray;
+    thinking:      (0x8a, 0x92, 0xa3), Color::DarkGray, true;
     // Outcome.
-    success:       (0x6e, 0xe7, 0xa0), Color::Green;
+    success:       (0x6e, 0xe7, 0xa0), Color::Green, false;
 
-    danger:        (0xf8, 0x76, 0x76), Color::Red;
+    danger:        (0xf8, 0x76, 0x76), Color::Red, false;
 
-    warn:          (0xf5, 0xc2, 0x5c), Color::Yellow;
+    warn:          (0xf5, 0xc2, 0x5c), Color::Yellow, false;
 
-    accent:        (0x9d, 0x7c, 0xf5), Color::Magenta;
+    accent:        (0x9d, 0x7c, 0xf5), Color::Magenta, false;
     // Inline code and fenced blocks.
-    code:          (0xe0, 0xaf, 0x68), Color::Yellow;
+    code:          (0xe0, 0xaf, 0x68), Color::Yellow, false;
 
-    code_block:    (0x9a, 0xa3, 0xb5), Color::Gray;
+    code_block:    (0x9a, 0xa3, 0xb5), Color::Gray, true;
     // Filled bands. Deliberately close to a dark terminal background: a band
-    // should read as a change of surface, not as a selected row.
-    surface_user:    (0x22, 0x24, 0x2c), Color::Reset;
+    // should read as a change of surface, not as a selected row. They are never
+    // emitted on ANSI-16 at all ([`Theme::has_surfaces`]), so `quiet` is moot.
+    surface_user:    (0x22, 0x24, 0x2c), Color::Reset, false;
 
-    surface_pending: (0x2a, 0x2a, 0x22), Color::Reset;
+    surface_pending: (0x2a, 0x2a, 0x22), Color::Reset, false;
 
-    surface_ok:      (0x1e, 0x2a, 0x22), Color::Reset;
+    surface_ok:      (0x1e, 0x2a, 0x22), Color::Reset, false;
 
-    surface_err:     (0x2e, 0x20, 0x20), Color::Reset;
+    surface_err:     (0x2e, 0x20, 0x20), Color::Reset, false;
 }
 
 /// The light palette: the same role names, values that survive a white
@@ -395,14 +442,48 @@ palette! {
 /// role-by-role reasoning lives in the comments beside each line, exactly as in
 /// the dark table above.
 macro_rules! light_palette {
-    ($($name:ident: $rgb:expr, $ansi:expr;)*) => {
+    ($($name:ident: $rgb:expr, $ansi:expr, $quiet:expr;)*) => {
         impl Palette {
-            /// Tuned for a light background. Every `ansi` value here is either
-            /// the terminal default or one of the slots that stays legible on
-            /// both backgrounds (see the contrast test) — never `White`, never
-            /// `DarkGray`, which is the pair that disappears on a light theme.
+            /// Tuned for a light background.
+            ///
+            /// `ansi` is a narrower promise than `rgb`, and it is the column the
+            /// user `--light` exists for actually sees: [`ColorMode::Ansi16`] is
+            /// what a console that does not advertise itself gets, which is the
+            /// console whose background the user had to tell us about by hand.
+            ///
+            /// Which slots are safe there is a property of ANSI-16, not of taste.
+            /// ANSI 7/8 and the bright half — `Color::Gray`, `Color::White`,
+            /// `Color::DarkGray` (ratatui's name for *bright black*) and every
+            /// `Light*` variant, which is ANSI 9–15 — are light on every terminal,
+            /// so none of them may appear here: they are the slots that vanish on
+            /// white. The body roles therefore defer to the terminal's own
+            /// foreground ([`Color::Reset`]), and the *quiet* roles carry "quiet"
+            /// with [`Modifier::DIM`] instead of with a slot — dimming whatever the
+            /// terminal draws normal text in is the only way to be secondary on a
+            /// background we cannot ask about.
+            ///
+            /// What is left is the standard slots, and the light palette is
+            /// restricted to five of them plus one bright one, measured against
+            /// white at the xterm defaults: `Reset` (the terminal's own, and the
+            /// reason the quiet roles work at all), `LightBlue` 4.7:1, `Magenta`
+            /// 4.7:1, `Red` 5.8:1, `Blue` 9.4:1 — and `Green` 2.2:1 and `Yellow`
+            /// 1.7:1, which are the honest limit of this palette and the reason it
+            /// is not a beautiful one: **ANSI-16 on a light background has no
+            /// legible green and no legible yellow.** Reaching for the bright slots
+            /// makes it worse, not better — ANSI 10 and 11 are `#00ff00` and
+            /// `#ffff00` — so `success`, `warn` and `code` keep the standard slots,
+            /// stay distinguishable from each other and from `danger`, and lean on
+            /// their glyph and their word for legibility, which is what the skill
+            /// requires of colour in the first place. The alternative was to paint
+            /// the warning in an unrelated hue, which trades a legible label for a
+            /// wrong one; that trade is recorded in the milestone's limits rather
+            /// than made silently here.
+            ///
+            /// `the_ansi_column_is_checked_for_every_role_in_both_palettes` is where
+            /// all of this is enforced, including the two ratios above that do not
+            /// clear a floor.
             pub(crate) const LIGHT: Self = Self {
-                $($name: Slot { rgb: $rgb, ansi: $ansi },)*
+                $($name: Slot { rgb: $rgb, ansi: $ansi, quiet: $quiet },)*
             };
         }
     };
@@ -411,48 +492,61 @@ macro_rules! light_palette {
 light_palette! {
     // Structure: a hairline that is visible on white without becoming a frame.
     // 3.6:1 against white — the skill's floor for a non-body role, since a
-    // divider nobody can see is a divider that does not exist.
-    border:        (0xb9, 0xc0, 0xcc), Color::DarkGray;
+    // divider nobody can see is a divider that does not exist. On ANSI-16 the
+    // slot is the terminal's own foreground, dimmed: see the table docs above.
+    border:        (0xb9, 0xc0, 0xcc), Color::Reset, true;
 
-    border_focus:  (0x1e, 0x63, 0xc4), Color::Cyan;
+    // `LightBlue` (ANSI 12, `#5c5cff`) is the one bright slot that is *darker*
+    // than its standard counterpart (`Blue`, `#0000ee` is darker still, but it is
+    // the user role's). ANSI 12 is 6.9:1 on white; the dark palette's `Cyan` is
+    // 1.9:1.
+    border_focus:  (0x1e, 0x63, 0xc4), Color::LightBlue, false;
     // Text: near-black body copy (14.8:1) rather than pure black, which reads as
     // a photocopy; secondary and tertiary values stay well above 4.5:1.
-    text:          (0x1f, 0x24, 0x30), Color::Reset;
+    text:          (0x1f, 0x24, 0x30), Color::Reset, false;
 
-    text_dim:      (0x4a, 0x53, 0x64), Color::DarkGray;
+    text_dim:      (0x4a, 0x53, 0x64), Color::Reset, true;
 
-    text_faint:    (0x5a, 0x63, 0x73), Color::DarkGray;
+    text_faint:    (0x5a, 0x63, 0x73), Color::Reset, true;
     // Who is speaking. The dark palette's pastel cyan is 1.6:1 on white; this is
-    // the same hue taken dark enough to read (6.4:1).
-    user:          (0x0b, 0x5e, 0xa8), Color::Blue;
+    // the same hue taken dark enough to read (6.4:1). ANSI 4 is 8.6:1.
+    user:          (0x0b, 0x5e, 0xa8), Color::Blue, false;
 
-    assistant:     (0x1f, 0x24, 0x30), Color::Reset;
+    assistant:     (0x1f, 0x24, 0x30), Color::Reset, false;
 
-    thinking:      (0x4a, 0x53, 0x64), Color::DarkGray;
+    thinking:      (0x4a, 0x53, 0x64), Color::Reset, true;
     // Outcome: the semantic hues, darkened rather than pastelised. All three
-    // clear 4.5:1 on white while staying distinguishable from each other, which
-    // is the property that matters more than any single ratio.
-    success:       (0x1d, 0x6b, 0x3a), Color::Green;
+    // clear 4.5:1 on white *as RGB* while staying distinguishable from each
+    // other, which is the property that matters more than any single ratio.
+    //
+    // On ANSI-16 they cannot: the standard slots for these hues are the light ones
+    // on white (3.0:1, 1.4:1, 1.1:1) and the bright ones are lighter still. They
+    // stay, because a wrong hue is worse than a quiet one, and each of these roles
+    // is always drawn beside a glyph and a word. See the table docs — this pair of
+    // lines is the palette's stated limit, not an oversight.
+    success:       (0x1d, 0x6b, 0x3a), Color::Green, false;
 
-    danger:        (0xa3, 0x22, 0x22), Color::Red;
+    danger:        (0xa3, 0x22, 0x22), Color::Red, false;
 
-    warn:          (0x7a, 0x5c, 0x00), Color::Yellow;
+    warn:          (0x7a, 0x5c, 0x00), Color::Yellow, false;
 
-    accent:        (0x6b, 0x3f, 0xc4), Color::Magenta;
-    // Inline code and fenced blocks.
-    code:          (0x7a, 0x4a, 0x12), Color::Yellow;
+    accent:        (0x6b, 0x3f, 0xc4), Color::Magenta, false;
+    // Inline code and fenced blocks. `code` shares dark's slot for the same reason
+    // `warn` keeps yellow: the hue carries the meaning, and the alternative on
+    // white is a slot with less contrast, not more.
+    code:          (0x7a, 0x4a, 0x12), Color::Yellow, false;
 
-    code_block:    (0x4a, 0x53, 0x64), Color::Gray;
+    code_block:    (0x4a, 0x53, 0x64), Color::Reset, true;
     // Filled bands: pale tints of white, dark enough to hold body text at 4.5:1
     // and light enough to read as a change of surface rather than as a
     // selection. A band that the text on it cannot sit on is worse than no band.
-    surface_user:    (0xdf, 0xe4, 0xee), Color::Reset;
+    surface_user:    (0xdf, 0xe4, 0xee), Color::Reset, false;
 
-    surface_pending: (0xf4, 0xef, 0xd6), Color::Reset;
+    surface_pending: (0xf4, 0xef, 0xd6), Color::Reset, false;
 
-    surface_ok:      (0xe0, 0xef, 0xe6), Color::Reset;
+    surface_ok:      (0xe0, 0xef, 0xe6), Color::Reset, false;
 
-    surface_err:     (0xf9, 0xe3, 0xe3), Color::Reset;
+    surface_err:     (0xf9, 0xe3, 0xe3), Color::Reset, false;
 }
 
 /// The resolved styles for one session.
@@ -548,7 +642,7 @@ impl Theme {
         match (self.mode, emphasis) {
             (ColorMode::None, Emphasis::Plain) => Style::default(),
             (ColorMode::None, e) => Style::default().add_modifier(e.modifier()),
-            (_, Emphasis::Plain) => style,
+            (_, Emphasis::Plain) => style.add_modifier(slot.quiet_modifier(self.mode)),
             (_, e) => style.add_modifier(e.modifier()),
         }
     }
@@ -900,16 +994,261 @@ mod tests {
             );
         }
         // The same for the other direction, at the level the light palette can
-        // actually promise: `Color::Reset` body text follows the terminal, so a
-        // light palette on a dark terminal is readonly-degraded rather than
-        // broken — but a role that is *identical* to the dark palette's is a copy
-        // that forgot to change, and that is checkable.
+        // actually promise: the body roles resolve to `Color::Reset`, which
+        // follows the terminal, so a light palette on a dark terminal is
+        // degraded-but-readable rather than broken — but a role whose *truecolor*
+        // value is identical to the dark palette's is a copy that forgot to
+        // change, and that is checkable. (The ANSI-16 column is checked the same
+        // way, and more strictly, further down.)
         for role in [Role::text, Role::assistant] {
             assert_ne!(
                 Palette::LIGHT.get(role).rgb,
                 Palette::DARK.get(role).rgb,
                 "{role:?} is the dark palette's value under a light name"
             );
+        }
+    }
+
+    /// The ANSI-16 slot each role is expected to emit, in both palettes, and
+    /// whether it carries `DIM` ([`Slot::quiet`]) — one record per row, so the
+    /// dark and light expectations cannot drift out of step.
+    ///
+    /// Hand-written on purpose: `Role::ALL` proves the *coverage* below (nothing
+    /// is skipped, and nothing is invented), and this table is what makes the
+    /// assertion about a value rather than about a shape. A role added to either
+    /// palette fails the coverage check until it is given a row here.
+    fn ansi_slots() -> Vec<AnsiExpectation> {
+        use AnsiExpectation as E;
+        use Color as C;
+        vec![
+            // Structure and text.
+            E::new(Role::border, C::Reset, C::DarkGray, true),
+            E::new(Role::border_focus, C::LightBlue, C::Cyan, false),
+            E::new(Role::text, C::Reset, C::Reset, false),
+            E::new(Role::text_dim, C::Reset, C::DarkGray, true),
+            E::new(Role::text_faint, C::Reset, C::DarkGray, true),
+            // Who is speaking.
+            E::new(Role::user, C::Blue, C::Cyan, false),
+            E::new(Role::assistant, C::Reset, C::Reset, false),
+            E::new(Role::thinking, C::Reset, C::DarkGray, true),
+            // Outcome and accent.
+            E::new(Role::success, C::Green, C::Green, false),
+            E::new(Role::danger, C::Red, C::Red, false),
+            E::new(Role::warn, C::Yellow, C::Yellow, false),
+            E::new(Role::accent, C::Magenta, C::Magenta, false),
+            // Code. `code` keeps dark's slot on purpose: see the light table.
+            E::new(Role::code, C::Yellow, C::Yellow, false),
+            E::new(Role::code_block, C::Reset, C::Gray, true),
+            // Bands. Never emitted on ANSI-16 at all ([`Theme::has_surfaces`]);
+            // the slot is still declared and still checked, so turning surfaces on
+            // for 16 colors would be a visible change in this table rather than a
+            // silent one.
+            E::new(Role::surface_user, C::Reset, C::Reset, false),
+            E::new(Role::surface_pending, C::Reset, C::Reset, false),
+            E::new(Role::surface_ok, C::Reset, C::Reset, false),
+            E::new(Role::surface_err, C::Reset, C::Reset, false),
+        ]
+    }
+
+    /// One row of [`ansi_slots`].
+    #[derive(Debug, Clone, Copy)]
+    struct AnsiExpectation {
+        role: Role,
+        light: Color,
+        dark: Color,
+        quiet: bool,
+    }
+
+    impl AnsiExpectation {
+        fn new(role: Role, light: Color, dark: Color, quiet: bool) -> Self {
+            Self {
+                role,
+                light,
+                dark,
+                quiet,
+            }
+        }
+    }
+
+    #[test]
+    fn the_ansi_column_is_checked_for_every_role_in_both_palettes() {
+        // B2, the defect this test exists to make unrepeatable: the light table
+        // used to override only `rgb` for the quiet roles and leave `ansi` at the
+        // dark palette's `Color::DarkGray` — bright black, invisible on the white
+        // terminal `--light` is for — directly under a comment promising these
+        // values were "never `White`, never `DarkGray`". The prose was right and
+        // nothing read the column, so the two disagreed for as long as nobody
+        // looked. A claim about `.ansi` is now a claim about `.ansi`.
+        let table = ansi_slots();
+        for role in Role::ALL {
+            assert!(
+                table.iter().any(|e| e.role == *role),
+                "{role:?} has no ANSI-16 row in this test: every role needs one, \
+                 because a role nothing names is a role nothing checks"
+            );
+        }
+        // …and the reverse: the test may not invent a role either.
+        for row in &table {
+            assert!(
+                Role::ALL.contains(&row.role),
+                "{:?} is checked here but is not in the palette table",
+                row.role
+            );
+        }
+
+        // The slots a light-background role may name. This is the *real* rule the
+        // old comment gestured at, and it is checkable by name: `Gray`, `White`,
+        // `DarkGray` (bright black) and every `Light*` variant are light on every
+        // terminal — ANSI 9–15 — so they are invisible or near-invisible on white.
+        // What is left is the terminal's own foreground, the five standard slots
+        // that are not near-white, and `LightBlue`, the one bright slot that is
+        // darker than its standard counterpart.
+        let allowed_on_white = [
+            Color::Reset,
+            Color::Blue,
+            Color::Magenta,
+            Color::Red,
+            Color::Green,
+            Color::Yellow,
+            Color::LightBlue,
+        ];
+        for role in Role::ALL {
+            let emitted = Palette::LIGHT.get(*role).ansi;
+            assert!(
+                allowed_on_white.contains(&emitted),
+                "light {role:?} emits {emitted:?} on a 16-colour terminal, which is \
+                 one of the slots that disappears on a white background"
+            );
+        }
+
+        // Every role, in both palettes, read through the style the draw path
+        // actually emits.
+        let dark = Theme::with_palette(ColorMode::Ansi16, UNICODE, ThemeMode::Dark);
+        let light = Theme::with_palette(ColorMode::Ansi16, UNICODE, ThemeMode::Light);
+        for row in &table {
+            let role = row.role;
+            let dark_style = dark.role(role, Emphasis::Plain);
+            assert_eq!(
+                dark_style.fg,
+                Some(row.dark),
+                "dark: {role:?} moved — this slice is about the light column"
+            );
+            assert_eq!(
+                dark_style.add_modifier.contains(Modifier::DIM),
+                row.quiet,
+                "dark: {role:?} carries the quiet flag or it does not"
+            );
+
+            let style = light.role(role, Emphasis::Plain);
+            assert_eq!(
+                style.fg,
+                Some(row.light),
+                "light: {role:?} emits {:?} on a 16-colour terminal, not {:?}",
+                style.fg,
+                row.light
+            );
+            // Quiet is what distinguishes secondary information from body copy now
+            // that both defer to the terminal. Without the attribute, `theme.dim()`
+            // and `theme.text()` would be the same pixels on exactly the console
+            // `--light` exists for.
+            assert_eq!(
+                style.add_modifier.contains(Modifier::DIM),
+                row.quiet,
+                "light: {role:?} must {} DIM on a 16-colour terminal",
+                if row.quiet { "carry" } else { "not carry" }
+            );
+        }
+
+        // The claim stated as a number, for the slots it is really about: the
+        // quiet roles used to name ANSI 8, and these are the nominal values a
+        // console renders it in. The spread is part of the argument — from
+        // `#555753` (GNOME) through `#808080` (xterm) to near-white on some
+        // Windows consoles — because a palette that names a slot the console may
+        // render near white cannot promise anything about its own contrast.
+        const ANSI_BRIGHT_BLACK: (u8, u8, u8) = (0x80, 0x80, 0x80);
+        const ANSI_GRAY: (u8, u8, u8) = (0xe5, 0xe5, 0xe5);
+        let bright_black = contrast(ANSI_BRIGHT_BLACK, WHITE);
+        let gray = contrast(ANSI_GRAY, WHITE);
+        assert!(
+            bright_black < 4.5 && gray < 4.5,
+            "the premise of B2: bright black scores {bright_black:.2}:1 and gray \
+             {gray:.2}:1 on white, both under the 4.5:1 body floor"
+        );
+        // …and the light palette's residual limit, stated where a change to it
+        // fails a test rather than passing quietly. Every slot it names is
+        // measured; the ones that cannot clear the floor are named so the next
+        // reader knows they were measured and kept, not forgotten.
+        let literals: Vec<(Role, f64)> = Role::ALL
+            .iter()
+            .filter(|role| Palette::LIGHT.get(**role).ansi != Color::Reset)
+            .map(|role| {
+                (
+                    *role,
+                    contrast(nominal_rgb(Palette::LIGHT.get(*role).ansi), WHITE),
+                )
+            })
+            .collect();
+        assert_eq!(
+            literals
+                .iter()
+                .filter(|(_, ratio)| *ratio < 4.5)
+                .map(|(role, _)| *role)
+                .collect::<Vec<_>>(),
+            vec![Role::success, Role::warn, Role::code],
+            "the light palette's under-floor slots are exactly the two ANSI hues \
+             that are light on white: {literals:?} — a fourth is a decision, not a \
+             detail"
+        );
+        assert!(
+            literals
+                .iter()
+                .filter(|(role, _)| !matches!(role, Role::success | Role::warn | Role::code))
+                .all(|(_, ratio)| *ratio >= 4.5),
+            "every *other* slot the light palette names clears the body floor: \
+             {literals:?}"
+        );
+        assert!(
+            literals.iter().all(|(_, ratio)| *ratio >= 1.7),
+            "no light slot may be near-invisible: {literals:?}"
+        );
+
+        // The truecolor values are untouched by any of this — the DIM fallback is
+        // a property of the 16-colour mode, not of the palette.
+        let rich = Theme::with_palette(ColorMode::Truecolor, UNICODE, ThemeMode::Light);
+        assert_eq!(
+            rich.dim().add_modifier,
+            Modifier::empty(),
+            "a truecolor terminal must not get an extra DIM on top of the grey"
+        );
+    }
+
+    /// The nominal RGB a terminal renders one of the named ANSI slots in.
+    ///
+    /// Only used to state a ratio, and only for the slots the light palette is
+    /// allowed to name — `Reset` has no value here by definition. The numbers are
+    /// the xterm defaults, which is the most conservative reading available: a
+    /// console that renders a slot differently renders it differently for the
+    /// *dark* palette too, and the light palette's alternative to naming a slot is
+    /// to defer to the terminal, which is what it does for every body role.
+    fn nominal_rgb(color: Color) -> (u8, u8, u8) {
+        match color {
+            Color::Black => (0x00, 0x00, 0x00),
+            Color::Red => (0xcd, 0x00, 0x00),
+            Color::Green => (0x00, 0xcd, 0x00),
+            Color::Yellow => (0xcd, 0xcd, 0x00),
+            Color::Blue => (0x00, 0x00, 0xee),
+            Color::Magenta => (0xcd, 0x00, 0xcd),
+            Color::Cyan => (0x00, 0xcd, 0xcd),
+            Color::Gray => (0xe5, 0xe5, 0xe5),
+            Color::DarkGray => (0x80, 0x80, 0x80),
+            Color::LightRed => (0xff, 0x00, 0x00),
+            Color::LightGreen => (0x00, 0xff, 0x00),
+            Color::LightYellow => (0xff, 0xff, 0x00),
+            Color::LightBlue => (0x5c, 0x5c, 0xff),
+            Color::LightMagenta => (0xff, 0x00, 0xff),
+            Color::LightCyan => (0x00, 0xff, 0xff),
+            Color::White => (0xff, 0xff, 0xff),
+            other => panic!("{other:?} is not one of the 16 named slots"),
         }
     }
 
@@ -1000,12 +1339,17 @@ mod tests {
             }
         }
         // Every *other* slot still has a real colour: `Reset` as a general
-        // answer would mean an all-default palette, which is not a palette.
+        // answer would mean an all-default palette, which is not a palette. The
+        // light slots are named here rather than left to the table so a
+        // "simplification" back to the bright variants — which are *lighter* on a
+        // light terminal, exactly backwards — fails a test with the reason
+        // attached.
         let light = Theme::with_palette(ColorMode::Ansi16, ASCII, ThemeMode::Light);
         assert_eq!(light.danger().fg, Some(Color::Red), "the light red is Red");
         assert_eq!(light.success().fg, Some(Color::Green));
         assert_eq!(light.warn().fg, Some(Color::Yellow));
         assert_eq!(light.user().fg, Some(Color::Blue));
+        assert_eq!(light.accent().fg, Some(Color::Magenta));
     }
 
     #[test]

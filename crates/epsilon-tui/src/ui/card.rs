@@ -159,9 +159,27 @@ pub fn rows(
     let mut rows: Vec<CardRow> = vec![vec![(title(card, theme), theme.text())]];
     // The budgets the skill asks for are *visible* rows, so the wrap happens first
     // and the cap counts what the reader would actually see.
+    //
+    // **A row that already fits is not re-wrapped.** The diff's rows are cut and
+    // padded to the body width by their own renderer — that is what makes a split
+    // row two columns rather than two lines — and `wrap::wrap_line` is not
+    // idempotent on them: it drops trailing whitespace and collapses a whitespace
+    // run to one space, which is right for prose ("screen convention", `wrap.rs`)
+    // and wrong for a row whose alignment *is* the padding. Re-wrapping a padded
+    // 138-cell split row squeezed it to 25 cells, put the right half 13 columns
+    // after the left instead of 69, and erased the blank half that says "this line
+    // has no counterpart". Only a split diff (body width ≥ `SPLIT_MIN_WIDTH`) could
+    // show it, and until `the_split_diff_draws_both_sides_at_a_wide_frame` no test
+    // rendered one.
     let wrapped: Vec<CardRow> = body
         .into_iter()
-        .flat_map(|row| crate::wrap::wrap_line(&row, width))
+        .flat_map(|row| {
+            if row_width(&row) <= width {
+                vec![row]
+            } else {
+                crate::wrap::wrap_line(&row, width)
+            }
+        })
         .collect();
     let budget = if expanded { usize::MAX } else { budget };
     rows.extend(cap(
@@ -287,7 +305,7 @@ fn unified_line(
     let mut row: CardRow = vec![(format!("{lead} "), base)];
     row.extend(number);
     row.extend(content);
-    pad_to(row, width, base)
+    pad_to_cell(row, width, base)
 }
 
 /// A context row: the sign column is blank, so the eye can run down the signs.
@@ -303,7 +321,7 @@ fn unified_context(line: &DiffLine, numbers: bool, width: usize, theme: &Theme) 
     let mut row: CardRow = vec![("  ".to_string(), base)];
     row.extend(number);
     row.push((cut(&sanitize(&line.text), body_width), base));
-    pad_to(row, width, base)
+    pad_to_cell(row, width, base)
 }
 
 /// The split view: old side then new side, one row per paired diff line.
@@ -461,12 +479,52 @@ fn emphasis(kind: DiffKind) -> Modifier {
 /// Pad a row out to `width` with the row's own style, so a removed line's colour
 /// runs to the edge of its column rather than stopping at the last character and
 /// leaving a ragged right edge down the card.
+///
+/// **Padding is a split-view device.** Its purpose is to hold one row's columns in
+/// step with another row's, which is what a side-by-side diff is; a unified row has
+/// no other column to line up with, so its trailing spaces mark nothing — the
+/// terminal's background is there anyway. The asymmetry matters because a wrapper
+/// downstream cannot tell "trailing spaces that mean nothing" from "trailing spaces
+/// that *are* the layout": `wrap_line` deletes trailing whitespace by design
+/// (correctly, for prose), so a padded unified row lost its padding and looked
+/// unchanged, while a padded split row lost the alignment that is the whole feature.
+/// Never emitting the meaningless ones is what lets the meaningful ones survive —
+/// see [`pad_to_cell`].
 fn pad_to(mut row: CardRow, width: usize, style: Style) -> CardRow {
     let used: usize = row.iter().map(|(t, _)| cols(t)).sum();
     if used < width {
         row.push((" ".repeat(width - used), style));
     }
     row
+}
+
+/// Pad a unified row to the end of the **cell** its own content defines, not to the
+/// card.
+///
+/// A unified row's colour has to reach the edge of the change, which is the one
+/// separator cell past the text — `unified_line` emits `{lead} ` and
+/// `unified_context` emits `"  "`, so the row's last cell is that separator. Past it
+/// the colour marks nothing, and padding further is what put a meaningless run of up
+/// to sixty spaces on every unified diff row. The row then measured exactly the body
+/// width, so the "does this need wrapping" test one layer up accepted it and its
+/// padding survived — which is how a cosmetic difference became the split diff's two
+/// halves landing on top of each other. Padding only what a row's own layout needs
+/// fixes both, and leaves the unified frame byte-identical to the one the golden
+/// tests already pin.
+fn pad_to_cell(row: CardRow, width: usize, style: Style) -> CardRow {
+    let used: usize = row.iter().map(|(t, _)| cols(t)).sum();
+    pad_to(row, used.saturating_sub(1).max(width), style)
+}
+
+/// Display width of a card row, for the "does this need wrapping" question.
+///
+/// Shared with [`crate::render_cache`], which asks the same question about the same
+/// rows one layer up: a renderer that pads a row to its column width is making a
+/// claim about the layout, and the next wrapper in the chain has to be able to see
+/// it. The measurement is the same one [`crate::wrap::wrap_line`] makes — `cols` is
+/// `unicode-width` — so a row this accepts is a row the wrap would leave alone.
+pub(crate) fn row_width(row: &CardRow) -> usize {
+    row.iter().map(|(text, _)| cols(text)).sum()
 }
 
 // ---- runs --------------------------------------------------------------------
@@ -552,9 +610,32 @@ fn intra_pair(removed: &[&DiffLine], added: &[&DiffLine]) -> Option<IntraPair> {
     if o.1.is_empty() && n.1.is_empty() {
         return None;
     }
+    // The shared prefix of two indented lines is the indentation plus whatever
+    // identifier precedes the edit — and on a diff row the indentation is not
+    // content: it is the *column* the code was at in the file, drawn here after a
+    // sign and a line number, so it pushes the code right by the sum of two
+    // indentations. `wrap_line` used to swallow it by accident (it collapses a
+    // leading whitespace run), which is exactly why this has to be said here rather
+    // than left to a wrapper's whitespace rule: the same rule also deleted the split
+    // view's padding, and a layout that depends on it is a layout that breaks when
+    // the rule changes. `Diff::number_width` is what keeps the columns aligned, and
+    // it cannot do that if a highlight adds leading blanks of its own.
+    let strip_lead = |spans: Vec<(String, Style)>| -> Vec<(String, Style)> {
+        spans
+            .into_iter()
+            .enumerate()
+            .map(|(index, (text, style))| {
+                if index == 0 {
+                    (text.trim_start().to_string(), style)
+                } else {
+                    (text, style)
+                }
+            })
+            .collect()
+    };
     Some(IntraPair {
-        removed: vec![(o.0, plain), (o.1, inverse), (o.2, plain)],
-        added: vec![(n.0, plain), (n.1, inverse), (n.2, plain)],
+        removed: strip_lead(vec![(o.0, plain), (o.1, inverse), (o.2, plain)]),
+        added: strip_lead(vec![(n.0, plain), (n.1, inverse), (n.2, plain)]),
     })
 }
 
