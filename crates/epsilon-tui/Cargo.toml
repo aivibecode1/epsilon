@@ -21,6 +21,13 @@ serde_json = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 arboard = { workspace = true }
+# The OSC 52 clipboard sequence (`ESC ] 52 ; c ; <base64> BEL`) — the only copy
+# path that survives an SSH hop, where arboard reaches a clipboard nobody is
+# looking at. `base64::engine::general_purpose::STANDARD` is the alphabet the
+# sequence requires (RFC 4648), and the crate is already in-tree at this exact
+# version for M43's image attachments, so this declares a dependency the lock
+# file already carries. See `src/clipboard.rs`.
+base64 = { workspace = true }
 pulldown-cmark = { workspace = true }
 unicode-width = { workspace = true }
 unicode-segmentation = { workspace = true }

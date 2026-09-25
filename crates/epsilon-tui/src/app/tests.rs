@@ -1871,3 +1871,159 @@ async fn export_writes_html_and_json() {
     assert!(j.is_array(), "json export must be an array");
     let _ = app;
 }
+
+// ---- OSC 52: `/copy` over a terminal that has no local clipboard ------------
+//
+// The defect: `/copy` called `arboard` and printed "copied N chars to clipboard"
+// unconditionally. Over SSH that is a success notice for a copy that did not
+// happen — the harness wrote to the *remote* machine's clipboard, or to nothing
+// at all, while the user pressed Ctrl+V locally and got whatever was there
+// before. The fix has two halves and they are tested separately, because only
+// one of them is reachable on any given machine: `clipboard::tests` owns the
+// path decision (with the native result injected, so every branch is reachable
+// everywhere), and these two own the wiring — that `/copy` asks, and that what
+// it parked is written at the frame boundary.
+
+/// Type `/copy` and press Enter: the real key path into the command.
+fn run_copy(app: &mut App, agent: &Arc<Agent>) {
+    type_and_enter(app, agent, "/copy");
+}
+
+/// The text of the last transcript row, whatever its kind.
+fn last_line_text(app: &App) -> String {
+    app.ui
+        .lines()
+        .last()
+        .expect("a notice must have been pushed")
+        .text
+        .clone()
+}
+
+/// The assistant body `/copy` is expected to have taken, from the state itself.
+fn last_assistant(app: &App) -> String {
+    app.ui
+        .lines()
+        .iter()
+        .rev()
+        .find(|l| l.kind == crate::state::LineKind::Assistant)
+        .map(|l| l.full.as_deref().unwrap_or(l.text.as_str()).to_string())
+        .expect("the fixture has an assistant message")
+}
+
+#[tokio::test]
+async fn copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path() {
+    // Both halves of the contract, in one test, because they are the same claim:
+    // whatever the notice says happened is what the parked sequence does. The
+    // native half is machine-dependent (a dev box has a clipboard, CI may not),
+    // so the assertions branch on whether a sequence was parked — and neither
+    // branch can pass by accident, because the other's evidence is checked to be
+    // absent.
+    let (mut app, agent, _receivers) = test_app();
+    // A real assistant row, produced by a real (faux) turn rather than pushed
+    // into the transcript behind `/copy`'s back.
+    run_one_turn(&mut app, &agent, "explain the layout module").await;
+    let expected = last_assistant(&app);
+
+    run_copy(&mut app, &agent);
+
+    let notice = last_line_text(&app);
+    match app.osc_pending.clone() {
+        Some(sequence) => {
+            // The terminal was asked, so the notice must say "sent" and must not
+            // claim the text is on a clipboard this process wrote to.
+            assert_eq!(
+                notice,
+                format!(
+                    "copied {} chars — sent via the terminal (OSC 52)",
+                    expected.chars().count()
+                ),
+                "the notice must name the path that ran"
+            );
+            assert!(!notice.contains("to the clipboard"), "{notice}");
+            // The payload is the real message, base64, under the real framing.
+            let payload = sequence
+                .trim_start_matches("\u{1b}Ptmux;\u{1b}")
+                .trim_start_matches("\u{1b}P")
+                .trim_start_matches("\u{1b}]52;c;")
+                .trim_end_matches("\u{1b}\\")
+                .trim_end_matches('\u{7}');
+            use base64::engine::Engine as _;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(payload)
+                .expect("the parked payload must be base64");
+            assert_eq!(
+                String::from_utf8(decoded).expect("utf-8"),
+                expected,
+                "the sequence must carry the message, not a summary of it"
+            );
+        }
+        None => {
+            // The native path landed and the terminal was correctly left alone.
+            assert_eq!(
+                notice,
+                format!("copied {} chars to the clipboard", expected.chars().count()),
+                "a local copy must not borrow the terminal's wording"
+            );
+            assert!(!notice.contains("OSC 52"), "{notice}");
+        }
+    }
+}
+
+#[test]
+fn copy_with_nothing_to_copy_parks_no_sequence_and_says_so() {
+    // The negative control for the test above, and the "not written when there
+    // is nothing to copy" case: an empty payload is not a no-op on the wire —
+    // `ESC ] 52 ; c ; BEL` asks the terminal to *clear* the clipboard, so a
+    // `/copy` with nothing to copy must not emit anything at all.
+    let (mut app, agent, _receivers) = test_app();
+    run_copy(&mut app, &agent);
+
+    assert_eq!(app.osc_pending, None, "nothing to copy, nothing to send");
+    assert_eq!(last_line_text(&app), "copy: no assistant message to copy");
+
+    let mut out: Vec<u8> = Vec::new();
+    assert_eq!(
+        flush_osc52(&mut app, &mut out),
+        None,
+        "the frame boundary must have nothing to write"
+    );
+    assert!(out.is_empty(), "bytes reached the terminal: {out:?}");
+}
+
+#[tokio::test]
+async fn the_sequence_is_written_at_the_frame_boundary_and_only_once() {
+    // "Not into the rendered buffer": the sequence is not a row, a span or a
+    // style — it is bytes on the terminal's own stream, written after the frame
+    // the terminal is being handed. So the test drives the seam the event loop
+    // drives, with a writer instead of stdout, and checks that the drain is a
+    // one-shot: a sequence re-sent every frame is a clipboard rewritten sixty
+    // times a second.
+    let (mut app, agent, _receivers) = test_app();
+    run_one_turn(&mut app, &agent, "explain the layout module").await;
+    run_copy(&mut app, &agent);
+
+    let mut out: Vec<u8> = Vec::new();
+    let written = flush_osc52(&mut app, &mut out);
+    if let Some(sequence) = written {
+        assert_eq!(
+            String::from_utf8(out.clone()).expect("the sequence is ascii"),
+            sequence,
+            "the writer must receive exactly the sequence that was parked"
+        );
+        assert!(
+            out.starts_with(b"\x1b]52;c;") || out.starts_with(b"\x1bP"),
+            "not an OSC 52 sequence: {out:?}"
+        );
+    } else {
+        // Local clipboard took the text; nothing belongs on the wire.
+        assert!(out.is_empty(), "unexpected bytes: {out:?}");
+    }
+
+    // The second boundary has nothing left to say.
+    let mut again: Vec<u8> = Vec::new();
+    assert_eq!(flush_osc52(&mut app, &mut again), None);
+    assert!(
+        again.is_empty(),
+        "the sequence was written twice: {again:?}"
+    );
+}

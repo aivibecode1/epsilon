@@ -415,6 +415,15 @@ pub(crate) struct App {
     /// palette. Detected once at startup, because a look that changes mid-session
     /// would make the screen flicker between two designs.
     theme: crate::ui::theme::Theme,
+    /// An OSC 52 clipboard sequence waiting for the next frame boundary.
+    ///
+    /// It cannot be written where `/copy` runs: a key handler must not touch the
+    /// terminal, and the sequence must not land in the middle of the frame the
+    /// terminal is being handed — interleaved with ratatui's own diff, it is at
+    /// best ignored and at worst a torn row. So it is parked here and written
+    /// after `terminal.draw` returns, via the backend's own writer. See
+    /// [`crate::clipboard`].
+    osc_pending: Option<String>,
 }
 
 /// M57: state of the `/sessions` browser overlay.
@@ -610,6 +619,7 @@ impl App {
             session_browser: None,
             external_editor_requested: false,
             theme: crate::ui::theme::Theme::detect(),
+            osc_pending: None,
             recents: epsilon_core::config::load_recent_models(),
             favorites: epsilon_core::config::load_favorite_models(),
             favorite_thinking: epsilon_core::config::load_favorite_thinking(),
@@ -2103,25 +2113,44 @@ impl App {
                 }
             }
             crate::picker::Command::Copy => {
-                // Copy the last assistant message to the system clipboard (pi
-                // app.message.copy parity; arboard is already in-tree for paste).
-                let last = self
+                // Copy the last assistant message to the clipboard (pi
+                // app.message.copy parity). Two paths, and the notice names the
+                // one that landed: `arboard` reaches this machine's clipboard,
+                // and OSC 52 asks the *terminal* to reach the one the user is
+                // sitting at — the only path that works over SSH, where arboard
+                // either fails or fills a clipboard nobody will paste from.
+                let text = self
                     .ui
                     .lines()
                     .iter()
                     .rev()
                     .find(|l| l.kind == crate::state::LineKind::Assistant)
                     .map(|l| l.full.as_deref().unwrap_or(l.text.as_str()).to_string());
-                if let Some(text) = last {
-                    match clipboard_set(&text) {
-                        Ok(()) => self.ui.push_notice(format!(
-                            "copied {} chars to clipboard",
-                            text.chars().count()
-                        )),
-                        Err(e) => self.ui.push_notice(format!("copy failed: {e}")),
+                match text {
+                    Some(text) => {
+                        let chars = text.chars().count();
+                        // The sequence is handed to the *terminal*, so it is
+                        // parked for the frame boundary rather than written from
+                        // a key handler; `drive` writes it through the backend's
+                        // own writer once the frame is out. A local rather than a
+                        // `self`-capturing closure: the borrow checker is right
+                        // that a closure holding `&mut self` across the call
+                        // conflicts with the notice pushed after it.
+                        let mut osc = None;
+                        let copied = crate::clipboard::copy(
+                            &text,
+                            crate::clipboard::Multiplexer::detect(),
+                            crate::clipboard::is_remote(),
+                            |sequence| {
+                                osc = Some(sequence.to_string());
+                                Ok(())
+                            },
+                        );
+                        self.osc_pending = osc;
+                        self.ui
+                            .push_notice(crate::clipboard::notice(chars, &copied));
                     }
-                } else {
-                    self.ui.push_notice("copy: no assistant message to copy");
+                    None => self.ui.push_notice("copy: no assistant message to copy"),
                 }
             }
             crate::picker::Command::Name(arg) => {
@@ -2786,11 +2815,22 @@ impl epsilon_llm::oauth_login::LoginUi for TuiLoginUi {
     }
 }
 
-/// Try to write `text` to the system clipboard (arboard). Returns Err on
-/// headless / permission failure so the caller can surface it as a notice.
-fn clipboard_set(text: &str) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("{e}"))?;
-    cb.set_text(text.to_string()).map_err(|e| format!("{e}"))
+/// Write any parked OSC 52 clipboard sequence and return what it was.
+///
+/// Called by the event loop immediately after `terminal.draw` returns — never
+/// from inside a draw, and never from a key handler: the sequence has to travel
+/// on the same stream as the frames, and interleaved with ratatui's own diff it
+/// would at best be ignored. `out` is the writer that stream belongs to.
+///
+/// Returns the sequence so the caller can report what it sent, and so a test can
+/// assert the exact bytes without owning a terminal.
+pub(crate) fn flush_osc52<W: std::io::Write>(app: &mut App, out: &mut W) -> Option<String> {
+    let sequence = app.osc_pending.take()?;
+    // A failed write is not fatal and not silent-by-accident: `/copy` already
+    // told the user which path it took, and a terminal that cannot be written to
+    // is the same terminal that would have ignored the sequence.
+    let _ = crate::clipboard::write_to(out, &sequence);
+    Some(sequence)
 }
 
 // The keyboard model lives in `app/keys.rs`: one handler per owner, in
@@ -4177,6 +4217,7 @@ fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests_support;
 

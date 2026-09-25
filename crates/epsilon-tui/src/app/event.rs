@@ -168,6 +168,11 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
             // the same history the frame is about to show.
             app.mirror_context_size(&agent);
             let _ = terminal.draw(|f| draw(f, &mut app));
+            // `/copy` parks an OSC 52 sequence instead of writing it, because a
+            // key handler must not touch the terminal and the sequence must not
+            // land inside the frame ratatui is handing over. Here the frame is
+            // out, so it goes to the same stream the frame went to.
+            flush_osc52(&mut app, terminal.backend_mut());
             dirty = false;
             frame_due = std::time::Instant::now() + FRAME_MIN;
         }

@@ -173,6 +173,19 @@ pub struct Glyphs {
     pub caret: &'static str,
     /// The marker for the session the user is looking at.
     pub cursor_bar: &'static str,
+    /// Assistant prose, where no filled band is available.
+    ///
+    /// `assistant` has no marker while a band can say what the row is; with the
+    /// band withheld (see [`Theme::has_surfaces`]) the two roles that carry the
+    /// most text — the answer and the reasoning trace behind it — would other-
+    /// wise render as the same run of plain words, which is the collapse
+    /// `NO_COLOR` must not cause.
+    pub assistant: &'static str,
+    /// A reasoning trace, where no filled band is available. The same fallback as
+    /// [`Self::assistant`], and the reason the two exist: the skill's rule is
+    /// that reasoning must never be indistinguishable from the answer it
+    /// produced.
+    pub thinking: &'static str,
     /// The prompt marker that introduces a row the user typed.
     pub prompt: &'static str,
     /// The marker that introduces a tool call, before it has a result.
@@ -207,6 +220,8 @@ pub const UNICODE: Glyphs = Glyphs {
     bullet: "•",
     caret: "▌",
     cursor_bar: "▎",
+    assistant: "•",
+    thinking: "≡",
     prompt: "❯",
     tool_call: "▸",
     tick: "✓",
@@ -229,6 +244,8 @@ pub const ASCII: Glyphs = Glyphs {
     bullet: "*",
     caret: "_",
     cursor_bar: ">",
+    assistant: "*",
+    thinking: "=",
     prompt: ">",
     tool_call: "\\",
     tick: "+",
@@ -743,6 +760,12 @@ impl Theme {
 
     /// Whether filled bands are available. Widgets that rely on a band for
     /// legibility must fall back to a gutter glyph when this is false.
+    ///
+    /// The transcript is the widget that does: [`crate::ui::transcript::row_style`]
+    /// picks its gutter from this, which is what [`Glyphs::assistant`] and
+    /// [`Glyphs::thinking`] are for. Off truecolor — and off colour entirely —
+    /// the answer and the reasoning trace behind it get one marker each instead
+    /// of sharing the undecorated row that a band used to explain.
     pub fn has_surfaces(&self) -> bool {
         self.mode == ColorMode::Truecolor
     }
@@ -765,6 +788,8 @@ mod tests {
         check(ASCII.bullet);
         check(ASCII.caret);
         check(ASCII.cursor_bar);
+        check(ASCII.assistant);
+        check(ASCII.thinking);
         check(ASCII.prompt);
         check(ASCII.tool_call);
         check(ASCII.back);

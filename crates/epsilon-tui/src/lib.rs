@@ -12,6 +12,7 @@
 pub mod app;
 pub mod at_files;
 pub mod bench;
+pub mod clipboard;
 pub mod editor_ops;
 pub mod fuzzy;
 pub mod git;

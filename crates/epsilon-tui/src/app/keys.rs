@@ -29,10 +29,13 @@ pub(crate) fn auth_insert(app: &mut App, c: char) {
 /// M32c: read the system clipboard (arboard). Used by the Ctrl+V fallback when
 /// the terminal does not deliver bracketed `TermEvent::Paste`. Best-effort:
 /// empty string on failure so the caller can show a hint.
+///
+/// Reading stays on the native path on purpose: OSC 52 can *write* a remote
+/// clipboard but reading it back needs a round-trip the terminal may never
+/// answer, which is a paste that hangs rather than a paste that fails. See
+/// [`crate::clipboard`].
 pub(crate) fn clipboard_text() -> String {
-    arboard::Clipboard::new()
-        .and_then(|mut c| c.get_text())
-        .unwrap_or_default()
+    crate::clipboard::local_text()
 }
 
 /// M32: paste (bracketed or Ctrl+V) into the masked API-key buffer. Keys are

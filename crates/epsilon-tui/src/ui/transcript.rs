@@ -28,8 +28,29 @@ pub const GUTTER: usize = 2;
 ///
 /// Returns `(gutter_glyph, gutter_style, body_style, band)`, where `band` is the
 /// background fill (if the terminal has colour to spare).
+///
+/// # The `has_surfaces` fallback
+///
+/// `Theme::has_surfaces` promises that a widget relying on a band for legibility
+/// falls back to a gutter glyph when the band is unavailable. This is where that
+/// promise is kept: off truecolor the two text roles — the answer and the
+/// reasoning trace behind it — take [`Glyphs::assistant`] and
+/// [`Glyphs::thinking`] instead of the blank gutter they use when a band already
+/// says what the row is.
+///
+/// Without it the pair collapsed on exactly the terminals the promise names. A
+/// band is truecolor-only, so nothing else separates them: an assistant row and
+/// a thinking row rendered the same two spaces of gutter and the same plain
+/// wrapped prose under them. With `NO_COLOR` the styles collapse as well —
+/// `Emphasis::Plain` is `Style::default()` there — so on a 16-colour or
+/// colourless terminal, "here is the answer" and "here is the model talking to
+/// itself" were the same pixels. That is the one collapse the skill singles out
+/// by name ("reasoning traces must not become indistinguishable from answers").
 pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style) {
     let glyphs = &theme.glyphs;
+    // A band is available only on truecolor (`Theme::surface`), so this is the
+    // same question the band itself asks.
+    let bands = theme.has_surfaces();
     match kind {
         // The user's own words: a filled band plus a caret glyph, because a
         // question and an answer must be distinguishable at a glance when
@@ -40,17 +61,25 @@ pub fn row_style(theme: &Theme, kind: LineKind) -> (String, Style, Style, Style)
             theme.text(),
             theme.surface_user(),
         ),
-        // The model's prose is the default surface: no marker, no band. It is
-        // what the page is *for*, so it should not be decorated.
+        // The model's prose is the default surface: no marker, no band, while the
+        // band is there to say so. See the fallback note above for the other half.
         LineKind::Assistant => (
-            " ".to_string(),
+            if bands {
+                " ".to_string()
+            } else {
+                glyphs.assistant.to_string()
+            },
             theme.assistant(),
             theme.assistant(),
             Style::default(),
         ),
         // Reasoning is background material and says so.
         LineKind::Thinking => (
-            glyphs.vertical.to_string(),
+            if bands {
+                glyphs.vertical.to_string()
+            } else {
+                glyphs.thinking.to_string()
+            },
             theme.faint(),
             theme.thinking(),
             Style::default(),
@@ -224,19 +253,66 @@ mod tests {
             let (glyph, _, _, _) = row_style(&theme, kind);
             gutters.push((kind, glyph));
         }
-        // User, tool call, tool ok, tool error and system each have a marker;
-        // assistant prose deliberately has none, and thinking has a rule. The
-        // call and the notice are the pair that used to share `*` — with colour
-        // gone, that made a pending call and a lifecycle notice the same pixels.
+        // Every role has a marker of its own here, including the two that have
+        // none while a band can carry the distinction: with no colour and no
+        // band, a marker is the only thing left. The call and the notice are the
+        // pair that used to share `*`, and the answer and the reasoning trace are
+        // the pair that used to share a blank gutter.
         assert_eq!(gutters[0].1, ">"); // user
-        assert_eq!(gutters[1].1, " "); // assistant: no marker, by design
-        assert_eq!(gutters[2].1, "|"); // thinking
+        assert_eq!(gutters[1].1, "*"); // assistant prose: the band's fallback
+        assert_eq!(gutters[2].1, "="); // thinking: the band's fallback
         assert_eq!(gutters[3].1, "\\"); // tool call
         assert_eq!(gutters[4].1, "+"); // ok
         assert_eq!(gutters[5].1, "x"); // error
         assert_eq!(gutters[6].1, "*"); // system notice
-        assert_ne!(gutters[0].1, gutters[5].1);
         assert_ne!(gutters[3].1, gutters[6].1);
+        // The pair this whole change is about, called out by name so a failure
+        // here says which two roles collapsed rather than just "some pair did".
+        assert_ne!(
+            gutters[1].1, gutters[2].1,
+            "the answer and the reasoning trace must not be the same pixels"
+        );
+    }
+
+    #[test]
+    fn the_bandless_gutter_is_the_fallback_the_theme_documents() {
+        // `Theme::has_surfaces` promises that a widget relying on a band falls
+        // back to a gutter glyph. The promise is only worth anything if it is
+        // observable on the pair that needs it: the answer and the reasoning
+        // trace are identical rows on a truecolor terminal *except* for the band,
+        // so if the marker is not the fallback they are identical everywhere.
+        let rich = Theme::new(ColorMode::Truecolor, UNICODE);
+        let plain = Theme::new(ColorMode::Ansi16, ASCII);
+        assert!(rich.has_surfaces());
+        assert!(!plain.has_surfaces());
+
+        let assistant_rich = row_style(&rich, LineKind::Assistant).0;
+        let assistant_plain = row_style(&plain, LineKind::Assistant).0;
+        let thinking_rich = row_style(&rich, LineKind::Thinking).0;
+        let thinking_plain = row_style(&plain, LineKind::Thinking).0;
+
+        assert_ne!(
+            assistant_plain, assistant_rich,
+            "the fallback must be a different glyph, not the same one"
+        );
+        assert_ne!(thinking_plain, thinking_rich);
+        for (name, rich_glyph, plain_glyph) in [
+            ("assistant", &assistant_rich, &assistant_plain),
+            ("thinking", &thinking_rich, &thinking_plain),
+        ] {
+            assert!(
+                !plain_glyph.trim().is_empty(),
+                "{name} has no marker without a band: {plain_glyph:?}"
+            );
+        }
+        // And the fallback is what actually reaches a screen, through `decorate`
+        // — the function the draw path calls.
+        let line = decorate(&plain, LineKind::Assistant, vec![Span::raw("body")], 40);
+        let head = line.spans.first().expect("gutter span").content.clone();
+        assert!(
+            head.starts_with(assistant_plain.as_str()),
+            "decorate drew {head:?}, not the fallback marker"
+        );
     }
 
     #[test]

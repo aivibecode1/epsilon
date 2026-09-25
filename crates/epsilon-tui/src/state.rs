@@ -550,7 +550,17 @@ impl UiState {
         // Settle the call's own card first: it is the row the reader is looking at
         // when the answer lands, and a row still saying "pending" after its result
         // has arrived is a row that lies.
-        self.settle_call(&t.tool_call_id, status, now);
+        //
+        // The result card inherits the **call's** start, not `now`. Stamping both of
+        // its own timestamps with `now` — which is what this did — made
+        // `Card::elapsed_ms()` return `Some(0)` for every result card ever drawn, so
+        // the duration the card advertises was a field that could only ever say
+        // `0ms`. A result whose call is not in the transcript (a replay that lost the
+        // call, a result for a call from another branch) falls back to `now` and
+        // honestly reports no elapsed time rather than inventing one.
+        let started_at_ms = self
+            .settle_call(&t.tool_call_id, status, now)
+            .unwrap_or(now);
         let card_body = match edit_diff(t) {
             Some(diff) => CardBody::Diff(parse_diff(&diff)),
             None => CardBody::Text(body.clone()),
@@ -561,7 +571,7 @@ impl UiState {
                 name: t.tool_name.clone(),
                 status,
                 tool_call_id: t.tool_call_id.clone(),
-                started_at_ms: now,
+                started_at_ms,
                 ended_at_ms: Some(now),
                 body: card_body,
             }),
@@ -577,19 +587,27 @@ impl UiState {
         });
     }
 
-    /// Mark the card for `tool_call_id` finished, if one is still open.
-    fn settle_call(&mut self, tool_call_id: &str, status: CardStatus, now: u64) {
+    /// Mark the card for `tool_call_id` finished, if one is still open, and return the
+    /// start time it was holding.
+    ///
+    /// The return value is the whole point: the result card needs the *call's* start to
+    /// report a duration, and the only place that start exists is the pending card this
+    /// function finds. Returning it here keeps one lookup instead of two, and means the
+    /// pair `(call, result)` reports the same elapsed time whichever end asks.
+    fn settle_call(&mut self, tool_call_id: &str, status: CardStatus, now: u64) -> Option<u64> {
         let Some(line) = self.lines.iter_mut().rev().find(|l| {
             l.card
                 .as_ref()
                 .is_some_and(|c| c.tool_call_id == tool_call_id && c.ended_at_ms.is_none())
         }) else {
-            return;
+            return None;
         };
         if let Some(card) = line.card.as_mut() {
             card.status = status;
             card.ended_at_ms = Some(now);
+            return Some(card.started_at_ms);
         }
+        None
     }
 
     /// Local echo of submitted input; distinct from replayed transcript messages.
