@@ -131,6 +131,19 @@ contention, and single-job builds with an external target have passed every roun
 - Milestone docs carry a `## Verification` section that reads **PENDING** until a battery has
   actually run; fill it from the log, reconcile per-binary test-count deltas, and keep the
   limits honest about what was never executed.
+- **Milestone docs also carry a one-line "what nothing exercises" section.** An independent review
+  of the TUI slices found five blockers, and **two of them were exactly this**: a field that every
+  card advertised but no test asserted (`0ms` durations), and a code path no test had ever drawn (the
+  split diff at ≥120 columns — which turned out to hide a real bug where the two halves rendered on
+  top of each other). Both would have been visible from a single line saying "no test exercises X" or
+  "nothing asserts Y", written by the author who already knew. `Limits` records what a slice does not
+  *do*; this section records what it does not *prove*, and the two are different lists.
+- **A claim about what a user sees is verified by measuring, not by reading.** The same review said a
+  footer badge vanished at 60 columns; the author probed the real frame and found the badge whole with
+  the protection disarmed, and the actual defect one band lower (a *partial* badge at widths 26–31,
+  which is worse than a missing one because a wrong number is not noticed). Where a reader of the code
+  and a measurement of the screen disagree, **the measurement wins** — and a commit message that
+  repeats the unmeasured version puts a false claim in the permanent record.
 
 ## Disk hygiene (this machine has a small, chronically-full C: drive)
 
