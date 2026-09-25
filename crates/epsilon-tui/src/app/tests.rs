@@ -984,7 +984,10 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
             }
         }
     }
-    assert!(checked >= 12, "the sweep stopped covering: {checked} checks");
+    assert!(
+        checked >= 12,
+        "the sweep stopped covering: {checked} checks"
+    );
 }
 
 /// The rule is stated in one place, and this is what keeps it that way.
@@ -998,10 +1001,11 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
 #[test]
 fn the_card_open_rule_is_borrowed_and_not_restated() {
     let source = include_str!("../app.rs");
+    const GONE: &str = "`card_is_open` is gone; the draw path and the key path now decide this \
+                        independently and nothing in the tree says the two agree";
     let after = source
         .split_once("fn card_is_open(&self, id: u64, has_body: bool) -> bool {")
-        .unwrap_or_else(|| panic!("`card_is_open` is gone; the draw path and the key path now \
-                                   decide this independently and nothing says they agree"))
+        .unwrap_or_else(|| panic!("{GONE}"))
         .1;
     // Up to the end of the item: the first line that closes it at column zero.
     let body: String = after

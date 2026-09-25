@@ -46,6 +46,41 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
+- **F1–F7 ARE GREEN AND VERIFIED IN THE WORKING TREE — and part of the slice is still UNCOMMITTED.**
+  The F1–F7 author measured, fixed, tested and controlled all seven; evidence and dispositions are in
+  [`audit/evidence/f1-f7-dispositions.md`](../../audit/evidence/f1-f7-dispositions.md). **Verified now:**
+  `cargo test -p epsilon-tui` → `308 passed; 0 failed; 0 ignored` (was 303 at the slice's start; +5 new
+  tests), `cargo check -p epsilon-cli` clean, `cargo clippy -p epsilon-tui --all-targets -- -D warnings`
+  clean, `rustfmt --edition 2024` on the six changed files only (never `cargo fmt --all`). Three negative
+  controls, each announced, armed for one run, restored byte-identically and grepped for the control text.
+  **Not yet committed:** `crates/epsilon-tui/src/app/tests.rs` (the two F2 tests,
+  `the_card_open_rule_is_borrowed_and_not_restated` and
+  `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer`), `audit/evidence/f1-f7-dispositions.md`
+  (untracked), and `agents/memory/README.md`. `f6cba05` captured the rest of the slice, so **HEAD's
+  `app.rs` delegates to `RenderState::is_open` while nothing in the tree yet guards that it does** — the
+  guard is the uncommitted file. Stage it before the next battery.
+- **Two corrections the F1–F7 slice owes the record, both measured rather than argued** (detail and the
+  verbatim rows are in the evidence file). (1) **The review's F1 failure mode does not happen**: at 60
+  columns with `~/Desktop/My Agent Space/Epsilon · main`, the badge is whole — and it is whole with the
+  protection *disarmed*, so nothing at 60 columns depends on the fix. What is wrong there is the comment's
+  claim that the exit's own words survive (`insert ^ 12/40 · g j`). (2) **The real defect is one band
+  lower**: disarmed, widths 26–31 render `^`, `^ 1`, `^ 12`, `^ 12/`, `^ 12/4` — a *wrong total*, which is
+  worse than a missing badge because absent information is noticed and a wrong number is not. `f6cba05`'s
+  message repeats the review's version of F1; the milestone/evidence record should carry the measured one.
+- **F2's lesson, worth more than the fix: a behavioural test cannot see a duplicated rule.** With the
+  original second copy of `card_is_open` restored verbatim, the agreement test **passes** — two
+  implementations that agree cannot be told apart by running them, which is why the copy survived a whole
+  slice and a review. The guard that fails on it reads `app.rs` and requires the delegation. Expect this
+  shape wherever "two places implement one convention".
+- **F5's artefacts never existed in git.** `zz_frame_dump_for_the_report` / `zz_frame_dump_no_color` are
+  not in the tree and `git log --all -S` finds them only inside the review document — they were the
+  previous author's uncommitted working-tree leftovers, gone before the review was committed. The old
+  memory line saying they were "still in `app/golden.rs`" was wrong and sent this slice hunting; `fn
+  filler` was real, dead, and duplicated a loop, and is now called by the test that wanted it.
+- **`docs/history.md` has NOT drifted again** (current through M130, rows carry their shas). `CHANGELOG.md`
+  gained two entries for M125–M130 (it stops at M82 — **M83–M121 have no changelog entries at all**, which
+  is a separate backfill, recorded as scope rather than silently extended), and `docs/README.md` now links
+  M126/M127/M130 with a note that its list was last kept current at M115.
 - **M131 COMMITTED (`f6cba05`) — the review's F1–F7 — but battery `m131a` FAILED on an unrelated test,
   and that failure is itself a finding.** `epsilon-llm`'s
   `auth::tests::concurrent_saves_keep_every_provider` panicked with `concurrent save: "acquire
