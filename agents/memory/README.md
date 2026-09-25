@@ -46,19 +46,21 @@ not themselves trigger runtime compression.
 
 ## Next safe action
 
-- **IN FLIGHT (round 55): the review's findings F1–F7.** A delegated agent is answering the seven findings
-  from `audit/evidence/m126-m127-review.md` (the footer's false 60-column claim, the card-open precedence
-  implemented twice, the two glyph-table entries with no reader, the duplicated doc lines in `theme.rs`,
-  the `zz_*`/`filler` author artefacts, doc hygiene, and `fg_of`'s `None`-vs-`Reset`). Files in play:
-  `ui/footer.rs`, `ui/header.rs`, `ui/layout.rs`, `ui/theme.rs`, `app.rs`, `app/golden.rs`,
-  `app/tests.rs`, `CHANGELOG.md`.
-  **Last measured: `307 passed / 1 failed`, and the failure is the agent's OWN new guard** —
-  `app::tests::the_card_open_rule_is_borrowed_and_not_restated`, the test it wrote for F2, failing before
-  the fix lands (TDD order), **not a regression**: the count rose from 302 to 307, so nothing that passed
-  before is broken. `cargo clippy -p epsilon-tui --all-targets -- -D warnings` is clean.
-  **Do not commit until the crate is green**, then battery + reinstall (the footer and the theme are
-  user-visible). Earlier in the slice the agent left a probe at `crates/epsilon-tui/tests/zz_f1_probe.rs`
-  and removed it again — check no scratch file remains before staging, and stage **named files**.
+- **M131 COMMITTED (`f6cba05`) — the review's F1–F7 — but battery `m131a` FAILED on an unrelated test,
+  and that failure is itself a finding.** `epsilon-llm`'s
+  `auth::tests::concurrent_saves_keep_every_provider` panicked with `concurrent save: "acquire
+  C:\Users\Hp\AppData\Local\Temp\.tmpfrd0zk\auth.lock: Access is denied. (os error 5)"`. The test uses a
+  **unique** `tempfile::tempdir()` (unlike the reconciliation flake M128 fixed) and spawns **8 threads**
+  that all save credentials, so this is contention on the lock file itself, not a shared path. Two
+  readings, and the second matters more than the test: (1) the test is aggressive, since 8 simultaneous
+  saves is more than a real user produces; but (2) **`Access is denied` (os error 5) is a transient
+  Windows sharing violation being reported to the user as a failure.** Two processes saving at once — the
+  CLI and the TUI, which the test's own comment says is the case it exists for — can hit this on a real
+  machine, and the right answer is a brief bounded retry on that error code rather than a hard failure.
+  **That is a production robustness item, not a flake**, and it belongs beside the `serve`-mode gap as
+  work on the F07 acceptance surface. **M131 still needs a clean battery** (nothing in `epsilon-tui` or
+  `docs/` can cause an `epsilon-llm` auth failure, but the log does not prove that yet), then the
+  reinstall — the footer, the palette and the diff layout are all user-visible.
 - **M129 CLOSED** (battery `m129c`: all five gates exit 0, **1,165 passed / 0 failed / 1 ignored across
   61 binaries**; installed; docs and history row landed). The slice landed
   the audit's last two items and the review's B1:
