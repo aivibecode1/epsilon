@@ -83,7 +83,20 @@ not themselves trigger runtime compression.
   **Do not commit it until the tree is green**, and note the review's second half of B1: the golden
   test named for that property asserts only that the tail ends in `ms`, so **it must be tightened to
   require `ms > 0`** or the fix is unpinned.
-- **M129 COMMITTED (`17cddb7`, `554dfec`, `3b2b9c8`) — battery `m129c` in flight.** The slice landed
+- **IN FLIGHT (round 52): blockers B2–B5 from `audit/evidence/m126-m127-review.md`.** A delegated agent
+  is fixing the light palette's ANSI-16 quiet roles (B2), the `EPSILON_THEME` fall-through (B3),
+  `parse_diff`'s doc contradicting its pinned test (B4), and the never-drawn split diff at ≥120 columns
+  (B5). Files in play: `crates/epsilon-tui/src/ui/theme.rs`, `ui/card.rs`, `state.rs`, `render_cache.rs`,
+  `app/golden.rs`, `crates/epsilon-cli/src/main.rs`.
+  **Last measured: `301 passed / 1 failed`, and the failure is a REGRESSION, not a new test** —
+  `app::golden::an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` is M126's own pinned
+  frame-level assertion (the one that reads the sign column's colour out of the drawn buffer) and it
+  passed before this slice started. **Do not commit until the crate is green**: either the agent's
+  change to `ui/card.rs`/`state.rs` altered the diff's rendering, or a control is armed in place.
+  Announce-and-restore discipline is in the brief, so ask the author which it is rather than guessing —
+  a control left armed and a real regression look identical from the tree.
+- **M129 CLOSED** (battery `m129c`: all five gates exit 0, **1,165 passed / 0 failed / 1 ignored across
+  61 binaries**; installed; docs and history row landed). The slice landed
   the audit's last two items and the review's B1:
   - **OSC 52 for `/copy`** (`crates/epsilon-tui/src/clipboard.rs`, new). Native first, terminal second;
     a local terminal with a working clipboard deliberately does **not** emit the sequence, because a
