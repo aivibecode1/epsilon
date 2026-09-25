@@ -595,19 +595,15 @@ impl UiState {
     /// function finds. Returning it here keeps one lookup instead of two, and means the
     /// pair `(call, result)` reports the same elapsed time whichever end asks.
     fn settle_call(&mut self, tool_call_id: &str, status: CardStatus, now: u64) -> Option<u64> {
-        let Some(line) = self.lines.iter_mut().rev().find(|l| {
+        let line = self.lines.iter_mut().rev().find(|l| {
             l.card
                 .as_ref()
                 .is_some_and(|c| c.tool_call_id == tool_call_id && c.ended_at_ms.is_none())
-        }) else {
-            return None;
-        };
-        if let Some(card) = line.card.as_mut() {
-            card.status = status;
-            card.ended_at_ms = Some(now);
-            return Some(card.started_at_ms);
-        }
-        None
+        })?;
+        let card = line.card.as_mut()?;
+        card.status = status;
+        card.ended_at_ms = Some(now);
+        Some(card.started_at_ms)
     }
 
     /// Local echo of submitted input; distinct from replayed transcript messages.
