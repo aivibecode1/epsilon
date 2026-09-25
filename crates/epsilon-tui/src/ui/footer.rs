@@ -2,9 +2,10 @@
 //!
 //! ```text
 //! insert · enter send · ctrl+j newline · pgup scroll back    ~/work/api · main
+//! insert ↑ 12/40 · g live · pgup scroll back                 ~/work/api · main
 //! ```
 //!
-//! Three rules make a key hint useful rather than noise:
+//! Four rules make a key hint useful rather than noise:
 //!
 //! * **Only live keys.** A footer that lists `esc stop` while nothing is running
 //!   trains the reader to stop reading it. The set is chosen per state.
@@ -17,6 +18,11 @@
 //! * **The location is not a key.** The workspace path and branch answer "which
 //!   project am I about to let this thing edit", which is a safety question, so
 //!   it gets the right-hand side where the eye lands after the hints.
+//! * **A view that stopped following the run says so.** Scrolling up used to be
+//!   silent: the transcript froze and nothing on screen admitted it, so a reader
+//!   who paged up during a stream could not tell "the model is quiet" from "I am
+//!   reading the past". The second line above is that state: a word, a position,
+//!   and the key that comes back ([`View::badge`]).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -25,6 +31,54 @@ use ratatui::text::Span;
 use crate::keybindings::KeybindingsManager;
 use crate::ui::layout::{Priority, clamp_line, side_by_side};
 use crate::ui::theme::Theme;
+
+/// Where the transcript view sits relative to the live tail.
+///
+/// One value instead of two flags, because the two facts are one state: a view is
+/// either following the run or parked above it, and "parked" without a position
+/// is what made scrolling silent in the first place.
+///
+/// The position is a **row count and a total** (`12/40`), not a scrollbar. The
+/// transcript occupies the body region, whose width is decided by the layout
+/// rather than by this widget, and a one-column scrollbar down the right edge
+/// would have to be drawn by whoever owns that rectangle — the footer cannot
+/// reach it. A fraction also answers the question the reader actually has
+/// ("how much of this is below me?") in the same row as the key that resolves it,
+/// which a thumb position on a 20-row viewport cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct View {
+    /// True when the view has stopped following new rows. New rows then push the
+    /// frozen window's *offset* rather than its contents, so this is the one bit
+    /// the footer needs to explain the screen.
+    pub frozen: bool,
+    /// Transcript rows below the visible window: how far back the reader is.
+    /// Zero means the last row of the transcript is on screen.
+    pub rows_below: usize,
+    /// Total transcript rows, including the part on screen.
+    pub total_rows: usize,
+}
+
+impl View {
+    /// The word that says the transcript is not following, plus the position —
+    /// `↑ 12/40` — or `None` while the view is live.
+    ///
+    /// The count is part of the same badge rather than a separate field so a
+    /// narrow terminal cannot show the word and lose the number: they are one
+    /// answer to "where am I", and half of it is a worse lie than none.
+    ///
+    /// Suppressed when the reader is at the bottom (`rows_below == 0`) even if
+    /// the frozen flag is set: a transcript that fits on one screen has nothing
+    /// to scroll to, and "frozen 0/6 rows back" would be true and useless.
+    pub fn badge(&self, theme: &Theme) -> Option<String> {
+        if !self.frozen || self.rows_below == 0 {
+            return None;
+        }
+        Some(format!(
+            "{} {}/{}",
+            theme.glyphs.back, self.rows_below, self.total_rows
+        ))
+    }
+}
 
 /// What the footer should say, chosen by the caller from the live app state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -43,6 +97,8 @@ pub struct Hints {
     /// Set while a run is in flight, so the footer can say how to stop it, and
     /// how many messages are waiting behind it.
     pub queued: usize,
+    /// Where the transcript view sits: live, or frozen above the tail.
+    pub view: View,
 }
 
 impl Hints {
@@ -58,9 +114,23 @@ impl Hints {
     /// mentions it, while `enter send` is stated by the composer's own
     /// placeholder and stated again by the row itself.
     pub fn idle(bindings: &KeybindingsManager) -> Self {
+        Self::idle_at(bindings, View::default())
+    }
+
+    /// The idle hints for a view that may be frozen.
+    ///
+    /// A frozen view is a different keyboard: the reader is looking at the past
+    /// and the one key they cannot guess is the one that comes back, so it leads
+    /// the set and `send` — which would queue a message they cannot see the
+    /// bottom of — steps aside for it. The exit is stated first and the way
+    /// further back is stated next; both are live in this state, and both are
+    /// resolved from the table like every other hint.
+    pub fn idle_at(bindings: &KeybindingsManager, view: View) -> Self {
+        if view.frozen {
+            return Self::frozen(bindings, view);
+        }
         let mut hints = Self::at_composer(bindings, "insert");
-        hints.push(bindings, "app.transcript.pageUp", "scroll back");
-        hints.push(bindings, "app.transcript.pageDown", "scroll forward");
+        Self::push_transcript_keys(&mut hints, bindings);
         hints.push(bindings, "tui.input.newLine", "newline");
         hints.push(bindings, "app.palette", "palette");
         hints
@@ -68,14 +138,27 @@ impl Hints {
 
     /// The hints for a running session.
     pub fn running(bindings: &KeybindingsManager, queued: usize) -> Self {
+        Self::running_at(bindings, queued, View::default())
+    }
+
+    /// The running hints for a view that may be frozen.
+    pub fn running_at(bindings: &KeybindingsManager, queued: usize, view: View) -> Self {
+        if view.frozen {
+            let mut hints = Self::frozen(bindings, view);
+            hints.push(bindings, "app.interrupt", "stop");
+            hints.queued = queued;
+            if queued > 0 {
+                hints.keys.push(("queued".to_string(), queued.to_string()));
+            }
+            return hints;
+        }
         let mut hints = Self::at_composer(bindings, "run");
         // The same chord, a different promise: while a run is in flight Enter
         // queues the message rather than sending it.
         hints.keys[0].1 = "queue".to_string();
         // While the model is talking, scrolling is what a reader reaches for:
         // the tail is streaming and the part they want to re-read is above it.
-        hints.push(bindings, "app.transcript.pageUp", "scroll back");
-        hints.push(bindings, "app.transcript.pageDown", "scroll forward");
+        Self::push_transcript_keys(&mut hints, bindings);
         hints.push(bindings, "app.interrupt", "stop");
         if queued > 0 {
             hints.keys.push(("queued".to_string(), queued.to_string()));
@@ -83,6 +166,45 @@ impl Hints {
         hints.push(bindings, "app.palette", "palette");
         hints.queued = queued;
         hints
+    }
+
+    /// The hints while the view is frozen: go further back, or come back.
+    ///
+    /// `mode` is deliberately unchanged from the live row. The reader is still
+    /// typing into a live composer — only the transcript below it stopped
+    /// following — and a mode word that changed would claim a keyboard state the
+    /// app does not have. What changed is stated by the position badge, which
+    /// lives on this row and nowhere else ([`View::badge`]).
+    ///
+    /// **Order is survival.** The existing narrow-row test in this module pinned
+    /// the rule the hard way: the hint pushed *first* is the one a 60-column row
+    /// beside a workspace path keeps. The exit is pushed first for that reason —
+    /// it is the one key on this row the reader cannot infer from the screen,
+    /// because a frozen view looks exactly like a slow model. At 80 columns both
+    /// hints print; at 60 the position and the exit survive and "further back" is
+    /// what gives way.
+    ///
+    /// PageDown (toward live) is deliberately not listed while frozen: it is the
+    /// same journey as the exit taken incrementally, and it is the first thing a
+    /// reader who has scrolled up has already discovered.
+    fn frozen(bindings: &KeybindingsManager, view: View) -> Self {
+        let mut hints = Self {
+            mode: Some("insert".to_string()),
+            view,
+            ..Self::default()
+        };
+        hints.push(bindings, "app.transcript.live", "jump to live");
+        hints.push(bindings, "app.transcript.pageUp", "further back");
+        hints
+    }
+
+    /// The two paging keys, in the order a narrow row keeps them.
+    ///
+    /// Shared by both live rows so PageUp cannot be advertised in one state and
+    /// not the other: they are the same binding and the same promise.
+    fn push_transcript_keys(hints: &mut Self, bindings: &KeybindingsManager) {
+        hints.push(bindings, "app.transcript.pageUp", "scroll back");
+        hints.push(bindings, "app.transcript.pageDown", "scroll forward");
     }
 
     /// The hints while a permission ask owns the keyboard.
@@ -153,6 +275,16 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
     // (`enter send` / `enter queue`), and the word is what tells them apart.
     if let Some(mode) = &hints.mode {
         left.push(Span::styled(mode.clone(), theme.accent()));
+    }
+    // Where the view is, immediately after the mode and before the keys: it
+    // qualifies both. `warn` rather than `accent` because a view that stopped
+    // following the run is a state to notice, not a brand colour — and on a
+    // no-colour terminal it is still the word's glyph and digits that carry it.
+    if let Some(badge) = hints.view.badge(theme) {
+        if !left.is_empty() {
+            left.push(Span::raw(" "));
+        }
+        left.push(Span::styled(badge, theme.warn()));
     }
     for (key, action) in hints.keys.iter() {
         if !left.is_empty() {
@@ -370,5 +502,148 @@ mod tests {
                 "trailing padding looks like a bug: {line:?}"
             );
         }
+        // The frozen row is the widest state the footer has (badge + exit +
+        // paging); it must not wrap at any supported width either.
+        let frozen = Hints::idle_at(
+            &defaults(),
+            View {
+                frozen: true,
+                rows_below: 120,
+                total_rows: 340,
+            },
+        );
+        for width in [44u16, 60, 80] {
+            let line = render(width, &frozen);
+            assert!(
+                crate::ui::layout::display_width(&line) <= width as usize,
+                "frozen footer overflowed at {width}: {line:?}"
+            );
+        }
+    }
+
+    // ---- the frozen view ------------------------------------------------------
+    //
+    // The audit's D11: scrolling up used to be silent, `G` did nothing, and
+    // nothing on screen said where the reader was. These are the three promises
+    // that replaced it.
+
+    fn frozen_view() -> View {
+        View {
+            frozen: true,
+            rows_below: 12,
+            total_rows: 40,
+        }
+    }
+
+    /// The row's position badge as the ASCII palette draws it.
+    ///
+    /// Taken from the theme's glyph table rather than written as `^` here: the
+    /// badge's marker is a repertoire decision, and a test that hardcoded one
+    /// would pass on a console the UI cannot actually draw on.
+    fn ascii_badge(view: &View) -> String {
+        view.badge(&Theme::new(ColorMode::Ansi16, ASCII))
+            .expect("a frozen view with rows below it has a position")
+    }
+
+    #[test]
+    fn a_frozen_view_says_so_and_names_the_way_back() {
+        let bindings = defaults();
+        let hints = Hints::idle_at(&bindings, frozen_view());
+        let line = full_line(&hints);
+
+        // The state, and where in the transcript it sits.
+        assert!(
+            line.contains(&ascii_badge(&frozen_view())),
+            "no position badge: {line:?}"
+        );
+        // The exit, resolved from the table like every other hint.
+        let live = bindings.key_text("app.transcript.live").expect("bound");
+        assert!(
+            line.contains(&format!("{live} jump to live")),
+            "the frozen row must name the way back (`{live}`): {line:?}"
+        );
+        // And the frozen row is not the live row with extra words on it: `send`
+        // would queue a message the reader cannot see the end of.
+        assert!(!line.contains("enter send"), "{line:?}");
+    }
+
+    #[test]
+    fn the_position_badge_is_the_only_thing_that_distinguishes_frozen_from_live() {
+        // Why the badge exists at all: the mode word stays `insert` — the reader
+        // is still typing into a live composer, only the transcript stopped
+        // following — so if the badge vanished there would be nothing on the row
+        // to say the view is parked.
+        let bindings = defaults();
+        let live = full_line(&Hints::idle_at(&bindings, View::default()));
+        let frozen = full_line(&Hints::idle_at(&bindings, frozen_view()));
+        let badge = ascii_badge(&frozen_view());
+        assert!(
+            !live.contains(&badge),
+            "a live view shows no position: {live:?}"
+        );
+        assert!(frozen.contains(&badge), "{frozen:?}");
+        assert!(
+            live.starts_with("insert · ") && frozen.starts_with("insert ^ "),
+            "the mode word is stable across both: {live:?} / {frozen:?}"
+        );
+        // A view that is frozen but has nothing below it (a transcript shorter
+        // than the screen) prints no badge: `0/6 rows back` is true and useless.
+        let nothing_below = View {
+            frozen: true,
+            rows_below: 0,
+            total_rows: 6,
+        };
+        assert_eq!(
+            nothing_below.badge(&Theme::new(ColorMode::Ansi16, ASCII)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_frozen_hint_set_is_honest_about_the_keys_it_names() {
+        // The same property the live row is held to, on the row that has the most
+        // to lose from a lie: every key printed resolves back to a binding, so a
+        // hint cannot outlive a rebinding.
+        let bindings = defaults();
+        let hints = Hints::idle_at(&bindings, frozen_view());
+        assert!(hints.keys.iter().any(|(_, a)| a == "jump to live"));
+        for (key, action) in &hints.keys {
+            assert!(
+                bindings.key_text_round_trips(key),
+                "`{key} {action}` names a key that resolves to no binding"
+            );
+        }
+        // ...and a rebinding moves the hint, which is the whole reason it is
+        // resolved rather than written down.
+        let mut map = HashMap::new();
+        map.insert("app.transcript.live".into(), vec!["ctrl+l".into()]);
+        let rebound = KeybindingsManager::from_map(map);
+        let line = full_line(&Hints::idle_at(&rebound, frozen_view()));
+        assert!(line.contains("ctrl+l jump to live"), "{line:?}");
+        assert!(!line.contains("g jump to live"), "{line:?}");
+    }
+
+    #[test]
+    fn the_position_counts_what_is_below_the_window_not_what_is_above() {
+        // "12/40" has to mean something a reader can act on. Rows *below* is that
+        // number: `g` returns to live, and every one of those rows is what the
+        // journey back passes through. A count of rows scrolled past would read
+        // as progress through the transcript, which it is not.
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let mid = View {
+            frozen: true,
+            rows_below: 12,
+            total_rows: 40,
+        };
+        assert_eq!(mid.badge(&theme).as_deref(), Some("^ 12/40"));
+        let top = View {
+            frozen: true,
+            rows_below: 40,
+            total_rows: 40,
+        };
+        assert_eq!(top.badge(&theme).as_deref(), Some("^ 40/40"));
+        // ASCII repertoire: the badge's glyph comes from the theme's table, so a
+        // legacy code page gets a character it can actually draw.
+        assert!(theme.glyphs.back.is_ascii());
     }
 }

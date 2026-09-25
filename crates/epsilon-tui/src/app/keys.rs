@@ -1186,6 +1186,21 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.notice(format!("{label} (Ctrl+X toggles)"));
             false
         }
+        // D11: jump to live — the exit from a frozen view.
+        //
+        // Guarded on `scroll_from_bottom`, which is the frozen state itself, so
+        // this arm is unreachable from a live view and the chord keeps its letter
+        // while the reader is typing. That guard is the whole reason a bare
+        // letter is acceptable here: M13 learned it the expensive way, when a
+        // bare `x` for "expand" made the letter x untypable in the editor.
+        //
+        // Zero means "follow the tail" rather than "one row above it" — the same
+        // value the transcript's follow-scroll snaps to, so there is exactly one
+        // representation of live and no way to land a row short of it.
+        _ if app.scroll_from_bottom > 0 && app.keybindings.matches("app.transcript.live", &key) => {
+            app.scroll_from_bottom = 0;
+            false
+        }
         KeyCode::Char(c) => {
             app.insert_char_tracked(c);
             false

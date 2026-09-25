@@ -29,3 +29,4 @@ pub mod undo;
 pub mod wrap;
 
 pub use app::{LiveFetcher, TuiConfig, run};
+pub use ui::theme::ThemeMode;

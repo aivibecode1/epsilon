@@ -33,7 +33,15 @@ fn streaming_tail_is_visible_after_full_transcript() {
     });
     let mut terminal = Terminal::new(TestBackend::new(60, 5)).unwrap();
     terminal
-        .draw(|frame| draw_transcript(frame, &mut app, frame.area()))
+        .draw(|frame| {
+            // The production path measures the transcript's own region before it
+            // draws; these two tests call the transcript renderer directly, so
+            // they measure the same rectangle through the same one-row draft the
+            // shell will wrap.
+            let area = App::transcript_window(frame.area(), 1);
+            let geometry = app.measure_transcript(area);
+            draw_transcript(frame, &mut app, area, geometry);
+        })
         .unwrap();
     let screen: String = terminal
         .backend()
@@ -51,9 +59,17 @@ fn long_transcript_renders_latest_visible_rows() {
     for index in 0..100 {
         app.ui.push_notice(format!("ROW-{index:03}"));
     }
-    let mut terminal = Terminal::new(TestBackend::new(60, 5)).unwrap();
+    // 60×12 rather than 60×5: the transcript now renders into its own region
+    // (the shell's, not the whole frame), so a frame below the layout floor no
+    // longer has room for two rows of history. That is the fix, not a lost
+    // assertion — see the frame test that pins it.
+    let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
     terminal
-        .draw(|frame| draw_transcript(frame, &mut app, frame.area()))
+        .draw(|frame| {
+            let area = App::transcript_window(frame.area(), 1);
+            let geometry = app.measure_transcript(area);
+            draw_transcript(frame, &mut app, area, geometry);
+        })
         .unwrap();
     let screen: String = terminal
         .backend()
@@ -63,9 +79,8 @@ fn long_transcript_renders_latest_visible_rows() {
         .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
         .collect();
     assert!(screen.contains("ROW-099"), "tail disappeared: {screen}");
-    assert!(screen.contains("ROW-095"));
+    assert!(screen.contains("ROW-095"), "{screen}");
 }
-
 #[test]
 fn wrapped_draft_grows_composer_at_supported_widths() {
     for (width, height) in [(60, 20), (80, 24), (120, 30), (160, 40)] {

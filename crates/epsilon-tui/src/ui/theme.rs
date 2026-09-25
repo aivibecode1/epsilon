@@ -21,8 +21,40 @@
 //! # Adding a color
 //!
 //! Give the role a *meaning*, not an appearance: `success`, not `green`. Then map
-//! it in both palette tables below. If a role needs the same color as another
+//! it in **both** palette tables below. If a role needs the same color as another
 //! role, that is a signal the two roles are actually one — merge them.
+//!
+//! # Four decisions this file encodes, and why each one is here
+//!
+//! 1. **Color depth is detected once, at startup**, and the theme carries it.
+//!    Claiming 24-bit color on a console that lacks it produces unreadable output;
+//!    falling back to 16 colors merely looks plainer. The asymmetry is the whole
+//!    argument for a conservative default.
+//! 2. **`NO_COLOR` still has to convey meaning.** With color off, emphasis comes
+//!    from attributes — bold for a value the reader must catch, dim+italic for
+//!    background material. A theme that maps every role to `Style::default()`
+//!    under `NO_COLOR` makes reasoning traces indistinguishable from answers.
+//! 3. **ANSI-16 body text is the terminal's own default foreground, and no other
+//!    slot.** This is the rule the light theme exists for: `Color::White` as body
+//!    text is invisible on a light terminal and `Color::Black` is invisible on a
+//!    dark one, so neither may be a default. `Color::Reset` is not a color, it is
+//!    "whatever this terminal draws normal text in", which is the one ANSI value
+//!    guaranteed to contrast with the background the user chose. The same
+//!    reasoning covers `text_dim`/`text_faint`: the quiet roles keep their
+//!    truecolor values and lean on `DIM` for their *look*, because every ANSI
+//!    slot that would read as "quiet grey" is invisible on one of the two
+//!    backgrounds. Filled bands are withheld entirely off truecolor
+//!    ([`Theme::has_surfaces`]) rather than approximated with a background that
+//!    collides with the user's own theme.
+//! 4. **A palette is selected, never sniffed.** There is no reliable
+//!    cross-platform way to ask a terminal whether its background is light:
+//!    `COLORTERM` and `WT_SESSION` describe color *depth*, and the one live query
+//!    that would answer it (`OSC 11`) needs a round-trip the terminal may not
+//!    answer inside a pipe, over SSH, or in `tmux` — and blocking startup on a
+//!    timeout is worse than one wrong guess. So [`ThemeMode`] is chosen by the
+//!    user (`--light`, `EPSILON_THEME=light`, `[tui] theme` in the config), and
+//!    the failure mode is a one-time toggle instead of a flicker or a guess every
+//!    session.
 
 use ratatui::style::{Color, Modifier, Style};
 
@@ -59,6 +91,62 @@ impl ColorMode {
             return Self::Truecolor;
         }
         Self::Ansi16
+    }
+}
+
+/// Environment variable that selects the palette, for a user who does not want to
+/// pass a flag every launch (`EPSILON_THEME=light`).
+pub const THEME_ENV: &str = "EPSILON_THEME";
+
+/// Which palette to resolve roles from.
+///
+/// Selected, never detected: see decision 4 in the module docs. Everything else
+/// about a session may be probed and adapted; this one is a question only the
+/// user can answer, and one wrong answer makes the transcript unreadable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeMode {
+    /// Tuned for a dark background, which is what most terminals are.
+    #[default]
+    Dark,
+    /// Tuned for a light background: darker text, pastel bands, and no
+    /// near-white anywhere.
+    Light,
+}
+
+impl ThemeMode {
+    /// The palette named by the environment, or [`Self::Dark`] when the variable
+    /// is unset or names neither variant.
+    ///
+    /// A typo falls back to the default rather than failing: a config mistake
+    /// must not make the TUI refuse to start, which is the same rule
+    /// `epsilon_core::config` follows for every other key.
+    pub fn detect() -> Self {
+        Self::from_name(&std::env::var(THEME_ENV).unwrap_or_default()).unwrap_or_default()
+    }
+
+    /// Parse a palette name (`dark` / `light`, case-insensitively).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+
+    /// The name this mode is selected by, for messages and for the config key.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
+    /// The other palette, for the runtime toggle.
+    pub fn flipped(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
     }
 }
 
@@ -100,6 +188,10 @@ pub struct Glyphs {
     pub minus: &'static str,
     /// A warning.
     pub warn: &'static str,
+    /// How far back a frozen transcript view is: the marker in the footer's
+    /// position badge (`↑ 12/40`, `^ 12/40`). Part of the glyph table like every
+    /// other character the UI draws, so a legacy code page gets `^`.
+    pub back: &'static str,
     /// Spinner frames, advanced on a timer while work is in flight.
     pub spinner: &'static [&'static str],
 }
@@ -122,6 +214,7 @@ pub const UNICODE: Glyphs = Glyphs {
     plus: "+",
     minus: "-",
     warn: "!",
+    back: "↑",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -143,6 +236,7 @@ pub const ASCII: Glyphs = Glyphs {
     plus: "+",
     minus: "-",
     warn: "!",
+    back: "^",
     spinner: &["|", "/", "-", "\\"],
 };
 
@@ -228,14 +322,15 @@ macro_rules! palette {
         }
     };
 }
-
 palette! {
     // Structure: borders, rules, and chrome the eye should skip over.
     border:        (0x3b, 0x40, 0x4a), Color::DarkGray;
 
     border_focus:  (0x62, 0x9d, 0xf5), Color::Cyan;
-    // Text.
-    text:          (0xd7, 0xdb, 0xe2), Color::White;
+    // Text. `Color::Reset` on the ANSI side, never `White`: the terminal's own
+    // default foreground is the only ANSI value guaranteed to contrast with
+    // whatever background the user set (see decision 3 in the module docs).
+    text:          (0xd7, 0xdb, 0xe2), Color::Reset;
 
     text_dim:      (0x8a, 0x92, 0xa3), Color::DarkGray;
 
@@ -243,7 +338,7 @@ palette! {
     // Who is speaking.
     user:          (0x7d, 0xd3, 0xfc), Color::Cyan;
 
-    assistant:     (0xd7, 0xdb, 0xe2), Color::White;
+    assistant:     (0xd7, 0xdb, 0xe2), Color::Reset;
 
     thinking:      (0x8a, 0x92, 0xa3), Color::DarkGray;
     // Outcome.
@@ -259,8 +354,9 @@ palette! {
 
     code_block:    (0x9a, 0xa3, 0xb5), Color::Gray;
     // Filled bands. Deliberately close to a dark terminal background: a band
-    surface_user:    (0x22, 0x24, 0x2c), Color::Reset;
     // should read as a change of surface, not as a selected row.
+    surface_user:    (0x22, 0x24, 0x2c), Color::Reset;
+
     surface_pending: (0x2a, 0x2a, 0x22), Color::Reset;
 
     surface_ok:      (0x1e, 0x2a, 0x22), Color::Reset;
@@ -268,32 +364,146 @@ palette! {
     surface_err:     (0x2e, 0x20, 0x20), Color::Reset;
 }
 
+/// The light palette: the same role names, values that survive a white
+/// background.
+///
+/// Written as a second table rather than as modifiers over the dark one, because
+/// the numbers are not a transform of each other — light-mode "quiet grey" is
+/// *darker* than light-mode body text, and every pastel band has to stay above
+/// the 4.5:1 body-text floor against the text that sits on it. The tests hold
+/// both properties (`the_light_palette_keeps_body_text_readable`), which is what
+/// stops this table from drifting into decoration.
+///
+/// An inner attribute cannot attach docs to macro-generated fields, so the
+/// role-by-role reasoning lives in the comments beside each line, exactly as in
+/// the dark table above.
+macro_rules! light_palette {
+    ($($name:ident: $rgb:expr, $ansi:expr;)*) => {
+        impl Palette {
+            /// Tuned for a light background. Every `ansi` value here is either
+            /// the terminal default or one of the slots that stays legible on
+            /// both backgrounds (see the contrast test) — never `White`, never
+            /// `DarkGray`, which is the pair that disappears on a light theme.
+            pub(crate) const LIGHT: Self = Self {
+                $($name: Slot { rgb: $rgb, ansi: $ansi },)*
+            };
+        }
+    };
+}
+
+light_palette! {
+    // Structure: a hairline that is visible on white without becoming a frame.
+    // 3.6:1 against white — the skill's floor for a non-body role, since a
+    // divider nobody can see is a divider that does not exist.
+    border:        (0xb9, 0xc0, 0xcc), Color::DarkGray;
+
+    border_focus:  (0x1e, 0x63, 0xc4), Color::Cyan;
+    // Text: near-black body copy (14.8:1) rather than pure black, which reads as
+    // a photocopy; secondary and tertiary values stay well above 4.5:1.
+    text:          (0x1f, 0x24, 0x30), Color::Reset;
+
+    text_dim:      (0x4a, 0x53, 0x64), Color::DarkGray;
+
+    text_faint:    (0x5a, 0x63, 0x73), Color::DarkGray;
+    // Who is speaking. The dark palette's pastel cyan is 1.6:1 on white; this is
+    // the same hue taken dark enough to read (6.4:1).
+    user:          (0x0b, 0x5e, 0xa8), Color::Blue;
+
+    assistant:     (0x1f, 0x24, 0x30), Color::Reset;
+
+    thinking:      (0x4a, 0x53, 0x64), Color::DarkGray;
+    // Outcome: the semantic hues, darkened rather than pastelised. All three
+    // clear 4.5:1 on white while staying distinguishable from each other, which
+    // is the property that matters more than any single ratio.
+    success:       (0x1d, 0x6b, 0x3a), Color::Green;
+
+    danger:        (0xa3, 0x22, 0x22), Color::Red;
+
+    warn:          (0x7a, 0x5c, 0x00), Color::Yellow;
+
+    accent:        (0x6b, 0x3f, 0xc4), Color::Magenta;
+    // Inline code and fenced blocks.
+    code:          (0x7a, 0x4a, 0x12), Color::Yellow;
+
+    code_block:    (0x4a, 0x53, 0x64), Color::Gray;
+    // Filled bands: pale tints of white, dark enough to hold body text at 4.5:1
+    // and light enough to read as a change of surface rather than as a
+    // selection. A band that the text on it cannot sit on is worse than no band.
+    surface_user:    (0xdf, 0xe4, 0xee), Color::Reset;
+
+    surface_pending: (0xf4, 0xef, 0xd6), Color::Reset;
+
+    surface_ok:      (0xe0, 0xef, 0xe6), Color::Reset;
+
+    surface_err:     (0xf9, 0xe3, 0xe3), Color::Reset;
+}
+
 /// The resolved styles for one session.
 ///
 /// Built once and stored on the app; widgets read tokens and never touch
-/// [`Color`] directly. That is what makes `NO_COLOR` and the 16-color fallback a
-/// single decision instead of a hunt through every draw function.
+/// [`Color`] directly. That is what makes `NO_COLOR`, the 16-color fallback and
+/// the light palette a single decision instead of a hunt through every draw
+/// function.
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     mode: ColorMode,
+    palette: ThemeMode,
     /// Which glyph repertoire to draw with.
     pub glyphs: Glyphs,
 }
 
 impl Theme {
-    /// Build the theme for a color mode and glyph set.
+    /// Build the theme for a color mode and glyph set, in the default (dark)
+    /// palette.
     pub fn new(mode: ColorMode, glyphs: Glyphs) -> Self {
-        Self { mode, glyphs }
+        Self::with_palette(mode, glyphs, ThemeMode::default())
     }
 
-    /// Detect both from the environment, which is what the app does at startup.
+    /// Build the theme for a color mode, a glyph set and a palette.
+    pub fn with_palette(mode: ColorMode, glyphs: Glyphs, palette: ThemeMode) -> Self {
+        Self {
+            mode,
+            palette,
+            glyphs,
+        }
+    }
+
+    /// Detect the color mode and glyphs from the environment, and take the
+    /// palette from `EPSILON_THEME` unless the caller resolved one (`--light`
+    /// and the config key win over the environment; see the CLI's
+    /// `resolve_theme_mode`).
     pub fn detect() -> Self {
-        Self::new(ColorMode::detect(), Glyphs::detect())
+        Self::with_palette(ColorMode::detect(), Glyphs::detect(), ThemeMode::detect())
     }
 
     /// The color mode in force.
     pub fn mode(&self) -> ColorMode {
         self.mode
+    }
+
+    /// The palette in force.
+    pub fn palette(&self) -> ThemeMode {
+        self.palette
+    }
+
+    /// Switch palettes, returning the theme that was in force so a caller can
+    /// report the change.
+    ///
+    /// This rebuilds styles rather than recolouring the screen: the theme is
+    /// `Copy` and every widget resolves roles through it at draw time, so the
+    /// next frame is already in the new palette and the render cache — which is
+    /// keyed by width and render state, deliberately not by the theme — stays
+    /// valid. Nothing is patched a cell at a time.
+    pub fn set_palette(&mut self, palette: ThemeMode) -> ThemeMode {
+        std::mem::replace(&mut self.palette, palette)
+    }
+
+    /// The colors this theme resolves roles from.
+    fn colors(&self) -> &'static Palette {
+        match self.palette {
+            ThemeMode::Dark => &Palette::DARK,
+            ThemeMode::Light => &Palette::LIGHT,
+        }
     }
 
     // ---- roles ---------------------------------------------------------------
@@ -304,10 +514,12 @@ impl Theme {
     // of a hunt through every draw function.
 
     /// Resolve a role to a style, with optional emphasis. The single place where
-    /// "what does emphasis mean when there is no color" is decided.
+    /// "what does emphasis mean when there is no color" is decided, and the only
+    /// place that reads a palette — which is what makes the light variant one
+    /// decision instead of a hunt through every draw function.
     #[allow(missing_docs)]
     fn role(&self, role: Role, emphasis: Emphasis) -> Style {
-        let slot = Palette::DARK.get(role);
+        let slot = self.colors().get(role);
         let style = match self.mode {
             ColorMode::Truecolor => {
                 Style::default().fg(Color::Rgb(slot.rgb.0, slot.rgb.1, slot.rgb.2))
@@ -518,12 +730,14 @@ impl Theme {
 
     /// Truecolor-only filled band. On a 16-color terminal we skip the fill
     /// rather than approximate it: a wrong background is worse than none,
-    /// because it collides with whatever theme the user already runs.
+    /// because it collides with whatever theme the user already runs. The bands
+    /// are the one place the light palette differs structurally rather than by
+    /// value — a pale tint on white instead of a near-background tint on black.
     fn surface(&self, role: Role) -> Style {
         if self.mode != ColorMode::Truecolor {
             return Style::default();
         }
-        let slot = Palette::DARK.get(role);
+        let slot = self.colors().get(role);
         Style::default().bg(Color::Rgb(slot.rgb.0, slot.rgb.1, slot.rgb.2))
     }
 
@@ -553,6 +767,7 @@ mod tests {
         check(ASCII.cursor_bar);
         check(ASCII.prompt);
         check(ASCII.tool_call);
+        check(ASCII.back);
         for frame in ASCII.spinner {
             check(frame);
         }
@@ -599,5 +814,239 @@ mod tests {
         let rich = Theme::new(ColorMode::Truecolor, UNICODE);
         assert!(rich.has_surfaces());
         assert_ne!(rich.surface_user(), Style::default());
+        // Withholding is a property of the *terminal*, not of the palette: the
+        // light theme must not start filling backgrounds on a 16-color console
+        // just because its tints happen to be pale.
+        let plain_light = Theme::with_palette(ColorMode::Ansi16, ASCII, ThemeMode::Light);
+        assert!(!plain_light.has_surfaces());
+        assert_eq!(plain_light.surface_ok(), Style::default());
+    }
+
+    // ---- the light palette ---------------------------------------------------
+    //
+    // The audit's D8, in the form a test can hold: body text that is legible
+    // against the background the *user* chose, and a second palette that is a
+    // real second palette rather than a rename of the first.
+
+    /// WCAG relative luminance, for contrast arithmetic.
+    fn luminance(rgb: (u8, u8, u8)) -> f64 {
+        fn channel(value: u8) -> f64 {
+            let v = value as f64 / 255.0;
+            if v <= 0.040_45 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * channel(rgb.0) + 0.7152 * channel(rgb.1) + 0.0722 * channel(rgb.2)
+    }
+
+    /// WCAG contrast ratio between two colors, 1.0 (identical) to 21.0.
+    fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f64 {
+        let (x, y) = (luminance(a), luminance(b));
+        let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// The surface a text role actually sits on, in the situation the audit
+    /// named: what the user's own terminal background is.
+    const WHITE: (u8, u8, u8) = (0xff, 0xff, 0xff);
+
+    #[test]
+    fn the_light_palette_keeps_body_text_readable_on_a_white_terminal() {
+        // The defect, stated as a number: the dark palette's body text is 1.19:1
+        // on white — near-invisible, which is what the owner was looking at.
+        let dark = contrast(Palette::DARK.get(Role::text).rgb, WHITE);
+        assert!(
+            dark < 1.5,
+            "the dark palette is supposed to be unreadable on white; it scored {dark:.2}:1"
+        );
+        // And the light palette's, at the WCAG AA floor for body text.
+        for role in [
+            Role::text,
+            Role::assistant,
+            Role::text_dim,
+            Role::text_faint,
+        ] {
+            let ratio = contrast(Palette::LIGHT.get(role).rgb, WHITE);
+            assert!(
+                ratio >= 4.5,
+                "{role:?} scores {ratio:.2}:1 on white, under the 4.5:1 floor"
+            );
+        }
+        // The same for the other direction, at the level the light palette can
+        // actually promise: `Color::Reset` body text follows the terminal, so a
+        // light palette on a dark terminal is readonly-degraded rather than
+        // broken — but a role that is *identical* to the dark palette's is a copy
+        // that forgot to change, and that is checkable.
+        for role in [Role::text, Role::assistant] {
+            assert_ne!(
+                Palette::LIGHT.get(role).rgb,
+                Palette::DARK.get(role).rgb,
+                "{role:?} is the dark palette's value under a light name"
+            );
+        }
+    }
+
+    #[test]
+    fn every_light_role_clears_its_floor_against_every_surface_it_can_sit_on() {
+        // The failure mode a single "text on white" check misses: a band behind a
+        // row, with quiet text on it. A band that its own text cannot sit on is
+        // worse than no band at all.
+        let surfaces = [
+            Role::surface_user,
+            Role::surface_pending,
+            Role::surface_ok,
+            Role::surface_err,
+        ];
+        for surface in surfaces {
+            let bg = Palette::LIGHT.get(surface).rgb;
+            for role in [
+                Role::text,
+                Role::assistant,
+                Role::text_dim,
+                Role::text_faint,
+            ] {
+                let ratio = contrast(Palette::LIGHT.get(role).rgb, bg);
+                assert!(
+                    ratio >= 4.5,
+                    "{role:?} on {surface:?} scores {ratio:.2}:1, under the 4.5:1 floor"
+                );
+            }
+        }
+        // Status colours are short words rather than paragraphs, so 3:1 is their
+        // floor — and they must not be near-invisible on the bands they appear on.
+        for surface in surfaces {
+            let bg = Palette::LIGHT.get(surface).rgb;
+            for role in [Role::success, Role::danger, Role::warn, Role::accent] {
+                let ratio = contrast(Palette::LIGHT.get(role).rgb, bg);
+                assert!(
+                    ratio >= 3.0,
+                    "{role:?} on {surface:?} scores {ratio:.2}:1, under the 3:1 floor"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn both_palettes_keep_the_conversation_legible() {
+        // Not every role may share a value with another: the two pairs that carry
+        // an entire outcome (`success`/`danger`) and an entire voice
+        // (`user`/`assistant`) are the ones a monochrome-looking palette breaks.
+        let dark = Theme::with_palette(ColorMode::Truecolor, UNICODE, ThemeMode::Dark);
+        let light = Theme::with_palette(ColorMode::Truecolor, UNICODE, ThemeMode::Light);
+        for theme in [dark, light] {
+            let name = theme.palette().name();
+            assert_ne!(
+                theme.success(),
+                theme.danger(),
+                "{name}: success and failure must never be the same pixels"
+            );
+            assert_ne!(
+                theme.user(),
+                theme.assistant(),
+                "{name}: the question and the answer must be distinguishable"
+            );
+            assert_ne!(theme.text(), theme.dim(), "{name}: hierarchy collapsed");
+        }
+        // And the two palettes are genuinely two: body text differs in the
+        // direction that matters, which is the whole point of the switch.
+        let dark_text = luminance(Palette::DARK.get(Role::text).rgb);
+        let light_text = luminance(Palette::LIGHT.get(Role::text).rgb);
+        assert!(
+            light_text < 0.1 && dark_text > 0.5,
+            "body text must be dark on light and light on dark: {light_text:.3} / {dark_text:.3}"
+        );
+    }
+
+    #[test]
+    fn body_text_is_never_a_hardcoded_white_or_black() {
+        // The skill forbids both, and for the same reason: they fight the user's
+        // terminal theme. In ANSI-16 — where the palette's `ansi` value is what
+        // is actually emitted — the body roles defer to the terminal, and the
+        // light palette's slots are the dark-on-light members of the safe set.
+        for palette in [Palette::DARK, Palette::LIGHT] {
+            for role in [Role::text, Role::assistant] {
+                assert_eq!(
+                    palette.get(role).ansi,
+                    Color::Reset,
+                    "{role:?} must defer to the terminal's default foreground"
+                );
+            }
+        }
+        // Every *other* slot still has a real colour: `Reset` as a general
+        // answer would mean an all-default palette, which is not a palette.
+        let light = Theme::with_palette(ColorMode::Ansi16, ASCII, ThemeMode::Light);
+        assert_eq!(light.danger().fg, Some(Color::Red), "the light red is Red");
+        assert_eq!(light.success().fg, Some(Color::Green));
+        assert_eq!(light.warn().fg, Some(Color::Yellow));
+        assert_eq!(light.user().fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn no_color_still_separates_the_roles_in_both_palettes() {
+        // `NO_COLOR` is orthogonal to the palette: it is set because the reader
+        // cannot take colour, and a light background is not a reason for the
+        // reasoning trace to become indistinguishable from the answer.
+        for palette in [ThemeMode::Dark, ThemeMode::Light] {
+            let theme = Theme::with_palette(ColorMode::None, ASCII, palette);
+            let name = palette.name();
+            assert_eq!(theme.text(), Style::default(), "{name}: body text is plain");
+            assert_eq!(
+                theme.danger().add_modifier,
+                Modifier::empty(),
+                "{name}: a status is plain text plus its word"
+            );
+            assert_ne!(
+                theme.thinking().add_modifier,
+                Modifier::empty(),
+                "{name}: reasoning needs an attribute when colour is off"
+            );
+            assert_ne!(
+                theme.selected().add_modifier,
+                Modifier::empty(),
+                "{name}: selection must survive"
+            );
+            assert_ne!(
+                theme.title().add_modifier,
+                Modifier::empty(),
+                "{name}: a title must outrank body copy without colour"
+            );
+            assert_eq!(
+                theme.surface_user(),
+                Style::default(),
+                "{name}: no colour means no bands either"
+            );
+        }
+    }
+
+    #[test]
+    fn the_palette_is_selected_by_name_and_survives_a_bad_one() {
+        // The switch is a selection, not a guess: an unknown value falls back to
+        // the default rather than failing to start, the same rule every other
+        // config key follows.
+        assert_eq!(ThemeMode::from_name("light"), Some(ThemeMode::Light));
+        assert_eq!(ThemeMode::from_name("LIGHT"), Some(ThemeMode::Light));
+        assert_eq!(ThemeMode::from_name(" dark "), Some(ThemeMode::Dark));
+        assert_eq!(ThemeMode::from_name("solarized"), None);
+        assert_eq!(ThemeMode::from_name(""), None);
+        assert_eq!(ThemeMode::Light.flipped(), ThemeMode::Dark);
+        assert_eq!(ThemeMode::Dark.flipped(), ThemeMode::Light);
+        assert_eq!(ThemeMode::default(), ThemeMode::Dark);
+
+        // And the runtime switch is a rebuild of the styles, not a repaint.
+        let mut theme = Theme::new(ColorMode::Truecolor, UNICODE);
+        assert_eq!(theme.palette(), ThemeMode::Dark);
+        let was = theme.set_palette(ThemeMode::Light);
+        assert_eq!(was, ThemeMode::Dark, "the switch reports what it replaced");
+        assert_eq!(theme.palette(), ThemeMode::Light);
+        let resolved = match theme.text().fg {
+            Some(Color::Rgb(r, g, b)) => (r, g, b),
+            other => panic!("light body text must be an RGB value, got {other:?}"),
+        };
+        assert!(
+            luminance(resolved) < 0.1,
+            "the switched theme resolves body text from the light table"
+        );
     }
 }

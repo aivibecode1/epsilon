@@ -551,6 +551,158 @@ fn the_advertised_scroll_key_scrolls_the_real_frame() {
     assert!(screen.contains("ROW-"), "the transcript vanished: {screen}");
 }
 
+// ---- D11: the frozen view, on the drawn frame --------------------------------
+//
+// "Scrolling up is silent, `G` does nothing, and there is no scroll position
+// indicator anywhere" was the audit's finding. All three are properties of the
+// screen, so all three are read back from the screen: the frozen state is the
+// footer row's own glyphs, and the return to live is asserted by which transcript
+// rows came back, not by a flag the key handler set.
+
+/// A frame with `count` numbered notices, one per row.
+fn numbered_app(count: usize) -> App {
+    let mut app = bench_app(UiState::new());
+    for index in 0..count {
+        app.ui.push_notice(format!("ROW-{index:03}"));
+    }
+    app
+}
+
+/// A key event of the kind crossterm delivers for a real press.
+fn press(code: KeyCode) -> KeyEvent {
+    KeyEvent {
+        code,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    }
+}
+
+#[test]
+fn paging_up_a_running_view_shows_it_is_frozen_and_where() {
+    // 60×12 leaves the transcript eight rows of the ten numbered ones, so one
+    // PageUp is enough to lose the tail — which is what the reader has to be
+    // able to tell at a glance from the footer.
+    let (mut app, agent, _receivers) = test_app();
+    // ASCII glyphs on purpose: the badge's marker is a repertoire decision, and
+    // the assertion below reads the marker out of the theme rather than writing
+    // it down here.
+    app.theme = Theme::with_palette(
+        ThemeColorMode::Ansi16,
+        crate::ui::theme::ASCII,
+        crate::ui::theme::ThemeMode::Dark,
+    );
+    for index in 0..10 {
+        app.ui.push_notice(format!("ROW-{index:03}"));
+    }
+    let before = render_rows(&mut app, 60, 12);
+    assert!(before.join("\n").contains("ROW-009"), "{before:#?}");
+
+    assert!(!super::keys::handle_key(
+        &mut app,
+        &agent,
+        press(KeyCode::PageUp)
+    ));
+    let frozen = render_rows(&mut app, 60, 12);
+    let screen = frozen.join("\n");
+    let footer = frozen.last().expect("footer row");
+
+    // The state is on the screen: a marker and a count of what is below the
+    // window, in the theme's own glyph repertoire.
+    let back = crate::ui::theme::ASCII.back;
+    assert!(
+        footer.contains(back),
+        "nothing on the footer says the view stopped following: {footer:?}"
+    );
+    assert!(
+        footer.contains("jump to live"),
+        "the footer does not name the way back: {footer:?}"
+    );
+    // And the position is a count of rows below the window, not a word.
+    let below = app.geometry.rows_below();
+    assert!(below > 0, "the frozen window is at the bottom: {below}");
+    assert!(
+        footer.contains(&format!("{back} {below}/")),
+        "the badge does not report {below} rows below the window: {footer:?}"
+    );
+    // The window really moved: the tail is out of view.
+    assert!(
+        !screen.contains("ROW-009"),
+        "the page key did not move the viewport: {screen}"
+    );
+}
+
+#[test]
+fn the_jump_to_live_key_returns_the_view_to_the_tail() {
+    // The exit, asserted through the production draw path twice over: the rows
+    // that come back are the ones a live view shows, and the frozen marker that
+    // was on the footer is gone. A test that read `scroll_from_bottom` would pass
+    // on a setter with no draw path behind it — the M123 lesson.
+    let (mut app, agent, _receivers) = test_app();
+    app.theme = Theme::with_palette(
+        ThemeColorMode::Ansi16,
+        crate::ui::theme::ASCII,
+        crate::ui::theme::ThemeMode::Dark,
+    );
+    for index in 0..10 {
+        app.ui.push_notice(format!("ROW-{index:03}"));
+    }
+    assert!(!super::keys::handle_key(
+        &mut app,
+        &agent,
+        press(KeyCode::PageUp)
+    ));
+    let frozen = render_rows(&mut app, 60, 12).join("\n");
+    assert!(!frozen.contains("ROW-009"), "{frozen}");
+
+    // The chord comes from the table the footer prints, and the letter is as the
+    // key label spells it — `g`, matching `G` because the matcher compares
+    // characters case-insensitively.
+    let key = app
+        .keybindings
+        .key_text("app.transcript.live")
+        .expect("the jump key must resolve, or the footer is advertising nothing");
+    assert_eq!(key, "g", "the default jump chord moved");
+    assert!(!super::keys::handle_key(
+        &mut app,
+        &agent,
+        press(KeyCode::Char('g'))
+    ));
+
+    let live = render_rows(&mut app, 60, 12);
+    let screen = live.join("\n");
+    assert!(
+        screen.contains("ROW-009"),
+        "the view did not come back to the tail after {key}: {screen}"
+    );
+    let footer = live.last().expect("footer row");
+    assert!(
+        !footer.contains(crate::ui::theme::ASCII.back),
+        "the frozen marker survived the jump: {footer:?}"
+    );
+    assert!(footer.contains("enter send"), "{footer:?}");
+}
+
+#[test]
+fn a_live_frame_never_advertises_the_frozen_position() {
+    // The negative half: the badge is not a permanent fixture of the row. A
+    // footer that always carried a position would be the same defect in the
+    // other direction — chrome that says something it does not mean.
+    let mut app = numbered_app(40);
+    app.theme = Theme::with_palette(
+        ThemeColorMode::Ansi16,
+        crate::ui::theme::ASCII,
+        crate::ui::theme::ThemeMode::Dark,
+    );
+    let rows = render_rows(&mut app, 60, 20);
+    let footer = rows.last().expect("footer row");
+    assert!(
+        !footer.contains(crate::ui::theme::ASCII.back),
+        "a following view reported a position: {footer:?}"
+    );
+    assert_eq!(app.scroll_from_bottom, 0);
+}
+
 // ---- the approval dialog: its size, and the colour it says it uses -----------
 //
 // `draw_dialog`'s own doc comment claimed a danger treatment while the code
@@ -560,6 +712,130 @@ fn the_advertised_scroll_key_scrolls_the_real_frame() {
 // a text-only assertion cannot see a border colour, and a test that asked
 // `draw_dialog` for its height would be asking the code under test to grade
 // itself.
+
+// ---- D8: the light palette, on the drawn frame -------------------------------
+//
+// The audit ranked "no light theme" as a body-text defect: `Color::White` as
+// prose is invisible on a light terminal. The palette tests in `ui::theme` hold
+// the arithmetic; these hold the promise that the *frame* changes when the
+// palette does, which is the half a token table cannot make on its own.
+
+/// The foreground colour of the first cell of `needle` in a drawn frame.
+///
+/// Found by scanning the rendered rows rather than assuming a row and column: the
+/// question is what colour the reader's eye lands on, and that has to come from
+/// the same cells the reader sees. Every needle used with this helper is ASCII,
+/// so the row's byte offset is also its column.
+fn fg_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> ratatui::style::Color {
+    let rows = crate::ui::layout::screen_text(buffer);
+    for (y, row) in rows.split('\n').enumerate() {
+        if let Some(x) = row.find(needle) {
+            let cell = &buffer[(x as u16, y as u16)];
+            return cell.style().fg.unwrap_or(ratatui::style::Color::Reset);
+        }
+    }
+    panic!("{needle:?} never reached the screen: {rows}");
+}
+
+#[test]
+fn the_light_palette_changes_the_body_text_the_frame_draws() {
+    // One frame, one palette, one asserted colour: a notice is drawn in the
+    // system role, which is the quiet-but-readable one the audit found invisible
+    // on a light terminal. Both values come out of the palette tables through
+    // `Theme`, never from a literal in a widget.
+    let prose = "BODYTEXT";
+    let draw_with = |mode: crate::ui::theme::ThemeMode| {
+        let mut app = bench_app(UiState::new());
+        app.theme = Theme::with_palette(ThemeColorMode::Truecolor, crate::ui::theme::UNICODE, mode);
+        app.ui.push_notice(prose);
+        let (buffer, _rows) = render_buffer(&mut app, 60, 12);
+        fg_of(&buffer, prose)
+    };
+    let light = draw_with(crate::ui::theme::ThemeMode::Light);
+    let dark = draw_with(crate::ui::theme::ThemeMode::Dark);
+    assert_ne!(
+        light, dark,
+        "the two palettes drew the same body text: the switch does nothing on screen"
+    );
+    // The light palette's system role, and the dark one's, exactly: an
+    // assertion on "dark-ish" would pass for the *timestamps* and prove nothing
+    // about the prose.
+    assert_eq!(
+        light,
+        ratatui::style::Color::Rgb(0x4a, 0x53, 0x64),
+        "light body text is not the light palette's system role"
+    );
+    assert_eq!(
+        dark,
+        ratatui::style::Color::Rgb(0x8a, 0x92, 0xa3),
+        "dark body text is not the dark palette's system role"
+    );
+    // `Color::White` is what the audit found and what the skill forbids as a
+    // default; the light palette must not resolve to it.
+    assert_ne!(
+        light,
+        ratatui::style::Color::White,
+        "light body text is still white — invisible on a light terminal"
+    );
+}
+
+#[test]
+fn no_color_keeps_the_roles_apart_in_the_light_palette_too() {
+    // `NO_COLOR` is orthogonal to the palette, and the failure it guards against
+    // is the one the skill names: a theme that collapses under it makes reasoning
+    // traces indistinguishable from answers. Read as *attributes on the drawn
+    // cells*, not from the theme object.
+    let mut app = bench_app(UiState::new());
+    app.theme = Theme::with_palette(
+        ThemeColorMode::None,
+        crate::ui::theme::UNICODE,
+        crate::ui::theme::ThemeMode::Light,
+    );
+    app.ui.push_local_input("ASKED");
+    app.ui.push_notice("NOTICED");
+    let (buffer, rows) = render_buffer(&mut app, 60, 12);
+    let screen = rows.join("\n");
+    assert!(
+        screen.contains("ASKED") && screen.contains("NOTICED"),
+        "{screen}"
+    );
+
+    let asked_row = row_of(&rows, "ASKED");
+    let asked_x = rows[asked_row].find("ASKED").expect("found above");
+    let asked = cell(&buffer, asked_x as u16, asked_row as u16).style();
+    // The contract is "no colour", not "no foreground": the frame is composed of
+    // `Style::default()`s and the terminal supplies the rest, so the only
+    // assertion that cannot break on an unrelated default is that nothing here
+    // names a *hue*.
+    assert!(
+        matches!(asked.fg, None | Some(ratatui::style::Color::Reset)),
+        "NO_COLOR must leave the foreground to the terminal, found {:?}",
+        asked.fg
+    );
+
+    // Selection is the other role the theme promises to keep visible without
+    // colour; it is read as an *attribute*, which is what a no-colour terminal
+    // has left.
+    let theme = Theme::with_palette(
+        ThemeColorMode::None,
+        crate::ui::theme::UNICODE,
+        crate::ui::theme::ThemeMode::Light,
+    );
+    assert!(
+        theme
+            .selected()
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD),
+        "selection lost its attribute in the light palette"
+    );
+    assert!(
+        theme
+            .thinking()
+            .add_modifier
+            .contains(ratatui::style::Modifier::DIM),
+        "reasoning lost its attribute in the light palette"
+    );
+}
 
 /// The columns the dialog's frame occupies, across every row it is drawn on.
 ///

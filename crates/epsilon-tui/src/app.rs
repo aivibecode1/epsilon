@@ -54,6 +54,17 @@ pub struct TuiConfig {
     /// strings for security behavior — rewording copy would silently disable
     /// the gate.
     pub trust_review_pending: bool,
+    /// Which palette to draw with (D8), already resolved by the caller: `--light`
+    /// beats `EPSILON_THEME` beats `[tui] theme` in the config, and the frontend
+    /// does not decide that precedence a second time. `None` means nothing was
+    /// resolved, in which case [`crate::ui::theme::ThemeMode::detect`] reads the
+    /// environment.
+    ///
+    /// Selected, never detected. There is no reliable way to ask a terminal
+    /// whether its background is light — `COLORTERM` describes colour *depth*,
+    /// and `OSC 11` needs a round-trip that may never come back inside a pipe,
+    /// over SSH, or in `tmux` — so the answer is the user's to give.
+    pub theme_mode: Option<crate::ui::theme::ThemeMode>,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -258,6 +269,9 @@ pub(crate) struct App {
     trust_review_pending: bool,
     guidance_mode: bool,
     scroll_from_bottom: usize,
+    /// D11: where the transcript's viewport sits, measured at the top of each
+    /// frame so the footer's position badge and the rows beneath it agree.
+    geometry: TranscriptGeometry,
     model_id: String,
     picker_open: bool,
     picker_index: usize,
@@ -589,6 +603,7 @@ impl App {
             trust_review_pending: false,
             guidance_mode: false,
             scroll_from_bottom: 0,
+            geometry: TranscriptGeometry::default(),
             model_id,
             picker_open: false,
             picker_index: 0,
@@ -2798,6 +2813,43 @@ fn levels_help() -> String {
 
 /// Collector's note on the safety rule below.
 ///
+/// Where the transcript's viewport sits on the frame being drawn (D11).
+///
+/// Computed **once per frame, before the chrome**, and that is the whole reason
+/// this type exists. The footer has to say how far back a frozen view is, and the
+/// only place that knows the answer is the transcript's own windowing — which
+/// used to run *after* the footer had already been painted. Measuring first makes
+/// the two read the same numbers in the same frame, instead of the footer
+/// describing the frame before last.
+///
+/// It also keeps the cache reconciled exactly once per frame: a second reconcile
+/// for the footer's benefit would be O(transcript), which is the cost the cache
+/// exists to remove.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TranscriptGeometry {
+    /// The row the visible window starts at, in transcript rows.
+    skip: usize,
+    /// Rows the transcript holds: cached rows plus the in-flight streaming tail.
+    total: usize,
+    /// Rows the viewport can show. Zero means "not measured", which
+    /// [`draw_transcript`] treats as nothing to draw.
+    visible: usize,
+}
+
+impl TranscriptGeometry {
+    /// How many rows sit below the visible window: what the footer's position
+    /// badge reports.
+    ///
+    /// Counted rather than expressed as a percentage because every one of these
+    /// rows is a row the reader must pass through to get back to live; see
+    /// [`crate::ui::footer::View`] for why that is the useful quantity.
+    fn rows_below(&self) -> usize {
+        self.total
+            .saturating_sub(self.skip)
+            .saturating_sub(self.visible)
+    }
+}
+
 /// The too-small fallback cannot paint the approval dialog, so it must also make
 /// sure `handle_key` refuses to answer one: `approval_painted_id` records which
 /// ask a frame actually showed, and clearing it here means no key can authorize
@@ -2832,23 +2884,35 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     // caret lands in the column the text actually occupies.
     let draft_width = crate::ui::shell::composer_text_width(area.width, &app.theme.glyphs);
     let (draft_rows, caret_row, caret_col) =
-        composer_rows(&app.input, app.cursor_chars, draft_width);
+        composer_rows(&app.input, app.cursor_chars, draft_width); // Before the chrome, and before the hints that describe it: measure the
+    // transcript's own region, not the frame, so the footer's position badge and
+    // the rows the body paints come from one arithmetic. The viewport height is
+    // the transcript's, and using the frame's instead is how a "follow the tail"
+    // view ends up four rows short of the tail it claims to be following.
+    //
+    // The split is the same one `shell::paint` will perform — same area, same
+    // draft row count — and [`App::measure_transcript_window`] is the one place
+    // that knows both, so the two cannot drift apart silently.
+    let draft_count = draft_rows.len().max(1) as u16;
+    app.geometry = app.measure_transcript_window(area, draft_count);
     // The theme is `Copy`, so the closure below can still take `&mut app`: the
     // alternative — holding a borrow of `app.theme` across the call — is what the
     // borrow checker refuses, and rightly, since the closure mutates the app.
     let theme = app.theme;
+    let hint_values = app.hints();
     let shell = crate::ui::shell::Shell {
         theme: &theme,
         run: app.run_state(),
         metrics: app.metrics(),
-        hints: app.hints(),
+        hints: hint_values,
         draft: draft_rows,
         caret: (caret_row, caret_col),
         composer_focused: !app.overlay_open(),
         transcript_empty: app.transcript_is_empty(),
     };
+    let geometry = app.geometry;
     let painted = crate::ui::shell::paint(f, area, &shell, |f, transcript_area| {
-        draw_transcript(f, app, transcript_area);
+        draw_transcript(f, app, transcript_area, geometry);
     });
     let transcript_area = painted.transcript;
 
@@ -3115,7 +3179,18 @@ impl App {
 
     /// Footer hints for the current state.
     fn hints(&mut self) -> crate::ui::footer::Hints {
-        use crate::ui::footer::Hints;
+        use crate::ui::footer::{Hints, View};
+        // D11: the frozen state comes from the same measurement the transcript
+        // draws from, so the badge cannot describe a viewport the reader is not
+        // looking at. `scroll_from_bottom > 0` *is* the state — it is what
+        // `apply_with_scroll` shifts when rows arrive, which is what keeps the
+        // window frozen on the same content — and the counts come from the
+        // geometry measured above.
+        let view = View {
+            frozen: self.scroll_from_bottom > 0,
+            rows_below: self.geometry.rows_below(),
+            total_rows: self.geometry.total,
+        };
         let mut hints = if self.pending_ask.is_some() {
             Hints::approval()
         } else if self.overlay_open() {
@@ -3135,9 +3210,9 @@ impl App {
                 ..Hints::default()
             }
         } else if self.ui.running() {
-            Hints::running(&self.keybindings, self.steer_queue_len)
+            Hints::running_at(&self.keybindings, self.steer_queue_len, view)
         } else {
-            Hints::idle(&self.keybindings)
+            Hints::idle_at(&self.keybindings, view)
         };
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
@@ -3174,6 +3249,89 @@ impl App {
         self.ui.lines().is_empty()
             && self.ui.streaming_text().is_empty()
             && self.ui.streaming_thinking().is_empty()
+    }
+
+    // ---- D11: where the view is ---------------------------------------------
+
+    /// The transcript's region for a frame of `area` and a draft of `draft_rows`
+    /// text rows.
+    ///
+    /// The one place that knows the split the shell will perform, exposed so the
+    /// position badge, the body and the tests all measure the same rectangle. The
+    /// production draw calls it once, before the chrome; a test that renders the
+    /// transcript directly calls it too rather than recomputing the layout.
+    fn transcript_window(area: Rect, draft_rows: u16) -> Rect {
+        crate::ui::layout::Regions::split(area, draft_rows).transcript
+    }
+
+    /// Measure the viewport for a frame whose transcript region is not in hand.
+    ///
+    /// Used by the draw path (which must measure before the shell lays out) and by
+    /// the tests that render [`draw_transcript`] on their own.
+    fn measure_transcript_window(&mut self, area: Rect, draft_rows: u16) -> TranscriptGeometry {
+        self.measure_transcript(Self::transcript_window(area, draft_rows))
+    }
+
+    /// Bring the render cache in line with the transcript and measure the
+    /// viewport the body region will show.
+    ///
+    /// `area` is the **transcript's** rectangle. Runs *before* the chrome, because
+    /// the footer reports the frozen view's position and a footer painted before
+    /// the transcript was measured could only ever describe the previous frame.
+    ///
+    /// Calling it twice in one frame is free and harmless: [`crate::render_cache::RenderCache::reconcile`]
+    /// is a no-op once the cache matches the transcript. The draw path calls it
+    /// here, once, and the body then renders the geometry this returned.
+    fn measure_transcript(&mut self, area: Rect) -> TranscriptGeometry {
+        // Body width: the frame minus the gutter the decoration adds back. Wrapping
+        // to the full frame width and then prefixing two columns is how a transcript
+        // row ends up two cells over the edge and wraps, which turns one line into
+        // two and shifts everything below it.
+        let body_width = (area.width as usize).saturating_sub(crate::ui::transcript::GUTTER);
+        // Taken rather than borrowed: the stale set is consumed by the reconcile
+        // that rebuilds those rows, and a card left on the list would rebuild every
+        // frame after.
+        let restale = std::mem::take(&mut self.card_restale);
+        let more_key = self.expand_key();
+        let state = crate::render_cache::RenderState {
+            expand_all: self.prefs.expand_outputs,
+            expanded: &self.card_open,
+            more_key: more_key.as_deref(),
+        };
+        self.render_cache
+            .reconcile(self.ui.lines(), body_width, &state, &self.theme, &restale);
+        // The streaming tail is not a transcript line yet, so it is counted here
+        // rather than by the cache: the viewport scrolls over history *and* the
+        // answer arriving under it, and a total that ignored the tail would make
+        // the position badge jump by a row every time the model wrapped a line.
+        let total = self.render_cache.total_rows() + self.streaming_tail_rows(body_width);
+        let visible = area.height as usize;
+        TranscriptGeometry {
+            skip: crate::scroll::transcript_skip(total, visible, self.scroll_from_bottom),
+            total,
+            visible,
+        }
+    }
+
+    /// The in-flight answer's and reasoning trace's wrapped rows, as a count.
+    ///
+    /// Cheap by construction: two `split('\n')` passes over the in-flight text,
+    /// never a wrap of the transcript. [`draw_transcript`] builds the same rows
+    /// through the same [`crate::wrap::wrap_line`] call, so the count the footer
+    /// reports is the count the body draws.
+    fn streaming_tail_rows(&self, body_width: usize) -> usize {
+        [
+            (self.ui.streaming_thinking(), self.theme.thinking()),
+            (self.ui.streaming_text(), self.theme.assistant()),
+        ]
+        .into_iter()
+        .filter(|(text, _)| !text.is_empty())
+        .map(|(text, style)| {
+            text.split('\n')
+                .map(|line| crate::wrap::wrap_line(&[(line.to_string(), style)], body_width).len())
+                .sum::<usize>()
+        })
+        .sum()
     }
 }
 
@@ -3406,27 +3564,19 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
 /// rows under an open state is the one bug the key exists to prevent. The state is
 /// cheap to compare (a bool, a short list and one string) and changes only when
 /// the user presses a key.
-fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    // Body width: the frame minus the gutter the decoration adds back. Wrapping
-    // to the full frame width and then prefixing two columns is how a transcript
-    // row ends up two cells over the edge and wraps, which turns one line into
-    // two and shifts everything below it.
+/// The measurement already happened in [`App::measure_transcript`]; this function
+/// renders a [`TranscriptGeometry`] rather than deriving it a second time, so the
+/// rows the reader sees are the rows the footer counted. A zero-height geometry
+/// is not a small viewport — it means "not measured", and the caller below the
+/// layout floor legitimately has none.
+fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect, geometry: TranscriptGeometry) {
+    if geometry.visible == 0 {
+        // No viewport, no rows. Drawing with a zero-height window would append the
+        // whole streaming tail and hand ratatui more rows than the area holds.
+        return;
+    }
     let frame_width = area.width as usize;
     let body_width = frame_width.saturating_sub(crate::ui::transcript::GUTTER);
-    // Taken rather than borrowed: the stale set is consumed by the reconcile that
-    // rebuilds those rows, and a card left on the list would rebuild every frame
-    // after. Taking it first is also what keeps the borrows below disjoint.
-    let restale = std::mem::take(&mut app.card_restale);
-    let more_key = app.expand_key();
-    let state = crate::render_cache::RenderState {
-        expand_all: app.prefs.expand_outputs,
-        expanded: &app.card_open,
-        more_key: more_key.as_deref(),
-    };
-    app.render_cache
-        .reconcile(app.ui.lines(), body_width, &state, &app.theme, &restale);
-    let total = app.render_cache.total_rows();
-    let visible = area.height as usize;
 
     // Keep thinking/prose and explicit newlines separate; slice the combined
     // history + live tail in screen rows, including tails taller than the viewport.
@@ -3461,8 +3611,11 @@ fn draw_transcript(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             }
         }
     }
-    let skip =
-        crate::scroll::transcript_skip(total + tail_rows.len(), visible, app.scroll_from_bottom);
+    // `total` here is the CACHED row count, which is what the tail rows are
+    // skipped against: the tail is not in the cache, so it starts at that offset.
+    let total = app.render_cache.total_rows();
+    let skip = geometry.skip;
+    let visible = geometry.visible;
     let mut rows = app.render_cache.visible_rows_with_kinds(skip, visible);
     let remaining = visible.saturating_sub(rows.len());
     rows.extend(

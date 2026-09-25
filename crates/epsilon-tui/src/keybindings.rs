@@ -43,6 +43,17 @@ const DEFAULTS: &[(&str, &[&str])] = &[
     // now, so the key in the footer is the key that scrolls.
     ("app.transcript.pageUp", &["pageup"]),
     ("app.transcript.pageDown", &["pagedown"]),
+    // Jump to live: the other end of the same journey. `G` is vim's
+    // end-of-buffer, but the reader pressing it here means "the newest rows",
+    // and that is what "live" names — the view following the run again. Two
+    // chords, primary first, because `g` is the one the footer can afford to
+    // print and `G` is the one a vim user's hand reaches for; `matches` compares
+    // characters case-insensitively, so the binding covers both.
+    //
+    // It fires only while the view is frozen. A bare letter that stopped typing
+    // its own character would take `g` out of every draft, which is the M13
+    // lesson (a bare `x` for expand made the letter untypable).
+    ("app.transcript.live", &["G", "g"]),
     ("app.live.refresh", &["ctrl+g"]),
     ("tui.editor.undo", &["ctrl+z"]),
     ("tui.editor.redo", &["ctrl+."]),
