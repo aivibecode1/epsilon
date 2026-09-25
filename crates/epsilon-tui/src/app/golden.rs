@@ -1817,13 +1817,14 @@ fn the_split_diff_draws_both_sides_at_a_wide_frame() {
     // The frame really is in split mode — a 138-column body against a 120-column
     // threshold — and the unified fallback would have put the halves on separate
     // rows, which the `replaced == added` assertion above would already have
-    // caught. Stated directly so a future edit to `SPLIT_MIN_WIDTH` fails here
-    // with the reason rather than turning this test into an 80-column test.
-    assert!(
+    // caught. A *compile-time* assertion rather than a run-time one: both values are
+    // constants, so it either holds for every build or for none, and a lowered
+    // `SPLIT_MIN_WIDTH` should fail the build rather than one test. Written this way
+    // after clippy rejected the run-time form (`clippy::assertions_on_constants`) —
+    // which was right, and the compile-time form is the stronger guard too.
+    const _: () = assert!(
         BODY_WIDTH >= crate::ui::card::SPLIT_MIN_WIDTH,
-        "this test's frame must be in split mode: {BODY_WIDTH} body columns against \
-         a {}-column threshold",
-        crate::ui::card::SPLIT_MIN_WIDTH
+        "the split-diff test's frame must be in split mode"
     );
 }
 
