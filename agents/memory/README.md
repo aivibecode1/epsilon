@@ -230,21 +230,28 @@ not themselves trigger runtime compression.
   user doc was fixed); and
   `pi_import_reconciliation::pi_import_carries_every_source_entry` failed once in a combined run
   and passed on every re-run (unexplained flake, worth a second look).
-- **IN FLIGHT (round 63), AND ITS SCOPE GREW PAST THE BRIEF — do not commit unread.** A delegated agent was
-  asked to correct `audit/02-defect-ledger.md` (the root cause of the stale claims: F04/F06/F07/F08/F15/F17
-  still listed open although later milestones closed all but F16), amend ADR-018 (which still says
+- **IN FLIGHT (round 63) — LEDGER SWEEP AND ADR AMENDMENT: docs done, not committed; the code half is VERIFIED.** A delegated agent
+  was asked to correct `audit/02-defect-ledger.md` (the root cause of the stale claims: F04/F06/F07/F08/F15/F17
+  were still listed open although later milestones closed all but F16), amend ADR-018 (which still said
   "Epsilon never stores credentials"), fix the ADR's precedence to match the code, and handle two one-line
   CLI drifts (`--plan`'s help after M82, and `RUST_LOG` with no tracing subscriber in any manifest).
-  It has since touched **`docs/design/epsilon-architecture.md` as well** — the guide the previous audit
-  called **stale wholesale**, with the explicit warning that patching lines would leave a half-current
-  guide and that the honest fixes are a full re-derivation pass or a dated "audit-era snapshot" header.
-  Files in play: `audit/02-defect-ledger.md`, `docs/design/epsilon-decisions.md`,
-  `docs/design/epsilon-architecture.md`, `docs/user/{README,configuration,troubleshooting}.md`,
-  `CHANGELOG.md`, `crates/epsilon-cli/src/main.rs`. `cargo check -p epsilon-cli` was **Finished** at the
-  last check, so the code half compiles.
-  **Before committing:** read the architecture-guide diff specifically — a wholesale rewrite needs review,
-  not a rubber stamp, and the acceptable outcomes are a genuine re-derivation or a dated header, not
-  scattered line patches presented as current. Then battery + reinstall if the CLI strings changed.
+  **Done and verified:** every ledger row carries a status with a legend (OPEN / CLOSED / CLOSED† /
+  FIXED / PARTIAL); the six findings were rewritten with the closing milestone, the regression, and the
+  **residual kept** where one survives (F15's missing user-facing revert, F04's faux-provider-only
+  two-compaction run, F06's untested append-failure and early-EOF paths, F07's incomplete sweep and the
+  `serve` protocol limit, F17's live Done-races-cancel); **F16 re-checked at HEAD and still OPEN**, said so
+  in the row; ADR-018 gained a dated amendment for credentials (M22/M46/M51/M52) and its precedence was
+  corrected to the four-layer chain the code implements; `--plan` help + banner now say `bash`/`shell` are
+  denied; `RUST_LOG` was removed from `--help` (it does nothing) and a CLI test now fails if it returns.
+  `cargo check -p epsilon-cli` exit 0 (72m, one job) and `cargo test -p epsilon-cli --bin epsilon help`
+  **2 passed / 0 failed**.
+  **The architecture guide is the one judgement call:** rather than a re-derivation, it got (a) the four
+  stale F04/F06/F07/F08/F15/F17 defect claims corrected to match the ledger and (b) a **dated header
+  saying the file is an audit-era snapshot, that everything else has not been re-verified, and that the
+  honest fix is re-derivation or removal rather than a patch per line**. Read that diff before committing
+  and judge whether the header is enough, or whether the guide should be re-derived wholesale.
+  **Owed:** a battery if the CLI help strings count as user-visible (they do — `--help` is the shipped
+  reference), and a global `epsilon.exe` reinstall after it, since the help text changed. Not committed.
 - **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files, ~420
   lines) was modified by something other than this task, and is still dirty. Preserve it; never `git add`
   that directory, and do not fold it into a milestone commit.

@@ -93,7 +93,8 @@ FLAGS
                           read-only  commands may look, not touch (the workspace mounts
                                      read-only where the backend can do it)
                           off        no confinement at all — trusted automation only
-  --plan                read-only run: write/edit denied, git commit/push blocked
+  --plan                read-only run: write/edit denied, and bash/shell denied
+                        outright (so git commit/push cannot run either)
   --light               draw the TUI for a light terminal background. There is no
                         reliable way to detect one (COLORTERM describes colour
                         depth, OSC 11 needs a round-trip the terminal may not
@@ -116,7 +117,6 @@ ENVIRONMENT
                         DEEPSEEK_API_KEY, GEMINI_API_KEY, XAI_API_KEY,
                         OPENROUTER_API_KEY, MOONSHOT_API_KEY, ZAI_API_KEY,
                         GROQ_API_KEY). Stored credentials win over env vars.
-  RUST_LOG              tracing filter for diagnostics
   EPSILON_THEME         TUI palette: `dark` (default) or `light`, for a terminal
                         with a light background. `--light` overrides it; an
                         unrecognised value falls back to dark.
@@ -176,7 +176,9 @@ struct Args {
     /// `--resume <path>` / `--continue`: seed history from a prior session file.
     resume: Resume,
     /// `--plan`: read-only research run (opencode plan-agent parity) — write/edit
-    /// denied outright, `git commit`/`git push` blocked; everything else normal.
+    /// and `bash`/`shell` denied outright (M82: command heads cannot establish a
+    /// read-only shell boundary, so shell is refused rather than classified);
+    /// everything else normal.
     plan_mode: bool,
     /// `--yes`: headless runs auto-APPROVE gated asks instead of the safe default
     /// (auto-deny). Explicit opt-in for trusted automation.
@@ -1291,8 +1293,8 @@ async fn dispatch(args: Args) -> i32 {
 
     if args.plan_mode {
         diag.push(
-            "PLAN MODE: read-only research run — write/edit are denied outright; \
-             re-run without --plan to apply changes",
+            "PLAN MODE: read-only research run — write/edit and bash/shell are denied \
+             outright; re-run without --plan to apply changes",
         );
     }
     let use_real: bool = match args.provider {
@@ -2746,6 +2748,21 @@ mod print_outcome_tests {
         ] {
             assert!(h.contains(flag), "help is missing {flag}");
         }
+    }
+
+    #[test]
+    fn help_does_not_advertise_an_environment_variable_nothing_reads() {
+        // `RUST_LOG` was listed here for a long time and **nothing reads it**: no crate in
+        // the workspace depends on `tracing`/`tracing-subscriber` (only the uncommitted
+        // reference harness under `references/` does), no crate installs a subscriber, and
+        // no source file reads the variable. The advertised list is a promise, so the dead
+        // one is gone and this test fails if it comes back without a consumer — a check
+        // against the *help*, not against `std::env`, because the defect was the promise.
+        let h = help_text();
+        assert!(
+            !h.contains("RUST_LOG"),
+            "help advertises RUST_LOG, which no crate initializes tracing for"
+        );
     }
 
     #[test]

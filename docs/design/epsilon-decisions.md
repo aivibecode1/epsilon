@@ -644,7 +644,8 @@ evidence. Vendoring rejected (HA-DSH W5: maintenance burden).
 
 ## ADR-018: Model selection — TUI picker over a bundled catalog, env-var auth
 
-**Decision.** Selection precedence everywhere: `--model` flag (ephemeral) > saved
+**Decision.** Selection precedence everywhere: `--model` flag (ephemeral) > project
+`<workspace>/.epsilon/config.toml` `[model] id` (trust-gated, ADR-012) > saved
 `~/.config/epsilon/config.toml` `[model] id` (persisted by the picker) > bundled default.
 The TUI exposes pi-style `/models` (filter-driven dialog grouped by provider, current model
 floated to top, custom-id row for unknown models) and `/model <id>`; `--list-models [provider]`
@@ -665,6 +666,41 @@ data, so a registry sync later is additive.
 
 **Best possible?** Yes for v1. Deferred: live per-provider listing (genai
 `all_model_names`, auth-gated), favorites/recents memory (opencode), credential store.
+
+**Amendment (M22, M46, M51, M52 — credentials on disk, and the project layer).** Two claims
+in the decision above are no longer true, and the reasoning is worth keeping rather than
+rewriting: "Epsilon never stores credentials" was correct **for v1 and is not any more**, and
+the precedence line omitted the project config layer between M12 and this amendment.
+
+*Credentials.* M22 shipped opencode's `auth` store: `epsilon auth login|list|logout` writing
+`~/.config/epsilon/auth.json` (0600 where the OS supports it, atomic tempfile+rename, and a
+corrupt file is refused rather than overwritten), with the picker showing a stored credential
+as well as an env var — **stored wins, env falls back**, the same precedence `credentials_ready`
+and live model listing use; without it the login flow set everything up except the one thing a
+chat request needs. The rejection reasoning was not wrong, it was *scoped*: the alternative was
+refused for v1 because a secrets-on-disk subsystem is a commitment, and ADR-012's
+declarative-config rule — no `${VAR}` interpolation, no code evaluation — still holds, because
+`auth.json` is **not** config: it is a data file owned by one subsystem, with its own lock, its
+own permission mode and its own refusal to clobber. M46 then added the OAuth credential shape
+(`StoredCredential::{Api, Oauth}` with liberal reads and canonical writes), M51 the
+refresh-before-use path (exchange off the auth lock, locked re-check on persist, failures
+falling through to the key path so a stale token never reaches the wire), and M52 the login
+ceremonies (PKCE with a loopback listener, RFC 8628 device polling) reachable from both
+`epsilon auth login <provider> --oauth [--paste]` and the TUI's `/login <provider> oauth`.
+What survives of the original decision is the part that mattered: **Epsilon embeds no
+credentials** — client ids are env-or-config and never another project's registration — and the
+picker's auth detection is still "is a credential usable", never a value shown on screen. The
+label at the top of this ADR is therefore stale: auth here is no longer env-var-only.
+
+*Precedence.* ADR-012's own M12 amendment already recorded the model precedence as
+`--model` flag > project config > global saved > default, and the CLI has implemented exactly
+that since M12: `crates/epsilon-cli/src/main.rs` resolves the candidate as
+`args.model_id.or_else(|| project.model_id.clone()).or_else(epsilon_core::config::load_model_id)`
+(the line below its own comment naming the same order), where `project` comes from
+`load_project_config`, the trust-gated `.epsilon/config.toml`. So this ADR's short chain was the
+stale half, not [`docs/user/configuration.md`](../user/configuration.md), which cites this ADR
+for the four-layer chain and matches the code. Corrected above; the project layer is
+trust-gated, so a repository cannot silently switch the model a user runs.
 
 **Amendment (2026-08, M17).** Catalog regenerated from a live models.dev fetch with
 REAL prices (placeholder era ends; footer cost is now an estimate against public list

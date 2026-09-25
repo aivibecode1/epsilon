@@ -49,7 +49,7 @@ command = "code --wait"   # used by Ctrl+O / Alt+E and /editor
 | Variable | Purpose |
 |---|---|
 | `<PROVIDER>_API_KEY` | credential fallback when nothing is stored |
-| `RUST_LOG` | advertised by help, but no application tracing initialization was established in the audit; do not rely on it for diagnostics |
+| `RUST_LOG` | **does nothing.** No crate in this workspace depends on `tracing`/`tracing-subscriber` and none installs a subscriber, so nothing reads the variable; `epsilon --help` no longer lists it, and headless diagnostics go to stderr regardless |
 | `EPSILON_STREAM_IDLE_SECS` | seconds of stream silence before a turn fails (default 120; `0` disables) |
 
 ## Files on disk

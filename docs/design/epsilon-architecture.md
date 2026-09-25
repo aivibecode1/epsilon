@@ -5,6 +5,18 @@ The [audit](../../audit/README.md) records verified defects; the
 [ADR log](epsilon-decisions.md) records design intent. Accepted intent is not proof
 of implemented behavior. The pi port remains incomplete.
 
+> **Dated snapshot — audit era (2026-09-16), partly corrected since.** This guide was
+> written against the audited working tree, and an independent documentation audit later
+> verified it stale in more than one place: several claims describe code that has since
+> moved, and some `file:line` references have drifted onto unrelated lines. Four of its
+> defect claims were corrected on 2026-09-23 by the ledger sweep — the F04, F06, F07, F08,
+> F15 and F17 paragraphs now say what closed them and where the evidence is — and the
+> positions of those findings are the [defect ledger](../../audit/02-defect-ledger.md)'s,
+> not this file's. **Everything else here has not been re-verified against the code.**
+> The honest fix for the rest is a re-derivation pass or removing the guide, not a patch
+> per line; until one of those happens, read a specific claim here as a hypothesis to check
+> against the implementation rather than as current description.
+
 ## Workspace and dependency graph
 
 The existing Cargo workspace already provides conventional `crates/<name>/src/`
@@ -88,12 +100,24 @@ shared knowledge, not resolved-object identity or race-resistant containment (F0
 
 `epsilon-session/src/store.rs` owns append/read/index/navigation and active-branch
 model projection. Compaction appends summaries rather than deleting old messages.
-That design does not establish correct persistence:
+Three defects in this area were found in the audit era and have since been closed,
+each with a regression — see the [defect ledger](../../audit/02-defect-ledger.md) for
+the evidence rather than taking this list's word for it:
 
-- Earlier summaries accumulate in subsequent compacted projections (F04).
-- Core updates memory independently and discards durable mutation errors
-  (`epsilon-core/src/lib.rs:743–777,1497–1512`, F07).
-- Some complete unsupported final entries enter torn-tail truncation (F08).
+- Earlier summaries accumulating in later compacted projections (F04): closed in M86,
+  which clears the projection before installing the latest summary + retained tail, with
+  the alternate-branch variant executed in M90.
+- Core updating memory independently of a durable mutation that failed
+  (`epsilon-core/src/lib.rs`, F07): closed in M122/M124/M133 — the turn loop reports the
+  failure, no later request is built from a view that disagrees with the loop, and `serve`
+  logs a refused run instead of discarding it. Residual: M122's own sweep of other
+  discarded-write sites is not proven exhaustive.
+- Complete unsupported final entries entering torn-tail truncation (F08): closed in M108
+  (`is_whole_json` is the discriminator; the file stays byte-identical on refusal), and
+  M113/M116 replaced the whole-session refusal with keeping a foreign entry and saying so.
+
+The lines below this section were written before those milestones and are stale where
+they cite these findings; the ledger rows are the current status.
 
 Leases live in `epsilon-session/src/lease.rs`. The TUI's `/fork` copies a session file
 without switching to it; `/tree` shows the active branch. No Rust `BranchSummary`
@@ -102,15 +126,20 @@ session-file compatibility.
 
 `epsilon-core/src/prompt.rs` assembles stable/context/volatile sections;
 `compact.rs` owns context selection and summary construction. Deterministic assembly
-supports cache reuse but cannot guarantee provider cache hits. Summary acceptance
-and cancellation require hardening (F06), as does persistence of local cancellation
-salvage (F17). Byte-identical replay of every provider request is not established.
+supports cache reuse but cannot guarantee provider cache hits. Summary acceptance and
+cancellation (F06) and persistence of local cancellation salvage (F17) were closed in M86:
+a pass commits only on a non-failure stop reason, usable text and a successful durable
+append, and the abort arms push their terminal message and emit `MessageEnd` like a
+completed turn. Byte-identical replay of every provider request is not established.
 
-`epsilon-tools/src/checkpoint.rs` records preimages before edits. Skipped captures
-are not safely distinguished from creation at restore, ledger errors are swallowed,
-and later user changes lack conflict checks (F15). Capture is implemented; safe
-user undo is not established. Do not replace it with a second snapshot subsystem
-before its existing contracts work.
+`epsilon-tools/src/checkpoint.rs` records preimages before edits. The two restore defects
+the audit found are closed — M100 refuses a skipped capture instead of deleting the file it
+could not save, M104 compares content (not metadata) before overwriting and refuses an entry
+it cannot verify, and `append` reports its failure — but **nothing in the product calls
+`restore`**, so safe user undo is still not established: the consumer arrives with a rewind
+command that does not exist. The refusal is also deliberately bare ("revert it by hand"), and
+ledger-append serialization and blob-path validation remain on the finding's list. Do not
+replace the store with a second snapshot subsystem before its existing contracts work.
 
 ## Frontends and integrations
 

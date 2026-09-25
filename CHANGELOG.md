@@ -5,6 +5,18 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Changed
+- **The help text stopped promising a variable that does nothing, and told the truth about
+  `--plan`.** `RUST_LOG` was listed under `ENVIRONMENT` as a "tracing filter for diagnostics"
+  while no crate in the workspace depends on `tracing`/`tracing-subscriber`, none installs a
+  subscriber, and no source file reads the variable — so setting it changed nothing, and the
+  list of environment variables a user trusts was the wrong place for a dead one. It is
+  removed, and a test now fails if it returns without a consumer. The `--plan` line said
+  "write/edit denied, git commit/push blocked", which was the pre-M82 ruleset: plan mode
+  denies `bash` and `shell` outright (command heads cannot establish a read-only shell
+  boundary), so `git commit` is refused as one instance of that rather than by pattern. Both
+  are user-visible strings in `epsilon --help`; no behaviour changed.
+
 ### Added
 - **`serve` mode reports a run it refused (M133).** The server's boot task did
   `let _ = agent.run(message).await;` with nothing subscribed to the agent's notices, so when a durable

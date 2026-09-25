@@ -6,30 +6,59 @@
 **Severity:** P0 = potential destructive loss or fundamental execution-boundary failure; P1 = blocking reliability/correctness; P2 = workflow or maintainability. Priority is not an exploitability rating.
 **Evidence:** E = executed here; S = source-verified; I = conditional consequence/inference. Unless marked E, a proposed regression below was **not run**. Estimates include tests for one experienced Rust engineer; see 04 for dependency order.
 
+**Update 2026-09-23 (status sweep):** the cells an earlier audit left blank had become a false bill of
+health — this table still listed F04, F06, F07, F08, F15 and F17 as open long after milestone
+M86–M133 closed them, and because the guides point here as the owner of "current defects", each
+un-updated row kept the stale claim alive in every document citing it. Every row now carries a
+status, and the six rewritten findings say what closed them, by which milestone, and what was left
+behind. Nothing else in this file changed: the other rows were not re-verified in this pass and are
+marked accordingly.
+
+**Status legend**
+- **OPEN** — the defect is in the code now. The row's own section carries the pre-fix source trace
+  and the unmet acceptance bar.
+- **CLOSED** — a landed milestone fixed the finding, and its section names the milestone, the
+  regression that pins it, and the evidence. Status is about the code, not about how comfortable
+  the evidence is; where a claim rests on a commit message rather than a preserved battery, the
+  section says so.
+- **CLOSED†** — fixed *and* still carrying a named residual: a path no test exercises, a limit the
+  fix documented, or an item from the finding's own acceptance list that was deliberately not
+  claimed. Read the section for the residual before treating the row as settled.
+- **FIXED** — code fixed, but the verification the finding demanded (a frozen-candidate battery, a
+  negative control, or a named regression) is still owed. **FIXED is not CLOSED.**
+- **PARTIAL** — some sub-claims in the row are resolved and others are still true; the section says
+  which are which.
+
+A milestone log or the [timeline](../docs/history.md) row is the citation for a closure, not this
+table: a reader who doubts a status should open the milestone named in the row. Conversely, **a row
+must not be marked CLOSED on the strength of this table's own say-so** — that is the failure this
+update exists to correct.
+
 ## Ranked inventory
 
-| ID | Priority | Finding | Evidence | Effort / change risk |
-|---|---|---|---|---|
-| F00 | P1, prerequisite | Current verification baseline fails — **fixed 2026-09-17, gates green** (05) | E | 0.5–1 day / low |
-| F01 | P0 | Editing a capped buffer overwrites the complete file — **fixed 2026-09-17** (05) | S, high confidence | 0.5–1 day / low |
-| F02 | P0 | Read observations are shared between agents | S, high | 2–4 days / medium |
-| F03 | P1 | SSE buffering depends on HTTP chunk boundaries; EOF can claim success | S, high | 3–5 days / medium |
-| F04 | P1 | Repeated durable compaction accumulates old summaries/tails | S, high | 2–4 days / medium |
-| F05 | P1 | Failed shell checks are recorded as passing verification | S, high | 1–3 days / medium |
-| F06 | P1 | Failed or cancelled summarization can replace valid context | S, high | 2–3 days / medium |
-| F07 | P0 | Persistence failures are discarded while model/store views diverge | S, high | 4–7 days / high |
-| F08 | P0 | Complete unsupported final entries are treated as torn writes | S, high | 1–3 days / medium |
-| F09 | P0 | Native file tools have lexical, not resolved, containment | S; exploitability filesystem-dependent | 4–8 days plus race-resistant design / high |
-| F10 | P1 | Plan-mode shell denials do not match execution subjects | S, high | 1–3 days / medium |
-| F11 | P1 | Process deadlines/cleanup do not cover the whole operation | S; descendant survival/hangs inferred | 3–6 days / medium |
-| F12 | P1 | Output/input caps apply after unlimited allocation | S, high | 3–5 days / medium |
-| F13 | P1 | RPC/HTTP can acknowledge work that is rejected | S, high | 2–4 days / medium |
-| F14 | P1 | LSP writes/framing/versioning undermine bounded fresh diagnostics | S, high | 3–5 days / medium |
-| F15 | P0 before exposing restore | Checkpoint restoration conflates skipped capture with creation | S, high; frontend reach not established | 3–6 days / high |
-| F16 | P1 | OAuth refresh orchestration differs from login/fallback paths | S, high for control flow | 3–6 days / high |
-| F17 | P1 | Locally aborted partial replies are not durably committed | S, high | 1–2 days / low |
-| F18 | P1 | Resumed child task is not marked running before dispatch — **fixed 2026-09-18 (M93); frozen-candidate battery owed** (see the F18 section) | S, high | 1–2 days / low |
-| F19 | P2 | Product/docs/parity claims exceed actual workflows | S plus E baseline | 3–5 days docs; workflow work separate / low |
+| ID | Status | Priority | Finding | Evidence | Effort / change risk |
+|---|---|---|---|---|---|
+| F00 | FIXED | P1, prerequisite | Current verification baseline fails — **fixed 2026-09-17, gates green** (05) | E | 0.5–1 day / low |
+| F01 | CLOSED | P0 | Editing a capped buffer overwrites the complete file — **fixed 2026-09-17** (05); the read-coverage rule that licensed the wholesale overwrite was made structural in **M95** | S, high confidence | 0.5–1 day / low |
+| F02 | CLOSED† | P0 | Read observations are shared between agents — **M81** gave every agent its own observation token and invalidated a sibling's cached observation; residual: F09 alias identity (see the row) | S, high | 2–4 days / medium |
+| F03 | OPEN | P1 | SSE buffering depends on HTTP chunk boundaries; EOF can claim success | S, high | 3–5 days / medium |
+| F04 | CLOSED† | P1 | Repeated durable compaction accumulates old summaries/tails — **M86** replaces the superseded projection; **M90** ran the alternate-branch variant | E (M86 battery + RED) | 2–4 days / medium |
+| F05 | OPEN | P1 | Failed shell checks are recorded as passing verification | S, high | 1–3 days / medium |
+| F06 | CLOSED† | P1 | Failed or cancelled summarization can replace valid context — **M86** commits only on a non-failure stop, usable text and a durable append | E (M86 RED + battery) | 2–3 days / medium |
+| F07 | CLOSED† | P0 | Persistence failures are discarded while model/store views diverge — **M122** (turn loop), **M124** (fault seam), **M133** (serve) | E (M124/M133 tests) | 4–7 days / high |
+| F08 | CLOSED | P0 | Complete unsupported final entries are treated as torn writes — **M108** refuses them, **M113**/M116 keep a foreign entry instead of costing the session | E (M108 battery + negative control) | 1–3 days / medium |
+| F09 | OPEN | P0 | Native file tools have lexical, not resolved, containment — **M84** bounded one consumer; containment itself still open | S; exploitability filesystem-dependent | 4–8 days plus race-resistant design / high |
+| F10 | CLOSED | P1 | Plan-mode shell denials do not match execution subjects — **M82** (bash/shell denied outright, plan layer composed over project rules) | E (M82 red/green + battery) | 1–3 days / medium |
+| F11 | OPEN | P1 | Process deadlines/cleanup do not cover the whole operation | S; descendant survival/hangs inferred | 3–6 days / medium |
+| F12 | PARTIAL | P1 | Output/input caps apply after unlimited allocation — the image path reads a bounded head (M95) and `webfetch` refuses on a declared length; the body is still buffered whole before its size check | S, high | 3–5 days / medium |
+| F13 | CLOSED† | P1 | RPC/HTTP can acknowledge work that is rejected — **M87** both surfaces, **M92** correlation/abort; residual: the untested RPC pump (see the row) | E (M87/M92) | 2–4 days / medium |
+| F14 | OPEN | P1 | LSP writes/framing/versioning undermine bounded fresh diagnostics | S, high | 3–5 days / medium |
+| F15 | CLOSED† | P0 before exposing restore | Checkpoint restoration conflates skipped capture with creation — **M100** refuses a skipped capture, **M104** refuses to clobber a file that moved since capture; residual: nothing calls `restore`, so no user-facing revert exists | E (M100/M104 tests; no battery over those bytes) | 3–6 days / high |
+| F16 | OPEN | P1 | OAuth refresh orchestration differs from login/fallback paths — **still true at HEAD (re-checked 2026-09-23)**; see the row | S, high for control flow | 3–6 days / high |
+| F17 | CLOSED† | P1 | Locally aborted partial replies are not durably committed — **M86** gives the abort arm the same lifecycle as a completed turn | E (M86 RED + battery) | 1–2 days / low |
+| F18 | FIXED | P1 | Resumed child task is not marked running before dispatch — **fixed 2026-09-18 (M93); frozen-candidate battery owed** (see the F18 section) | S, high | 1–2 days / low |
+| F19 | PARTIAL | P2 | Product/docs/parity claims exceed actual workflows — regressions fixed in **ffff7e2**; other claims not swept here (see the row) | S plus E baseline | 3–5 days docs; workflow work separate / low |
+| F20 | CLOSED | P1 | Abort did not stop new calls starting inside the running batch — **M88** checks the run token in `run_one`, before any call starts | E (M88 battery + the pre-fix RED in the same log) | 1–2 days / low |
 
 ## F00 — Restore the baseline without weakening its assertions
 
@@ -89,14 +118,34 @@ Hermes retains per-task observations (`references/hermes-agent-2026.8.19/tools/f
 
 ## F04 — Make durable compaction replace superseded model context
 
-**M86 bounded progress:** `model_view` now *replaces* the projection an earlier
-compaction built (`crates/epsilon-session/src/store.rs`), so the latest summary + its
-retained tail + later messages are the whole request view (pi `session-manager.ts:418-453`).
-Executed regression: `a_second_compaction_replaces_the_superseded_projection`
-(`crates/epsilon-session/tests/session_store.rs`) — two compactions, first summary/tail
-absent, human log intact. **Still open:** end-to-end two-compaction provider-context
-comparison through a live loop and alternate-branch/reopen variants.
+**CLOSED 2026-09 (M86; the branch variant in M90).** What was wrong: a second compaction
+*added* its projection to the first instead of replacing it, so a store-backed request
+carried the new summary **and** the summary it had just superseded (S1/T1/S2/T2 while runtime
+history held only S2/T2) — and reopening the session restored the same wrong view. What
+closed it: `model_view` now clears the projection before installing the latest summary + its
+retained tail + later messages, so those three are the whole request view
+(`crates/epsilon-session/src/store.rs`; pi `session-manager.ts:418-453`), and the human
+transcript is untouched throughout — this was always a projection error, never physical
+duplication of the log. Evidence: the regression
+`a_second_compaction_replaces_the_superseded_projection`
+(`crates/epsilon-session/tests/session_store.rs:207`) was **shown failing against the pre-fix
+code** in the M86 RED round — the view held `first summary`, `tail-1`, `second summary`,
+`tail-2`, `after` — and passes on the frozen candidate that took the `gate-m86-88f` battery
+(751 passed / 0 failed / 0 ignored across 55 summaries,
+`audit/evidence/gate-m86-88f.log`; [M86](../docs/milestones/M86-compaction-correctness.md)).
 
+**What survives.** The acceptance bar asked for two things that are still not both executed:
+a *two-compaction provider-context comparison through the live loop*, and branch variants.
+The branch half did land in [M90](../docs/milestones/M90-session-tree.md):
+`a_sibling_branch_sees_its_own_summary_and_not_the_other_branchs_compaction`
+(`crates/epsilon-core/tests/compaction_scenarios.rs:582`) compacts on one branch, attaches a
+branch summary at the root, continues the sibling, reopens the file, and asserts that the
+**first request of the new run equals the intended projection exactly**. So the rule is
+pinned at the store level and end to end across a branch, and the honest residue is narrower
+than the row used to suggest: nothing in this repository runs two compactions through a real
+provider, because every compaction test drives the faux provider.
+
+**Original source trace (pre-fix snapshot, kept for history).**
 **Evidence:** `crates/epsilon-session/src/store.rs:717–748` appends every summary/tail to `out` and clears only `pending`; `crates/epsilon-core/src/lib.rs:1484–1512` replaces runtime history with the new summary/tail. Provider calls prefer the store view (`:1592–1604`).
 
 **Trace:** C1 gives S1/T1; C2 replaces memory with S2/T2 but persisted projection gives S1/T1/S2/T2. Retained material can duplicate: older summaries and tails remain even though newly pending messages are still shadowed. This is a projection error, not physical duplication of the historical log. Resume restores the divergent projection.
@@ -115,15 +164,37 @@ comparison through a live loop and alternate-branch/reopen variants.
 
 ## F06 — Commit summaries only on success, with cancellation
 
-**M86 bounded progress:** `compact_now` returns `CompactionOutcome` and commits only on a
-non-failure stop reason, nonempty text, and a successful durable append
-(`crates/epsilon-core/src/lib.rs`, `crates/epsilon-core/src/compact.rs`); the template
-placeholder fallback is gone. Execution is cancellation-aware at connect and while polling.
-Executed regressions (faux summarizer): provider-error attempt reports a Notice and commits
-nothing; empty text is refused; abort during summarization ends the run `Aborted` with no
-entry (`crates/epsilon-core/tests/compaction_scenarios.rs`). **Still open:** explicit
-early-EOF and append-failure regression tests; live summarizer cancellation timing.
+**CLOSED 2026-09 (M86).** What was wrong: a summarization pass committed whatever `Done`
+message came back. A failed summarizer answer, or an empty one, became the new model
+context — and an empty answer was worse than a failure, because `compact.rs` substituted a
+template placeholder that then *shadowed* real context while looking like a legitimate
+summary. Cancellation did not interrupt the pass either, so a result could still land after
+the run was aborted. What closed it: `compact_now` returns
+`CompactionOutcome::{Committed, Failed, Cancelled}` and commits only on all three of a
+non-failure stop reason, nonempty text, and a successful durable append **before** runtime
+history is replaced (`crates/epsilon-core/src/lib.rs`, `crates/epsilon-core/src/compact.rs`;
+the placeholder is gone), with the pass cancellation-aware at connect, while polling, and
+once more immediately before the commit — `biased` select, so cancellation wins a tie.
+Evidence: three executed regressions against the faux summarizer, each shown failing on
+pre-fix behaviour in the M86 RED round
+(`audit/evidence/red-round.log`) — `failed_summarization_does_not_commit_and_is_reported_once`,
+`empty_summary_text_is_refused_rather_than_padded`, and
+`abort_during_summarization_ends_the_run_aborted_and_commits_nothing`
+(`crates/epsilon-core/tests/compaction_scenarios.rs`); the same candidate took the
+`gate-m86-88f` battery ([M86](../docs/milestones/M86-compaction-correctness.md)).
 
+**What survives.** Two acceptance items are implemented but still not regression-tested, and
+the row should keep saying so: the summarizer's **early-EOF** path and a **durable-append
+failure during the compaction commit**. M86's own Limits record that the append-failure
+branch — the exact case the append-before-replace ordering exists for — needs a store-level
+fault-injection seam that did not exist yet. That seam does exist now
+(`SessionStore::set_write_fault_for_tests`, occurrence-addressable since M124), and the
+turn-loop paths use it (`crates/epsilon-core/tests/loop_scenarios.rs`), but I did **not**
+find it applied to the compaction commit, so I am not claiming this residual is closed.
+Likewise the third item — cancellation timing against a **live** summarizer — is untested;
+every compaction test here is faux-provider.
+
+**Original source trace (pre-fix snapshot, kept for history).**
 **Evidence:** `crates/epsilon-core/src/lib.rs:1468–1478` accepts any summarizer `Done` and does not select on cancellation. `crates/epsilon-core/src/compact.rs:241–248` substitutes a template for empty text. The replacement commits at `lib.rs:1497–1512`.
 
 **Trace:** a failed or empty `Done` message is accepted as summary content; empty text produces a placeholder that shadows useful context. Raw early EOF is already rejected before replacement (`lib.rs:1473–1474`). Cancellation does not itself create a placeholder, but it does not interrupt summary creation/polling and can allow a later result to commit.
@@ -132,6 +203,42 @@ early-EOF and append-failure regression tests; live summarizer cancellation timi
 
 ## F07 — Surface persistence failures and retain one authoritative transcript
 
+**CLOSED 2026-09 (M122, M124, M133).** What was wrong: append and pop failures were thrown
+away *after* memory had already been changed. A full disk during a prompt or result append
+advanced the UI and in-memory history while the durable index stayed behind, and the next
+provider request was then built from the store's projection — so the model answered a
+transcript that did not contain the question, in silence. The compaction append failure was
+discarded the same way. What closed it, in three parts: **M122** made the turn loop's two
+store mutations report their failure (`crates/epsilon-core/src/lib.rs`, where the old shape
+was `let _ = st.append(..)`), added `Agent::durable_write_failed`, and made a later request
+refuse to be built from the older view instead of quietly disagreeing with the loop.
+**M124** gave the fault-injection seam an occurrence count, which is what makes "fail the
+*second* append" expressible at all — before it, a fault armed on count alone always failed
+the prompt first, and since M122 a failed prompt append ends the run before the provider is
+reached. **M133** closed the last silent surface: `serve_mode`'s boot task discarded the
+result of `agent.run(message)`, so a refusal caused by a failed write vanished with nothing
+subscribed to the agent's notices; the server log now carries
+`serve: admitted run failed: … the session file could not record this turn … may be missing it`.
+Evidence: `a_failed_durable_append_is_reported_and_no_request_is_built_from_the_old_view`
+(`crates/epsilon-core/tests/loop_scenarios.rs:2497`) asserts both halves of the acceptance —
+exactly one notice reaches the user, and the provider is never asked (`recorded` requests
+empty); M124's rewritten test asserts its own append sequence and bounds every join, so a
+wait that cannot resolve fails instead of hanging a battery round. Citations:
+[M122/M124](../docs/history.md) timeline rows and
+[M133](../docs/milestones/M133-serve-mode-reports.md).
+
+**What survives.** Two honest residues. (1) M122 was written by a delegated author who went
+inactive without reporting, and the milestone itself says its inventory of the other
+discarded-write sites "should be treated as incomplete" — so the loop's known sites are
+fixed and the *sweep* is not proven exhaustive. A later reader finding another `let _ =`
+on a store write is finding the remainder of this row, not a new defect. (2) M133's own
+limit: `serve`'s protocol genuinely cannot carry the failure to the client, because a
+`Notice` is a broadcast event and the boot task starts before the listener binds, so a client
+learns of its own failed prompt only from the next request's refusal. That is recorded as a
+limit rather than papered over, and it is why this row is closed with a marker rather than a
+clean tick.
+
+**Original source trace (pre-fix snapshot, kept for history).**
 **Evidence:** `crates/epsilon-core/src/lib.rs:743–777` discards append/pop failures after changing memory; compaction similarly ignores append failure (`:1497–1512`). Next requests use store projection (`:1592–1604`).
 
 **Trace:** disk fills during prompt/result append → UI/in-memory history advances → store index does not → model sees older context or resume loses the turn. A partial physical append followed by continued writing can damage the log. This is especially material on the disk-constrained development machine.
@@ -142,6 +249,42 @@ early-EOF and append-failure regression tests; live summarizer cancellation timi
 
 ## F08 — Refuse schema/version errors; repair only genuinely incomplete tails
 
+**CLOSED 2026-09 (M108; M113/M116 for what replaced its remedy).** What was wrong: the store
+asked only "is this the last line and did it fail to parse?" before truncating. A complete
+final line in a shape this build did not know — a newer Epsilon's entry, or the user's newest
+turn — was treated as crash debris and deleted, while the same bytes in a mid-file position
+were refused with a typed diagnosis. Position decided whether data survived, which is not a
+rule anyone would choose. What closed it (**M108**): `is_whole_json` is the discriminator —
+a fragment is still repaired, a complete line is refused with
+`LineDiagnosis::UnknownLineShape`/`UnknownEntryType` and **the file stays byte-identical**
+(`crates/epsilon-session/src/store.rs` — the three gates now read
+`if i + 1 == last && !is_whole_json(fragment)` at `:771`, `:795`, `:809`). The repository's
+own test had asserted the opposite behaviour as intended, and was rewritten rather than
+deleted. Evidence: battery `m106a` (five gates exit 0, 1,021 passed / 0 failed / 1 ignored
+across 59 binaries, `audit/evidence/gate-m106a.log`), a **negative control** — the three
+gates reverted in place, the new test failing with
+`a complete unknown final line was accepted: …` — plus an end-to-end run through the
+reinstalled binary that refused a real session file with its 5 lines intact
+([M108](../docs/milestones/M108-unknown-final-line.md)).
+
+**What replaced the remedy, and why the row is nonetheless closed.** M108's refusal was safe
+but blunt: one foreign entry cost the *entire* conversation, whose only routes back were
+upgrading or hand-editing the file. **M113** changed the remedy without weakening the rule —
+an unknown `kind.type` is now *kept* (parsed as an opaque object, replayed verbatim on the
+next write, left out of the model view), while a known type with an unreadable body is still
+refused, because preserving that would open the session with a silent gap where a turn should
+be. The two cases got two diagnoses (`UnknownEntryType` "foreign" versus the new
+`MalformedEntry` "damaged"), which also closed the item M108's own Limits had recorded as
+owed. **M116** made preservation audible — the `preserved_unknown()` notice is now printed by
+both frontends — and fixed a `model_change` line healing to `provider: ""`, an empty string
+in a typed field that looks like data. Residual, recorded rather than hidden: the *repair*
+still deletes a genuine fragment (a kill between write and newline loses that turn), which is
+the intended behaviour its own test pins, and only the store's own reader is covered — the
+TUI's session browser and `search.rs` parse files directly in places and were not checked for
+the same classification ([M113](../docs/milestones/M113-unknown-kinds-preserved.md),
+[M116](../docs/milestones/M116-preserved-notice-and-typed-model-change.md)).
+
+**Original source trace (pre-fix snapshot, kept for history).**
 **Evidence:** `crates/epsilon-session/src/store.rs:484–500` labels any unusable final entry torn without diagnosis. Opening truncates this case (`:273–275`). `truncate_to_index` defaults to byte zero if no entry indexed (`:550–558`).
 
 **Trace:** a complete final entry rejected by both typed and lenient parsing is treated as crash debris and truncated; a final second header also follows this path (`store.rs:457–463`). Recognized legacy shapes are separately migrated or refused, so not every unsupported shape is deleted. Header plus a torn first entry leaves no indexed entry, so repair also deletes the header. A clean header-only file is not itself subject to this repair.
@@ -250,6 +393,53 @@ the lagged frame's bytes are pinned by a unit test, the wiring is inspection-onl
 
 ## F15 — Checkpoint capture is not yet safe user undo
 
+**CLOSED, WITH THE USER-FACING HALF MISSING (M100, M104 — both 2026-09).** What was wrong:
+`restore()` read `blob: None` as "the file did not exist, so reverting means removing it",
+and a **skipped** capture is also `blob: None` — with `existed: true` and a reason. So asking
+to undo one edit to an oversized file deleted the file. The second half was worse in kind:
+restore wrote the snapshot over whatever was there without asking whether the file had moved
+on, so the sequence a user actually performs — agent edits a file, user edits it again, user
+asks for an undo — replaced the user's own work with the agent's older copy and said nothing.
+The ledger append failure was swallowed too, so a capture could report `Stored` while its
+record never reached disk. What closed it: **M100** keys the branch on `existed` (reading
+`skipped` only for the message), so a skipped capture is an error naming the reason and the
+file is left untouched, while a file that genuinely never existed still reverts by being
+removed. **M104** gave the entry a `digest` — the content hash every capture already computes,
+because `blob_name` *is* the content address — and refuses to write when the target's content
+no longer matches, comparing **content and not metadata** (length or mtime would have been
+fooled inside one clock tick, exactly as `read_log`'s guard test was); an entry too old to
+carry a digest is refused rather than assumed safe, and a missing file is not a conflict
+because deletion is the case a snapshot exists to undo. `append` now returns its failure
+instead of dropping four of them. Evidence: M100's
+`reverting_a_skipped_capture_refuses_instead_of_deleting_the_file`
+(`crates/epsilon-tools/src/checkpoint.rs:653`) and
+`reverting_a_file_that_never_existed_still_removes_it`; M104's
+`a_restore_refuses_to_clobber_a_file_that_changed_since_capture` (`:516`),
+`a_restore_recreates_a_file_that_was_deleted_after_capture` and
+`a_restore_refuses_an_entry_it_cannot_verify`. One existing test had been *codifying* the bug
+— it clobbered the file and then asserted the restore succeeded — and became the refusal test
+instead. Sources: [M100](../docs/milestones/M100-restore-must-not-delete.md),
+[M104](../docs/milestones/M104-restore-verifies-the-file.md).
+
+**What survives, and why this row keeps a marker.** **No user-facing revert exists.**
+`CheckpointStore::restore` has no caller outside `checkpoint.rs`'s own tests — I re-checked
+the whole tree; `files.rs` only calls `open` and `record` — so both milestones closed
+*latent* defects, and the exposure arrives with a rewind/undo command that does not exist
+yet. That is the residual the earlier wording carried as "no frontend reach established", and
+it is still true, so it stays in the row rather than being tidied away. Three smaller items
+also survive: the restore is **not atomic** (the file is read, compared, then written; a write
+landing in between is undetected — the session lease and per-path mutation queue are what make
+that unreachable in practice, and no test asserts it); two items on F15's own acceptance list
+were named in the commits as **not claimed** — serializing ledger appends across different-file
+writers, and validating every blob path against the store root (the path-traversal half); and
+the refusal is deliberately user-hostile with no recovery affordance ("revert it by hand"),
+which is a UI question neither milestone answered. Verification honesty: no battery log covers
+either slice, and neither milestone claims a pre-fix RED for all of its tests — the evidence
+is focused per-crate test runs recorded in the commit messages, with the test-count deltas
+reconciled against the neighbouring commits (92 → 94 → 97 in `epsilon-tools`). Windows-only;
+the Linux CI job has not run on those bytes.
+
+**Original source trace (pre-fix snapshot, kept for history).**
 **Evidence:** skipped oversized captures have `blob: None, existed: true, skipped: Some(...)` (`crates/epsilon-tools/src/checkpoint.rs:168–184`). `restore()` treats every `None` blob as deletion (`:261–277`), without checking skip/existence. Ledger append errors are swallowed (`:223–235`) while capture can report success (`:211–216`). Restore writes without checking later user changes (`:265–270`).
 
 **Impact:** restoring a skipped capture through this API deletes an existing file; restoring a real preimage can overwrite later work. No normal UI route to this API was established, so this is a **blocker before exposure**, not a claim that users already trigger it with a shipped slash command.
@@ -258,7 +448,30 @@ the lagged frame's bytes are pinned by a unit test, the wiring is inspection-onl
 
 ## F16 — Unify call-time OAuth preparation
 
-**Evidence:** `crates/epsilon-llm/src/providers/mod.rs:1161–1181` requires an environment client ID before calling the refresh exchange. Copilot's endpoint has no such requirement (`crates/epsilon-llm/src/oauth.rs:79–87,223–226`). Login supports config client IDs (`crates/epsilon-llm/src/oauth_login.rs:780–789`). Fallback retains credentials and invokes direct transport without the same refresh preparation (`crates/epsilon-llm/src/fallback.rs:33–40,89–115`).
+**Still open at HEAD — re-checked 2026-09-23, unchanged.** The row stays as written; the
+check is recorded here so the next reader does not have to redo it. At HEAD:
+`refresh_oauth_before_use` still resolves the client id from the environment alone
+(`crates/epsilon-llm/src/providers/mod.rs:1174` — `std::env::var(endpoint.client_id_env)` with
+an early `return` when it is unset) while login accepts env-then-config
+(`crates/epsilon-llm/src/oauth_login.rs:780`, `client_id_from_config`); GitHub Copilot's
+refresh endpoint still declares an **empty** `client_id_env`
+(`crates/epsilon-llm/src/oauth.rs:86`) because its mint takes no client id
+(`:226-260`), so for Copilot the call-time refresh returns early and never mints; and
+`fallback.rs` still reaches the transport through `try_stream_direct`
+(`crates/epsilon-llm/src/fallback.rs:115` → `crates/epsilon-llm/src/providers/mod.rs:1191`,
+whose body from `:1191` to `:1260` contains no refresh call at all), the path with no refresh
+preparation. The threshold mismatch below is also still in the
+code: `oauth_needs_refresh_in` refreshes when `expires <= now + min_validity_ms + 60_000`
+(`crates/epsilon-llm/src/auth.rs:639-648`) while `store_refreshed_oauth_in` discards the fresh
+pair when the *stored* access is live
+(`:672-679`, `*expires > now_millis() + 60_000 && *access != fresh.access`) — so with no
+concurrent writer at all, a pair inside the one-to-six-minute band triggers an exchange whose
+result is thrown away, and the refresh repeats on every call until the stored token falls
+below a minute of life. The existing test
+(`oauth_two_phase_refresh_composition`, `auth.rs:1143`) exercises the concurrent-rotation
+case, not this one.
+
+**Original (unchanged) evidence:** `crates/epsilon-llm/src/providers/mod.rs:1161–1181` requires an environment client ID before calling the refresh exchange. Copilot's endpoint has no such requirement (`crates/epsilon-llm/src/oauth.rs:79–87,223–226`). Login supports config client IDs (`crates/epsilon-llm/src/oauth_login.rs:780–789`). Fallback retains credentials and invokes direct transport without the same refresh preparation (`crates/epsilon-llm/src/fallback.rs:33–40,89–115`).
 
 **Impact:** successful login does not imply refresh works; long-running fallback sessions can reuse expired tokens. These are source integration findings, not live account tests.
 
@@ -268,16 +481,32 @@ the lagged frame's bytes are pinned by a unit test, the wiring is inspection-onl
 
 ## F17 — Persist cancellation salvage like ordinary completion
 
-**M86 bounded progress:** the two local cancellation arms in `stream_one_turn` now push the
-synthetic terminal message into runtime history, the durable mirror, and emit `MessageEnd`
-— the same lifecycle the Done and EOF-salvage paths already used
-(`crates/epsilon-core/src/lib.rs`). Executed regression:
+**CLOSED 2026-09 (M86).** What was wrong: the two local cancellation arms in
+`stream_one_turn` returned their synthesized terminal message directly, so partial prose could
+survive in `RunOutcome` while being absent from both in-memory history and the durable
+transcript — a resumed conversation lost the answer the user had already watched stream in.
+Ordinary raw-EOF salvage already pushed history and emitted `MessageEnd`; the finding was
+specific to locally synthesized cancellation. What closed it: both abort arms now
+`push_message` the synthetic terminal message into runtime history *and* the durable mirror,
+and emit `MessageEnd` — the same lifecycle the provider-`Done` and EOF-salvage paths use
+(`crates/epsilon-core/src/lib.rs`). Evidence: the regression
 `abort_mid_stream_commits_the_terminal_message_to_history_and_store`
-(`crates/epsilon-core/tests/loop_scenarios.rs`) asserts one terminal message with the partial
-text in history, in the store, in the reopened model view, and exactly one `MessageEnd`.
-**Still open:** durable-append failure during that commit (F07), and a live
-provider-Done-races-cancel timing run (the biased select prefers cancellation; unexecuted).
+(`crates/epsilon-core/tests/loop_scenarios.rs:859`) asserts one terminal message carrying the
+partial text in history, in the store, and in the **reopened** model view, with exactly one
+`MessageEnd`; the pre-fix RED is in the same M86 round (it failed with "one terminal message
+survives the abort"), and the candidate took the `gate-m86-88f` battery
+([M86](../docs/milestones/M86-compaction-correctness.md)).
 
+**What survives.** Two items, both inherited rather than new. A durable-append **failure**
+during that commit is the F07 shape and is handled by M122's reporting, but it is not
+separately regression-tested *for the abort commit* (the compaction append failure is the
+untested one; see F06). And the live timing case — a provider `Done` racing a cancellation —
+is unexecuted: the select is `biased` toward cancellation, which is the right ordering and is
+also exactly why a real race would be the interesting test. The acceptance bar's "incomplete
+calls never executed" half is covered by F20/M88, which refuses to start calls in a cancelled
+batch.
+
+**Original source trace (pre-fix snapshot, kept for history).**
 **Evidence:** cancellation returns locally synthesized assistant messages directly (`crates/epsilon-core/src/lib.rs:1680–1703`); provider `Done` uses `push_message` and `MessageEnd` (`:1729–1733`).
 
 **Impact:** partial prose can survive in `RunOutcome` while absent from both in-memory history and the durable transcript. Ordinary raw-EOF salvage does push history and emit `MessageEnd` (`lib.rs:1772–1782`); the finding is specific to locally synthesized cancellation. The inspected abort regression checks returned output, not reopened history.

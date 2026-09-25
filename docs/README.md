@@ -40,7 +40,8 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 
 **New to coding agents?** [`qa/06-agent-harness-primer.md`](qa/06-agent-harness-primer.md) with
 [`glossary.md`](glossary.md) open beside it, then the
-[architecture guide](design/epsilon-architecture.md).
+[architecture guide](design/epsilon-architecture.md) — which now carries a dated header
+saying which parts were verified when, so read a claim there as a hypothesis to check.
 
 **New to the codebase?** Root README → [`design/epsilon-architecture.md`](design/epsilon-architecture.md)
 → the crate that owns what you are touching → its milestone log in `milestones/` → the tests in
@@ -50,7 +51,9 @@ that crate.
 ([`design/epsilon-decisions.md`](design/epsilon-decisions.md)) for the behaviour it changes,
 then the milestone log that introduces it.
 
-**Deciding what to build next?** [`../audit/02-defect-ledger.md`](../audit/02-defect-ledger.md),
+**Deciding what to build next?** [`../audit/02-defect-ledger.md`](../audit/02-defect-ledger.md) —
+every row now carries a status (OPEN / CLOSED / CLOSED with a named residual / FIXED pending
+verification), and the status is only as good as the milestone log it names —
 [`../audit/03-port-plan.md`](../audit/03-port-plan.md) and
 [`../audit/04-roadmap.md`](../audit/04-roadmap.md), then the relevant study in `research/`.
 
