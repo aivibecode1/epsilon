@@ -107,6 +107,17 @@ One defect *did* reproduce while probing, and it is new:
 
 ## 2. Gaps that remain, ranked
 
+> **Re-derived at HEAD `4fbca81`, 2026-09-25.** The rows below were written from the audit-era
+> evidence, and the notes that were supposed to keep this list current had gone stale — they still
+> listed blockers closed in M130 and session-format gaps closed in M113/M119. Three read-only passes
+> re-derived the open items from the code, and the result is
+> [`evidence/open-items-at-head-2026-09-25.md`](evidence/open-items-at-head-2026-09-25.md): one
+> P1 (F03 — several SSE frames in one HTTP chunk lose all but the first), two one-line defects
+> (a dead `app.clear` binding that `/hotkeys` advertises; pi's `ignoreCase` silently ignored), and a
+> TUI honesty list that is explicitly unverified. F03 is not in this table because the assessment's
+> P0 rows are all closed; it belongs to the ledger, where it has now been re-verified with its exact
+> mechanism.
+
 ### P0 — correctness or safety
 
 | # | Gap | Evidence | Why it matters |

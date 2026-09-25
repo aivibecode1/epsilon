@@ -842,6 +842,92 @@ async fn paging_to_the_end_grants_the_overwrite_but_a_skipped_page_does_not() {
 }
 
 #[tokio::test]
+async fn an_edit_does_not_hand_the_model_the_rest_of_a_partly_read_file() {
+    // The F01 refusal, through the back door (M135). `edit` used to record its own success
+    // exactly as `write` does, which marks the file wholly seen — so editing one line of a
+    // file the model had read 20 lines of granted the right to replace the whole thing. The
+    // unit test on `read_log` pins the state transition; this one pins the path a model
+    // actually walks, because that is the path the defect lived on.
+    //
+    // The partial view comes from the caller's own `limit`, not from a huge file: `edit`
+    // refuses a source over its byte cap, so a file too big to read in one page is too big
+    // to edit, and the two-step route to this defect is a *narrow* read of a small file.
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path());
+    let read = ReadTool::new();
+    let edit = EditTool::new();
+    let write = WriteTool::new();
+    std::fs::write(dir.path().join("book.txt"), paged_file(200, 0)).unwrap();
+
+    let first = run(
+        &read,
+        &ctx,
+        serde_json::json!({"path": "book.txt", "limit": 20}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        first.contains("180 more lines in file"),
+        "the read is a window, and it says so: {first}"
+    );
+
+    // A targeted edit is legal on a partly-read file — that is the tool's whole point, and
+    // the guard must not punish the model for using it correctly.
+    let edited = run(
+        &edit,
+        &ctx,
+        serde_json::json!({
+            "path": "book.txt",
+            "old_string": "line 1 ",
+            "new_string": "line 1, edited by the model ",
+        }),
+    )
+    .await
+    .expect("a targeted edit of a seen line is not a wholesale overwrite");
+    assert!(edited.contains("edited book.txt"), "{edited}");
+
+    let err = run(
+        &write,
+        &ctx,
+        serde_json::json!({"path": "book.txt", "content": "replaced all of it\n"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("only read in part"),
+        "an edit must not promote a page to a whole file: {err}"
+    );
+    assert!(
+        std::fs::read_to_string(dir.path().join("book.txt"))
+            .unwrap()
+            .contains("line 200"),
+        "and the file is still the one the model read"
+    );
+
+    // The same shape, but the model had read every line before editing: the licence stands,
+    // because a guard that cannot be satisfied is a trap.
+    let small = dir.path().join("notes.md");
+    std::fs::write(&small, "alpha\nbeta\ngamma\n").unwrap();
+    run(&read, &ctx, serde_json::json!({"path": "notes.md"}))
+        .await
+        .unwrap();
+    run(
+        &edit,
+        &ctx,
+        serde_json::json!({"path": "notes.md", "old_string": "beta", "new_string": "beta, edited"}),
+    )
+    .await
+    .expect("the edit of a wholly-read file lands");
+    run(
+        &write,
+        &ctx,
+        serde_json::json!({"path": "notes.md", "content": "alpha\nbeta, edited\ngamma\ndelta\n"}),
+    )
+    .await
+    .expect("a file read in full stays wholly known across an edit of it");
+}
+
+#[tokio::test]
 async fn grep_marks_the_files_it_could_only_search_in_part() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ctx_for(dir.path());

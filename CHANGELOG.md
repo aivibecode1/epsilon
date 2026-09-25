@@ -17,6 +17,17 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   boundary), so `git commit` is refused as one instance of that rather than by pattern. Both
   are user-visible strings in `epsilon --help`; no behaviour changed.
 
+### Fixed
+- **An `edit` no longer hands the model the rest of a partly-read file (M135).** `edit` recorded
+  its own success through the same function `write` uses, and that function's contract — "the bytes
+  it just wrote are known in full" — is true of `write` and false of a targeted replacement. It
+  *set* the file's "wholly seen" state, so a model that read 20 lines of a 200-line file, edited one
+  of them, and then wrote the file was allowed to replace all 200. The refusal that prevents this
+  is the one that stops a model overwriting text it has never seen, and it now survives an edit. The
+  narrow read that reaches the hole is the caller's own `limit`, not the byte cap, so no large file
+  is involved. One message changes in the honest direction: a file the model edited without ever
+  reading it is now refused as never read rather than as partly read.
+
 ### Added
 - **`serve` mode reports a run it refused (M133).** The server's boot task did
   `let _ = agent.run(message).await;` with nothing subscribed to the agent's notices, so when a durable

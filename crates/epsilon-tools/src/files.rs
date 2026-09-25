@@ -552,7 +552,7 @@ impl Tool for EditTool {
                             let diff = crate::util::unified_diff(&raw, &updated);
                             std::fs::write(&path, &updated)
                                 .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                            crate::read_log::record_write(&ctx.observation_scope, &path);
+                            crate::read_log::record_edit(&ctx.observation_scope, &path);
                             let mut details = serde_json::json!({});
                             if !diff.is_empty() {
                                 details["diff"] = serde_json::Value::String(diff);
@@ -686,7 +686,7 @@ impl Tool for EditTool {
                 let diff = crate::util::unified_diff(&raw, &updated);
                 std::fs::write(&path, &updated)
                     .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
-                crate::read_log::record_write(&ctx.observation_scope, &path);
+                crate::read_log::record_edit(&ctx.observation_scope, &path);
                 let mut details = serde_json::json!({});
                 if !diff.is_empty() {
                     details["diff"] = serde_json::Value::String(diff);

@@ -39,7 +39,7 @@ update exists to correct.
 | ID | Status | Priority | Finding | Evidence | Effort / change risk |
 |---|---|---|---|---|---|
 | F00 | FIXED | P1, prerequisite | Current verification baseline fails — **fixed 2026-09-17, gates green** (05) | E | 0.5–1 day / low |
-| F01 | CLOSED | P0 | Editing a capped buffer overwrites the complete file — **fixed 2026-09-17** (05); the read-coverage rule that licensed the wholesale overwrite was made structural in **M95** | S, high confidence | 0.5–1 day / low |
+| F01 | CLOSED | P0 | Editing a capped buffer overwrites the complete file — **fixed 2026-09-17** (05); the read-coverage rule that licensed the wholesale overwrite was made structural in **M95**, and a second route to the same defect (an `edit` promoting a partial read) in **M135** | S, high confidence | 0.5–1 day / low |
 | F02 | CLOSED† | P0 | Read observations are shared between agents — **M81** gave every agent its own observation token and invalidated a sibling's cached observation; residual: F09 alias identity (see the row) | S, high | 2–4 days / medium |
 | F03 | OPEN | P1 | SSE buffering depends on HTTP chunk boundaries; EOF can claim success | S, high | 3–5 days / medium |
 | F04 | CLOSED† | P1 | Repeated durable compaction accumulates old summaries/tails — **M86** replaces the superseded projection; **M90** ran the alternate-branch variant | E (M86 battery + RED) | 2–4 days / medium |
@@ -80,6 +80,27 @@ Clippy reports unused `Hash as _` at `crates/epsilon-tools/src/checkpoint.rs:340
 
 **Acceptance:** single and batch edits against a file with a unique suffix beyond the cap either preserve every unrelated byte or refuse with the original byte-identical. Cover boundary size, multi-byte split and invalid UTF-8. Checkpoint existence is not an excuse for destructive writeback.
 
+**A second route to the same defect, closed in M135.** M95 replaced "this view was capped" with a
+coverage record and fixed the route the trace above describes. It left one door open and wrote it
+into its own `Limits`: a successful `edit` called `read_log::record_write`, which *sets* `complete`,
+so editing one line of a file the model had read 20 lines of granted a whole-file licence — the same
+destruction, reached without a large file at all. The narrow read that reaches it is the caller's
+`limit`, not the byte cap. M135 adds `read_log::record_edit`, which carries `read`/`complete`/`capped`
+and discards the line arithmetic, and pins the route with a behavioural test through the real tools
+plus a negative control that reproduces the overwrite (`Ok("overwrote book.txt (19 bytes)")`) with both
+`edit` call sites reverted — output in
+[evidence/m135-negative-control.txt](evidence/m135-negative-control.txt), run on the final bytes, and
+named here rather than merely asserted, per this ledger's own rule that a CLOSED row rests on executed
+evidence. Battery `m135b` (1185 tests passed, 0 failed). The independent review of the slice
+([evidence/m135-review.md](evidence/m135-review.md)) found that control asserted here and in three
+other documents while no log existed, and also found the pre-existing `capped` hole it would not close
+in this slice: a read that stops on an over-cap line shows the model **no lines at all** and the guard
+still licenses replacing the file. That is now pinned by
+`the_capped_exemption_is_a_hole_the_read_tool_cannot_cloze` rather than left as an unmentioned trade —
+it stays open as a residual, and the honest long-term fix is a read that truncates a long line
+visibly, which would let the exemption be dropped. Record:
+[M135](../docs/milestones/M135-edit-does-not-license-a-whole-file-write.md).
+
 ## F02 — Track what each agent actually observed
 
 **Working-tree update:** observer ownership and sibling invalidation are implemented
@@ -115,6 +136,17 @@ Hermes retains per-task observations (`references/hermes-agent-2026.8.19/tools/f
 **Coverage gap:** wire fixtures test codec events and line helpers, not every production `WireStream` network-chunk partition.
 
 **Acceptance:** local HTTP fixture sends the same valid stream as one chunk, byte fragments, several frames/chunk, and final-frame-with-connection-held-open; results and usage must agree. Missing terminal evidence must yield failed salvage and no executable partial call. Valid provider-specific final framing remains supported.
+
+**Re-verified at HEAD `4fbca81`, 2026-09-25 — STILL REAL, and the mechanism is now exact.** The row's
+evidence above cites `:776–811` / `:820–847`; those ranges have drifted, and the code they describe is
+still there. `WireStream::ingest` (`crates/epsilon-llm/src/providers/mod.rs:780-819`) drains complete
+lines in a `while let Some(pos) = …position(|b| *b == b'\n')` loop with `return first;` **inside** it, so
+every complete line after the first event-producing line stays in `line_buf`; `EventStream::next`
+(`:823-848`) pops `self.queued` and, when that is empty, awaits `self.inner.chunk()` without re-checking
+`line_buf`. A provider that delivers a whole response in one TCP chunk therefore loses every frame after
+the first, and if the body then ends, `next()` returns `None` and the stream ends **cleanly** — the
+"EOF can claim success" half of the finding, reachable with no slow server at all. No code change; this
+is the verification. Record: [open-items-at-head-2026-09-25.md](evidence/open-items-at-head-2026-09-25.md) §1.1.
 
 ## F04 — Make durable compaction replace superseded model context
 

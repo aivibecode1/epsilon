@@ -72,6 +72,17 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M135 — an `edit` no longer hands the model the rest of a partly-read file](milestones/M135-edit-does-not-license-a-whole-file-write.md):
+  the F01 guard had a second door. `edit` recorded its success through the same function as `write`,
+  whose contract is true of one and false of the other, so **editing one line of a file the model had
+  read twenty lines of granted a licence to replace all of it**. A hole written into a milestone's
+  `Limits` is a hole nobody measures; the record here is the fix, the six tests, battery `m135b`
+  (1185 passed, 0 failed), and the negative control that reproduces the overwrite with the fix
+  reverted — [`audit/evidence/m135-negative-control.txt`](../audit/evidence/m135-negative-control.txt).
+  The [independent review](../audit/evidence/m135-review.md) earned its keep twice over: it caught
+  that control being asserted in four documents before its log existed, and it found that the
+  `capped` exemption lets a model that has seen **zero** lines destroy a whole file — a pre-existing
+  hole, now pinned by its own test instead of living in nobody's notes.
 - [M133 — `serve` mode stops discarding a run it refused](milestones/M133-serve-mode-reports.md):
   the last place a durable-write failure was still silent. The server's boot task did
   `let _ = agent.run(message).await;` with nothing subscribed to the agent's notices, so the error

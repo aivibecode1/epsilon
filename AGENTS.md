@@ -24,7 +24,11 @@ see `crates/epsilon-core/assets/agent-contract.md`.
 ```sh
 cargo fmt --all -- --check              # formatting gate — no diffs tolerated
 cargo clippy --workspace --all-targets -- -D warnings  # enforce zero warnings
-cargo test --workspace                  # report actual outcomes; latest baseline: audit/05-verification-log.md
+cargo test --workspace                  # report actual outcomes; the executed record of record is
+                                         # audit/evidence/gate-<label>.log, cited by the milestone that
+                                         # ran it and by docs/history.md. audit/05-verification-log.md
+                                         # is the *2026-09-16 baseline* and stays history — its tail is
+                                         # M86–M88, so do not read it as current.
 cargo run -q -p epsilon-cli -- --demo  # demo must complete when loop/session/llm touched
 cargo check -p epsilon-cli --features real   # real-provider path must compile (M13 lesson)
 # CI (post-push): .github/workflows/ci.yml runs all gates on Windows, the bwrap

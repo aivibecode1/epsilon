@@ -1,10 +1,18 @@
 //! Stale-read guard (defect D-15; Hermes `tools/file_state.py` parity).
 //!
-//! `write` and `edit` are the only tools that can destroy work, and the model decides to call
-//! them from what it read — possibly many turns ago, and possibly before something else
-//! rewrote the file: a `task` child, a background script, the user's own editor. The mutation
-//! queue in [`crate::mutation`] serializes *harness* writers against each other; it cannot know
-//! that the bytes on disk changed since the model last looked.
+//! `write` and `edit` are the tools that destroy work *through a path this guard can see*, and
+//! the model decides to call them from what it read — possibly many turns ago, and possibly
+//! before something else rewrote the file: a `task` child, a background script, the user's own
+//! editor. The mutation queue in [`crate::mutation`] serializes *harness* writers against each
+//! other; it cannot know that the bytes on disk changed since the model last looked.
+//!
+//! The boundary of that claim is worth stating plainly, because this module's doc used to overstate
+//! it. `bash` runs the platform shell — PowerShell on Windows — and can overwrite any file with a
+//! redirect or `Set-Content`, and `shell.rs` consults nothing here. `checkpoint::restore` also
+//! writes bytes back. So this guard closes the route *through the file tools*, and a model with
+//! shell access can still destroy a file it never read. The distinction matters when reading a
+//! security claim about this harness: the F01 guarantee is "a model may not overwrite text it has
+//! never seen **through the file tools**", not "…period".
 //!
 //! This module records what each path looked like when the model last read it, and refuses a
 //! mutation whose target no longer matches — naming the path and the reason, so the model can
@@ -17,7 +25,9 @@
 //! states which lines a read covered, whether it reached the end of the file, and whether the
 //! byte budget alone stopped it. Coverage accumulates only across contiguous reads of the same
 //! bytes, and a full overwrite needs the whole file — a page of a 5 MB file is not a license
-//! to replace it (F01).
+//! to replace it (F01). A targeted `edit` is deliberately **not** a way to obtain that license
+//! (M135): it changes lines the model named, so the file's coverage is carried forward
+//! unchanged rather than promoted to "wholly seen" — see [`record_edit`].
 //!
 //! Observations belong to an opaque agent/session-view lifetime, never to a shared
 //! session-name string. Children share mutation locks, not read history (F02).
@@ -36,9 +46,15 @@ struct Snapshot {
     mtime: Option<std::time::SystemTime>,
     /// File length in bytes at read time.
     len: u64,
+    /// The model has *read* this path in this observation scope — as opposed to having only
+    /// mutated it. A file the model wrote from nothing is known to it; a file it merely
+    /// edited is not, because an edit needs no prior read to be legal (M135). The two need
+    /// different refusals: the second is "you have not read this", not "you read part of it".
+    read: bool,
     /// The whole file was seen: every line of the content this snapshot describes was shown
     /// to the model (a read that covered lines 1..=total, or a write of our own). A partial
     /// view cannot justify an overwrite — the model would be replacing text it never saw.
+    /// A targeted `edit` **carries this flag rather than setting it** (see [`record_edit`]).
     complete: bool,
     /// Highest line number covered by reads contiguous from line 1 (0 = none). Only
     /// meaningful while `complete` is false; a gap at the top cannot be filled in from below.
@@ -220,6 +236,7 @@ pub fn record_read(owner: &Arc<()>, path: &Path, coverage: Coverage) {
                 invalidated: false,
                 mtime,
                 len,
+                read: true,
                 complete: false,
                 covered: 0,
                 total: None,
@@ -248,6 +265,7 @@ pub fn record_read(owner: &Arc<()>, path: &Path, coverage: Coverage) {
                 invalidated: false,
                 mtime,
                 len,
+                read: true,
                 complete,
                 covered,
                 total,
@@ -257,8 +275,12 @@ pub fn record_read(owner: &Arc<()>, path: &Path, coverage: Coverage) {
     }
 }
 
-/// Record the state a successful mutation just produced, so the model's own change does not
+/// Record the state a successful `write` just produced, so the model's own change does not
 /// look like someone else's — and so the bytes it just wrote are known in full.
+///
+/// "Known in full" is exactly as strong as it sounds and is true *only* of this tool: the
+/// caller supplied every byte of the new content, so the file is the model's own text from
+/// line 1 to the end. An `edit` supplies a fragment, and must use [`record_edit`] instead.
 pub fn record_write(owner: &Arc<()>, path: &Path) {
     let key = key_of(path);
     let (mtime, len) = stat(path);
@@ -275,10 +297,65 @@ pub fn record_write(owner: &Arc<()>, path: &Path) {
                 invalidated: false,
                 mtime,
                 len,
+                read: true,
                 complete: true,
                 covered: 0,
                 total: Some(0),
                 capped: false,
+            },
+        );
+    }
+}
+
+/// Record the state a successful `edit` (or batch of edits) just produced.
+///
+/// Two things are true after a targeted replacement, and only one of them is a licence:
+///
+/// - **The model's own change must not look like someone else's.** The next `edit` of this
+///   path would otherwise be refused as [`Stale::Modified`], i.e. the guard would punish the
+///   model for using the tool correctly. So the stat is refreshed, exactly as
+///   [`record_write`] does it, and sibling scopes are invalidated the same way.
+/// - **The file is not thereby wholly known.** The caller supplied a fragment, so what the
+///   model has seen is still what it had seen before the edit — no more. Before M135 the edit
+///   path called [`record_write`], which *sets* `complete`, and that quietly defeated the
+///   partial-read refusal: read page 1 of a 5,500-line file, edit one line of it, and the
+///   whole file became overwritable. The F01 defect came back through the back door.
+///
+/// So `complete` and `capped` are carried from the previous observation and the line
+/// arithmetic is discarded: an edit can add or remove lines, so a high-water mark counted in
+/// the *old* line numbering can only over-claim coverage of the new content. Rebuilding
+/// coverage from line 1 is the conservative direction, and the one the module already takes
+/// for an out-of-order page. A file nobody had read stays unread (`read: false`) even though
+/// it now has an observation, so `verify` keeps saying "read it before overwriting" rather
+/// than the vaguer "only read in part".
+pub fn record_edit(owner: &Arc<()>, path: &Path) {
+    let key = key_of(path);
+    let (mtime, len) = stat(path);
+    if let Ok(mut map) = log().lock() {
+        // Read the previous state before invalidating anything: a snapshot a sibling
+        // invalidated says nothing about this model's knowledge, so it carries nothing.
+        let prev = map
+            .paths(owner)
+            .get(&key)
+            .copied()
+            .filter(|p| !p.invalidated);
+        for scope in map.scopes.values_mut() {
+            if let Some(snapshot) = scope.paths.get_mut(&key) {
+                snapshot.invalidated = true;
+            }
+        }
+        let carried = |f: fn(Snapshot) -> bool| prev.is_some_and(f);
+        map.paths(owner).insert(
+            key,
+            Snapshot {
+                invalidated: false,
+                mtime,
+                len,
+                read: carried(|p| p.read),
+                complete: carried(|p| p.complete),
+                covered: 0,
+                total: None,
+                capped: carried(|p| p.capped),
             },
         );
     }
@@ -289,17 +366,21 @@ pub fn record_write(owner: &Arc<()>, path: &Path) {
 /// Rules, in the order they are checked:
 /// 1. **never read, and the file exists** → refuse a full overwrite (`Stale::NeverRead`).
 ///    Replacing a file nobody has looked at is how a model destroys work it never knew about.
+///    This covers both "no observation at all" and "an observation that only records this
+///    model's own `edit`" ([`record_edit`]) — the model has still never seen the file.
 /// 2. **changed since the last read** → refuse (`Stale::Modified`).
 /// 3. **not seen in full, and now overwriting wholesale** → refuse (`Stale::PartialRead`).
 ///    "In full" means every line of the current content was covered by reads contiguous from
-///    line 1 (`Snapshot::complete`) — a page of a larger file is precisely not that. The one
+///    line 1 (`Snapshot::complete`) — a page of a larger file is precisely not that, and
+///    neither is a file whose only recorded mutation is an `edit`. The one
 ///    exemption is `capped`: the read was stopped by a single line longer than the read byte
 ///    budget, which no further read of this tool can ever show, and a guard that cannot be
 ///    satisfied is a trap (M65's rule, narrowed in M95 — the old byte-cap exemption died with
 ///    pagination, because the next offset now *can* widen the window).
 ///
 /// `Ok(())` otherwise: a file that does not exist yet, one that was read to the end and has
-/// not moved, or any targeted edit (which matches exact text the caller had to have seen).
+/// not moved, one the model wrote itself, or any targeted edit (which matches exact text the
+/// caller had to have seen).
 pub fn verify(owner: &Arc<()>, path: &Path, full_overwrite: bool) -> Result<(), Stale> {
     let snapshot = match log().lock() {
         Ok(mut map) => map.paths(owner).get(&key_of(path)).copied(),
@@ -319,6 +400,11 @@ pub fn verify(owner: &Arc<()>, path: &Path, full_overwrite: bool) -> Result<(), 
             path: path.display().to_string(),
             read_len: snapshot.len,
             now_len: len,
+        });
+    }
+    if full_overwrite && !snapshot.read {
+        return Err(Stale::NeverRead {
+            path: path.display().to_string(),
         });
     }
     if full_overwrite && !snapshot.complete && !snapshot.capped {
@@ -590,6 +676,150 @@ mod tests {
             verify(&owner, &p, true),
             Ok(()),
             "the harness's own mutation updates the snapshot"
+        );
+    }
+
+    /// An edit changes some of a file and leaves the rest alone, so the observation it
+    /// produces is the previous one with a new stat. These five tests are that sentence
+    /// turned into properties: the F01 refusal survives an edit, a whole-file read still
+    /// licenses a whole-file write after one, the capped exemption survives one, an unread
+    /// file stays unread, and the line arithmetic restarts rather than being carried into a
+    /// numbering that no longer holds.
+    #[test]
+    fn an_edit_is_not_a_licence_to_overwrite_the_rest_of_the_file() {
+        let owner = Arc::new(());
+        let body: String = (1..=300).map(|i| format!("line {i}\n")).collect();
+        let p = tmp("edit-partial", &body);
+        record_read(&owner, &p, Coverage::page(1, 200, Some(300)));
+        // One line of the page the model did see is replaced, and the replacement is longer.
+        let edited = body.replace("line 5\n", "line 5, now with more text than before\n");
+        std::fs::write(&p, &edited).unwrap();
+        record_edit(&owner, &p);
+        assert!(
+            matches!(verify(&owner, &p, true), Err(Stale::PartialRead { .. })),
+            "an edit supplies a fragment; it must not promote a page to a whole file"
+        );
+        assert_eq!(
+            verify(&owner, &p, false),
+            Ok(()),
+            "and the edit itself is still legal — that is the whole point of a targeted one"
+        );
+    }
+
+    #[test]
+    fn an_edit_of_a_fully_read_file_leaves_it_fully_read() {
+        let owner = Arc::new(());
+        let p = tmp("edit-complete", "one\ntwo\nthree\n");
+        record_read(&owner, &p, whole(3));
+        std::fs::write(&p, "one\ntwo, edited\nthree\n").unwrap();
+        record_edit(&owner, &p);
+        assert_eq!(
+            verify(&owner, &p, true),
+            Ok(()),
+            "the model saw every line and supplied the one that changed"
+        );
+        assert_eq!(
+            verify(&owner, &p, false),
+            Ok(()),
+            "and our own edit is not someone else's change: a second edit must not be refused"
+        );
+    }
+
+    #[test]
+    fn an_edit_does_not_close_the_one_window_no_read_can_widen() {
+        let owner = Arc::new(());
+        // Dropping `capped` here would turn the exemption M65 added and M95 narrowed back into a
+        // trap: a file with one unshowable line would become unwriteable the moment the model edited
+        // anything else in it. That is the trade this test defends, and it is a real trade, not a
+        // free win — see the honesty note below for what it costs.
+        let body = format!("{}\nsecond\nthird\n", "x".repeat(4_000));
+        let p = tmp("edit-capped", &body);
+        record_read(&owner, &p, Coverage::long_line());
+        let edited = format!("{}\nsecond, edited\nthird\n", "x".repeat(4_000));
+        std::fs::write(&p, &edited).unwrap();
+        record_edit(&owner, &p);
+        assert_eq!(
+            verify(&owner, &p, true),
+            Ok(()),
+            "a window no read through this tool can widen is still open after an edit"
+        );
+    }
+
+    /// What the `capped` exemption actually costs, stated as a test so the cost cannot be
+    /// forgotten the way an unasserted comment is.
+    ///
+    /// A read that stops on an over-cap line shows the model **nothing at all** — `read_page`
+    /// reports `truncated_by = LongLine` with an empty range — yet the exemption lets a
+    /// whole-file overwrite through. So a model that has seen zero lines of a file may replace
+    /// every line of it. That is the same destruction M135 spent this milestone closing, reached
+    /// through the one window the read tool physically cannot widen.
+    ///
+    /// It is pre-existing (M65, narrowed in M95) and M135 neither widened nor narrowed it. It is
+    /// pinned here because a guard that can never be satisfied is a trap, and this is the other
+    /// half of that sentence: a guard that is *too easily* satisfied destroys work. The right
+    /// long-term answer is a read that truncates a long line visibly rather than showing nothing,
+    /// which would let `capped` be dropped and the trap close. Until then the exemption stands.
+    #[test]
+    fn the_capped_exemption_is_a_hole_the_read_tool_cannot_cloze() {
+        let owner = Arc::new(());
+        let p = tmp("capped-blind", &format!("{}\nsecond\n", "x".repeat(4_000)));
+        record_read(&owner, &p, Coverage::long_line());
+        // The honest accounting, from the guard's own mouth: the read covered nothing, and the
+        // guard still permits the overwrite. `verify(.., true) == Ok(())` with no other read is only
+        // reachable through the `capped` exemption, so this assertion is about that flag alone.
+        assert_eq!(
+            verify(&owner, &p, true),
+            Ok(()),
+            "and yet a whole-file overwrite is permitted — the known cost of the capped exemption"
+        );
+    }
+
+    #[test]
+    fn an_edit_of_a_file_nobody_read_leaves_it_a_file_nobody_read() {
+        let owner = Arc::new(());
+        let p = tmp("edit-unread", "written by someone else entirely\n");
+        // A targeted edit needs no prior read — the old_string is the evidence.
+        record_edit(&owner, &p);
+        match verify(&owner, &p, true) {
+            Err(Stale::NeverRead { .. }) => {}
+            other => panic!("expected a never-read refusal, got {other:?}"),
+        }
+        let text = verify(&owner, &p, true).unwrap_err().diagnosis("write");
+        assert!(
+            text.contains("has not been read"),
+            "an edit must not soften the refusal into 'only read in part': {text}"
+        );
+    }
+
+    #[test]
+    fn coverage_starts_from_the_top_again_after_an_edit() {
+        let owner = Arc::new(());
+        let body: String = (1..=300).map(|i| format!("line {i}\n")).collect();
+        let p = tmp("edit-coverage", &body);
+        record_read(&owner, &p, Coverage::page(1, 200, Some(300)));
+        // An edit that keeps the line count and changes the bytes: the model has now seen
+        // 200 lines of the *old* content, which is not 200 lines of this one.
+        let edited = body.replace("line 5\n", "line 5, longer than it was\n");
+        std::fs::write(&p, &edited).unwrap();
+        record_edit(&owner, &p);
+        // Reading on from where the old mark stood is the trap: it would close the file at
+        // 300 == 300 while lines 1..200 of the new content have never been shown.
+        record_read(&owner, &p, Coverage::page(201, 300, Some(300)));
+        assert!(
+            matches!(verify(&owner, &p, true), Err(Stale::PartialRead { .. })),
+            "the old high-water mark must not carry into a file whose lines it described"
+        );
+        // Paging from the top rebuilds it, and the whole file becomes writable again.
+        record_read(&owner, &p, Coverage::page(1, 200, Some(300)));
+        assert!(
+            matches!(verify(&owner, &p, true), Err(Stale::PartialRead { .. })),
+            "200 of 300 is still a partial view of the new content"
+        );
+        record_read(&owner, &p, Coverage::page(201, 300, Some(300)));
+        assert_eq!(
+            verify(&owner, &p, true),
+            Ok(()),
+            "a full re-read of the new content restores the licence the edit withheld"
         );
     }
 }

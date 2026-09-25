@@ -1,5 +1,13 @@
 # 05 — Verification record
 
+> **This file is history, not the current baseline** (corrected 2026-09-25). It records the
+> 2026-09-16 audit's executed gates and the M86–M88 round; its last section is M88. The batteries
+> since then are in [`evidence/gate-*.log`](evidence), each named by the milestone that ran it and
+> carried in [`../docs/history.md`](../docs/history.md) — for the most recent landed work, read
+> `docs/milestones/M129`–`M135` and the history rows. `AGENTS.md` pointed here as "latest baseline"
+> until this note, which is the defect this header names: a document that stops being current and
+> keeps being cited as if it were.
+
 **Audience:** reviewers checking executed evidence separately from source analysis.
 **Date:** 2026-09-16. **Platform:** Windows (win32); Windows edition/version was not verified.
 **Baseline:** dirty working tree over `e200815`, including checkpoint source marked M80.

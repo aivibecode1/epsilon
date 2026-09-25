@@ -1,0 +1,63 @@
+M135 GATE BATTERY — label m135b
+==============================
+
+Machine: Windows 10 (10.0.19045), 2026-09-25 evening
+Build:   CARGO_BUILD_JOBS=1, CARGO_TARGET_DIR outside the repo
+Why an external target dir: Avira had pinned the in-repo artifact path
+  target/debug/deps/epsilon_tools-<hash>.exe, so every test that created a file
+  failed with "Access is denied (os error 5)" while every test that did not
+  passed. A byte-identical COPY of the same binary run from %LOCALAPPDATA%\Temp
+  passed, which is what identified the cause as the path and not the code.
+  See agents/memory/next-hardening.md.
+
+Why this is label m135b and not m135a: battery m135a was started earlier on an
+older byte state, was still running when the review's source fixes landed, and
+was then killed mid-test-leg by the harness. It reached 13 of 49 test binaries
+and never printed GATE PASS, so per AGENTS.md it proves nothing. This battery
+was run in the foreground against the final bytes, after the review fixes and
+after the negative control was re-run and files.rs was restored byte-identically.
+
+===== fmt --check =====
+$ cargo fmt --all -- --check
+FMT_EXIT=0
+(no diff)
+
+===== clippy -D warnings =====
+$ cargo clippy --workspace --all-targets -- -D warnings
+CLIPPY_EXIT=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.47s
+
+===== test (workspace) =====
+$ cargo test --workspace
+WS_EXIT=0
+test binaries run: 61
+tests passed:      1185
+tests failed:      0
+tests ignored:     1  (the env-gated real-provider check)
+No FAILED lines, no panics.
+
+Per-crate (the two the slice touched):
+  epsilon-tools  lib:          106 passed; 0 failed
+  epsilon-tools  integration:  58 passed; 0 failed
+
+===== demo =====
+$ cargo run -q -p epsilon-cli -- --demo
+DEMO_EXIT=0
+assistant> One check failed; here is the summary of what I found.
+=== run end ===
+final reason: Completed
+messages produced: 6
+tokens in/out: 300/150
+
+===== real-provider path compiles =====
+$ cargo check -p epsilon-cli --features real
+REAL_EXIT=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 56.33s
+
+===== negative control (separate battery; see audit/evidence/m135-negative-control.txt) =====
+With both `edit` call sites reverted to record_write, the behavioural test fails
+by writing the file the fix refuses to let it write:
+    called `Result::unwrap_err()` on an `Ok` value: "overwrote book.txt (19 bytes)"
+Full log: audit/evidence/m135-negative-control.txt
+
+===== GATE PASS =====
