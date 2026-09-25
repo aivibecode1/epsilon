@@ -62,12 +62,32 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
-**This list is not the timeline.** It was last kept current at M115 and the rows below
-it stop there, so M116–M125 have milestone logs in [`milestones/`](milestones) and rows
-in [`history.md`](history.md) without a pointer here. The three newest entries were added
-when a review found the two slices of M126/M127 unlinked from this map; the gap between
-them is drift, not a claim that nothing landed.
+**This list is not the timeline.** Every milestone has a log in [`milestones/`](milestones)
+and a row in [`history.md`](history.md); this list is the subset a reader is most likely to
+want first, newest at the top. It is kept current from M126 forward. **M116–M125 are the
+known gap** — their logs and timeline rows exist, but nobody has written the one-line
+pointers here, and that is drift rather than a claim that nothing landed.
 
+- [M133 — `serve` mode stops discarding a run it refused](milestones/M133-serve-mode-reports.md):
+  the last place a durable-write failure was still silent. The server's boot task did
+  `let _ = agent.run(message).await;` with nothing subscribed to the agent's notices, so the error
+  and core's own `Notice` both vanished. **The protocol genuinely cannot carry it** — a `Notice` is a
+  broadcast event, not a replay log, and the boot task starts before the listener binds — so the
+  server's log is the right channel rather than a second one being invented.
+- [M131 + M132 — the review's seven findings, and the auth lock that reported a permission error](milestones/M131-M132-review-findings-and-auth-lock.md):
+  a footer comment claiming a survival order the code did not have (and the **measurement** that
+  contradicted the review's own account of it), one convention implemented twice where an agreement
+  test provably cannot see the duplication, two glyph-table entries with no reader anywhere, and a
+  lock that reported `Access is denied` for a transient Windows sharing violation — wrong twice over,
+  since it is neither a permission failure nor permanent.
+- [M129 — OSC 52 for `/copy`, the glyph fallback that was only promised, and a real card duration](milestones/M129-osc52-and-glyph-fallback.md):
+  over SSH, `/copy` printed a success notice while copying nothing; `theme.rs` promised a band-less
+  gutter fallback that no branch implemented, so under `NO_COLOR` an answer and its reasoning were the
+  same pixels; and every card reported `0ms` because the result stamped its start and end with the
+  same `now`.
+- [M128 — each reconciliation run gets its own directory](docs/history.md):
+  the test that failed once and passed on every re-run had a cause: a **fixed shared path**, so two
+  runs at once renamed and deleted each other's fixtures.
 - [M130 — the review's four remaining blockers, and the production bug the third one hid](milestones/M130-review-blockers.md):
   the light palette's ANSI-16 quiet roles were the dark palette's `DarkGray` under a comment forbidding
   it — in the mode that is the *default* on a console that does not advertise itself, which is the user
