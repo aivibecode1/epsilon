@@ -274,6 +274,22 @@ fn acquire_auth_lock(config_dir: &Path) -> Result<AuthLock, String> {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1)));
             }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                // A transient Windows sharing violation, not a permission problem:
+                // when two processes (or eight threads, as the concurrency test
+                // runs) create-and-delete the same lock path at once, one of them
+                // gets ACCESS_DENIED (os error 5) rather than AlreadyExists, purely
+                // because the other is mid-delete. Reporting that to the user as
+                // `acquire …auth.lock: Access is denied` is wrong twice over: it is
+                // not a permission failure and it is not permanent. Measured from
+                // the concurrency test before this arm existed — the CLI and the TUI
+                // saving at the same moment, which is the case that test is named
+                // for, is a realistic way to hit it.
+                //
+                // Treated as contention, with the same backoff, so the retry budget
+                // covers both reasons for losing the race.
+                std::thread::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1)));
+            }
             Err(e) => {
                 return Err(format!("acquire {}: {e}", path.display()));
             }
