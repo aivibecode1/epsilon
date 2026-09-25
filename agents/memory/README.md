@@ -49,9 +49,10 @@ not themselves trigger runtime compression.
 - **IN FLIGHT (rounds 46–48): the last two audit items — `NO_COLOR` glyph separation and OSC 52 for
   `/copy`.** A delegated agent is working in `crates/epsilon-tui` (untracked
   `src/app/scratch_dump_tests.rs`, modified `app.rs`, `theme.rs`/`footer.rs`/`clipboard` in play).
-  **The tree does NOT compile as of round 48** and the breakage is the agent's, not the parent's:
+  **The tree did not compile during rounds 47–48** and the breakage was the agent's — first
   `missing field osc_pending in initializer of app::App`, then `cannot find module or crate base64`
-  in the lib. Two things to decide or check when it stops:
+  in the lib. **It compiles and is green again as of round 49** (see the status line below); the two
+  items here are what the slice still owes:
   1. **The `base64` dependency is a judgement call the parent owns.** `AGENTS.md` says "No new
      dependency without a stated reason tied to an ADR or milestone need", and deps are pinned EXACT.
      OSC 52 needs the payload base64-encoded; a ~30-line encoder with no dependency is a legitimate
@@ -60,6 +61,19 @@ not themselves trigger runtime compression.
   2. **The scratch file must not be committed.** `src/app/scratch_dump_tests.rs` is an untracked
      module; the last delegated author's `zz_frame_dump_*` tests are still in `app/golden.rs` and were
      named in `audit/evidence/m126-m127-review.md` finding **F5** as artefacts to remove.
+     **Round 49: it is worse than untracked — `app.rs` declares it as a module and it owns
+     `push_line_for_test`, which other tests call**, so removing the declaration breaks the build
+     (`no method named push_line_for_test`). It cannot simply be excluded from a commit: delete the
+     file and move the helper somewhere honest before this slice lands, or it ships as a second
+     F5-shaped artefact. Its one test is `#[ignore]`d and is the agent's tool for the *unfinished*
+     glyph-separation half (`ui/theme.rs` is still untouched).
+  **Round 49 status: the OSC 52 half is done and the tree is GREEN at 298 passed / 0 failed / 1
+  ignored.** New `crates/epsilon-tui/src/clipboard.rs` emits the sequence, with
+  `a_failed_terminal_write_is_not_reported_as_a_copy` pinning the property that mattered most — a
+  terminal that ignores OSC 52 must not yield a success notice. `base64` was added as a **workspace
+  dependency**; the parent's judgement is to **accept it**: OSC 52 is a wire format with a normative
+  alphabet, and hand-rolling it risks exactly the silent-encoding bug whose failure mode here is
+  "copies nothing, reports success". The reason goes in the milestone doc when the slice lands.
 - **B1 IS FIXED IN THE WORKING TREE, UNVERIFIED (round 48).** The review's sharpest blocker — every
   result card reporting `0ms` because `state.rs` stamped its start and end with the same `now` — is
   fixed in `crates/epsilon-tui/src/state.rs`: `settle_call` now **returns** the pending card's
