@@ -230,8 +230,31 @@ not themselves trigger runtime compression.
   user doc was fixed); and
   `pi_import_reconciliation::pi_import_carries_every_source_entry` failed once in a combined run
   and passed on every re-run (unexplained flake, worth a second look).
-- **Unrelated dirty work — deliberately NOT staged:** `.agents/skills/ratatui-tui/**` (6 files) was
-  modified by something other than this task. Preserve it; do not fold it into a milestone commit.
+- **DOCUMENTATION GAPS CLOSED (`ffff7e2`), AND THE ROOT CAUSE OF THE STALE CLAIMS FOUND.** The docs map
+  now carries a pointer for every milestone M83–M133 (each with its *finding*, not its feature), the
+  changelog's M83–M124 hole is a stated blockquote rather than a backfill (**decided**, with four measured
+  reasons: the file was never complete and already defers an earlier hole, the account exists at finding
+  level in `docs/history.md`, a third copy written after the fact would carry the changelog's authority,
+  and git confirms it stopped at M82 and resumed at M125 — M132/M133 entries were added because otherwise
+  any coverage sentence would have been false), and six guides were corrected with every claim verified
+  against code or logs. `docs/user/sessions.md` was the worst: **five of its statements described defects
+  fixed later**, so the page a user reads for limitations was listing bugs that no longer exist.
+  **THE HEADLINE FINDING, and where the next slice should start:** `audit/02-defect-ledger.md` still lists
+  F04/F06/F07/F08/F15/F17 as open although M86–M133 closed all but F16, and **every user guide points at
+  that ledger as the owner of "current defects"** — so fixing a defect without fixing its row keeps the
+  stale claim alive in every doc that cites it. That is why `sessions.md` was wrong, and correcting the
+  ledger is the single highest-leverage documentation change left.
+  **Second finding, larger:** `docs/design/epsilon-architecture.md` — the maintained how-and-why guide — is
+  **stale wholesale**, an audit-era snapshot with at least ten verified-stale claims and line references
+  that have drifted onto unrelated code (`:42-43` cites a `lib.rs` range that is now
+  `steer_queue_len`/`follow_up`/`attach_session_store`). It needs a **re-derivation pass or an explicit
+  dated header**; patching individual lines would leave a half-current guide, which is worse than naming it.
+  Also recorded, smaller, each with a `file:line` in the slice's report: ADR-018 still says "Epsilon never
+  stores credentials" (false since M22/M46), ADR-018's precedence omits the project layer the code
+  implements, `docs/qa/07-tui-keymap-audit.md` reads as current while citing `app.rs` for a match now in
+  `app/keys.rs`, `epsilon-skills.md` claims shipped CI-enforced skills that neither ships nor is checked,
+  the `--plan` help under-describes the M82 denial of `bash`/`shell`, `RUST_LOG` is advertised with no
+  tracing subscriber in any manifest, and four gitignored scratch files sit at the repo root.
 - **Rounds closed 2026-09-22/23 (tenth through thirteenth)** — M116 (`6462a44`): the
    preserved-entry notice is printed by both frontends, and the `model_change` arm stopped
    writing `provider: ""` when the field was absent. M117 (`4e292a7`): `find` announces the
