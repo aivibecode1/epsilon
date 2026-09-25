@@ -29,8 +29,27 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
 - **Deleting tests must be reconciled out loud** in the milestone: state the per-crate
   delta and the arithmetic behind it.
 
+## What just landed (2026-09-25)
+
+- **M135** (`813555d`) — `record_edit` splits edit from write in the read-coverage guard; battery
+  `m135b`, 1185 tests, negative control captured. The independent review's `capped` finding is kept
+  as a named test rather than fixed: an over-cap read shows the model *no lines* and the guard still
+  licenses a whole-file overwrite.
+- **M136** — the session lease waits out the stale window instead of refusing on first sight, so
+  reopening a session you just closed no longer fails for 30 s. Battery `m136a`, 1188 tests, GATE
+  PASS. Rejected a pid-liveness probe on purpose: it needs `unsafe` here to learn less than the
+  heartbeat already reports. **Its remaining gap is the silence, not the refusal** — the TUI shows
+  no progress during the wait, and that needs a callback the session crate cannot own.
+
 ## Traps that have cost real time
 
+- **A background gate battery gets killed on this harness, mid-leg.** `m135a` reached 13 of 49 test
+  binaries and died without printing `GATE PASS`; per the repo's own rule that log proves nothing.
+  A background battery on `CARGO_BUILD_JOBS=1` is long enough that a same-session edit is likely to
+  land underneath it *and* long enough to be killed. **Run the battery in the foreground**; the
+  420 s tool cap is the lesser evil, and a warm `CARGO_TARGET_DIR` makes the retry cheap. Foreground
+  `cargo clippy --workspace` on a *cold* external target does exceed 420 s, so give it a warm
+  target or a background run and poll.
 - **`cargo test` can fail with `Access is denied (os error 5)` in a dozen unrelated tests, and the
   cause is not your change** (2026-09-25, M135). Avira had pinned the *path*
   `target/debug/deps/<crate>-<hash>.exe`: every test that creates a file failed, every test that

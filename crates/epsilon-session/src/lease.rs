@@ -21,6 +21,24 @@
 //! platforms but needs a dependency and platform-specific review; the mtime-steal
 //! window here is acceptable because concurrent writers to one session are a user
 //! error we surface loudly rather than serialize silently.
+//!
+//! # Why acquisition waits instead of refusing (M136)
+//!
+//! Because a live holder heartbeats, the mtime already answers the only question
+//! that matters — *is anyone still there?* — and it answers it without a platform
+//! call. So the refusal did not have to be immediate. Refusing straight away made
+//! the ordinary way to restart a TUI fail: press Ctrl-C, close the tab, and get
+//! "another epsilon is already writing this session" for up to [`STALE_AFTER`]
+//! seconds, because the process you just killed is not heartbeating any more.
+//! The console probe hit exactly this and had to work around it.
+//!
+//! So [`SessionLease::acquire`] **waits out the remaining window and then steals**.
+//! The trade is obvious once stated: in the only case that costs anything, the
+//! holder really is alive, and waiting is the correct behaviour anyway — the user
+//! is looking at a second window that owns the session. The alternative considered
+//! and rejected was a liveness probe of the recorded pid, which needs a platform
+//! call (and `unsafe`, which this workspace forbids) to learn *less* than the
+//! heartbeat already tells us, while adding pid-reuse as a new failure mode.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -36,15 +54,23 @@ pub const STALE_AFTER: Duration = Duration::from_secs(30);
 /// process look dead.
 pub const HEARTBEAT: Duration = Duration::from_secs(10);
 
+/// How often a waiting acquirer re-reads the lock while it waits out the stale
+/// window. Small enough that a holder which exits mid-wait is noticed at once,
+/// large enough that a 30-second wait is not thousands of syscalls.
+const WAIT_POLL: Duration = Duration::from_millis(100);
+
 /// Outcome of trying to acquire a lease.
 #[derive(Debug)]
 pub enum LeaseOutcome {
     /// We hold it.
     Acquired(SessionLease),
-    /// Someone else holds it (and it is not stale).
+    /// Someone else holds it, and they are still holding it.
     Held {
         /// Recorded holder info, when parseable.
         holder: Option<String>,
+        /// How long we waited before giving up. `Duration::ZERO` when the caller
+        /// asked not to wait.
+        waited: Duration,
     },
 }
 
@@ -58,34 +84,93 @@ pub struct SessionLease {
 }
 
 impl SessionLease {
-    /// Try to acquire the lease for `session_path` (the `.jsonl`) with the
-    /// production [`STALE_AFTER`]/[`HEARTBEAT`] timings.
+    /// Try to acquire the lease for `session_path` (the `.jsonl`).
+    ///
+    /// If another process holds it, this **waits up to `wait`** for that holder to
+    /// finish or die, and takes the lock the moment it is no longer heartbeating.
+    /// It returns [`LeaseOutcome::Held`] only when the holder is still alive at the
+    /// end of the wait — a genuine second writer, which the caller must still
+    /// refuse.
     pub fn acquire(session_path: &Path) -> std::io::Result<LeaseOutcome> {
-        Self::acquire_with(session_path, STALE_AFTER, HEARTBEAT)
+        Self::acquire_with(session_path, STALE_AFTER, HEARTBEAT, STALE_AFTER)
     }
 
-    /// [`SessionLease::acquire`] with explicit timings — the lease's own tests
-    /// must not spend 30 seconds proving a 30-second window.
+    /// Acquire without waiting at all: report `Held` the moment anyone else has it.
+    /// The pre-M136 behaviour, kept because it is the only way to test both
+    /// outcomes without spending real seconds, and because "refuse immediately" is
+    /// the right answer for a caller that has its own timeout.
+    pub fn acquire_now(session_path: &Path) -> std::io::Result<LeaseOutcome> {
+        Self::acquire_with(session_path, STALE_AFTER, HEARTBEAT, Duration::ZERO)
+    }
+
+    /// [`SessionLease::acquire`] with explicit timings and wait budget — the
+    /// lease's own tests must not spend 30 seconds proving a 30-second window.
     pub fn acquire_with(
         session_path: &Path,
         stale_after: Duration,
         heartbeat: Duration,
+        wait: Duration,
     ) -> std::io::Result<LeaseOutcome> {
         let lock_path = session_path.with_extension("lock");
+        let started = std::time::Instant::now();
 
-        if lock_path.exists()
-            && let Ok(meta) = std::fs::metadata(&lock_path)
-        {
-            let age = meta
-                .modified()
+        // One pass: is the lock free, stale, or freshly held? Re-reading on every
+        // pass is what lets a holder that exits mid-wait be noticed immediately
+        // rather than after the remainder of the window.
+        // One pass over the lock: free, stale, or freshly held. Written as a named
+        // shape rather than a nested `Option<Option<String>>` because the nesting
+        // is exactly what makes the call site wrong — `Some(x)` hands back `x`, so
+        // `if let Some(holder) = …` silently drops the inner Option and every
+        // reader has to re-derive which layer is which.
+        enum LockState {
+            /// Absent or old enough to steal.
+            Stealable,
+            /// Someone has it, and it was still fresh. Carries the holder line
+            /// when the file was readable.
+            Held(Option<String>),
+        }
+
+        let probe = |lock_path: &Path| -> LockState {
+            if !lock_path.exists() {
+                return LockState::Stealable;
+            }
+            let age = std::fs::metadata(lock_path)
                 .ok()
+                .and_then(|m| m.modified().ok())
                 .and_then(|m| SystemTime::now().duration_since(m).ok())
                 .unwrap_or(Duration::ZERO);
-            if age < stale_after {
-                let holder = std::fs::read_to_string(&lock_path).ok();
-                return Ok(LeaseOutcome::Held { holder });
+            if age >= stale_after {
+                LockState::Stealable
+            } else {
+                LockState::Held(std::fs::read_to_string(lock_path).ok())
             }
+        };
+
+        let holder = loop {
+            match probe(&lock_path) {
+                // Free or stale: fall through to the steal-and-create below.
+                LockState::Stealable => break None,
+                LockState::Held(holder) => {
+                    let elapsed = started.elapsed();
+                    if elapsed >= wait {
+                        break Some(holder);
+                    }
+                    // Never sleep past the deadline: a 30s wait must not become 30.1s.
+                    let remaining = wait.saturating_sub(elapsed);
+                    std::thread::sleep(remaining.min(WAIT_POLL));
+                }
+            }
+        };
+        let waited = started.elapsed();
+
+        // A `Held` we gave up on. Note this is decided by the wait budget, not by
+        // the lock's age: a holder that heartbeats stays fresh forever, so waiting
+        // is the only way to be sure, and a caller that does not want to wait gets
+        // today's answer.
+        if let Some(holder) = holder {
+            return Ok(LeaseOutcome::Held { holder, waited });
         }
+
         // Stale or unreadable metadata: steal. The stale file must actually be
         // removed — `create_new` below can only succeed once it is gone, so
         // without this the "steal" path silently degraded to `Held` and a crash
@@ -112,6 +197,8 @@ impl SessionLease {
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(LeaseOutcome::Held {
                 holder: std::fs::read_to_string(&lock_path).ok(),
+                // Someone won the race between our last check and the create.
+                waited: started.elapsed(),
             }),
             Err(e) => Err(e),
         }
@@ -195,7 +282,7 @@ mod tests {
             panic!("first acquisition must succeed");
         };
 
-        let second = SessionLease::acquire(&session).expect("probe ok");
+        let second = SessionLease::acquire_now(&session).expect("probe ok");
         assert!(matches!(second, LeaseOutcome::Held { .. }));
 
         drop(a); // released
@@ -217,13 +304,14 @@ mod tests {
         let beat = Duration::from_millis(20);
 
         let LeaseOutcome::Acquired(held) =
-            SessionLease::acquire_with(&session, stale, beat).expect("acquire")
+            SessionLease::acquire_with(&session, stale, beat, Duration::ZERO).expect("acquire")
         else {
             panic!("first acquisition must succeed");
         };
         // Several stale windows pass while the holder is alive.
         std::thread::sleep(Duration::from_millis(450));
-        let probe = SessionLease::acquire_with(&session, stale, beat).expect("probe");
+        let probe =
+            SessionLease::acquire_with(&session, stale, beat, Duration::ZERO).expect("probe");
         assert!(
             matches!(probe, LeaseOutcome::Held { .. }),
             "a heartbeating holder must not be stolen from: {probe:?}"
@@ -257,9 +345,13 @@ mod tests {
         file.set_modified(SystemTime::now() - Duration::from_secs(120))
             .expect("age it");
 
-        let outcome =
-            SessionLease::acquire_with(&session, Duration::from_secs(30), Duration::from_secs(10))
-                .expect("acquire");
+        let outcome = SessionLease::acquire_with(
+            &session,
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::ZERO,
+        )
+        .expect("acquire");
         assert!(
             matches!(outcome, LeaseOutcome::Acquired(_)),
             "a crash leftover must be stealable, not wedging: {outcome:?}"
@@ -280,6 +372,7 @@ mod tests {
                 &session,
                 Duration::from_secs(30),
                 Duration::from_millis(20),
+                Duration::ZERO,
             )
             .expect("acquire")
             {
@@ -303,8 +396,8 @@ mod tests {
         else {
             panic!("acquired");
         };
-        match SessionLease::acquire(&session).expect("probe") {
-            LeaseOutcome::Held { holder } => {
+        match SessionLease::acquire_now(&session).expect("probe") {
+            LeaseOutcome::Held { holder, .. } => {
                 let holder = holder.expect("holder text");
                 assert!(
                     holder.contains(&format!("pid={}", std::process::id())),
@@ -313,5 +406,136 @@ mod tests {
             }
             other => panic!("expected Held, got {other:?}"),
         }
+    }
+
+    // ---- M136: waiting out the stale window instead of refusing outright ----
+
+    /// The defect this milestone fixes, in miniature: a lock nobody is heartbeating
+    /// is a dead holder, and a caller that refuses immediately turns "reopen the app
+    /// I just closed" into a 30-second error.
+    ///
+    /// Timings are 200× compressed so the test costs milliseconds: a 300 ms stale
+    /// window, a lock aged 150 ms (half-stale, i.e. not yet stealable), and a 2-second
+    /// wait budget. Pre-fix this returned `Held` on the first check. Post-fix the
+    /// acquirer keeps looking, the lock crosses 300 ms, and the steal succeeds.
+    #[test]
+    fn a_waiting_acquirer_takes_the_lock_the_moment_it_goes_stale() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("s.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        let lock = session.with_extension("lock");
+        std::fs::write(&lock, "pid=999999\n").expect("dead holder left this");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&lock)
+            .expect("open");
+        f.set_modified(SystemTime::now() - Duration::from_millis(150))
+            .expect("age it to half the window");
+
+        let started = std::time::Instant::now();
+        let outcome = SessionLease::acquire_with(
+            &session,
+            Duration::from_millis(300),
+            Duration::from_millis(50),
+            Duration::from_secs(2),
+        )
+        .expect("acquire");
+        assert!(
+            matches!(outcome, LeaseOutcome::Acquired(_)),
+            "a dead holder must not make the next launch fail: {outcome:?}"
+        );
+        // It waited for the window rather than stealing early — the whole point is
+        // that a *live* holder is never taken from, so a fast steal would be a bug.
+        assert!(
+            started.elapsed() >= Duration::from_millis(140),
+            "the steal waited for the stale window rather than firing at once ({:?})",
+            started.elapsed()
+        );
+    }
+
+    /// The other half, and the one that must not regress: a holder that keeps
+    /// heartbeating is still refused after the full wait. A test that only proved
+    /// the dead-holder case would pass just as happily against a lease that steals
+    /// instantly — which is exactly the second-writer corruption this exists to stop.
+    #[test]
+    fn a_waiting_acquirer_still_refuses_a_heartbeating_holder() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("s.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        let stale = Duration::from_millis(200);
+        let beat = Duration::from_millis(30);
+        let LeaseOutcome::Acquired(_held) =
+            SessionLease::acquire_with(&session, stale, beat, Duration::ZERO).expect("acquire")
+        else {
+            panic!("first acquisition must succeed");
+        };
+
+        // Wait several stale windows. The holder is alive and re-stamping throughout,
+        // so the lock never ages out and the acquirer must end up refusing.
+        let outcome = SessionLease::acquire_with(&session, stale, beat, Duration::from_millis(500))
+            .expect("acquire");
+        match outcome {
+            LeaseOutcome::Held { holder, waited } => {
+                let holder = holder.expect("holder text");
+                assert!(
+                    holder.contains(&format!("pid={}", std::process::id())),
+                    "and it still names the live holder: {holder}"
+                );
+                assert!(
+                    waited >= Duration::from_millis(500),
+                    "having actually waited, not refused early: {waited:?}"
+                );
+            }
+            other => panic!(
+                "a live holder must survive a full wait, got {other:?} — this is the \
+                 second-writer corruption the lease exists to prevent"
+            ),
+        }
+    }
+
+    /// The case the milestone's own `Limits` section used to admit nothing covered:
+    /// a holder that exits *while* someone is waiting on it. The wait re-reads the
+    /// lock each poll specifically to notice this, and the holder's `Drop` removes
+    /// the file — so the acquirer should take the lock well before its own deadline
+    /// rather than sitting out the remainder.
+    #[test]
+    fn a_holder_that_exits_mid_wait_is_noticed_at_once() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("s.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        let stale = Duration::from_secs(30);
+        let beat = Duration::from_millis(20);
+        let lock = session.with_extension("lock");
+        let holder = match SessionLease::acquire_with(&session, stale, beat, Duration::ZERO)
+            .expect("acquire")
+        {
+            LeaseOutcome::Acquired(held) => held,
+            other => panic!("expected Acquired, got {other:?}"),
+        };
+        assert!(lock.exists());
+
+        // The holder quits 150 ms in — well before the 3-second wait is up.
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(holder);
+        });
+
+        let started = std::time::Instant::now();
+        let outcome = SessionLease::acquire_with(
+            &session,
+            stale,
+            Duration::from_millis(20),
+            Duration::from_secs(3),
+        )
+        .expect("acquire");
+        assert!(
+            matches!(outcome, LeaseOutcome::Acquired(_)),
+            "a holder that released the lock must be taken over from, not waited out: {outcome:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "and taken promptly, not at the deadline ({:?})",
+            started.elapsed()
+        );
     }
 }

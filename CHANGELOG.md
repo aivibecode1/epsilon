@@ -18,6 +18,17 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   are user-visible strings in `epsilon --help`; no behaviour changed.
 
 ### Fixed
+- **Reopening a session you just closed no longer fails for 30 seconds (M136).** Kill a TUI, open it
+  again, and the harness would report that another instance is already writing the session and exit —
+  because the process you just killed is exactly the one that was not heartbeating its lock, and the
+  lease refused on first sight instead of waiting to find out. The lock's own heartbeat already
+  answers "is anyone still there?" without a platform call, so acquisition now waits out the crash
+  window and takes the session the moment the heartbeat stops. A live holder is still never taken
+  from: that is the corruption the lease exists to prevent, and it is now pinned by a test that fails
+  if the wait ever turns into an instant steal. A pid-liveness probe was considered and rejected — it
+  needs a platform call to learn less than the heartbeat already reports. If the refusal does stand
+  (a second window genuinely owns the session), the message now says how long it waited and that the
+  pid is a hint rather than a verified fact.
 - **An `edit` no longer hands the model the rest of a partly-read file (M135).** `edit` recorded
   its own success through the same function `write` uses, and that function's contract — "the bytes
   it just wrote are known in full" — is true of `write` and false of a targeted replacement. It

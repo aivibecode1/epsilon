@@ -373,6 +373,27 @@ Two consequences worth recording:
   previous handle if the reopen fails. The alternative — teaching the lease to recognise its own
   pid — would have hidden genuine same-process double-writers.
 
+**Amendment (M136).** The lease **waits out the stale window instead of refusing on first sight.**
+The M61 heartbeat above already answers the only question that matters — is anyone still there? —
+and it answers it without a platform call. Having that answer, refusing immediately was strictly
+worse than useless in the most common case: killing a TUI and reopening it produced "another epsilon
+is already writing this session" for up to `STALE_AFTER` (30 s), because the process just killed is
+precisely the one not heartbeating. The console probe hit this and had to work around it
+(`audit/evidence/console-probe-2026-09-21.md`). Acquisition now polls to the stale deadline, re-reading
+the lock each time so a holder that exits mid-wait is taken over from immediately rather than after
+the remainder, and only reports `Held` when a heartbeat is still arriving at the deadline.
+
+The alternative — a liveness probe of the recorded pid — was considered and **rejected**, and the
+reasoning generalises: it needs a platform call and, in this workspace, `unsafe`, to learn strictly
+*less* than the heartbeat already reports, while adding pid reuse as a fresh failure mode. The trade
+this amendment accepts is the one worth stating plainly: **in the only case that costs anything, the
+holder really is alive, and waiting is the correct behaviour** because the user is looking at a
+second window that owns the session. Two consequences: `LeaseOutcome::Held` and
+`StoreError::Leased` now carry `waited`, because a refusal that says how long it tried is a
+different experience from one that looks like the tool is broken; and `acquire_now` is kept as the
+explicit no-wait entry point for callers with their own timeout (and for tests, which must not spend
+30 seconds proving a 30-second window).
+
 **Amendment (M60).** The retry stack is now **engaged in production** — it had been
 implemented, exported, and unit-tested while no production path wrapped a stream with it, so a
 transient 429/503 failed the turn outright. `Agent::retrying_real_stream()` is the single

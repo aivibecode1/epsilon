@@ -363,8 +363,12 @@ fn lease_blocks_second_writer_until_released() {
 
     let held = SessionLease::acquire(&session).unwrap();
     assert!(matches!(held, epsilon_session::LeaseOutcome::Acquired(_)));
+    // `acquire_now`, not `acquire`: the waiting variant would deliberately sit out
+    // the 30-second stale window here, because this process is the live holder and
+    // will keep heartbeating. Asserting the refusal is the point, and refusing
+    // immediately is what a caller with its own timeout wants.
     assert!(matches!(
-        SessionLease::acquire(&session).unwrap(),
+        SessionLease::acquire_now(&session).unwrap(),
         epsilon_session::LeaseOutcome::Held { .. }
     ));
 }

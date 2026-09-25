@@ -72,6 +72,14 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M136 — reopening a session you just closed no longer fails for 30 seconds](milestones/M136-the-lease-waits-instead-of-refusing.md):
+  kill the TUI, open it again, and the harness said another instance owned the session and exited —
+  because the process you just killed is precisely the one that was *not* heartbeating its lock. The
+  heartbeat already answers "is anyone still there?" without a platform call, so the lease now waits
+  the crash window out and takes the session the moment the heartbeat stops. A **pid-liveness probe
+  was considered and rejected**: it needs `unsafe` in this workspace to learn strictly less than the
+  heartbeat already reports. The trade is stated rather than hidden — the only case that costs
+  anything is one where the holder really is alive, and there waiting is correct.
 - [M135 — an `edit` no longer hands the model the rest of a partly-read file](milestones/M135-edit-does-not-license-a-whole-file-write.md):
   the F01 guard had a second door. `edit` recorded its success through the same function as `write`,
   whose contract is true of one and false of the other, so **editing one line of a file the model had

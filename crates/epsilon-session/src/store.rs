@@ -135,6 +135,8 @@ pub enum StoreError {
     Leased {
         /// Holder line from the lock file, empty when unreadable.
         holder: String,
+        /// How long acquisition waited before reporting the refusal (M136).
+        waited: std::time::Duration,
     },
 }
 
@@ -156,17 +158,32 @@ impl std::fmt::Display for StoreError {
                     diagnosis.explain()
                 )
             }
-            StoreError::Leased { holder } => write!(
-                f,
-                "another epsilon is already writing this session ({}) — one writer per \
-                 session file; close it, or remove the .lock file if it is a crash \
-                 leftover (a live holder re-stamps it every few seconds)",
-                if holder.trim().is_empty() {
-                    "holder unknown"
+            StoreError::Leased { holder, waited } => {
+                let who = if holder.trim().is_empty() {
+                    "holder unknown".to_string()
                 } else {
-                    holder.trim()
-                }
-            ),
+                    holder.trim().to_string()
+                };
+                // Say how long we tried, and say plainly that the pid is a hint
+                // rather than a verified fact. A user who killed a TUI and reopened
+                // it deserves to know we already waited for the crash window — that
+                // is the difference between a refusal they can act on and one that
+                // looks like the tool is broken.
+                let waited_note = if waited.is_zero() {
+                    String::new()
+                } else {
+                    format!(" (waited {}s for it to be released)", waited.as_secs())
+                };
+                write!(
+                    f,
+                    "another epsilon is already writing this session ({who}){waited_note} — \
+                     one writer per session file. If you just closed the other window, it is \
+                     probably still shutting down; wait a moment and try again. Otherwise \
+                     close it, or delete the .lock file beside the session: a live holder \
+                     re-stamps it every few seconds, so a lock that stays put after that is \
+                     a leftover, not a running instance.",
+                )
+            }
         }
     }
 }
@@ -429,11 +446,19 @@ impl SessionStore {
         // M61: one writer per session file. The check is `create_new` on
         // `<file>.lock` (atomic on NTFS and POSIX), and the holder heartbeats it
         // so a live process is never mistaken for a crash leftover.
+        //
+        // M136: `acquire` waits out the stale window before giving up, because
+        // refusing immediately made the ordinary way to restart a TUI fail — kill
+        // it, reopen, and get "another epsilon is already writing this session"
+        // for up to 30 seconds. `waited` is carried into the error so the message
+        // can say how long we tried, which is the difference between a user who
+        // understands the refusal and a user who thinks the tool is broken.
         let lease = match SessionLease::acquire(&path)? {
             LeaseOutcome::Acquired(lease) => lease,
-            LeaseOutcome::Held { holder } => {
+            LeaseOutcome::Held { holder, waited } => {
                 return Err(StoreError::Leased {
                     holder: holder.unwrap_or_default(),
+                    waited,
                 });
             }
         };

@@ -1,0 +1,97 @@
+M136 NEGATIVE CONTROL — the wait removed, the lockout reproduced
+=============================================================
+
+Purpose
+-------
+M136 changes session-lease acquisition from "refuse the moment anyone else
+holds the lock" to "wait out the stale window, then steal". The defect being
+fixed: kill a TUI, reopen it, and for up to STALE_AFTER (30s) the harness
+prints "another epsilon is already writing this session" and exits — because
+the process you just killed is not heartbeating any more, but the refusal
+path did not wait to find that out.
+
+Machine: Windows 10, 2026-09-25
+Build:   CARGO_BUILD_JOBS=1, CARGO_TARGET_DIR outside the repo
+
+What was reverted
+-----------------
+crates/epsilon-session/src/lease.rs, one line inside the acquisition loop:
+
+    -  if elapsed >= wait {
+    +  if elapsed >= Duration::ZERO {
+
+`Duration::ZERO` is exactly the pre-M136 condition: every check compares a
+non-negative elapsed time against zero, so the loop refuses on its first
+pass. Nothing else was touched.
+
+Command
+-------
+    cargo test -p epsilon-session --lib lease
+
+Result — CONTROL (wait removed): exit code 101
+---------------------------------------------
+    test lease::tests::a_waiting_acquirer_takes_the_lock_the_moment_it_goes_stale ... FAILED
+    test lease::tests::a_holder_that_exits_mid_wait_is_noticed_at_once ... FAILED
+    test lease::tests::a_waiting_acquirer_still_refuses_a_heartbeating_holder ... FAILED
+    test lease::tests::held_reports_the_holder_pid ... ok
+    test lease::tests::a_dead_holders_lock_is_stolen_after_the_stale_window ... ok
+    test lease::tests::lease_is_exclusive_and_released_on_drop ... ok
+    test lease::tests::dropping_a_lease_stops_the_heartbeat_and_removes_the_lock ... ok
+    test lease::tests::a_live_holder_is_never_stolen_from ... ok
+    test result: FAILED. 5 passed; 3 failed; 0 ignored; 0 measured; 13 filtered out
+
+The failure that names the defect
+---------------------------------
+    thread 'lease::tests::a_waiting_acquirer_takes_the_lock_the_moment_it_goes_stale'
+    panicked at crates\epsilon-session\src\lease.rs:444:9:
+    a dead holder must not make the next launch fail: Held { holder: Some("pid=999999\n"), waited: 309.3µs }
+
+Read that `waited` field: **309.3 microseconds**. The acquirer looked once,
+found a lock file whose mtime was half the stale window old, and refused —
+which is the whole bug. The holder is `pid=999999`, a process that does not
+exist; nobody was heartbeating that file; the correct outcome was to wait the
+remaining ~150ms and then take it. Instead the user got a refusal.
+
+Why three tests fail and not one
+--------------------------------
+Worth recording, because a control that fails everything proves less than one
+that fails exactly the right thing:
+
+  * a_waiting_acquirer_takes_the_lock_the_moment_it_goes_stale — the defect
+    itself. Refused at 309µs instead of waiting out the window.
+  * a_holder_that_exits_mid_wait_is_noticed_at_once — same root cause: with
+    no wait there is no mid-wait, so the acquirer cannot notice a holder that
+    leaves.
+  * a_waiting_acquirer_still_refuses_a_heartbeating_holder — the *opposite*
+    property, failing for an incidental reason: it asserts `waited >= 500ms`,
+    and the control refuses instantly, so `waited` is ~0. This test's job is
+    to catch a lease that steals too eagerly, and it cannot do that while the
+    lease refuses too eagerly. Under the real code it passes by waiting the
+    full budget and still refusing.
+
+The five that pass under the control are the pre-existing M61 tests. That is
+the correct shape: the change is additive to the exclusivity guarantee, and
+the control does not weaken any of them.
+
+Result — FIXED (control restored)
+---------------------------------
+    $ cargo test -p epsilon-session --lib lease
+      test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.51s
+    $ cargo fmt --all -- --check          # clean
+    $ cargo clippy -p epsilon-session --all-targets -- -D warnings   # clean
+
+Restore
+-------
+The one line was restored with the patch tool and re-read from disk to confirm
+it reads `if elapsed >= wait {`. No mtime hazard applies to this direction (the
+source file is not restored by a timestamp-preserving copy, and the test run
+above recompiled rather than reusing the control binary — proven by the 0.51s
+runtime and the 8/0 result, which the control could not have produced).
+
+Scope of this control
+--------------------
+It proves the new tests are discriminating for the behaviour they name. It
+does not prove the improvement is visible in a real console window: the TUI
+still shows no progress during the wait, because the countdown belongs in the
+TUI layer and is not written. That is recorded in the milestone's "what
+nothing exercises" section rather than claimed here.
