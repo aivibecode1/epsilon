@@ -22,10 +22,36 @@ REFS = os.path.join(REPO, "references")
 # NOTE: the extension alternation must be ordered longest-first, or `package.json`
 # matches as `package.js` and the `:2-4` line range is silently left behind. The
 # trailing lookahead keeps `foo.json` from being re-matched as `foo.js` + "on".
+# Two shapes, and the brace form must come FIRST. A single alternation of
+# `path + extension` stops at the first `.ts` *inside* `{a.ts,b.ts}` and yields
+# the nonsense path `src/{a.ts`, which then reads as "file not found". The
+# subagent who found this gap was right that the earlier count under-reported.
 CITE = re.compile(
-    r"references/pi-0\.84\.2/(?P<path>[\w./\-]+\.(?:tsx|ts|json|js|md))(?![A-Za-z])"
+    r"references/pi-0\.84\.2/"
+    r"(?P<path>[\w./\-]*\{[^{}]*\}[\w./\-]*"  # brace group, whole
+    r"|[\w./\-]+\.(?:tsx|ts|json|js|md))"  # plain file
+    r"(?![A-Za-z])"
     r"(?::(?P<lines>\d+(?:[–\-]\d+)?(?:,\d+(?:[–\-]\d+)?)*))?"
 )
+
+
+def expand(path: str) -> list[str]:
+    """Expand brace alternation: `src/{a.ts,b/c.ts}` -> the concrete paths.
+
+    Without this, a brace-form citation is silently skipped -- the regex just
+    fails to match and the count comes out low with no error. A subagent caught
+    exactly that: 5 citations were never validated by the first version of this
+    script, and the script reported "all checkable" without mentioning them.
+    A tool that under-reports looks identical to a tool that finds nothing wrong.
+    """
+    m = re.search(r"\{([^{}]+)\}", path)
+    if not m:
+        return [path]
+    head, tail = path[: m.start()], path[m.end() :]
+    out = []
+    for alt in m.group(1).split(","):
+        out.extend(expand(head + alt.strip() + tail))
+    return out
 
 # Only these trees are worth walking; scratch/build output is noise.
 SCAN_DIRS = ["audit", "docs", "crates"]
@@ -72,33 +98,32 @@ def main():
                 text = open(full, encoding="utf-8", errors="replace").read()
                 for m in CITE.finditer(text):
                     total += 1
-                    path = m.group("path")
                     lines = m.group("lines")
-                    # Does it exist under the version we ACTUALLY have?
-                    cur = os.path.join(REFS, "pi-0.85.1", path)
-                    if not os.path.isfile(cur):
-                        # maybe the file moved; report as unresolvable either way
-                        bad_path += 1
-                        per_file.setdefault(rel, []).append(
-                            (path, lines, "no such file in pi-0.85.1")
-                        )
-                        continue
-                    if lines:
-                        n = len(
-                            open(cur, encoding="utf-8", errors="replace").read().splitlines()
-                        )
-                        worst = 0
-                        for part in re.split(r",", lines):
-                            part = part.replace("–", "-")
-                            nums = [int(x) for x in re.findall(r"\d+", part)]
-                            worst = max(worst, max(nums) if nums else 0)
-                        if worst > n:
-                            bad_line += 1
+                    for path in expand(m.group("path")):
+                        # Does it exist under the version we ACTUALLY have?
+                        cur = os.path.join(REFS, "pi-0.85.1", path)
+                        if not os.path.isfile(cur):
+                            bad_path += 1
                             per_file.setdefault(rel, []).append(
-                                (path, lines, f"cites line {worst}, file has {n}")
+                                (path, lines, "no such file in pi-0.85.1")
                             )
                             continue
-                    ok += 1
+                        if lines:
+                            n = len(
+                                open(cur, encoding="utf-8", errors="replace").read().splitlines()
+                            )
+                            worst = 0
+                            for part in re.split(r",", lines):
+                                part = part.replace("–", "-")
+                                nums = [int(x) for x in re.findall(r"\d+", part)]
+                                worst = max(worst, max(nums) if nums else 0)
+                            if worst > n:
+                                bad_line += 1
+                                per_file.setdefault(rel, []).append(
+                                    (path, lines, f"cites line {worst}, file has {n}")
+                                )
+                                continue
+                        ok += 1
 
     print(f"citations to pi-0.84.2: {total}")
     print(f"  file not found in pi-0.85.1 : {bad_path}")

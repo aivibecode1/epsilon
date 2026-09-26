@@ -124,10 +124,30 @@ What the code actually says, checked rather than recalled:
    `epsilon-core/src` for `rewind|navigate_back|edit_previous|fork_branch|switch_branch` returns
    **zero** non-test hits. The feature that would create an abandoned branch is not ported, so
    there is no abandoned branch to summarize.
-4. **pi does not call it either.** The only producer is `AgentSession.navigateTo(targetId,
-   { summarize, ... })` (`agent-session.ts:3103-3112`). A repo-wide grep for `navigateTo` in
-   `packages/` returns 5 hits, and every one is an unrelated `navigateTo` *cursor option* in
-   `tui/src/components/settings-list.ts`. pi itself has no internal caller for it.
+4. **~~pi does not call it either.~~ WITHDRAWN — this was wrong, and it was my error.**
+   I wrote that `AgentSession.navigateTo` has no caller in pi, based on a repo-wide grep for
+   `navigateTo` that returned 5 hits, all an unrelated cursor option in
+   `tui/src/components/settings-list.ts`. **That grep was for a name that does not exist in
+   0.85.1.** The method is `AgentSession.navigateTree`, and it **does** have callers:
+   `interactive-mode.ts:1889,5288`, `print-mode.ts:86`, `extensions/runner.ts:827`,
+   `agent-controller-provider.ts:60`. A grep that returns nothing because the identifier is
+   wrong proves nothing, and I wrote the conclusion as though it had.
+
+**The argument that does hold**, and it does not depend on any identifier guess: the only
+production site that constructs an `EntryKind::BranchSummary` is `store.rs:1397`, inside
+`branch_with_summary`, and **every caller of `branch_with_summary` is a test** (7 sites). A
+grep for "how do you navigate" can miss; a grep for "where is the thing constructed" cannot.
+Two other Epsilon facts, re-checked with the right identifiers this time:
+
+5. **`/tree` exists but does not navigate.** `picker.rs:354` advertises "navigate session tree
+   (switch branches)", and `app.rs:1721` handles it — but that arm is an **alias for
+   `/timeline`**: it calls `store.branch_entries()` and opens the same picker. It *lists*
+   branches; selecting one does not create a `BranchSummary`. A slash command's own description
+   is not a specification, which is the same mistake as citing a build artifact earlier.
+6. **No rewind or edit-previous path exists** — zero non-test hits across tui, cli and core.
+
+So the conclusion is unchanged and now rests on point 4's construction-site argument, but the
+original reasoning was invalid and should not be repeated.
 
 So: **nothing in Epsilon spends money summarizing a branch, therefore nothing is unbilled.**
 A reader that counts a `BranchSummary`'s usage is correct and already tested; it is simply fed
