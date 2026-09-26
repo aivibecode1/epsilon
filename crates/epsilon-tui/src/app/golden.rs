@@ -2313,3 +2313,60 @@ fn ctrl_x_opens_the_newest_card_and_leaves_the_others_alone() {
 fn filler(n: usize) -> String {
     (0..n).map(|i| format!("+filler {i}\n")).collect::<String>()
 }
+
+/// The frame-level half of the architecture M152 recorded as a contradiction.
+///
+/// `only_a_finished_card_carries_a_duration` (`state.rs`) already proves `elapsed_ms()` is
+/// `None` while a call is pending. That is a fact about state, and it says nothing about what
+/// the reader sees. What is unproven is the pair this milestone claims: the **header** carries a
+/// live figure for a running call, and the **card row** carries none.
+#[test]
+fn a_running_call_shows_its_time_in_the_header_not_on_the_card() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // The public event stream, stopped one step short of the result.
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(crate::state::assistant_calling(
+            "running the check",
+            "tc_live",
+            "bash",
+            serde_json::json!({"command": "sleep 30"}),
+        ))),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "tc_live".into(),
+        tool_name: "bash".into(),
+        args: serde_json::json!({"command": "sleep 30"}),
+    });
+
+    // The header's live figure comes from `App::run_started_at`, which the real event loop
+    // stamps when a turn begins — not from anything in `UiState`. Driven here the same way,
+    // because a test that reached the header by a different route would be testing the route.
+    app.run_started_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(12));
+
+    let rows = render_rows(&mut app, 80, 24);
+    let header = rows.first().cloned().unwrap_or_default();
+
+    // The header is the surface that can afford a live figure: repainted every frame, and it
+    // names the phase. This is the half of the pair M152 could not check, because the probe
+    // could not then drive a live tool at all.
+    assert!(
+        header.contains("running 12s"),
+        "the header is where a running call states its time: {header:?}"
+    );
+
+    // And the card row in that same frame says nothing about duration. A number here would
+    // be the stale kind: the row is cached, so it would freeze at whatever the frame that
+    // built it happened to see, then jump when the card was finally rebuilt.
+    let card_row = rows
+        .iter()
+        .find(|r| r.contains("sleep 30"))
+        .unwrap_or_else(|| panic!("the running bash card is on screen: {rows:#?}"));
+    for badge in ["0ms", "0s", "1ms", "1s"] {
+        assert!(
+            !card_row.contains(badge),
+            "a running card must not draw a duration it cannot keep live \
+             (found {badge:?} in {card_row:?})"
+        );
+    }
+}

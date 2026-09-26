@@ -153,8 +153,24 @@ pub struct Card {
     pub tool_call_id: String,
     /// When the call was requested, in Unix milliseconds.
     pub started_at_ms: u64,
-    /// When it finished, in Unix milliseconds. `None` while it is still running,
-    /// which is also what makes the duration live rather than absent.
+    /// When it finished, in Unix milliseconds. `None` while it is still running.
+    ///
+    /// **Where a running call's elapsed time appears, and why it is not here.** It is
+    /// *live*, and it is in the status header — `⠹ running 12s · running bash` — which
+    /// is repainted every frame. It is deliberately absent from the card, because a
+    /// transcript row is cached until something invalidates it: a `now - started` duration
+    /// drawn into the row would freeze at whatever value the frame that built the row
+    /// happened to see, then jump when the card was finally rebuilt. See
+    /// [`Card::elapsed_ms`].
+    ///
+    /// (This comment used to say that a `None` "makes the duration live rather than
+    /// absent", which contradicted the method two lines below and was simply wrong — the
+    /// card's duration *is* absent while running. M152 recorded the contradiction instead of
+    /// resolving it, on the grounds that settling it needed a measurement. The measurement
+    /// was the header probe: the header genuinely does carry a live figure, so both facts
+    /// were true and only this sentence was wrong. It is now asserted by
+    /// `a_running_call_shows_its_time_in_the_header_not_on_the_card` rather than left to a
+    /// comment to carry.)
     pub ended_at_ms: Option<u64>,
     /// The card's body.
     pub body: CardBody,

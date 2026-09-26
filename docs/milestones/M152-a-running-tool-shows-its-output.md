@@ -48,6 +48,13 @@ it alone, because the code already argues against it in a comment worth reading
 the row happened to see, because rows are cached until something invalidates them — and a number
 that is sometimes live and sometimes stale is worse than no number.
 
+> **SETTLED IN M158 — kept as the original record, not rewritten.** The decision deferred
+> here was made once there was a measurement to make it on: the header genuinely does carry a
+> live figure (`⠹ running 12s · running bash`, repainted every frame), so both facts were true
+> and only the field's doc comment was wrong. It now says so, and
+> `a_running_call_shows_its_time_in_the_header_not_on_the_card` asserts the pair on a real
+> frame. See `M158-the-contradiction-a-comment-could-not-settle.md`.
+
 That objection is correct, and it is not resolved by adding a clock. It is resolved by making
 the frame repaint and the row invalidate together, which is a render-cache change with its own
 risk. The field's own doc comment claims `None` "makes the duration live rather than absent",
