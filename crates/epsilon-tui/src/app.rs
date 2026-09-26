@@ -269,6 +269,35 @@ pub(crate) struct App {
     trust_review_pending: bool,
     guidance_mode: bool,
     scroll_from_bottom: usize,
+
+    /// An open transcript search, or `None`.
+    ///
+    /// `None` is the common case and is the whole point: this is state, not a mode, so
+    /// every other key path keeps treating the app as a normal transcript until something
+    /// actually opens a search.
+    search: Option<crate::search::TranscriptSearch>,
+
+    /// A transcript line the view must scroll to at the next measurement.
+    ///
+    /// A search cannot move the view when the key is handled: the line-to-row mapping lives
+    /// in the render cache, and the cache is reconciled *during* the draw, so at key time it
+    /// is empty and every lookup misses. That was the first implementation, and the frame
+    /// test caught it at once — `row_of_line` returning `None` silently meant "do nothing".
+    ///
+    /// So the search records its target here and [`App::measure_transcript`] applies it once
+    /// the offsets exist. Deliberately *not* cleared on a miss: the first jump of a search
+    /// happens before any draw has reconciled the cache, so dropping it there would lose
+    /// precisely the jump that matters most.
+    pending_jump: Option<usize>,
+
+    /// Height of the transcript viewport in rows, recorded at each frame.
+    ///
+    /// The transcript search has to place a match inside the viewport, and the viewport's
+    /// height is only known while a frame is being measured — which is *after* a key is
+    /// handled. Recording it here is what lets a search move the view at all; without it the
+    /// match can only be scrolled to the very top, which hides whatever the reader was
+    /// looking at one line above it.
+    viewport_rows: usize,
     /// D11: where the transcript's viewport sits, measured at the top of each
     /// frame so the footer's position badge and the rows beneath it agree.
     geometry: TranscriptGeometry,
@@ -612,6 +641,9 @@ impl App {
             trust_review_pending: false,
             guidance_mode: false,
             scroll_from_bottom: 0,
+            search: None,
+            pending_jump: None,
+            viewport_rows: 0,
             geometry: TranscriptGeometry::default(),
             model_id,
             picker_open: false,
@@ -1402,46 +1434,17 @@ impl App {
                 }
             }
             crate::picker::Command::Search(query) => {
-                if query.trim().is_empty() {
-                    self.ui
-                        .push_notice("usage: /search <query> — scans this session's log");
-                } else {
-                    match agent.search_history(
-                        &query,
-                        &epsilon_core::SearchOptions {
-                            limit: 20,
-                            ..Default::default()
-                        },
-                    ) {
-                        Some(Ok(hits)) if hits.is_empty() => {
-                            self.ui.push_notice(format!("no matches for '{query}'"));
-                        }
-                        Some(Ok(hits)) => {
-                            self.ui.push_notice(format!(
-                                "{} hit{} for '{}':",
-                                hits.len(),
-                                if hits.len() == 1 { "" } else { "s" },
-                                query
-                            ));
-                            for h in &hits {
-                                self.ui.push_notice(format!(
-                                    "#{seq} {role}: {snippet}",
-                                    seq = h.seq,
-                                    role = h.role,
-                                    snippet = h.snippet
-                                ));
-                            }
-                        }
-                        Some(Err(e)) => {
-                            self.ui.push_notice(format!("session search failed: {e}"));
-                        }
-                        None => {
-                            self.ui.push_notice(
-                                "no session log attached (search unavailable this run)",
-                            );
-                        }
-                    }
-                }
+                // M157: this scanned the session *log on disk* and printed its hits as
+                // transcript notices — a list of places you could go, printed into the one
+                // place you already were. Nothing moved, nothing was highlighted, and with
+                // no session log attached it answered "search unavailable this run", which
+                // is exactly when a user most wants it.
+                //
+                // It searches the rendered transcript now, because that is what the reader
+                // is looking at (pi searches the screen too, not the log). The trade is
+                // honest and recorded in `search.rs`: the log reached further back than the
+                // viewport, but it could not show you what it found.
+                self.search_own_transcript(&query);
             }
             crate::picker::Command::Quit => return true,
             crate::picker::Command::Compact => {
@@ -3035,6 +3038,71 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         .map(|ask| ask.request.request_id.clone());
     if app.pending_ask.is_some() {
         draw_dialog(f, app, f.area());
+    } else if app.search.is_some() {
+        // M157: a search that moves the view without saying so is the same defect M155
+        // was about — the action happens, the user is not told. The panel names the query,
+        // which match is current, and what the keys do.
+        draw_search(f, app, f.area());
+    }
+}
+
+/// The open search: the query, where you are in the matches, and the keys.
+///
+/// Drawn last, over the transcript, for the same reason the permission dialog is: the
+/// thing it reports has to be visible while it is being reported. A counter in the footer
+/// would be out of the way exactly when a user is pressing `n` through a list.
+fn draw_search(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+    use ratatui::text::{Line, Span};
+
+    let Some(search) = app.search.as_ref() else {
+        return;
+    };
+    let theme = &app.theme;
+    // query row + position row + one key row, plus the panel's two border rows.
+    let width = Width::PROMPT.resolve(outer);
+    let height = (3 + 2).min(outer.height);
+    let panel = Panel {
+        theme,
+        area: overlay::centered(outer, width, height),
+        title: "search",
+        focused: true,
+        border: Some(theme.accent()),
+    };
+    let inner = panel.open(f);
+    let body = vec![
+        Line::from(vec![
+            Span::styled("find  ", theme.faint()),
+            Span::styled(search.query.clone(), theme.text()),
+        ]),
+        Line::from(vec![
+            Span::styled("      ", theme.faint()),
+            // One of these, never both and never neither: a counter reading `4 of 4`
+            // while the viewport is somewhere else is worse than no counter at all.
+            Span::styled(
+                search.position(),
+                if search.matches.is_empty() {
+                    theme.danger()
+                } else {
+                    theme.text()
+                },
+            ),
+        ]),
+    ];
+    f.render_widget(ratatui::widgets::Paragraph::new(body), inner);
+    if let Some(hint_row) = inner.height.checked_sub(3).map(|y| Rect {
+        x: inner.x,
+        y: inner.y + y,
+        width: inner.width,
+        height: 1,
+    }) {
+        f.render_widget(
+            crate::ui::overlay::hint_row(
+                theme,
+                &[("n", "next"), ("p", "previous"), ("esc", "close")],
+            ),
+            hint_row,
+        );
     }
 }
 
@@ -3447,10 +3515,109 @@ impl App {
         // the position badge jump by a row every time the model wrapped a line.
         let total = self.render_cache.total_rows() + self.streaming_tail_rows(body_width);
         let visible = area.height as usize;
+        self.viewport_rows = visible;
+        // A search target becomes resolvable only now: the cache was reconciled two lines
+        // above, and the viewport height that places the match a third of the way down was
+        // unknown until this line.
+        self.apply_pending_jump();
         TranscriptGeometry {
             skip: crate::scroll::transcript_skip(total, visible, self.scroll_from_bottom),
             total,
             visible,
+        }
+    }
+
+    /// Open a search over the rendered transcript, or explain why not.
+    ///
+    /// A blank query and a query that matched nothing are different answers and used to look
+    /// identical, because both printed one line of prose. One is a usage error; the other is
+    /// a result.
+    fn search_own_transcript(&mut self, query: &str) {
+        let texts: Vec<String> = self.ui.lines().iter().map(|l| l.text.clone()).collect();
+        match crate::search::TranscriptSearch::open(&texts, query, self.scroll_from_bottom) {
+            None => self
+                .ui
+                .push_notice("usage: /search <text> \u{2014} find it in this transcript"),
+            Some(found) if found.matches.is_empty() => {
+                self.ui
+                    .push_notice(format!("no match for '{}' in this transcript", found.query));
+            }
+            Some(found) => {
+                // Land on the first match immediately, so opening a search is not a state the
+                // user has to act in before seeing anything.
+                self.search = Some(found);
+                self.jump_to_current_match();
+            }
+        }
+    }
+
+    /// Move the view so the current match is on screen.
+    ///
+    /// `scroll_from_bottom` is counted from the tail, so showing row `r` means setting it to
+    /// "however many rows sit below the viewport's new top". The match is placed a third of
+    /// the way down rather than at the top: at the top it hides whatever the user was
+    /// reading above, and centred would need the viewport height, which the cache does not
+    /// know at this point in the frame.
+    fn jump_to_current_match(&mut self) {
+        let Some(search) = self.search.as_ref() else {
+            return;
+        };
+        let Some(line) = search.current_line() else {
+            return;
+        };
+        // Recorded, not applied. The key path still holds the *previous* frame's cache, and
+        // that cache is a perfectly good line-to-row map for the wrong transcript —
+        // applying here consumed the target against stale offsets, cleared the flag, and left
+        // the measurement with nothing to do. That is the whole bug, and it looked like a
+        // search that reported its match perfectly and then did nothing.
+        self.pending_jump = Some(line);
+    }
+
+    /// Apply [`App::pending_jump`] as far as the cache allows.
+    ///
+    /// Called only from [`App::measure_transcript`], *after* the cache has been reconciled
+    /// for this frame. Calling it from the key path is a bug, not an optimisation: the cache
+    /// there is the previous frame's, and it answers authoritatively about a transcript that
+    /// has since grown.
+    fn apply_pending_jump(&mut self) {
+        let Some(line) = self.pending_jump else {
+            return;
+        };
+        let Some(row) = self.render_cache.row_of_line(line) else {
+            return;
+        };
+        self.pending_jump = None;
+        let total = self.render_cache.total_rows();
+        let visible = self.viewport_rows.max(1);
+        let skip = row
+            .saturating_sub(visible / 3)
+            .min(total.saturating_sub(visible));
+        self.scroll_from_bottom = total.saturating_sub(visible).saturating_sub(skip);
+    }
+
+    /// Step to the next match, or the previous, and follow it.
+    pub(crate) fn search_step(&mut self, forward: bool) {
+        let Some(mut search) = self.search.take() else {
+            return;
+        };
+        let moved = if forward {
+            search.next_match()
+        } else {
+            search.previous_match()
+        };
+        self.search = Some(search);
+        if moved.is_some() {
+            self.jump_to_current_match();
+        }
+    }
+
+    /// Close the search and put the view back where the user left it.
+    ///
+    /// Restoring rather than snapping to the tail: a search that relocates the viewport and
+    /// leaves it there makes *closing* the thing you have to undo.
+    pub(crate) fn search_close(&mut self) {
+        if let Some(search) = self.search.take() {
+            self.scroll_from_bottom = search.saved_scroll_from_bottom;
         }
     }
 

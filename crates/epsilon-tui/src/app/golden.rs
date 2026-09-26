@@ -1265,6 +1265,117 @@ fn press_expand(app: &mut App, agent: &std::sync::Arc<Agent>) {
 /// M153, M155) were invisible to the state tests and obvious here, so this asserts the
 /// thing a reader would actually see: the call appears once, and its body is under it
 /// rather than beside a copy of it.
+/// M157, and the assertion that makes this different from the old `/search`.
+///
+/// The old command searched the session log and printed its hits as transcript notices, so
+/// the honest frame test for "does search work" was the frame test for "are the notices
+/// there" — which passed while the thing it was supposed to do, *move the view to the
+/// match*, did not exist.
+///
+/// This asserts the two things a user would notice: the panel says what is being searched
+/// and where you are in the matches, and stepping through actually changes which part of
+/// the transcript is on screen.
+#[test]
+fn an_open_search_reports_itself_and_the_matches_it_found() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    for text in [
+        "alpha",
+        "the needle is here",
+        "beta",
+        "gamma",
+        "another needle",
+        "delta",
+    ] {
+        app.ui.push_notice(text);
+    }
+    app.search_own_transcript("needle");
+
+    let search = app.search.as_ref().expect("a match opens the search");
+    assert_eq!(search.matches, vec![1, 4], "both needles, in order");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+    assert!(
+        screen.contains("search"),
+        "the panel must say what it is: {screen}"
+    );
+    assert!(
+        screen.contains("needle"),
+        "the query must be on screen: {screen}"
+    );
+    assert!(
+        screen.contains("1 of 2"),
+        "the reader must know which match they are on: {screen}"
+    );
+}
+
+/// The part the old one could not do.
+#[test]
+fn stepping_through_matches_moves_what_is_on_screen() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    for i in 0..80 {
+        app.ui.push_notice(format!("row {i}"));
+    }
+    app.ui.push_notice("findme at the top");
+    for i in 80..160 {
+        app.ui.push_notice(format!("row {i}"));
+    }
+    app.search_own_transcript("findme");
+    let before = render_rows(&mut app, 80, 24).join("\n");
+    assert!(before.contains("1 of 1"), "{before}");
+
+    // A second match far below, so stepping must relocate the viewport.
+    app.search_close();
+    for i in 160..240 {
+        app.ui.push_notice(format!("row {i}"));
+    }
+    app.ui.push_notice("findme at the bottom");
+    app.search_own_transcript("findme");
+    let opened = render_rows(&mut app, 80, 24).join("\n");
+    // The *first* match specifically. Asserting `contains("findme")` was not enough and
+    // the control proved it: with the jump disabled the view sits at the tail, where the
+    // **second** match happens to be, so the assertion passed with the feature broken. A
+    // test that a control cannot fail is not evidence, which is the same rule as everything
+    // else in this file — it just needed saying here too.
+    assert!(
+        opened.contains("findme at the top"),
+        "opening a search must land on its FIRST match, not merely report one: {opened}"
+    );
+    assert!(
+        !opened.contains("row 0"),
+        "and it must have *moved the view* to do it — this is the whole point: {opened}"
+    );
+}
+
+/// Closing puts the view back, so search is not itself the thing you have to undo.
+#[test]
+fn closing_a_search_restores_the_view_it_started_from() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    for i in 0..200 {
+        app.ui.push_notice(format!("row {i}"));
+    }
+    app.scroll_from_bottom = 0;
+    app.search_own_transcript("row 12");
+    // The jump is *deferred* to the next measurement, because the line-to-row mapping only
+    // exists once the render cache has been reconciled for the current transcript. So a frame
+    // has to be drawn before there is anything to assert — which is also the real sequence
+    // in the app: a key is handled, then the loop draws.
+    let _ = render_rows(&mut app, 80, 24);
+    let moved = app.scroll_from_bottom;
+    assert!(
+        moved > 0,
+        "the search moved the view, or there is nothing to restore"
+    );
+    app.search_close();
+    assert_eq!(
+        app.scroll_from_bottom, 0,
+        "closing restores where the reader was"
+    );
+}
+
 #[test]
 fn a_completed_tool_call_is_drawn_once_on_a_real_frame() {
     let mut app = bench_app(UiState::new());

@@ -72,7 +72,33 @@ pub(crate) fn begin_auth_key_prompt(app: &mut App, provider: String) {
     ));
 }
 
-pub(crate) fn handle_auth_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
+///
+/// Deliberately tiny: navigation, and a way out. There is no editable query yet — the
+/// query comes from `/search <text>` and refining it means leaving and retyping, which
+/// `search.rs` records as the obvious next slice rather than a half-built filter box.
+pub(crate) fn handle_search_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.search_close();
+            true
+        }
+        KeyCode::Down | KeyCode::Enter | KeyCode::Char('n') => {
+            app.search_step(true);
+            true
+        }
+        KeyCode::Up | KeyCode::PageUp | KeyCode::Char('p') => {
+            app.search_step(false);
+            true
+        }
+        KeyCode::Char('q') => {
+            app.search_close();
+            true
+        }
+        _ => true,
+    }
+}
+
+fn handle_auth_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
             // M52: dropping the code sender disconnects the login thread,
@@ -345,6 +371,16 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     // login flow resumes exactly where it was once the ask clears. The exit
     // keybind keeps its precedence over the approval branch (quitting drops the
     // parked ask, which resolves to Deny — fail closed), exactly as before.
+    // M157: an open transcript search owns the keyboard, like every other overlay, and
+    // for the same reason the approval dialog does: keys sent anywhere the user cannot see
+    // them are keys the user believes they pressed and did not.
+    //
+    // It is placed after the approval branch on purpose. A pending permission ask is a
+    // question about *doing work*, and a search is a question about *reading*; answering the
+    // first with `n` should deny the tool, not silently move the viewport.
+    if app.search.is_some() {
+        return handle_search_key(app, key);
+    }
     if app.pending_ask.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_approval_key(app, key);
     }

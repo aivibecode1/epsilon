@@ -52,48 +52,56 @@ fn type_and_enter(app: &mut App, agent: &Arc<Agent>, text: &str) -> bool {
 }
 
 #[tokio::test]
-async fn search_command_reports_hits_from_the_real_session_log() {
+async fn search_command_now_searches_the_transcript_and_not_the_session_log() {
+    // M157 replaced this test rather than deleting it, because the behaviour it pinned is
+    // the one that was wrong. It seeded a real session log and asserted the hits came back as
+    // transcript notices — which passed, and passed for a feature that could not move the
+    // view, highlight anything, or work at all without a session attached.
+    //
+    // What is asserted now is the contract that actually matters: `/search` finds text in
+    // **what is on screen**, and a miss and a blank query are two different answers.
     let (mut app, agent, (_f, _n)) = test_app();
-    // Attach a durable mirror and seed it directly through the store API.
-    let tmp = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(std::sync::Mutex::new(
-        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
-    ));
-    agent.attach_session_store(std::sync::Arc::clone(&store));
-    {
-        let mut st = store.lock().unwrap();
-        use epsilon_contracts::content::UserContent;
-        use epsilon_contracts::session_entry::EntryKind;
-        st.append(EntryKind::Message {
-            message: epsilon_contracts::message::Message::User(UserMessage {
-                id: epsilon_contracts::new_id("msg"),
-                timestamp_ms: 0,
-                content: vec![UserContent::Text {
-                    text: "the launch codes are under the keyboard".into(),
-                }],
-            }),
-            api_request_sha256: None,
-        })
-        .unwrap();
+    for text in [
+        "first thing",
+        "the launch codes are under the keyboard",
+        "third thing",
+    ] {
+        app.ui.push_notice(text);
     }
 
     // Real key path: /search keyboard
     assert!(!type_and_enter(&mut app, &agent, "/search keyboard"));
-    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    let search = app.search.as_ref().expect("a hit opens the search");
+    assert_eq!(search.query, "keyboard");
+    assert_eq!(
+        search.matches,
+        vec![1],
+        "the seeded line, by transcript index"
+    );
     assert!(
-        texts
+        app.search.is_some() && app.ui.lines()[1].text.contains("keyboard"),
+        "the match must be a real line on screen, not a session-log entry: {:?}",
+        app.ui
+            .lines()
             .iter()
-            .any(|t| t.contains("#0 user") && t.contains("keyboard")),
-        "expected a hit line mentioning the seeded entry, got {texts:?}"
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
     );
 
-    // Miss case
+    // Close first, and the reason is the assertion: while a search is open it owns the
+    // keyboard (as the approval dialog does), so typing goes nowhere and the transcript
+    // below shows a mangled "/search q..." swallowed by the overlay. A user would press Esc;
+    // this test has to as well, and the fact that it *had* to is worth knowing.
+    app.search_close();
+
+    // Miss case: a different message from a blank query, and nothing left open.
     assert!(!type_and_enter(&mut app, &agent, "/search quantum-unicorn"));
+    assert!(app.search.is_none(), "a miss must not leave a search open");
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(
         texts
             .iter()
-            .any(|t| t.contains("no matches for 'quantum-unicorn'")),
+            .any(|t| t.contains("no match for 'quantum-unicorn'")),
         "expected the miss notice, got {texts:?}"
     );
 

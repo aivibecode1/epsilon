@@ -22,9 +22,11 @@ pub mod latex;
 pub mod markdown;
 pub mod picker;
 pub mod render_cache;
-/// What a tool card says, per tool. See the module docs.
 pub mod renderers;
 pub mod scroll;
+/// What a tool card says, per tool. See the module docs.
+/// Finding text in the visible transcript. See the module docs for what replaced.
+pub mod search;
 pub mod state;
 pub mod trust_store;
 pub mod ui;

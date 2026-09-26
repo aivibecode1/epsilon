@@ -5,6 +5,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- `/search` now finds text in the transcript you can see, opens a panel with the match
+  position, and **moves the view to the match** — it previously printed the session log's
+  hits as notices and changed nothing on screen (M157).
+
 - A tool call is no longer drawn twice — the result settles the call's own card (M155).
 
 - Tool cards now say what the tool actually did — `read src/main.rs:10–50 of 300`

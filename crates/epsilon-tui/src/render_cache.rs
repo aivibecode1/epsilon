@@ -367,6 +367,28 @@ impl RenderCache {
             .collect()
     }
 
+    /// The first **screen row** of a logical line.
+    ///
+    /// Exposed because a logical line wraps into several rows, so a line index is not a
+    /// row index — and the transcript search has to convert between them to move the view
+    /// to a match. The mapping is already computed for the viewport window (see
+    /// [`RenderCache::visible_rows_with_kinds`], which binary-searches these same offsets);
+    /// this just names it, rather than a second walk through the cache to rediscover it.
+    ///
+    /// `None` for a line that has not been reconciled, or a cache with no lines at all:
+    /// a search target that is not on screen is not something to scroll to.
+    pub fn row_of_line(&self, line_index: usize) -> Option<usize> {
+        self.offsets.get(line_index).copied()
+    }
+
+    /// How many logical lines the cache currently holds.
+    ///
+    /// The counterpart to [`RenderCache::row_of_line`]: a caller holding a transcript line
+    /// index needs both ends of the mapping.
+    pub fn line_count(&self) -> usize {
+        self.reconciled_ids.len()
+    }
+
     /// The same window, each row paired with the [`LineKind`] it came from.
     ///
     /// The draw path needs the kind to pick the row's gutter and band, and the
