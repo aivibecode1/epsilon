@@ -165,6 +165,11 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
   0.31s alone and failed at 2.39s under the full parallel suite — PowerShell startup, not the
   drain grace. The bound now asks the question actually meant ("well under the 5s grace") at 4s,
   which still catches a regression that always pays the grace.
+- **A background process notification's exit code is not the test result.** The tool reports
+  "completed normally (exit code 0)" for a wrapper whose last command is `echo`, so it says 0 even
+  when the inner `cargo` failed — observed on a run that had `FMT=1` and another with a real test
+  failure. The verdict lives only in the log. Always end a battery chain with something that
+  propagates failure (`|| exit 1`, or a final `test $? -eq 0`), and read the marker file.
 - **A test that cannot fail is worse than no test, because it is a claim.** Two instances in one
   round, from opposite ends. A latency bound (`elapsed < 8s`) failed at 8.6s under parallel load and
   passed at 0.3s alone — it could not fail on a slow machine. Then its replacement, an *ordering*
