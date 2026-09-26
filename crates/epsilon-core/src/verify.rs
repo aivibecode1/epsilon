@@ -104,23 +104,46 @@ pub fn is_check_command(command: &str) -> bool {
     false
 }
 
+/// Whether a shell result describes a command that **passed**, as distinct from one that was
+/// merely *delivered*.
+///
+/// This is the F05 correction, and the distinction is not cosmetic. `ShellTool` reports a
+/// command exiting nonzero inside `Ok(ToolOutput)`: the tool ran fine, the command failed.
+/// Deriving verification from `!result.is_error` therefore records "cargo test" with six
+/// failing tests as a *passing* check, and the harness then has nothing to say to a model that
+/// shipped broken code. The exit code is already published in `details`, so read it.
+///
+/// A missing or non-numeric `exit_code` — a process killed by a signal, or a tool that reports
+/// none — is **not** a pass. An unknown outcome stays unknown, because a redundant nudge costs
+/// one message and a false all-clear costs a user a broken afternoon. This deliberately does
+/// not touch `is_error`: an ordinary nonzero exit remains a successful *tool call* carrying a
+/// failed *command*, and only the verification record distinguishes them.
+pub fn check_passed(details: &Value) -> bool {
+    matches!(details.get("exit_code").and_then(Value::as_i64), Some(0))
+}
+
 /// One check the model ran.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckRun {
     /// The command as issued.
     pub command: String,
-    /// Whether it exited zero.
+    /// Whether it **exited zero** — not merely whether the tool call was delivered.
     pub ok: bool,
-    /// Which turn it ran in (later beats earlier).
+    /// Which turn it ran in (informational; ordering uses `seq`).
     pub turn: usize,
+    /// Position in the observation stream, so "after this edit" is exact even within one turn.
+    pub seq: usize,
 }
 
 /// Files the model changed and checks it ran, in order.
 #[derive(Debug, Default)]
 pub struct VerificationLog {
-    /// `(path, turn of the last write)` in first-touch order.
-    edits: Vec<(String, usize)>,
+    /// `(path, turn of the write, position of the write)` in first-touch order.
+    edits: Vec<(String, usize, usize)>,
     checks: Vec<CheckRun>,
+    /// How many calls have been observed. Monotonic, so it orders edits against checks even
+    /// when both happen in the same turn — which is the case the turn number alone got wrong.
+    seen: usize,
 }
 
 impl VerificationLog {
@@ -130,7 +153,15 @@ impl VerificationLog {
     }
 
     /// Record one settled tool call. `ok` is the call's own success, not the check's.
+    ///
+    /// For a **check** the caller must pass whether the command *exited zero* — see
+    /// [`check_passed`]. For an **edit** the call's own success is the right test, since a
+    /// refused write changed nothing and must not be recorded as a change.
     pub fn observe(&mut self, tool: &str, args: &Value, ok: bool, turn: usize) {
+        // One position per call, taken before any early return, so a rejected call still
+        // consumes its slot and the ordering never depends on whether something was recorded.
+        let seq = self.seen;
+        self.seen += 1;
         match tool {
             "write" | "edit" => {
                 if !ok {
@@ -139,9 +170,12 @@ impl VerificationLog {
                 let Some(path) = args.get("path").and_then(Value::as_str) else {
                     return;
                 };
-                match self.edits.iter_mut().find(|(p, _)| p == path) {
-                    Some(entry) => entry.1 = turn,
-                    None => self.edits.push((path.to_string(), turn)),
+                match self.edits.iter_mut().find(|(p, _, _)| p == path) {
+                    Some(entry) => {
+                        entry.1 = turn;
+                        entry.2 = seq;
+                    }
+                    None => self.edits.push((path.to_string(), turn, seq)),
                 }
             }
             "bash" => {
@@ -153,6 +187,7 @@ impl VerificationLog {
                         command: command.to_string(),
                         ok,
                         turn,
+                        seq,
                     });
                 }
             }
@@ -165,15 +200,21 @@ impl VerificationLog {
         !self.edits.is_empty()
     }
 
-    /// Paths changed with no *successful* check at or after the turn they were changed in.
+    /// Paths changed with no *successful* check that ran **after** the change.
     ///
     /// A failing check does not clear an edit — that is the whole point of the record: the model
     /// has evidence that something is wrong, and "I ran the tests" is not "the tests pass".
+    ///
+    /// Ordering is by `seq`, not by `turn`, and that is the F05 correction. Two calls in the same
+    /// turn share a turn number, so `turn >=` let a check that ran *before* an edit in the same
+    /// batch vouch for the edit it never saw — the model would edit a file, and a check from
+    /// earlier in its own batch would "verify" it. `seq >` asks the question that was meant:
+    /// did a check run *after* this change?
     pub fn unverified(&self) -> Vec<String> {
         self.edits
             .iter()
-            .filter(|(_, turn)| !self.checks.iter().any(|c| c.ok && c.turn >= *turn))
-            .map(|(path, _)| path.clone())
+            .filter(|(_, _, seq)| !self.checks.iter().any(|c| c.ok && c.seq > *seq))
+            .map(|(path, _, _)| path.clone())
             .collect()
     }
 
@@ -273,6 +314,75 @@ mod tests {
         assert!(nudge.contains("src/a.rs, src/b.rs"), "{nudge}");
         assert!(nudge.contains("no check has run"), "{nudge}");
         assert!(nudge.contains("cargo test"), "it says what to run: {nudge}");
+    }
+
+    // ---- F05: delivery is not passage, and order is not the turn number --------------
+
+    #[test]
+    fn a_command_that_exited_nonzero_is_delivered_but_did_not_pass() {
+        // The exact shape ShellTool produces: the tool worked, the command failed.
+        let failed = json!({"exit_code": 101, "duration_ms": 12, "truncated": false});
+        assert!(
+            !check_passed(&failed),
+            "a nonzero exit is not a passing check"
+        );
+        assert!(check_passed(&json!({"exit_code": 0})), "zero is");
+    }
+
+    #[test]
+    fn an_unknown_outcome_stays_unknown() {
+        // A signalled process reports no exit code. Treating that as a pass would turn a
+        // killed test run into a clean bill of health.
+        assert!(!check_passed(&json!({"exit_code": null})));
+        assert!(!check_passed(&json!({"duration_ms": 9})));
+        assert!(!check_passed(&json!({})));
+    }
+
+    #[test]
+    fn a_failing_exit_leaves_the_edit_unverified() {
+        let mut log = VerificationLog::new();
+        log.observe("edit", &json!({"path": "src/a.rs"}), true, 1);
+        // delivered = true, but the command exited 1 — so it is not evidence.
+        log.observe("bash", &json!({"command": "cargo test"}), false, 2);
+        assert_eq!(log.unverified(), vec!["src/a.rs"]);
+    }
+
+    #[test]
+    fn a_check_before_an_edit_in_the_same_turn_does_not_cover_it() {
+        // Both calls in turn 1. Under the old `turn >=` rule the check covered the edit,
+        // because they share a turn number — the model would edit a file and its own earlier
+        // check would vouch for a change that check never saw.
+        let mut log = VerificationLog::new();
+        log.observe("bash", &json!({"command": "cargo test"}), true, 1);
+        log.observe("edit", &json!({"path": "src/a.rs"}), true, 1);
+        assert_eq!(
+            log.unverified(),
+            vec!["src/a.rs"],
+            "a check that ran before the edit cannot verify it"
+        );
+    }
+
+    #[test]
+    fn a_check_after_an_edit_in_the_same_turn_does_cover_it() {
+        // The positive control for the test above: ordering, not turn membership.
+        let mut log = VerificationLog::new();
+        log.observe("edit", &json!({"path": "src/a.rs"}), true, 1);
+        log.observe("bash", &json!({"command": "cargo test"}), true, 1);
+        assert!(
+            log.unverified().is_empty(),
+            "checked after the edit, same turn"
+        );
+    }
+
+    #[test]
+    fn a_rejected_call_still_consumes_its_position() {
+        // A refused write is not an edit, but it happened. If it did not advance the
+        // counter, a later check would be credited with a position it never occupied.
+        let mut log = VerificationLog::new();
+        log.observe("write", &json!({"path": "src/a.rs"}), false, 1); // refused
+        log.observe("edit", &json!({"path": "src/a.rs"}), true, 1);
+        log.observe("bash", &json!({"command": "cargo test"}), true, 1);
+        assert!(log.unverified().is_empty(), "{:?}", log.unverified());
     }
 
     #[test]

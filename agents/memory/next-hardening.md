@@ -141,13 +141,18 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
 ## Traps that have cost real time
 
 - **Assert a negative by locating the definition and its callers — never by failing to match a
-  guessed identifier.** This bit three times in one session (2026-09-26), and each false negative
-  was stated as a conclusion: (1) pi's `navigateTo` "has no caller" — the method is `navigateTree`,
-  with 5; (2) Epsilon has "no `generate_branch_summary`" — true, but I nearly asserted the
-  neighbouring claim "no navigate path" from a pattern that **could not match** `navigate_to`
-  (`store.rs:1329`, called from `app/keys.rs:457`); (3) "no rewind/fork/switch path" for the same
-  reason. **A grep that returns nothing is evidence about the pattern, not about the code.** Find
-  the `pub fn`, then grep for its name, then check whether each hit is a test.
+  guessed identifier, and never by reading a *bounded* search as a complete one.** This bit four
+  times in one session (2026-09-26), and each false negative was stated as a conclusion: (1) pi's
+  `navigateTo` "has no caller" — the method is `navigateTree`, with 5; (2) Epsilon has "no
+  `generate_branch_summary`" — true, but I nearly asserted the neighbouring claim "no navigate
+  path" from a pattern that **could not match** `navigate_to` (`store.rs:1329`, called from
+  `app/keys.rs:457`); (3) "no rewind/fork/switch path" for the same reason; (4) "no integration
+  test exists for the verification nudge" — I piped a grep through `head -6`, saw six hits from
+  one file, and `verification_scenarios.rs` was right there with four tests. A write was refused
+  because the target file already existed, which is the only reason I caught it. **A grep that
+  returns nothing — or that stops where `head` stopped — is evidence about the search, not about
+  the code.** Find the `pub fn`, grep its name, check each hit for a test, and **count the
+  results before believing them**.
 - **A dated audit is a claim about the past, not the present.** `audit/evidence/port-gap-recheck-2026-09-21.md`
   (W1–W12) predates this work: I partly **duplicated** it (W1/W2/W8/W9), and its loudest claim —
   "a pi session can refuse to open … losing a session is the loudest failure this harness has" —
@@ -262,10 +267,14 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
   also names the model** (`session-manager.ts:362-374`, third arm), so a session with no
   `model_change` at all still restores. `thinking_level` is produced by the same walk but **not yet
   applied to the agent** — the next slice, not a bug.
-- **The skills collision policy contradicts pi in shipped code**: `crates/epsilon-tui/src/skills.rs`
-  says its later-root shadowing "mirrors pi"; pi keeps the FIRST name and reports a collision
-  diagnostic (`skills.ts:432-439`). A design decision (which root wins, what the diagnostic says)
-  with a test to write — not a patch.
+- **The skills collision policy still diverges from pi, but the lie is gone.** The *comment* in
+  `crates/epsilon-core/src/skills.rs` claimed later-root shadowing "mirrors pi"; it did not —
+  pi keeps the FIRST name and emits a collision diagnostic naming winner and loser
+  (`pi-0.85.1/.../core/skills.ts:432-448`). Corrected 2026-09-26 (`3713b94`); the behaviour is
+  deliberate and pinned by `discovers_validates_and_shadows_by_priority_root_order`, which
+  asserts the project root wins. **What is still missing is the diagnostic, not the policy**:
+  `discover` returns `Vec<Skill>` with no channel for one, so shadowing a global skill is
+  silent. A design decision about what the message says and where it goes — not a patch.
 - **The 30-second lockout after a kill** (`crates/epsilon-session/src/lease.rs`): the lease calls
   a holder dead only after `STALE_AFTER`, so relaunching straight after End Task refuses to start.
   A pid liveness check wants a platform call and `unsafe` is forbidden outside a reviewed override,

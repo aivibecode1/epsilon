@@ -71,6 +71,63 @@ fn failing_bash() -> Arc<dyn Tool> {
     })
 }
 
+/// A `bash` that *delivers* a command which failed — the F05 shape.
+///
+/// `failing_bash()` above returns `Err(ToolFailure)`, so it exercises "the tool call itself
+/// failed". Real shell work almost never looks like that: `BashTool` reports a command exiting
+/// nonzero as a **successful** tool result whose `details.exit_code` carries the status, because
+/// the tool did its job and the program it ran did not. That shape is pinned on the producing
+/// side by `a_non_zero_exit_is_a_command_outcome_never_a_confinement_one`
+/// (`crates/epsilon-tools/tests/builtin_tools.rs`), which asserts `details["exit_code"] == 7`,
+/// `details["verdict"] == "exited:7"` and an `Ok` return. Until F05 this second shape was
+/// untested, and it is the one a user's failing test suite actually produces.
+struct DeliveredBash {
+    descriptor: ToolDescriptor,
+    exit_code: Option<i32>,
+}
+
+fn delivered_bash(exit_code: Option<i32>) -> Arc<dyn Tool> {
+    Arc::new(DeliveredBash {
+        descriptor: ToolDescriptor {
+            name: "bash".into(),
+            label: "Bash".into(),
+            description: "test fixture".into(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            execution_mode: ExecutionMode::Sequential,
+        },
+        exit_code,
+    })
+}
+
+#[async_trait]
+impl Tool for DeliveredBash {
+    fn descriptor(&self) -> &ToolDescriptor {
+        &self.descriptor
+    }
+
+    async fn execute(
+        &self,
+        _call: ToolInvocation,
+        _ctx: ToolContext,
+        _on_update: ToolUpdateSink,
+    ) -> Result<ToolOutput, ToolFailure> {
+        Ok(ToolOutput {
+            content: vec![epsilon_contracts::content::ContentBlock::Text {
+                text: "running 3 tests".into(),
+            }],
+            details: serde_json::json!({
+                "exit_code": self.exit_code,
+                "duration_ms": 412,
+                "truncated": false,
+            }),
+            // The real `BashTool` sets exactly these two: a shell run has no model usage of its
+            // own and never asks the loop to stop (`shell.rs:350,356`).
+            usage: None,
+            terminate: false,
+        })
+    }
+}
+
 fn user(text: &str) -> Message {
     Message::User(UserMessage {
         id: epsilon_contracts::new_id("msg"),
@@ -154,7 +211,10 @@ async fn an_edit_that_stops_without_a_check_is_nudged() {
         FauxStep::say("Tests pass; src/lib.rs is verified."),
     ];
     let agent = agent_with(
-        vec![tool("edit"), tool("bash")],
+        vec![tool("edit"), delivered_bash(Some(0))],
+        // `tool("bash")` reported no exit status at all, which the corrected rule
+        // reads as "unknown, so not a pass". These tests mean "a check that passed", so they
+        // now use the shape a real passing `cargo test` produces.
         steps,
         LoopLimits {
             verification_nudges: 2,
@@ -196,7 +256,7 @@ async fn a_passing_check_after_the_edit_ends_the_run_without_a_nudge() {
         FauxStep::say("Done, and the tests pass."),
     ];
     let agent = agent_with(
-        vec![tool("edit"), tool("bash")],
+        vec![tool("edit"), delivered_bash(Some(0))],
         steps,
         LoopLimits::default(),
     );
@@ -249,6 +309,166 @@ async fn a_check_that_did_not_pass_is_not_verification() {
         n[0].contains("none succeeding after the change"),
         "and the nudge says why: {}",
         n[0]
+    );
+}
+
+#[tokio::test]
+async fn a_delivered_check_that_exited_nonzero_is_not_verification() {
+    // F05. Same scenario as the test above, but the check *succeeded as a tool call* and the
+    // command it ran failed — which is what a real failing `cargo test` looks like. Before the
+    // fix the loop read `!result.is_error`, saw a clean result, and stood down.
+    let steps = vec![
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![call(
+                "tc_1",
+                "edit",
+                serde_json::json!({"path": "src/lib.rs"}),
+            )],
+        },
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![call(
+                "tc_2",
+                "bash",
+                serde_json::json!({"command": "cargo test"}),
+            )],
+        },
+        FauxStep::say("The tests fail but I am stopping anyway."),
+    ];
+    let agent = agent_with(
+        vec![tool("edit"), delivered_bash(Some(101))],
+        steps,
+        LoopLimits {
+            verification_nudges: 1,
+            max_turns: 12,
+            ..Default::default()
+        },
+    );
+    agent.run(user("fix the bug")).await.expect("run");
+
+    let n = nudges(&agent);
+    assert_eq!(
+        n.len(),
+        1,
+        "a check that exited 101 is not a passing check, however cleanly it was delivered"
+    );
+    assert!(
+        n[0].contains("none succeeding after the change"),
+        "and the nudge says why: {}",
+        n[0]
+    );
+}
+
+#[tokio::test]
+async fn a_delivered_check_that_exited_zero_is_verification() {
+    // The positive control for the test above, and the reason the fix is not "nudge always".
+    let steps = vec![
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![call(
+                "tc_1",
+                "edit",
+                serde_json::json!({"path": "src/lib.rs"}),
+            )],
+        },
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![call(
+                "tc_2",
+                "bash",
+                serde_json::json!({"command": "cargo test"}),
+            )],
+        },
+        FauxStep::say("All green."),
+    ];
+    let agent = agent_with(
+        vec![tool("edit"), delivered_bash(Some(0))],
+        steps,
+        LoopLimits {
+            verification_nudges: 1,
+            max_turns: 12,
+            ..Default::default()
+        },
+    );
+    agent.run(user("fix the bug")).await.expect("run");
+
+    assert!(
+        nudges(&agent).is_empty(),
+        "a check that exited 0 leaves nothing standing behind the edit"
+    );
+}
+
+#[tokio::test]
+async fn a_check_with_no_reported_exit_code_is_not_verification() {
+    // Signalled, or a tool that reports no status. Unknown must not read as clean.
+    let steps = vec![
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![call(
+                "tc_1",
+                "edit",
+                serde_json::json!({"path": "src/lib.rs"}),
+            )],
+        },
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![call(
+                "tc_2",
+                "bash",
+                serde_json::json!({"command": "cargo test"}),
+            )],
+        },
+        FauxStep::say("Done."),
+    ];
+    let agent = agent_with(
+        vec![tool("edit"), delivered_bash(None)],
+        steps,
+        LoopLimits {
+            verification_nudges: 1,
+            max_turns: 12,
+            ..Default::default()
+        },
+    );
+    agent.run(user("fix the bug")).await.expect("run");
+
+    assert_eq!(
+        nudges(&agent).len(),
+        1,
+        "an unknown outcome stays unknown rather than counting as a pass"
+    );
+}
+
+#[tokio::test]
+async fn a_check_in_the_same_batch_before_an_edit_does_not_verify_it() {
+    // Both calls are issued in ONE assistant turn. The old rule compared turn numbers, and
+    // same-turn meant "at or after", so a check that ran first vouched for an edit that had not
+    // happened yet when it ran.
+    let steps = vec![
+        FauxStep::ToolCalls {
+            text: None,
+            calls: vec![
+                call("tc_1", "bash", serde_json::json!({"command": "cargo test"})),
+                call("tc_2", "edit", serde_json::json!({"path": "src/lib.rs"})),
+            ],
+        },
+        FauxStep::say("All green — the suite passed."),
+    ];
+    let agent = agent_with(
+        vec![tool("edit"), delivered_bash(Some(0))],
+        steps,
+        LoopLimits {
+            verification_nudges: 1,
+            max_turns: 12,
+            ..Default::default()
+        },
+    );
+    agent.run(user("fix the bug")).await.expect("run");
+
+    assert_eq!(
+        nudges(&agent).len(),
+        1,
+        "a passing check that ran *before* the edit cannot verify it"
     );
 }
 

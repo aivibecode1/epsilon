@@ -5,6 +5,18 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failing test suite could be recorded as a passing check (F05).** The verification record
+  decided "did the check pass?" from the tool result's error flag, but a shell command exiting
+  nonzero is delivered as a *successful* call carrying `details.exit_code`. `cargo test` with six
+  failing tests was evidence of success, so the harness had nothing to say to a model that shipped
+  broken code. Verification now reads the exit code, and treats a missing one as unknown rather than
+  clean. Ordinary nonzero exits are still delivered to the model as ordinary nonzero exits.
+- **A check could vouch for an edit that had not happened yet.** Ordering was compared by turn
+  number, and two calls in one turn share one number, so a check issued before an edit in the same
+  batch appeared to cover it.
+
 ### Added
 - **Epsilon can now read, group and total what its summarizations cost (M144, read side).** Compaction resends
   your whole history and is billed for it, and the usage was discarded even though the response was in scope.

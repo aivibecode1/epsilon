@@ -1643,11 +1643,17 @@ impl Agent {
                 // Which files changed, and whether a check has passed since. The record is what
                 // the stop-time nudge reads, and what a reader of the session can audit.
                 for (call_id, tool_name, args) in assistant.tool_calls() {
-                    let ok = results
-                        .iter()
-                        .find(|r| r.tool_call_id == call_id)
-                        .map(|r| !r.is_error)
-                        .unwrap_or(false);
+                    let result = results.iter().find(|r| r.tool_call_id == call_id);
+                    let delivered = result.map(|r| !r.is_error).unwrap_or(false);
+                    // F05: "the tool call was delivered" is not "the command passed". A shell
+                    // command that exits nonzero arrives as a successful call carrying a failed
+                    // command, so a check is only evidence when it exited zero. Edits keep the
+                    // plain test — a refused write changed nothing, which is what `delivered`
+                    // already means for them.
+                    let ok = match (tool_name, result) {
+                        ("bash", Some(r)) => delivered && crate::verify::check_passed(&r.details),
+                        _ => delivered,
+                    };
                     evidence.observe(tool_name, args, ok, turn_index);
                 }
 

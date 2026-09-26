@@ -79,6 +79,11 @@ first, newest at the top, and it is kept current from M83 forward.
   itself. Epsilon now does the same, plus the charging model, because its `Usage` is four token counts with no
   precomputed cost. One entry cannot be half-removed. The regression test reproduces the pop and asserts the bill
   goes with it, and a negative control reverts to M144's shape for a decisive RED.
+- [M146 — delivery is not passage](milestones/M146-delivery-is-not-passage.md)
+  — **closes F05**. A shell command exiting nonzero arrives as a *successful* tool call, so the
+  verification record counted a failing test suite as a passing check; and ordering was compared in
+  turn numbers, so a check before an edit in the same batch vouched for it. Two negative controls,
+  one per half, so neither fix could hide the other.
 - [M144 — a summarization is a real bill](milestones/M144-a-summarization-is-a-real-bill.md) — **read side
   only**. Compaction resends the whole history and is charged for it, and the response was in scope at the write
   site while the entry said `usage: None`; pi counts this charge explicitly so totals "reflect what was actually

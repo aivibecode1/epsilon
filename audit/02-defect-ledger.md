@@ -214,6 +214,15 @@ provider, because every compaction test drives the faux provider.
 
 ## F05 — Distinguish process exit from successful tool transport
 
+> **CLOSED by M146 (`docs/milestones/M146-delivery-is-not-passage.md`), 2026-09-26.** Both
+> halves were live: the exit code was never read, and order was compared in turn numbers. Fixed
+> with `verify::check_passed` plus a `seq` counter; controlled separately so neither fix could
+> hide the other. Captured output in
+> [`evidence/f05-negative-control.md`](evidence/f05-negative-control.md) — control 1
+> (`ok = delivered`) gives 2 failed / 7 passed; control 2 (`turn >=`) gives 1 failed / 8 passed.
+> `verification_scenarios.rs` 9 passed / 0 failed. The description below is kept as the record
+> of what was wrong, not as current behaviour.
+
 **Evidence:** nonzero shell exits intentionally return `Ok(ToolOutput)` with `details.exit_code` (`crates/epsilon-tools/src/shell.rs:301–329,416–438`). Verification derives success only from `!result.is_error` (`crates/epsilon-core/src/lib.rs:1173–1179`). `crates/epsilon-core/src/verify.rs:151–175` records that boolean and treats any successful check in the same or later turn as covering an edit.
 
 **Trace:** tests exit nonzero → bash successfully reports the result → verification marks pass. Additionally, a check before an edit within the same serial batch gets the same turn number and wrongly covers that later edit.
