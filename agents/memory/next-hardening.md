@@ -140,6 +140,20 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
 
 ## Traps that have cost real time
 
+- **Assert a negative by locating the definition and its callers — never by failing to match a
+  guessed identifier.** This bit three times in one session (2026-09-26), and each false negative
+  was stated as a conclusion: (1) pi's `navigateTo` "has no caller" — the method is `navigateTree`,
+  with 5; (2) Epsilon has "no `generate_branch_summary`" — true, but I nearly asserted the
+  neighbouring claim "no navigate path" from a pattern that **could not match** `navigate_to`
+  (`store.rs:1329`, called from `app/keys.rs:457`); (3) "no rewind/fork/switch path" for the same
+  reason. **A grep that returns nothing is evidence about the pattern, not about the code.** Find
+  the `pub fn`, then grep for its name, then check whether each hit is a test.
+- **A dated audit is a claim about the past, not the present.** `audit/evidence/port-gap-recheck-2026-09-21.md`
+  (W1–W12) predates this work: I partly **duplicated** it (W1/W2/W8/W9), and its loudest claim —
+  "a pi session can refuse to open … losing a session is the loudest failure this harness has" —
+  was already **fixed**, by `EntryKind::Unknown { type_name, body }`
+  (`session_entry.rs:263`, test `an_unknown_kind_keeps_every_field_and_value`). Read prior audit
+  before re-deriving it, and re-verify it before repeating it.
 - **Never rewrite a historical record's citation; add a status banner instead.** A stale
   `pi-0.84.2` line number in a dated milestone dev log, a `REJECTED` plan, or a
   self-declared "historical research" file is **archaeology** — "fixing" it falsifies what was

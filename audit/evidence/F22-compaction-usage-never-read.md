@@ -144,7 +144,17 @@ Two other Epsilon facts, re-checked with the right identifiers this time:
    `/timeline`**: it calls `store.branch_entries()` and opens the same picker. It *lists*
    branches; selecting one does not create a `BranchSummary`. A slash command's own description
    is not a specification, which is the same mistake as citing a build artifact earlier.
-6. **No rewind or edit-previous path exists** — zero non-test hits across tui, cli and core.
+6. **Correction to my own claim, 2026-09-26.** I also wrote above that Epsilon has "no navigate
+   path" in tui/cli/core. **That is wrong too.** `SessionStore::navigate_to` exists
+   (`store.rs:1329`), with `reset_leaf` (`:1352`) and `fork_branch_at` (`:1486`), and the timeline
+   picker **does** call it on Enter: `crates/epsilon-tui/src/app/keys.rs:457` runs
+   `st.navigate_to(&id).is_ok()`. So navigation is wired to the user. What is missing is the
+   *other half*: `branch_with_summary` still has no production caller, so a jump records no
+   summary of the path it abandoned. This is the third time in one session that a grep over
+   identifier names produced a confident false negative — `navigateTo` (wrong name in pi),
+   `navigate_tree|navigate_back` (wrong name in Rust), and now "no navigate path" asserted from
+   a pattern that could not match `navigate_to`. **Assert a negative by locating the definition
+   and its callers, never by failing to match a guessed name.**
 
 So the conclusion is unchanged and now rests on point 4's construction-site argument, but the
 original reasoning was invalid and should not be repeated.

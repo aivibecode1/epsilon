@@ -42,28 +42,33 @@ across `audit/03` and `audit/11` (W1–W12).
 
 ## 2. The still-open rows, ranked by what a user notices
 
-**1. A pi session file can refuse to open, and cannot carry labels (row 6).**
-pi's coding-agent file format has nine entry types, including `label` (`references/pi-0.85.1/packages/coding-agent/src/core/session-manager.ts:111-117`) and `session_info` (`:118-120`), which give an entry a name and a session a title.
-Epsilon's `EntryKind` has message, model change, thinking change, active-tools change, compaction,
-branch summary, custom and turn end (`crates/epsilon-contracts/src/session_entry.rs:93-155`) — no
-label, no session-info — and its decoder has no "unknown type, keep going" arm: an unrecognised
-`kind.type` is diagnosed (`crates/epsilon-session/src/store.rs:1285-1292`) and turned into
-`StoreError::corrupt` (`:610-612`). **What the user gets:** a session exported from pi, or one this
-build meets after pi adds an entry type, is not partly readable — it is refused, with the whole
-conversation unavailable. Losing a session is the loudest failure this harness has.
+> **Status re-checked 2026-09-26. Items 1 and 2 below are STALE — both have since been fixed,
+> and item 1 was this document's loudest claim.** See
+> [`../../agents/memory/next-hardening.md`](../../agents/memory/next-hardening.md) for the rule
+> that produced the second correction. Items 3+ were not re-read.
 
-**2. Branch navigation is a timeline, and fork does not move you (row 7).**
-pi's `/tree` shows the whole session tree and `branchWithSummary` records what the abandoned path was
-about (`session-manager.ts:1381-1405`); navigating there re-points the leaf and writes a summary
-entry. Epsilon now has all of the store machinery — `navigate_to` (`store.rs:890-901`), `reset_leaf`
-(`:913-915`), `branch_with_summary` (`:933-962`), `fork_branch_at` (`:1042`) and projection of the
-summary into the model's view (`:1175-1188`, `:1233`) — and **nothing on the user path calls them**:
-`/tree` is an alias that opens the same active-branch picker (`crates/epsilon-tui/src/app.rs:1606-1621`
-→ `branch_entries`), Enter just moves the leaf (`crates/epsilon-tui/src/app/keys.rs:443-447`), and
-`/fork` is a raw `std::fs::copy` that tells you to relaunch with `--session` (`app.rs:1458-1489`).
-**What the user gets:** after exploring a wrong path and going back, the model is handed a context
-that silently changed with no record of what the abandoned attempt learned, and a "fork" that leaves
-the current session running.
+**1. ~~A pi session file can refuse to open, and cannot carry labels (row 6).~~ CLOSED since
+2026-09-21.** `EntryKind` now has a catch-all that preserves what it does not understand:
+`EntryKind::Unknown { type_name: String, body: serde_json::Value }`
+(`crates/epsilon-contracts/src/session_entry.rs:263`), with `is_unknown()` at `:347` and the
+round-trip test `an_unknown_kind_keeps_every_field_and_value` at `:474`. An unrecognised
+`kind.type` therefore no longer becomes `StoreError::corrupt`; it is kept verbatim so a later
+write reproduces the same object. The line the entry occupies is *not* preserved as raw text
+(`seq` is the file index and every rewrite re-serializes), and key order is not preserved — the
+comment at `:255` says so and is right about the limit. **The "loudest failure this harness
+has" is no longer true.** The `label`/`session_info` gaps are a separate matter and were not
+re-checked.
+
+**2. ~~Branch navigation is a timeline, and fork does not move you (row 7).~~ HALF STALE.**
+"nothing on the user path calls them" is no longer true: the timeline picker calls
+`SessionStore::navigate_to` on Enter — `crates/epsilon-tui/src/app/keys.rs:457` runs
+`st.navigate_to(&id).is_ok()`, resolved from `store.branch_entries()` by `seq`. Navigation is
+wired. The remaining half is accurate: `branch_with_summary` still has **no production caller**,
+so a jump records nothing about the abandoned path, and `fork_branch_at` is still not reached
+from the UI. That is the same gap F22 records, and it is a *missing summarization on navigation*,
+not a missing navigator.
+
+*(The original text of items 1 and 2 is superseded by the corrections above; it is quoted in this file's history rather than repeated here, because leaving a refuted claim in place is how it gets re-read as current.)*
 
 **3. The model is handed twelve tools where pi hands four (row 5).**
 pi's default active set is `["read", "bash", "edit", "write"]`

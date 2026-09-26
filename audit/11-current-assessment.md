@@ -182,16 +182,19 @@ One defect *did* reproduce while probing, and it is new:
   lives in `crates/epsilon-tui/src/at_files.rs`. This bullet said "queued, not done" until
   2026-09-21; the port re-check below caught it, which is the argument for re-reading the
   audit against the code rather than trusting it.
-- **The port plan was written against a pi snapshot that is no longer on disk.**
-  [`03-port-plan.md`](03-port-plan.md) cites `references/pi-0.84.2/` twenty-one times;
-  only `pi-0.85.1` exists. Every row was re-checked against the current code and pi 0.85.1
-  on 2026-09-21 — see
-  [`evidence/port-gap-recheck-2026-09-21.md`](evidence/port-gap-recheck-2026-09-21.md),
-  which lists the thirteen rows that still carry a gap, the two that closed since, and
-  **twelve claims in `audit/03` and this file that are now factually wrong** (wrong paths,
-  wrong line numbers, "no producer was found" for something that has one, a deleted Rust
-  file, and a code comment that claims pi behaviour it does not match). Treat unverified
-  line numbers in `03` as historical; the re-check is the current reading.
+- **The port plan was written against a pi snapshot that is no longer on disk.** RESOLVED
+  2026-09-26. This bullet said [`03-port-plan.md`](03-port-plan.md) cites
+  `references/pi-0.84.2/` twenty-one times and that unverified line numbers should be treated
+  as historical. That work is now **done**: every citation in `03` is repointed at
+  `references/pi-0.85.1/` and re-read, with the corrections and their evidence recorded inline.
+  `scripts/check-reference-citations.py` reports that no pi citation in the repo names a tree
+  that is absent. The prior re-check at
+  [`evidence/port-gap-recheck-2026-09-21.md`](evidence/port-gap-recheck-2026-09-21.md) did the
+  same sweep five days earlier and listed twelve wrong claims (W1–W12); **W1, W2, W8 and W9
+  were duplicated in the 09-26 pass and W3, W4, W5, W6, W10 and W11 are now also corrected.**
+  Two of that document's ranked open items have since closed — see its status banner. The
+  lesson, now in `agents/memory`: read prior audit before re-deriving it, and re-verify it
+  before repeating it, because a dated finding is a claim about the past.
 
 ### Bookkeeping defects (not code)
 
