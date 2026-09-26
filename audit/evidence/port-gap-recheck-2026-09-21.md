@@ -45,7 +45,26 @@ across `audit/03` and `audit/11` (W1–W12).
 > **Status re-checked 2026-09-26. Items 1 and 2 below are STALE — both have since been fixed,
 > and item 1 was this document's loudest claim.** See
 > [`../../agents/memory/next-hardening.md`](../../agents/memory/next-hardening.md) for the rule
-> that produced the second correction. Items 3+ were not re-read.
+> that produced the second correction. **Item 3 re-verified and still accurate** (see below).
+> Items 4+ were not re-read.
+>
+> **Item 3, re-verified 2026-09-26 — the claim holds, the count was imprecise.** It is **11**
+> built-in registrations in `register_builtins_with` (`crates/epsilon-tools/src/lib.rs`: Read,
+> Write, Edit, Bash, Grep, Glob, Find, Ls, WebFetch, Todo, Task), **plus** `SkillTool`
+> registered only when skills are non-empty — so 11, or 12 with skills loaded, not "twelve …
+> plus conditional skill", which would be 13. pi's default active set is confirmed still
+> `["read", "bash", "edit", "write"]` (`pi-0.85.1/.../core/agent-session.ts:2808–2810`).
+> Epsilon's mechanism is `crates/epsilon-core/src/lib.rs:2593`: agent-type routing treats
+> `default` as "full registry". So the model really does see every tool by default, against
+> pi's four. That is a deliberate divergence with a real cost — more tool schemas in every
+> request — and it is **not** recorded as a divergence anywhere in `03-port-plan.md`, which
+> describes tool parity as a count question instead. Worth a disposition.
+>
+> Related and checked while there: `EntryKind::ActiveToolsChange` exists in the session format
+> (pi parity) but **nothing in Epsilon ever constructs it** — only the variant, the
+> `KNOWN_ENTRY_KINDS` guard and a test fixture. Like `BranchSummary`, it is a read path with no
+> writer, which is defensible for reading pi sessions, but pi's own default set is exactly what
+> this variant would record and Epsilon never records it.
 
 **1. ~~A pi session file can refuse to open, and cannot carry labels (row 6).~~ CLOSED since
 2026-09-21.** `EntryKind` now has a catch-all that preserves what it does not understand:
