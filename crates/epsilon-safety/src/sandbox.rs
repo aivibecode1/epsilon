@@ -144,6 +144,15 @@ pub struct ConfinedOutcome {
     pub backend: &'static str,
     /// How completely the boundary the policy asked for was applied (M77).
     pub enforcement: Enforcement,
+    /// Whether both pipe readers reached EOF before the post-exit grace expired (F11).
+    ///
+    /// This is a fact about the *output*, not about the command: `exit_code` is the command's own
+    /// and stays true either way, but when this is `false` some process was still holding a pipe
+    /// when the grace ran out, so `stdout`/`stderr` are only what had been written by then. It
+    /// exists because a bounded drain that silently returns short output is its own defect — a
+    /// caller, and the model behind it, need to be able to tell the two apart. A backend that
+    /// only produces an outcome once its readers have finished reports `true` honestly.
+    pub output_complete: bool,
 }
 
 /// Why a confined run refused or failed BEFORE producing command output.
@@ -252,22 +261,47 @@ impl Sandbox for NullSandbox {
     }
 }
 
+/// A pipe reader's buffer, shared so a drain that gives up on time can still be read.
+///
+/// The bug this exists to prevent: a reader accumulates into a local and returns it only at
+/// EOF, so a caller that stops waiting receives *nothing* — including the megabytes the command
+/// legitimately wrote before a stray descendant kept the pipe open. Bounding the wait and
+/// discarding the result is not a fix, it is a second, quieter defect (M150). Handing back
+/// whatever arrived is the whole point of a timeout here.
+pub type SharedBuf = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
+/// An empty shared buffer for [`drain_pipe`].
+pub fn new_shared_buf() -> SharedBuf {
+    std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))
+}
+
+/// Snapshot a shared buffer, tolerating a reader poisoned by a panic.
+pub fn snapshot(buf: &SharedBuf) -> Vec<u8> {
+    buf.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
 /// Drain one child pipe into a buffer, forwarding each chunk to `sink` as it
 /// arrives. Shared by both backends so streaming behaves identically on Windows
 /// (Job Objects) and Unix (bubblewrap); the returned bytes are always complete
 /// even when the sink is dropped or never set.
+///
+/// `into` is the shared buffer each chunk is appended to *as it arrives*, not at EOF, so
+/// [`snapshot`] is meaningful at any instant. It is required rather than optional because a
+/// caller that abandons the drain is exactly the case it exists for.
 pub async fn drain_pipe(
     mut reader: impl tokio::io::AsyncRead + Unpin,
     sink: Option<OutputSink>,
+    into: SharedBuf,
 ) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
-    let mut out: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                out.extend_from_slice(&buf[..n]);
+                if let Ok(mut guard) = into.lock() {
+                    guard.extend_from_slice(&buf[..n]);
+                }
                 if let Some(s) = &sink {
                     s(&String::from_utf8_lossy(&buf[..n]));
                 }
@@ -276,7 +310,7 @@ pub async fn drain_pipe(
             Err(_) => break,
         }
     }
-    out
+    snapshot(&into)
 }
 
 /// Best confinement this platform offers, probed once.
@@ -432,8 +466,11 @@ impl Sandbox for BwrapSandbox {
         // Drain both pipes concurrently: a child that fills a pipe buffer while
         // we wait on the other stream would deadlock.
         let (out_sink, err_sink) = (on_output.clone(), on_output);
-        let out_task = tokio::spawn(async move { drain_pipe(stdout_pipe, out_sink).await });
-        let err_task = tokio::spawn(async move { drain_pipe(stderr_pipe, err_sink).await });
+        let out_buf = new_shared_buf();
+        let err_buf = new_shared_buf();
+        let (ob, eb) = (out_buf.clone(), err_buf.clone());
+        let out_task = tokio::spawn(async move { drain_pipe(stdout_pipe, out_sink, ob).await });
+        let err_task = tokio::spawn(async move { drain_pipe(stderr_pipe, err_sink, eb).await });
 
         // F11: one deadline covers the *whole* run — waiting for the child AND collecting the
         // pipes. Bounding only the wait would still hang on a descendant that outlives the
@@ -449,8 +486,8 @@ impl Sandbox for BwrapSandbox {
                 .map_err(|e| SandboxError::Spawn(format!("bwrap wait: {e}")))?;
             // Both readers finish on EOF once the tree is gone; awaiting them here is what
             // makes the collected output complete rather than truncated at the deadline.
-            let stdout = out_task.await.unwrap_or_default();
-            let stderr = err_task.await.unwrap_or_default();
+            let stdout = out_task.await.unwrap_or_else(|_| snapshot(&out_buf));
+            let stderr = err_task.await.unwrap_or_else(|_| snapshot(&err_buf));
             Ok::<_, SandboxError>((status, stdout, stderr))
         };
 
@@ -463,6 +500,11 @@ impl Sandbox for BwrapSandbox {
                 // The backend's envelope, not a per-field audit of this policy: what it cannot
                 // confine at all is exactly what a caller has to know (M77).
                 enforcement: self.capabilities(),
+                // Honestly `true`, not optimistically: this arm is only reached when the whole
+                // future completed, and the future completes only after both readers hit EOF.
+                // The expired arm below returns an error instead of an outcome, so no outcome
+                // from this backend can ever carry short output.
+                output_complete: true,
             }),
             Ok(Err(e)) => Err(e),
             Err(_) => {

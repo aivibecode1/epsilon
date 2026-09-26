@@ -254,15 +254,49 @@ const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// exit code, and that exit code is the truth we can report; the only casualty here is how much
 /// of its output made it out.
 async fn collect_within(
-    task: tokio::task::JoinHandle<Vec<u8>>,
+    mut task: tokio::task::JoinHandle<Vec<u8>>,
+    buf: epsilon_safety::SharedBuf,
     grace: std::time::Duration,
 ) -> (Vec<u8>, bool) {
-    match tokio::time::timeout(grace, task).await {
-        Ok(Ok(bytes)) => (bytes, true),
-        // A panicking reader, or one that ran past the grace: either way we did not collect
-        // everything, and the caller is told so rather than handed a silent truncation.
-        _ => (Vec::new(), false),
+    // `&mut task`, not `task`: on expiry the handle is dropped rather than moved, so the reader
+    // is detached and keeps draining in the background instead of being cancelled mid-read.
+    //
+    // The buffer is read either way. An earlier version returned `Vec::new()` on expiry, which
+    // threw away everything the command had already written — so a descendant holding the pipe
+    // turned a successful command into a result with no output at all. Bounding the wait and
+    // discarding the data is not a fix; it is a second, quieter defect (found in M150).
+    let finished = tokio::time::timeout(grace, &mut task).await.is_ok();
+    (epsilon_safety::snapshot(&buf), finished)
+}
+
+/// The note appended to the model-visible body when output is known to be short (F11).
+///
+/// The model is the one who has to act on this, so the fact goes in the text it reads rather
+/// than only in `details` for the TUI. It is deliberately *not* the same marker as truncation:
+/// truncation keeps a spill file and says how much was dropped, so the rest is retrievable.
+/// Here the rest was never written — something was still holding the pipe — so there is
+/// nothing to point at and re-running the command is the only way to see more.
+///
+/// `output_complete == true` returns the text untouched, which is the overwhelmingly common
+/// case and must not pay for the rare one.
+fn body_text(t: &util::Truncated, output_complete: bool) -> String {
+    if output_complete {
+        return t.text.clone();
     }
+    let mut text = t.text.clone();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(
+        "\n[epsilon: this output is INCOMPLETE. The command exited, but a background process \
+         \
+         was still holding its output pipe, so the text above is only what had been written by \
+         \
+         the time collection stopped. The exit code is the command's own and is correct. Do not \
+         \
+         treat what you have read as the whole output.]\n",
+    );
+    text
 }
 
 fn combine_output(stdout: &str, stderr: &str, exit_code: Option<i32>) -> String {
@@ -359,11 +393,17 @@ impl Tool for BashTool {
                     let combined = combine_output(&o.stdout, &o.stderr, o.exit_code);
                     let duration_ms = started.elapsed().as_millis();
                     let t = util::truncate_output(&combined, &ctx.spill_dir, "bash");
+                    // Before the spill check below, which moves `t.spilled_to` out.
+                    let body = body_text(&t, o.output_complete);
                     let verdict = command_verdict(&o);
                     let mut details = serde_json::json!({
                         "exit_code": o.exit_code,
                         "duration_ms": duration_ms,
                         "truncated": t.truncated,
+                        // F11: same fact as the unconfined path, so one caller can read
+                        // either. A command that exited 0 with `false` here ran and
+                        // succeeded; only its output is short.
+                        "output_complete": o.output_complete,
                         "confinement": o.backend,
                         "mode": mode.as_str(),
                         // M77: the outcome says how completely the boundary held, so a caller
@@ -378,7 +418,7 @@ impl Tool for BashTool {
                             serde_json::Value::String(spill.display().to_string());
                     }
                     Ok(ToolOutput {
-                        content: vec![epsilon_contracts::content::ContentBlock::text(t.text)],
+                        content: vec![epsilon_contracts::content::ContentBlock::text(body)],
                         details,
                         usage: None,
                         // Non-zero exits are information for the model, not run-stoppers.
@@ -433,10 +473,18 @@ impl Tool for BashTool {
             .ok_or_else(|| ToolFailure::msg("stderr pipe unavailable".to_string()))?;
         let sink = live.sink();
         let (out_sink, err_sink) = (Some(sink.clone()), Some(sink));
+        // Shared buffers: on a grace expiry these are what let the partial read survive.
+        let out_buf = epsilon_safety::new_shared_buf();
+        let err_buf = epsilon_safety::new_shared_buf();
+        let (ob, eb) = (out_buf.clone(), err_buf.clone());
         let out_task =
-            tokio::spawn(async move { epsilon_safety::drain_pipe(stdout_pipe, out_sink).await });
+            tokio::spawn(
+                async move { epsilon_safety::drain_pipe(stdout_pipe, out_sink, ob).await },
+            );
         let err_task =
-            tokio::spawn(async move { epsilon_safety::drain_pipe(stderr_pipe, err_sink).await });
+            tokio::spawn(
+                async move { epsilon_safety::drain_pipe(stderr_pipe, err_sink, eb).await },
+            );
 
         let wait = tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait());
         let status = tokio::select! {
@@ -474,8 +522,8 @@ impl Tool for BashTool {
         // caught before this comment did. The readers are independent; their deadlines are the
         // same instant, so `join!` is the only shape that means what it looks like.
         let (out, err) = tokio::join!(
-            collect_within(out_task, DRAIN_GRACE),
-            collect_within(err_task, DRAIN_GRACE),
+            collect_within(out_task, out_buf, DRAIN_GRACE),
+            collect_within(err_task, err_buf, DRAIN_GRACE),
         );
         let (stdout_bytes, out_done) = out;
         let (stderr_bytes, err_done) = err;
@@ -486,6 +534,8 @@ impl Tool for BashTool {
         let duration_ms = started.elapsed().as_millis();
 
         let t = util::truncate_output(&combined, &ctx.spill_dir, "bash");
+        // Before the spill check below, which moves `t.spilled_to` out.
+        let body = body_text(&t, output_complete);
         // Same vocabulary on the opt-out path: a caller branching on `verdict` should not have
         // to know which path produced the result.
         let verdict = match status.code() {
@@ -511,7 +561,7 @@ impl Tool for BashTool {
         }
 
         Ok(ToolOutput {
-            content: vec![epsilon_contracts::content::ContentBlock::text(t.text)],
+            content: vec![epsilon_contracts::content::ContentBlock::text(body)],
             details,
             usage: None,
             terminate: false,
@@ -566,6 +616,7 @@ mod verdict_tests {
             stderr: String::new(),
             backend: "test",
             enforcement: Enforcement::from_missing(vec!["filesystem"]),
+            output_complete: true,
         }
     }
 

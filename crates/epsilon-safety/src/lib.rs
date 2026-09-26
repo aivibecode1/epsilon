@@ -27,6 +27,6 @@ pub use sandbox::BwrapSandbox;
 pub use sandbox::JobObjectSandbox;
 pub use sandbox::{
     ConfinedCommand, ConfinedOutcome, ConfinementPolicy, Enforcement, NullSandbox, OutputSink,
-    Sandbox, SandboxError, best_available, drain_pipe,
+    Sandbox, SandboxError, SharedBuf, best_available, drain_pipe, new_shared_buf, snapshot,
 };
 pub use wildcards::glob_match;

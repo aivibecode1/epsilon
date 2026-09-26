@@ -165,8 +165,28 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
   0.31s alone and failed at 2.39s under the full parallel suite — PowerShell startup, not the
   drain grace. The bound now asks the question actually meant ("well under the 5s grace") at 4s,
   which still catches a regression that always pays the grace.
-- **Awaiting two independent futures in sequence charges their timeout twice.** The first
-  working version of the bounded drain did `collect_within(out).await; collect_within(err).await`
+- **A test that cannot fail is worse than no test, because it is a claim.** Two instances in one
+  round, from opposite ends. A latency bound (`elapsed < 8s`) failed at 8.6s under parallel load and
+  passed at 0.3s alone — it could not fail on a slow machine. Then its replacement, an *ordering*
+  assertion (a marker file the descendant writes on its way out), passed **vacuously**: a quoting
+  mistake — `''{path}''` inside a PowerShell double-quoted string is two literal quotes, so
+  `-LiteralPath` got an empty path — killed the descendant immediately, and a pipe nobody holds
+  looks exactly like a drain that gave up on time. Prefer an ordering assertion over a timing one
+  (no threshold to tune, load-insensitive both ways), and **always** assert the precondition: wait
+  for the marker *after* the call and fail if it never arrives.
+- **Assert the precondition your test depends on, not just the outcome.** A check that reads
+  `details["x"]` passes as `Null` on a missing key; asserting the *value* is what catches a field
+  that was never written. Same class as the vacuous test above.
+- **A bounded wait that discards its result is a second defect, not a fix.** `collect_within`
+  returned `Vec::new()` on expiry while `drain_pipe` accumulated locally and returned only at EOF, so
+  a successful command came back with no output at all. Shared-buffer pattern: publish each chunk
+  into an `Arc<Mutex<Vec<u8>>>` as it arrives and snapshot it on both paths; `timeout(grace, &mut
+  task)` rather than `task` so expiry *detaches* the reader instead of cancelling it mid-read.
+- **Read the defect's blast radius before closing it.** F11 was closed after two of **three**
+  execution paths were fixed; the third (Windows Job Objects, the backend this host actually runs)
+  had the identical unbounded drain. A ledger entry scoped by the first two examples is not a scope.
+- **Awaiting two independent futures in sequence charges their timeout twice.** The first working
+  version of the bounded drain did `collect_within(out).await; collect_within(err).await`
   and took 10.46s for a 5s grace — *numerically identical to the unfixed control*, so a loose
   bound would have called it fixed. `tokio::join!` is the only shape a shared deadline implies.
 - **A dated audit is a claim about the past, not the present.** `audit/evidence/port-gap-recheck-2026-09-21.md`

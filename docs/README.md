@@ -91,6 +91,7 @@ first, newest at the top, and it is kept current from M83 forward.
   the Windows host** — the status banner says so rather than implying coverage.
 - [M148 — a descendant cannot hold the shell open](milestones/M148-a-descendant-cannot-hold-the-shell-open.md)
 - [M149 — a short result stops saying ok](milestones/M149-a-short-result-stops-saying-ok.md)
+- [M150 — the third path, and the fix that was eating the output](milestones/M150-the-third-path-and-the-eaten-output.md)
   — **closes F11's unconfined half.** The pipe drains were awaited outside the caller's timeout, so a
   surviving descendant hung a command that had already exited. Bounded, and the shortfall is
   declared. The control settles in 10.46s without the fix — the descendant's own lifetime.

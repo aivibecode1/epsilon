@@ -5,6 +5,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- A shell command that exits while a background process still holds its output pipe
+  now returns the output it *did* collect. The M148 timeout discarded it entirely, so a
+  successful command could report no output at all (M150).
+- The Windows confined path (Job Objects) bounds its pipe drain the way bubblewrap and the
+  unconfined shell already did, and reports `output_complete` like them (M150).
+- The model is now told in the tool text when its output is incomplete, not only the TUI (M150).
+
 - A shell result whose output is known to be short now renders as **partial**, with a warning
   glyph and the word `partial`, instead of a green tick and the word `ok` (M149).
 

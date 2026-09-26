@@ -49,7 +49,7 @@ update exists to correct.
 | F08 | CLOSED | P0 | Complete unsupported final entries are treated as torn writes — **M108** refuses them, **M113**/M116 keep a foreign entry instead of costing the session | E (M108 battery + negative control) | 1–3 days / medium |
 | F09 | OPEN | P0 | Native file tools have lexical, not resolved, containment — **M84** bounded one consumer; containment itself still open | S; exploitability filesystem-dependent | 4–8 days plus race-resistant design / high |
 | F10 | CLOSED | P1 | Plan-mode shell denials do not match execution subjects — **M82** (bash/shell denied outright, plan layer composed over project rules) | E (M82 red/green + battery) | 1–3 days / medium |
-| F11 | OPEN | P1 | Process deadlines/cleanup do not cover the whole operation | S; descendant survival/hangs inferred | 3–6 days / medium |
+| F11 | CLOSED (M150) | P1 | Process deadlines/cleanup do not cover the whole operation | S; descendant survival/hangs inferred. **Three** execution paths, not two: bubblewrap (M147), unconfined shell (M148), Windows Job Objects (M150). M148's bound also discarded the partial read entirely — fixed in M150 | — |
 | F12 | PARTIAL | P1 | Output/input caps apply after unlimited allocation — the image path reads a bounded head (M95) and `webfetch` refuses on a declared length; the body is still buffered whole before its size check | S, high | 3–5 days / medium |
 | F13 | CLOSED† | P1 | RPC/HTTP can acknowledge work that is rejected — **M87** both surfaces, **M92** correlation/abort; residual: the untested RPC pump (see the row) | E (M87/M92) | 2–4 days / medium |
 | F14 | OPEN | P1 | LSP writes/framing/versioning undermine bounded fresh diagnostics | S, high | 3–5 days / medium |

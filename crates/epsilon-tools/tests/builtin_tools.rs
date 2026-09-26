@@ -1836,6 +1836,21 @@ async fn bash_timeout_kills_long_commands() {
 /// question about the *envelope* — the exit code and the flags that say whether the output is
 /// whole. `confinement: "off"` keeps this on the unconfined path, which is the path with the
 /// unbounded drain; `run_full` covers the confined one.
+/// The text the model actually reads: `content`, not `details`.
+///
+/// Most of this file asserts on `details` because that is where machine-readable facts live,
+/// but a note the model is meant to act on has to be in the text the model is given.
+fn text_of(out: &epsilon_contracts::tool::ToolOutput) -> String {
+    out.content
+        .iter()
+        .filter_map(|c| match c {
+            epsilon_contracts::content::ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn run_unconfined(
     tool: &dyn Tool,
     ctx: &ToolContext,
@@ -1861,17 +1876,31 @@ async fn run_unconfined(
 /// on a pipe the descendant still holds — so the call hangs long past its own timeout.
 ///
 /// The command exits immediately after spawning something that inherits its output handle and
-/// sleeps. `-NoNewWindow` on Windows is what makes the grandchild inherit the pipe rather than
-/// getting a fresh console; on Unix a background job inherits it for free. Either way the writer
-/// outlives the writer's parent, which is the whole point.
+/// sleeps, then writes a marker file on its way out. `-NoNewWindow` on Windows is what makes the
+/// grandchild inherit the pipe rather than getting a fresh console; on Unix a background job
+/// inherits it for free. Either way the writer outlives the writer's parent, which is the point.
+///
+/// **The assertion is about ordering, not latency.** An earlier version bounded the elapsed time
+/// and failed at 8.6s on a loaded machine while passing at 0.3s alone — PowerShell startup, not
+/// the drain. The marker makes both directions load-insensitive: the fixed call returns while the
+/// descendant is still running, so the marker is absent; the unfixed call waits for the pipe to
+/// close, so the descendant has finished and the marker is there. No timing threshold to tune.
 #[tokio::test]
 async fn a_descendant_holding_the_pipe_does_not_hang_the_call() {
     let (_d, ctx) = seeded_workspace();
     let bash = BashTool::new();
+    let marker = std::env::temp_dir().join("epsilon-descendant-alive.marker");
+    let _ = std::fs::remove_file(&marker);
     let cmd = if cfg!(windows) {
-        r#"Start-Process -FilePath "ping" -ArgumentList "-n","11","127.0.0.1" -NoNewWindow; "child-exited""#
+        format!(
+            r#"Start-Process -FilePath "powershell" -ArgumentList "-NoProfile","-NonInteractive","-Command","Start-Sleep -Seconds 11; Set-Content -LiteralPath '{}' -Value done" -NoNewWindow; "child-exited""#,
+            marker.display()
+        )
     } else {
-        "sleep 30 & echo child-exited"
+        format!(
+            "( sleep 11; echo done > {} ) & echo child-exited",
+            marker.display()
+        )
     };
 
     let started = std::time::Instant::now();
@@ -1882,27 +1911,120 @@ async fn a_descendant_holding_the_pipe_does_not_hang_the_call() {
     )
     .await
     .expect("the command itself succeeded, so this is not a tool failure");
+    // Taken here, before the non-vacuity wait below, which deliberately spends wall clock.
+    let returned_in = started.elapsed();
 
-    // The descendant holds the pipe for 10s. The bound is the 5s drain grace plus slack, not
-    // "under 10s" — a hang inside the reader would satisfy that, and that is the regression.
-    //
     // Note what this does NOT do: kill the grandchild. On the unconfined path nothing owns it,
     // which is precisely the difference from the confined path, where a job object takes the
     // whole tree. It is left to finish and reaped by the OS; the cost is that this test binary
     // stays alive until it does, because the grandchild inherited the harness's output pipe.
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(8),
-        "settled in {:?}; a held pipe should not hold the call",
-        started.elapsed()
-    );
     assert_eq!(
         out.details["exit_code"], 0,
         "the command's own verdict stands"
     );
     assert_eq!(
         out.details["output_complete"], false,
-        "and the short output is declared, not passed off as complete: {:?}",
+        "the harness knows the output is short"
+    );
+    // M150: the model reads `content`, not `details`, so the note has to be in the text.
+    let body = text_of(&out);
+    assert!(
+        body.contains("INCOMPLETE"),
+        "the model must be told the output is short, not handed short output as if it were \
+         \
+         whole; got: {:?}",
+        body
+    );
+    assert!(
+        body.contains("child-exited"),
+        "the real output is still there — the note is added, not substituted: {:?}",
+        body
+    );
+    // The discriminator.
+    assert!(
+        !marker.exists(),
+        "settled in {:?} but the descendant had already finished — the call waited for the pipe \
+         \
+         to close instead of returning on its grace",
+        returned_in
+    );
+    // Non-vacuity. An earlier version of this test passed for the wrong reason: a quoting
+    // mistake killed the descendant immediately, and a pipe nobody holds looks exactly like a
+    // drain that gave up on time. So the descendant is waited for *after* the call, and the
+    // test fails if it never arrives — which is what a dead grandchild looks like.
+    let mut arrived = false;
+    for _ in 0..60 {
+        if marker.exists() {
+            arrived = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let _ = std::fs::remove_file(&marker);
+    assert!(
+        arrived,
+        "the descendant never wrote its marker: it must outlive the call, or this test is \
+         \
+         measuring nothing"
+    );
+
+    // The marker is the primary assertion; this only stops a regression that returns before the
+    // grace but after the descendant, which no ordering check would notice.
+    assert!(
+        returned_in < std::time::Duration::from_secs(11),
+        "settled in {:?}, after the descendant finished",
+        returned_in
+    );
+}
+
+/// The confined path must carry the same fact as the unconfined one, or a caller has to know
+/// which backend ran to know whether its output is whole. The job object is the only backend on
+/// this host that can actually be exercised, so this is where the F11 work is provable.
+#[tokio::test]
+async fn a_confined_run_reports_whether_its_output_is_complete() {
+    let (_d, ctx) = seeded_workspace();
+    let bash = BashTool::new();
+    let out = run_full(
+        &bash,
+        &ctx,
+        serde_json::json!({ "command": "Write-Output confined", "timeout_secs": 30 }),
+    )
+    .await
+    .expect("a confined command succeeds");
+    assert_eq!(
+        out.details["exit_code"], 0,
+        "the command ran: {:?}",
         out.details
+    );
+    // The field must EXIST, not merely be absent. A missing key reads as `Null` and would
+    // satisfy a truthiness check somewhere; asserting the value is the point.
+    assert_eq!(
+        out.details["output_complete"], true,
+        "a confined run that finished cleanly has complete output: {:?}",
+        out.details
+    );
+    assert_eq!(text_of(&out).trim(), "confined");
+}
+
+/// The control for the note above: a command with complete output must not carry it. A marker
+/// that appears on every call is worse than none, because it trains the model to read past it.
+#[tokio::test]
+async fn a_complete_result_carries_no_incomplete_note() {
+    let (_d, ctx) = seeded_workspace();
+    let bash = BashTool::new();
+    let out = run_unconfined(
+        &bash,
+        &ctx,
+        serde_json::json!({"command": "Write-Output done", "timeout_secs": 30}),
+    )
+    .await
+    .expect("a plain command succeeds");
+    assert_eq!(out.details["output_complete"], true);
+    assert_eq!(
+        text_of(&out).trim(),
+        "done",
+        "a complete result is the command's own output and nothing else: {:?}",
+        text_of(&out)
     );
 }
 

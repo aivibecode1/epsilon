@@ -17,6 +17,31 @@ use std::time::Duration;
 use tokio::process::Command;
 use winapi::um::winnt::HANDLE;
 
+/// How long the pipe readers may take *after* the child has exited (F11).
+///
+/// A separate grace rather than the remaining wall budget, for the same reason as the
+/// unconfined shell in M148: the wait already consumed that budget, so a command that used
+/// all of it would get no time at all to report what it produced. Five seconds covers a
+/// child flushing a large buffer through a pipe that a dying process is still closing.
+const DRAIN_GRACE: Duration = Duration::from_secs(5);
+
+/// Await a pipe reader under `grace`, reporting whether it finished rather than only
+/// what it managed to read.
+///
+/// Returns `(bytes, finished)`. A reader that is dropped mid-await is detached, not
+/// cancelled, so it keeps draining into the sink in the background and simply stops
+/// counting toward this call.
+async fn collect_within(
+    mut task: tokio::task::JoinHandle<Vec<u8>>,
+    buf: crate::sandbox::SharedBuf,
+    grace: Duration,
+) -> (Vec<u8>, bool) {
+    // `&mut task`, not `task`: on expiry the handle is dropped rather than moved, so the reader
+    // is detached and keeps draining in the background instead of being cancelled mid-read.
+    let finished = tokio::time::timeout(grace, &mut task).await.is_ok();
+    (crate::sandbox::snapshot(&buf), finished)
+}
+
 use super::{
     ConfinedCommand, ConfinedOutcome, ConfinementPolicy, Enforcement, Sandbox, SandboxError,
 };
@@ -263,10 +288,18 @@ impl Sandbox for JobObjectSandbox {
             .take()
             .ok_or_else(|| SandboxError::Setup("stderr pipe unavailable".into()))?;
         let (out_sink, err_sink) = (on_output.clone(), on_output);
+        // Shared buffers: on a grace expiry these are what lets the partial read survive.
+        let stdout_buf = crate::sandbox::new_shared_buf();
+        let stderr_buf = crate::sandbox::new_shared_buf();
+        let (sb, eb) = (stdout_buf.clone(), stderr_buf.clone());
         let stdout_task =
-            tokio::spawn(async move { crate::sandbox::drain_pipe(stdout_pipe, out_sink).await });
+            tokio::spawn(
+                async move { crate::sandbox::drain_pipe(stdout_pipe, out_sink, sb).await },
+            );
         let stderr_task =
-            tokio::spawn(async move { crate::sandbox::drain_pipe(stderr_pipe, err_sink).await });
+            tokio::spawn(
+                async move { crate::sandbox::drain_pipe(stderr_pipe, err_sink, eb).await },
+            );
 
         let seconds = policy.wall_timeout_secs.max(1);
         let wait = child.wait();
@@ -274,16 +307,29 @@ impl Sandbox for JobObjectSandbox {
 
         match waited {
             Ok(Ok(status)) => {
-                let stdout =
-                    String::from_utf8_lossy(&stdout_task.await.unwrap_or_default()).into_owned();
-                let stderr =
-                    String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
+                // F11, third path. The `timeout` above bounds `child.wait()` and nothing else, so
+                // these two bare awaits are an unbounded wait in disguise: the job object kills
+                // the processes *assigned to it*, and anything holding these pipes that is not in
+                // the job — a detached grandchild, a breakaway — keeps them open, and this call
+                // waits on it forever with a command that has already exited.
+                //
+                // Same shape as M147's bwrap fix and M148's unconfined fix: one grace covering
+                // both readers, awaited concurrently, and the fact that the grace expired is
+                // reported rather than hidden. A bounded wait that silently returns short output
+                // is a different defect from an unbounded one, and is the one left here.
+                let (out, err) = tokio::join!(
+                    collect_within(stdout_task, stdout_buf, DRAIN_GRACE),
+                    collect_within(stderr_task, stderr_buf, DRAIN_GRACE),
+                );
+                let (stdout_bytes, stdout_done) = out;
+                let (stderr_bytes, stderr_done) = err;
                 Ok(ConfinedOutcome {
                     exit_code: status.code(),
-                    stdout,
-                    stderr,
+                    stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+                    stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
                     backend: self.name(),
                     enforcement: self.capabilities(),
+                    output_complete: stdout_done && stderr_done,
                 })
             }
             Ok(Err(e)) => Err(SandboxError::Spawn(format!("wait failed: {e}"))),
