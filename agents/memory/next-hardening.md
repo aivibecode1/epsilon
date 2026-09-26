@@ -126,8 +126,37 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   threaded into the app — and per the repo's own rule that claim has to be *measured* with
   `scripts/console-probe.py`, not asserted from code.
 
+## The reference tree moved under the audit (2026-09-26)
+
+`references/` now holds **pi-0.85.1**; `pi-0.84.2` is **gone**. 97 occurrences of `pi-0.84.2` remain across 12
+files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — so the port plan's
+"source-verified" claim is **not true of that file**. `python scripts/check-reference-citations.py` reports
+ only two objective facts (file exists under 0.85.1; line range in bounds). **All 54 are checkable; none
+ are content-verified** — a version bump shifts line numbers and an in-bounds citation can point at
+ unrelated code. Reading the 54 ranges is the open task. Evidence:
+ `audit/evidence/reference-citations-point-at-a-missing-tree.md`.
+ **Also: a checker reporting on the repo is itself evidence.** Its first run reported a bad citation
+ that was really its own regex bug (`json` matched as `js`, losing the line range). Check the tool.
+
 ## Traps that have cost real time
 
+- **Never rewrite a historical record's citation; add a status banner instead.** A stale
+  `pi-0.84.2` line number in a dated milestone dev log, a `REJECTED` plan, or a
+  self-declared "historical research" file is **archaeology** — "fixing" it falsifies what was
+  true when written. The live hazards are different and were the real finds: **five DONE plans
+  (001, 013, 014, 015, 016) that still opened with "Executor instructions: follow this plan step
+  by step"** and no status banner. Bannered instead. And the plans index said 015 was `S` with
+  unticked boxes, while the tree showed the work done — **the index and the files each
+  contradicted the code, in opposite directions.**
+- **A subagent's line numbers are a self-report.** Spot-checked 8 of them before writing them
+  into `03-port-plan.md`: 7 held exactly, 1 did not (the compaction row's "usage anchor" was
+  actually an entry-projection helper). Two subagent *paths* were also wrong
+  (`harness/runtime/harness.ts` is under `packages/agent/`, not `packages/coding-agent/`).
+  **Read the file before citing the number.**
+- **A grep that finds nothing proves nothing if the identifier is wrong.** I claimed pi's
+  `navigateTo` had no callers; the method is `navigateTree` and has 5. The conclusion survived
+  only via a different check — "where is the thing *constructed*" rather than "how do you get
+  there". Epsilon had `/tree` all along and my identifier sweep missed it.
 - **A background gate battery gets killed on this harness, mid-leg.** `m135a` reached 13 of 49 test
   binaries and died without printing `GATE PASS`; per the repo's own rule that log proves nothing.
   A background battery on `CARGO_BUILD_JOBS=1` is long enough that a same-session edit is likely to
