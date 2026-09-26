@@ -1210,6 +1210,167 @@ mod tests {
         }
     }
 
+    // ---- M142: the per-model accumulation M141 left untested ----
+    //
+    // M141 fixed the *pricing* and named the *accumulation* as untested. These drive a
+    // real `UiState` through the two paths that populate the map, and read it back — so
+    // the property under test is the one that actually matters to a user: the bill is
+    // assembled from the models that really produced the turns.
+
+    /// An assistant reply attributed to a named model, with the given usage.
+    fn reply_from(model_id: &str, usage: Usage) -> Message {
+        let mut msg = assistant("ok", vec![], usage);
+        msg.model_id = model_id.into();
+        Message::Assistant(msg)
+    }
+
+    fn usage(input: u64, output: u64, cache_read: u64) -> Usage {
+        Usage {
+            input,
+            output,
+            cache_read,
+            cache_write: 0,
+            total_tokens: input + output + cache_read,
+        }
+    }
+
+    /// Two turns on two models, through the live `MessageEnd` path. The map must hold
+    /// two rows, not one merged row — the merged row is precisely the state M141 had to
+    /// eliminate, because a merged row cannot be priced correctly.
+    #[test]
+    fn each_turn_lands_under_the_model_that_produced_it() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(reply_from("cheap-model", usage(1_000, 100, 0))),
+        });
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(reply_from("pricey-model", usage(2_000, 200, 0))),
+        });
+
+        let by_model = st.usage_by_model();
+        assert_eq!(by_model.len(), 2, "two models, two rows: {by_model:?}");
+        assert_eq!(by_model["cheap-model"].input, 1_000);
+        assert_eq!(by_model["pricey-model"].input, 2_000);
+    }
+
+    /// A second turn on the *same* model accumulates into the same row. Without this,
+    /// `record_usage` could satisfy the two-model test while replacing rather than adding
+    /// — the per-turn detail the pricing depends on would be quietly lost.
+    #[test]
+    fn a_second_turn_on_one_model_adds_to_that_models_row() {
+        let mut st = UiState::new();
+        for _ in 0..3 {
+            st.apply(&AgentEvent::MessageEnd {
+                message: Box::new(reply_from("one-model", usage(1_000, 100, 0))),
+            });
+        }
+
+        let by_model = st.usage_by_model();
+        assert_eq!(by_model.len(), 1, "one model, one row: {by_model:?}");
+        assert_eq!(by_model["one-model"].input, 3_000, "three turns, summed");
+        assert_eq!(by_model["one-model"].output, 300);
+    }
+
+    /// The flat totals and the per-model rows must agree, or the header shows two
+    /// different sessions at once: the token counters reading one sum and the bill
+    /// another. They are updated in the same call for exactly this reason.
+    #[test]
+    fn the_flat_totals_still_equal_the_sum_of_the_rows() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(reply_from("a", usage(1_000, 100, 300))),
+        });
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(reply_from("b", usage(2_000, 200, 400))),
+        });
+
+        let (tokens_in, tokens_out) = st.usage();
+        let (cache_read, cache_write) = st.cache_usage();
+        let rows: u64 = st.usage_by_model().values().map(|c| c.input).sum();
+        assert_eq!(tokens_in, 3_000);
+        assert_eq!(
+            rows, 3_000,
+            "the bill and the token counter must not disagree"
+        );
+        assert_eq!(tokens_out, 300);
+        assert_eq!(cache_read, 700);
+        assert_eq!(cache_write, 0);
+    }
+
+    /// `/resume`: replayed history must be attributed to each message's *own* model.
+    ///
+    /// This is the case M141 most improves and the one that had no coverage at all. A
+    /// history that ignored `a.model_id` and charged everything at the currently-selected
+    /// model would bill a resumed session at today's prices for work done at yesterday's.
+    #[test]
+    fn a_resumed_session_keeps_each_messages_own_model() {
+        let history = vec![
+            Message::User(epsilon_contracts::message::UserMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                content: vec![epsilon_contracts::content::UserContent::Text { text: "hi".into() }],
+            }),
+            reply_from("yesterday-model", usage(1_000, 100, 0)),
+            reply_from("today-model", usage(4_000, 400, 0)),
+        ];
+        let mut st = UiState::new();
+        st.hydrate_from_history(&history);
+
+        let by_model = st.usage_by_model();
+        assert_eq!(
+            by_model.len(),
+            2,
+            "a resumed two-model session must not collapse into one row: {by_model:?}"
+        );
+        assert_eq!(by_model["yesterday-model"].input, 1_000);
+        assert_eq!(by_model["today-model"].input, 4_000);
+    }
+
+    /// Replaying into a state that already holds a session must replace, not add. If the
+    /// per-model map were not cleared alongside the flat totals, a `/resume` would show the
+    /// previous session's tokens *plus* the new one's — and the map, unlike the totals,
+    /// would be the only place that was wrong.
+    #[test]
+    fn resuming_replaces_the_previous_sessions_rows() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(reply_from("old-model", usage(9_000, 900, 0))),
+        });
+        assert_eq!(st.usage_by_model().len(), 1);
+
+        st.hydrate_from_history(&[reply_from("new-model", usage(500, 50, 0))]);
+
+        let by_model = st.usage_by_model();
+        assert_eq!(
+            by_model.keys().collect::<Vec<_>>(),
+            vec!["new-model"],
+            "the old row must be gone, not merged in: {by_model:?}"
+        );
+        assert_eq!(st.usage(), (500, 50), "flat totals reset alongside the map");
+    }
+
+    /// A response arriving *after* a `/model` switch is billed to the model that actually
+    /// produced it, not the newly-selected one. The `model_id` on the message is the only
+    /// evidence, and it is what the accounting must trust.
+    #[test]
+    fn a_reply_lands_on_its_own_model_even_after_a_switch() {
+        let mut st = UiState::new();
+        // A turn that was in flight when the user switched: the agent finishes on the old
+        // model, and the reply arrives afterwards.
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(reply_from("old-model", usage(1_500, 150, 0))),
+        });
+
+        assert!(
+            st.usage_by_model().contains_key("old-model"),
+            "the in-flight turn stays on the model that was actually billed for it"
+        );
+        assert!(
+            !st.usage_by_model().contains_key("new-model"),
+            "nothing may be attributed to a model that produced no turn"
+        );
+    }
+
     #[test]
     fn a_salvaged_partial_reply_is_marked_partial_not_complete() {
         // M62: text + a failure must read as a cut-off answer, never as a

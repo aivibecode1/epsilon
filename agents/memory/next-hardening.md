@@ -108,6 +108,13 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   `cl : Command line error D8050 ... c1.dll` — do not reach for it first.
   Note also that cargo names test binaries by *metadata*, not by content: editing a source file
   does **not** produce a new name, so "touch the file and retry" does not dodge a pinned path.
+- **A second mid-run artifact deletion (2026-09-26, M142).** `per_kind_counts_tie_out_on_both_sides`
+  failed in battery `m142` with `os error 2` on a `std::fs::rename` whose `fs::write` had just succeeded —
+  the file was written, then gone. Same signature as the Avira case below, and in a test's own `%TEMP%`
+  scratch dir, **not** under the target dir, so the external-`CARGO_TARGET_DIR` mitigation does not cover it.
+  Re-run on identical bytes: 5/5 pass. `os error 2` between a successful write and its rename is the AV
+  filter, not code. An exclusion for `%LOCALAPPDATA%\Temp` is an **owner/admin decision** — do not change
+  security config from an agent session. `audit/evidence/m142-failed-round.md` has the full record.
 - **A test that fails only in a batch, on a file nobody else writes, is worth a copy-and-run before
   a theory.** The same trap, one layer down: `Access is denied` reads like a permission bug in the
   product and is not one.
@@ -139,7 +146,7 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
 
 ## Open threads (the ranked list lives in audit/11)
 
-- ~~Session cost is re-priced at the current model.~~ **Closed by M141.** The cause was the accounting, not the pricing: `UiState` kept four bare `u64` totals, so once summed, which model consumed which tokens was unrecoverable. It now keeps a `BTreeMap<String, TokenCounts>` keyed on the message's own `model_id`. The error followed the *direction* of the `/model` switch, which is why it was invisible. **The untested part is the accumulation, not the pricing** — no test feeds two models through a real `UiState`, and the resumed-multi-model case (the one the fix most improves) has no end-to-end coverage.
+- ~~Session cost is re-priced at the current model.~~ **Closed by M141.** The cause was the accounting, not the pricing: `UiState` kept four bare `u64` totals, so once summed, which model consumed which tokens was unrecoverable. It now keeps a `BTreeMap<String, TokenCounts>` keyed on the message's own `model_id`. The error followed the *direction* of the `/model` switch, which is why it was invisible. **The accumulation gap is now closed by M142** — six tests drive a real `UiState` through both `MessageEnd` and `hydrate_from_history`. The lesson generalises: **when a fix has a producing half and a consuming half, testing the consumer proves nothing about the producer.** M141 tested `breakdown_per_model` with a hand-built map; a collapsed map would have passed all six.
 - **The header's numbers still have no legend** — a user sees `?/164k · ↑0 ↓0 · cache — · $0+ ·
   DeepSeek V3.1` and nothing on screen explains the `?`, the `—` or the `+`. Two lines in
   `/help` (`app.rs:1212-1230`) close it. Carried here from the retired
