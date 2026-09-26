@@ -259,14 +259,29 @@ def main():
         print(__file__)
         return 0
     for a in argv:
-        if a.startswith("--") and a not in ("--early", "--late", "--maximize", "--at", "--size"):
+        if a.startswith("--") and a not in (
+            "--early",
+            "--late",
+            "--maximize",
+            "--at",
+            "--size",
+            "--enter",
+            "--settle",
+            "--keys",
+        ):
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
-            sys.stderr.write("options: --early --late --maximize --at SECONDS --size COLSxROWS\n")
+            sys.stderr.write(
+                "options: --early --late --maximize --at SECONDS --size COLSxROWS"
+                " --enter --settle SECONDS --keys TEXT\n"
+            )
             return 2
     mode = "late"
     size = None
     maximize = False
     wait_s = 7.0
+    press_enter = False
+    settle_s = 9.0
+    keys = ""
     text = "hello from the probe"
     positionals = []
     i = 0
@@ -277,6 +292,25 @@ def main():
             mode = "late"
         elif argv[i] == "--maximize":
             maximize = True
+        elif argv[i] == "--enter":
+            # Submit what was typed. Without this the probe can only ever leave the
+            # composer holding text, so the *one* state a user spends their time in —
+            # after a turn has run, with real tokens in the header — was unreachable.
+            # `type_text` already maps `\r` to VK 0x0D (see VK_BY_CHAR), which is the
+            # keystroke a TUI's key handler actually recognises as Enter; a probe that
+            # only wrote characters could type `/help` forever and never run it.
+            press_enter = True
+        elif argv[i] == "--keys":
+            # Keys to send after submitting, to unblock whatever the turn is waiting on.
+            i += 1
+            keys = argv[i]
+        elif argv[i] == "--settle":
+            # Seconds to wait after submitting, before reading the screen. A faux
+            # provider answers in well under a second; a real one does not, and this is
+            # the knob that keeps the measurement about the header rather than about
+            # how long a model took to answer.
+            i += 1
+            settle_s = float(argv[i])
         elif argv[i] == "--at":
             # Seconds to wait after attaching before typing. The default suits a settled
             # TUI; measuring whether early keystrokes survive needs it smaller.
@@ -349,6 +383,24 @@ def main():
         time.sleep(2.5)
         result["after_typing"] = snapshot(out)
         result["typed_screen"] = screen_text(out, limit_rows=64)
+        if press_enter:
+            # Submit, then read the screen *again*. Everything the owner asked to see —
+            # context used, cache hit rate, estimated cost — only has a value once a
+            # reply has come back, so a probe that cannot press Enter can only ever
+            # photograph the one state where those numbers are legitimately unknown.
+            result["enter"] = type_text(inp, "\r")
+            time.sleep(settle_s)
+            result["after_turn"] = snapshot(out)
+            result["turn_screen"] = screen_text(out, limit_rows=64)
+            if keys:
+                # Answer whatever the turn is blocked on. A `bash` call opens a permission
+                # dialog and waits, so without this the probe photographs a turn that is
+                # *parked*, not one that is *done* — and a header read while a dialog is up
+                # says nothing about what the header says when the work has landed.
+                result["keys"] = type_text(inp, keys)
+                time.sleep(settle_s)
+                result["after_keys"] = snapshot(out)
+                result["settled_screen"] = screen_text(out, limit_rows=64)
 
     kill(shell.pid)
     print(json.dumps(result, indent=2))
