@@ -5,6 +5,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- The welcome screen no longer repeats the footer's keybindings; it shows the model and
+  context window instead (M151).
+- The cache metric now reads `R<read> W<write> CH<rate>` instead of `cache N%`, so the rate has
+  a denominator and real cache volume is never hidden behind a dash (M151).
+
 - A shell command that exits while a background process still holds its output pipe
   now returns the output it *did* collect. The M148 timeout discarded it entirely, so a
   successful command could report no output at all (M150).

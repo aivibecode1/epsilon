@@ -250,6 +250,19 @@ def kill(pid):
 
 def main():
     argv = sys.argv[1:]
+    # An unknown flag used to fall through to `positionals` and be treated as the exe path, so
+    # `--help` opened a console and tried to run a file named "--help". A diagnostic that fails
+    # by doing something confusing is worse than one that refuses: the obvious reading of the
+    # output was "the probe is broken", not "you passed me nonsense".
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        print(__file__)
+        return 0
+    for a in argv:
+        if a.startswith("--") and a not in ("--early", "--late", "--maximize", "--at", "--size"):
+            sys.stderr.write(f"console-probe: unknown option {a!r}\n")
+            sys.stderr.write("options: --early --late --maximize --at SECONDS --size COLSxROWS\n")
+            return 2
     mode = "late"
     size = None
     maximize = False

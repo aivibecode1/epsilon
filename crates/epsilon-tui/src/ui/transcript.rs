@@ -15,11 +15,12 @@
 //! never carries it alone — a reader on a 16-colour terminal, or with `NO_COLOR`
 //! set, must still be able to follow the conversation.
 
+use crate::ui::metrics::{Metrics, Pressure};
+use crate::ui::theme::Theme;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::state::LineKind;
-use crate::ui::theme::Theme;
 
 /// Columns reserved at the left of every transcript row.
 pub const GUTTER: usize = 2;
@@ -175,8 +176,22 @@ pub fn decorate(
 /// make: the user cannot tell whether the program is working, waiting, or broken.
 /// This says what the harness is, what to type, and which keys matter — and it
 /// disappears the moment there is a real conversation to show.
-pub fn welcome(theme: &Theme, width: usize) -> Vec<Line<'static>> {
-    let g = &theme.glyphs;
+///
+/// **What it deliberately does not do is list the keybindings.** It used to, and that was
+/// the design failure worth recording: the footer already renders the *live* key set for the
+/// current state, three lines below, so the block above was a second, staler copy of the same
+/// information. Two copies of a help listing, one of them wrong within seconds of the first
+/// keystroke, reads as noise and pushes the composer off the screen.
+///
+/// The space goes to what a user cannot read anywhere else: what this session actually is
+/// right now — the model, its context window, where the session lives, and how much room is
+/// left. That is the part of "is it working?" that a blank transcript leaves open.
+pub fn welcome(
+    theme: &Theme,
+    width: usize,
+    metrics: &Metrics,
+    session_label: &str,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let title = "EPSILON";
     // A plain, wide-tracked wordmark. Not ASCII art: art breaks on a narrow
@@ -193,22 +208,34 @@ pub fn welcome(theme: &Theme, width: usize) -> Vec<Line<'static>> {
         theme.dim(),
     )));
     lines.push(Line::from(""));
-    let hint = |key: &str, what: &str| {
+
+    // The session panel: real values, in the order a person asks for them.
+    // The role is chosen up front rather than inside the closure, because a `fn` pointer
+    // cannot carry the `match` and a closure cannot be coerced to one.
+    let context_style = match metrics.pressure() {
+        Pressure::Danger => theme.danger(),
+        Pressure::Warn => theme.warn(),
+        _ => theme.dim(),
+    };
+    let field = |key: &str, value: String, style: Style| {
         Line::from(vec![
-            Span::styled(format!("  {:<10}", key), theme.dim_strong()),
-            Span::styled(what.to_string(), theme.dim()),
+            Span::styled(format!("  {:<9}", key), theme.faint()),
+            Span::styled(value, style),
         ])
     };
-    lines.push(hint("type", "describe a task and press enter"));
-    lines.push(hint("/", "commands — try /help, /models, /sessions"));
-    lines.push(hint("@", "reference a file by name"));
-    lines.push(hint("ctrl-p", "command palette"));
+    lines.push(field("model", metrics.model_label.clone(), theme.user()));
+    // The same pressure colouring the header uses, so the number does not change
+    // meaning when the first message lands and the header takes over.
+    lines.push(field("context", metrics.context_gauge(), context_style));
+    if !session_label.is_empty() {
+        lines.push(field("session", session_label.to_string(), theme.dim()));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  this session runs against the model shown at the top right",
+        "  ready — describe a task and press enter",
         theme.faint(),
     )));
-    let _ = (g, width);
+    let _ = width;
     lines
 }
 
@@ -375,9 +402,47 @@ mod tests {
     #[test]
     fn the_welcome_screen_is_not_a_blank_void() {
         let theme = Theme::new(ColorMode::Ansi16, ASCII);
-        let text = screen(welcome(&theme, 80), 80, 20);
+        let text = screen(
+            welcome(&theme, 80, &crate::ui::metrics::Metrics::idle(), ""),
+            80,
+            20,
+        );
         assert!(text.contains("E P S I L O N"), "{text}");
         assert!(text.contains("describe a task"), "{text}");
-        assert!(text.contains("/help"), "{text}");
+        // The session panel, not a second copy of the footer.
+        assert!(text.contains("model"), "{text}");
+        assert!(text.contains("context"), "{text}");
+    }
+
+    /// The footer already renders the live key set for the current state. A welcome screen
+    /// that repeats it produces two help listings, the upper one stale within seconds of the
+    /// first keystroke, and pushes the composer off a short window. This is the regression test
+    /// for the design change, not a formatting preference.
+    #[test]
+    fn the_welcome_screen_does_not_repeat_the_footers_keybindings() {
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let text = screen(
+            welcome(&theme, 80, &crate::ui::metrics::Metrics::idle(), ""),
+            80,
+            20,
+        );
+        for key in ["ctrl-p", "pageup scroll", "command palette"] {
+            assert!(
+                !text.contains(key),
+                "the welcome screen must not restate the footer's live keys ({key:?}): {text}"
+            );
+        }
+    }
+
+    /// A session label is optional; an empty one drops the row instead of printing a blank
+    /// field, because a row reading "session" with nothing after it looks like a bug.
+    #[test]
+    fn a_session_label_appears_only_when_there_is_one() {
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let metrics = crate::ui::metrics::Metrics::idle();
+        let named = screen(welcome(&theme, 80, &metrics, "refactor-rates"), 80, 20);
+        assert!(named.contains("refactor-rates"), "{named}");
+        let anon = screen(welcome(&theme, 80, &metrics, ""), 80, 20);
+        assert!(!anon.contains("session"), "{anon}");
     }
 }

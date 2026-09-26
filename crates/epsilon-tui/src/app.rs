@@ -2967,7 +2967,16 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     // The theme is `Copy`, so the closure below can still take `&mut app`: the
     // alternative — holding a borrow of `app.theme` across the call — is what the
     // borrow checker refuses, and rightly, since the closure mutates the app.
+    /// What the welcome panel calls this session: its name when it has one, otherwise the
+    /// git branch, otherwise nothing. Never a placeholder — an empty label drops the row,
+    /// and a row that says "session: -" is worse than no row.
+    fn session_label(app: &App) -> String {
+        app.session_name.clone().unwrap_or_default()
+    }
+
     let theme = app.theme;
+    // Owned, because `shell` borrows it and `app` is used again in the closure below.
+    let session_label = session_label(app);
     let hint_values = app.hints();
     let shell = crate::ui::shell::Shell {
         theme: &theme,
@@ -2978,6 +2987,9 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         caret: (caret_row, caret_col),
         composer_focused: !app.overlay_open(),
         transcript_empty: app.transcript_is_empty(),
+        // Session first, branch second: a session label is the thing a user can
+        // act on, and the branch is context for it. Falls back to the branch alone.
+        session_label: &session_label,
     };
     let geometry = app.geometry;
     let painted = crate::ui::shell::paint(f, area, &shell, |f, transcript_area| {

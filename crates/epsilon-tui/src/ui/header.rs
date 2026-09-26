@@ -188,7 +188,10 @@ mod tests {
                 // fragment survives is [`side_by_side`]'s business — asserted
                 // there, by width breakpoint.
                 assert!(line.contains("DeepSeek"), "width {width}: {line}");
-                assert!(line.contains("cache"), "width {width}: {line}");
+                // The cache fragment is identified by its counters, not by the word
+                // "cache" — the row reads `R12k W2.0k CH 75%`, and a test that pinned
+                // the old label would pass against a row that had lost its rate.
+                assert!(line.contains("CH"), "width {width}: {line}");
             }
         }
     }

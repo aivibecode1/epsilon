@@ -44,6 +44,10 @@ pub struct Shell<'a> {
     pub composer_focused: bool,
     /// Whether there is anything to show in the transcript.
     pub transcript_empty: bool,
+
+    /// Shown on the welcome panel: where this session lives. Empty is fine and
+    /// means "unnamed" — the panel drops the row rather than printing a blank.
+    pub session_label: &'a str,
 }
 
 /// The result of laying out a frame, so the caller can paint the transcript and
@@ -82,7 +86,12 @@ where
     header::draw(f, regions.header, theme, &shell.run, &shell.metrics);
 
     if shell.transcript_empty {
-        let lines = crate::ui::transcript::welcome(theme, regions.transcript.width as usize);
+        let lines = crate::ui::transcript::welcome(
+            theme,
+            regions.transcript.width as usize,
+            &shell.metrics,
+            shell.session_label,
+        );
         f.render_widget(ratatui::widgets::Paragraph::new(lines), regions.transcript);
     } else {
         draw_transcript(f, regions.transcript);
@@ -159,6 +168,7 @@ mod tests {
             caret: (0, 0),
             composer_focused: true,
             transcript_empty: empty,
+            session_label: "",
         }
     }
 

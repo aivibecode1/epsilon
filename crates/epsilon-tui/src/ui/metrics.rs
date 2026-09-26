@@ -218,9 +218,42 @@ impl Metrics {
 
     /// The cache line as the header prints it: `cache 87%`, or `cache —`.
     pub fn cache_gauge(&self) -> String {
+        // Volume *and* rate, because a rate without a denominator is a vibe. `CH 100%` on a
+        // 200-token cache and on a 2M-token cache are the same string and mean opposite
+        // things; the R/W counters are what make the number mean something. This is the same
+        // breakdown pi's footer prints.
+        let volume = format!(
+            "R{} W{}",
+            format_tokens(self.cache_read_session),
+            format_tokens(self.cache_write_session)
+        );
         match self.cache_hit_rate() {
-            Some(rate) => format!("cache {}", format_percent(rate * 100.0)),
-            None => "cache —".to_string(),
+            Some(rate) => format!("{volume} CH {}", format_percent(rate * 100.0)),
+            // No rate yet is not the same as no cache. Showing `cache —` hid the volume
+            // entirely, so a session that had already cached 400k tokens read as "no cache".
+            None => format!("{volume} CH —"),
+        }
+    }
+
+    /// The row a session shows before anything has happened: no usage, no cache, no cost.
+    ///
+    /// Used by the welcome panel and by tests that need a well-formed `Metrics` without
+    /// inventing usage numbers. Constructing the struct literally in every test meant a dozen
+    /// call sites that all had to change when a field was added.
+    pub fn idle() -> Self {
+        Self {
+            model_label: "no model".to_string(),
+            context_used: None,
+            context_window: None,
+            tokens_in: 0,
+            tokens_out: 0,
+            cache_read_session: 0,
+            cache_write_session: 0,
+            cache_read_last: 0,
+            prompt_tokens_last: None,
+            cost_micro_usd: None,
+            cost_is_floor: false,
+            offline: false,
         }
     }
 
@@ -448,7 +481,9 @@ mod tests {
             ..metrics()
         };
         assert!(fresh.cache_hit_rate().is_none());
-        assert_eq!(fresh.cache_gauge(), "cache —");
+        // Session volume is real and is shown; the *rate* is withheld, because a rate
+        // computed from a 120-token prompt is a number with no meaning.
+        assert_eq!(fresh.cache_gauge(), "R18k W2.0k CH —");
         assert_eq!(fresh.context_gauge(), "ctx 20%/200k");
     }
 
@@ -468,7 +503,7 @@ mod tests {
         let mut m = metrics();
         // 18k of a 24k prompt came from cache.
         assert_eq!(m.cache_hit_rate(), Some(0.75));
-        assert_eq!(m.cache_gauge(), "cache 75%");
+        assert_eq!(m.cache_gauge(), "R18k W2.0k CH 75%");
 
         // A later prompt that hit nothing must read as a *miss*, even though the session
         // still holds 18k of cache reads. This is the assertion the pre-G16 gauge failed:
@@ -515,7 +550,7 @@ mod tests {
             ..Metrics::default()
         };
         assert!(m.cache_hit_rate().is_none(), "120 tokens proves nothing");
-        assert_eq!(m.cache_gauge(), "cache —");
+        assert_eq!(m.cache_gauge(), "R0 W0 CH —");
     }
 
     #[test]
