@@ -35,7 +35,7 @@ Relevant files, each with one line on its role:
 - `crates/epsilon-tools/src/edit_match.rs` — fuzzy edit chain (exact → lineTrimmed → indentFlexible)
 - `crates/epsilon-tools/src/util.rs` — `resolve_in_workspace`, `walk_files`, `read_text_capped`, `MAX_READ_BYTES`, `WALK_MAX_ENTRIES`
 - `crates/epsilon-tools/Cargo.toml` — deps: epsilon-contracts/core/safety, serde, tokio, regex, schemars (no walkdir/ignore yet, `util::walk_files` does it)
-- `references/pi-0.84.2/packages/coding-agent/src/core/tools/file-mutation-queue.ts` — `withFileMutationQueue(env, path, fn)` per-env WeakMap of per-canonical-path Promise chains
+- `references/pi-0.85.1/packages/agent/src/harness/tools/file-mutation-queue.ts:10,30–35` — `withFileMutationQueue(env, path, fn)` per-env WeakMap of per-canonical-path Promise chains. **Corrected 2026-09-26:** this line previously pointed at `coding-agent/src/core/tools/file-mutation-queue.ts`, which is a *different, 2-argument* queue keyed by a module-level `Map` (`32| export async function withFileMutationQueue<T>(filePath: string, fn: () => Promise<T>)`, `4| const fileMutationQueues = new Map<string, Promise<void>>()`). The shape described above is the one in `packages/agent/…` (`10| const states = new WeakMap<ExecutionEnv, MutationQueueState>();`), so an executor following the old path would have copied the wrong implementation.
 - `references/pi-0.84.2/packages/coding-agent/src/core/tools/find.ts` — `findSchema {pattern, path?, limit?}`, DEFAULT_LIMIT 1000, fd-backed with `relativizeFindResultPath`
 
 Excerpts as of `e200815`:

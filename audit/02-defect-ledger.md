@@ -663,7 +663,7 @@ handed the run token to the tool through `ToolContext` (`:683-684`) but never co
 before executing. The loop's abort checkpoint ran only at the next turn
 (`crates/epsilon-core/src/lib.rs:1076-1079`).
 
-**Reference semantics:** pi breaks a sequential batch after the in-flight call settles and stops scheduling parallel calls once the signal aborts; every remaining call becomes an error result ("Operation aborted") and all results are still emitted in order (`references/pi-0.84.2/packages/agent/src/agent-loop.ts:478-480,516-553,629-635`).
+**Reference semantics:** pi breaks a sequential batch after the in-flight call settles and stops scheduling parallel calls once the signal aborts; every remaining call becomes an error result ("Operation aborted") and all results are still emitted in order (`references/pi-0.85.1/packages/agent/src/agent-loop.ts:476–478,520–544,636–642`). Re-verified 2026-09-26: the old `478-480,516-553,629-635` had drifted — `478-480` began 2 lines *after* the break (`476| if (signal?.aborted) {`), and `629-635` landed 7 lines early on the `beforeToolCall` context object (`631| args: validatedArgs,`) instead of the abort return at `636-642` (`639| result: createErrorToolResult("Operation aborted")`).
 
 **Impact:** after Esc, the rest of the active batch still started and executed. A write or shell command the user just cancelled could still run; only tools that personally honour the token stopped early. The transcript stayed valid (every call receives a result), which is why this never surfaced as a wire error or a dangling-call repair.
 

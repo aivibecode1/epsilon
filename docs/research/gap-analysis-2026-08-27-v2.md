@@ -26,8 +26,24 @@ Planned at: `e200815` (2026-08-27). Scope: every crate vs `references/pi-0.84.2`
 Re-ran the sweep against `references/pi-0.84.2` after M52–M59. **Every G-item is
 now closed or explicitly dropped:**
 
-- G1 slash lifecycle — closed (34 items incl. `/sessions`, `/tasks`, `/editor`; pi's 22 builtins all present).
-- G2 `find` + tool table — closed (read/bash/edit/write/grep/find/ls parity + `task`/`todo`/`skill`).
+- G1 slash lifecycle — closed (34 items incl. `/sessions`, `/tasks`, `/editor`). **The "pi's 22 builtins all present" claim is WITHDRAWN (2026-09-26): it was never true and is now provably false.** Measured against `pi-0.85.1/packages/coding-agent/src/core/slash-commands.ts:19–43`, which holds **23** builtins (0.84.2 had 22; pi added `thinking` at `:23`). Epsilon registers 22 slash items in `crates/epsilon-tui/src/picker.rs`, of which **15 are pi's** and **8 pi commands are absent**:
+
+  | Missing in Epsilon | pi's line |
+  |---|---|
+  | `thinking` | `:23` (new in 0.85.1) |
+  | `export`, `import` | `:25–28` |
+  | `name` | `:29` |
+  | `login`, `logout` | `:36–38` (capability exists in `epsilon-llm/src/oauth_login.rs`, without a slash command) |
+  | `trust` | `:35` |
+  | `resume` | `:42` (Epsilon's `/sessions` may cover this functionally — **unverified**) |
+
+  Epsilon's 7 extras: `clear`, `editor`, `help`, `sessions`, `skills`, `tasks`, `timeline`
+  (`timeline` is what `/tree` aliases to). `model` and `scoped-models` are present under
+  Epsilon's internal names `Models` / `ScopedModels`. **`/export` and `/import` are the subject of
+  `docs/plans/016-atfile-and-export.md`, so their absence is planned, not forgotten** — but G1
+  cannot be "closed" while they are missing. Re-verify with
+  `sed -n '19,43p' references/pi-0.85.1/packages/coding-agent/src/core/slash-commands.ts`.
+- G2 `find` + tool table — closed (read/bash/edit/write/grep/find/ls parity + `task`/`todo`/`skill`). **Corrected 2026-09-26: the 7-name parity is an undercount.** `pi-0.85.1/packages/coding-agent/src/core/tools/index.ts:95` declares **8** — `read | bash | powershell | edit | write | grep | find | ls` — pi added `powershell` after 0.84.2. Epsilon covers 7 of the 8. This is a **surface difference, not a missing capability**: Epsilon's single `bash` tool *is* PowerShell on Windows (`crates/epsilon-tools/src/shell.rs:47`, asserted at `:483`), where pi exposes `bash` and `powershell` as two separately selectable tools. The real consequence: on Windows an Epsilon model cannot run `bash` at all, and the model-visible tool list differs from pi's in a way a prompt written for pi would not expect.
 - G3 file-mutation queue — closed.
 - G4 `task` tool — closed, and well beyond capture-v1: background runs, resumption, abort cascade,
   per-delegation model override (M56), and durable child sessions (M58).

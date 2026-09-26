@@ -60,7 +60,7 @@ Repo conventions to honor:
 
 ## Suggested executor toolkit
 
-- Read `references/pi-0.84.2/packages/tui/src/components/editor.ts` for @-trigger (trigger on `@` + `[\w./-]*` at word boundary, filter files, Tab inserts `path`, Enter inserts `path + " "`).
+- Read `references/pi-0.85.1/packages/tui/src/components/editor.ts:251–263,756–801` for the @-trigger (fires on `@` at a word boundary with pattern `[^\s]*`, and Tab/Enter both call the same `applyCompletion`). **Corrected 2026-09-26 — both specifics below were wrong:** the trigger pattern is `[^\s]*`, not `[\w./-]*` (`editor.ts:258| return new RegExp(`(?:^|[\s])[${…}][^\s]*$`)`), and there is **no** Tab/Enter asymmetry — `756–775` and `777–801` run identical `applyCompletion` calls. File *filtering* and the trailing space live in `references/pi-0.85.1/packages/tui/src/autocomplete.ts:412–418`, not `editor.ts`: `416| const isDirectory = item.label.endsWith("/");` and `417| const suffix = isDirectory ? "" : " ";` — so the space is **directory-conditional**, not an Enter-only behaviour.
 - Keep ponytail heuristic: smallest diff — @-completion reuses `util::walk_files` + `picker.rs` fuzzy; export is one file write + one notice.
 
 ## Scope
