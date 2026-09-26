@@ -72,6 +72,9 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M141 — a session's bill is priced per model](milestones/M141-a-sessions-bill-is-priced-per-model.md):
+  the second half of M140. A token's price belongs to the model that consumed it, so the session
+  keeps its counts split by model. The error followed the direction of the switch and was invisible.
 - [M140 — the header counted the cached prefix twice](milestones/M140-the-header-counted-the-cached-prefix-twice.md):
   the three numbers the owner asked for were present but wrong on most providers, in three different
   directions. Present-but-wrong is worse than absent, because a missing number gets noticed.

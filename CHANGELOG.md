@@ -25,6 +25,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   elapsed, ~27s left (another process may still be writing it)`.
 
 ### Fixed
+- **A session's cost is now priced per model, not at whichever model is selected (M141).** Switching
+  models with `/model` silently repriced everything the session had spent so far, and resuming a
+  multi-model session did the same to history billed at other prices. The error followed the
+  direction of the switch — moving to a pricier model made past work look expensive — and nothing
+  on screen showed it. Epsilon now keeps the token counts split by the model that produced them
+  and prices each at its own rates. A model the price registry does not know now marks the total
+  with `+` rather than being treated as free.
 - **The context gauge, cache hit rate and cost no longer count the cached prefix twice (M140).**
   All three numbers were on screen and, on every provider except Anthropic and Mistral, wrong — the
   cache rate read low, the context gauge read high, and the cost was charged at the full input rate

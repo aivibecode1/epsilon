@@ -25,6 +25,7 @@ pub enum LineKind {
     System,
 }
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Process-wide id source. Uniqueness is what the render cache needs (content-stable,
@@ -420,6 +421,9 @@ pub struct UiState {
     running: bool,
     tokens_in: u64,
     tokens_out: u64,
+    /// M141: the same counts, kept per model so each is priced at its own rates.
+    /// See [`Self::usage_by_model`].
+    usage_by_model: BTreeMap<String, crate::ui::cost::TokenCounts>,
     cache_read: u64,
     cache_write: u64,
     /// Cache-read tokens of the most recent call, paired with `latest_prompt_tokens`.
@@ -496,6 +500,40 @@ impl UiState {
     /// Accumulated prompt-cache traffic across the session: (cache read, cache write).
     pub fn cache_usage(&self) -> (u64, u64) {
         (self.cache_read, self.cache_write)
+    }
+
+    /// Token counts split by the model that actually produced them.
+    ///
+    /// M141. The bare `tokens_in`/`tokens_out`/`cache_read`/`cache_write` totals cannot
+    /// be priced correctly across a model switch, because a token's price is a property
+    /// of the model that consumed it. Summing first and pricing the sum at the *current*
+    /// model's rates silently repriced every earlier turn the moment you switched, and
+    /// `/resume` did the same by re-accumulating history that was billed at other prices.
+    ///
+    /// So the accounting keeps the split, and `cost::breakdown_per_model` prices each
+    /// model's tokens at that model's own rates. The flat totals above stay for the
+    /// header's token counters, which genuinely only need the sum.
+    pub fn usage_by_model(&self) -> &BTreeMap<String, crate::ui::cost::TokenCounts> {
+        &self.usage_by_model
+    }
+
+    /// Add one provider response's usage to the totals *and* to that model's own row.
+    ///
+    /// The two are updated together on purpose. The flat totals are what the header's
+    /// token counters show and they legitimately need only the sum; the per-model row is
+    /// what makes the *cost* correct, because price is a property of the model that
+    /// consumed the tokens, not of the model that happens to be selected now.
+    ///
+    /// `model_id` comes from the message itself, not from `self`, so a response is always
+    /// billed to the model that actually produced it — including one that arrives after a
+    /// `/model` switch, and including replayed history whose each message carries the id it
+    /// was generated under.
+    fn record_usage(&mut self, model_id: &str, usage: epsilon_contracts::message::Usage) {
+        let row = self.usage_by_model.entry(model_id.to_string()).or_default();
+        row.input += usage.input;
+        row.output += usage.output;
+        row.cache_read += usage.cache_read;
+        row.cache_write += usage.cache_write;
     }
 
     /// Latest single-call prompt size = input + cache_read + cache_write
@@ -656,6 +694,7 @@ impl UiState {
         self.tokens_out = 0;
         self.cache_read = 0;
         self.cache_write = 0;
+        self.usage_by_model.clear();
         self.latest_prompt_tokens = 0;
         self.compacted = false;
         // A replayed session has no per-call timings to recover — the store keeps
@@ -703,6 +742,7 @@ impl UiState {
                     self.tokens_out += a.usage.output;
                     self.cache_read += a.usage.cache_read;
                     self.cache_write += a.usage.cache_write;
+                    self.record_usage(&a.model_id, a.usage);
                     let prompt = a.usage.input + a.usage.cache_read + a.usage.cache_write;
                     if prompt > 0 {
                         self.latest_prompt_tokens = prompt;
@@ -814,6 +854,7 @@ impl UiState {
                     self.tokens_out += a.usage.output;
                     self.cache_read += a.usage.cache_read;
                     self.cache_write += a.usage.cache_write;
+                    self.record_usage(&a.model_id, a.usage);
                     // pi footer convention: context size = latest call's full prompt.
                     let prompt = a.usage.input + a.usage.cache_read + a.usage.cache_write;
                     if prompt > 0 {

@@ -71,6 +71,7 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   stream because the concrete `Response` had made chunk framing untestable — **that is why the
   defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
   1.12.1) — ADR-017 amendment.
+- **M141** — a session's bill is priced per model (M140's second half). The lesson worth keeping: **when a metric is correct only because every input happened to share one property, the accounting is discarding what would make it correct in general.** The first negative-control attempt was also wrong — it priced every model at the first model's rates *inside* the loop, which double-counted instead of repricing, and only one test noticed. A control must BE the old code, not merely differ from it.
 - **M140** — the owner's three numbers (context use, cache hit rate, cost) were **present but wrong** on every provider except Anthropic and Mistral. `seed_usage_compat` set `input = prompt_tokens` *and* read the cached count from the same payload, so the prefix sat in two buckets; three consumers read the buckets as disjoint and each failed differently (rate low, gauge high, cost charged twice). Mistral already had the subtraction — **that asymmetry is the tell that it was an oversight, not a decision.** The Responses wire dropped `input_tokens_details` outright, printing a confident `cache 0%` where the header means `—` for unknown. Fixed at the boundary; `ui/cost.rs` and `ui/metrics.rs` were already right. Needed a new `test_support` seam because the arithmetic happens mid-stream on raw JSON, and `wire_fixtures.rs` has **no usage fixtures at all** — that absence is why it survived.
 - **M139** — a model switch now survives closing the session. `model_change` was written faithfully
   and read by nobody (`ModelChange` appeared only in the decoder, the search index and tests), so a
@@ -138,7 +139,7 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
 
 ## Open threads (the ranked list lives in audit/11)
 
-- **Session cost is re-priced at the current model (M140's named residual, NOT fixed).** `App::metrics` prices the whole accumulated total with `lookup_model(&self.model_id)`, so a `/model` switch reprices every earlier token and `/resume` re-accumulates from history while ignoring each message's own `model_id`. A different layer (accumulation, not decoding) and it deserves its own milestone.
+- ~~Session cost is re-priced at the current model.~~ **Closed by M141.** The cause was the accounting, not the pricing: `UiState` kept four bare `u64` totals, so once summed, which model consumed which tokens was unrecoverable. It now keeps a `BTreeMap<String, TokenCounts>` keyed on the message's own `model_id`. The error followed the *direction* of the `/model` switch, which is why it was invisible. **The untested part is the accumulation, not the pricing** — no test feeds two models through a real `UiState`, and the resumed-multi-model case (the one the fix most improves) has no end-to-end coverage.
 - **The header's numbers still have no legend** — a user sees `?/164k · ↑0 ↓0 · cache — · $0+ ·
   DeepSeek V3.1` and nothing on screen explains the `?`, the `—` or the `+`. Two lines in
   `/help` (`app.rs:1212-1230`) close it. Carried here from the retired

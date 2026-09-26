@@ -3162,26 +3162,35 @@ impl App {
         // session totals above (G16).
         let cache_read_last = self.ui.latest_cache_read();
         let latest_prompt = self.ui.latest_prompt_tokens();
+        // The context *window* is a property of the model selected now — it is a capacity,
+        // not a bill — so this one lookup stays keyed on `self.model_id`. The cost below
+        // deliberately does not.
         let info = epsilon_llm::catalog::lookup_model(&self.model_id);
-        let counts = crate::ui::cost::TokenCounts {
-            input: tokens_in,
-            output: tokens_out,
-            cache_read: cache_read_session,
-            cache_write: cache_write_session,
-        };
-        // One call, so the total and the floor marker cannot disagree about which
-        // components were priced.
-        let cost = info.as_ref().map(|info| {
-            crate::ui::cost::breakdown(
-                counts,
-                crate::ui::cost::TokenPrices {
-                    input: info.input_cost_micro_per_mtok,
-                    output: info.output_cost_micro_per_mtok,
-                    cache_read: info.cache_read_cost_micro_per_mtok,
-                    cache_write: info.cache_write_cost_micro_per_mtok,
+        // M141: price each model's tokens at that model's own rates. Pricing the summed
+        // totals at `self.model_id` — the model selected *now* — repriced every earlier
+        // turn the moment you switched, and `/resume` did the same to replayed history
+        // that was billed at other prices. The registry lookup is per model id rather
+        // than one lookup for the session, so this is also what makes a resumed
+        // multi-model session come back with the bill it actually incurred.
+        let cost = if self.ui.usage_by_model().is_empty() {
+            // No provider response yet: nothing has been billed, so there is nothing to
+            // price and no model whose absence from the registry matters.
+            None
+        } else {
+            Some(crate::ui::cost::breakdown_per_model(
+                self.ui.usage_by_model(),
+                |model_id| {
+                    epsilon_llm::catalog::lookup_model(model_id).map(|info| {
+                        crate::ui::cost::TokenPrices {
+                            input: info.input_cost_micro_per_mtok,
+                            output: info.output_cost_micro_per_mtok,
+                            cache_read: info.cache_read_cost_micro_per_mtok,
+                            cache_write: info.cache_write_cost_micro_per_mtok,
+                        }
+                    })
                 },
-            )
-        });
+            ))
+        };
         let cost_micro_usd = cost.as_ref().map(crate::ui::cost::CostBreakdown::total);
         let cost_is_floor = cost.as_ref().is_some_and(|c| c.is_floor());
         // A frame that has not mirrored yet — the first one, or a bench frame —

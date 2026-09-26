@@ -153,6 +153,48 @@ pub fn is_floor(counts: TokenCounts, prices: TokenPrices) -> bool {
     breakdown(counts, prices).is_floor()
 }
 
+/// Price a whole session's usage where more than one model produced it.
+///
+/// M141. A token's price is a property of the model that consumed it, so a session that
+/// switched models has to be priced in pieces: sum the per-model counts, price each at
+/// *its own* rates, and add the results. Summing first and pricing the sum once — at
+/// whatever model is selected now — silently repriced every earlier turn the instant you
+/// switched, with no visible sign, because the total simply became a different number.
+///
+/// `prices_for` looks up the rates for one model id and returns `None` when the registry
+/// has no row for it. A model with no row contributes its tokens to the floor instead of
+/// silently costing nothing, so an unpriced model is visible in the header's `+` marker
+/// rather than quietly making the bill smaller.
+///
+/// Summing the four per-model `scaled` components and dividing once at the end is
+/// deliberate: `breakdown` already works in a scale wide enough that per-model rounding
+/// cannot lose a micro-dollar, and a single final division is the only way the total cannot
+/// depend on the order the models happen to be visited.
+pub fn breakdown_per_model(
+    usage_by_model: &std::collections::BTreeMap<String, TokenCounts>,
+    prices_for: impl Fn(&str) -> Option<TokenPrices>,
+) -> CostBreakdown {
+    let mut scaled = [0u64; 4];
+    let mut floor = false;
+    for (model_id, counts) in usage_by_model {
+        match prices_for(model_id) {
+            Some(prices) => {
+                let part = breakdown(*counts, prices);
+                for (acc, add) in scaled.iter_mut().zip(part.scaled) {
+                    *acc += add;
+                }
+                floor |= part.floor;
+            }
+            None => {
+                // The registry does not price this model. Its tokens are real money of an
+                // unknown amount, so the whole session becomes a lower bound.
+                floor = true;
+            }
+        }
+    }
+    CostBreakdown { scaled, floor }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +208,157 @@ mod tests {
             cache_read: 300_000,
             cache_write: 3_750_000,
         }
+    }
+
+    // ---- M141: a session that switched models ----
+
+    /// Ten times the input price, nothing else. Chosen to make a repricing error
+    /// unmistakable in the total rather than a rounding-level nuisance.
+    fn pricey() -> TokenPrices {
+        TokenPrices {
+            input: 30_000_000,
+            output: 150_000_000,
+            cache_read: 3_000_000,
+            cache_write: 37_500_000,
+        }
+    }
+
+    fn counts(input: u64, output: u64) -> TokenCounts {
+        TokenCounts {
+            input,
+            output,
+            cache_read: 0,
+            cache_write: 0,
+        }
+    }
+
+    fn by_model(pairs: &[(&str, TokenCounts)]) -> std::collections::BTreeMap<String, TokenCounts> {
+        pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+    }
+
+    /// One model: identical to pricing the flat total. The fix must not perturb the
+    /// overwhelmingly common single-model case, or it is not worth having.
+    #[test]
+    fn a_single_model_session_is_priced_exactly_as_before() {
+        let usage = by_model(&[("cheap", counts(1_000_000, 100_000))]);
+        let single = breakdown_per_model(&usage, |id| (id == "cheap").then(prices));
+        let flat = breakdown(counts(1_000_000, 100_000), prices());
+
+        assert_eq!(single.total(), flat.total(), "one model, one answer");
+        assert_eq!(single.is_floor(), flat.is_floor());
+    }
+
+    /// The defect. A turn on the cheap model followed by a switch to the expensive one
+    /// must not charge the cheap turn at the expensive rate.
+    ///
+    /// Under the old behaviour both turns were summed and priced at whichever model was
+    /// selected at render time, so this number was whatever `/model` was set to — and a
+    /// session that switched to a pricier model appeared to have cost more than it did.
+    #[test]
+    fn a_switch_does_not_reprice_the_turns_that_came_before_it() {
+        let usage = by_model(&[
+            ("cheap", counts(1_000_000, 100_000)),  // $3.00 + $1.50
+            ("pricey", counts(1_000_000, 100_000)), // $30.00 + $15.00
+        ]);
+        let result = breakdown_per_model(&usage, |id| match id {
+            "cheap" => Some(prices()),
+            "pricey" => Some(pricey()),
+            _ => None,
+        });
+
+        // 3.00 + 1.50 + 30.00 + 15.00 = $49.50.
+        assert_eq!(
+            result.total(),
+            49_500_000,
+            "each turn at its own model's price, not both at the current one"
+        );
+    }
+
+    /// The same usage priced wrongly, stated as the number that used to be printed.
+    ///
+    /// `breakdown` works in micro-USD per Mtok × tokens, so the old path charged
+    /// 2,000,000 input at 30 (=$60.00) plus 200,000 output at 150 (=$30.00) = **$90.00**,
+    /// for work that actually cost $49.50. The wrong number is not a rounding artefact —
+    /// it is 82% too high, and the direction it errs depends on which way you switched,
+    /// so a session that moved to a *cheaper* model under-reports its own spending.
+    #[test]
+    fn the_old_pricing_would_have_overstated_this_session() {
+        let usage = by_model(&[
+            ("cheap", counts(1_000_000, 100_000)),
+            ("pricey", counts(1_000_000, 100_000)),
+        ]);
+        let correct = breakdown_per_model(&usage, |id| match id {
+            "cheap" => Some(prices()),
+            "pricey" => Some(pricey()),
+            _ => None,
+        });
+        // What the old code did: sum the counts, price once at the *selected* model.
+        let repriced = breakdown(
+            counts(2_000_000, 200_000),
+            pricey(), // the model selected at render time
+        );
+
+        assert_eq!(correct.total(), 49_500_000, "3.00 + 1.50 + 30.00 + 15.00");
+        assert_eq!(
+            repriced.total(),
+            90_000_000,
+            "60.00 + 30.00, every token at the new rate"
+        );
+        assert!(
+            repriced.total() > correct.total(),
+            "switching to a pricier model inflated the bill for work already done"
+        );
+    }
+
+    /// A model the registry has no row for costs an unknown amount, so the total is a
+    /// floor. It must NOT be treated as free: a silently smaller bill is the failure this
+    /// module exists to prevent.
+    #[test]
+    fn an_unpriced_model_makes_the_total_a_floor_not_a_smaller_bill() {
+        let usage = by_model(&[
+            ("cheap", counts(1_000_000, 100_000)),
+            ("mystery", counts(5_000_000, 500_000)),
+        ]);
+        let result = breakdown_per_model(&usage, |id| (id == "cheap").then(prices));
+
+        assert_eq!(
+            result.total(),
+            4_500_000,
+            "only the priced model's tokens contribute to a known total"
+        );
+        assert!(
+            result.is_floor(),
+            "an unpriced model must show as `$…+`, never as a confidently smaller total"
+        );
+    }
+
+    /// Order independence: `BTreeMap` fixes the iteration order, but the total must not
+    /// depend on it either way, or a future `HashMap` would silently change the number.
+    #[test]
+    fn the_total_does_not_depend_on_which_model_is_visited_first() {
+        let usage = by_model(&[
+            ("aaa-cheap", counts(1_000_000, 100_000)),
+            ("zzz-pricey", counts(1_000_000, 100_000)),
+        ]);
+        let result = breakdown_per_model(&usage, |id| {
+            if id.starts_with("aaa") {
+                Some(prices())
+            } else {
+                Some(pricey())
+            }
+        });
+        assert_eq!(result.total(), 49_500_000);
+    }
+
+    /// An empty session is free and is not a floor — there is nothing missing from it.
+    #[test]
+    fn a_session_with_no_usage_yet_is_zero_and_not_a_floor() {
+        let result = breakdown_per_model(&std::collections::BTreeMap::new(), |_| Some(prices()));
+        assert_eq!(result.total(), 0);
+        assert!(
+            !result.is_floor(),
+            "no tokens means no unpriced tokens; `+` would be noise"
+        );
     }
 
     #[test]
