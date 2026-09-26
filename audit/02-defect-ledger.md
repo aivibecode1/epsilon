@@ -401,6 +401,18 @@ Original source trace below describes the pre-fix snapshot.
 
 ## F11 — Own child exit, descendants and pipe draining under one deadline
 
+> **PARTIALLY CLOSED by M147 (`docs/milestones/M147-one-deadline-for-the-whole-run.md`),
+> 2026-09-26 — read the status honestly.** The bwrap backend's three gaps are closed in source:
+> `wall_timeout_secs` is now honoured (it was `_policy`, discarded), the deadline covers the
+> pipe drains and not just the child wait, and `kill_on_drop(true)` stops a cancelled run
+> leaking its tree. **But the three tests that prove it are `#![cfg(unix)]` and reported
+> `0 passed` on this Windows host — they were never executed here.** They are written to
+> compile and run on the `ubuntu-latest` CI job, which installs bubblewrap. What *was* executed
+> is the Windows job-object backend, which implements the same pattern and whose
+> `timeout_kills_tree_and_reports_timeout_error` and `grandchildren_die_with_the_job` both pass
+> (44 passed / 0 failed in `epsilon-safety`). The evidence below is kept as the record of what
+> was wrong, not as current behaviour.
+
 **Evidence:** bwrap ignores `_policy`, awaits child exit and drains without timeout/kill-on-drop (`crates/epsilon-safety/src/sandbox.rs:389–438`). Shell cancellation only drops that future (`crates/epsilon-tools/src/shell.rs:280–298`). Unconfined shell's timeout covers direct-child wait, not later drains (`:385–407`). Windows similarly drains after timed wait while holding the job (`crates/epsilon-safety/src/sandbox/jobobject.rs:271–294`).
 
 **Impact:** Linux timeout is not implemented; cancellation may leave work running. If a descendant retains a pipe after the direct child exits, final drain can hang past the promised timeout. These lifecycle consequences require native process tests, not sleeps-and-hope.

@@ -389,7 +389,7 @@ impl Sandbox for BwrapSandbox {
     async fn run(
         &self,
         cmd: ConfinedCommand,
-        _policy: &ConfinementPolicy,
+        policy: &ConfinementPolicy,
         on_output: Option<OutputSink>,
     ) -> Result<ConfinedOutcome, SandboxError> {
         let mut target = vec![cmd.program.clone()];
@@ -415,6 +415,11 @@ impl Sandbox for BwrapSandbox {
         let mut child = command
             .spawn()
             .map_err(|e| SandboxError::Setup(format!("bwrap exec: {e}")))?;
+        // Cancellation drops this future, and a dropped future must not leave a sandboxed
+        // tree running unsupervised. The unconfined path already sets this
+        // (`shell.rs`); a confined run is the one place it matters more, because the tree it
+        // leaks is isolated, long-lived, and invisible to the user who cancelled.
+        child.kill_on_drop(true);
         let stdout_pipe = child
             .stdout
             .take()
@@ -430,22 +435,45 @@ impl Sandbox for BwrapSandbox {
         let out_task = tokio::spawn(async move { drain_pipe(stdout_pipe, out_sink).await });
         let err_task = tokio::spawn(async move { drain_pipe(stderr_pipe, err_sink).await });
 
-        let status = child
-            .wait()
-            .await
-            .map_err(|e| SandboxError::Setup(format!("bwrap wait: {e}")))?;
-        let stdout = out_task.await.unwrap_or_default();
-        let stderr = err_task.await.unwrap_or_default();
+        // F11: one deadline covers the *whole* run — waiting for the child AND collecting the
+        // pipes. Bounding only the wait would still hang on a descendant that outlives the
+        // direct child while holding stdout open, which is the case that turns a promised
+        // timeout into an indefinite wait. `--die-with-parent` is already in the argv, so the
+        // namespace goes with the process and a held pipe cannot outlive the kill.
+        let seconds = policy.wall_timeout_secs.max(1);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        let whole = async {
+            let status = child
+                .wait()
+                .await
+                .map_err(|e| SandboxError::Spawn(format!("bwrap wait: {e}")))?;
+            // Both readers finish on EOF once the tree is gone; awaiting them here is what
+            // makes the collected output complete rather than truncated at the deadline.
+            let stdout = out_task.await.unwrap_or_default();
+            let stderr = err_task.await.unwrap_or_default();
+            Ok::<_, SandboxError>((status, stdout, stderr))
+        };
 
-        Ok(ConfinedOutcome {
-            exit_code: status.code(),
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-            backend: self.name(),
-            // The backend's envelope, not a per-field audit of this policy: what it cannot
-            // confine at all is exactly what a caller has to know (M77).
-            enforcement: self.capabilities(),
-        })
+        match tokio::time::timeout_at(deadline, whole).await {
+            Ok(Ok((status, stdout, stderr))) => Ok(ConfinedOutcome {
+                exit_code: status.code(),
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                backend: self.name(),
+                // The backend's envelope, not a per-field audit of this policy: what it cannot
+                // confine at all is exactly what a caller has to know (M77).
+                enforcement: self.capabilities(),
+            }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                // Elapsed. Kill the tree, and deliberately do NOT await the drains: a pipe
+                // still held is precisely why the clock ran out, so waiting on it here would
+                // move the hang we are fixing to the line after it. The tasks are detached and
+                // end when the namespace goes with the killed process.
+                let _ = child.start_kill();
+                Err(SandboxError::Timeout { seconds })
+            }
+        }
     }
 }
 

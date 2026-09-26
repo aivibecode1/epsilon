@@ -13,6 +13,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   failing tests was evidence of success, so the harness had nothing to say to a model that shipped
   broken code. Verification now reads the exit code, and treats a missing one as unknown rather than
   clean. Ordinary nonzero exits are still delivered to the model as ordinary nonzero exits.
+
+- **A confined command was not actually bounded (F11, bwrap).** The Linux backend ignored its own
+  wall-clock limit, bounded only the direct child's exit and then awaited the pipe drains
+  outside that bound — so a descendant holding stdout open could hang past the promised
+  timeout — and left the process tree running when a run was cancelled. One deadline now covers
+  the wait and both drains, and a cancelled run takes its tree with it.
 - **A check could vouch for an edit that had not happened yet.** Ordering was compared by turn
   number, and two calls in one turn share one number, so a check issued before an edit in the same
   batch appeared to cover it.

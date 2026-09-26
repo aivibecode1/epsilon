@@ -84,6 +84,11 @@ first, newest at the top, and it is kept current from M83 forward.
   verification record counted a failing test suite as a passing check; and ordering was compared in
   turn numbers, so a check before an edit in the same batch vouched for it. Two negative controls,
   one per half, so neither fix could hide the other.
+- [M147 — one deadline for the whole confined run](milestones/M147-one-deadline-for-the-whole-run.md)
+  — **partially closes F11** (bwrap half). The backend discarded its own
+  `wall_timeout_secs`, bounded only the child wait and not the pipe drains, and leaked the
+  tree on cancellation. The three tests that prove it are `cfg(unix)` and **did not run on
+  the Windows host** — the status banner says so rather than implying coverage.
 - [M144 — a summarization is a real bill](milestones/M144-a-summarization-is-a-real-bill.md) — **read side
   only**. Compaction resends the whole history and is charged for it, and the response was in scope at the write
   site while the entry said `usage: None`; pi counts this charge explicitly so totals "reflect what was actually
