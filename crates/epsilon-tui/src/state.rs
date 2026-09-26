@@ -417,6 +417,15 @@ impl TranscriptLine {
 }
 
 /// Long tool outputs collapse to a head + ellipsis so one bash call cannot flood the pane.
+/// How many lines of in-flight output a running tool card keeps.
+///
+/// `ToolExecutionUpdate` carries a *delta*, not a cumulative buffer, so the card has to
+/// accumulate to show anything. A `cargo build` can emit tens of thousands of lines in a
+/// long session; keeping them all would make the transcript a memory leak with a scrollbar.
+/// The result overwrites this on settle, so the bound costs nothing but the oldest lines
+/// during a run nobody is going to scroll back through anyway.
+const CARD_STREAM_TAIL_LINES: usize = 40;
+
 const MAX_RESULT_CHARS: usize = 400;
 
 /// Reducible UI state for one TUI session.
@@ -988,7 +997,10 @@ impl UiState {
                 }
             }
             AgentEvent::ToolExecutionUpdate {
-                tool_name, partial, ..
+                tool_call_id,
+                tool_name,
+                partial,
+                ..
             } => {
                 // M63: a long command reports what it is doing while it runs. The
                 // status line carries the newest output line (bounded to one row);
@@ -1012,6 +1024,37 @@ impl UiState {
                     .trim();
                 if !last.is_empty() {
                     self.status = format!("{tool_name}: {}", truncate(last, 120));
+                }
+                // M152: also show the output *in the card*, not only its last line in the
+                // header. `partial` is a delta, not a cumulative buffer, so the card keeps a
+                // bounded tail of recent lines and drops the rest. Without this a three-minute
+                // `cargo build` shows a static `bash` card for three minutes, which reads as a
+                // hang — the complaint that sent us looking at the references in the first place.
+                //
+                // The result overwrites this wholesale on settle, so nothing here is ever the
+                // record; `CARD_STREAM_TAIL_LINES` bounds the memory a runaway command can pin.
+                if let Some(line) = self.lines.iter_mut().rev().find(|l| {
+                    l.card
+                        .as_ref()
+                        .is_some_and(|c| c.tool_call_id == *tool_call_id)
+                }) && let Some(card) = line.card.as_mut()
+                {
+                    let mut tail = match &card.body {
+                        CardBody::Text(existing) if card.status == CardStatus::Running => {
+                            existing.lines().map(str::to_string).collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                        tail.push(line.to_string());
+                    }
+                    if tail.len() > CARD_STREAM_TAIL_LINES {
+                        let drop = tail.len() - CARD_STREAM_TAIL_LINES;
+                        tail.drain(..drop);
+                    }
+                    if !tail.is_empty() {
+                        card.body = CardBody::Text(tail.join("\n"));
+                    }
                 }
             }
             AgentEvent::PermissionDecided { decision, .. } => {
@@ -1876,6 +1919,146 @@ mod tests {
         assert_eq!(last.kind, DiffKind::Meta);
         assert!(last.text.contains("No newline"), "{last:?}");
         assert_eq!(last.number, None);
+    }
+
+    /// A running tool must show its output. A three-minute `cargo build` that draws a
+    /// static card for three minutes is indistinguishable from a hang, which is exactly the
+    /// complaint that sent us to read the references in the first place.
+    #[test]
+    fn a_running_tool_card_shows_the_output_it_has_produced_so_far() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(assistant(
+                "",
+                vec![("tc_9", "bash")],
+                Usage::default(),
+            ))),
+        });
+        st.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc_9".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({"command": "cargo build"}),
+        });
+        for chunk in [
+            "Compiling epsilon-core v0.1.0",
+            "Compiling epsilon-tools v0.1.0",
+        ] {
+            st.apply(&AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "tc_9".into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::Text {
+                        text: chunk.into(),
+                    }],
+                    details: serde_json::json!({}),
+                },
+            });
+        }
+        let card = st.lines()[0].card.as_ref().expect("the running card");
+        let CardBody::Text(body) = &card.body else {
+            panic!(
+                "a streaming bash result is text, not a diff: {:?}",
+                card.body
+            );
+        };
+        // `partial` is a delta, so the card has to accumulate. Both chunks must be there:
+        // keeping only the newest is the bug this test exists to catch.
+        assert!(body.contains("epsilon-core"), "{body}");
+        assert!(body.contains("epsilon-tools"), "{body}");
+    }
+
+    /// The tail is bounded. A build that emits tens of thousands of lines must not turn the
+    /// transcript into an unbounded buffer; the result replaces this wholesale on settle, so
+    /// what is dropped during the run is dropped for good and that is the right trade.
+    #[test]
+    fn a_running_tool_card_keeps_only_a_bounded_tail() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(assistant(
+                "",
+                vec![("tc_10", "bash")],
+                Usage::default(),
+            ))),
+        });
+        st.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc_10".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({"command": "cargo build"}),
+        });
+        for n in 0..(CARD_STREAM_TAIL_LINES + 25) {
+            st.apply(&AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "tc_10".into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::Text {
+                        text: format!("line {n}"),
+                    }],
+                    details: serde_json::json!({}),
+                },
+            });
+        }
+        let card = st.lines()[0].card.as_ref().expect("card");
+        let CardBody::Text(body) = &card.body else {
+            panic!("text")
+        };
+        let kept = body.lines().count();
+        assert!(
+            kept <= CARD_STREAM_TAIL_LINES,
+            "kept {kept} lines, bound is {CARD_STREAM_TAIL_LINES}"
+        );
+        assert!(
+            body.contains(&format!("line {}", CARD_STREAM_TAIL_LINES + 24)),
+            "the newest line is the one that must survive: {body}"
+        );
+    }
+
+    /// The result is the record. When the call settles, the streamed tail must be replaced
+    /// rather than prepended to, or every line of a long command appears twice.
+    #[test]
+    fn the_result_replaces_the_streamed_tail_rather_than_joining_it() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(assistant(
+                "",
+                vec![("tc_11", "bash")],
+                Usage::default(),
+            ))),
+        });
+        st.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "tc_11".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({"command": "echo hi"}),
+        });
+        st.apply(&AgentEvent::ToolExecutionUpdate {
+            tool_call_id: "tc_11".into(),
+            tool_name: "bash".into(),
+            partial: epsilon_contracts::tool::ToolPartial {
+                content: vec![epsilon_contracts::content::ContentBlock::Text { text: "hi".into() }],
+                details: serde_json::json!({}),
+            },
+        });
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_11".into(),
+                tool_name: "bash".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::Text { text: "hi".into() }],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let card = st
+            .lines()
+            .iter()
+            .rev()
+            .find_map(|l| l.card.as_ref())
+            .expect("the settled card");
+        let CardBody::Text(body) = &card.body else {
+            panic!("text")
+        };
+        assert_eq!(body.trim(), "hi", "the result is the record, once: {body}");
     }
 
     #[test]

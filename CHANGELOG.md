@@ -5,6 +5,9 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- A tool that is still running now streams its output into its card, so a long build
+  no longer looks like a hang (M152).
+
 - The welcome screen no longer repeats the footer's keybindings; it shows the model and
   context window instead (M151).
 - The cache metric now reads `R<read> W<write> CH<rate>` instead of `cache N%`, so the rate has
