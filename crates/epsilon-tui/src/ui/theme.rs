@@ -193,6 +193,11 @@ pub struct Glyphs {
     pub tool_call: &'static str,
     /// A completed step.
     pub tick: &'static str,
+    /// A step that succeeded but whose result is known to be short.
+    ///
+    /// A warning sign rather than a tick: the tick asserts the result is whole, and for a
+    /// partially-collected output it is not. Not the cross either — nothing failed.
+    pub warn: &'static str,
     /// A failed step.
     pub cross: &'static str,
     /// A line a diff adds. Part of the glyph table rather than a literal `"+"` in
@@ -223,6 +228,7 @@ pub const UNICODE: Glyphs = Glyphs {
     prompt: "❯",
     tool_call: "▸",
     tick: "✓",
+    warn: "!",
     cross: "✗",
     plus: "+",
     minus: "-",
@@ -245,6 +251,7 @@ pub const ASCII: Glyphs = Glyphs {
     prompt: ">",
     tool_call: "\\",
     tick: "+",
+    warn: "!",
     cross: "x",
     plus: "+",
     minus: "-",

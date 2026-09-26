@@ -5,6 +5,9 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- A shell result whose output is known to be short now renders as **partial**, with a warning
+  glyph and the word `partial`, instead of a green tick and the word `ok` (M149).
+
 ### Fixed
 
 - **A failing test suite could be recorded as a passing check (F05).** The verification record

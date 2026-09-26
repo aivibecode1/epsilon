@@ -99,6 +99,12 @@ fn status_word(status: CardStatus, glyphs: &Glyphs) -> (&'static str, &'static s
     match status {
         CardStatus::Pending | CardStatus::Running => (glyphs.tool_call, "pending"),
         CardStatus::Ok => (glyphs.tick, "ok"),
+        // Deliberately not the tick, and deliberately not the cross. The tick would say the
+        // result is whole when the harness knows it is short; the cross would say the command
+        // failed when it succeeded. A warning glyph with the word "partial" is the only one of
+        // the three that is not a lie, and the word is what survives `NO_COLOR` or a font that
+        // cannot draw the glyph.
+        CardStatus::Partial => (glyphs.warn, "partial"),
         CardStatus::Failed => (glyphs.cross, "failed"),
         CardStatus::Denied => (glyphs.cross, "denied"),
     }
@@ -746,4 +752,39 @@ pub fn cut(text: &str, width: usize) -> String {
 fn cols(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
     text.width()
+}
+#[cfg(test)]
+mod tests {
+    use super::{CardStatus, status_word};
+    use crate::ui::theme::{ASCII, UNICODE};
+
+    /// The word matters as much as the glyph. `status_word` is documented to return both
+    /// because the glyph is what a glance catches and the word is what survives a font that
+    /// cannot draw it — and "partial" is the only one of these three words that tells the
+    /// truth about output the harness knows it did not finish collecting.
+    #[test]
+    fn a_partial_result_says_partial_in_both_themes() {
+        for (name, glyphs) in [("unicode", &UNICODE), ("ascii", &ASCII)] {
+            let (glyph, word) = status_word(CardStatus::Partial, glyphs);
+            assert_eq!(word, "partial", "{name} theme word");
+            assert_ne!(
+                glyph, glyphs.tick,
+                "{name}: a tick would claim the output is whole"
+            );
+            assert_ne!(
+                glyph, glyphs.cross,
+                "{name}: a cross would claim the command failed"
+            );
+        }
+    }
+
+    /// The control: the tick and the cross must keep their own words, so `Partial` did not
+    /// quietly steal one of them.
+    #[test]
+    fn ok_and_failed_keep_their_own_glyphs_and_words() {
+        assert_eq!(status_word(CardStatus::Ok, &UNICODE).1, "ok");
+        assert_eq!(status_word(CardStatus::Ok, &ASCII).0, ASCII.tick);
+        assert_eq!(status_word(CardStatus::Failed, &UNICODE).1, "failed");
+        assert_eq!(status_word(CardStatus::Failed, &ASCII).0, ASCII.cross);
+    }
 }

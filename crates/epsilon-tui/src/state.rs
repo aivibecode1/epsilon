@@ -127,6 +127,14 @@ pub enum CardStatus {
     Running,
     /// Finished without an error.
     Ok,
+    /// Finished, and the *command* reported success — but the result is known to be short.
+    ///
+    /// This exists because "did not fail" and "told the whole truth" are different questions.
+    /// A shell command that exits 0 while a background process holds its output pipe
+    /// (`output_complete: false`, M148) has genuinely succeeded, so `Failed` would be a lie, and
+    /// `Ok` would be a bigger one: a green tick on output the harness knows it did not finish
+    /// collecting. A partial result is a third thing and says so.
+    Partial,
     /// Finished with an error result.
     Failed,
     /// Refused by the permission gate.
@@ -595,8 +603,20 @@ impl UiState {
     /// been.
     fn push_tool_result(&mut self, t: &epsilon_contracts::message::ToolResultMessage, now: u64) {
         let body = tool_result_text(t);
+        // "Did not fail" and "told the whole truth" are different questions, and a tool card
+        // can only answer one of them. A shell command that exits 0 while a background process
+        // holds its output pipe has succeeded — so `Failed` would misreport it — but the
+        // harness knows the text below is short, so `Ok` would over-report it. M148 puts the
+        // fact in `details.output_complete`; this is where it becomes something a user sees.
+        let truncated_output = t
+            .details
+            .get("output_complete")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false);
         let status = if t.is_error {
             CardStatus::Failed
+        } else if truncated_output {
+            CardStatus::Partial
         } else {
             CardStatus::Ok
         };
@@ -1729,6 +1749,100 @@ mod tests {
         assert_eq!(card.status, CardStatus::Ok);
     }
 
+    /// A shell result whose output the harness knows is short must not render as `Ok`.
+    ///
+    /// Before M149 the card was green and the word "ok" for any result that was not an error,
+    /// so a `cargo test` whose output got cut short by a surviving background process looked
+    /// exactly like one that was collected in full. The command really did exit 0 — that is why
+    /// this is `Partial` and not `Failed` — and the card now has to say which of the two it was.
+    #[test]
+    fn a_result_known_to_be_short_is_partial_rather_than_ok() {
+        let msg = Message::ToolResult(ToolResultMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: "tc_bash".into(),
+            tool_name: "bash".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "running 3 tests\ntest a ... ok",
+            )],
+            details: serde_json::json!({
+                "exit_code": 0,
+                "output_complete": false,
+                "confinement": "off",
+            }),
+            usage: None,
+            is_error: false,
+        });
+
+        let mut ui = UiState::new();
+        ui.apply(&AgentEvent::MessageEnd {
+            message: Box::new(msg),
+        });
+        let card = ui
+            .lines
+            .iter()
+            .find_map(|l| l.card.as_ref())
+            .expect("a tool result is a card");
+        assert_eq!(
+            card.status,
+            CardStatus::Partial,
+            "exit 0 with output_complete:false is neither ok nor failed"
+        );
+    }
+
+    /// The control for the test above: the same result with the flag absent must still be
+    /// `Ok`, or the change would be reading a field that is not really there.
+    #[test]
+    fn a_result_without_the_flag_is_still_ok() {
+        let msg = Message::ToolResult(ToolResultMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: "tc_bash".into(),
+            tool_name: "bash".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text("done")],
+            details: serde_json::json!({ "exit_code": 0, "confinement": "off" }),
+            usage: None,
+            is_error: false,
+        });
+
+        let mut ui = UiState::new();
+        ui.apply(&AgentEvent::MessageEnd {
+            message: Box::new(msg),
+        });
+        let card = ui
+            .lines
+            .iter()
+            .find_map(|l| l.card.as_ref())
+            .expect("a tool result is a card");
+        assert_eq!(card.status, CardStatus::Ok);
+    }
+
+    /// A failing command is still `Failed` even if its output is also short: "it failed" is the
+    /// more useful fact, and the two are not exclusive.
+    #[test]
+    fn an_error_beats_partial_when_both_are_true() {
+        let msg = Message::ToolResult(ToolResultMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: "tc_bash".into(),
+            tool_name: "bash".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text("boom")],
+            details: serde_json::json!({ "exit_code": 1, "output_complete": false }),
+            usage: None,
+            is_error: true,
+        });
+
+        let mut ui = UiState::new();
+        ui.apply(&AgentEvent::MessageEnd {
+            message: Box::new(msg),
+        });
+        let card = ui
+            .lines
+            .iter()
+            .find_map(|l| l.card.as_ref())
+            .expect("a tool result is a card");
+        assert_eq!(card.status, CardStatus::Failed);
+    }
     #[test]
     fn a_hunk_header_sets_the_line_numbers_it_declares() {
         // `@@ -10,2 +20,2 @@` means the old file's next line is 10 and the new
