@@ -1,6 +1,6 @@
 # F22 — compaction usage is stored and never read (port fidelity: `getSessionStats`)
 
-**Status:** the **compaction half is CLOSED** (M145 — the bill is recorded on the entry that incurred it, keyed by the model actually charged, and read back on resume). **The branch-summary half is still OPEN**, and the difference turned out to be a separate defect rather than the same one twice. Found while building M143; deliberately not folded into it.
+**Status: CLOSED, and the second half was never a defect.** M145 closed the compaction half — the bill is recorded on the entry that incurred it, keyed by the model actually charged, and read back on resume. The branch-summary half is **withdrawn as a defect** on the evidence below; the missing *capability* is already tracked as the "Cross-branch navigation, branch summaries, fork" row of `audit/03-port-plan.md`, which had it right. Found while building M143; deliberately not folded into it.
 **Severity:** P2 — the number is wrong, not missing, and it is wrong *low*.
 
 ## The gap
@@ -103,4 +103,39 @@ to take it (`reason: "branch_summary"`) when that happens.
 | 3 | Repeated compactions **add** rather than overwrite | done (M145) — the write-side test asserts the reader's total equals the SUM over entries, because the threshold fires twice in that fixture |
 | 4 | A resumed session reads the rows back into the totals | done (M145) — `app.rs` adds them *after* hydration, and a test asserts why that order matters |
 | 5 | A legacy compaction with usage but no charging model is **not** priced at an invented rate | done (M145) — under-reporting is the chosen direction to be wrong in. Both arms are asserted: usage with no model is skipped, and the SAME entry with a model IS counted |
-| 6 | A branch summary is a real billed call, attributed like a compaction | **open** — needs the call to exist first |
+| 6 | A branch summary is a real billed call, attributed like a compaction | **withdrawn — no such call exists in Epsilon.** See “Why row 6 was withdrawn” below; the capability is tracked in `03-port-plan.md` |
+
+## Why row 6 was withdrawn
+
+I claimed the branch-summary half was "still open" and "needs the call to exist first". The
+second half of that sentence was doing the real work, and it turns out to mean there is **no
+defect at all** — I had filed a missing *feature* as a wrong *number*.
+
+What the code actually says, checked rather than recalled:
+
+1. **pi does bill it.** `agent-session.ts:3205-3225` calls `generateBranchSummary(...)` and takes
+   `summaryUsage = result.usage`, passed as the 5th argument to `branchWithSummary`. So in pi a
+   branch summary is a real provider call with a real cost.
+2. **Epsilon has no such call.** There is no `generate_branch_summary` anywhere in the workspace.
+   Every caller of `branch_with_summary` is a **test** — 7 sites, all in
+   `crates/epsilon-session/tests/session_store.rs` and `compaction_scenarios.rs`, all passing
+   `None` for usage.
+3. **Epsilon has no way to abandon a branch.** Searching `epsilon-tui/src`, `epsilon-cli/src` and
+   `epsilon-core/src` for `rewind|navigate_back|edit_previous|fork_branch|switch_branch` returns
+   **zero** non-test hits. The feature that would create an abandoned branch is not ported, so
+   there is no abandoned branch to summarize.
+4. **pi does not call it either.** The only producer is `AgentSession.navigateTo(targetId,
+   { summarize, ... })` (`agent-session.ts:3103-3112`). A repo-wide grep for `navigateTo` in
+   `packages/` returns 5 hits, and every one is an unrelated `navigateTo` *cursor option* in
+   `tui/src/components/settings-list.ts`. pi itself has no internal caller for it.
+
+So: **nothing in Epsilon spends money summarizing a branch, therefore nothing is unbilled.**
+A reader that counts a `BranchSummary`'s usage is correct and already tested; it is simply fed
+only by sessions pi wrote.
+
+**Why the `BranchSummary` code is not dead, and must not be deleted.** Epsilon shares pi's
+session file format — its header is pi's (`"type":"session"`), and the model-view projection
+replicates pi's own truthiness guard verbatim (`store.rs:1625`: `entry.type === "branch_summary"
+&& entry.summary`). An imported pi session can contain branch summaries, so the **reader** arm
+earns its keep for compatibility. It is a read path with no writer *yet* — which is a missing
+feature, not dead code.
