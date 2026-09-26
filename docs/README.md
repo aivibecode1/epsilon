@@ -94,6 +94,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M150 — the third path, and the fix that was eating the output](milestones/M150-the-third-path-and-the-eaten-output.md)
 - [M151 — the welcome screen stops repeating the footer](milestones/M151-the-welcome-screen-stops-repeating-the-footer.md)
 - [M152 — a running tool shows its output](milestones/M152-a-running-tool-shows-its-output.md)
+- [M153 — every tool card says something specific](milestones/M153-every-tool-card-says-something.md)
   — **closes F11's unconfined half.** The pipe drains were awaited outside the caller's timeout, so a
   surviving descendant hung a command that had already exited. Bounded, and the shortfall is
   declared. The control settles in 10.46s without the fix — the descendant's own lifetime.

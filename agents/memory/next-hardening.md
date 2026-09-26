@@ -335,3 +335,19 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
   re-derivation or removal, not a patch per line; patching lines leaves a half-current guide, which
   is worse than naming it. Same for `audit/05-verification-log.md`, which AGENTS.md calls the latest
   baseline while its tail is M86–M88.
+
+## Load-sensitive tests are not flaky, they are unrun (M153)
+
+`epsilon-tools` has wall-clock assertions that are meaningful — `a_normal_command_reports_complete_output_immediately`
+and `a_descendant_holding_the_pipe_does_not_hang_the_call` are what caught M148's hang. They also fail under load.
+`mutation::tests::different_paths_run_concurrently` and `pi_import_carries_every_source_entry` join them.
+
+Cost this session: two full-suite runs reported `TEST=101` with **two different** failures, both of which
+passed in isolation. I caused the first one by running a foreground test while a background battery's
+clippy was still going — the "one build owner at a time" rule, violated by me. The second was the full
+suite loading itself.
+
+Rule, learned the hard way: **never conclude a regression from a load-sensitive failure until the same
+test has passed in isolation on an idle machine**, and never report a green battery you did not actually
+see. `--no-fail-fast` plus a per-binary tally is what makes this visible; a single `TEST=0` from a run
+that had contention is not evidence.

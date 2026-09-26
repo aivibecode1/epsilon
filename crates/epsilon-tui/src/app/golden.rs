@@ -399,12 +399,13 @@ fn a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour()
         "NO_COLOR must not claim filled bands"
     );
     // M126: the call is a **card** now, so the row to find is its title line —
-    // `▸ bash · pending` — and the command it is about to run is the body under
+    // `▸ bash $ cargo test -p epsilon-tui · pending` — and the command it is about
+    // to run is both the headline (M153) and the body under
     // it. Mutated from `tool-call bash cargo test`, which is the flat row this
     // slice replaced.
     let call_row = rows
         .iter()
-        .position(|r| r.contains("bash · pending"))
+        .position(|r| r.contains("bash $ cargo test -p epsilon-tui · pending"))
         .unwrap_or_else(|| panic!("the tool card never reached the screen: {rows:#?}"));
     let notice_row = rows
         .iter()
@@ -413,7 +414,7 @@ fn a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour()
 
     // The gutter glyph and the card's own status glyph, in that order.
     assert!(
-        rows[call_row].starts_with("▸ ▸ bash · pending"),
+        rows[call_row].starts_with("▸ ▸ bash $ cargo test -p epsilon-tui · pending"),
         "tool-card row {call_row} must carry the call gutter and the card title: {:?}",
         rows[call_row]
     );
@@ -585,10 +586,10 @@ fn a_pending_tool_call_gets_the_pending_band_where_the_terminal_has_one() {
     let (buffer, rows) = render_buffer(&mut app, 80, 24);
     let call_row = rows
         .iter()
-        .position(|r| r.contains("edit · pending"))
+        .position(|r| r.contains("edit src/lib.rs · pending"))
         .unwrap_or_else(|| panic!("the tool card never reached the screen: {rows:#?}"));
     assert!(
-        rows[call_row].starts_with("▸ ▸ edit · pending"),
+        rows[call_row].starts_with("▸ ▸ edit src/lib.rs · pending"),
         "the card must carry its gutter marker and its own status glyph: {:?}",
         rows[call_row]
     );
@@ -1269,17 +1270,19 @@ fn a_tool_result_is_a_card_whose_title_carries_name_status_and_duration() {
     ));
 
     let rows = render_rows(&mut app, 80, 24);
-    let title_row = row_of(&rows, "bash · ok");
+    let title_row = row_of(&rows, "bash all tests pass · ok");
     let title = &rows[title_row];
     // Gutter glyph, then the card's own status glyph, then the title.
     assert!(
-        title.starts_with("✓ ✓ bash · ok · "),
+        title.starts_with("✓ ✓ bash all tests pass · ok · "),
         "the title line must carry name, status and duration: {title:?}"
     );
     // The duration is a real number with a unit, not a placeholder. A card that
     // printed `0s` for every fast call would look broken, which is why the unit is
     // milliseconds at this scale.
-    let tail = title.trim_end().trim_start_matches("✓ ✓ bash · ok · ");
+    let tail = title
+        .trim_end()
+        .trim_start_matches("✓ ✓ bash all tests pass · ok · ");
     assert!(
         tail.ends_with("ms"),
         "the duration must be milliseconds for a fast call: {tail:?}"
@@ -1307,9 +1310,9 @@ fn a_failed_tool_result_says_failed_on_its_title() {
         .apply(&crate::state::agent_event_tool_result("bash", "boom", true));
 
     let rows = render_rows(&mut app, 80, 24);
-    let title = &rows[row_of(&rows, "bash · failed")];
+    let title = &rows[row_of(&rows, "bash boom · failed")];
     assert!(
-        title.starts_with("✗ ✗ bash · failed"),
+        title.starts_with("✗ ✗ bash boom · failed"),
         "a failed call must say so in words and glyphs: {title:?}"
     );
 }
@@ -1468,7 +1471,7 @@ fn the_diff_is_not_run_through_the_markdown_parser() {
     // The card's last row is the `… N more lines` affordance, which carries the
     // `•` of a *system* row because that is what a capped card's tail is. So the
     // slice stops before it: this test is about how a diff's own rows are drawn.
-    let title_row = row_of(&rows, "edit · ok");
+    let title_row = row_of(&rows, "edit edited a.rs");
     let card = rows[title_row..]
         .iter()
         .take_while(|r| r.starts_with('✓'))

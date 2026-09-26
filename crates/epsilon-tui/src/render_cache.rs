@@ -807,11 +807,14 @@ mod tests {
         let rows = snapshot_rows(std::slice::from_ref(&line), 60, false, 0, 20, &theme());
         let joined = rows.iter().map(text_of).collect::<Vec<_>>().join("\n");
         assert!(
-            joined.contains("edit · ok"),
+            joined.contains("edit edited a.rs"),
             "the title must carry the name and the status: {joined}"
         );
         assert!(
-            !joined.contains("→"),
+            // The pre-M153 fallback was a row reading `edit → <output>`. The headline may
+            // legitimately contain the output's first line, so the assertion has to be about
+            // the *form*: an arrow-prefixed row, not the presence of the words.
+            !joined.contains("edit → "),
             "the card must not fall back to the `name → body` row: {joined}"
         );
         // The sign gutter is what survives `NO_COLOR`, so it is asserted on the

@@ -22,6 +22,8 @@ pub mod latex;
 pub mod markdown;
 pub mod picker;
 pub mod render_cache;
+/// What a tool card says, per tool. See the module docs.
+pub mod renderers;
 pub mod scroll;
 pub mod state;
 pub mod trust_store;

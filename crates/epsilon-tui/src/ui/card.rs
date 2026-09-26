@@ -87,9 +87,25 @@ pub type CardRow = Vec<(String, Style)>;
 /// is beside it so a reader who cannot see the colour still reads the state.
 pub fn title(card: &Card, theme: &Theme) -> String {
     let (glyph, word) = status_word(card.status, &theme.glyphs);
+    // M153: the headline comes from the renderer, so a `read` card names the file and the
+    // line range instead of repeating 400 characters of it. It is optional: a tool the
+    // renderer knows nothing about still gets a readable card, just a less specific one.
+    let head = card.head.trim();
+    // The renderer's fallback already leads with the tool's name, because that string is
+    // also the collapsed transcript line, where the name is the only thing saying which tool
+    // ran. The card title prints the name too, so prefixing it again gave `bash bash → boom`.
+    // Strip the redundant prefix rather than discarding the head with it: dropping the whole
+    // headline instead lost `→ boom`, which is the part that says what happened.
+    let prefix = format!("{} \u{2192} ", card.name);
+    let head = head.strip_prefix(prefix.as_str()).unwrap_or(head);
+    let name = if head.is_empty() {
+        card.name.clone()
+    } else {
+        format!("{} {head}", card.name)
+    };
     match card.elapsed_ms() {
-        Some(ms) => format!("{glyph} {} · {word} · {}", card.name, ms_text(ms)),
-        None => format!("{glyph} {} · {word}", card.name),
+        Some(ms) => format!("{glyph} {name} · {word} · {}", ms_text(ms)),
+        None => format!("{glyph} {name} · {word}"),
     }
 }
 

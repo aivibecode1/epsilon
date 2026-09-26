@@ -158,6 +158,15 @@ pub struct Card {
     pub ended_at_ms: Option<u64>,
     /// The card's body.
     pub body: CardBody,
+    /// The arguments the model sent, kept so a renderer can describe a *result* in the same
+    /// terms the *call* used. `read` reports which lines it returned but never the path it
+    /// read, and a card that says `10–50 of 300` without naming the file is trivia.
+    pub args: serde_json::Value,
+    /// The card's one-line headline, produced by [`crate::renderers`].
+    ///
+    /// Kept as data rather than formatted at draw time because the draw path is cached, so
+    /// anything derived per-frame is frozen for as long as the row survives.
+    pub head: String,
 }
 
 impl Card {
@@ -597,6 +606,8 @@ impl UiState {
                 started_at_ms: now,
                 ended_at_ms: None,
                 body: CardBody::Prompt(detail),
+                args: args.clone(),
+                head: crate::renderers::call_head(name, args),
             }),
             ..TranscriptLine::plain(LineKind::ToolCall, format!("{name} {args}"))
         });
@@ -647,7 +658,27 @@ impl UiState {
             Some(diff) => CardBody::Diff(parse_diff(&diff)),
             None => CardBody::Text(body.clone()),
         };
-        let head = format!("{} → {}", t.tool_name, truncate(&body, MAX_RESULT_CHARS));
+        // A result carries no arguments — only the call did. Recover them from the call's own
+        // card so the headline can name the file or the command; without this the renderer
+        // would have nothing but the output to describe, which is the state this replaces.
+        let args = self
+            .lines
+            .iter()
+            .rev()
+            .find(|l| {
+                l.card
+                    .as_ref()
+                    .is_some_and(|c| c.tool_call_id == t.tool_call_id)
+            })
+            .and_then(|l| l.card.as_ref())
+            .map(|c| c.args.clone())
+            .unwrap_or_default();
+        // M153: the headline used to be `"{name} → {first 400 chars of output}"`, which
+        // made every card's one line a copy of its own body. A `read` card announced itself
+        // with 400 characters of the file the user was already looking at, and never named
+        // the file or the line range — both of which the tool had already reported. The
+        // renderer says what the tool did, using only facts the tool stated.
+        let head = crate::renderers::result_head(&t.tool_name, &args, &t.details, &body);
         self.push_line(TranscriptLine {
             card: Some(Card {
                 name: t.tool_name.clone(),
@@ -656,6 +687,8 @@ impl UiState {
                 started_at_ms,
                 ended_at_ms: Some(now),
                 body: card_body,
+                args: args.clone(),
+                head: head.clone(),
             }),
             ..TranscriptLine::expandable(
                 if t.is_error {
@@ -980,7 +1013,7 @@ impl UiState {
             AgentEvent::ToolExecutionStart {
                 tool_call_id,
                 tool_name,
-                ..
+                args: _,
             } => {
                 self.status = format!("running {tool_name}…");
                 // The card was committed when the assistant message ended; this is
@@ -1272,6 +1305,13 @@ fn summarize_args(args: &serde_json::Value) -> String {
         }
     }
     truncate(&args.to_string(), 80)
+}
+
+/// [`truncate`] for the renderers module, which formats card headlines and cannot
+/// reach a private helper. One implementation: two different truncation policies would be
+/// one more place for a card to disagree with its own header.
+pub fn truncate_public(s: &str, max: usize) -> String {
+    truncate(s, max)
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -2164,6 +2204,8 @@ mod tests {
             started_at_ms: now_ms(),
             ended_at_ms: None,
             body: CardBody::Text("running".into()),
+            args: serde_json::json!({}),
+            head: String::new(),
         };
         assert_eq!(
             card.elapsed_ms(),

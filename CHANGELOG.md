@@ -5,6 +5,9 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- Tool cards now say what the tool actually did — `read src/main.rs:10–50 of 300`
+  instead of 400 characters of the file in the header line (M153).
+
 - A tool that is still running now streams its output into its card, so a long build
   no longer looks like a hang (M152).
 
