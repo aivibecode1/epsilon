@@ -351,3 +351,21 @@ Rule, learned the hard way: **never conclude a regression from a load-sensitive 
 test has passed in isolation on an idle machine**, and never report a green battery you did not actually
 see. `--no-fail-fast` plus a per-binary tally is what makes this visible; a single `TEST=0` from a run
 that had contention is not evidence.
+
+## A test that only fails in a full run is a race, not flake (M156)
+
+`pi_import_carries_every_source_entry` failed in three separate batteries and I wrote it off
+as load twice. Wrong. The signature of a **race** rather than load:
+
+- it **always passes in isolation** (a filtered binary has no second thread to collide with);
+- it fails only when the whole workspace runs;
+- two tests build the **same filename**, or one deletes a path another is writing.
+
+The doc comment on the culprit helper *asserted the race was impossible* — "the threads inside
+one process ... are serialized by the test harness anyway". Rust's harness runs a binary's
+tests in parallel threads by default. A confident comment is not evidence; read the harness's
+own behaviour.
+
+Rule: **when a test fails only in a full run, go read the test before blaming the machine.**
+And when the race cannot be reproduced on demand, pin the *invariant* (two threads must not
+share a fixture dir) rather than shipping "it passed 4/4, probably fixed".
