@@ -1,13 +1,20 @@
 # Epsilon audit
 
-**Current assessment:** [11 — current assessment and plan](11-current-assessment.md),
+**Current assessment:** [12 — fresh reference audit](12-fresh-reference-audit.md),
+2026-09-27, over `712e438`. It is a *new* pass over all four reference harnesses rather
+than a revision of 11: 11 ranks gaps against the references as previously understood, and
+12 ranks them against the references as read today, first-hand, with sources cited. Start
+at 12.
+
+**Earlier assessment:** [11 — current assessment and plan](11-current-assessment.md),
 2026-09-19, working tree over `0548e9f`. It folds in 09's revalidation rather than
 replacing it with silence: 09's findings are carried forward with their status.
 Start at 11 unless you are specifically re-checking the earlier revalidation.
 
 | Document | Status |
 |---|---|
-| [11 — current assessment](11-current-assessment.md) | **live** — current state, ranked gaps, plan |
+| [12 — fresh reference audit](12-fresh-reference-audit.md) | **live** — four references read first-hand; gaps ranked, every Epsilon claim cited to source |
+| [11 — current assessment](11-current-assessment.md) | superseded by 12; its findings remain a useful second opinion |
 | [09 — source revalidation](09-revalidation.md) | superseded as the live assessment; its findings are folded into 11 |
 | [01 — 08, 10](01-usability-review.md) | historical. Read for the reasoning, not for current status. |
 

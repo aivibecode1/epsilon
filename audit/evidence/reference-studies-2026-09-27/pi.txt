@@ -1,0 +1,290 @@
+I have complete coverage. Here's the report.
+
+---
+
+# pi (v0.85.1) — non-TUI architecture + TUI framework
+
+**Repo root:** `C:\Users\Hp\Desktop\My Agent Space\Epsilon\references\pi-0.85.1`. All paths below are relative to that. Scope note: I deliberately did **not** re-report footer/viewport/renderer pixels/keybindings/theme-controller-selection; where those touch a structural question I answer only the structural part.
+
+## 1. Package layout & dependency direction
+
+11 workspace packages under `packages/`. Reading the manifests, not the names:
+
+| Package | Owns | Manifest evidence |
+|---|---|---|
+| `chord` | App composition runtime: services, replicated state, facets, RPC, plugin bundler. **Zero pi deps**, only `esbuild`. | `packages/chord/package.json` deps `{esbuild}`; `packages/chord/src/index.ts:1-12` exports `defineService`/`defineFacet`/`replicatedState` |
+| `telemetry` | Vendor-neutral telemetry contracts + typebox schema utils. **Zero runtime deps** (only devDeps). | `packages/telemetry/package.json:43-46` (no `dependencies` key at all) |
+| `tui` | Self-contained terminal UI library. **Zero pi deps**; only `get-east-asian-width` + `marked`. | `packages/tui/package.json:47-50` |
+| `ai` | Unified LLM API: providers (Anthropic/OpenAI/Google/Bedrock), model discovery, auth/OAuth. | `packages/ai/package.json` deps `@anthropic-ai/sdk`, `openai`, `@google/genai`, `@aws-sdk/client-bedrock-runtime`, `partial-json`; has a `bin`: `pi-ai` → `dist/cli.js` |
+| `protocol` | Transport-neutral CBOR message protocol. Deps: `chord` + `typebox`. | `packages/protocol/package.json` |
+| `client` | Remote-session client over framed CBOR. Deps: `chord` + `protocol`. | `packages/client/package.json` |
+| `server` | **"experimental server package for pi"** (own description). Deps: `chord` + `agent` + `protocol`. | `packages/server/package.json` `description` |
+| `agent` | The core: agent loop, session model, persistence, built-in harness tools. Deps: `chord` + `ai` + `telemetry` + `diff`/`ignore`/`typebox`/`yaml`. | `packages/agent/package.json` |
+| `session-backends/sqlite-node` | A **SQLite** session backend for agent-core sessions. Deps: `ai` + `agent`. | `packages/session-backends/sqlite-node/package.json:37-40` |
+| `coding-agent` | The product: CLI, tools, extensions, interactive TUI, settings. Deps: `chord` + `agent` + `ai` + `tui` + `photon-node`(image resize) + `jiti` + `highlight.js` + `grok-mermaid` + `proper-lockfile`. `bin`: `pi`. | `packages/coding-agent/package.json` |
+| `evals` | Test harness only; no deps, devDeps on `ai` + `coding-agent`, `vitest-evals`. | `packages/evals/package.json` |
+
+**Dependency direction is a clean DAG** with three root leaves (`chord`, `telemetry`, `tui`) that know nothing about each other:
+
+```
+chord, telemetry, tui          (leaves — no pi-internal deps)
+   ├── ai          (→ telemetry)
+   │     └── agent (→ chord, ai, telemetry)
+   │           ├── session-backends/sqlite-node (→ ai, agent)
+   │           ├── server (→ chord, agent, protocol)   [experimental]
+   │           └── coding-agent (→ chord, agent, ai, tui)
+   └── protocol (→ chord, typebox)
+         └── client (→ chord, protocol)
+```
+
+Note the inversion: **`agent` does not depend on `tui`**, and `coding-agent` depends on both. This is the single most important structural fact — the agent runtime is headless.
+
+## 2. Core agent loop and session model
+
+**Two layers.** A low-level stateless loop, and a durable "harness" state machine above it.
+
+**The low-level loop** is `packages/agent/src/agent-loop.ts`. It is a plain async function returning an `EventStream`, not a class:
+
+```ts
+// packages/agent/src/agent-loop.ts:32-38
+export function agentLoop(
+	prompts: AgentMessage[], context: AgentContext, config: AgentLoopConfig,
+	signal: AbortSignal | undefined, streamFn: StreamFn,
+): EventStream<AgentEvent, AgentMessage[]> {
+```
+
+`runLoop` (agent-loop.ts:156-273) is a **two-level while loop**: outer loop continues only when `getFollowUpMessages()` returns work (agent-loop.ts:261-266); inner loop runs while `hasMoreToolCalls || pendingMessages.length > 0` (agent-loop.ts:175). Steering messages are drained at the top of each inner iteration (agent-loop.ts:201-209).
+
+**The core abstraction is `Agent`**, wrapping the loop into a stateful object with `AgentState` (systemPrompt, model, thinkingLevel, tools, messages, isStreaming, streamingMessage, pendingToolCalls, errorMessage) — `packages/agent/src/types.ts:334-359`. `Agent` is what coding-agent actually drives: `await this.agent.prompt(messages)` / `this.agent.continue()` at `packages/coding-agent/src/core/agent-session.ts:1108-1110`, and `new Agent({...})` at `packages/coding-agent/src/core/sdk.ts:306`.
+
+**Message handling.** `AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages]` (types.ts:326) — an open union extended by declaration merging (types.ts:317-319). Conversion to the LLM shape happens at exactly one boundary: `await config.convertToLlm(messages)` (agent-loop.ts:293), with an optional `transformContext` first (agent-loop.ts:288-290). Streaming mutates the tail in place: `context.messages[context.messages.length - 1] = partialMessage` (agent-loop.ts:335).
+
+**Tool calls.** Default mode is `parallel` (types.ts:267-269). Parallel execution *prepares* sequentially then fires (agent-loop.ts:487-561) — preparation is where hooks/validation run; execution is deferred into closures pushed onto `finalizedCalls` (agent-loop.ts:520-541), then `await Promise.all(...)` (agent-loop.ts:547). One tool declaring `executionMode: "sequential"` forces the whole batch sequential (agent-loop.ts:417-422). A tool-result message is only emitted for calls that survived a cancel, as an error result: `createErrorToolResult("Operation aborted")` (agent-loop.ts:522-529). If the assistant hit the token limit, **all** tool calls are failed rather than executed, because streamed args can be silently incomplete: `message.stopReason === "length" ? await failToolCallsFromTruncatedMessage(...)` (agent-loop.ts:230-233, rationale at 372-378).
+
+**Retries.** Not in the low-level loop. The default policy is `{ enabled: true, maxRetries: 3, baseDelayMs: 1000 }` (`packages/agent/src/harness/config.ts:4`), validated to be finite non-negative safe integers (config.ts:14-23). Backoff is `baseDelayMs * 2 ** (attempt-1)` with overflow clamped (`packages/agent/src/harness/runtime/drive/retry.ts:1-4`); `waitUntil` is abort-aware and clamps the timer to max int32 (retry.ts:11-35).
+
+**Cancellation** is an orthogonal `AbortSignal` threaded through every layer, plus a durable `Control` union: `{status:"running"} | {status:"cancel_requested"; requestedAt}` (`packages/agent/src/harness/session/types.ts:92-97`, comment at 178-182: "cancellation stays orthogonal via Control").
+
+### **Conversation history IS a tree** — cite this
+
+```ts
+// packages/agent/src/harness/session/types.ts:18-25
+export interface EntryBase {
+	id: string;
+	parentId: string | null;
+	seq: number;
+	timestamp: number;
+	type: EntryType;
+	customType?: string;
+}
+```
+
+Four entry kinds — `"message" | "compaction" | "branch_summary" | "custom"` (types.ts:16) — over the same `EntryBase` (types.ts:27-64). Navigation is by named **Branch** with a tip: `Branch.getTipId()`, `Branch.appendMessage()` (types.ts:520-527); `Session.createBranch(name, at, ctx)` (types.ts:539). Reading a branch is a walk from tip → root (`packages/coding-agent/src/core/session-manager.ts:352-359`: `current = current.parentId ? index.get(current.parentId) : undefined; path.reverse()`). The `/tree` slash command exists precisely to switch branches (`packages/coding-agent/src/core/slash-commands.ts:22`). Forking has two scopes — `"branch"` (one path from one lane) and `"tree"` (whole tree, every branch tip) — types.ts:561-589.
+
+**The harness layer above it** is the durable state machine: `Lane` (2012 lines, `packages/agent/src/harness/runtime/lane.ts`) driving a **flat 13-leaf `OperationState` union** (types.ts:314-328) through a `drive/` directory with per-leaf procedures: `checkpoint.ts`, `generation.ts`, `tools.ts`, `response.ts`, `recovery.ts`, `boundary.ts`, `structural.ts`, `tool-placement.ts`, `deferred.ts`, `terminal.ts`. The union is deliberately flat — "exactly 13 family-neutral dispatcher leaves" (types.ts:314). Cancellation is a `Control` field threaded through `operationScopeOf()` (types.ts:333-339), and cancellation checks return `{kind:"continue"}` rather than throwing (e.g. `checkpoint.ts:46`, `recovery.ts:57`).
+
+## 3. Persistence format & restart/recovery
+
+**Two generations of format coexist.**
+
+**Live path (v3)** — `packages/coding-agent/src/core/session-manager.ts`, `CURRENT_SESSION_VERSION = 3` (line 30). JSONL append-only, one JSON object per line, at `~/.pi/agent/sessions/<timestamp>_<id>.jsonl` (`packages/coding-agent/src/config.ts:572-574`; filename built at session-manager.ts:949). A `SessionHeader` first, then `SessionEntry` variants — `SessionMessageEntry`, `ThinkingLevelChangeEntry`, `ModelChangeEntry`, `CompactionEntry`, `BranchSummaryEntry`, `CustomEntry`, `LabelEntry`, `SessionInfoEntry`, `CustomMessageEntry` (session-manager.ts:32-156), each carrying `{type, id, parentId, timestamp}` (46-51) — again a tree.
+
+There is a **deliberate write-behind-flush**: entries accumulate in memory and are *not* written to disk until the first assistant message arrives, then the whole buffer is written at once:
+
+```ts
+// packages/coding-agent/src/core/session-manager.ts:1043-1052
+if (!this.flushed) {
+	const fd = openSync(this.sessionFile, "wx");
+	try {
+		for (const e of this.fileEntries) writeFileSync(fd, `${JSON.stringify(e)}\n`);
+	} finally { closeSync(fd); }
+	this.flushed = true;
+} else {
+	appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+}
+```
+
+`"wx"` = exclusive-create, so a session file is never clobbered by a second process. This is the main file being rewritten in one shot, so a crash before the first assistant turn leaves a header-only file.
+
+**v4 (new, plugin-only)** — `packages/agent/src/harness/session/jsonl/`, `JSONL_FORMAT_VERSION = 4` / `JSONL_STORAGE_VERSION = 1` (`jsonl/types.ts:4-5`). Header is `kind:"header"` with `v`, `id`, `storageVersion`, `createdAt`, `cwd`, `parentSessionId`, `nextSeq` (jsonl/types.ts:7-18). Each subsequent line is a **committed transaction** — an array of writes (`{kind:"entry"|"usage"|"value"|"list"}`), one file append per commit (`jsonl/storage.ts:249-262`, append at :256). Commits are serialized through a promise queue (storage.ts:241-246).
+
+**Skeptical finding:** `JsonlSessionRepo` is referenced **only from `experimental/`** — `experimental/server.ts:384`, `experimental/session-worker.ts:540`, `experimental/mini/server/run.ts:38`, `experimental/mini/worker/run.ts:64`. Zero non-experimental call sites. The 13-leaf `OperationState` machine is likewise only exercised via `AgentHarness.create()` in `experimental/session-worker.ts:834` and `experimental/mini/worker/run.ts:66`. The shipped product uses the v3 `SessionManager` + `Agent`. This is a **parallel v4 architecture in migration, not dead code** — but it is not what runs today.
+
+**Recovery/reconciliation is real and explicit** in v4:
+- **Torn-tail detection** — a file not ending in `\n` is truncated back to the last complete line and **rewritten**:
+  ```ts
+  // packages/agent/src/harness/session/jsonl/storage.ts:87-92
+  function splitCompleteLines(content: string): { lines: string[]; torn: boolean } {
+  	if (content.endsWith("\n")) return { lines: content.slice(0, -1).split("\n"), torn: false };
+  	const lastNewline = content.lastIndexOf("\n");
+  	if (lastNewline === -1) return { lines: [], torn: true };
+  	return { lines: content.slice(0, lastNewline).split("\n"), torn: true };
+  }
+  ```
+  and `if (torn) await publishFileAtomically(...)` (storage.ts:210), which stages to `.tmp` and renames (storage.ts:94-114).
+- **v3 → v4 import** — `openLegacyV3` (storage.ts:214-232) calls `normalizeLegacyV3Records` (`jsonl/legacy-v3.ts:519-539`), which dedupes ids, drops non-retained entries, **remints all retained ids as uuidv7 seeded by the original timestamp** (legacy-v3.ts:527), rewrites parent references through a `RetainedIdResolver`, re-sequences, and aggregates usage (legacy-v3.ts:503-516). The upgrade is atomic and preserves the first caller write: `upgradeLegacyV3ToV4` (storage.ts:264-270).
+- **Orphaned LLM effect recovery** — an interrupted assistant request is settled from its committed frame prefix **without re-calling the provider**:
+  ```ts
+  // packages/agent/src/harness/runtime/drive/recovery.ts:26-27
+  const warning = "Assistant request was interrupted. The preceding content is the latest committed partial; newer live output may be missing and the external outcome is unknown.";
+  ```
+  via `recoverAssistantGeneration` (recovery.ts:44-84) and `recoverCancelledAssistantEffect` (recovery.ts:87-126), both emitting events with `recovery: true`. Tools carry an explicit durability contract for this: `replay?: "never" | "safe"` — "Recovery policy for an effect whose durable intent exists but whose outcome is unknown" (`packages/agent/src/types.ts:402-403`).
+- **Mutation barrier** — `Session.beginMutation()` returns a `SessionMutation` on which "Exactly zero or one commit attempt. A second attempt rejects" (session/types.ts:507-513); `SessionMutator` deliberately omits `end()` (types.ts:516), and `mutate()` documents the resulting deadlock if you nest a public writer (types.ts:541-546).
+
+## 4. Tool system
+
+**Definition.** `AgentTool<TParameters, TDetails>` (`packages/agent/src/types.ts:387-412`) extends `pi-ai`'s `Tool` and adds: `label`, optional `prepareArguments` shim, `execute(toolCallId, params, signal, onUpdate)`, `replay`, `executionMode`. Contract: "Throw on failure instead of encoding errors in `content`" (types.ts:395).
+
+**Registration.** The product-level contract is `ToolDefinition` (`packages/coding-agent/src/core/extensions/types.ts:451-500`) — a superset adding `promptSnippet`/`promptGuidelines` (system-prompt injection), `constrainedSampling`, `renderShell`, and the two render hooks. Extensions register via `ExtensionApi.registerTool()` (types.ts:1308-1310). `defineTool<TParams, TDetails, TState>()` exists solely to preserve parameter inference when a tool is passed through a bare array (types.ts:504-515).
+
+**Schema discipline** is **TypeBox** end to end (`parameters: TParams` constrained to `TSchema`, types.ts:463). Validation is `validateToolArguments` from `pi-ai` (imported at agent-loop.ts:11). `prepareArguments` is explicitly a *pre-validation* compat shim, not a validation bypass (types.ts:390-394). The runtime layer independently refuses duplicate names: `validateToolNames` throws `TypeError` on a duplicate (`packages/agent/src/harness/config.ts:6-12`).
+
+**The resolved tool set** — `_refreshToolRegistry` (`packages/coding-agent/src/core/agent-session.ts:2671-2762`) is the whole answer:
+1. Allowed/excluded sets filter everything (agent-session.ts:2676-2677).
+2. Base built-ins from `createAllToolDefinitions` (core/tools/index.ts:182-193) are tagged `source: "builtin"`; extension + SDK tools are added **on top, overwriting by name** (agent-session.ts:2687-2703).
+3. Both are wrapped by `wrapRegisteredTools` and merged into `_toolRegistry`, extension-wins again (agent-session.ts:2733-2737).
+4. **Active** ⊆ **allowed**: everything is filtered through `isAllowedTool` (agent-session.ts:2741), and when `--tools` was passed, every allowed tool is force-activated (agent-session.ts:2743-2748). New tools appearing in the registry are auto-activated unless an explicit list was given (agent-session.ts:2753-2758), then deduped via `new Set` (agent-session.ts:2761).
+
+Built-in names are a closed union — `ToolName = "read" | "bash" | "powershell" | "edit" | "write" | "grep" | "find" | "ls"` with an `allToolNames` Set (core/tools/index.ts:95-105). Per the CLI help, `grep`/`find`/`ls` are "read-only, **off by default**" (`packages/coding-agent/src/cli/args.ts:443-445`).
+
+**Permission / approval flow: there isn't one, and this looks deliberate.** I searched for `confirm(`, `askUser`, `requireConfirmation`, `onConfirm`, `permission`, `approval` across all of `packages/coding-agent/src`. The only `confirm` hits are extension UI dialogs (`core/extensions/types.ts:138`, wired in `core/extensions/runner.ts:445`, implemented at `modes/interactive/interactive-mode.ts:2536`) and one session-import prompt (interactive-mode.ts:6086). There is **no per-tool approval gate and no per-tool permission rule**. The nearest thing is **project trust**, a coarse whole-directory switch: `getProjectTrustOptions` returns Trust / Do-not-trust, each with a persisted and a session-only variant (`packages/coding-agent/src/core/trust-manager.ts:66-95`), defaulting to `"ask"` and **global-setting-only** (settings-manager.ts:112), and `/trust` persists the decision (slash-commands.ts:35). Untrusted projects simply have their project `settings.json` not loaded — `SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted)` (settings-manager.ts:364). I'd flag this as the most conspicuous gap versus e.g. Claude Code, but the `executionMode: "sequential"` escape hatch (types.ts:404-411) is the real concurrency guard — `bash`/`edit`/`write` are the serialization points, not permissions.
+
+**Output bounding** is two-layer. `truncateHead`/`truncateTail`/`truncateLine` with `DEFAULT_MAX_BYTES`/`DEFAULT_MAX_LINES` (core/tools/index.ts:65-73), and `OutputAccumulator` — a streaming UTF-8 decoder keeping only a bounded tail in memory and spilling the full output to a temp file when needed: "Incrementally tracks streaming output with bounded memory… opens a temp file when the full output needs to be preserved" (`core/tools/output-accumulator.ts:28-34`, fields at :36-55, `maxRollingBytes = max(2×maxBytes, 1)` at :60). The renderer then *reports* truncation to the user rather than silently hiding it (renderers/read.ts:137-146). `OutputAccumulator` snapshots expose `fullOutputPath?: string` (:16) so the model can be pointed at the complete log.
+
+**The per-tool RENDERER layer.** This is a genuinely nice decoupling, and the stated rationale is worth quoting:
+
+> "A presentation displays tool calls and results; it does not execute them and does not need their typebox parameter schemas. Importing this instead of `core/tools/index.ts` keeps **~17 MB of module graph** out of a process that only renders."
+> — `packages/coding-agent/src/core/tools/renderers/index.ts:1-7`
+
+**Registry** — a plain record literal, `createAllToolRenderers(): Record<ToolName, ToolRenderers>` (renderers/index.ts:32-43), where `ToolRenderers = Pick<ToolDefinition<any,any>, "renderCall"|"renderResult">` (:19). `powershell` and `bash` share one factory parameterized by prompt glyph: `createShellRenderers("$")` / `createShellRenderers("PS>")` (:35-36). `withBuiltInRenderers(toolName, definition)` (:51-63) does per-field fallback so a custom tool can override only `renderResult`. The comment records a refactor: "`ToolExecutionComponent` used to do this lookup itself, which forced every presentation to import the tool implementations. Callers do it now" (:45-50).
+
+**Concrete renderer** — `readRenderers` (`core/tools/renderers/read.ts:150-175`). Note the **component-reuse** pattern: it grabs `context.lastComponent` and mutates it rather than allocating, so the same `Text` node is refilled each frame:
+```ts
+// core/tools/renderers/read.ts:151-158
+renderCall(rawArgs, theme, context) {
+	const args = rawArgs as ReadRenderArgs | undefined;
+	const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+	const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
+	text.setText(classification ? formatCompactReadCall(...) : formatReadCall(args, theme, context.cwd));
+	return text;
+},
+```
+It also does **progressive disclosure by file kind** — `SKILL.md`, `AGENTS.md`/`CLAUDE.md`, and pi's own `docs/`+`README.md` collapse to a one-line compact label when unexpanded (:66-87, :104-109), and `renderResult` returns `""` entirely when collapsed and not an error (:120-122). The render context carries the full interaction surface — `invalidate()`, `lastComponent`, `expanded`, `isPartial`, `isError`, `showImages`, `executionStarted`, `argsComplete` (`core/extensions/types.ts:421-446`).
+
+## 5. Config system
+
+**Location.** Two scopes, both `settings.json`:
+- global: `~/.pi/agent/settings.json` — `getAgentDir()` = `join(homedir(), CONFIG_DIR_NAME, "agent")` with `CONFIG_DIR_NAME` defaulting to `".pi"` (`packages/coding-agent/src/config.ts:504`, :528-534); paths at :542-564 for `models.json`, `auth.json`, `settings.json`, `tools/`, `bin/`, `themes/`. Sessions at `~/.pi/agent/sessions/` (:572-574).
+- project: `<cwd>/.pi/settings.json` — `this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json")` (`core/settings-manager.ts:221`).
+
+**Precedence: project over global, by recursive deep merge.** `this.settings = deepMergeSettings(this.globalSettings, this.projectSettings)` (settings-manager.ts:333), documented at :171 — "project/overrides take precedence, nested objects merge recursively". `deepMergeObjects` recurses only when *both* sides are mergeable objects, else override wins wholesale (settings-manager.ts:160-168). There is no env-var layer in the settings chain (env only redirects the *directory*: `PI_CODING_AGENT_DIR`, config.ts:508, :529-532).
+
+Writes are **lock-guarded and write-narrow**: `withLock(scope, fn)` under `proper-lockfile` with 10 attempts × 20 ms (settings-manager.ts:224-231), and the manager tracks per-scope dirty field sets — `modifiedFields`, `modifiedNestedFields`, `modifiedProjectFields`, `modifiedProjectNestedFields` (:305-308) — so a project-scoped edit doesn't rewrite global keys. Parse errors are **captured, not thrown**: `globalSettingsLoadError`/`projectSettingsLoadError` are retained and surfaced as `SettingsError[]` (:309-310, :365-371) rather than crashing startup. Tests cover this (`packages/coding-agent/test/settings-manager-bug.test.ts`).
+
+**Enabled tools** resolve as covered in §4: `--tools` / `--excludeTools` / `--noTools` / `--noBuiltinTools` (cli/args.ts:32-35) → `_allowedToolNames` / `_excludedToolNames` → intersection with the registry → `activeToolNames`, then persisted onto the lane as `LaneConfiguration.activeToolNames` (session/types.ts:69-73; wired at core/agent-session.ts:407 and :2828).
+
+**Layered beyond settings:** extensions (`--extensions` / `--noExtensions`, args.ts:36-37) loaded through `jiti/static` (`core/extensions/loader.ts:17`, :496-508), skills (`--skills`/`--noSkills`), prompt templates, themes, and context files each have their own on/off flags (args.ts:39-47). An `Extension` is a bag of registries — `handlers`, `tools`, `messageRenderers`, `markdownTransformer`, `entryRenderers`, `commands`, `flags`, `shortcuts` (core/extensions/types.ts:1765-1778) — with load errors collected, not fatal (`LoadExtensionsResult.errors`, :1781-1786).
+
+## 6. TUI layer — the framework (structural)
+
+**The abstraction above the raw terminal is a line-differencing, retained-mode `TUI` with a `Component` protocol. It is not built on Ink, React, blessed, or any library — `pi-tui` has zero runtime deps beyond `get-east-asian-width` and `marked`** (`packages/tui/package.json:47-50`). It talks to terminals directly, with an optional hand-written C native addon for Windows console mode (`packages/tui/package.json:15-26`; `packages/tui/src/native-modifiers.ts`, `terminal.ts:14-17` for Kitty protocol negotiation).
+
+**The Component contract is four methods, one required** (`packages/tui/src/tui.ts:111-136`):
+```ts
+export interface Component {
+	render(width: number): string[];        // width in → lines out. No height, no retained state, no VDOM.
+	handleInput?(data: string): void;
+	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
+	wantsKeyRelease?: boolean;
+	invalidate(): void;
+}
+```
+The whole model is **`render(width) → string[]` with ANSI inline**. A component returns *text lines for a given width*; it does not know its position, does not get a height, and does not paint. This is the key design choice: layout is a separate pass, and there's no retained node tree at all.
+
+**Cursor/IME is solved with a zero-width escape sentinel.** A focused component emits `CURSOR_MARKER = "\x1b_pi:c\x07"` (tui.ts:168 — an APC sequence) at its cursor column; the TUI finds and strips it, then moves the real hardware cursor there — "so the focused component can emit `CURSOR_MARKER` when true" (tui.ts:146-155). Elegant: components stay pure text producers.
+
+**Class hierarchy.** `TuiBase extends Container implements TUI` (tui.ts:465), with two concrete modes:
+- `TuiMainScreen` — inline, grows upward through scrollback, `previousLines: string[]` diffing (tui-main-screen.ts:124, :198).
+- `TuiAltScreen implements ViewportTUI` — full app-owned scrollable viewport, and the only mode that uses real layout (tui-alt-screen.ts:194-197).
+
+Mode selection is a single factory: `modes/interactive/tui-renderer.ts:25` (alt) vs `:47` (main), driven by `settings.tuiMode?: TuiMode` defaulting to `"regular"` (settings-manager.ts:142, re-exported from pi-tui at :37).
+
+**Layout — flexbox, opt-in via a symbol-branded method.** Not a component tree; a *capability probe*:
+```ts
+// packages/tui/src/layout-node.ts:3, 44-51
+export const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
+export interface LayoutComponent extends Component {
+	[LAYOUT_NODE](): LayoutNode;
+}
+export function getLayoutNode(component: Component): LayoutNode | undefined {
+	const candidate = component as Partial<LayoutComponent>;
+	return typeof candidate[LAYOUT_NODE] === "function" ? candidate[LAYOUT_NODE]() : undefined;
+}
+```
+`LayoutNode = StackLayoutNode | ScrollLayoutNode` (layout-node.ts:42). Stack entries carry **flexbox `basis`/`grow`/`shrink`/`minSize`/`maxSize` and a `visible(viewport)` predicate** (layout-node.ts:10-18), and allocation is a real flexbox algorithm — `allocateStackSizes` distributes overflow by `grow` weight, deficit by `shrink × max(1, size)` (components/stack.ts:99-152).
+
+Layout resolves to a **`LayoutBox` tree of rects with per-node `clip`** (`LayoutRect{x,y,width,height}`, `LayoutBox{component, rect, clip, children, parent?}` — layout.ts:16-34), flattens to `LayoutFrame{root, width, height, lines, primaryScrollView?}` (layout.ts:36-42), with a **per-frame render cache keyed by component × width** (layout.ts:55, `renderCached` at :68-80). Unmeasured components fall through the plain `Container` path (tui.ts:366-378) and a new `TuiAltScreen` wraps its own children in an implicit `ScrollView` if the app never set a layout root (tui-alt-screen.ts:255-262).
+
+**The redraw/invalidation cycle is a 16 ms-coalesced, request-flag scheduler.** No virtual DOM, no dirty-rect tracking, no diff tree — just a boolean and a timer:
+```ts
+// packages/tui/src/tui.ts:473-477
+private renderRequested = false;
+private immediateRenderScheduled = false;
+private renderTimer: NodeJS.Timeout | undefined;
+private lastRenderAt = 0;
+private static readonly MIN_RENDER_INTERVAL_MS = 16;
+```
+`requestRender(force)` is idempotent via the flag, then hops to `process.nextTick` before scheduling (tui.ts:952-961) — a microtask hop so a burst of `invalidate()` calls from one event coalesce. `scheduleRender()` computes `delay = max(0, 16 - elapsed)` and re-arms if work arrived during the frame (tui.ts:986-1004). `requestImmediateRender()` exists to **preempt** the throttle for user input, with an explicit comment: "A previously queued scheduleRender() can create a timer before this callback runs. User input must preempt that throttled frame" (tui.ts:971-976). `renderNow(force)` is the synchronous escape hatch (tui.ts:944-950).
+
+`invalidate()` propagates top-down and is the *only* coherence mechanism: `Container.invalidate()` walks children (tui.ts:338-342); components drop their own cached wrap/layout and rebuild.
+
+**The actual diff is line-level and first/last-changed bounded** (`tui-main-screen.ts:362-376`) — compute `firstChanged`/`lastChanged` by string compare against `previousLines`, then emit only that row range, not a re-render of everything after it (:487, "Only render changed lines (firstChanged to lastChanged), not all lines to end"). Full redraw is reserved for genuine full-redraw conditions: first frame, width change ("Width changes always need a full re-render because wrapping changes" — :337-342), height change (with a **Termux carve-out** because a soft keyboard toggling height would replay the entire history, :344-351), and opt-in `clearOnShrink` (:353-360). Counting is instrumented: `fullRedrawCount` exposed as `get fullRedraws()` (tui.ts:480, :520-522), with a `PI_TUI_DEBUG_REDRAW=1` env var writing `pi-tui-debug.log` with a `logRedraw(reason)` per branch (tui-main-screen.ts:321-328). Writes are wrapped in **synchronized output** mode: `output.append("\x1b[?2026h")` … `"\x1b[?2026l"` (tui-main-screen.ts:280, :302) so the terminal never shows a half-drawn frame. `BoundedTerminalWriter` (:18) caps the chunk.
+
+**Overlays are a first-class layer, not a component.** `showOverlay(component, options)` returns an `OverlayHandle` (`hide`/`setHidden`/`isHidden`/`focus`/`unfocus`/`getBounds`) — tui.ts:270-285. `OverlayOptions` is a full positioning system: 9 anchor points (tui.ts:175-184), `SizeValue = number | \`${number}%\``, `row`/`col` percentage-or-absolute, `margin`, a `visible(termW, termH)` predicate, and `nonCapturing` (tui.ts:215-251). Overlays are composited into rendered lines *before* the diff so they invalidate correctly (tui-main-screen.ts:266-269) via `compositeTuiLine` (tui.ts:387-399), which refuses to composite over image lines (`if (isImageLine(baseLine)) return baseLine;` — :394). Focus restoration across overlay open/close is an explicit state machine — `OverlayFocusRestoreState` with `eligible`/`blocked`/`inactive` and a recorded `resume` target (tui.ts:304-314).
+
+**Mouse is normalized and routed, not bubbled raw.** A `TuiMouseEvent` carries both local and absolute coords plus `clickCount` and `wheelDelta` (tui.ts:25-44). `dispatchMouseEvent` returns a `handled`/`capture`/`focus`/`render` result (tui.ts:46-58, :81-98); `Container.handleMouse` hit-tests by cumulative child height and caches that layout keyed on width (tui.ts:344-364, cache at :321/:376). `retargetMouseEvent` replays drag/release at the captured origin (tui.ts:101-109). Per-type default render policy: move/release default to *not* rendering, press/click/drag/wheel default to rendering (tui.ts:53-57).
+
+**Input layers.** `Terminal` is an interface (`terminal.ts:74-115`: `start(onInput, onResize)`, `drainInput`, `write`, `moveBy`, `hideCursor`, `clearLine`, `clearScreen`, `setTitle`, `setProgress`) with `ProcessTerminal` as the only impl (:140) — so `@xterm/headless` (devDep, package.json:52) can drive tests headlessly. Raw bytes hit `StdinBuffer` for batch splitting (index.ts:79), then `Key`/`parseKey` (index.ts:64-75), then `TuiInputListener`s, then the focused component (tui.ts:1006+). Kitty keyboard protocol is negotiated and upgradeable mid-session — `parseKeyboardProtocolNegotiationSequence` (terminal.ts:23-34), `DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7` (:15), plus `isKeyRelease`/`isKeyRepeat` filtering (index.ts:66-68).
+
+**Terminal introspection is first-class**, which is rare: `queryTerminalBackgroundColor()` / `queryTerminalColorScheme()` are async with timeout+settlement queues (tui.ts:450-451, state at :140-144, :482-485), color-scheme change notifications are subscribable (tui.ts:448), and OSC 11 replies are matched out of the input stream (tui.ts:1007-1008). Images: Kitty/iTerm2 encoding, capability detection with cache + overrides, cell-dimension queries, GIF/PNG/JPEG/WebP dimension parsing (index.ts:90-117), with **image lines given special diff treatment** — they reserve N terminal rows, so a changed line expands its dirty range (`expandChangedRangeForKittyImages`, tui-main-screen.ts:196-201, :385) and rows are reserved during full render (:289-299).
+
+### Theme controller — what it *owns* (structure only)
+
+Split across three files: `theme.ts` (1234 lines — the `Theme` object, `fg`/`bold` color accessors, `getThemeByName`, `setTheme`, `setThemeInstance`, `getThemeForRgbColor`), `theme-json.ts` (parse/validate against `theme-schema.json`), and `theme-controller.ts` (172 lines — the stateful orchestrator).
+
+`InteractiveThemeController` owns exactly four things (theme-controller.ts:19-27): the `TUI` handle, a `getSettingsManager` thunk, a `showError` sink, an `onChanged` callback — plus the mutable state `currentThemeSetting` (an **override that shadows the persisted setting**, :23), `terminalTheme: "dark"|"light"`, `activeThemeName`, `autoSyncEnabled`. It resolves on construction: `resolveThemeSetting(currentThemeSetting ?? settings.getThemeSetting(), terminalTheme)` → `initTheme(name, true)` → `bindTerminalColorSchemeListener()` (:43-48). It supports **rebinding after TUI swap** (`rebindTui()` re-subscribes and re-arms notifications, :51-55) — necessary because the TUI instance is mode-dependent and can be recreated. `applyFromSettings()` (:57-81) is the precedence engine: a `"light/dark"` pair means auto (parse at theme.ts:580-595, resolve at :597-604), disabling auto-sync; an explicit name wins; otherwise it **probes the terminal** via OSC 11 with a 100 ms timeout, and only **persists the detection when confidence is "high"** (:77-80) — a nice touch that avoids churning settings on ambiguous terminals.
+
+**Registration** is a module-level `Map`, not a plugin API:
+```ts
+// modes/interactive/theme/theme.ts:762
+const registeredThemes = new Map<string, Theme>();
+```
+`loadTheme(name)` checks the registry first, else falls back to JSON (:561-568). Sources: built-ins shipped as `dark.json` / `light.json` (copied by `copy-assets` in package.json scripts), user themes from `getCustomThemesDir()` = `~/.pi/agent/themes` scanned with `readdirSync` (:456-462, :834), and `initTheme` repopulates the map (:765-769). Hot reload is supported: a `fs.watch` on the custom dir swaps entries into the live map (theme.ts:864). `setTheme(name, enableWatcher = false)` (:790) is the global entry point; `setThemeInstance(theme)` (:813) injects a pre-built Theme.
+
+## 7. User-visible surface outside the TUI
+
+**CLI.** `pi` → `dist/bundle/cli.js` (esbuild bundle; `scripts/build-coding-agent-bundle.mjs` in the build script). Three modes: `type Mode = "text" | "json" | "rpc"` (cli/args.ts:11). `Args` is ~50 fields (args.ts:13-58) covering provider/model/apiKey/thinking, session lifecycle (`-c/--continue`, `-r/--resume`, `--fork`, `--session`, `--session-id`, `--session-dir`, `--no-session`), tool selection, extensions, skills, prompt templates, themes (`--use-theme`, `--themes`, `--no-themes`), context files, and diagnostics. Notable: positional `@file` args are captured as file attachments (args.ts:82-90), and `unknownFlags: Map<string, boolean|string>` is retained for **extension-owned flags** (args.ts:56, with `ExtensionFlag` imported at :8) — extensions can define their own CLI surface. Install-method detection (`bun-binary`/`npm`/`pnpm`/`yarn`/`bun`) drives self-update commands (config.ts:34-99). Distros exist beyond npm: `build:binary` compiles a standalone Bun binary with WASM copied in (package.json `build:binary`), and there's a Windows self-updater (`utils/windows-self-update.ts`).
+
+**Slash commands** — 23 builtins (`core/slash-commands.ts:19-42`): `settings`, `model`, `tree`, `thinking`, `scoped-models`, `export`, `import`, `share`, `copy`, `name`, `session`, `changelog`, `hotkeys`, `fork`, `clone`, `trust`, `login`, `logout`, `new`, `compact`, `resume`, `reload`, `quit`. `reload` re-reads "keybindings, extensions, skills, prompts, themes, and context files" without restart (:41). Extensions add more via `registerCommand` (extensions/loader.ts:296, types.ts:1317). `share` publishes a **secret GitHub gist** with a viewer at `https://pi.dev/session/` (slash-commands.ts:27; `getShareViewerUrl` config.ts:515-521, overridable via `PI_SHARE_VIEWER_URL`).
+
+**Export** is HTML-first with a vendored static bundle — `core/export-html/` with `template.html/css/js` + `vendor/*.js` (highlight.min.js, mermaid via `grok-mermaid`) copied by `copy-assets`; `export` also accepts `.jsonl` for round-tripping (slash-commands.ts:25), and `/import` re-opens one behind a confirm (interactive-mode.ts:6086).
+
+**Cost/usage reporting.** `Usage` is a first-class value with `input`/`output`/`cacheRead`/`cacheWrite`/`totalTokens` and a **nested cost object** `{input, output, cacheRead, cacheWrite, total}` (see the `ZERO_USAGE` literal at `packages/agent/src/harness/runtime/drive/recovery.ts:13-20`) — cost is a *product of usage*, not an afterthought. `UsageTotals` accumulates (`core/usage-totals.ts:12-28`), and `getUsageCostBreakdown` attributes cost **per model** as `provider/responseModel`, bucketing all non-assistant usage — tool results, compaction, branch summaries — under a single `"Tools/summaries"` key (usage-totals.ts:36-52). This is why sub-agent/summary spending is visible rather than hidden. Usage is also **durably persisted per entry**, not just recomputed: `UsageRow{id, seq, usage, entryId?, adjustment, details?}` written as a first-class commit kind alongside entries (`session/types.ts:378-397`). `/session` shows "session info and stats" (slash-commands.ts:30). Cache stats are separate (`core/cache-stats.ts`). `/scoped-models` narrows Ctrl+P cycling to a chosen subset (slash-commands.ts:24).
+
+**LSP: not present.** I searched all of `packages/` — no language-server client, no LSP types, no diagnostics-from-LSP path. The only `diagnostics` in the tree are *pi's own* config/flag diagnostics (`Args.diagnostics`, args.ts:57; `core/diagnostics.ts`, `core/settings-diagnostics.ts`) — CLI/config problem reports, not editor diagnostics. Closest relatives: `find`/`grep` are agent-invoked ripgrep/glob tools, and `pi-manifest.ts` / `project-trust.ts` handle project metadata. I'd call this a genuine absence, not something I failed to find.
+
+**MCP: not present either.** Zero references outside one incidental substring in `packages/ai/src/auth/oauth/anthropic.ts` (the `mcp` letters inside a scope/URL string). The **extension system is the substitute** — it's a superset of MCP's useful surface (tools, commands, flags, shortcuts, message renderers, markdown transformers, header/footer components) with a `ui: ExtensionUI` bridge including `confirm()` (types.ts:138, :175-204) and a `sendUserMessage` that can deliver as `"steer"` or `"followUp"` (types.ts:402-405) — i.e. extensions can inject into the running turn, not just add tools. Deliberate design choice, not a gap.
+
+**Other user-visible:** skills (`--skills`, `harness/skills.ts` + `core/skills.ts`; a `SKILL.md` gets a special compact read renderer, renderers/read.ts:75-77); managed binaries in `~/.pi/agent/bin` for `fd`/`rg` (config.ts:562-564); project trust; `PI_OFFLINE=1` to disable startup network ops and `PI_TELEMETRY` to control install telemetry (args.ts:433-434) — a vendor-neutral telemetry contract layer (`packages/telemetry`) with a generated schema and a `check:telemetry-docs` CI gate (agent/package.json `generate-telemetry-docs`/`--check`).
+
+---
+
+### Things I'd flag as skeptical findings
+
+- **Two parallel session architectures.** The shipped product is v3 (`coding-agent/core/session-manager.ts`, 1746 lines) + the class-based `Agent`. The v4 tree repo + 13-leaf `OperationState` machine is real, tested (846/920-line conformance suites at `agent/src/harness/session/testing/conformance/`), and benchmarked — but reachable only from `experimental/`. Not dead code; **not yet the shipping path**.
+- **v3's write-behind-flush** means an unsaved session can lose every entry if you crash before the first assistant message; the exclusive-create `"wx"` protects against double-write but there's no v3 equivalent of v4's torn-tail repair.
+- **No per-tool approval.** Project trust is directory-coarse. Safety rests on `executionMode: "sequential"` for mutating tools, not on a permission system.
+- **No LSP, no MCP** — extensions cover the MCP niche better than MCP would.
+- **`Renderers deliberately split from implementations** to keep ~17 MB of typebox/execution graph out of render-only processes (renderers/index.ts:1-7). Worth copying.
+
+**No files created or modified — read-only throughout.** The one friction point: `packages/session-backends` has no root manifest (only `sqlite-node/`), and `evals` has no `main`/`exports`, so it isn't a publishable library — both are grouping directories, not packages.
