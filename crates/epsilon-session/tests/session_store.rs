@@ -3349,3 +3349,109 @@ fn the_settings_survive_a_close_and_reopen() {
         "a model switch must outlive the process that made it"
     );
 }
+
+// -------------------------------------------------------------------------------------
+// M144 / F22 — a summarization is a real provider call, so it must be accounted for.
+// -------------------------------------------------------------------------------------
+
+fn billed(input: u64, output: u64) -> epsilon_contracts::message::Usage {
+    epsilon_contracts::message::Usage {
+        input,
+        output,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: input + output,
+    }
+}
+
+#[test]
+fn a_compaction_that_was_billed_shows_up_in_the_sessions_accounting() {
+    // The defect: compaction resends the whole history to a model and is charged for it,
+    // and pi counts that charge explicitly. Epsilon had nowhere to read it from, so a
+    // compaction was free in every number the user could see.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    store
+        .append(EntryKind::UsageAccount {
+            model_id: "claude-sonnet-4".into(),
+            provider: "anthropic".into(),
+            reason: "compaction".into(),
+            usage: billed(12_000, 400),
+        })
+        .unwrap();
+
+    let accounts = store.usage_accounts().unwrap();
+    assert_eq!(accounts["claude-sonnet-4"]["compaction"].input, 12_000);
+    assert_eq!(accounts["claude-sonnet-4"]["compaction"].output, 400);
+}
+
+#[test]
+fn accounting_is_keyed_by_the_model_that_was_charged_not_the_one_in_the_header() {
+    // M141's lesson applied to a summarizer: a cheap model summarizing a session billed
+    // to an expensive one must not be repriced at the header's rate. Keying by the
+    // charging model is the only way to avoid inventing that number.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    for (model, input) in [("expensive", 5_000u64), ("cheap", 20_000u64)] {
+        store
+            .append(EntryKind::UsageAccount {
+                model_id: model.into(),
+                provider: "anthropic".into(),
+                reason: "compaction".into(),
+                usage: billed(input, 100),
+            })
+            .unwrap();
+    }
+
+    let accounts = store.usage_accounts().unwrap();
+    assert_eq!(accounts.len(), 2, "each charging model keeps its own row");
+    assert_eq!(accounts["expensive"]["compaction"].input, 5_000);
+    assert_eq!(accounts["cheap"]["compaction"].input, 20_000);
+}
+
+#[test]
+fn two_compactions_by_one_model_add_up_rather_than_the_last_one_winning() {
+    // An overwrite bug here would under-report again, just more quietly: the second
+    // compaction would replace the first instead of adding to it.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    for input in [3_000u64, 1_000] {
+        store
+            .append(EntryKind::UsageAccount {
+                model_id: "m".into(),
+                provider: "anthropic".into(),
+                reason: "compaction".into(),
+                usage: billed(input, 50),
+            })
+            .unwrap();
+    }
+
+    let accounts = store.usage_accounts().unwrap();
+    assert_eq!(accounts["m"]["compaction"].input, 4_000);
+    assert_eq!(accounts["m"]["compaction"].output, 100);
+}
+
+#[test]
+fn a_legacy_compaction_with_usage_but_no_accounting_entry_is_not_counted() {
+    // A session written before M144 has a `Compaction` whose `usage` is populated and no
+    // `UsageAccount` beside it. Counting it would mean inventing a model to price it
+    // against — the M141 defect, reintroduced. Omitting it under-reports instead, which
+    // is the honest direction to be wrong in. This test is what makes that a decision
+    // rather than a comment that can drift.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    store
+        .append(EntryKind::Compaction {
+            summary: "earlier work".into(),
+            tokens_before: 9_000,
+            retained_tail: Vec::new(),
+            details: None,
+            usage: Some(billed(9_000, 300)),
+        })
+        .unwrap();
+
+    assert!(
+        store.usage_accounts().unwrap().is_empty(),
+        "an unattributable charge must not be priced at some model's rate"
+    );
+}

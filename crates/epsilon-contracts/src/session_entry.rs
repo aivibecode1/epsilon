@@ -129,6 +129,7 @@ pub const KNOWN_ENTRY_KINDS: &[&str] = &[
     "active_tools_change",
     "compaction",
     "branch_summary",
+    "usage_account",
     "custom",
     "turn_end",
     "label",
@@ -187,6 +188,39 @@ pub enum EntryKind {
         summary: String,
         /// Usage of the summarization call.
         usage: Option<Usage>,
+    },
+    /// A summarization call billed to a model, as a durable accounting entry.
+    ///
+    /// M144. F22: `Compaction` and `BranchSummary` carried a `usage` field that nothing
+    /// ever read, and — worse — the compaction path wrote `usage: None` even though the
+    /// summarizer's response was in scope. Compaction is a real provider call: it sends the
+    /// whole history to a model and bills for it. That money was spent and never counted,
+    /// so the session's token totals and cost under-reported, worst in exactly the long
+    /// sessions where cost matters. pi aggregates this usage explicitly so its totals
+    /// "reflect what was actually billed" (`agent-session.ts:3340`).
+    ///
+    /// This entry exists because **price is a property of the model that consumed the
+    /// tokens**, which is the same reason M141 had to split the session's accounting by
+    /// model. A summary's tokens cannot be attributed to whichever model happens to be
+    /// selected when `/session` is read, so the model that performed the summarization is
+    /// recorded here, at write time, where it is known.
+    ///
+    /// It is a separate entry rather than a new field on `Compaction` so that accounting
+    /// does not have to interpret the semantic of every other entry kind — a `Compaction`
+    /// with `usage: None` (an older session, a failed summarization) would otherwise be
+    /// indistinguishable from one that was never billed.
+    UsageAccount {
+        /// Model that performed the billed call, as recorded in the session file.
+        model_id: String,
+        /// Provider that served it, when known. Empty string when the caller did not have
+        /// it, which is honest: an empty provider is better than an invented one.
+        provider: String,
+        /// What the call was for: `"compaction"`, `"branch_summary"`, or another label
+        /// this build adds later. A free-form tag rather than an enum so a future caller
+        /// does not have to widen a contract that is only ever read for grouping.
+        reason: String,
+        /// The provider's own usage report for the call.
+        usage: Usage,
     },
     /// Extension/harness state that never enters LLM context.
     Custom {
@@ -407,6 +441,15 @@ mod tests {
             },
             EntryKind::SessionInfo {
                 name: Some("title".into()),
+            },
+            // M144. Absent here, the guard fails with `left: 10, right: 11` and this
+            // variant is invisible to every "which kinds exist" question the contract
+            // asks — including the one that just asked.
+            EntryKind::UsageAccount {
+                model_id: "m".into(),
+                provider: "anthropic".into(),
+                reason: "compaction".into(),
+                usage: Usage::default(),
             },
         ];
         assert_eq!(

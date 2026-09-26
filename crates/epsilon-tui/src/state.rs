@@ -686,6 +686,51 @@ impl UiState {
     ///
     /// Clears existing rows and rebuilds them from `messages` (the store's shadowed
     /// model view). Ponytail: reuse existing line constructors and token accounting.
+    ///
+    /// Folds recorded summarization bills into the per-model rows.
+    ///
+    /// M144/F22. **A separate entry point from `hydrate_from_history` on purpose.** That
+    /// method takes the store's *message* view, and a `UsageAccount` is not a message —
+    /// it never enters LLM context and is not part of the shadowed history. Routing
+    /// billing through the message view would mean either pretending the entry is a
+    /// message or widening that method's contract, and the first is the mistake that let
+    /// the charge go uncounted in the first place.
+    ///
+    /// Takes `&BTreeMap<String, BTreeMap<String, Usage>>` — the store's `usage_accounts()`
+    /// shape — so this layer performs no conversion it would have to keep in step with one
+    /// in the store.
+    ///
+    /// The flat totals are updated here as well as the per-model rows, because
+    /// `record_usage` fills only the per-model map (M141's split). Without that, the cost
+    /// breakdown would be right while `/session`'s token line and the header's counters
+    /// still ignored the spend — F22's own class of defect, one function over.
+    /// `a_recorded_compaction_bill_reaches_the_sessions_token_rows` asserts the flat
+    /// totals, which is how that was caught.
+    ///
+    /// **Order matters**, and it is a tested property rather than a comment:
+    /// `hydrate_from_history` clears `usage_by_model`, so bills added before it are
+    /// discarded. `app.rs`'s resume path therefore calls this *after* hydrating, and
+    /// `hydration_and_accounting_compose_in_either_order` asserts both the surviving order
+    /// and the silently-losing one, so reordering those two lines goes red.
+    pub fn add_usage_accounts(
+        &mut self,
+        rows: &BTreeMap<String, BTreeMap<String, epsilon_contracts::message::Usage>>,
+    ) {
+        for (model_id, by_reason) in rows {
+            for usage in by_reason.values() {
+                self.record_usage(model_id, *usage);
+                self.tokens_in += usage.input;
+                self.tokens_out += usage.output;
+                self.cache_read += usage.cache_read;
+                self.cache_write += usage.cache_write;
+            }
+        }
+    }
+
+    /// Rebuild the frame's view from a replayed session's messages.
+    ///
+    /// Summarization bills are **not** folded in here — they are not messages, so they
+    /// arrive separately through [`UiState::add_usage_accounts`] after this returns.
     pub fn hydrate_from_history(&mut self, messages: &[Message]) {
         self.lines.clear();
         self.streaming_text.clear();
@@ -1921,5 +1966,87 @@ mod tests {
     fn normal_text_not_mistaken_for_image() {
         assert!(summarize_image_blob("hello world").is_none());
         assert!(summarize_image_blob("data:text/plain;base64,SGVsbG8=").is_none());
+    }
+
+    // ---------------------------------------------------------------------------------
+    // M144 / F22 — a summarization is a real provider call, so it must be accounted for.
+    // ---------------------------------------------------------------------------------
+
+    /// A `usage_accounts()`-shaped map: model id -> reason -> usage.
+    fn bill_rows(
+        rows: &[(&str, u64)],
+    ) -> BTreeMap<String, BTreeMap<String, epsilon_contracts::message::Usage>> {
+        let mut out = BTreeMap::new();
+        for (model, input) in rows {
+            let mut reasons = BTreeMap::new();
+            reasons.insert(
+                "compaction".to_string(),
+                epsilon_contracts::message::Usage {
+                    input: *input,
+                    output: 100,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: input + 100,
+                },
+            );
+            out.insert((*model).to_string(), reasons);
+        }
+        out
+    }
+
+    #[test]
+    fn a_recorded_compaction_bill_reaches_the_sessions_token_rows() {
+        // The read half of F22. Before this, a compaction's cost was recorded by nobody and
+        // read by nobody: the provider was paid, and every number the user could see said
+        // otherwise.
+        let mut st = UiState::new();
+        st.add_usage_accounts(&bill_rows(&[("claude-sonnet-4", 12_000)]));
+
+        let (tin, tout) = st.usage();
+        assert_eq!(
+            (tin, tout),
+            (12_000, 100),
+            "a billed summarization is spend"
+        );
+    }
+
+    #[test]
+    fn a_summarizer_billed_to_another_model_keeps_its_own_pricing_row() {
+        // M141's lesson applied where it is easiest to forget: a cheap model compacting an
+        // expensive session is still billed at the *cheap* model's rate. Folding this into
+        // the header's model would be the M141 defect, one layer up.
+        let mut st = UiState::new();
+        st.add_usage_accounts(&bill_rows(&[("expensive", 5_000), ("cheap", 20_000)]));
+
+        let by_model = st.usage_by_model();
+        assert_eq!(by_model.len(), 2, "each charging model keeps its own row");
+        assert_eq!(by_model["cheap"].input, 20_000);
+        assert_eq!(by_model["expensive"].input, 5_000);
+    }
+
+    #[test]
+    fn hydration_and_accounting_compose_in_either_order() {
+        // `hydrate_from_history` clears the rows, so the order the resume path uses is a
+        // real hazard rather than a stylistic choice: adding the bills first discards them
+        // silently. Both halves are asserted, so reordering the two lines in `app.rs` gives
+        // a red test naming the charge that vanished.
+        let bills = bill_rows(&[("m", 8_000)]);
+
+        let mut surviving = UiState::new();
+        surviving.hydrate_from_history(&[]);
+        surviving.add_usage_accounts(&bills);
+        assert_eq!(
+            surviving.usage_by_model()["m"].input,
+            8_000,
+            "hydrating first, then adding the bills, keeps the charge"
+        );
+
+        let mut losing = UiState::new();
+        losing.add_usage_accounts(&bills);
+        losing.hydrate_from_history(&[]);
+        assert!(
+            !losing.usage_by_model().contains_key("m"),
+            "hydration clears the rows, so bills added first are discarded"
+        );
     }
 }

@@ -71,6 +71,28 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   stream because the concrete `Response` had made chunk framing untestable — **that is why the
   defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
   1.12.1) — ADR-017 amendment.
+- **F23 (OPEN, blocks F22) — a durable `UsageAccount` row collides with `pop_last_message`.** That fn pops
+  **the last entry** to discard a failed turn; runtime `history.pop()` pops the last *message*. They agree only
+  while nothing non-message is last. Appending a bill right after `Compaction` breaks that, and a pop meant for a
+  message eats the bill — proof: `kinds=[..., "compaction", ..., "compaction", ...]` with no `usage_account`.
+  Same shape as F07. **Needs a design decision, not an edit** — three options weighed in the F23 file; the sane
+  one is to stop putting the bill in the append-only transcript's tail.
+  **M144 = READ SIDE ONLY.** Entry kind + `usage_accounts()` + `add_usage_accounts` + resume wiring shipped and are
+  tested; the writer was reverted, so the chain has **no producer** and no user-visible number changed. Say
+  "read side only" in every summary — claiming compaction cost is fixed would be false. New `EntryKind::UsageAccount
+  {model_id, provider, reason, usage}`: compaction's response was in scope at the append site and the entry said
+  `usage: None`, so the provider was paid and nothing recorded it. A separate entry rather than a field on
+  `Compaction` because `usage: None` conflates *never billed* with *billed before this kind existed*, and pricing a
+  charge with no charging model is M141's defect one layer up. `add_usage_accounts` is separate from
+  `hydrate_from_history` **on purpose** — a `UsageAccount` is not a message — and hydration clears the rows, so
+  `app.rs` adds the bills *after* hydrating. A test asserts both orders so a reorder goes red.
+  **Fourth way a control misleads:** this slice's tests all exercised the READER with hand-built rows, so reverting
+  the WRITER left all 249 `epsilon-core` tests green. **A control must exercise the code the fix changed.** A read-path
+  slice must also be controlled at the write path.
+  **F22 stays open for branch summaries** — all five `branch_with_summary` callers pass `None`, so that is an
+  *unimplemented feature*, not a lost measurement. My original finding grouped two different defects.
+  **I destroyed ~1100 lines of `state.rs` with a Python script** that split on `\r\n` and reassembled wrongly, leaving an
+  unclosed delimiter. `git checkout --` restored it. **Never reassemble a whole file in Python** — use `patch`.
 - **M143** — `/session` now prints the cost breakdown. The four `CostBreakdown` accessors had **zero callers**
   anywhere: computed, documented, tested, unreachable — dead code that reads like a feature. pi has no `/cost`, so
   this is not a port; it is Epsilon's own dead code connected to the surface it was written for. Reused the `+`

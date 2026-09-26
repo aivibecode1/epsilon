@@ -762,6 +762,29 @@ impl App {
         {
             let history = agent.history();
             self.ui.hydrate_from_history(&history);
+            // M144/F22: summarization bills are not messages, so `live_resume`'s history
+            // does not contain them and `hydrate_from_history` cannot see them. They are
+            // read from the store and folded in *after* hydration, which clears the rows —
+            // adding them first would silently discard them. Compaction is a real provider
+            // call; a resumed session that hid it would under-report the one number a user
+            // opens a long session to check.
+            if let Some(store) = agent.session_store() {
+                match store.lock() {
+                    Ok(st) => match st.usage_accounts() {
+                        Ok(rows) => self.ui.add_usage_accounts(&rows),
+                        // A read failure must not fail the resume: the transcript is
+                        // already hydrated, and a user can act on a session whose cost
+                        // under-reports far better than on one that refuses to open.
+                        Err(e) => self
+                            .ui
+                            .push_notice(format!("session cost totals may under-report: {e}")),
+                    },
+                    Err(_) => self.ui.push_notice(
+                        "session cost totals may under-report: the session file is locked"
+                            .to_string(),
+                    ),
+                }
+            }
             if let Some(shown) = typed.filter(|s| !s.is_empty()) {
                 self.history.push_back(shown.to_string());
                 while self.history.len() > HISTORY_MAX {

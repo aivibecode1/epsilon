@@ -1238,6 +1238,55 @@ impl SessionStore {
         Ok(out)
     }
 
+    /// Every billed summarization call in the file, grouped by the model that was charged.
+    ///
+    /// M144/F22. pi's `getSessionStats` adds `compaction` and `branch_summary` usage
+    /// explicitly, "so token/cost totals reflect what was actually billed"
+    /// (`agent-session.ts:3340-3348`). Epsilon had nowhere to read that from, so a
+    /// compaction — a real provider call that resends the whole history — was free in
+    /// every number the user could see, worst in exactly the long sessions where a user
+    /// compacts at all.
+    ///
+    /// Grouped by model because **price is a property of the model that consumed the
+    /// tokens** (the reason M141 had to split the session's accounting the same way). A
+    /// summarizer billed to a different model than the one in the header cannot be priced
+    /// from the header's model, and guessing would be the M141 defect all over again.
+    ///
+    /// Deliberately reads `UsageAccount` entries only, and **not** the `usage` field on
+    /// `Compaction`/`BranchSummary`. Those fields are written (M144) but predate this
+    /// reader, and an older session file can carry a compaction whose usage was recorded
+    /// with no model to price it against. Counting such a row would mean inventing a
+    /// model; leaving it out means an old session reports a slightly lower total, which
+    /// is the honest direction to be wrong in. A test asserts that a compaction with
+    /// usage but no accounting entry is not counted, so this is a decision under test
+    /// rather than a comment that can drift from the code.
+    ///
+    /// `read_all` rather than `branch_entries`: billing belongs to the whole file. A
+    /// compaction performed on a branch the user later navigated away from was still paid
+    /// for, and a total that forgets it is wrong regardless of where the user is now.
+    pub fn usage_accounts(&self) -> Result<BTreeMap<String, BTreeMap<String, Usage>>, StoreError> {
+        let mut by_model: BTreeMap<String, BTreeMap<String, Usage>> = BTreeMap::new();
+        for entry in self.read_all()? {
+            let EntryKind::UsageAccount {
+                model_id,
+                reason,
+                usage,
+                ..
+            } = entry.kind
+            else {
+                continue;
+            };
+            let by_reason = by_model.entry(model_id).or_default();
+            match by_reason.get_mut(&reason) {
+                Some(seen) => *seen = seen.combine(usage),
+                None => {
+                    by_reason.insert(reason, usage);
+                }
+            }
+        }
+        Ok(by_model)
+    }
+
     /// Read one entry's identity (`id`, `seq`) by id, or `None` when the file holds
     /// no such entry. The hash index narrows the search; the parsed id confirms it,
     /// so a hash collision can never navigate to the wrong entry.

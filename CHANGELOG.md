@@ -5,6 +5,17 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Added
+- **Epsilon can now read, group and total what its summarizations cost (M144, read side).** Compaction resends
+  your whole history and is billed for it, and the usage was discarded even though the response was in scope.
+  Charges are keyed by **the model that was actually charged**, never by whichever model the conversation is on,
+  and a resumed session folds them into its totals.
+  **Nothing writes those charges yet** — the write side collided with the turn-discard path and was reverted,
+  so this fixes no user-visible number on its own. It is the measuring apparatus for F23, which is the
+  precondition. No compaction cost is claimed as fixed here.
+- **A summarization bill reaches the token counters, not only the cost breakdown (M144).** Found by M144's own
+  test, and the same class of defect the milestone exists to close, one function over.
+
 ### Changed
 - **The help text stopped promising a variable that does nothing, and told the truth about
   `--plan`.** `RUST_LOG` was listed under `ENVIRONMENT` as a "tracing filter for diagnostics"

@@ -72,6 +72,13 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M144 — a summarization is a real bill](milestones/M144-a-summarization-is-a-real-bill.md) — **read side
+  only**. Compaction resends the whole history and is charged for it, and the response was in scope at the write
+  site while the entry said `usage: None`; pi counts this charge explicitly so totals "reflect what was actually
+  billed". Epsilon can now read, group and total such charges per model, and a resumed session folds them in.
+  **The write side was reverted** — see F23, where `pop_last_message` can eat a bill. Carries the fourth way a
+  negative control misleads: this slice's tests all exercised the *reader* with hand-built rows, so reverting the
+  *writer* left 249 tests green.
 - [M143 — the session says where the money went](milestones/M143-the-session-says-where-the-money-went.md):
   the cost breakdown accessors were computed, tested, documented, and called by nothing. Also F22, found
   while checking pi's parity: compaction usage is stored on the entry and read by nobody, so summarization
