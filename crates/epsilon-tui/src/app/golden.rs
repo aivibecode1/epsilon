@@ -1256,6 +1256,92 @@ fn press_expand(app: &mut App, agent: &std::sync::Arc<Agent>) {
     );
 }
 
+/// The frame test for M155, and the one that should have existed before it.
+///
+/// Every assertion about a tool call until now was about *state* — `cards.len()`,
+/// `card.status`, `card.head`. None of them could see that the call was drawn **twice**,
+/// because two cards and one card are equally valid to a state assertion; only the screen
+/// shows that one tool call occupies two blocks of rows. Three defects in a row (M152,
+/// M153, M155) were invisible to the state tests and obvious here, so this asserts the
+/// thing a reader would actually see: the call appears once, and its body is under it
+/// rather than beside a copy of it.
+#[test]
+fn a_completed_tool_call_is_drawn_once_on_a_real_frame() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // Drive the public event stream, in the order the loop emits it: the call is
+    // committed with the assistant message, then it starts, then the result lands.
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(crate::state::assistant_calling(
+            "running the check",
+            "tc_frame",
+            "bash",
+            serde_json::json!({"command": "echo epsilon-ready"}),
+        ))),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "tc_frame".into(),
+        tool_name: "bash".into(),
+        args: serde_json::json!({"command": "echo epsilon-ready"}),
+    });
+    app.ui.apply(&crate::state::agent_event_tool_result_named(
+        "tc_frame",
+        "bash",
+        "epsilon-ready",
+        false,
+    ));
+
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+
+    // The headline carries the command, the status and the duration (M153).
+    let title = row_of(&rows, "bash $ echo epsilon-ready");
+    assert!(
+        rows[title].contains("· ok ·"),
+        "a settled call must say so on its own row: {:?}",
+        rows[title]
+    );
+
+    // The regression, stated as a count. Before M155 the call card *and* the result
+    // card both rendered, so the command appeared twice and the output appeared twice.
+    let command_rows = rows
+        .iter()
+        .filter(|r| r.contains("echo epsilon-ready"))
+        .count();
+    let output_rows = rows.iter().filter(|r| r.contains("epsilon-ready")).count();
+    assert_eq!(
+        command_rows, 1,
+        "the tool call is drawn once; found it on {command_rows} rows:\n{screen}"
+    );
+    // `epsilon-ready` is also the command's argument, so the command row matches this
+    // pattern too. The output must add exactly one row beyond it — the result body,
+    // under its own title, not beside a second copy of the title.
+    assert_eq!(
+        output_rows, 2,
+        "one title row plus one body row, not two of each:\n{screen}"
+    );
+}
+
+/// A result with no call in the transcript must still reach the screen. The counterpart
+/// to M155's in-place branch: if the frame silently dropped an orphaned result, a replay
+/// or a branch switch would lose the tool's output with nothing to show for it.
+#[test]
+fn an_orphaned_tool_result_still_reaches_the_frame() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    app.ui.apply(&crate::state::agent_event_tool_result(
+        "read",
+        "fn main() {}",
+        false,
+    ));
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+    assert!(
+        screen.contains("fn main() {}"),
+        "an orphaned result must not be swallowed:\n{screen}"
+    );
+}
+
 #[test]
 fn a_tool_result_is_a_card_whose_title_carries_name_status_and_duration() {
     // The card contract: `name · status · duration` on the title line, so the

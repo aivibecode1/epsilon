@@ -1201,6 +1201,67 @@ pub(crate) fn now_ms() -> u64 {
 /// `TranscriptLine`: the card's title, its diff and its duration are decided by
 /// the reducer, and a fixture that wrote them out by hand would keep passing after
 /// the reducer stopped producing them.
+/// An assistant message with **one** tool call whose arguments the caller chooses.
+///
+/// The test-local `assistant` fixture hardcodes `{"command": "echo hi"}`, which is fine
+/// for state assertions and useless for a *frame* test: a card's headline is rendered
+/// from those arguments, so a test that wants `$ echo epsilon-ready` on screen needs a
+/// fixture that can actually say that. `app/golden.rs` needs this, which is why it lives
+/// at module scope rather than inside `mod tests`.
+#[cfg(test)]
+pub(crate) fn assistant_calling(
+    text: &str,
+    id: &str,
+    name: &str,
+    args: serde_json::Value,
+) -> epsilon_contracts::message::AssistantMessage {
+    epsilon_contracts::message::AssistantMessage {
+        id: epsilon_contracts::ids::new_id("msg"),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![
+            epsilon_contracts::content::ContentBlock::text(text),
+            epsilon_contracts::content::ContentBlock::ToolCall {
+                id: id.into(),
+                name: name.into(),
+                arguments: args,
+            },
+        ],
+        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+        error_message: None,
+        usage: epsilon_contracts::message::Usage::default(),
+    }
+}
+
+/// A tool result addressed to a **named** `tool_call_id`.
+///
+/// `agent_event_tool_result` derives the id from the tool name, which suits a result with
+/// no call to settle but cannot address a run whose call id is `tc_frame` — so a frame
+/// test of a *completed* call has to hand-build the event. It can, and now does.
+#[cfg(test)]
+pub(crate) fn agent_event_tool_result_named(
+    tool_call_id: &str,
+    tool_name: &str,
+    body: &str,
+    is_error: bool,
+) -> AgentEvent {
+    AgentEvent::MessageEnd {
+        message: Box::new(Message::ToolResult(
+            epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::ids::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(body)],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error,
+            },
+        )),
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn agent_event_tool_result(tool_name: &str, body: &str, is_error: bool) -> AgentEvent {
     AgentEvent::MessageEnd {

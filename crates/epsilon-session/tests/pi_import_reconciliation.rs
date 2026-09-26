@@ -55,23 +55,43 @@ fn fixtures_dir() -> PathBuf {
 /// Where the generated pi v2 sources and their imports live: `EPSILON_RECONCILE_DIR` when set,
 /// else a directory of this process's own under the system temp dir.
 ///
-/// The default used to be the **fixed** `epsilon-pi-reconciliation`, and that made the suite
-/// unusable whenever two runs overlapped: a battery and a delegated agent's `cargo test` would both
-/// write `large-session.v2.jsonl` and its `.epsilon.jsonl` import there, and each would rename and
-/// delete the other's files. It surfaced as
-/// `rename into …\large-session.v2.jsonl: The system cannot find the file specified. (os error 2)`
-/// and, before the message was noticed, as an unexplained one-off failure that passed on re-run.
+/// A directory this thread alone writes to.
 ///
-/// The process id is the right discriminator rather than a random suffix: the failures come from
-/// different *processes* racing for one path, while the threads inside one process share the
-/// fixtures they are meant to share and are serialized by the test harness anyway. `thread::current()
-/// .id()` would be stable per run but is not `Display`-able without a `Debug` format, and a random
-/// suffix would leave debris to accumulate with no way to tell whose it was.
+/// Two rounds of fixing this, and the first fix was wrong in a way its own comment
+/// asserted was impossible.
+///
+/// **Round one.** The path used to be the **fixed** `epsilon-pi-reconciliation`, so two
+/// overlapping runs -- a battery and a delegated agent's `cargo test` -- wrote
+/// `large-session.v2.jsonl` and renamed over each other, surfacing as
+/// `rename into …\large-session.v2.jsonl: The system cannot find the file specified`.
+///
+/// **Round two** keyed the path on the **process id**, on the stated grounds that "the threads
+/// inside one process share the fixtures they are meant to share and are serialized by the test
+/// harness anyway". Both halves of that are wrong:
+///
+/// - Rust's test harness runs the tests in a binary **in parallel threads by default**. They
+///   are not serialized.
+/// - The threads do not share fixtures; each test calls `work_dir()` and builds its own
+///   source. Two of them build the *same filename* (`large-session.v2.jsonl`, at the
+///   reconciliation and the branch tests), and one test does
+///   `remove_file(&imported)` on a path another is renaming into.
+///
+/// The symptom is identical to the original, which is why this looked like load flakiness for
+/// three batteries. The tell is that it **always passes in isolation** -- a filtered run has
+/// no second thread to race with -- and fails only in a full run. Load changes the timing; it
+/// does not cause the race.
+///
+/// So the discriminator is the thread as well as the process. `ThreadId` is not `Display`,
+/// but its `Debug` form is stable and unique within the process.
 fn work_dir() -> PathBuf {
     let dir = std::env::var_os("EPSILON_RECONCILE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            std::env::temp_dir().join(format!("epsilon-pi-reconciliation-{}", std::process::id()))
+            std::env::temp_dir().join(format!(
+                "epsilon-pi-reconciliation-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ))
         });
     std::fs::create_dir_all(&dir).expect("create reconciliation directory");
     dir
@@ -143,6 +163,32 @@ fn write_pi_v2(v1: &Path, out: &Path) -> usize {
     std::fs::rename(&tmp_path, out)
         .unwrap_or_else(|e| panic!("rename into {}: {e}", out.display()));
     entries
+}
+
+/// The property `work_dir` exists to provide, asserted directly rather than left to
+/// timing.
+///
+/// The race this fixes cannot be reproduced on demand: with the per-process path restored,
+/// four consecutive runs of this binary in isolation all pass, because a single filtered
+/// binary with five tests rarely interleaves the two fixtures that collide. It reproduces
+/// in a full workspace run, which is exactly why it survived three batteries and was
+/// written off as load.
+///
+/// So the test states the invariant instead of the symptom: two threads must not share a
+/// work directory. This fails deterministically against the per-process path, which is the
+/// evidence a timing-dependent reproduction cannot give.
+#[test]
+fn two_threads_never_share_a_work_directory() {
+    let mine = work_dir();
+    let theirs = std::thread::spawn(work_dir)
+        .join()
+        .expect("the other thread");
+    assert_ne!(
+        mine,
+        theirs,
+        "two tests in one process must not write the same fixtures: {}",
+        mine.display()
+    );
 }
 
 // ---------------------------------------------------------------- the comparison

@@ -97,6 +97,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M153 — every tool card says something specific](milestones/M153-every-tool-card-says-something.md)
 - [M154 — the probe could not submit](milestones/M154-the-probe-could-not-submit.md)
 - [M155 — one tool call, one card](milestones/M155-one-tool-call-one-card.md)
+- [M156 — the frame test that would have caught M155](milestones/M156-the-frame-test-that-would-have-caught-m155.md)
   — **closes F11's unconfined half.** The pipe drains were awaited outside the caller's timeout, so a
   surviving descendant hung a command that had already exited. Bounded, and the shortfall is
   declared. The control settles in 10.46s without the fix — the descendant's own lifetime.
