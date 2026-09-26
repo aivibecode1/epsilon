@@ -1,5 +1,11 @@
 # Plan 015: Trust ack + live reload (G5)
 
+> **Status: DONE — do not execute.** The unchecked acceptance boxes below were stale, not a
+> signal of open work. Verified 2026-09-26 against the current tree: `accept_project_config_hash`
+> is present in `crates/epsilon-tui/src/app.rs` (2 hits), `set_skills|load_skills` is present (1), and
+> trust/reload tests exist in `crates/epsilon-tui/src/app/tests.rs`. The plan index said `S`
+> (started); it is now corrected to `M`.
+
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and

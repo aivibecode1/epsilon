@@ -1,5 +1,11 @@
 # Plan 013: Complete slash registry to pi parity (G1)
 
+> **Status: DONE — do not execute.** `docs/plans/README.md` records this plan's milestone as
+> complete, and the work it describes has landed. The "Executor instructions" below are the
+> original text, kept for the record; they are **historical**, not current guidance.
+> Re-verify any claim here against the current tree before relying on it — several `pi-0.84.2`
+> citations in this file were checked on 2026-09-26 and corrected.
+
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and

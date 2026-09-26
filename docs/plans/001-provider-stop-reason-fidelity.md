@@ -1,5 +1,11 @@
 # Plan 001: Provider stop-reason fidelity (OpenAI finish_reason, Anthropic message_delta, Gemini early-return)
 
+> **Status: DONE — do not execute.** `docs/plans/README.md` records this plan's milestone as
+> complete, and the work it describes has landed. The "Executor instructions" below are the
+> original text, kept for the record; they are **historical**, not current guidance.
+> Re-verify any claim here against the current tree before relying on it — several `pi-0.84.2`
+> citations in this file were checked on 2026-09-26 and corrected.
+
 > **Executor instructions**: Follow steps in order; run every verification command.
 > On STOP conditions, report back instead of improvising. Update your row in
 > `docs/plans/README.md` when done.
