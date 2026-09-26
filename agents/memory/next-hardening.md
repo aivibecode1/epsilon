@@ -71,6 +71,17 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   stream because the concrete `Response` had made chunk framing untestable — **that is why the
   defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
   1.12.1) — ADR-017 amendment.
+- **M143** — `/session` now prints the cost breakdown. The four `CostBreakdown` accessors had **zero callers**
+  anywhere: computed, documented, tested, unreachable — dead code that reads like a feature. pi has no `/cost`, so
+  this is not a port; it is Epsilon's own dead code connected to the surface it was written for. Reused the `+`
+  floor marker so `/session` and the header cannot disagree. **The first negative-control attempt passed all 321
+  tests** — `/session` has two branches and the fixture builds a store-less agent, so I had edited the branch the
+  test does not execute. **A control can be wrong in a third way: applied where the test does not run.** Re-running
+  proves nothing there; reading the fixture does.
+  **F22, found and recorded, not fixed:** pi's `getSessionStats` adds `compaction`/`branch_summary` usage so totals
+  "reflect what was actually billed". Epsilon has `usage: Option<Usage>` on both entry kinds and **zero read
+  sites** — summarization is a real provider call whose cost nothing counts. Needs a design decision (which model
+  is a summarization billed to?), so it is not a patch. Evidence + acceptance criteria in the F22 file.
 - **M141** — a session's bill is priced per model (M140's second half). The lesson worth keeping: **when a metric is correct only because every input happened to share one property, the accounting is discarding what would make it correct in general.** The first negative-control attempt was also wrong — it priced every model at the first model's rates *inside* the loop, which double-counted instead of repricing, and only one test noticed. A control must BE the old code, not merely differ from it.
 - **M140** — the owner's three numbers (context use, cache hit rate, cost) were **present but wrong** on every provider except Anthropic and Mistral. `seed_usage_compat` set `input = prompt_tokens` *and* read the cached count from the same payload, so the prefix sat in two buckets; three consumers read the buckets as disjoint and each failed differently (rate low, gauge high, cost charged twice). Mistral already had the subtraction — **that asymmetry is the tell that it was an oversight, not a decision.** The Responses wire dropped `input_tokens_details` outright, printing a confident `cache 0%` where the header means `—` for unknown. Fixed at the boundary; `ui/cost.rs` and `ui/metrics.rs` were already right. Needed a new `test_support` seam because the arithmetic happens mid-stream on raw JSON, and `wire_fixtures.rs` has **no usage fixtures at all** — that absence is why it survived.
 - **M139** — a model switch now survives closing the session. `model_change` was written faithfully
@@ -108,7 +119,16 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   `cl : Command line error D8050 ... c1.dll` — do not reach for it first.
   Note also that cargo names test binaries by *metadata*, not by content: editing a source file
   does **not** produce a new name, so "touch the file and retry" does not dodge a pinned path.
-- **A second mid-run artifact deletion (2026-09-26, M142).** `per_kind_counts_tie_out_on_both_sides`
+- **`os error 2` on a `fs::rename` after a successful `fs::write` is an ENV problem, not a flake.**
+  Seen three times (`m142`, `m143`, +1); a *different* test loses it each round, in the same test binary.
+  **Cause: this host exports `TMPDIR=/tmp TEMP=/tmp TMP=/tmp`; native Windows resolves those to `C:\tmp`,
+  which does not exist.** Always export `TMP`/`TEMP`/`TMPDIR`=`C:/Users/Hp/AppData/Local/Temp` before any
+  cargo run that creates files. A still-needed belt is an AV exclusion for `%LOCALAPPDATA%\Temp` — an
+  **owner/admin decision**, never from an agent session. Full diagnosis, including why a passing re-run is
+  evidence about the environment and not the code: `audit/evidence/temp-var-os-error-2-diagnosis.md`.
+  **Never re-run until green and cite only the green one** — that is how a flake becomes a false bill of health.
+  Supersedes the AV-quarantine hypothesis in `m142-failed-round.md`.
+  — the earlier hypothesis, for history: **A second mid-run artifact deletion (2026-09-26, M142).** `per_kind_counts_tie_out_on_both_sides`
   failed in battery `m142` with `os error 2` on a `std::fs::rename` whose `fs::write` had just succeeded —
   the file was written, then gone. Same signature as the Avira case below, and in a test's own `%TEMP%`
   scratch dir, **not** under the target dir, so the external-`CARGO_TARGET_DIR` mitigation does not cover it.

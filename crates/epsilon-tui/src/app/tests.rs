@@ -789,6 +789,25 @@ async fn session_command_reports_cache_attribution_beside_the_totals() {
 }
 
 #[tokio::test]
+async fn session_command_shows_where_the_money_went_not_just_how_much() {
+    // M143. `CostBreakdown`'s four per-component accessors had **no callers anywhere** —
+    // tested, documented, and unreachable, which is the worst kind of dead code: it reads
+    // like a feature. pi's `SessionStats` carries a `cost`; this is the same idea, made
+    // legible, because a single `$0.31` cannot tell you whether the cache is working.
+    let (mut app, agent, (_f, _n)) = test_app();
+    type_and_enter(&mut app, &agent, "/session");
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    let joined = texts.join("\n");
+
+    // Before any provider call there is nothing billed, so the line says so rather than
+    // printing `$0.00` — which would be a precise-looking number about nothing.
+    assert!(
+        joined.contains("cost: nothing billed yet"),
+        "an untouched session must not claim a cost: {texts:?}"
+    );
+}
+
+#[tokio::test]
 async fn tasks_command_lists_the_registry_and_says_when_it_is_empty() {
     let (mut app, agent, (_f, _n)) = test_app();
     type_and_enter(&mut app, &agent, "/tasks");

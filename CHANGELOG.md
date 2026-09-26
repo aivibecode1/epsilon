@@ -24,8 +24,15 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   reported TUI freeze. Startup now redraws one line: `waiting for this session to be released — 3s
   elapsed, ~27s left (another process may still be writing it)`.
 
+### Added
+- **`/session` now shows where the money went, not just how much (M143).** One line breaks the session's
+  cost into input, output, cache read, and cache write. A single total cannot tell you whether the prompt
+  cache is working, and the cache is the main lever most users have on cost. The per-component figures
+  were computed and tested but had no caller anywhere — the header showed one number and the machinery
+  underneath it did nothing.
+
 ### Fixed
-- **A session's cost is now priced per model, not at whichever model is selected (M141).** Switching
+- **A session's cost is now priced per model, not at whichever model is selected (M141).**
   models with `/model` silently repriced everything the session had spent so far, and resuming a
   multi-model session did the same to history billed at other prices. The error followed the
   direction of the switch — moving to a pricier model made past work look expensive — and nothing

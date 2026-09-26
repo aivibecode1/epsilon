@@ -60,7 +60,7 @@ update exists to correct.
 | F19 | PARTIAL | P2 | Product/docs/parity claims exceed actual workflows — regressions fixed in **ffff7e2**; other claims not swept here (see the row) | S plus E baseline | 3–5 days docs; workflow work separate / low |
 | F20 | CLOSED | P1 | Abort did not stop new calls starting inside the running batch — **M88** checks the run token in `run_one`, before any call starts | E (M88 battery + the pre-fix RED in the same log) | 1–2 days / low |
 | F21 | CLOSED | P1 | The header's context gauge, cache hit rate and cost were computed from a double-counted cached prefix on every provider except Anthropic and Mistral — **M140** subtracts cache reads and writes from `input` in `seed_usage_compat`, and the Responses wire no longer discards `input_tokens_details`. The three numbers were *present but wrong*: rate low, gauge high, cost charged twice; on Responses, a confident `cache 0%` where the header means `—` for unknown | E (M140 control: 5 failed / 1 passed) | 1 day / low |
-
+| F22 | OPEN | P2 | Compaction and branch-summary usage is stored and never read, so summarization cost is uncounted — pi's `getSessionStats` aggregates it explicitly so totals "reflect what was actually billed"; Epsilon has `usage: Option<Usage>` on both entry kinds and zero read sites | S, high | 0.5–1 day, but a design decision first (which model is a summarization billed to?) / medium |
 ## F00 — Restore the baseline without weakening its assertions
 
 **Executed:** fmt=0, strict Clippy=101, workspace tests=101, demo=0, real-check=0. Full evidence in [05](05-verification-log.md).

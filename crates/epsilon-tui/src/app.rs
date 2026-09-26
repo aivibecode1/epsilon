@@ -1651,6 +1651,10 @@ impl App {
                             "session: no durable session file attached \u{b7} tokens {tin}/{tout} \u{b7} model {}",
                             self.model_id
                         ));
+                        // Cost, broken down (M143). The header shows one number; this says where
+                        // it went. A total alone cannot tell you the cache is working, and the
+                        // cache is the main lever a user has on cost.
+                        self.ui.push_notice(self.cost_summary());
                         for line in agent.cache_report() {
                             self.ui.push_notice(line);
                         }
@@ -1683,6 +1687,8 @@ impl App {
                 for line in agent.cache_report() {
                     self.ui.push_notice(line);
                 }
+                // CONTROL (M143): the cost breakdown line removed — the state before this
+                // slice, where the four per-component accessors had no caller at all.
                 // Session repairs (M75): a resumed session may have been missing tool results or
                 // an end marker. The kinds are worth naming — they are what the user lost.
                 for line in repair_lines(agent) {
@@ -3219,6 +3225,47 @@ impl App {
             cost_micro_usd,
             cost_is_floor,
         }
+    }
+
+    /// One line naming what the session has cost and which part of it is the cache's doing.
+    ///
+    /// The header can only show a total, and a total is not actionable: `$0.31` reads the
+    /// same whether the prompt cache saved 90% of your spend or none of it. The cache is
+    /// the main lever a user has on cost, so `/session` shows the split that tells them
+    /// whether it is working.
+    ///
+    /// **It says what it does not know.** Three cases, each with its own wording, because
+    /// collapsing them would be the exact failure this repo keeps fixing:
+    ///
+    /// - no usage yet → "nothing billed yet", never `$0.00`, which is a precise-looking
+    ///   number about nothing;
+    /// - a model the price registry lacks → the total is a **lower bound** and is marked
+    ///   with `+`, the same marker the header uses, so the two never disagree;
+    /// - a genuinely free model (ollama, a `:free` row) → `$0.00` is the true answer, and
+    ///   `is_floor` is what distinguishes it, so this line trusts that flag rather than
+    ///   second-guessing the registry.
+    fn cost_summary(&self) -> String {
+        use crate::ui::cost::{TokenPrices, breakdown_per_model};
+        if self.ui.usage_by_model().is_empty() {
+            return "cost: nothing billed yet".to_string();
+        }
+        let b = breakdown_per_model(self.ui.usage_by_model(), |model_id| {
+            epsilon_llm::catalog::lookup_model(model_id).map(|info| TokenPrices {
+                input: info.input_cost_micro_per_mtok,
+                output: info.output_cost_micro_per_mtok,
+                cache_read: info.cache_read_cost_micro_per_mtok,
+                cache_write: info.cache_write_cost_micro_per_mtok,
+            })
+        });
+        let total = crate::ui::format::format_cost(b.total());
+        let floor = if b.is_floor() { "+" } else { "" };
+        format!(
+            "cost: {total}{floor} · in {} · out {} · cache read {} · cache write {}",
+            crate::ui::format::format_cost(b.input()),
+            crate::ui::format::format_cost(b.output()),
+            crate::ui::format::format_cost(b.cache_read()),
+            crate::ui::format::format_cost(b.cache_write()),
+        )
     }
 
     /// Mirror the agent's context estimate onto the frame's input.

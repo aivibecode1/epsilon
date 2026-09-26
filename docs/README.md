@@ -72,6 +72,10 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M143 — the session says where the money went](milestones/M143-the-session-says-where-the-money-went.md):
+  the cost breakdown accessors were computed, tested, documented, and called by nothing. Also F22, found
+  while checking pi's parity: compaction usage is stored on the entry and read by nobody, so summarization
+  cost is real money that nothing counts.
 - [M142 — proving the accumulation, not just the pricing](milestones/M142-proving-the-accumulation-not-just-the-pricing.md):
   M141's tests all fed a hand-built map to the pricing function, so a bug in the code that *builds*
   that map would have passed every one of them. No product code changed here.
