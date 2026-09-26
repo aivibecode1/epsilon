@@ -9,7 +9,7 @@
 
 ### Retain: explicit turn/queue behavior
 
-**Reference:** `references/pi-0.84.2/packages/agent/src/agent-loop.ts:166–174,208–214,259–267` separates steering, tool batches and follow-ups, and rejects all calls on a token-limit stop.
+**Reference:** `references/pi-0.85.1/packages/agent/src/agent-loop.ts:166–174,221–241,259–267` separates steering, tool batches and follow-ups, and rejects all calls on a token-limit stop. **Corrected 2026-09-26:** `208–214` did not contain the rejection — it is `226–235`, and the comment that states the rule is `227–229`: *"A 'length' stop means the output was cut off by the token limit, so every tool call in the message may carry truncated arguments. Fail them all instead of executing potentially borked calls."*
 **Epsilon:** `crates/epsilon-core/src/lib.rs:1037–1065,1125–1133,1208–1261` implements the same main checkpoints.
 
 This is already adopted, not missing work. Keep Epsilon's bounded conflict-aware scheduler (`crates/epsilon-core/src/exec.rs:183–256,540–606`) instead of copying unbounded `Promise.all` merely for parity. Add conformance tests for queue defaults/abnormal exits and fix F03's incomplete-stream path so the truncated-call guarantee survives the real transport.
@@ -18,7 +18,7 @@ This is already adopted, not missing work. Keep Epsilon's bounded conflict-aware
 
 ### Adopt next: session operations as coherent runtime APIs
 
-**Reference:** `references/pi-0.84.2/packages/coding-agent/src/core/agent-session.ts:2905–2935,2993–3068` implements navigation and optional abandoned-branch summary. `references/pi-0.84.2/packages/coding-agent/src/modes/rpc/rpc-types.ts:20–73` exposes correlated operations for abort, state, models, compaction and sessions.
+**Reference:** `references/pi-0.85.1/packages/coding-agent/src/core/agent-session.ts:3102–3116,3201–3215,3250–3270` implements navigation and optional abandoned-branch summary. **Corrected 2026-09-26:** the old `2905–2935,2993–3068` is retry backoff (`2908| const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);`) and bash execution (`2997| const result = await executeBashWithOperations(`) — no navigation content at all. The method is `async navigateTree(` at `:3113`; 0.85.1 has **no** `navigateTo`. `references/pi-0.85.1/packages/coding-agent/src/modes/rpc/rpc-types.ts:20–73` exposes correlated operations for abort, state, models, compaction and sessions.
 **Epsilon:** `crates/epsilon-tui/src/app.rs:1446–1477,1594–1608` implements copy-style fork and active-branch tree; `crates/epsilon-cli/src/rpc_mode.rs:16–35` exposes only six operations.
 
 The strongest product lesson is that a session action should mean the same thing from terminal and embedding APIs. Build shared runtime operations and test durable identity/history before extending UI labels. Prioritize abort/state/admission and real new/fork/tree behavior, not every RPC method at once.
@@ -27,10 +27,10 @@ The strongest product lesson is that a session action should mean the same thing
 
 ### Later: resources and isolated extension equivalence
 
-**Reference:** resource loader `references/pi-0.84.2/packages/coding-agent/src/core/resource-loader.ts:39–50`, templates `references/pi-0.84.2/packages/coding-agent/src/core/prompt-templates.ts:57–102`, extension SDK `references/pi-0.84.2/packages/coding-agent/src/core/extensions/types.ts:1198–1346`.
+**Reference:** resource loader `references/pi-0.85.1/packages/coding-agent/src/core/resource-loader.ts:40–52`, templates `references/pi-0.85.1/packages/coding-agent/src/core/prompt-templates.ts:57–102,265–285`, extension SDK `references/pi-0.85.1/packages/coding-agent/src/core/extensions/types.ts:1198–1346`.
 **Epsilon:** conventional roots/reload at `crates/epsilon-cli/src/runtime.rs:564–608` and `crates/epsilon-tui/src/app.rs:1805–1845`; process manifest/host at `crates/epsilon-ext/src/manifest.rs:18–37` and `crates/epsilon-ext/src/host.rs:130–186`.
 
-Adopt explicit resource origins, precedence, diagnostics and reload semantics, then template expansion. Preserve process isolation instead of importing in-process TypeScript extension assumptions. The full compatibility cost is material: see 03. Pi's newer `AgentHarness` scaffold has unavailable operations (`references/pi-0.84.2/packages/agent/src/harness/agent-harness.ts:347–420`); do not mistake its type declarations for proven durability.
+Adopt explicit resource origins, precedence, diagnostics and reload semantics, then template expansion. Preserve process isolation instead of importing in-process TypeScript extension assumptions. The full compatibility cost is material: see 03. Pi's newer `AgentHarness` scaffold has unavailable operations (`references/pi-0.85.1/packages/agent/src/harness/runtime/harness.ts:305–306`); do not mistake its type declarations for proven durability. **Corrected 2026-09-26 — this sentence previously cited the very thing it warns against.** It read "has unavailable operations (`agent-harness.ts:347–420`); do not mistake its **type declarations** for proven durability", but `347–420` is precisely a block of event-type declarations (`HarnessEventPayload`, `HarnessEvent`, `LaneTranscriptSnapshot`, `Events`) and contains no unavailable operation at all. The real evidence is one line elsewhere: `305| async watchSession(_context: Context): Promise<never> {` / `306| throw new SliceNotImplemented("watchSession");`. There is **one** such operation, not several, and its interface is declared at `agent-harness.ts:608` — which is the distinction the sentence was reaching for.
 
 ## DSH v0.1.1-rc.2 — Bounded execution and honest confinement
 
