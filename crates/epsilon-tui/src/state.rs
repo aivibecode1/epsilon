@@ -651,9 +651,8 @@ impl UiState {
         // `0ms`. A result whose call is not in the transcript (a replay that lost the
         // call, a result for a call from another branch) falls back to `now` and
         // honestly reports no elapsed time rather than inventing one.
-        let started_at_ms = self
-            .settle_call(&t.tool_call_id, status, now)
-            .unwrap_or(now);
+        let settled = self.settle_call(&t.tool_call_id, status, now);
+        let started_at_ms = settled.unwrap_or(now);
         let card_body = match edit_diff(t) {
             Some(diff) => CardBody::Diff(parse_diff(&diff)),
             None => CardBody::Text(body.clone()),
@@ -679,6 +678,40 @@ impl UiState {
         // the file or the line range — both of which the tool had already reported. The
         // renderer says what the tool did, using only facts the tool stated.
         let head = crate::renderers::result_head(&t.tool_name, &args, &t.details, &body);
+        // M155: the call card was settled above. *Finishing* it is the other half of that,
+        // and this used to be skipped: the call's status was updated and a **second** card
+        // was pushed beside it carrying the same headline and the same body. Painted, that
+        // is one tool call drawn twice, visible on every call and measured on a real
+        // console in M154. The comment above `settle_call` already stated the intent:
+        // \u0022the result settles the callQown row\u0022. The count of two was never the goal.
+        //
+        // A result with no call card to settle -- a replay that lost the call, a result
+        // carried over from another branch -- still gets its own row, because dropping it
+        // would lose the output entirely.
+        if settled.is_some()
+            && let Some(line) = self.lines.iter_mut().rev().find(|l| {
+                l.card
+                    .as_ref()
+                    .is_some_and(|c| c.tool_call_id == t.tool_call_id && c.ended_at_ms == Some(now))
+            })
+        {
+            if let Some(card) = line.card.as_mut() {
+                card.body = card_body;
+                card.head = head.clone();
+                if !args.is_null() {
+                    card.args = args.clone();
+                }
+            }
+            line.kind = if t.is_error {
+                LineKind::ToolResultErr
+            } else {
+                LineKind::ToolResultOk
+            };
+            line.text = head;
+            line.full = Some(body);
+            self.status = "tool done".into();
+            return;
+        }
         self.push_line(TranscriptLine {
             card: Some(Card {
                 name: t.tool_name.clone(),
@@ -1597,20 +1630,35 @@ mod tests {
         });
         st.apply(&AgentEvent::AgentEnd { messages: vec![] });
 
-        // The transcript holds what was said, and only that: assistant prose,
-        // the tool call, its result. Lifecycle state lives in the header, so a
-        // run produces no marker rows to scroll past.
+        // The transcript holds what was said, and only that: assistant prose and
+        // the tool call **settled into its result**. Lifecycle state lives in the
+        // header, so a run produces no marker rows to scroll past.
+        //
+        // M155: this used to be three rows — assistant, the call, the result —
+        // because settling the call's status and then pushing a *second* card beside
+        // it drew one tool call twice. The call row is not gone; it is the result
+        // row, which is where it always should have been.
         let kinds: Vec<LineKind> = st.lines().iter().map(|l| l.kind).collect();
+        assert_eq!(kinds, vec![LineKind::Assistant, LineKind::ToolResultOk]);
+        // One row carries both halves: which tool ran, and what it said.
+        // M153 moved the tool's identity out of the line text and into the card title:
+        // the row reads the command, and `bash` is what the card's title says. Asserting
+        // the line for the tool name would be asserting M153 never happened.
+        let row = &st.lines()[1].text;
+        assert!(row.contains("hi"), "{row:?}");
+        let card = st.lines()[1]
+            .card
+            .as_ref()
+            .expect("a tool row carries a card");
+        assert_eq!(card.name, "bash");
+        let CardBody::Text(body) = &card.body else {
+            panic!("a bash result is text, not a diff: {:?}", card.body);
+        };
         assert_eq!(
-            kinds,
-            vec![
-                LineKind::Assistant,
-                LineKind::ToolCall,
-                LineKind::ToolResultOk
-            ]
+            body.trim(),
+            "hi",
+            "the result body replaces the call's prompt"
         );
-        assert!(st.lines()[1].text.contains("bash"));
-        assert!(st.lines()[2].text.contains("hi"));
         // The header is where "a run is happening" is visible, so the state must
         // still know it even though no row says so.
         assert!(!st.running(), "the run ended");
@@ -2102,11 +2150,17 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_call_and_its_result_are_two_cards_but_one_call() {
-        // The shape the event stream has, and the shape a reader needs: the call
-        // is on screen (saying what is about to run) before the result exists, and
-        // the result settles the call's own row rather than leaving a permanently
-        // pending one to scroll past.
+    fn a_tool_result_settles_the_calls_own_card_rather_than_doubling_it() {
+        // The shape the event stream has, and the shape a reader needs: the call is
+        // on screen (saying what is about to run) before the result exists, and the
+        // result settles the call's own row rather than leaving a permanently pending
+        // one to scroll past.
+        //
+        // M155: this test used to be named `..._are_two_cards_but_one_call` and asserted
+        // `cards.len() == 2`, pinning a duplication. The name was the behaviour and the
+        // assertion was an artifact — the comment above already said the intent was to
+        // *settle* the call. Painting it in M154 showed one tool call drawn twice on
+        // every call, so the count is now 1.
         let mut st = UiState::new();
         st.apply(&AgentEvent::MessageEnd {
             message: Box::new(Message::Assistant(assistant(
@@ -2137,19 +2191,70 @@ mod tests {
             })),
         });
         let cards: Vec<&Card> = st.lines().iter().filter_map(|l| l.card.as_ref()).collect();
-        assert_eq!(cards.len(), 2, "the call row and the result row");
-        assert_eq!(cards[0].tool_call_id, "tc_7");
         assert_eq!(
-            cards[0].status,
+            cards.len(),
+            1,
+            "one call, one card: the result finishes the call's row instead of adding a twin"
+        );
+        let card = cards[0];
+        assert_eq!(card.tool_call_id, "tc_7");
+        assert_eq!(
+            card.status,
             CardStatus::Ok,
             "the result must settle the call's own row"
+        );
+        assert!(card.ended_at_ms.is_some(), "a settled call has a duration");
+        assert_eq!(card.name, "bash");
+        // And it is *finished*, not merely re-statused: the body is the result's.
+        let CardBody::Text(body) = &card.body else {
+            panic!("a bash result is text, not a diff: {:?}", card.body);
+        };
+        assert_eq!(
+            body.trim(),
+            "ok",
+            "the result body replaces the call's prompt"
+        );
+        // The row is re-kinded too: a finished call is drawn with the result's
+        // colour and glyph, not the call's, or it would still look like a pending
+        // request that never came back.
+        assert_eq!(
+            st.lines().iter().map(|l| l.kind).collect::<Vec<_>>(),
+            vec![LineKind::ToolResultOk],
+            "a settled call is a result row, not a call row"
         );
         assert!(
             cards[0].ended_at_ms.is_some(),
             "a settled call has a duration"
         );
-        assert_eq!(cards[1].status, CardStatus::Ok);
-        assert_eq!(cards[1].name, "bash");
+    }
+
+    /// The other half of M155, and the reason the fix is not simply
+    /// `one card per tool_call_id`. A result whose call is not in the
+    /// transcript — a replay that lost it, a result carried over from another branch —
+    /// has no row to settle, and dropping it would lose the tool's output entirely.
+    #[test]
+    fn a_result_with_no_call_in_the_transcript_still_gets_its_own_row() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::ToolResult(ToolResultMessage {
+                id: new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_orphan".into(),
+                tool_name: "read".into(),
+                content: vec![ContentBlock::text("fn main() {}")],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            })),
+        });
+        let cards: Vec<&Card> = st.lines().iter().filter_map(|l| l.card.as_ref()).collect();
+        assert_eq!(
+            cards.len(),
+            1,
+            "an orphaned result must not be swallowed: the output is all there is"
+        );
+        assert_eq!(cards[0].tool_call_id, "tc_orphan");
+        assert_eq!(cards[0].status, CardStatus::Ok);
     }
 
     #[test]

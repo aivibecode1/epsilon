@@ -5,6 +5,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- A tool call is no longer drawn twice — the result settles the call's own card (M155).
+
 - Tool cards now say what the tool actually did — `read src/main.rs:10–50 of 300`
   instead of 400 characters of the file in the header line (M153).
 
