@@ -1252,14 +1252,20 @@ impl SessionStore {
     /// summarizer billed to a different model than the one in the header cannot be priced
     /// from the header's model, and guessing would be the M141 defect all over again.
     ///
-    /// Deliberately reads `UsageAccount` entries only, and **not** the `usage` field on
-    /// `Compaction`/`BranchSummary`. Those fields are written (M144) but predate this
-    /// reader, and an older session file can carry a compaction whose usage was recorded
-    /// with no model to price it against. Counting such a row would mean inventing a
-    /// model; leaving it out means an old session reports a slightly lower total, which
-    /// is the honest direction to be wrong in. A test asserts that a compaction with
-    /// usage but no accounting entry is not counted, so this is a decision under test
-    /// rather than a comment that can drift from the code.
+    /// Reads the bill **on** each `Compaction`/`BranchSummary` entry (M145) — never a
+    /// sidecar and never a second entry. That is pi's shape (`session-manager.ts:68-92`)
+    /// and it is load-bearing: a separate accounting row becomes the file's *last* entry,
+    /// which `Agent::pop_last_message` pops to discard a failed turn, so a rollback could
+    /// separate a summary from its cost (F23). One entry cannot be half-removed.
+    ///
+    /// **A bill with no `model_id` is skipped, not guessed.** Sessions written before M145
+    /// carry a compaction's `usage` and no charging model, and pi's v1 files carry neither.
+    /// Counting those would mean inventing a rate, which is the M141 defect one layer up;
+    /// skipping them means an old session reports a slightly lower total, which is the
+    /// honest direction to be wrong in. Both arms are asserted in
+    /// `a_legacy_compaction_with_usage_but_no_accounting_entry_is_not_counted`: the same
+    /// entry without a model is skipped, and the same entry *with* one is counted — so a
+    /// reader that skipped everything could not pass.
     ///
     /// `read_all` rather than `branch_entries`: billing belongs to the whole file. A
     /// compaction performed on a branch the user later navigated away from was still paid
@@ -1267,20 +1273,31 @@ impl SessionStore {
     pub fn usage_accounts(&self) -> Result<BTreeMap<String, BTreeMap<String, Usage>>, StoreError> {
         let mut by_model: BTreeMap<String, BTreeMap<String, Usage>> = BTreeMap::new();
         for entry in self.read_all()? {
-            let EntryKind::UsageAccount {
-                model_id,
-                reason,
-                usage,
-                ..
-            } = entry.kind
-            else {
+            // Both bill-carrying kinds, matched on their own fields rather than destructured,
+            // so a new field on either is a compile error here instead of a silently
+            // dropped bill.
+            let (model_id, reason, usage) = match entry.kind {
+                EntryKind::Compaction {
+                    usage, model_id, ..
+                } => (model_id, "compaction", usage),
+                EntryKind::BranchSummary {
+                    usage, model_id, ..
+                } => (model_id, "branch_summary", usage),
+                _ => continue,
+            };
+            // A bill with no model cannot be priced, and a bill with no usage is nothing to
+            // count. Sessions written before M145 have the first case: the summarizer's usage
+            // was recorded but nothing recorded which model ran it. Skipping under-reports
+            // an old session, which is the honest direction to be wrong in; the alternative
+            // is M141's defect, inventing a rate.
+            let (Some(model_id), Some(usage)) = (model_id, usage) else {
                 continue;
             };
             let by_reason = by_model.entry(model_id).or_default();
-            match by_reason.get_mut(&reason) {
+            match by_reason.get_mut(reason) {
                 Some(seen) => *seen = seen.combine(usage),
                 None => {
-                    by_reason.insert(reason, usage);
+                    by_reason.insert(reason.to_string(), usage);
                 }
             }
         }
@@ -1357,6 +1374,7 @@ impl SessionStore {
         branch_from: Option<&str>,
         summary: impl Into<String>,
         usage: Option<Usage>,
+        model_id: Option<String>,
     ) -> Result<SessionEntry, StoreError> {
         match branch_from {
             Some(target) => {
@@ -1380,6 +1398,10 @@ impl SessionStore {
             from_id,
             summary: summary.into(),
             usage,
+            // M145: the model that produced the summary, recorded beside the usage because
+            // Epsilon prices from the catalog when it tallies. A caller with no bill passes
+            // no model, and the reader skips the row either way.
+            model_id,
         })
     }
 
@@ -2059,7 +2081,14 @@ pub(crate) fn heal_legacy_kind(
                     .unwrap_or(0),
                 retained_tail: Vec::new(),
                 details: compaction_target.map(|id| serde_json::json!({"firstKeptEntryId": id})),
+                // pi's v1 format records no usage on a compaction, so an imported session
+                // has a summary and no bill at all. `None` is the honest value, and the
+                // reader skips it rather than pricing a summary nobody was charged for
+                // (M145).
                 usage: None,
+                // And no charging model, for the same reason. pi's file does not name one,
+                // and inventing it would be pricing a bill that does not exist.
+                model_id: None,
             }
         }
         // The two entry kinds whose pi shape lines up with an Epsilon variant field for field,

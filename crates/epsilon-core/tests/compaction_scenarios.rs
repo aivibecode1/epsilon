@@ -632,7 +632,7 @@ async fn a_sibling_branch_sees_its_own_summary_and_not_the_other_branchs_compact
     let tip_id = {
         let mut st = store.lock().unwrap();
         let summary = st
-            .branch_with_summary(Some(&root_id), "explored branch A", None)
+            .branch_with_summary(Some(&root_id), "explored branch A", None, None)
             .unwrap();
         assert_eq!(
             st.leaf_id().as_deref(),
@@ -732,5 +732,118 @@ async fn a_sibling_branch_sees_its_own_summary_and_not_the_other_branchs_compact
     assert!(
         !seen.iter().any(|t| t.contains("<compaction_summary>")),
         "branch A's compaction must not leak into the sibling: {seen:?}"
+    );
+}
+
+// -------------------------------------------------------------------------------------
+// M145 / F22 / F23 — a compaction is a real provider call, so it is a real bill.
+// -------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_compaction_records_its_bill_on_its_own_entry() {
+    // This is the test that found F23. It drives a real compaction through a real agent
+    // with a store attached, then asks the store what it recorded. M144 appended a SEPARATE
+    // accounting entry, which made the bill the file's last entry — and
+    // `Agent::pop_last_message` pops the last entry to discard a failed turn, so the pop ate
+    // the bill and left an unbilled compaction behind:
+    //   kinds=["message", "message", "message", "compaction", "message", "message",
+    //          "compaction", "message"]
+    // The bill now lives on the compaction entry, so there is nothing to separate.
+    //
+    // Same shape as `pressure_triggers_compaction_and_persists_entry`, which is known to
+    // fire: 4000-char echo turns (~2000 estimated tokens each) against a 1500 threshold,
+    // plus a trailing text step so the loop ends cleanly. Smaller steps made the trigger
+    // miss, and a test that fails before its subject is not evidence.
+    let (agent, handle, _dir) = setup(
+        vec![
+            big_echo_call("tc_1", 4000),
+            big_echo_call("tc_2", 4000),
+            epsilon_llm::FauxStep::say("final answer"),
+        ],
+        LoopLimits {
+            compaction_threshold_tokens: 1500,
+            compaction_tail_tokens: 300,
+            max_turns: 8,
+            ..Default::default()
+        },
+    );
+
+    let mut rx = agent.subscribe();
+    let _ = agent.run(user("work hard enough to compact")).await;
+    // The same drain the neighbouring scenarios use, so a compaction bookend that has not
+    // been consumed cannot be mistaken for one that has not happened.
+    let (started, _) = drain_compactions(&mut rx);
+    assert!(
+        started > 0,
+        "the pressure trigger never fired, so nothing was billed"
+    );
+
+    // The faux provider stamps usage in `blank()` (faux.rs:167) with no seam to change it.
+    // It is NOT a constant: a summarizer's prompt carries the whole shadowed history, so
+    // the real stamp here is 200 prompt / 100 completion, not `blank()`'s 100/50. The first
+    // draft of this test asserted `blank()`'s constants and failed twice — `left: 200` then
+    // `left: 100` — with the bill recorded correctly and my expectations the thing that was
+    // wrong both times. Asserting numbers the provider cannot produce would have been a test
+    // of nothing; a *fixture wish* is not a measurement.
+    let accounts = handle.lock().unwrap().usage_accounts().unwrap();
+    assert!(
+        !accounts.is_empty(),
+        "a billed compaction recorded nothing, so its cost is invisible"
+    );
+    let (model_id, by_reason) = accounts.iter().next().expect("at least one row");
+    let compaction = by_reason
+        .get("compaction")
+        .expect("the reader says what kind of call this was");
+    assert_eq!(
+        compaction.input, 200,
+        "the summarizer's own prompt tokens, not a guess at them"
+    );
+    assert_eq!(compaction.output, 100);
+    assert!(
+        !model_id.is_empty(),
+        "a bill with no charging model cannot be priced, and must be skipped rather than \
+         stored unattributable"
+    );
+
+    // And the bill is on the compaction entry itself — one entry, so a positional pop takes
+    // the summary and its cost together (F23).
+    let st = handle.lock().unwrap();
+    let kinds: Vec<String> = st
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .map(|e| e.kind.wire_tag().unwrap_or_else(|| "?".into()))
+        .collect();
+    assert!(
+        !kinds.iter().any(|k| k == "usage_account"),
+        "a separate accounting entry is exactly the shape F23 rejects: {kinds:?}"
+    );
+    // The reader reports a SUM and an entry holds ONE bill, so the invariant is not
+    // equality between them — it is that the reader's total equals the sum of the entries.
+    // The pressure threshold can fire twice here (100 + 100 = 200), and asserting one entry's
+    // 100 against the reader's 200 is how this test failed twice while the code was right.
+    let entries: Vec<(Option<epsilon_contracts::message::Usage>, Option<String>)> = st
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            EntryKind::Compaction {
+                usage, model_id, ..
+            } => Some((usage, model_id)),
+            _ => None,
+        })
+        .collect();
+    let summed_input: u64 = entries
+        .iter()
+        .filter_map(|(u, _)| u.as_ref())
+        .map(|u| u.input)
+        .sum();
+    assert_eq!(
+        summed_input, compaction.input,
+        "the reader's total must equal the sum of the bills on the entries, not one of them"
+    );
+    assert!(
+        entries.iter().any(|(u, m)| u.is_some() && m.is_some()),
+        "some compaction entry must carry both a bill and the model that was charged"
     );
 }

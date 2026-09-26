@@ -1,6 +1,6 @@
 # F22 — compaction usage is stored and never read (port fidelity: `getSessionStats`)
 
-**Status:** PARTIALLY FIXED by M144. **The compaction half is closed; the branch-summary half is not**, and the difference turned out to be a separate defect rather than the same one twice. Found while building M143; deliberately not folded into it.
+**Status:** the **compaction half is CLOSED** (M145 — the bill is recorded on the entry that incurred it, keyed by the model actually charged, and read back on resume). **The branch-summary half is still OPEN**, and the difference turned out to be a separate defect rather than the same one twice. Found while building M143; deliberately not folded into it.
 **Severity:** P2 — the number is wrong, not missing, and it is wrong *low*.
 
 ## The gap
@@ -98,9 +98,9 @@ to take it (`reason: "branch_summary"`) when that happens.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | A compaction's real usage is recorded durably | done (M144) |
-| 2 | It is keyed by the model **actually charged**, not the header's | done (M144) — a test fails if a second model's row is merged into the first |
-| 3 | Repeated compactions **add** rather than overwrite | done (M144) |
-| 4 | A resumed session reads the rows back into the totals | done (M144) — `app.rs` adds them *after* hydration, and a test asserts why that order matters |
-| 5 | A legacy compaction with usage but no charging model is **not** priced at an invented rate | done (M144) — under-reporting is the chosen direction to be wrong in |
+| 1 | A compaction's real usage is recorded durably | done (M145) |
+| 2 | It is keyed by the model **actually charged**, not the header's | done (M145) — a test fails if a second model's row is merged into the first |
+| 3 | Repeated compactions **add** rather than overwrite | done (M145) — the write-side test asserts the reader's total equals the SUM over entries, because the threshold fires twice in that fixture |
+| 4 | A resumed session reads the rows back into the totals | done (M145) — `app.rs` adds them *after* hydration, and a test asserts why that order matters |
+| 5 | A legacy compaction with usage but no charging model is **not** priced at an invented rate | done (M145) — under-reporting is the chosen direction to be wrong in. Both arms are asserted: usage with no model is skipped, and the SAME entry with a model IS counted |
 | 6 | A branch summary is a real billed call, attributed like a compaction | **open** — needs the call to exist first |

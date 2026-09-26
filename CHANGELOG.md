@@ -10,9 +10,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   your whole history and is billed for it, and the usage was discarded even though the response was in scope.
   Charges are keyed by **the model that was actually charged**, never by whichever model the conversation is on,
   and a resumed session folds them into its totals.
-  **Nothing writes those charges yet** — the write side collided with the turn-discard path and was reverted,
-  so this fixes no user-visible number on its own. It is the measuring apparatus for F23, which is the
-  precondition. No compaction cost is claimed as fixed here.
+  **M145 closed the loop**: the bill is now written, on the compaction entry that incurred it — pi's shape,
+  and the reason M144's separate accounting row was reverted. A compaction is a real provider call and its
+  cost now shows up in your session's tokens and cost, in exactly the long sessions where you compact.
+  The bill carries the **model that was charged**, so it is priced correctly even if you `/model`-switched
+  since; a pre-M145 session that recorded a charge with no model is reported slightly low rather than
+  guessed at a rate.
 - **A summarization bill reaches the token counters, not only the cost breakdown (M144).** Found by M144's own
   test, and the same class of defect the milestone exists to close, one function over.
 

@@ -72,11 +72,19 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+- [M145 — a bill lives on the entry that incurred it](milestones/M145-a-bill-lives-on-the-entry-that-incurred-it.md)
+  — **closes F23 and the compaction half of F22**. M144's write side was reverted because a *separate* accounting
+  row becomes the file's last entry, and `pop_last_message` pops the last entry to discard a failed turn — so a
+  rollback could separate a summary from its cost. pi has no such entry: `Compaction.usage` sits on the compaction
+  itself. Epsilon now does the same, plus the charging model, because its `Usage` is four token counts with no
+  precomputed cost. One entry cannot be half-removed. The regression test reproduces the pop and asserts the bill
+  goes with it, and a negative control reverts to M144's shape for a decisive RED.
 - [M144 — a summarization is a real bill](milestones/M144-a-summarization-is-a-real-bill.md) — **read side
   only**. Compaction resends the whole history and is charged for it, and the response was in scope at the write
   site while the entry said `usage: None`; pi counts this charge explicitly so totals "reflect what was actually
   billed". Epsilon can now read, group and total such charges per model, and a resumed session folds them in.
-  **The write side was reverted** — see F23, where `pop_last_message` can eat a bill. Carries the fourth way a
+  **The write side was reverted** — see F23, where `pop_last_message` can eat a bill, and **M145**, which fixed it
+  by deleting the second entry rather than defending it. Carries the fourth way a
   negative control misleads: this slice's tests all exercised the *reader* with hand-built rows, so reverting the
   *writer* left 249 tests green.
 - [M143 — the session says where the money went](milestones/M143-the-session-says-where-the-money-went.md):

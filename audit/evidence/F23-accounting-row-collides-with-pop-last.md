@@ -1,7 +1,11 @@
 # F23 — a durable accounting entry collides with `pop_last_message`
 
-**Status:** OPEN. Found while attempting F22's write side; the write side was reverted and
-this is recorded instead of shipped.
+**Status:** CLOSED by M145 — the collision is now structurally impossible, and a store test
+(`a_pop_that_discards_a_turn_takes_its_bill_with_it`) reproduces the pop and asserts the bill
+goes with the summary. **The fix was to delete M144's second entry**, adopting pi's shape: the
+bill is a field on the `Compaction` that incurred it, so there is nothing for a positional
+rollback to separate. That is option (3) from the analysis below — reached by reading the
+reference implementation rather than by choosing among the options.
 **Severity:** P2, but it is a **precondition** for F22, not a parallel defect.
 
 ## What was attempted

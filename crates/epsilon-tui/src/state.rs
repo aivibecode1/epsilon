@@ -690,7 +690,7 @@ impl UiState {
     /// Folds recorded summarization bills into the per-model rows.
     ///
     /// M144/F22. **A separate entry point from `hydrate_from_history` on purpose.** That
-    /// method takes the store's *message* view, and a `UsageAccount` is not a message —
+    /// method takes the store's *message* view, and a `Compaction` entry is not a message —
     /// it never enters LLM context and is not part of the shadowed history. Routing
     /// billing through the message view would mean either pretending the entry is a
     /// message or widening that method's contract, and the first is the mistake that let

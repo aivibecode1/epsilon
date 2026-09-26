@@ -2152,7 +2152,21 @@ impl Agent {
                 tokens_before: estimate_messages_before as u64,
                 retained_tail: kept_tail.to_vec(),
                 details: Some(serde_json::json!({ "pruned_tool_results": pruned_count })),
-                usage: None,
+                // M145/F22: the summarizer's real bill, on the entry that incurred it. The
+                // response has been in scope here all along and the usage was discarded, so
+                // a genuine provider call was free in every number the user could see.
+                //
+                // One entry, not two. M144 appended a SEPARATE accounting entry after this
+                // one and was reverted: that row became the file's last entry, and
+                // `pop_last_message` pops the last entry to discard a failed turn, so a
+                // rollback separated a summary from its cost (F23). pi puts the usage here
+                // for the same reason (`session-manager.ts:68-80`).
+                //
+                // The model comes from the `ModelRef` the summarizer actually ran with, not
+                // from the header at read time — Epsilon prices from the catalog when it
+                // tallies, so a bill with no model cannot be priced at all.
+                usage: Some(answer.usage),
+                model_id: Some(model.id.clone()),
             }) {
                 // F07: nothing has diverged yet — memory is untouched and the caller reports the
                 // failure — but the store just refused a durable write, so a later request must

@@ -188,6 +188,7 @@ fn model_view_shadows_compacted_ranges_but_file_keeps_them() {
             retained_tail: vec![user_msg("recent")],
             details: None,
             usage: None,
+            model_id: None,
         })
         .unwrap();
 
@@ -226,6 +227,7 @@ fn a_second_compaction_replaces_the_superseded_projection() {
             retained_tail: vec![user_msg("tail-1")],
             details: None,
             usage: None,
+            model_id: None,
         })
         .unwrap();
     store
@@ -241,6 +243,7 @@ fn a_second_compaction_replaces_the_superseded_projection() {
             retained_tail: vec![user_msg("tail-2")],
             details: None,
             usage: None,
+            model_id: None,
         })
         .unwrap();
     store
@@ -2332,7 +2335,7 @@ fn a_branch_summary_lands_once_on_the_new_branch_and_never_on_the_abandoned_one(
     // not leave the leaf somewhere the caller did not ask for.
     let leaf_before = store.leaf_id();
     let err = store
-        .branch_with_summary(Some("ent_no_such_entry"), "nope", None)
+        .branch_with_summary(Some("ent_no_such_entry"), "nope", None, None)
         .unwrap_err();
     assert!(err.to_string().contains("no such entry"), "{err}");
     assert_eq!(
@@ -2343,7 +2346,7 @@ fn a_branch_summary_lands_once_on_the_new_branch_and_never_on_the_abandoned_one(
 
     // Branch from the root, summarizing the path being left behind.
     let summary = store
-        .branch_with_summary(Some(&root.id), "explored the abandoned path", None)
+        .branch_with_summary(Some(&root.id), "explored the abandoned path", None, None)
         .unwrap();
     assert_eq!(
         summary.parent_id.as_deref(),
@@ -2364,10 +2367,15 @@ fn a_branch_summary_lands_once_on_the_new_branch_and_never_on_the_abandoned_one(
             from_id,
             summary: text,
             usage,
+            model_id,
         } => {
             assert_eq!(from_id.as_str(), root.id.as_str());
             assert_eq!(text, "explored the abandoned path");
             assert!(usage.is_none());
+            // The pairing matters: a bill with no model is unpriceable, so "no usage" and
+            // "no charging model" have to be true together or the entry claims to bill
+            // something nobody can charge for.
+            assert!(model_id.is_none());
         }
         other => panic!("expected a branch summary, got {other:?}"),
     }
@@ -2449,7 +2457,9 @@ fn an_empty_branch_summary_is_appended_but_not_projected() {
         })
         .unwrap();
 
-    let empty = store.branch_with_summary(Some(&leaf.id), "", None).unwrap();
+    let empty = store
+        .branch_with_summary(Some(&leaf.id), "", None, None)
+        .unwrap();
     assert_eq!(
         store.read_all().unwrap().len(),
         2,
@@ -2477,7 +2487,7 @@ fn an_empty_branch_summary_is_appended_but_not_projected() {
     // The guard is exactly `is_empty`: whitespace is truthy in pi's check, so a
     // whitespace-only summary projects like any other text.
     let spaced = store
-        .branch_with_summary(Some(&empty.id), "   ", None)
+        .branch_with_summary(Some(&empty.id), "   ", None, None)
         .unwrap();
     let projected = store
         .model_view()
@@ -2518,7 +2528,7 @@ fn branch_with_summary_maps_pis_target_shapes_exactly() {
     // first did) makes the move a no-op, so the assertion could not see it happen.
     assert_eq!(store.leaf_id().as_deref(), Some(b.id.as_str()));
     let at_a = store
-        .branch_with_summary(Some(&a.id), "summarized the abandoned tail", None)
+        .branch_with_summary(Some(&a.id), "summarized the abandoned tail", None, None)
         .unwrap();
     assert_eq!(
         at_a.parent_id.as_deref(),
@@ -2548,7 +2558,7 @@ fn branch_with_summary_maps_pis_target_shapes_exactly() {
     // `None` is pi's `branchWithSummary(null, …)`: the summary is itself a new ROOT and
     // records `fromId = "root"`; the leaf it replaces is abandoned, not re-used.
     let from_root = store
-        .branch_with_summary(None, "branch from before the start", None)
+        .branch_with_summary(None, "branch from before the start", None, None)
         .unwrap();
     assert_eq!(
         from_root.parent_id, None,
@@ -3372,11 +3382,13 @@ fn a_compaction_that_was_billed_shows_up_in_the_sessions_accounting() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
     store
-        .append(EntryKind::UsageAccount {
-            model_id: "claude-sonnet-4".into(),
-            provider: "anthropic".into(),
-            reason: "compaction".into(),
-            usage: billed(12_000, 400),
+        .append(EntryKind::Compaction {
+            summary: "earlier work".into(),
+            tokens_before: 12_000,
+            retained_tail: Vec::new(),
+            details: None,
+            usage: Some(billed(12_000, 400)),
+            model_id: Some("claude-sonnet-4".into()),
         })
         .unwrap();
 
@@ -3394,11 +3406,13 @@ fn accounting_is_keyed_by_the_model_that_was_charged_not_the_one_in_the_header()
     let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
     for (model, input) in [("expensive", 5_000u64), ("cheap", 20_000u64)] {
         store
-            .append(EntryKind::UsageAccount {
-                model_id: model.into(),
-                provider: "anthropic".into(),
-                reason: "compaction".into(),
-                usage: billed(input, 100),
+            .append(EntryKind::Compaction {
+                summary: "earlier work".into(),
+                tokens_before: input,
+                retained_tail: Vec::new(),
+                details: None,
+                usage: Some(billed(input, 100)),
+                model_id: Some(model.into()),
             })
             .unwrap();
     }
@@ -3417,11 +3431,13 @@ fn two_compactions_by_one_model_add_up_rather_than_the_last_one_winning() {
     let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
     for input in [3_000u64, 1_000] {
         store
-            .append(EntryKind::UsageAccount {
-                model_id: "m".into(),
-                provider: "anthropic".into(),
-                reason: "compaction".into(),
-                usage: billed(input, 50),
+            .append(EntryKind::Compaction {
+                summary: "earlier work".into(),
+                tokens_before: input,
+                retained_tail: Vec::new(),
+                details: None,
+                usage: Some(billed(input, 50)),
+                model_id: Some("m".into()),
             })
             .unwrap();
     }
@@ -3434,7 +3450,7 @@ fn two_compactions_by_one_model_add_up_rather_than_the_last_one_winning() {
 #[test]
 fn a_legacy_compaction_with_usage_but_no_accounting_entry_is_not_counted() {
     // A session written before M144 has a `Compaction` whose `usage` is populated and no
-    // `UsageAccount` beside it. Counting it would mean inventing a model to price it
+    // charging model beside it. Counting it would mean inventing a model to price it
     // against — the M141 defect, reintroduced. Omitting it under-reports instead, which
     // is the honest direction to be wrong in. This test is what makes that a decision
     // rather than a comment that can drift.
@@ -3447,11 +3463,70 @@ fn a_legacy_compaction_with_usage_but_no_accounting_entry_is_not_counted() {
             retained_tail: Vec::new(),
             details: None,
             usage: Some(billed(9_000, 300)),
+            model_id: None,
         })
         .unwrap();
 
     assert!(
         store.usage_accounts().unwrap().is_empty(),
         "an unattributable charge must not be priced at some model's rate"
+    );
+
+    // The other arm, and the reason the field is `Option`: the SAME entry with a model
+    // recorded is counted. Without both halves, a reader that skipped everything would
+    // pass the test above and silently under-report every future session.
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut store2 = SessionStore::open(dir2.path().join("s.jsonl")).unwrap();
+    store2
+        .append(EntryKind::Compaction {
+            summary: "earlier work".into(),
+            tokens_before: 9_000,
+            retained_tail: Vec::new(),
+            details: None,
+            usage: Some(billed(9_000, 300)),
+            model_id: Some("m".into()),
+        })
+        .unwrap();
+    assert_eq!(
+        store2.usage_accounts().unwrap()["m"]["compaction"].input,
+        9_000,
+        "a bill that names its charging model is not unattributable"
+    );
+}
+
+#[test]
+fn a_pop_that_discards_a_turn_takes_its_bill_with_it() {
+    // F23, the regression. M144 appended a SEPARATE accounting entry after the compaction,
+    // which made the bill the file's last entry — and `pop_last_message` pops the last entry
+    // to discard a failed turn, so the pop ate the bill and left an unbilled compaction
+    // behind. With the bill on the compaction entry itself there is nothing to separate, and
+    // this test is what makes that structural rather than incidental.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    store
+        .append(EntryKind::Compaction {
+            summary: "earlier work".into(),
+            tokens_before: 4_000,
+            retained_tail: Vec::new(),
+            details: None,
+            usage: Some(billed(4_000, 120)),
+            model_id: Some("m".into()),
+        })
+        .unwrap();
+    assert_eq!(
+        store.usage_accounts().unwrap()["m"]["compaction"].input,
+        4_000
+    );
+
+    // Exactly what `Agent::pop_last_message` does to undo a turn it must not keep.
+    let popped = store.pop_last().unwrap().expect("something to pop");
+    assert!(
+        matches!(popped.kind, EntryKind::Compaction { .. }),
+        "the pop removed something that is not the compaction"
+    );
+    assert!(
+        store.usage_accounts().unwrap().is_empty(),
+        "a discarded turn must take its bill with it, or the total over-reports work that \
+         was thrown away"
     );
 }

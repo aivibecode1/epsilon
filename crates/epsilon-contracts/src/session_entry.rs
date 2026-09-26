@@ -129,7 +129,6 @@ pub const KNOWN_ENTRY_KINDS: &[&str] = &[
     "active_tools_change",
     "compaction",
     "branch_summary",
-    "usage_account",
     "custom",
     "turn_end",
     "label",
@@ -178,7 +177,26 @@ pub enum EntryKind {
         /// Files read/modified accumulated across compacted history (feeds future summaries).
         details: Option<serde_json::Value>,
         /// Usage of the summarization call(s).
+        ///
+        /// M145. pi puts the bill on the entry that incurred it
+        /// (`session-manager.ts:68-80`) and so has no separate accounting entry to keep in
+        /// step with this one. That is the whole reason: a *second* entry appended after this
+        /// one becomes the file's last entry, and `Agent::pop_last_message` pops the last
+        /// entry to discard a failed turn (F23) — so the bill and the summary it bills can
+        /// be separated by a rollback. One entry cannot be half-removed.
         usage: Option<Usage>,
+        /// Catalog model id of the model that performed the summarization, when known.
+        ///
+        /// Epsilon needs this where pi does not: pi's `Usage` carries a pre-computed
+        /// `cost`, so aggregating needs no attribution, while Epsilon prices from the
+        /// catalog at read time — a bill with no model cannot be priced at all.
+        ///
+        /// `None` means *not recorded*, not *free*: sessions written before M145 have
+        /// `usage` and no model here, and the reader skips them rather than inventing a
+        /// rate. pi's own fallback here is the literal bucket `"Tools/summaries"`
+        /// (`usage-totals.ts:51-53`), which is a display grouping for an already-known cost,
+        /// not an attribution — copying it would price a summarizer at an arbitrary rate.
+        model_id: Option<String>,
     },
     /// Summary of an abandoned branch created when navigating elsewhere.
     BranchSummary {
@@ -187,40 +205,14 @@ pub enum EntryKind {
         /// Summary text of the abandoned work.
         summary: String,
         /// Usage of the summarization call.
+        ///
+        /// M145: same contract as [`EntryKind::Compaction`]'s `usage` — the bill lives on
+        /// the entry that incurred it. Still `None` for every current caller, because Epsilon
+        /// makes no summarization call when abandoning a branch (F22's second half); the
+        /// field is what makes recording one possible, not a claim that it happens.
         usage: Option<Usage>,
-    },
-    /// A summarization call billed to a model, as a durable accounting entry.
-    ///
-    /// M144. F22: `Compaction` and `BranchSummary` carried a `usage` field that nothing
-    /// ever read, and — worse — the compaction path wrote `usage: None` even though the
-    /// summarizer's response was in scope. Compaction is a real provider call: it sends the
-    /// whole history to a model and bills for it. That money was spent and never counted,
-    /// so the session's token totals and cost under-reported, worst in exactly the long
-    /// sessions where cost matters. pi aggregates this usage explicitly so its totals
-    /// "reflect what was actually billed" (`agent-session.ts:3340`).
-    ///
-    /// This entry exists because **price is a property of the model that consumed the
-    /// tokens**, which is the same reason M141 had to split the session's accounting by
-    /// model. A summary's tokens cannot be attributed to whichever model happens to be
-    /// selected when `/session` is read, so the model that performed the summarization is
-    /// recorded here, at write time, where it is known.
-    ///
-    /// It is a separate entry rather than a new field on `Compaction` so that accounting
-    /// does not have to interpret the semantic of every other entry kind — a `Compaction`
-    /// with `usage: None` (an older session, a failed summarization) would otherwise be
-    /// indistinguishable from one that was never billed.
-    UsageAccount {
-        /// Model that performed the billed call, as recorded in the session file.
-        model_id: String,
-        /// Provider that served it, when known. Empty string when the caller did not have
-        /// it, which is honest: an empty provider is better than an invented one.
-        provider: String,
-        /// What the call was for: `"compaction"`, `"branch_summary"`, or another label
-        /// this build adds later. A free-form tag rather than an enum so a future caller
-        /// does not have to widen a contract that is only ever read for grouping.
-        reason: String,
-        /// The provider's own usage report for the call.
-        usage: Usage,
+        /// Catalog model id of the model that performed the summarization, when known.
+        model_id: Option<String>,
     },
     /// Extension/harness state that never enters LLM context.
     Custom {
@@ -421,12 +413,30 @@ mod tests {
                 tokens_before: 1,
                 retained_tail: vec![],
                 details: None,
-                usage: None,
+                usage: Some(Usage {
+                    input: 7,
+                    output: 3,
+                    cache_read: 11,
+                    cache_write: 0,
+                    // Provider-reported, and deliberately NOT the sum of the fields above:
+                    // a round-trip test that set it to the sum could not tell the two apart.
+                    total_tokens: 25,
+                }),
+                // Not `None`: this is the round-trip test for every kind, so a field set
+                // to `None` here would pass whether or not it survives serialization.
+                model_id: Some("test-model".into()),
             },
             EntryKind::BranchSummary {
                 from_id: "ent_a".into(),
                 summary: "s".into(),
-                usage: None,
+                usage: Some(Usage {
+                    input: 5,
+                    output: 1,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: 6,
+                }),
+                model_id: Some("branch-model".into()),
             },
             EntryKind::Custom {
                 custom_type: "c".into(),
@@ -441,15 +451,6 @@ mod tests {
             },
             EntryKind::SessionInfo {
                 name: Some("title".into()),
-            },
-            // M144. Absent here, the guard fails with `left: 10, right: 11` and this
-            // variant is invisible to every "which kinds exist" question the contract
-            // asks — including the one that just asked.
-            EntryKind::UsageAccount {
-                model_id: "m".into(),
-                provider: "anthropic".into(),
-                reason: "compaction".into(),
-                usage: Usage::default(),
             },
         ];
         assert_eq!(
@@ -658,7 +659,10 @@ mod tests {
                 tokens_before: 123456,
                 retained_tail: vec![assistant],
                 details: None,
+                // This test is about LLM visibility, not billing; the billed shape is
+                // covered by the round-trip test above.
                 usage: None,
+                model_id: None,
             },
         };
         assert!(!entry.is_llm_visible());
