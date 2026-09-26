@@ -71,7 +71,13 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   stream because the concrete `Response` had made chunk framing untestable — **that is why the
   defect survived years**. `bytes` added as a direct dep (already compiled via reqwest, same
   1.12.1) — ADR-017 amendment.
-- **F23 (OPEN, blocks F22) — a durable `UsageAccount` row collides with `pop_last_message`.** That fn pops
+- ~~F23~~ **CLOSED by M145 (`9c61af7`), and with it the compaction half of F22.** The bill moved onto the
+  `Compaction` entry that incurred it — pi's shape, and `UsageAccount` is **deleted**, not defended. Epsilon also
+  records the charging *model*, which pi does not need (its `Usage` has a precomputed `cost`; ours is four token
+  counts priced from a catalog at read time). A bill with no model is **skipped, not guessed** — inventing a rate is
+  M141 one layer up. **62 binaries, 1,232 passed (+2 on M144j)**, all five gates green, but as five direct commands,
+  not one battery: see the battery trap below. Negative control: M144's shape → 1 failed, 10 passed.
+- **(history) F23 was OPEN and blocked F22 — a durable `UsageAccount` row collides with `pop_last_message`.** That fn pops
   **the last entry** to discard a failed turn; runtime `history.pop()` pops the last *message*. They agree only
   while nothing non-message is last. Appending a bill right after `Compaction` breaks that, and a pop meant for a
   message eats the bill — proof: `kinds=[..., "compaction", ..., "compaction", ...]` with no `usage_account`.
@@ -129,6 +135,19 @@ assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-as
   420 s tool cap is the lesser evil, and a warm `CARGO_TARGET_DIR` makes the retry cheap. Foreground
   `cargo clippy --workspace` on a *cold* external target does exceed 420 s, so give it a warm
   target or a background run and poll.
+- **Extended 2026-09-26 (M145): the kill is not specific to background.** Six `gate.ps1` attempts
+  died with no verdict — three background, and **two background-with-a-`sleep`-poll**, where the
+  poll being reaped took the build with it. `persist_on_release` did not help. What worked was
+  **plain foreground with `timeout=600`**: `m145d` and `m145e` both reached a real verdict, and the
+  final 62-binary test run finished inside one foreground call. Two rules follow. **A background
+  process is not durable across a turn on this harness** — for anything that must finish, go
+  foreground. And when the battery cannot run, **run the five gates as five direct commands and say
+  so**: M145's green set is five commands, not a battery log, and the milestone says exactly that.
+- **A green focused run hides whole crates.** `cargo test -p epsilon-session` does not compile
+  `epsilon-contracts`' own tests, so three `E0063` errors and a missing `Usage::total_tokens` field
+  survived 161 and 11 passing focused tests and were caught only by the full run. **`Usage` has five
+  fields, not four** — read the struct, do not write it from memory. And a round-trip test that
+  leaves a new field at `None` **cannot tell whether it survives serialization**; give it a real value.
 - **`cargo test` can fail with `Access is denied (os error 5)` in a dozen unrelated tests, and the
   cause is not your change** (2026-09-25, M135). Avira had pinned the *path*
   `target/debug/deps/<crate>-<hash>.exe`: every test that creates a file failed, every test that
