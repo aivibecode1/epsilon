@@ -62,7 +62,23 @@ fn strip_frontmatter(raw: &str) -> String {
 
 /// Discover skills across root directories (each scanned one level deep for `SKILL.md`).
 ///
-/// Later roots shadow earlier ones by name (project overrides global), mirroring pi.
+/// **Name collisions: last root wins, which is NOT what pi does.** pi keeps the
+/// *first* skill registered under a name and records a collision diagnostic naming
+/// both paths (`pi-0.85.1/packages/coding-agent/src/core/skills.ts:432-448`: the
+/// `set` is in the `else` of `if (existing)`, so a later duplicate is reported and
+/// discarded). This implementation replaces the earlier entry, so a project-level
+/// skill overrides a global one of the same name.
+///
+/// The divergence is deliberate and recorded in `audit/03-port-plan.md` (capability
+/// matrix, "Skill discovery/frontmatter/collisions"). An earlier version of this
+/// comment claimed the behaviour was "mirroring pi", which was false in both
+/// directions — pi neither lets the later skill win nor stays silent.
+///
+/// **Not implemented: pi's collision diagnostic.** pi reports `winnerPath` and
+/// `loserPath` (`skills.ts:434-443`); `discover` returns a `Vec<Skill>` and has no
+/// channel for a diagnostic, so a user who shadows a global skill gets no notice.
+/// Adding one means changing this signature or adding a sibling that returns
+/// collisions. See W11 in `audit/evidence/port-gap-recheck-2026-09-21.md`.
 pub fn discover(roots: &[PathBuf]) -> Vec<Skill> {
     let mut out: Vec<Skill> = Vec::new();
     for root in roots {
@@ -101,7 +117,9 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Skill> {
                     .map(|v| v == "true")
                     .unwrap_or(false),
             };
-            // Shadowing: replace earlier-root skill with the same name.
+            // Shadowing: replace the earlier-root skill with the same name. This is a
+            // deliberate divergence from pi (see the doc comment above): pi keeps the
+            // first and reports a collision instead.
             if let Some(slot) = out.iter_mut().find(|s| s.name == skill.name) {
                 *slot = skill;
             } else {
