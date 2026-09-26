@@ -89,6 +89,10 @@ first, newest at the top, and it is kept current from M83 forward.
   `wall_timeout_secs`, bounded only the child wait and not the pipe drains, and leaked the
   tree on cancellation. The three tests that prove it are `cfg(unix)` and **did not run on
   the Windows host** — the status banner says so rather than implying coverage.
+- [M148 — a descendant cannot hold the shell open](milestones/M148-a-descendant-cannot-hold-the-shell-open.md)
+  — **closes F11's unconfined half.** The pipe drains were awaited outside the caller's timeout, so a
+  surviving descendant hung a command that had already exited. Bounded, and the shortfall is
+  declared. The control settles in 10.46s without the fix — the descendant's own lifetime.
 - [M144 — a summarization is a real bill](milestones/M144-a-summarization-is-a-real-bill.md) — **read side
   only**. Compaction resends the whole history and is charged for it, and the response was in scope at the write
   site while the entry said `usage: None`; pi counts this charge explicitly so totals "reflect what was actually

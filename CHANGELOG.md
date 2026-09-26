@@ -14,6 +14,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   broken code. Verification now reads the exit code, and treats a missing one as unknown rather than
   clean. Ordinary nonzero exits are still delivered to the model as ordinary nonzero exits.
 
+
+- **A surviving descendant could hang a finished shell command (F11, unconfined).** The command's
+  timeout covered waiting for the process but not draining its output, so a background process that
+  inherited the pipe kept the call waiting long after the command itself had exited — often
+  forever. Draining is now bounded, and a result whose output may be short says so in
+  `output_complete` instead of pretending to be whole or failing a command that succeeded.
 - **A confined command was not actually bounded (F11, bwrap).** The Linux backend ignored its own
   wall-clock limit, bounded only the direct child's exit and then awaited the pipe drains
   outside that bound — so a descendant holding stdout open could hang past the promised

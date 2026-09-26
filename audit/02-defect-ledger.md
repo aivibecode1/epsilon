@@ -401,7 +401,7 @@ Original source trace below describes the pre-fix snapshot.
 
 ## F11 — Own child exit, descendants and pipe draining under one deadline
 
-> **PARTIALLY CLOSED by M147 (`docs/milestones/M147-one-deadline-for-the-whole-run.md`),
+> **CLOSED by M147 + M148, 2026-09-26.** Both halves are now bounded. **M147** (bwrap): the backend no longer discards its `wall_timeout_secs`, one deadline covers the child wait *and* both pipe drains, and `kill_on_drop` stops a cancelled run leaking its tree — but its three tests are `cfg(unix)` and **did not run on this Windows host**, and it has no negative control for the same reason. **M148** (unconfined `shell.rs`): the drains were awaited outside the caller's timeout, so a descendant holding stdout hung the call indefinitely; they now share a 5s grace and the shortfall is reported as `output_complete: false` rather than silently truncating or failing a command that exited 0. M148's control is decisive — the old lines settle in **10.46s**, the descendant's own lifetime — captured in [`evidence/f11-unconfined-negative-control.md`](evidence/f11-unconfined-negative-control.md). `epsilon-tools`: 166 passed / 0 failed. **The remaining honest gap is M147's unexecuted bwrap coverage**, which CI closes on `ubuntu-latest`.
 > 2026-09-26 — read the status honestly.** The bwrap backend's three gaps are closed in source:
 > `wall_timeout_secs` is now honoured (it was `_policy`, discarded), the deadline covers the
 > pipe drains and not just the child wait, and `kill_on_drop(true)` stops a cancelled run

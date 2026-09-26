@@ -1830,6 +1830,116 @@ async fn bash_timeout_kills_long_commands() {
     assert!(err.contains("timed out after 1s"));
 }
 
+/// Like [`run`], but keeps the whole `ToolOutput` so a test can read `details`.
+///
+/// `run` flattens the result to text, which is right for most assertions and wrong for any
+/// question about the *envelope* — the exit code and the flags that say whether the output is
+/// whole. `confinement: "off"` keeps this on the unconfined path, which is the path with the
+/// unbounded drain; `run_full` covers the confined one.
+async fn run_unconfined(
+    tool: &dyn Tool,
+    ctx: &ToolContext,
+    args: serde_json::Value,
+) -> Result<epsilon_contracts::tool::ToolOutput, String> {
+    let sink: epsilon_contracts::tool::ToolUpdateSink = Arc::new(|_| {});
+    tool.execute(
+        ToolInvocation {
+            tool_call_id: "tc_t".into(),
+            args,
+        },
+        ctx.clone(),
+        sink,
+    )
+    .await
+    .map_err(|f| f.message)
+}
+
+/// A descendant that outlives the direct child must not outlive the tool call.
+///
+/// This is the case the `timeout_secs` bound cannot catch, and the ledger named it: `child.wait()`
+/// returns as soon as the direct child exits, and the unbounded drain that follows then blocks
+/// on a pipe the descendant still holds — so the call hangs long past its own timeout.
+///
+/// The command exits immediately after spawning something that inherits its output handle and
+/// sleeps. `-NoNewWindow` on Windows is what makes the grandchild inherit the pipe rather than
+/// getting a fresh console; on Unix a background job inherits it for free. Either way the writer
+/// outlives the writer's parent, which is the whole point.
+#[tokio::test]
+async fn a_descendant_holding_the_pipe_does_not_hang_the_call() {
+    let (_d, ctx) = seeded_workspace();
+    let bash = BashTool::new();
+    let cmd = if cfg!(windows) {
+        r#"Start-Process -FilePath "ping" -ArgumentList "-n","11","127.0.0.1" -NoNewWindow; "child-exited""#
+    } else {
+        "sleep 30 & echo child-exited"
+    };
+
+    let started = std::time::Instant::now();
+    let out = run_unconfined(
+        &bash,
+        &ctx,
+        serde_json::json!({"command": cmd, "timeout_secs": 60}),
+    )
+    .await
+    .expect("the command itself succeeded, so this is not a tool failure");
+
+    // The descendant holds the pipe for 10s. The bound is the 5s drain grace plus slack, not
+    // "under 10s" — a hang inside the reader would satisfy that, and that is the regression.
+    //
+    // Note what this does NOT do: kill the grandchild. On the unconfined path nothing owns it,
+    // which is precisely the difference from the confined path, where a job object takes the
+    // whole tree. It is left to finish and reaped by the OS; the cost is that this test binary
+    // stays alive until it does, because the grandchild inherited the harness's output pipe.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "settled in {:?}; a held pipe should not hold the call",
+        started.elapsed()
+    );
+    assert_eq!(
+        out.details["exit_code"], 0,
+        "the command's own verdict stands"
+    );
+    assert_eq!(
+        out.details["output_complete"], false,
+        "and the short output is declared, not passed off as complete: {:?}",
+        out.details
+    );
+}
+
+/// The ordinary case must not pay for the pathological one: a command that closes its pipes
+/// normally reports complete output, and returns without waiting out the grace.
+#[tokio::test]
+async fn a_normal_command_reports_complete_output_immediately() {
+    let (_d, ctx) = seeded_workspace();
+    let bash = BashTool::new();
+    let cmd = if cfg!(windows) {
+        "Write-Output hello-from-shell"
+    } else {
+        "echo hello-from-shell"
+    };
+
+    let started = std::time::Instant::now();
+    let out = run_unconfined(
+        &bash,
+        &ctx,
+        serde_json::json!({"command": cmd, "timeout_secs": 60}),
+    )
+    .await
+    .expect("a plain echo");
+    assert_eq!(out.details["output_complete"], true, "{:?}", out.details);
+    // The bound is "well under the 5s grace", not a latency budget. Spawning PowerShell under
+    // a full parallel suite measured 2.39s on this host, so an earlier 2s bound here failed on
+    // machine load rather than on behaviour. A regression that always paid the grace would land
+    // past 5s, which 4s still catches.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "returned in {:?} — a clean exit must not wait out the drain grace",
+        started.elapsed()
+    );
+    let text = output_text(&out);
+    assert!(text.contains("hello-from-shell"), "{text}");
+}
+
 #[tokio::test]
 async fn oversized_outputs_spill_with_locator() {
     let (_d, ctx) = seeded_workspace();

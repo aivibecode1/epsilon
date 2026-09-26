@@ -235,6 +235,36 @@ fn command_verdict(outcome: &epsilon_safety::ConfinedOutcome) -> CommandVerdict 
     }
 }
 
+/// How long the pipe readers may keep going after the child has exited.
+///
+/// Not the command's budget — that already ran, and was enforced against `child.wait()`. This
+/// only covers the gap between "the process ended" and "the last byte has been read", which on a
+/// well-behaved run is microseconds. The grace exists for the run that is *not* well-behaved:
+/// a descendant still holding the write end. Five seconds is far longer than draining a pipe
+/// ever needs and far shorter than a user will wait for a tool that has already finished.
+const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Await one pipe reader, giving up after `grace`.
+///
+/// Returns what was collected and whether the reader finished. On expiry the task is dropped,
+/// which detaches it: the reader stops when its pipe closes, and a pipe held by a stray
+/// descendant is precisely the case where waiting is the bug.
+///
+/// This is deliberately *not* the same as failing the command. A command that exited has an
+/// exit code, and that exit code is the truth we can report; the only casualty here is how much
+/// of its output made it out.
+async fn collect_within(
+    task: tokio::task::JoinHandle<Vec<u8>>,
+    grace: std::time::Duration,
+) -> (Vec<u8>, bool) {
+    match tokio::time::timeout(grace, task).await {
+        Ok(Ok(bytes)) => (bytes, true),
+        // A panicking reader, or one that ran past the grace: either way we did not collect
+        // everything, and the caller is told so rather than handed a silent truncation.
+        _ => (Vec::new(), false),
+    }
+}
+
 fn combine_output(stdout: &str, stderr: &str, exit_code: Option<i32>) -> String {
     let mut combined = String::new();
     if !stdout.is_empty() {
@@ -429,8 +459,27 @@ impl Tool for BashTool {
                 )));
             }
         };
-        let stdout_bytes = out_task.await.unwrap_or_default();
-        let stderr_bytes = err_task.await.unwrap_or_default();
+        // The child is done, but a descendant it left behind can still hold the open pipe — and
+        // that is the case the wait above cannot catch: `wait()` returns promptly, and then a
+        // drain blocked on a pipe nobody will ever close hangs forever, past the timeout the
+        // caller was promised. So the readers get a bounded grace period, and their failure to
+        // finish is reported rather than waited on.
+        //
+        // A command that exited is still a command that ran: its own verdict stands, and the
+        // only casualty is how much of its output was collected. Failing the whole call would
+        // turn "this build succeeded but a daemon it spawned is noisy" into an error, which
+        // misreports the one thing we actually know.
+        // Concurrently, not one after the other. Awaiting them in sequence charges the grace
+        // twice — once per pipe — so a call that should settle in 5s took 10, which the test
+        // caught before this comment did. The readers are independent; their deadlines are the
+        // same instant, so `join!` is the only shape that means what it looks like.
+        let (out, err) = tokio::join!(
+            collect_within(out_task, DRAIN_GRACE),
+            collect_within(err_task, DRAIN_GRACE),
+        );
+        let (stdout_bytes, out_done) = out;
+        let (stderr_bytes, err_done) = err;
+        let output_complete = out_done && err_done;
         let stdout = String::from_utf8_lossy(&stdout_bytes);
         let stderr = String::from_utf8_lossy(&stderr_bytes);
         let combined = combine_output(&stdout, &stderr, status.code());
@@ -448,6 +497,10 @@ impl Tool for BashTool {
             "exit_code": status.code(),
             "duration_ms": duration_ms,
             "truncated": t.truncated,
+            // F11: `false` means a descendant was still holding the pipe when the grace period
+            // ran out, so the text above may be missing whatever that process had not written
+            // yet. The exit code is still the command's own; only the *output* is short.
+            "output_complete": output_complete,
             "confinement": "off",
             "enforcement": "none — confinement is switched off for this call",
             "mode": mode.as_str(),

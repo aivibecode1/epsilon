@@ -153,6 +153,22 @@ files in `audit/`/`docs/`/`crates/`, 54 of them with a path and line range — s
   returns nothing — or that stops where `head` stopped — is evidence about the search, not about
   the code.** Find the `pub fn`, grep its name, check each hit for a test, and **count the
   results before believing them**.
+- **A test run concurrent with a background `cargo` can silently use a stale binary.** Running
+  `cargo test -p epsilon-tools` while the full workspace suite was still finishing produced
+  `output_complete: Null` and an 11.07s settle — the *control's* behaviour, from a source file
+  that provably contained the fix (`tokio::join!` at `shell.rs:476`, the flag at `:503`, no
+  `out_task.await` left anywhere). `touch`ing the file and re-running gave 0.31s and a pass.
+  **Never run two cargo invocations against one `CARGO_TARGET_DIR` on this host**, and when a
+  result contradicts the source, re-run with a `touch` before believing either.
+- **A positive control that asserts a latency bound will fail on machine load, not on
+  behaviour.** `a_normal_command_reports_complete_output_immediately` bounded at 2s passed in
+  0.31s alone and failed at 2.39s under the full parallel suite — PowerShell startup, not the
+  drain grace. The bound now asks the question actually meant ("well under the 5s grace") at 4s,
+  which still catches a regression that always pays the grace.
+- **Awaiting two independent futures in sequence charges their timeout twice.** The first
+  working version of the bounded drain did `collect_within(out).await; collect_within(err).await`
+  and took 10.46s for a 5s grace — *numerically identical to the unfixed control*, so a loose
+  bound would have called it fixed. `tokio::join!` is the only shape a shared deadline implies.
 - **A dated audit is a claim about the past, not the present.** `audit/evidence/port-gap-recheck-2026-09-21.md`
   (W1–W12) predates this work: I partly **duplicated** it (W1/W2/W8/W9), and its loudest claim —
   "a pi session can refuse to open … losing a session is the loudest failure this harness has" —
