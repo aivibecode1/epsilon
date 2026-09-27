@@ -822,7 +822,7 @@ impl Agent {
             previous
         };
         let opened = SessionStore::open(path);
-        let mut store = match opened {
+        let store = match opened {
             Ok(store) => store,
             Err(e) => {
                 if let Some(previous) = restore_target {
@@ -831,9 +831,21 @@ impl Agent {
                 return Err(format!("open {}: {e}", path.display()));
             }
         };
-        // The attach below swaps in the new handle, dropping the previous
-        // store and with it the previous lease.
-        match epsilon_session::repair::repair_on_open(&mut store) {
+        // M169: the store is attached BEFORE anything else can fail. Above, the old one was
+        // detached and dropped (to release its lease) when this is the file we already hold,
+        // so an early return here used to leave the agent with no store at all - and every
+        // TUI command that reads the session would then panic rather than describe the state.
+        // Attaching first means a failed repair still costs the user their command, not the
+        // whole session store.
+        let handle = Arc::new(Mutex::new(store));
+        self.attach_session_store(Arc::clone(&handle));
+        // The attach above swaps in the new handle, dropping the previous store and with it
+        // the previous lease. We keep our own clone so we can lock while repairing.
+        let repaired = {
+            let mut st = handle.lock().map_err(|_| "store lock".to_string())?;
+            epsilon_session::repair::repair_on_open(&mut st)
+        };
+        match repaired {
             Ok(report) => {
                 if !report.kinds().is_empty() {
                     // The kinds, not just a count: "a call had no result" and "the session ended
@@ -848,15 +860,16 @@ impl Agent {
             }
             Err(e) => return Err(format!("repair {}: {e}", path.display())),
         }
-        let msgs: Vec<Message> = store
-            .model_view()
-            .map_err(|e| format!("read {}: {e}", path.display()))?
-            .into_iter()
-            .map(|v| v.into_message())
-            .collect();
+        let msgs: Vec<Message> = {
+            let st = handle.lock().map_err(|_| "store lock".to_string())?;
+            st.model_view()
+                .map_err(|e| format!("read {}: {e}", path.display()))?
+                .into_iter()
+                .map(|v| v.into_message())
+                .collect()
+        };
         let count = msgs.len();
         self.restore_history(msgs);
-        self.attach_session_store(Arc::new(Mutex::new(store)));
         Ok(count)
     }
 

@@ -196,7 +196,7 @@ M165| 018 | Model selection: TUI picker over bundled generated catalog; flag > s
 M166
 M167## Decision-log index
 M168
-Full reasoning lives in [`docs/design/epsilon-decisions.md`](design/epsilon-decisions.md);
+M169Full reasoning lives in [`docs/design/epsilon-decisions.md`](design/epsilon-decisions.md);
 one line per ADR:
 
 | ADR | Decision |

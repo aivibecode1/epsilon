@@ -1,5 +1,20 @@
 # M168 — `/tree` was a copy of `/timeline`, and closing the gap found a crash
 
+> **CORRECTION (M169).** The severity claim below is **too strong, and its mechanism is
+> wrong**. I wrote that "typing `/tree` in a plain `--tui` run took the TUI down". It did not,
+> and could not: `epsilon-cli/src/main.rs:1813` attaches the store unconditionally, and
+> `open_in_with_progress` at 1764 propagates its error, so every shipped `--tui` agent has
+> one. Two independent searches agree that all four production attach sites (the TUI path,
+> the serve path, and both child-agent paths) are unconditional.
+>
+> What the defect actually was: nine production call sites depended on a `#[doc(hidden)]`
+> **test-only** accessor that panics, for a state `Agent`'s own docs call normal. That is a
+> layering violation and a latent hazard, not a live crash. M169 traced the one state that
+> can produce it — a failed `live_resume` — and found it far narrower than claimed.
+>
+> The code change in this milestone stands: it matches the documented contract, follows the
+> precedent already set by `/session`, and costs nothing. The *severity* was overstated.
+
 ## What this did
 
 M167 measured that 18 of 30 user-typable slash commands are never executed by a single TUI
