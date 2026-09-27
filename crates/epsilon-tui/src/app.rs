@@ -1447,6 +1447,35 @@ impl App {
                 self.search_own_transcript(&query);
             }
             crate::picker::Command::Quit => return true,
+            crate::picker::Command::Theme(arg) => {
+                // The palette is a **view** choice, not session state, so it is applied to the
+                // live theme and not written to config: a cosmetic toggle should not quietly
+                // rewrite a file the user may have under version control. `EPSILON_THEME` and
+                // `[tui] theme` remain the way to make a default permanent.
+                let next = match arg.as_deref().map(str::trim) {
+                    None | Some("") => self.theme.palette().flipped(),
+                    Some(name) => match crate::ui::theme::ThemeMode::from_name(name) {
+                        Some(mode) => mode,
+                        None => {
+                            self.ui.push_notice(format!(
+                                "unknown palette '{name}' \u{2014} use `light` or `dark`, or bare `/theme` to toggle"
+                            ));
+                            return false;
+                        }
+                    },
+                };
+                let was = self.theme.palette();
+                self.theme.set_palette(next);
+                // M160: the transcript is drawn through the render cache, and a cache entry
+                // carries the escape codes it was drawn with. The palette is part of `CacheKey`
+                // now, so the next reconcile rebuilds; this drops the rows already drawn for
+                // this frame so none of them survives it. Without both, the chrome would change
+                // immediately while cached rows kept the old palette \u{2014} half a theme change,
+                // which is worse than none because it looks deliberate.
+                self.render_cache.clear();
+                self.ui
+                    .push_notice(format!("palette: {} \u{2192} {}", was.name(), next.name()));
+            }
             crate::picker::Command::Compact => {
                 if self.compact_running {
                     self.ui

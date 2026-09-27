@@ -2164,3 +2164,55 @@ async fn the_sequence_is_written_at_the_frame_boundary_and_only_once() {
         "the sequence was written twice: {again:?}"
     );
 }
+
+/// M160: `/theme` switches the palette while the TUI is running, and says so.
+///
+/// The palette could only ever be chosen before the process started \u{2014} `EPSILON_THEME` or
+/// `[tui] theme` \u{2014} so a user who guessed wrong had to edit a file and restart to find out.
+/// `ThemeMode::flipped()` had carried the doc comment "for the runtime toggle" for a long time
+/// with no caller.
+#[tokio::test]
+async fn theme_command_toggles_and_names_the_palette() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    let start = app.theme.palette();
+
+    // Bare `/theme` toggles, and the notice names both ends so the user can see it happened.
+    assert!(!type_and_enter(&mut app, &agent, "/theme"));
+    assert_eq!(app.theme.palette(), start.flipped(), "bare /theme toggles");
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains(&format!(
+            "palette: {} \u{2192} {}",
+            start.name(),
+            start.flipped().name()
+        ))),
+        "the switch must be reported, not silent: {texts:?}"
+    );
+
+    // A named palette sets rather than toggles, and twice is idempotent \u{2014} the second
+    // `/theme dark` must not bounce back to light.
+    assert!(!type_and_enter(&mut app, &agent, "/theme dark"));
+    assert_eq!(app.theme.palette(), crate::ui::theme::ThemeMode::Dark);
+    assert!(!type_and_enter(&mut app, &agent, "/theme dark"));
+    assert_eq!(
+        app.theme.palette(),
+        crate::ui::theme::ThemeMode::Dark,
+        "a named palette sets; it does not toggle"
+    );
+
+    // A typo is refused, with the two valid names, and changes nothing.
+    let before = app.theme.palette();
+    assert!(!type_and_enter(&mut app, &agent, "/theme solarized"));
+    assert_eq!(
+        app.theme.palette(),
+        before,
+        "a bad name must not change the palette"
+    );
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("unknown palette 'solarized'")),
+        "and it must say what was wrong: {texts:?}"
+    );
+}

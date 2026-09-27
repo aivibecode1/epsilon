@@ -463,6 +463,14 @@ pub enum Command {
     Think(Option<String>),
     /// Compact the session context (manual trigger of the same compaction loop).
     Compact,
+    /// Switch the TUI palette at runtime (`/theme` toggles; `/theme light|dark` sets).
+    ///
+    /// This existed as a possibility for a long time and as a command for none of it:
+    /// `ThemeMode::flipped()` carried the doc comment "for the runtime toggle" and
+    /// `Theme::set_palette` was public, but the only production caller applied the palette
+    /// once at startup from `EPSILON_THEME` or `[tui] theme`. A user who guessed wrong had to
+    /// edit a config file and restart to find out.
+    Theme(Option<String>),
     /// List the active branch entries (timeline / branch inspection).
     Timeline,
     /// Fork the session at the current leaf into a new session file.
@@ -549,6 +557,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
             Some(tail.to_string())
         })),
         "compact" => Some(Command::Compact),
+        "theme" => Some(Command::Theme(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
         "timeline" | "branch" => Some(Command::Timeline),
         "tree" => Some(Command::Tree),
         "fork" => Some(Command::Fork),

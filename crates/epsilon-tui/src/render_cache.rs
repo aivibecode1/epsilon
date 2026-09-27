@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 
 use crate::markdown;
 use crate::state::{LineKind, TranscriptLine};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, ThemeMode};
 use crate::wrap;
 
 /// One logical transcript line rendered into `width`-wide screen rows.
@@ -220,14 +220,27 @@ struct CacheKey {
     expand_all: bool,
     open_cards: Vec<(u64, bool)>,
     more_key: Option<String>,
+    /// The palette every cached row was rendered under.
+    ///
+    /// This was missing, and the omission was invisible for exactly as long as the palette could
+    /// only be chosen before the process started. A runtime toggle exposes it: `reconcile` takes
+    /// the theme as an input to rendering but never consulted it when deciding what to rebuild,
+    /// so flipping the palette would restyle the chrome — drawn fresh every frame — and leave
+    /// every cached transcript row carrying the *old* palette's escape codes. Half a theme change
+    /// is worse than none, because the result stays legible enough to look deliberate.
+    ///
+    /// Colour *depth* (`ColorMode`) needs no place here: it is detected once at startup and
+    /// never changes, so it cannot produce this failure. Only the palette can.
+    palette: ThemeMode,
 }
 
 impl CacheKey {
-    fn of(state: &RenderState<'_>) -> Self {
+    fn of(state: &RenderState<'_>, theme: &Theme) -> Self {
         Self {
             expand_all: state.expand_all,
             open_cards: state.expanded.to_vec(),
             more_key: state.more_key.map(str::to_string),
+            palette: theme.palette(),
         }
     }
 }
@@ -238,9 +251,9 @@ impl CacheKey {
 /// (`/clear`) drop on the next reconcile; entries for surviving ids stay valid across
 /// frames because ids are content-stable.
 ///
-/// The **render state** is the other half of the key. Three things invalidate a
-/// cached row: the width, a change to the open/closed set, and a line whose content
-/// changed. The first two are detected wholesale (a resize, or an expansion toggle
+/// The **render state** is the other half of the key. Four things invalidate a
+/// cached row: the width, the palette, a change to the open/closed set, and a line
+/// whose content changed. The first two are detected wholesale (a resize, or an expansion toggle
 /// from the key handler, both of which are rare); the third is detected when the
 /// caller says which lines changed, which is how a card's status going from
 /// `pending` to `ok` re-renders that card and nothing else.
@@ -265,6 +278,21 @@ impl Default for RenderCache {
 
 impl RenderCache {
     /// Empty cache; first draw builds everything once.
+    /// Drop every cached row, forcing the next reconcile to redraw the transcript.
+    ///
+    /// Exists for the one case the cache key cannot express: a change to something the
+    /// transcript renders *through* but that the key does not carry. M160 leans on the palette
+    /// being in [`CacheKey`] for the rebuild and uses this for the same frame, so a row already
+    /// drawn with the old palette cannot survive one frame.
+    pub fn clear(&mut self) {
+        self.rendered.clear();
+        self.offsets.clear();
+        self.reconciled_ids.clear();
+        self.offsets.push(0);
+        self.total_rows = 0;
+    }
+
+    /// Empty cache; the first draw builds every row once.
     pub fn new() -> Self {
         Self {
             width: 0,
@@ -295,7 +323,7 @@ impl RenderCache {
         theme: &Theme,
         restale: &[u64],
     ) {
-        let key = CacheKey::of(state);
+        let key = CacheKey::of(state, theme);
         let invalidate_all = width != self.width || self.state.as_ref() != Some(&key);
         if invalidate_all {
             self.rendered.clear();

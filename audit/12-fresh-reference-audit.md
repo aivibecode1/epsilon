@@ -121,11 +121,31 @@ holds its own list.
 
 ### G4 — Theme selection
 
-pi ships light **and** dark palettes (`theme/theme.ts`, 26 references) behind a picker
-(`components/settings-selector.ts`, 18 references), and tests both
-(`test/theme-detection.test.ts`, `test/theme-picker.test.ts`). Epsilon has neither: `theme_pick`,
-`ThemePicker` and `set_theme` return zero hits across `crates/`, and `ThemeColorMode` appears
-only in test code. Our own skill advises *against* background detection, which is where pi went.
+> **CORRECTED 2026-09-27. The first draft of this section was wrong, on a narrow grep.**
+> It claimed Epsilon had "no theme selector at all", from zero hits for `theme_pick`,
+> `ThemePicker` and `set_theme`. The method name is `set_palette`, and the picture is much
+> better than the claim: `ThemeMode::{Dark, Light}` exists (`ui/theme.rs:110`), both palettes
+> are contrast-tested in both directions, and selection works through `EPSILON_THEME`,
+> `[tui] theme` and the CLI's own resolution order (`crates/epsilon-cli/src/main.rs:187`).
+> `app.palette` (`ctrl+p`) is the **command palette**, not a theme picker — a name collision
+> that made the grep look emptier than the code was.
+
+pi ships light and dark behind a picker (`components/settings-selector.ts`, 18 references) and
+tests both (`test/theme-detection.test.ts`, `test/theme-picker.test.ts`). The one real gap was
+narrower: **the palette was decided before the process started**, and `ThemeMode::flipped()`
+carried the doc comment "for the runtime toggle" with no production caller — `set_palette` had
+exactly one, in `app/event.rs:51`, applying the CLI's choice at startup.
+
+Closed in M160 with `/theme`, which required first fixing a latent cache bug: the palette was a
+rendering *input* to `reconcile` but not part of the invalidation *decision*, so a naive runtime
+switch would have restyled the chrome and left every cached transcript row in the old palette.
+
+> **The method lesson, now that it has happened three times.** G1 ("no test names it"), this G4,
+> and the skill asset that "did not exist" were all **asserted absences from a single narrow
+> search**. A negative claim has exactly one piece of supporting evidence — the search — and
+> no second opinion. From here: a negative claim needs two independent searches, or it gets
+> phrased as what was actually checked ("no caller found for `set_palette` outside
+> `app/event.rs`") rather than as a claim about the world.
 
 ### G5 — `app.rs` is 4,497 lines with 75 methods
 
@@ -171,7 +191,9 @@ Epsilon the operative rule is: **do not begin a v2 of anything while v1 is still
 1. ~~**G1** — test the interrupted-tool-call repair.~~ **Done**, and the gap turned out to be
    half of what this document first claimed: the runtime view was already covered by M70, the
    durable view was not.
-2. **G4** — a theme selector, with light and dark palettes, matching what pi tests for.
+2. ~~**G4** — a theme selector.~~ **Done in M160** as `/theme`, and the gap was narrower than
+   first claimed: the palettes and their contrast tests already existed; only the runtime switch
+   was missing, behind a latent render-cache bug.
 3. **G5** — split `app.rs` along the four seams the measurement found, not along intuition.
 4. **G3** — one command table feeding every surface.
 5. **G2** — the capability model, which is a design task rather than a feature.

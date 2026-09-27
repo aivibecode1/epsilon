@@ -2370,3 +2370,50 @@ fn a_running_call_shows_its_time_in_the_header_not_on_the_card() {
         );
     }
 }
+
+/// The palette is part of the render-cache key, and this is the test that says so.
+///
+/// The failure it exists to prevent is specific and was real: `reconcile` takes the theme as an
+/// input to *rendering* but never consulted it when deciding what to *rebuild*, so a cached row
+/// kept the styles it was drawn with. Add a runtime palette switch without fixing that and the
+/// chrome changes colour instantly while the conversation keeps the old palette underneath it
+/// \u{2014} which looks like a terminal rendering bug rather than a stale cache.
+///
+/// `the_light_palette_changes_the_body_text_the_frame_draws` above already proves a light frame
+/// draws different body text from a dark one. That is a statement about the *theme*. This is a
+/// statement about the *cache*, and it is a different question.
+#[test]
+fn switching_the_palette_redraws_the_transcript_and_not_just_the_chrome() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    for i in 0..6 {
+        app.ui
+            .push_notice(format!("palette probe line {i} with enough words to wrap"));
+    }
+
+    let (dark_buffer, _dark_rows) = render_buffer(&mut app, 80, 24);
+    let dark_fg = fg_of(&dark_buffer, "words to wrap");
+
+    // **No `render_cache.clear()` here, on purpose.** The first version of this test called it,
+    // and its negative control then passed 363/363 \u{2014} a test that cannot fail is not
+    // evidence. `clear()` is a blunt instrument that rebuilds the whole transcript, which is
+    // exactly the O(n) work the cache exists to avoid; the palette belongs in `CacheKey` so the
+    // *cache* decides, through the mechanism the design already has. The `/theme` handler also
+    // calls `clear()`, for rows already drawn on the in-flight frame \u{2014} a different
+    // property, and conflating the two here would have hidden this one.
+    app.theme.set_palette(crate::ui::theme::ThemeMode::Light);
+    let (light_buffer, light_rows) = render_buffer(&mut app, 80, 24);
+    let light_fg = fg_of(&light_buffer, "words to wrap");
+
+    assert_ne!(
+        dark_fg, light_fg,
+        "the transcript row must be re-rendered in the new palette, not reused from the cache"
+    );
+    // And the content survived, so this is a restyle and not a truncation.
+    assert!(
+        light_rows
+            .iter()
+            .any(|r| r.contains("palette probe line 3")),
+        "the row must keep its text after a palette switch"
+    );
+}
