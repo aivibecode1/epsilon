@@ -516,3 +516,49 @@ the first one, against a law `AGENTS.md` states as repository-wide.
 
 **Fix:** add `workspace = true`, keeping `missing_docs = "warn"` as the local
 override. One line.
+
+---
+
+# Status, 2026-09-28
+
+Five defects opened this audit are now closed. Each was fixed *and* measured; the
+measurement is the point, because the whole reason this ledger exists is that the
+previous pass asserted causes it had not reproduced.
+
+| # | Defect | Commit | How it was verified |
+|---|---|---|---|
+| D17 | Subagent tokens never counted in the cost | `12ae518` | 4 unit tests; a negative control removing both accounting calls made 2 fail for the right reason |
+| D18 | Per-frame transcript clone | `fc9ed3b` | 144.3 µs → **276 ns, flat** across 10× the transcript |
+| D19 | A panic bricks the terminal | `a4e9fa2` | Real conhost: control **FAIL**, fix **PASS** |
+| D20 | A killed TUI blocks for 30 s | `5d4e205` | Real conhost: 30 s wait → no wait notice at all |
+| D21 | `epsilon-lsp` outside the lint law | `dda2b54` | `clippy -D warnings` clean; workspace sweep shows one remaining exception, and it is the recorded one |
+
+## The headline result, and what it is not
+
+**The reported typing-freeze does not reproduce.** `PacedProvider` (`f318bc5`) made a
+turn last seconds, which nothing in this repository had ever done, and then the TUI was
+typed into *while it streamed*: 42 characters appeared, the cursor advanced, output kept
+growing — cmd and PowerShell, 100×30, debug build. `f9f1d25` and the permanent test in
+`b3fa012`.
+
+That is a narrow claim, and it is deliberately not a larger one. It does **not** mean the
+owner has not seen it. Two candidates remain untestable from here: a stale installed
+binary, and the owner's own terminal and real provider.
+
+## What this ledger was wrong about
+
+- **D2 was retracted** — `epsilon-server` uses `epsilon-tools` in production, not tests.
+- **The inherited TUI diagnosis was wrong twice over.** It blamed a permission dialog
+  that renders `y/a/n/e` and handles `y`; and it blamed the transcript clone, which is
+  real and now fixed but measured at ~0.4% of a frame. Both are recorded because
+  inferring a cause from a symptom is exactly what this pass was hired to stop doing.
+
+## Still open
+
+- **0.6** promote `docs/design/epsilon-architecture.draft.md`.
+- **146 broken links**, all in `audit/history/` — deliberately unrepaired, because a
+  blind rewrite points readers at the wrong document.
+- **Phases 4 and 5** (pi port parity, repository structure) not started.
+- **No full gate battery has been run this session.** Every count above comes from
+  per-crate runs.
+- The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` is still the pre-session build.
