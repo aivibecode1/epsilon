@@ -355,7 +355,18 @@ def main():
         print(__doc__)
         print(__file__)
         return 0
+    # Validate the options, but skip the VALUE of `--exe-args`: that value is
+    # itself a list of `epsilon` flags (`--script ... --stream-pace-ms 30`), and
+    # checking it against this probe's own vocabulary would reject every use of
+    # the flag. The `skip` toggle is how a value stops looking like an option.
+    skip = False
     for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a == "--exe-args":
+            skip = True
+            continue
         if a.startswith("--") and a not in (
             "--early",
             "--late",
@@ -367,11 +378,14 @@ def main():
             "--keys",
             "--submit",
             "--shell",
+            "--exe-args",
+            "--during",
         ):
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
             sys.stderr.write(
                 "options: --early --late --maximize --at SECONDS --size COLSxROWS"
                 " --enter --settle SECONDS --keys SEQ --submit\n"
+                "        --shell cmd|powershell --exe-args ARGS --during\n"
             "        SEQ is literal text plus <up> <down> <left> <right> <enter>\n"
             "        <tab> <esc> <home> <end> <pgup> <pgdn> <space> <backspace>\n"
             "        <delete>, e.g. \"<down><down><enter>\" (M176)\n"
@@ -387,6 +401,8 @@ def main():
     settle_s = 9.0
     keys = ""
     text = "hello from the probe"
+    exe_args = ""
+    during = False
     positionals = []
     i = 0
     while i < len(argv):
@@ -427,6 +443,23 @@ def main():
             # TUI; measuring whether early keystrokes survive needs it smaller.
             i += 1
             wait_s = float(argv[i])
+        elif argv[i] == "--exe-args":
+            # Extra arguments for the TUI process itself, e.g.
+            #   --exe-args "--script audit/evidence/long-turn-script.json --stream-pace-ms 30"
+            #
+            # This is what makes a LONG turn reachable from a real console. The faux
+            # provider emits a whole turn instantly, so every probe ever taken here
+            # photographed a run that was already finished. `--stream-pace-ms` (see
+            # crates/epsilon-llm/src/paced.rs) stretches a turn to seconds, which is
+            # the state the owner's report is actually about.
+            i += 1
+            if i >= len(argv):
+                raise SystemExit("--exe-args requires a value")
+            exe_args = argv[i]
+        elif argv[i] == "--during":
+            # Type a SECOND time while a turn is still streaming. See the `during`
+            # block below; this is the assertion the repository has never made.
+            during = True
         elif argv[i] == "--size":
             i += 1
             parts = argv[i].lower().split("x")
@@ -448,16 +481,40 @@ def main():
     # sleep is a stand-in for "do nothing for a moment" that does not read stdin, so
     # nothing competes with the TUI for keys: `ping` under cmd, `Start-Sleep` under
     # PowerShell. Both are chosen for that property, not for being idiomatic.
+    # The invocation the shell runs. `exe_args` is appended so the TUI can be given
+    # a paced provider; without it every probe drives a turn that finishes instantly.
+    invoke = f'"{exe}" {exe_args}'.strip()
     if shell_kind == "powershell":
         ps = os.environ.get("PSEXE", "powershell.exe")
+        # PowerShell needs the invocation operator and then the path and its
+        # arguments as SEPARATE tokens. Quoting the whole thing -- which is what
+        # `& '{invoke}'` did once `invoke` gained arguments -- hands
+        # PowerShell one long string, and it reports "the term
+        # 'D:\...\epsilon.exe --script ...' is not recognized", naming the
+        # arguments as part of the program. So the call operator takes the path,
+        # and the arguments follow it unquoted.
+        #
+        # `--%` is not used: it stops PowerShell from parsing the rest of the line
+        # at all, which would pass the arguments through as literals even where
+        # the harness genuinely needs them interpolated.
+        ps_args = " ".join(f"'{a}'" if (" " in a or not a) else a for a in exe_args.split()) if exe_args else ""
         line = (
             f'"{ps}" -NoProfile -NoLogo -Command '
-            f'"Start-Sleep -Seconds 6; & \'{exe}\'"'
+            f'"Start-Sleep -Seconds 6; & \'{exe}\' {ps_args}"'
         )
     else:
         comspec = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
-        line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}""'
+        # The trailing `""` is deliberate and is what the original probe used:
+        # cmd's /c rule strips one layer of quotes, so the command must be wrapped
+        # to survive being parsed as a single string. The important detail when
+        # adding `exe_args` is that the *opening* quote before the path must stay a
+        # single `"` — doubling it (`""{exe}"`) makes cmd read the executable name
+        # and the typed text as one quoted token and the TUI never launches.
+        # Verified by launching the real binary through all four spellings; this is
+        # the one that returns 0. Cost one probe run whose screen blamed cmd.
+        line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}" {exe_args}""'
     result["shell"] = shell_kind
+    result["exe_args"] = exe_args
     shell = subprocess.Popen(line, creationflags=CREATE_NEW_CONSOLE)
     time.sleep(1.5)
 
@@ -513,6 +570,33 @@ def main():
             # reply has come back, so a probe that cannot press Enter can only ever
             # photograph the one state where those numbers are legitimately unknown.
             result["enter"] = type_text(inp, "\r")
+
+            if during:
+                # THE REPRODUCTION. Type again while the turn is still streaming.
+                #
+                # The owner's report is that the TUI "freezes and shows no input or
+                # output the moment you start typing, even though tokens are clearly
+                # being consumed underneath" — i.e. the work continues while the
+                # screen stops. Nothing in this repository had ever typed into a live
+                # turn, because the faux provider finishes before the first keystroke.
+                # `--stream-pace-ms` is what makes the state reachable; this block is
+                # what looks at it.
+                #
+                # The read happens while the stream is still running, so
+                # `during_stream` showing partial text is the proof the turn is
+                # genuinely in flight rather than already over.
+                time.sleep(min(1.5, settle_s / 2))
+                result["during_stream"] = snapshot(out)
+                result["during_stream_screen"] = screen_text(out, limit_rows=64)
+                result["typed_during"] = type_text(inp, "typed while streaming")
+                time.sleep(0.8)
+                result["after_during_typing"] = snapshot(out)
+                result["after_during_screen"] = screen_text(out, limit_rows=64)
+                # `snapshot` carries the cursor, so no separate helper is needed: a
+                # cursor that advanced is what "the keystroke arrived" looks like
+                # from outside the process.
+                result["cursor_after_during"] = result["after_during_typing"].get("cursor")
+
             time.sleep(settle_s)
             result["after_turn"] = snapshot(out)
             result["turn_screen"] = screen_text(out, limit_rows=64)
