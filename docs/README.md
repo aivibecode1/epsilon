@@ -1,4 +1,5 @@
 # Documentation
+M161 | [The first seam out of `app.rs`](milestones/M161-the-first-seam-out-of-app-rs.md) | 1,288 | 4,526 → 3,757 lines in `app.rs`; eleven panel `draw_*` functions moved verbatim to `app/panels.rs` |
 
 For users and contributors finding current guides, design intent and historical records.
 The implementation is the authority when documents disagree; older design and milestone
