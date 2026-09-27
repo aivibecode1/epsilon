@@ -453,6 +453,19 @@ const CARD_STREAM_TAIL_LINES: usize = 40;
 
 const MAX_RESULT_CHARS: usize = 400;
 
+/// The billing key for tokens a tool burned without naming the model it used.
+///
+/// A `task` result always carries `details["model"]`, so this is a fallback for a
+/// tool that reports usage but not provenance. It matters that the row exists at
+/// all: the alternative is to skip the tokens, and skipped tokens are invisible in
+/// a total — the failure mode this whole fix is about. A dedicated unpriced row
+/// shows up in the per-model breakdown as a line nobody can attribute, which is
+/// honest, where a smaller total is not.
+///
+/// Priced as nothing, so a missing `+` marker would be a lie. Checked by
+/// `a_tool_usage_without_a_model_is_billed_to_an_unpriced_row`.
+const UNKNOWN_BILLED_MODEL: &str = "(model not reported)";
+
 /// Reducible UI state for one TUI session.
 #[derive(Debug, Default, Clone)]
 pub struct UiState {
@@ -576,6 +589,42 @@ impl UiState {
         row.output += usage.output;
         row.cache_read += usage.cache_read;
         row.cache_write += usage.cache_write;
+    }
+
+    /// Account for the tokens a *tool* burned running a model of its own.
+    ///
+    /// A tool result can carry usage without the tool being a model turn: the `task`
+    /// tool spawns subagents, and each child's tokens are real money that the user
+    /// expects to see in the total. `task.rs` records the child's usage on the
+    /// result's `usage` field and the model it ran on in `details["model"]`.
+    ///
+    /// **This was not accounted for at all.** The usage was produced and carried onto
+    /// the message by `exec.rs`, and neither the live arm nor the hydration arm of
+    /// [`AgentEvent::Message`] ever read it. A session that fanned out into subagents
+    /// therefore under-reported its cost by an unbounded multiple, silently: the `+`
+    /// marker that flags a floor only fires for an unpriced *model* or *bucket*, never
+    /// for missing *tokens*, so an under-report is indistinguishable from a true one.
+    ///
+    /// A helper rather than an inline block because there are two call sites — the
+    /// live event and the `/resume` hydration — and the accounting has to match
+    /// between them exactly. A version that double-counted on resume or missed it on
+    /// the live path would be a worse bug than the one being fixed.
+    ///
+    /// The model id comes from `details["model"]`, which `task.rs` sets to the model
+    /// the child actually ran on rather than the one the parent currently has
+    /// selected: price is a property of the model that consumed the tokens.
+    fn record_tool_usage(&mut self, t: &epsilon_contracts::message::ToolResultMessage) {
+        let Some(usage) = t.usage else { return };
+        let model_id = t
+            .details
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or(UNKNOWN_BILLED_MODEL);
+        self.tokens_in += usage.input;
+        self.tokens_out += usage.output;
+        self.cache_read += usage.cache_read;
+        self.cache_write += usage.cache_write;
+        self.record_usage(model_id, usage);
     }
 
     /// Latest single-call prompt size = input + cache_read + cache_write
@@ -907,6 +956,9 @@ impl UiState {
                     }
                 }
                 Message::ToolResult(t) => {
+                    // Tokens a subagent burned belong in the total. See
+                    // `record_tool_usage` for why this was missing.
+                    self.record_tool_usage(t);
                     let body = tool_result_text(t);
                     if t.tool_name == "todo"
                         && let Some(head) = todo_head(&t.details)
@@ -1020,6 +1072,10 @@ impl UiState {
                     }
                 }
                 Message::ToolResult(t) => {
+                    // Tokens a subagent burned belong in the total. See
+                    // `record_tool_usage` for why this was missing, and why the
+                    // hydration arm above has to do the same thing.
+                    self.record_tool_usage(t);
                     let body = tool_result_text(t);
                     // M30: todo results render their checklist (opencode's todo
                     // block) — short lists fully visible, long ones summarized.
@@ -2529,6 +2585,124 @@ mod tests {
             (12_000, 100),
             "a billed summarization is spend"
         );
+    }
+
+    /// A `task` tool result, shaped the way `task.rs` emits one: usage on the
+    /// message, and the model the *child* ran on in `details["model"]`.
+    fn subagent_result(model: Option<&str>, input: u64, output: u64) -> Message {
+        let mut details = serde_json::json!({ "task_id": "t1", "host": "isolated" });
+        if let Some(m) = model {
+            details["model"] = serde_json::json!(m);
+        }
+        Message::ToolResult(ToolResultMessage {
+            id: new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: "tc_1".into(),
+            tool_name: "task".into(),
+            content: vec![ContentBlock::text("done")],
+            details,
+            usage: Some(epsilon_contracts::message::Usage {
+                input,
+                output,
+                cache_read: 0,
+                cache_write: 0,
+                total_tokens: input + output,
+            }),
+            is_error: false,
+        })
+    }
+
+    /// The defect this file existed to prevent, in one assertion: a subagent's tokens
+    /// never reached the session total.
+    ///
+    /// `task.rs` produced the usage and `exec.rs` carried it onto the result, and
+    /// nothing in the TUI read it. Every other usage goes through `record_usage`, so
+    /// a session that fanned out under-reported its cost by an unbounded multiple —
+    /// with no `+` marker, because the floor marker only fires for an unpriced
+    /// *model* or *bucket*, never for missing *tokens*.
+    #[test]
+    fn a_subagents_tokens_reach_the_session_total() {
+        let mut st = UiState::new();
+        deliver(
+            &mut st,
+            subagent_result(Some("deepseek/deepseek-chat-v3.1"), 4_000, 900),
+        );
+
+        assert_eq!(st.tokens_in, 4_000, "the child's prompt tokens are counted");
+        assert_eq!(st.tokens_out, 900, "and the tokens it generated");
+        let by_model = st.usage_by_model();
+        assert_eq!(
+            by_model["deepseek/deepseek-chat-v3.1"].output, 900,
+            "billed to the model the CHILD ran on, not the one the parent has selected"
+        );
+    }
+
+    /// The same charge on the `/resume` path, which replays history through a
+    /// different arm of the same match.
+    ///
+    /// Two arms means two places to forget, and forgetting one produces a bug that
+    /// is worse than the original: a total that is right while you watch and wrong
+    /// after a restart is harder to notice than one that is always low.
+    #[test]
+    fn a_subagents_tokens_survive_a_resume() {
+        let history = vec![subagent_result(Some("m"), 2_000, 400)];
+        let mut st = UiState::new();
+        st.hydrate_from_history(&history);
+
+        assert_eq!(
+            st.tokens_in, 2_000,
+            "a resumed session must bill the subagent its child spent"
+        );
+        assert_eq!(st.usage_by_model()["m"].output, 400);
+    }
+
+    /// A tool that reports usage without naming the model still has to be counted.
+    ///
+    /// The alternative — skipping the tokens — is the exact failure this fix removes,
+    /// so a fallback row is correct even though it cannot be priced. What matters is
+    /// that the tokens are *visible*: a line in the per-model breakdown nobody can
+    /// attribute is honest, and a total that is quietly short is not.
+    #[test]
+    fn a_tool_usage_without_a_model_is_billed_to_an_unpriced_row() {
+        let mut st = UiState::new();
+        deliver(&mut st, subagent_result(None, 1_500, 300));
+
+        assert_eq!(st.tokens_in, 1_500, "not dropped for want of a model name");
+        assert!(
+            st.usage_by_model().contains_key(UNKNOWN_BILLED_MODEL),
+            "and it lands in a row a reader can see is unattributable, rather than \
+             in no row at all"
+        );
+    }
+
+    /// A tool result with no usage must not invent any. Most tools report none, and
+    /// the fix above must not turn every `read` into a phantom charge.
+    #[test]
+    fn a_tool_result_without_usage_adds_nothing() {
+        let mut st = UiState::new();
+        let mut plain = subagent_result(Some("m"), 1_000, 100);
+        if let Message::ToolResult(t) = &mut plain {
+            t.usage = None;
+        }
+        deliver(&mut st, plain);
+
+        assert_eq!(
+            st.tokens_in, 0,
+            "a tool that reports no usage charges nothing"
+        );
+        assert_eq!(st.tokens_out, 0);
+        assert!(
+            st.usage_by_model().is_empty(),
+            "and creates no pricing row: {:?}",
+            st.usage_by_model()
+        );
+    }
+
+    /// Deliver a message the way the event bus does.
+    fn deliver(st: &mut UiState, m: Message) {
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(m),
+        });
     }
 
     #[test]
