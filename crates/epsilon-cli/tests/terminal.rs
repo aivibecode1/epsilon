@@ -391,6 +391,91 @@ fn the_screen_reports_what_the_harness_is_doing() {
 }
 
 #[test]
+fn typing_still_works_while_a_turn_is_streaming() {
+    // The reported defect, and the test this repository never had.
+    //
+    // The claim was: the TUI "freezes and shows no input or output the moment you
+    // start typing, even though tokens are clearly being consumed underneath" —
+    // three assertions at once, none of which any prior test could check. Every
+    // other test in this file runs against a turn that is over in microseconds,
+    // because `FauxProvider` emits its whole event sequence with no delay. A test
+    // that only ever photographs a finished turn cannot see a freeze that happens
+    // mid-turn.
+    //
+    // `--stream-pace-ms` (crates/epsilon-llm/src/paced.rs) makes a turn last
+    // seconds, so this test drives the state the report is actually about: submit,
+    // wait until the header says the turn is in flight, then type.
+    //
+    // Measured against a real conhost window on 2026-09-28, at 100x30 under both
+    // cmd and PowerShell, the typed text appears while the turn is at `running 2s`
+    // and the assistant output keeps growing. This test is what keeps that true.
+    let Some(bin) = binary() else { return };
+    let ws = workspace();
+
+    // A long answer, so the paced turn is long enough to type into. 30ms per event
+    // over ~100 deltas is a turn measured in seconds.
+    //
+    // Written by hand rather than with `serde_json`: this crate has two
+    // dev-dependencies (portable-pty and vt100) and adding a third to format eight
+    // lines of JSON would be a poor trade. The text is plain ASCII, so it needs no
+    // escaping beyond the surrounding quotes.
+    let script = ws.path().join("paced-turn.json");
+    let body = "This answer is long on purpose so that the turn stays in flight \
+                while the test types into the composer. "
+        .repeat(6);
+    std::fs::write(
+        &script,
+        format!("[{{\"type\":\"assistant\",\"text\":\"{body}\"}}]"),
+    )
+    .expect("the script is written");
+    let script_arg = script.to_string_lossy().to_string();
+
+    let mut session = Session::start(
+        &bin,
+        &["--script", &script_arg, "--stream-pace-ms", "30"],
+        ws.path(),
+    );
+    session.settle(SETTLE);
+
+    session.type_text("explain the freeze");
+    session.key(b'\r');
+
+    // Wait for the turn to actually be running before typing. Without this the
+    // test could pass for the wrong reason: a fast turn would already be over and
+    // the typing would be tested against a settled screen, which is a state the
+    // other tests here already cover.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut streaming = false;
+    while std::time::Instant::now() < deadline {
+        if session.screen().contains("streaming") {
+            streaming = true;
+            break;
+        }
+        session.settle(Duration::from_millis(250));
+    }
+    assert!(
+        streaming,
+        "the turn never reported itself in flight, so this test would not be \
+         exercising the state it exists for"
+    );
+
+    // Now type, while the turn is streaming.
+    session.type_text("typed while streaming");
+    session.settle(Duration::from_millis(800));
+    let mid = session.screen();
+
+    assert!(
+        mid.contains("typed while streaming"),
+        "typing during a live turn did not reach the screen:\n{mid}"
+    );
+    assert!(
+        mid.contains("streaming"),
+        "the turn stopped being reported in flight after typing, which is the \
+         freeze this test exists to catch:\n{mid}"
+    );
+}
+
+#[test]
 fn a_typed_line_is_submitted_and_the_run_is_visible() {
     // The whole loop through the real terminal: type, press Enter, and see the
     // harness acknowledge the turn. This is the path the owner reported as
