@@ -200,7 +200,7 @@ M169Full reasoning lives in [`docs/design/epsilon-decisions.md`](design/epsilon-
 M170one line per ADR:
 M171
 M172| ADR | Decision |
-|---|---|
+M173|---|---|
 | 001 | Rust on tokio (LTS channel), single binary |
 | 002 | Port pi's loop shape verbatim; improve only at named seams |
 | 003 | Provider layer: pi-style direct per-provider HTTP behind our own `StreamFn`; wire types never leak (M17 superseded the original genai wrapper); config-declared custom endpoints since M28 |

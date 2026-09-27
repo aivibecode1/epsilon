@@ -1,4 +1,5 @@
 # Documentation
+M173 | [The "acceptable trade" that was not one](milestones/M173-the-trade-that-was-not-one.md) | 1,298 | M172 filtered `/exit` out of the sweep and called the resulting gap a trade; `type_and_enter` only *returns* the quit signal, so all 32 heads now run |
 M172 | [The list the parser owns, and the seven commands it found](milestones/M172-the-list-the-parser-owns.md) | 1,298 | `COMMAND_HEADS` moved next to the match; a reverse-drift check found seven heads no test drove, and it is the control for itself |
 M171 | [Every command executed at least once](milestones/M171-every-command-executed-at-least-once.md) | 1,296 | 29 of 30 slash commands driven on a fresh App each; a control restoring the M168 panic fails it at `lib.rs:1002` |
 M170 | [The real-console check, and a tool gap it exposed](milestones/M170-the-real-console-check.md) | 1,295 | `/tree` and `/export` measured in a genuine conhost window; the probe gained `--submit` because `--keys` could not type a slash command at all |

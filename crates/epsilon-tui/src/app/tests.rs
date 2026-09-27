@@ -2503,13 +2503,14 @@ fn each_entry_kind_gets_the_tag_the_picker_shows() {
 async fn no_slash_command_panics_when_typed() {
     // Taken from the same `picker` mapping the parser uses, so a command added without a
     // test here is a gap in this list rather than a silent omission.
-    // M172: read the parser's own list rather than keeping a second copy here. `exit` is
-    // the one command whose job is to end the session, so running it in this loop would
-    // prove nothing about the other 29 - which is why the head is skipped rather than the
-    // entry omitted, so a command still cannot vanish from the sweep unnoticed.
+    // M172: read the parser's own list rather than keeping a second copy here. M173
+    // removed the `exit` filter that M172 added: `type_and_enter` returns the "the app
+    // should quit" signal instead of quitting, so the one command whose job is to end the
+    // session can be executed and asserted like every other. M172 recorded leaving
+    // `Command::Quit` uncovered as an acceptable trade. It was not one - it was a gap I
+    // had just finished measuring the cost of, and then introduced on purpose.
     let commands: Vec<String> = super::super::picker::COMMAND_HEADS
         .iter()
-        .filter(|h| **h != "exit")
         .map(|h| h.to_string())
         .collect();
     for cmd in &commands {
@@ -2517,7 +2518,15 @@ async fn no_slash_command_panics_when_typed() {
         // that would otherwise bleed into the next iteration.
         let (mut app, agent, (_f, _n)) = test_app();
         let before = app.ui.lines().len();
-        type_and_enter(&mut app, &agent, &format!("/{cmd}"));
+        let should_quit = type_and_enter(&mut app, &agent, &format!("/{cmd}"));
+        if cmd == "exit" {
+            assert!(should_quit, "`/exit` did not report the quit signal");
+            continue;
+        }
+        assert!(
+            !should_quit,
+            "`/{cmd}` reported the quit signal, which would end the sweep's own session"
+        );
         let after: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
         // A command can answer in the transcript, or by opening something. Both count, and
         // the second list is every `*open` flag on `App` plus the trust review - missing one
