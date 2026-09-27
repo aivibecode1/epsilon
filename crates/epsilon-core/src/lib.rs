@@ -1111,8 +1111,33 @@ impl Agent {
     }
 
     /// Current transcript snapshot (all roles, including harness-only messages).
+    ///
+    /// Returns an owned `Vec` because most callers want to keep or filter it, and
+    /// a deep clone of a long session is not free. For callers that only need to
+    /// *look*, prefer [`Self::with_history`]: this is a full clone of every
+    /// message, tool arguments and all, and one such call per drawn frame is
+    /// enough to make an input-latency problem out of a rendering problem.
     pub fn history(&self) -> Vec<Message> {
         self.history.lock().map(|h| h.clone()).unwrap_or_default()
+    }
+
+    /// Run `f` over a borrowed view of the transcript, without cloning it.
+    ///
+    /// This exists for the per-frame callers — the TUI's context mirror, and any
+    /// other read that happens on a redraw. Holding the lock for the duration of
+    /// `f` is what makes the borrow sound; `f` therefore cannot itself call back
+    /// into a method that takes the same lock, which is the one real constraint
+    /// and is a good one, because that would be a deadlock rather than a slow
+    /// path.
+    pub fn with_history<T>(&self, f: impl FnOnce(&[Message]) -> T) -> T {
+        match self.history.lock() {
+            Ok(h) => f(&h),
+            // A poisoned lock still holds readable data; `history()` degrades to
+            // empty in the same situation, and an empty transcript would make the
+            // context gauge read `0/164k`, which is a lie of the same kind this
+            // function exists to prevent.
+            Err(poisoned) => f(&poisoned.into_inner()),
+        }
     }
 
     fn push_message(&self, m: &Message) -> Result<(), RunError> {
@@ -1933,7 +1958,15 @@ impl Agent {
     /// agree with the number the loop actually decides on.
     pub fn estimated_context_tokens(&self) -> usize {
         let anchor = self.usage_anchor.lock().ok().and_then(|slot| *slot);
-        crate::compact::anchored_tokens(&self.history(), anchor)
+        // Borrowed, not `&self.history()`. This is called once per drawn frame
+        // from the TUI's event loop — the same thread that must read the
+        // keyboard — and a deep clone of the whole transcript on that thread
+        // scales with session length. Measured at 13µs for 20 messages and
+        // 144µs for 200 (see `crates/epsilon-core/tests/context_mirror_cost.rs`),
+        // i.e. 10.8x for a 10x larger transcript: the signature of a whole-history
+        // scan rather than the anchored walk this intends to be. The tripwire in
+        // that test fails until the clone is gone.
+        self.with_history(|h| crate::compact::anchored_tokens(h, anchor))
     }
 
     /// Record what the provider billed for the request that covered `covered`
