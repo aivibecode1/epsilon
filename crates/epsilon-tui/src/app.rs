@@ -903,6 +903,93 @@ fn inert_channel<T>() -> tokio::sync::mpsc::UnboundedSender<T> {
     tx
 }
 
+/// Restores the terminal on the way out, however the way out happens.
+///
+/// # Why this exists
+///
+/// A panic used to leave the terminal in raw mode, on the alternate screen, with a
+/// hidden cursor — and there is no way to tell that from the outside. The process
+/// is gone, but the *console* is not: it looks exactly like a program that has
+/// stopped responding, which is precisely the defect the owner reported and
+/// impossible to diagnose without knowing to look for a raw-mode console.
+///
+/// The guard has to live in a `Drop`, not in the error path. `run` returns an
+/// `i32`, so there is no `Err` to propagate, and by the time a panic has unwound
+/// the stack any code after the call has already been skipped. `Drop` is the only
+/// place that runs on *every* exit.
+///
+/// A second reason to prefer `Drop` over a panic hook alone: a hook can only print.
+/// Restoring requires the `ratatui` terminal, which the hook has no handle to, and
+/// printing a message to a console still in raw mode is unreadable anyway. This
+/// does both — the hook leaves the terminal first, so the message is legible.
+struct TerminalGuard;
+
+/// The restore steps, in one place so the normal exit and the panic path cannot
+/// drift apart.
+///
+/// Separate from `Drop` because the panic hook needs to run them *before* the
+/// unwinding continues — a hook that only printed would leave the user looking at
+/// a raw-mode console, which is where the message goes to die. Taking `&mut self`
+/// rather than consuming keeps both entry points on the same function.
+impl TerminalGuard {
+    /// Idempotent: every step is a `let _ =`, and `Drop` runs the same calls
+    /// again when the guard is dropped. Restoring twice is harmless; restoring
+    /// zero times is not.
+    fn restore(&mut self) {
+        use crossterm::execute;
+        let _ = execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+        // `disable_raw_mode` is the one that matters: without it the user's shell
+        // is left with no echo and no line editing, and the next command they type
+        // appears nowhere.
+        let _ = crossterm::terminal::disable_raw_mode();
+        // `ratatui::restore` returns `()`, so the `let _ =` the other two steps
+        // need is a `let_unit_value` lint here. It is still a discarded result,
+        // just not one that needs a binding.
+        ratatui::restore();
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+/// Render a panic payload as text the user can read.
+///
+/// Factored out of the hook so it can be tested without `set_hook`, which is
+/// process-global: installing it from a unit test would replace the harness's own
+/// hook for every test that runs afterwards.
+///
+/// Every shape gets a message. A hook that unwraps without a fallback replaces a
+/// readable crash report with a second crash, which is strictly worse than the
+/// panic it was reporting — and an `i32` payload is what `assert_eq!` produces, so
+/// it is not a hypothetical.
+fn payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .or_else(|| payload.downcast_ref::<u32>().map(|n| n.to_string()))
+        .unwrap_or_else(|| "unknown panic payload".to_string())
+}
+
+/// Print a panic where the user can read it, after the terminal is usable again.
+///
+/// Installed *after* the guard is armed, so a panic during `drive` restores first
+/// (this hook runs during unwinding, before the frames above it are dropped) and
+/// the message below lands on a working console. The reverse order would print to
+/// a raw-mode alternate screen, which is where a panic message disappears.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        TerminalGuard.restore();
+        eprintln!("\nepsilon crashed: {}", payload_message(info.payload()));
+        eprintln!("the terminal has been restored; this is a bug — please report it.");
+        previous(info);
+    }));
+}
+
 /// Run the interactive frontend until the user quits. Returns the process exit code.
 pub async fn run(cfg: TuiConfig) -> i32 {
     use crossterm::execute;
@@ -913,15 +1000,32 @@ pub async fn run(cfg: TuiConfig) -> i32 {
             return 1;
         }
     };
+    // Armed immediately after init and before anything that can panic. A panic
+    // anywhere below now leaves a usable terminal, which is the entire point.
+    let guard = TerminalGuard;
+    install_panic_hook();
     // Bracketed paste only — mouse capture stays OFF so drag-select copies
     // (pi does this; opencode/Hermes too). Hold Shift to select still works
     // on ConPTY, but we don't need to swallow motion just for wheel.
     let _ = execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+
+    // Hidden crash trigger, for the console probe only.
+    //
+    // D19 is the one defect in this crate whose *symptom* cannot be reproduced by
+    // any existing test, because the symptom is a broken console and a test
+    // harness that breaks its own console takes every other test with it. A unit
+    // test can check the mechanism; only a real conhost can check the outcome.
+    //
+    // Env-gated rather than bound to a key, so it cannot be typed by accident, and
+    // checked once, before the event loop starts, so it cannot fire in production
+    // by any route other than someone setting the variable deliberately.
+    if std::env::var_os("EPSILON_TUI_CRASH").is_some() {
+        panic!("deliberate crash: EPSILON_TUI_CRASH is set (probe hook)");
+    }
+
     let code = drive(cfg, &mut terminal).await;
     let _ = execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
-    if let Err(e) = ratatui::try_restore() {
-        eprintln!("terminal restore failed: {e}");
-    }
+    drop(guard); // restores; the explicit calls below are then redundant
     code
 }
 
@@ -1304,11 +1408,13 @@ fn composer_rows(input: &str, cursor_chars: usize, width: usize) -> (Vec<String>
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests_support;
 
 #[cfg(test)]
 mod golden;
+
+#[cfg(test)]
+mod panic_tests;
 
 #[cfg(test)]
 mod tests;

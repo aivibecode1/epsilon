@@ -380,6 +380,7 @@ def main():
             "--shell",
             "--exe-args",
             "--during",
+            "--crash",
         ):
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
             sys.stderr.write(
@@ -403,6 +404,7 @@ def main():
     text = "hello from the probe"
     exe_args = ""
     during = False
+    crash = False
     positionals = []
     i = 0
     while i < len(argv):
@@ -460,6 +462,18 @@ def main():
             # Type a SECOND time while a turn is still streaming. See the `during`
             # block below; this is the assertion the repository has never made.
             during = True
+        elif argv[i] == "--crash":
+            # Launch with EPSILON_TUI_CRASH set, so the TUI panics on purpose, then
+            # check the console is still usable afterwards.
+            #
+            # D19: a panic used to leave raw mode on, the alternate screen up and
+            # the cursor hidden. The process is gone but the *console* is not, so
+            # from outside the process it looks exactly like a program that has
+            # stopped responding — which is what the owner reported. No unit test
+            # can catch that, because a test harness that breaks its own console
+            # takes every other test with it, so the check has to happen here, in a
+            # real conhost, by typing into it afterwards and reading the echo back.
+            crash = True
         elif argv[i] == "--size":
             i += 1
             parts = argv[i].lower().split("x")
@@ -518,10 +532,28 @@ def main():
         #     the path as one token and the TUI never launches.
         # So: one opening quote, the path, its arguments, and the closing pair.
         tail = f' {exe_args}' if exe_args else ""
+        # In `--crash` mode the shell must OUTLIVE epsilon, and `cmd /c` does not:
+        # it exits with its last child, and a console whose last process has gone
+        # is *closed*. The probe would then attach to nothing and read an empty
+        # screen, producing a FAIL that says nothing about raw mode — which is
+        # exactly the kind of wrong answer that gets filed as a bug report.
+        #
+        # `/k` plus `pause` is the fix that matches what a user actually has on
+        # screen: the shell is still there after the program dies, and the shell
+        # is the thing that has to stay usable. Without `pause`, `/k` with a single
+        # quoted command still exits when the command finishes.
         line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}"{tail}""'
+        if crash:
+            line = f'{comspec} /k "ping -n 6 127.0.0.1 >nul & "{exe}"{tail} & pause"'
+
     result["shell"] = shell_kind
     result["exe_args"] = exe_args
-    shell = subprocess.Popen(line, creationflags=CREATE_NEW_CONSOLE)
+    # `--crash` sets the TUI's hidden panic hook. It is a *child-process* env
+    # change, not this probe's own: the probe must stay healthy to read the screen.
+    child_env = dict(os.environ)
+    if crash:
+        child_env["EPSILON_TUI_CRASH"] = "1"
+    shell = subprocess.Popen(line, creationflags=CREATE_NEW_CONSOLE, env=child_env)
     time.sleep(1.5)
 
     if not K32.AttachConsole(shell.pid):
@@ -564,6 +596,66 @@ def main():
 
     result["after"] = snapshot(out)
     result["after_screen"] = screen_text(out, limit_rows=64)
+
+    if crash:
+        # D19, end to end.
+        #
+        # The TUI has just panicked. The question is not whether it printed a
+        # message — it did, because the hook runs before the unwind — but whether
+        # the *console* is still a console. A panic that skipped `restore` leaves
+        # raw mode on, the alternate screen up and the cursor hidden, and the shell
+        # behind it has no echo: you type and nothing appears, which from outside is
+        # indistinguishable from the freeze the owner reported.
+        #
+        # So: type a real command into the console the crashed process owned, and
+        # read the screen back. If raw mode was lifted, cmd echoes the keystrokes
+        # and prints the output. If not, the screen still shows epsilon's last
+        # frame and the echo is invisible. That difference is the whole test, and
+        # it is the only place in the repository it can be observed at all.
+        time.sleep(2.0)
+        result["crash_screen"] = screen_text(out, limit_rows=64)
+        # `pause` is waiting for a key, and it eats the first one. That is a real
+        # property of the console, not a probe artifact: a user would press
+        # space to clear it too. Send that key first, then the command, so the
+        # assertion tests what it means to test instead of `pause`. Previously
+        # this read `echo ...` as `cho ...` and the probe passed on cmd's error
+        # message being visible rather than on the command having worked.
+        type_text(inp, " ")
+        time.sleep(0.6)
+        result["crash_typed"] = type_text(inp, "echo PROBE_SAYS_CONSOLE_IS_ALIVE\r")
+        time.sleep(2.0)
+        after_crash = screen_text(out, limit_rows=64)
+        result["post_crash_screen"] = after_crash
+        # Assert on the command's OUTPUT, not on the echo of what was typed. The
+        # echo only proves the keystrokes were seen; the output proves cmd actually
+        # ran, which is what "raw mode was lifted" means in practice.
+        result["console_usable"] = any(
+            ln.lstrip().startswith("PROBE_SAYS_CONSOLE_IS_ALIVE") for ln in after_crash
+        )
+        result["crash_reported"] = any(
+            "epsilon crashed" in ln for ln in result["crash_screen"]
+        )
+        # The TUI's own frame is the sharper signal, and `console_usable` is not
+        # sufficient on its own. Measured: with the restore removed, cmd still takes
+        # the command, because cmd re-establishes echo for its own prompt when it
+        # starts — so `console_usable` is true with and without the fix, and a probe
+        # asserting only that is asserting nothing.
+        #
+        # What actually differs is whether the TUI left the console as it found it.
+        # Without a restore, the alternate screen stays up: the harness's own startup
+        # diagnostics and last frame are still on screen, and the crash message — the
+        # thing the panic hook prints once the terminal is legible again — never
+        # appears. So the verdict is built from the crash message, which is only
+        # reachable after a successful restore.
+        # A verdict, not just data: a probe that records a number and leaves the
+        # reading to whoever opens the JSON is a probe that gets ignored.
+        result["verdict"] = (
+            "PASS: the terminal was restored and the crash was reported"
+            if result["console_usable"] and result["crash_reported"]
+            else "FAIL: the terminal was left as the TUI found it -- "
+            + ("the crash message never printed" if not result["crash_reported"]
+               else "the console took no command")
+        )
 
     if mode == "late":
         result["typed"] = type_text(inp, text)
