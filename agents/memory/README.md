@@ -22,7 +22,7 @@ next.
 | File | Work item | Status |
 |------|-----------|--------|
 | [`00-session-takeover.md`](00-session-takeover.md) | What this session established, with the measurements | done |
-| [`01-plan-execution.md`](01-plan-execution.md) | **Where I am in the 0-7 phases; inherited dirty work to triage** | live |
+| [`01-plan-execution.md`](01-plan-execution.md) | **Where I am in the 0-7 phases; the five audit defects, all closed** | live |
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 
 ## Superseded notes (kept for history, not for direction)

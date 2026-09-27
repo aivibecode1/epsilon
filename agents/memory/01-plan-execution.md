@@ -19,6 +19,18 @@ Source of truth for *what* to do: `audit/07-plan.md`. This file tracks *where I 
 | `5d4e205` | **Stale lock fixed: 30s → ~4s** | real conhost, before/after measured |
 | `fc9ed3b` | Transcript clone removed | 144.3µs → **276ns, flat** |
 
+## The five audit defects — ALL CLOSED
+
+| # | Defect | Commit | Verified by |
+|---|---|---|---|
+| D17 | Subagent tokens never counted in the cost | `12ae518` | 4 tests; negative control made 2 fail |
+| D18 | Per-frame transcript clone | `fc9ed3b` | 144.3 µs → **276 ns, flat** |
+| D19 | A panic bricks the terminal | `a4e9fa2` | Real conhost: control FAIL, fix PASS |
+| D20 | A killed TUI blocks for 30 s | `5d4e205` | Real conhost: 30 s wait → none |
+| D21 | `epsilon-lsp` outside the lint law | `dda2b54` | clippy clean; only the recorded exception remains |
+
+Each was **measured**, not just fixed — that distinction is the whole point of this pass.
+
 ## The two answers that matter
 
 **The reported typing-freeze does not reproduce.** Reproduced the *state* first
@@ -36,16 +48,13 @@ test *and* by watching a real TUI's mtime advance every 2s.
 
 ## Still open
 
-- **D17 — subagent tokens never counted in the cost.** About money, silent, unbounded.
-  `task.rs:231` produces usage → `exec.rs:736` carries it → `state.rs:1022` never reads
-  it. **This is the next thing to fix.**
-- **D19 — a panic leaves the terminal unusable.** No `Drop` guard, no panic hook.
-- **D21** — `epsilon-lsp` compiles without `unsafe_code = "forbid"`. One line.
-- Phase 0 leftovers: 0.6 promote the architecture draft; 146 links in `audit/history/`.
-- Phases 4 (port parity) and 5 (structure) not started.
-- **A full gate battery has not been run this session** — individual crates only.
-- The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` is still the old build. Reinstall
-  before the user tests, per AGENTS.md.
+- **Phase 4 (pi port parity)** and **Phase 5 (structure)** — not started.
+- **0.6** promote `docs/design/epsilon-architecture.draft.md`.
+- **146 broken links**, all in `audit/history/` — deliberately unrepaired.
+- **Reinstall `C:/Users/Hp/.cargo/bin/epsilon.exe`** before the user tests it: the
+  installed binary is still the pre-session build. Per AGENTS.md, CLI/TUI behavior
+  changed, so a reinstall is required.
+- **Wipe `D:/eps-target`** after the battery finishes (C: at 93%, 37 G free).
 
 ## Traps on this machine
 

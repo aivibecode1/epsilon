@@ -559,6 +559,8 @@ binary, and the owner's own terminal and real provider.
 - **146 broken links**, all in `audit/history/` — deliberately unrepaired, because a
   blind rewrite points readers at the wrong document.
 - **Phases 4 and 5** (pi port parity, repository structure) not started.
-- **No full gate battery has been run this session.** Every count above comes from
-  per-crate runs.
+- **The battery ran, and it passed** — `audit/evidence/gate-m180-1.md`, 1253 tests,
+  0 failures. Two things it does not cover: `--no-default-features` (which found a
+  real pre-existing compile failure, now fixed in `57812ca`), and anything whose
+  symptom is a broken console rather than a wrong value.
 - The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` is still the pre-session build.
