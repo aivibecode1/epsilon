@@ -18,5 +18,14 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 tempfile = { workspace = true }
 
-[lints.rust]
-missing_docs = "warn"
+# `[lints] workspace = true` rather than spelling out `missing_docs` here.
+#
+# Every other crate in the workspace inherits the whole lint table from the root
+# Cargo.toml. This one re-declared `[lints.rust]` with a single entry, which had two
+# consequences: it did not get `unsafe_code = "forbid"` (so the crate was the one
+# place `unsafe` could be introduced without the compiler objecting, in a project
+# that forbids it workspace-wide), and it silently opted out of every future lint
+# added to the root. Both are the kind of drift a table of contents is supposed to
+# prevent, and a linter is the last place to want it.
+[lints]
+workspace = true
