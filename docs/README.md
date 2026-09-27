@@ -100,6 +100,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M156 — the frame test that would have caught M155](milestones/M156-the-frame-test-that-would-have-caught-m155.md)
 - [M157 — a search that moves the view](milestones/M157-a-search-that-moves-the-view.md)
 - [M158 — the contradiction a comment could not settle](milestones/M158-the-contradiction-a-comment-could-not-settle.md)
+- [M159 — the repair was tested; the durability was not](milestones/M159-the-repair-was-tested-the-durability-was-not.md)
   — **closes F11's unconfined half.** The pipe drains were awaited outside the caller's timeout, so a
   surviving descendant hung a command that had already exited. Bounded, and the shortfall is
   declared. The control settles in 10.46s without the fix — the descendant's own lifetime.

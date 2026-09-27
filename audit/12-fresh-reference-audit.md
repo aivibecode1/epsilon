@@ -81,12 +81,22 @@ This is the right design, and it is also the only thing in the tree that *proves
 durable before execution — you cannot synthesise that repair unless the call reached the store
 first. That makes it a load-bearing claim about transcript integrity.
 
-**No test names it.** A search for tests covering orphan or interrupted tool calls returns three
-unrelated ones (`compact.rs:746`, `compact.rs:778`, `app/golden.rs:1440`). So the property is
-asserted by a comment and proven by an implementation, and asserted by no test.
+> **CORRECTED 2026-09-27 — the first draft of this section was half wrong.** It said "no test
+> names it", citing a search that had missed M70. `crates/epsilon-core/tests/sequence_repair.rs`
+> already had three tests. They are not nothing, but they build their `Agent` with **no
+> `SessionStore` attached** and seed history through `restore_history()` — so they prove the
+> repair works on the *runtime-history* view and say nothing about the *store*.
+>
+> The accurate statement is: **the runtime view was tested; the durable view was not.** Since the
+> whole point is that the file already held the call before the tool ran, an assertion about
+> process memory does not establish it. Closed by
+> `the_repair_is_durable_and_leaves_the_answered_call_untouched`, which writes the interrupted
+> turn through a real store, resumes from that store's own `model_view()`, and requires the
+> repair to land in both views as the *same* `ToolResultMessage` — plus asserts the answered call
+> is left alone, since an over-eager repair is as much a bug as an absent one.
 
-*Severity: highest in this audit.* A durability invariant with no RED is one refactor away from
-being quietly untrue.
+*Severity: highest in this audit while open.* A durability invariant with no RED is one refactor
+away from being quietly untrue.
 
 ### G2 — Extension capability model
 
@@ -158,8 +168,9 @@ Epsilon the operative rule is: **do not begin a v2 of anything while v1 is still
 
 ## 6. Recommended next work, in order
 
-1. **G1** — test the interrupted-tool-call repair. Small, and it is the only durable-integrity
-   claim in the tree with no RED.
+1. ~~**G1** — test the interrupted-tool-call repair.~~ **Done**, and the gap turned out to be
+   half of what this document first claimed: the runtime view was already covered by M70, the
+   durable view was not.
 2. **G4** — a theme selector, with light and dark palettes, matching what pi tests for.
 3. **G5** — split `app.rs` along the four seams the measurement found, not along intuition.
 4. **G3** — one command table feeding every surface.
