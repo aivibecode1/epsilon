@@ -199,7 +199,7 @@ M168
 M169Full reasoning lives in [`docs/design/epsilon-decisions.md`](design/epsilon-decisions.md);
 M170one line per ADR:
 M171
-| ADR | Decision |
+M172| ADR | Decision |
 |---|---|
 | 001 | Rust on tokio (LTS channel), single binary |
 | 002 | Port pi's loop shape verbatim; improve only at named seams |

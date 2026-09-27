@@ -2503,44 +2503,20 @@ fn each_entry_kind_gets_the_tag_the_picker_shows() {
 async fn no_slash_command_panics_when_typed() {
     // Taken from the same `picker` mapping the parser uses, so a command added without a
     // test here is a gap in this list rather than a silent omission.
-    const COMMANDS: &[&str] = &[
-        "model",
-        "think",
-        "compact",
-        "theme",
-        "branch",
-        "tree",
-        "fork",
-        "clone",
-        "new",
-        "resume",
-        "sessions",
-        "editor",
-        "session",
-        "trust",
-        "reload",
-        "export",
-        "import",
-        "share",
-        "copy",
-        "name",
-        "changelog",
-        "tasks",
-        "hotkeys",
-        "settings",
-        "scoped_models",
-        "clear",
-        "skills",
-        "search",
-        "logout",
-    ];
-    for cmd in COMMANDS {
+    // M172: read the parser's own list rather than keeping a second copy here. `exit` is
+    // the one command whose job is to end the session, so running it in this loop would
+    // prove nothing about the other 29 - which is why the head is skipped rather than the
+    // entry omitted, so a command still cannot vanish from the sweep unnoticed.
+    let commands: Vec<String> = super::super::picker::COMMAND_HEADS
+        .iter()
+        .filter(|h| **h != "exit")
+        .map(|h| h.to_string())
+        .collect();
+    for cmd in &commands {
         // A fresh app per command: several of these open pickers or start state machines
         // that would otherwise bleed into the next iteration.
         let (mut app, agent, (_f, _n)) = test_app();
         let before = app.ui.lines().len();
-        // `exit` is deliberately absent: it is the one command whose job is to end the
-        // session, and running it here would prove nothing about the other 29.
         type_and_enter(&mut app, &agent, &format!("/{cmd}"));
         let after: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
         // A command can answer in the transcript, or by opening something. Both count, and

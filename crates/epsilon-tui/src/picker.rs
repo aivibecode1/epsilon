@@ -536,6 +536,144 @@ pub enum Command {
     Unknown(String),
 }
 
+/// Every command head [`parse_command`] understands, one entry per command.
+///
+/// M171's sweep over all 30 commands kept its own hand-written list, which meant a new
+/// command added to [`parse_command`] without updating the test was a silent gap - the
+/// exact failure this list exists to remove. Keeping the list here, next to the match it
+/// describes, is only half the answer: `every_head_in_command_heads_is_parsed` and
+/// `the_parser_does_not_know_a_command_the_list_does_not` together check both directions,
+/// so neither an unlisted new command nor a stale entry can survive.
+///
+/// Aliases (`models` for `model`) are deliberately absent - one entry per command, and the
+/// parser resolves the alias to the same variant.
+pub const COMMAND_HEADS: &[&str] = &[
+    "model",
+    "think",
+    "compact",
+    "theme",
+    "branch",
+    "tree",
+    "fork",
+    "clone",
+    "new",
+    "resume",
+    "sessions",
+    "editor",
+    "session",
+    "trust",
+    "reload",
+    "export",
+    "import",
+    "share",
+    "copy",
+    "name",
+    "changelog",
+    "tasks",
+    "hotkeys",
+    "settings",
+    "scoped_models",
+    "clear",
+    "skills",
+    "search",
+    "logout",
+    "exit",
+    // M172: the reverse-drift check found these two on its first run. M167 counted
+    // *variants* rather than parser tokens, so it missed seven heads the parser accepts -
+    // and so did M171's hand-written list, which is exactly the gap this check exists for.
+    "help",
+    "login",
+];
+
+/// Tokens the parser accepts as spellings of a listed command rather than as commands of
+/// their own. Kept beside the list so the reverse drift check has somewhere to put them.
+///
+/// The sweep drives one head per [`Command`] variant, so an alias is covered through the
+/// command it aliases - `/timeline` is swept by `/branch`, which reaches the same arm.
+/// `?` is not listed: it is the only head with a non-word character, and the reverse check
+/// filters those out rather than reporting them.
+#[allow(dead_code)]
+pub const ALIAS_HEADS: &[&str] = &[
+    "models",   // model
+    "timeline", // branch
+    "auth",     // login
+    "connect",  // login
+    "quit",     // exit
+    "q",        // exit
+];
+
+/// Parse submitted input that starts with `/`; `None` means ordinary prompt text.
+///
+/// Slash input is ALWAYS a command attempt (pi/opencode convention): unknown words
+/// come back as [`Command::Unknown`] so the UI can correct the user instead of
+/// silently prompting the model with literal `/typo`.
+/// Forward drift: every head the list claims must actually parse to a command.
+#[test]
+fn every_head_in_command_heads_is_parsed() {
+    for head in COMMAND_HEADS {
+        assert!(
+            parse_command(&format!("/{head}")).is_some(),
+            "`/{head}` is listed in COMMAND_HEADS but parse_command returned None"
+        );
+    }
+}
+
+/// Reverse drift: the parser must not accept a command the list does not drive.
+///
+/// This is the direction a hand-written list cannot catch, and the one that matters: a
+/// command added to the `match` and forgotten in the sweep would be executed by no test,
+/// which is precisely how the M168 defect survived sixteen commands' worth of coverage
+/// census. Reading the parser's own arms means the check cannot lag behind the code.
+///
+/// This is a source-shaped assertion and honestly labelled as one - it reads the quoted
+/// tokens of `parse_command`'s body out of this file. It is the price of `Command` not
+/// being `Debug` and therefore not comparable. The alternative is a second hand-written
+/// list, which is the bug this milestone removes.
+#[test]
+fn the_parser_does_not_know_a_command_the_list_does_not() {
+    // Line-based, not byte-based: this repository is checked out with CRLF, so searching
+    // for a `"\n}\n"` byte pattern finds nothing and fails in a way that looks like a
+    // parser bug. `lines()` strips the terminator and is immune to either ending.
+    let lines: Vec<&str> = include_str!("picker.rs").lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.starts_with("pub fn parse_command("))
+        .expect("parse_command is defined in this file");
+    let end = lines[start..]
+        .iter()
+        .position(|l| l.trim_end() == "}")
+        .map(|i| start + i)
+        .expect("parse_command has a closing brace on a line of its own");
+
+    let mut found: Vec<&str> = Vec::new();
+    for line in &lines[start..end] {
+        let line = line.trim_start();
+        if !line.starts_with('"') {
+            continue;
+        }
+        for piece in line.split('"').skip(1).step_by(2) {
+            let is_head = !piece.is_empty()
+                && piece
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c == ':');
+            if is_head && found.last() != Some(&piece) {
+                found.push(piece);
+            }
+        }
+    }
+
+    let unlisted: Vec<&&str> = found
+        .iter()
+        .filter(|h| !COMMAND_HEADS.contains(*h) && !ALIAS_HEADS.contains(*h))
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "the parser accepts {unlisted:?} but no test drives them; add each to COMMAND_HEADS \
+         (or to ALIAS_HEADS if it is only another spelling of a listed command) so the \
+         all-commands sweep reaches it"
+    );
+}
+
 /// Parse submitted input that starts with `/`; `None` means ordinary prompt text.
 ///
 /// Slash input is ALWAYS a command attempt (pi/opencode convention): unknown words
