@@ -1,7 +1,30 @@
-# Design Q&A — What Exists After the First Milestones (Partial vs Full Port)
+# Design Q&A — What Existed After the First Milestones (Partial vs Full Port)
 
 > Captured from a project conversation (2026-08-23). Question: after executing milestones M0-M5,
 > do we have a full port of pi and a working harness, or a partial port?
+
+> ## ⚠️ Historical snapshot — every "missing" row below shipped long ago
+>
+> **Do not read this as a statement about the project.** It was accurate on
+> 2026-08-23 at milestone M5, and it is preserved because the *reasoning* about
+> sequencing is still worth having. The table of what does not exist is simply
+> wrong today, and a reader who takes it at face value learns that Epsilon has no
+> tools, no permissions, no compaction, no extensions and no TUI.
+>
+> What shipped after this was written:
+>
+> | This document says "missing" | Actually landed in |
+> |---|---|
+> | Real built-in tools (read/write/edit/bash/grep) | `epsilon-tools/src/lib.rs:110-158` — 11 tools |
+> | Permission rulesets + approval UX | `epsilon-safety/` — engine, gate, escalation, sandbox |
+> | Compaction engine + prompt builder | `epsilon-core/src/compact.rs`, `prompt.rs` |
+> | Skills, extension host, MCP client | `core/skills.rs`, `epsilon-ext/`, `epsilon-mcp/` |
+> | TUI / server / print modes | `epsilon-tui/` (28k lines), `epsilon-server/`, `--print` |
+>
+> For the current answer, read [`audit/02-port-fidelity.md`](../../audit/02-port-fidelity.md).
+> The short version: **the loop is a faithful port; the product surface is roughly
+> 60% of pi's coding-agent layer** — which is close to what this document
+> predicted, and is a much more useful claim than "missing".
 
 ## Short answer
 
