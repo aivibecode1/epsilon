@@ -1,4 +1,5 @@
 # Documentation
+M164 | [The read side of `app.rs`, and a test that named a file](milestones/M164-the-read-side-and-a-test-that-named-a-file.md) | 1,288 | `impl App #2`'s 22 methods moved to `app/view.rs`; a source-grep test stopped naming one file |
 M163 | [The catch-all stops being a monolith](milestones/M163-the-catch-all-stops-being-a-monolith.md) | 1,288 | `run_workspace_command`'s 655 lines split by subject into view (274) / transfer (289) / catch-all (85) |
 M162 | [Slash commands by subject](milestones/M162-slash-commands-by-subject.md) | 1,288 | `run_command`'s 1,147 lines split into three themed executors in `app/commands.rs`; a routing tripwire replaces silent fall-through |
 M161 | [The first seam out of `app.rs`](milestones/M161-the-first-seam-out-of-app-rs.md) | 1,288 | 4,526 → 3,757 lines in `app.rs`; eleven panel `draw_*` functions moved verbatim to `app/panels.rs` |

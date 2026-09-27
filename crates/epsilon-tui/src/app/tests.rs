@@ -1017,6 +1017,18 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
     );
 }
 
+/// The concatenated source of the `app` module and its children.
+///
+/// The module is being split up (see `app/panels.rs`, `app/commands.rs`, `app/view.rs`),
+/// and a test that greps the source must not care which file a line ended up in.
+#[cfg(test)]
+const APP_MODULE_SOURCE: &str = concat!(
+    include_str!("../app.rs"),
+    include_str!("../app/commands.rs"),
+    include_str!("../app/panels.rs"),
+    include_str!("../app/view.rs"),
+);
+
 /// The rule is stated in one place, and this is what keeps it that way.
 ///
 /// The agreement test below passes for a second copy of the rule too — which is
@@ -1027,7 +1039,10 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
 /// and it fails on the day someone writes the expression out again.
 #[test]
 fn the_card_open_rule_is_borrowed_and_not_restated() {
-    let source = include_str!("../app.rs");
+    // Every file the `app` module is split across, not just `app.rs`. A source-grep
+    // test that names one file is a test that breaks the first time the code moves,
+    // and it breaks with a message about the *rule* rather than about the move.
+    let source = APP_MODULE_SOURCE;
     const GONE: &str = "`card_is_open` is gone; the draw path and the key path now decide this \
                         independently and nothing in the tree says the two agree";
     let after = source
