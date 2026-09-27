@@ -1068,7 +1068,10 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
 
 /// The concatenated source of the `app` module and its children.
 ///
-/// The module is being split up (see `app/panels.rs`, `app/commands.rs`, `app/view.rs`),
+/// The module is being split up, and a test that greps the source must not care which file a
+/// line ended up in. This list is hand-maintained and *will* fall behind the next split;
+/// the rule that keeps it honest is M166's — a new file under `app/` is added here in the
+/// same change that creates it.
 /// and a test that greps the source must not care which file a line ended up in.
 #[cfg(test)]
 const APP_MODULE_SOURCE: &str = concat!(
@@ -1076,6 +1079,11 @@ const APP_MODULE_SOURCE: &str = concat!(
     include_str!("../app/commands.rs"),
     include_str!("../app/panels.rs"),
     include_str!("../app/view.rs"),
+    include_str!("../app/session.rs"),
+    include_str!("../app/editing.rs"),
+    include_str!("../app/completion.rs"),
+    include_str!("../app/editor.rs"),
+    include_str!("../app/login.rs"),
 );
 
 /// The rule is stated in one place, and this is what keeps it that way.
