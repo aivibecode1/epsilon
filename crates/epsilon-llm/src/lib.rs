@@ -18,6 +18,7 @@ mod faux;
 mod http;
 pub mod oauth;
 pub mod oauth_login;
+pub mod paced;
 #[cfg(feature = "real")]
 pub mod providers;
 pub use sanitize::{Fix, ParsedArgs, parse_tool_arguments, unique_call_ids};
@@ -42,6 +43,7 @@ pub use catalog::WireApi;
 #[cfg(feature = "real")]
 pub use catalog::live_models;
 pub use faux::{FauxProvider, FauxStep, FauxToolCall};
+pub use paced::PacedProvider;
 #[cfg(feature = "real")]
 pub use providers::DirectProvider;
 pub use retry::{FailureKind, backoff_delay, classify, should_retry};

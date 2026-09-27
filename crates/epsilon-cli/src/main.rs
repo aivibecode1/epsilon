@@ -18,7 +18,7 @@ use std::sync::Arc;
 use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
 use epsilon_contracts::message::{Message, StopReason};
 use epsilon_core::{Agent, LoopLimits, ToolRegistry};
-use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
+use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PacedProvider, PanicGuard};
 use epsilon_mcp::McpServerConfig;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
 
@@ -160,6 +160,9 @@ fn help_text() -> &'static str {
 struct Args {
     mode: Mode,
     script_path: Option<String>,
+    /// `--stream-pace-ms N`: delay every faux stream event by N ms, so a turn lasts
+    /// seconds instead of microseconds. See the flag's parse site for why this exists.
+    stream_pace_ms: u64,
     workspace: Option<PathBuf>,
     mcp_servers: Vec<McpServerConfig>,
     port: u16,
@@ -315,6 +318,7 @@ fn parse_args() -> Args {
         return Args {
             mode,
             script_path: None,
+            stream_pace_ms: 0,
             workspace: None,
             mcp_servers: Vec::new(),
             port: 8787,
@@ -331,6 +335,7 @@ fn parse_args() -> Args {
     }
     let mut mode = Mode::Tui(None); // M14: plain `epsilon` opens the interactive TUI
     let mut script_path = None;
+    let mut stream_pace_ms: u64 = 0;
     let mut workspace = None;
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
@@ -484,6 +489,20 @@ fn parse_args() -> Args {
                     });
                 mode = Mode::TuiBench(n);
             }
+            // Hidden: slow the faux stream down so a turn lasts seconds, not
+            // microseconds. The reason this flag exists at all is in
+            // `epsilon-llm/src/paced.rs`: every TUI test and probe this
+            // repository has ever run drove a turn that was over before the
+            // first keystroke, so the reported "freezes the moment you start
+            // typing" state has never been executed by anything. A long turn
+            // measured in seconds is the precondition for reproducing it.
+            "--stream-pace-ms" => {
+                i += 1;
+                stream_pace_ms = raw
+                    .get(i)
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or_else(|| die("--stream-pace-ms requires a delay (e.g. 40)"));
+            }
             "--list-models" => {
                 i += 1;
                 let provider = positional(&raw, &mut i);
@@ -514,6 +533,7 @@ fn parse_args() -> Args {
     Args {
         mode,
         script_path,
+        stream_pace_ms,
         workspace,
         mcp_servers,
         port,
@@ -1400,7 +1420,18 @@ async fn dispatch(args: Args) -> i32 {
         diag.push(
             "go real:  epsilon auth login <provider>   (or set the provider's API key env var)",
         );
-        Arc::new(PanicGuard(FauxProvider::new(steps)))
+        if args.stream_pace_ms > 0 {
+            diag.push(format!(
+                "stream pace: {}ms per event (test hook; see epsilon-llm/src/paced.rs)",
+                args.stream_pace_ms
+            ));
+        }
+        let faux = FauxProvider::new(steps);
+        if args.stream_pace_ms > 0 {
+            Arc::new(PanicGuard(PacedProvider::new(faux, args.stream_pace_ms)))
+        } else {
+            Arc::new(PanicGuard(faux))
+        }
     };
     // Silence the never-read warning in faux builds: fallbacks only matter on
     // the real path (see the use_real branch above).
