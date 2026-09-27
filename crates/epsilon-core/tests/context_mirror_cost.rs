@@ -74,10 +74,7 @@ fn user_turn(i: usize) -> Message {
 /// production builds it rather than poked into directly.
 async fn fill(agent: &Arc<Agent>, turns: usize) {
     for i in 0..turns {
-        agent
-            .run(user_turn(i))
-            .await
-            .expect("faux turn completes");
+        agent.run(user_turn(i)).await.expect("faux turn completes");
     }
 }
 
