@@ -51,6 +51,25 @@ responsibility table is wrong because of it.**
 **Fix:** move both to `[dev-dependencies]`. The architecture table stays true and
 the release binary stops linking ~27,000 lines it cannot reach.
 
+> **RETRACTED 2026-09-28 — this claim is wrong.** I checked whether those two
+> uses are the only ones, and they are not:
+>
+> ```
+> $ grep -rn "epsilon_llm\|epsilon_tools" crates/epsilon-server/src/
+>   lib.rs:461:  use epsilon_llm::{FauxProvider, FauxStep, PanicGuard};
+>   lib.rs:863:  let registry = Arc::new(epsilon_tools::builtin_registry(
+> ```
+>
+> The claim was that every use sits inside `mod tests`, which opens at `:457`.
+> Line 461 is inside it; **line 863 is 400 lines further down and is not.** The
+> server builds a real tool registry at runtime. Both crates are genuinely used
+> by production code, so the proposed fix — moving them to `[dev-dependencies]` —
+> would **break the build**.
+>
+> This is recorded rather than deleted because the failure mode is instructive:
+> a claim with a file:line citation reads as verified, and this one was not. Every
+> other row in this ledger is cheap to re-run the same way before acting on it.
+
 ---
 
 ## D3 — `epsilon-tools` depends on `epsilon-lsp` directly, contradicting the reason the trait exists
@@ -378,3 +397,122 @@ currently does not use.
 are sitting in the repository root. They are untracked — `.gitignore:6` covers
 `/.tmp-*` — so git is clean, but they are consumed scratch left where the next
 reader will trip over them. **Fix: delete.**
+
+---
+
+# Added 2026-09-28
+
+Defects found in this pass. Each was verified with a command named in the entry,
+because D2 above is a standing reminder that a file:line citation is not evidence.
+
+## D17 — Delegated subagent tokens are never counted in the cost
+
+**Severity: high. It is about money, it is silent, and it is unbounded.**
+
+The `task` tool returns its child's aggregated usage on `ToolOutput.usage`
+(`crates/epsilon-tools/src/task.rs:231,281`). `crates/epsilon-core/src/exec.rs:736`
+carries it into the `ToolResultMessage`. And then nothing reads it:
+
+```
+$ grep -n "usage" crates/epsilon-tui/src/state.rs
+  → the Message::ToolResult arm (state.rs:1022-1061) never reads t.usage
+  → the hydrate arm (state.rs:909-934) never reads it either
+  → the only reader of per-message usage in epsilon-tui is app/session.rs:205,
+    which is the /resume path
+```
+
+Every other usage in this codebase flows through `record_usage`
+(`state.rs:573-579`). This path bypasses it. A session that fans out into
+subagents under-reports its cost by an arbitrary multiple, with **no `+` marker**,
+because `is_floor` fires only for unpriced *models* and *buckets* — never for
+missing *tokens*.
+
+**Fix:** read `t.usage` where the sibling usage is already read, and route it
+through `record_usage`. One reader, in one place. The test is a fan-out that
+asserts the bill rose by the child's usage.
+
+## D18 — The per-frame context mirror deep-clones the whole transcript
+
+**Severity: medium, and rising with session length. Measured.**
+
+`crates/epsilon-tui/src/app/event.rs:169` calls `App::mirror_context_size` on
+every drawn frame — up to 30×/second, on the event-loop thread, which is the
+same thread that must read the keyboard. It reaches
+`Agent::estimated_context_tokens` (`core/src/lib.rs:1934-1937`), which calls
+`self.history()` — a full deep clone of every message (`lib.rs:1114-1116`) — to
+produce one integer.
+
+`--tui-bench` structurally cannot see this: it calls `draw_frame` directly and
+its `bench_app` holds no `Agent`, so the mirror never runs.
+
+Measured on this machine (commit `47ca904`,
+`crates/epsilon-core/tests/context_mirror_cost.rs`):
+
+| Transcript | Cost per mirror |
+|---|---|
+| 20 messages | 16.9 µs |
+| 200 messages | 216.7 µs |
+
+**12.9× cost for a 10× larger transcript** — the signature of a whole-transcript
+scan rather than the anchored walk it intends to be. The test's second assertion
+fails today, deliberately; it is the tripwire for this fix.
+
+**Honest limit:** at 216 µs this is ~0.7% of a 33 ms frame. It is a real defect
+and it is O(session) on the input thread, but it is **not** established as the
+reported freeze. See [04](04-tui.md).
+
+**Fix:** `anchored_tokens` already takes `&[Message]`; the clone is the caller's
+choice, not the function's. Hoist or memoise the mirror so a frame does not pay
+for a session-length clone.
+
+## D19 — A panic leaves the terminal unusable
+
+**Severity: medium. A panic is indistinguishable from a freeze.**
+
+`crates/epsilon-tui/src/app.rs:906-926` calls `ratatui::try_init()` and
+`ratatui::try_restore()` with no `Drop` guard and no panic hook. A panic unwinds
+past both, leaving raw mode, the alternate screen and a hidden cursor — the
+symptom is a screen that never updates, which is exactly what the owner reported
+and impossible to diagnose from the outside.
+
+**Fix:** a panic hook plus a `Drop` guard that restores unconditionally. Small,
+and it converts the next occurrence of an unexplained freeze into a readable
+error.
+
+## D20 — A killed TUI blocks the workspace for 30 seconds
+
+**Severity: medium. Confirmed by hitting it repeatedly.**
+
+A TUI killed with `taskkill /F` leaves `.epsilon/sessions/tui.lock` behind. The
+next launch then waits on `STALE_AFTER`/`ACQUIRE_WAIT` (`lease.rs:50,59`) for 30
+seconds, showing a truncated "waiting for this session to be released" frame with
+no working input. The recorded pid is deliberately never probed for liveness.
+
+I hit this on every probe run: `scripts/console-probe.py` ends with `taskkill /F`,
+so each run needs `rm .epsilon/sessions/tui.lock` first. A user who closes a
+terminal window pays 30 seconds per launch until they find the file.
+
+**Fix:** probe the recorded pid, or shorten the steal window once it is known
+dead.
+
+## D21 — `epsilon-lsp` compiles without the workspace lint law
+
+*(Carried forward from D1, which was correct; repeated here because the severity
+is easy to lose in a long ledger.)*
+
+`crates/epsilon-lsp/Cargo.toml:21-23` declares a `[lints.rust]` table with
+`missing_docs = "warn"` and **no `workspace = true`**. A package `[lints]` table
+*replaces* the workspace one rather than merging with it, so this crate compiles
+with neither `unsafe_code = "forbid"` nor `clippy::all = "warn"`. Verified:
+
+```
+$ sed -n '18,25p' crates/epsilon-lsp/Cargo.toml
+  [lints.rust]
+  missing_docs = "warn"
+```
+
+There is no `unsafe` in the crate today. The defect is that nothing would stop
+the first one, against a law `AGENTS.md` states as repository-wide.
+
+**Fix:** add `workspace = true`, keeping `missing_docs = "warn"` as the local
+override. One line.

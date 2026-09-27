@@ -17,8 +17,10 @@ judgment overrides `AGENTS.md`; edit it and report the delta.
   `crates/epsilon-cli/tests/terminal.rs`, 6 files in `.agents/skills/ratatui-tui/`) plus
   untracked `docs/design/epsilon-architecture.draft.md`. Not mine; decide before committing.
   The `terminal.rs` M179 change (fall back to `CARGO_BIN_EXE_epsilon`) is correct — keep it.
-- Rust LOC 107,837 / 11 crates. tui 28,119 · llm 21,615 · core 19,233 · tools 10,613 ·
-  session 9,402 · cli 7,166. **AGENTS.md says 12 crates; there are 11.** Contradiction.
+- Rust LOC 107,837 / **12 crates** (tui 28,119 · llm 21,615 · core 19,233 · tools 10,613 ·
+  session 9,402 · cli 7,166 …). I first counted 11 by missing `epsilon-safety`; the repo is
+  internally consistent at 12 (Cargo.toml, `crates/`, README, AGENTS.md all agree). **My
+  earlier "AGENTS.md says 12, there are 11" note was wrong — do not repeat it.**
 - `audit/` is INCOMPLETE: only `README.md`, `01`, `03`, `04` exist. The README's table
   promises `02-port-fidelity`, `05-metrics`, `06-references`, `07-plan` — **none exist**.
   `audit/evidence/` is 13 MB of mostly stale logs; `audit/history/` has 14 old assessments.

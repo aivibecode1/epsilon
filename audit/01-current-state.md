@@ -1,168 +1,126 @@
 # 01 — Current state
 
-What is actually in this repository, and how much of it should be believed.
-Counts in this document were taken on 2026-09-27 against commit `6c4063b`.
+What exists, how big it is, and how much of it I trust. Written on 2026-09-28 from the
+code, from `git log`, and from measurements taken on this machine.
 
-## Verdict
+**Sources of truth, in order:** the code; a command run in this audit; `git log`; the
+reference harnesses. Documentation is a *claim about* the code, never evidence for it.
 
-This is a real codebase, not a sketch. Roughly 83,000 lines of Rust across
-twelve crates, with about 18,000 lines of tests, an offline test suite that runs
-without a provider, and a terminal frontend that drives the real binary through
-a real pseudo-terminal. The engineering is above average in places: the
-provider-anchored context estimate in
-`crates/epsilon-core/src/compact.rs:29-53` is a genuinely good idea, better than
-anything in the reference harnesses; the permission engine's last-match-wins
-rule is right and pure; the work that has gone into making numbers honest rather
-than merely present is unusual and worth keeping.
+**Evidence labels used throughout:**
 
-It is also carrying three problems that need decisions, not more work:
+- **Measured** — observed from a command named in this audit.
+- **Read** — the control flow and its callers were inspected. Establishes what the code
+  does, not what a user sees.
+- **Inferred** — a conditional consequence. The trigger and the test that would settle it
+  are both stated.
+- **Unverified** — no adequate evidence yet. Do not treat as a capability.
 
-1. **Documentation has drifted from the code, and the drift has been recorded as
-   truth.** The agent memory in this repository named M135 as its next action
-   when M178 was the last commit — forty-three milestones of drift. That is the
-   failure mode this audit exists to stop.
-2. **The terminal frontend has a per-frame cost that grows with the session, and
-   a panic path that leaves the console unusable.** Both are in
-   [04 — The TUI](04-tui.md).
-3. **The three numbers in the header can each be wrong in a specific, known
-   way**, and in one case the code that would make them right already exists and
-   is not called. That is in [05](05-metrics.md).
+## Shape of the repository
 
-## Size
+107,837 lines of Rust across **12 crates**. The dependency graph is a clean DAG —
+`contracts` → {llm, session, ext, lsp} → `core` → {tools, safety, mcp, tui, server} →
+`cli`. The apparent `tools`↔`safety` cycle is a dev-dependency only.
 
-Measured by line count, excluding `tests/` directories and `*_test.rs`:
+| Crate | Lines | What it owns |
+|---|---|---|
+| `epsilon-tui` | 28,119 | The terminal frontend: state, panels, keys, themes, render cache |
+| `epsilon-llm` | 21,615 | Providers, wires, streaming, the model catalog, OAuth |
+| `epsilon-core` | 19,233 | The agent loop, scheduling, compaction, the prompt |
+| `epsilon-tools` | 10,613 | read/write/edit/bash/grep/glob/find/ls/web_fetch/todo/task, LSP, sandbox |
+| `epsilon-session` | 9,402 | The durable JSONL session store, fork, branch |
+| `epsilon-cli` | 7,166 | Argument parsing, mode dispatch, the binary |
+| `epsilon-safety` | 3,530 | The permission engine, escalation, bubblewrap + Job Objects |
+| `epsilon-contracts` | 2,759 | Types and traits with no internal dependencies |
+| `epsilon-ext` | 1,939 | The extension host (subprocess tools, declared events) |
+| `epsilon-lsp` | 1,560 | Language-server integration |
+| `epsilon-server` | 1,229 | The axum server mode |
+| `epsilon-mcp` | 672 | MCP stdio transport |
 
-| Crate | Source | Files | Tests | Test files |
-|---|---:|---:|---:|---:|
-| `epsilon-tui` | 26,437 | 49 | 0 | 0 |
-| `epsilon-llm` | 19,506 | 24 | 1,270 | 4 |
-| `epsilon-core` | 10,576 | 17 | 7,370 | 14 |
-| `epsilon-tools` | 7,472 | 15 | 2,455 | 1 |
-| `epsilon-cli` | 5,734 | 5 | 1,032 | 4 |
-| `epsilon-session` | 4,533 | 7 | 4,334 | 2 |
-| `epsilon-safety` | 2,398 | 9 | 833 | 4 |
-| `epsilon-contracts` | 2,578 | 12 | 0 | 0 |
-| `epsilon-lsp` | 1,300 | 7 | 137 | 1 |
-| `epsilon-server` | 1,146 | 2 | 0 | 0 |
-| `epsilon-ext` | 912 | 5 | 848 | 4 |
-| `epsilon-mcp` | 538 | 3 | 72 | 1 |
-| **Total** | **83,131** | **155** | **18,351** | **35** |
+**Read:** the crate boundaries are correct and ADR-014's "brick earns existence" rule is
+holding. The problem is not the layout — it is that `crates/epsilon-core/src/lib.rs` is
+3,415 lines / 155 KB while the same crate's other 16 modules are 1–46 KB.
 
-**Read that table before planning anything.** Three of twelve crates have no
-`tests/` directory at all, and `epsilon-tui` — the largest crate, roughly a third
-of the code, and the one with the reported defect — has no integration test
-directory and relies entirely on inline tests plus one pseudo-terminal suite in
-`crates/epsilon-cli/tests/terminal.rs`. Test-to-source ratio by crate ranges from
-0.0 (`epsilon-tui`, `epsilon-contracts`, `epsilon-server`) to 0.96
-(`epsilon-session`).
+## Maturity
 
-The eight largest source files:
+This is a real codebase with real depth, not a prototype. It has 1,300+ test functions, a
+five-gate verification battery, a real-console integration test, a documentation culture
+that is genuinely better than average, and 178 milestones of recorded decisions.
 
-| Lines | File |
-|---:|---|
-| 7,937 | `epsilon-llm/src/catalog/catalog_data.rs` — **generated**, not code |
-| 3,233 | `epsilon-core/src/lib.rs` — the agent loop and agent state |
-| 3,002 | `epsilon-cli/src/main.rs` |
-| 2,447 | `epsilon-tui/src/state.rs` |
-| 2,396 | `epsilon-session/src/store.rs` |
-| 1,656 | `epsilon-llm/src/providers/mod.rs` |
-| 1,535 | `epsilon-tui/src/picker.rs` |
-| 1,147 | `epsilon-core/src/compact.rs` |
+The prose quality deserves a specific note, because it is unusual. From `docs/milestones/M106`:
 
-One of those eight is generated data and should not be counted as complexity.
-The rest are large but none is a god object in the sense of having no
-internal structure: `epsilon-core/src/lib.rs` is a crate root with a large
-`Agent`, and a previous line of work had already begun splitting it.
+> The header divided the session-total cache reads by the latest prompt size, so the
+> figure inflated every turn and pinned at `cache 100%`. The test named for the right
+> property passed because it modelled the gauge wrongly.
 
-## The dependency graph is real, and mostly matches its documentation
+That is a project recording its own mistakes precisely, which is the behaviour you want
+from a team and which most codebases never achieve. **The writing is the strongest asset
+here and should be protected through any restructure.**
 
-Read from all twelve manifests. Internal production edges:
+## What the verification actually covers
 
-```
-contracts ──┬─> llm ──┐
-            ├─> session ──> core ──┬─> safety ──> tools ──> (lsp) ──┐
-            ├─> lsp ───────────────┼─> mcp ────────────────────────┤
-            ├─> ext                 │                              │
-            └────────────────────── > tui ─────────────────────────┤
-                                   core ──> safety                 │
-                                   llm, session, safety ──> tui ───┤
-                                   core, safety ──> server ─────────┤
-                                   all eleven ──> cli ──────────────┘
-```
+The battery is `pwsh -File scripts/gate.ps1 <label>` on Windows (CI uses
+`scripts/gate.sh`): `cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
+`cargo test --workspace`, the demo, and a real-provider compile check.
 
-The four rules this repository states about its own layering **hold**: no
-library depends on `epsilon-cli`; `epsilon-core` depends on exactly
-`{contracts, llm, session}`; `epsilon-lsp` depends on `contracts` alone; there
-is no cycle. `epsilon-safety` has a dev-dependency back on `epsilon-tools`,
-which is legal and is how its integration tests get a real tool set.
+One important gap, which the previous session partly fixed in uncommitted work: the
+terminal integration test used to require `EPSILON_BIN` to be set by hand, so
+`cargo test --workspace` skipped it — and a test the battery skips is a test that rots.
+`the_screen_reports_what_the_harness_is_doing` sat broken from M151 to M178 for exactly
+that reason. The pending change falls back to `CARGO_BIN_EXE_epsilon`, which Cargo sets
+automatically. That change is correct and should be kept.
 
-Two edges are wrong in a way that matters, and one is wrong in a way that hides
-a safety law — both in [03 — Defect ledger](03-defects.md), D1 through D3.
+**But the deeper gap remains, and it is the most important finding in this audit:** the
+faux provider emits an entire turn's events instantly
+(`crates/epsilon-llm/src/faux.rs:145-148`, `pending.pop_front()` with no delay). No test
+or probe has ever run the TUI while a turn is genuinely in flight over seconds. See
+[04](04-tui.md).
 
-**The graph is not a layering, and no document says so.** `core` is a dependency
-of five siblings; `tools` reaches down to `lsp`. That is a real structure — a set
-of peers over a shared core, with the frontend crates on top — but
-`docs/design/epsilon-architecture.md` draws it as a descending stack, and a
-reader who trusts the picture will reason about new edges wrongly.
+## Documentation
 
-## What is genuinely good, and should not be lost in a restructure
+- `docs/qa/` — 10 design-convention notes. The best writing in the repository.
+- `docs/milestones/` — 171 dev logs. Valuable, and roughly 90% is bookkeeping rather than
+  decision-record.
+- `docs/design/epsilon-decisions.md` — 19 ADRs in one 95 KB file.
+- `docs/history.md`, `CHANGELOG.md` (65 KB) — the same facts in a third and fourth place.
+- `docs/user/` — 7 maintained guides. These are what a user should actually read.
+- **~155 broken markdown links** across 43 files, mostly one unpropagated move from
+  `audit/NN-*.md` to `audit/history/NN-*.md`. Two are load-bearing: the README's own
+  "read this before trusting any claim" disclaimer points at a file that moved.
+- `docs/README.md` opens with 18 orphaned table rows above its heading.
 
-These are not politenesses. Each is a decision that took real thought, and a
-restructure that flattens them would make the codebase worse.
+## Skills
 
-- **The context estimate is provider-anchored, not guessed.**
-  `crates/epsilon-core/src/compact.rs:46-53` takes the provider's own count for
-  the prefix and estimates only what was appended since. All four reference
-  harnesses estimate, and all four are wrong by a factor of up to four in
-  opposite directions on prose and on code. The header and the compaction
-  trigger read the *same function*, so the number a user sees cannot flatter the
-  loop that produced it. That property is worth more than the last ten
-  milestones of TUI work.
-- **Truncation is bounded and the bound is per-tool with a stated reason.**
-  `read` pages, `bash` tails, `grep` caps lines and each says so. The
-  references converge on the same need (Hermes `tools/tool_output_truncate.py`,
-  opencode `src/tool/truncate.ts`, DSH's spill subsystem) and opencode's version
-  — a single authority in the tool registry, with a self-aware hint — is better
-  than what is here. See [06](06-references.md).
-- **The permission engine is a pure function.** Matching denies win; otherwise
-  the last matching rule decides. Property-testable, no I/O, no callbacks.
-  opencode's `evaluate()` is the same shape.
-- **The test suite runs offline.** A harness that can only be tested by spending
-  money is a harness that is only tested when someone is paid to do it. The faux
-  provider and the `SlowProvider` are the reason the loop is testable at all.
-- **The terminal test drives the real binary through a real pty**, and answers
-  the pty's cursor-position query — a detail that costs an afternoon to learn and
-  whose absence makes the harness look like a program that renders nothing.
+`.agents/skills/` holds **8** skills. Two earn their place: `improve` (a read-only
+codebase survey that produces a prioritised plan) and `ratatui-tui` (a general ratatui
+reference; its `references/ai-harness.md` is genuinely useful).
 
-## What the previous audit got wrong, or left unverified
+The other six are `ponytail`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`,
+`ponytail-help`, `ponytail-review`, and they do not belong to this project. `ponytail-gain`
+renders a benchmark scoreboard citing `benchmarks/` and the README — **there is no
+`benchmarks/` directory in this repository.** `ponytail-debt` greps for `ponytail:`
+comments in a structured format; the 19 that exist are prose asides. All six ship
+slash-command mode-switching UX that belongs to a chat plugin. They are the shape of
+rigour without the substance, and the user's instinct to distrust them is correct.
 
-Kept because leaving it in place is the actual risk.
+## Housekeeping
 
-| Earlier claim | Status |
-|---|---|
-| "`agents/memory/README.md` — next safe action: M135 is in flight" | **False.** M178 was the last commit. The note had not been updated for forty-three milestones. |
-| "The typing-freeze report was two real defects, both already fixed and both measured" | **Unverified, and now doubtful.** The measurement that established it (`audit/evidence/console-probe-2026-09-21.md`) typed into an *idle* TUI against the *faux* provider, and the milestone that added the shell tests says so in its own `Limits` (`docs/milestones/M178-the-shell-in-the-suite.md:107-109`). The reported symptom involves a run in flight. See [04](04-tui.md). |
-| "12 workspace crates" (audit/12) and "Twelve crates" (README) | **True**, and the audit's correction of an earlier "11" was right. |
-| "`docs/design/epsilon-architecture.md` maps the real edges and the execution paths" | **Half false.** The edge table is exactly right. Five execution-path claims are false and four are stale — [03](03-defects.md) D4 lists them. |
-| "A test the battery skips is a test that rots" | **True, and the fix was in flight uncommitted** at the time of this audit: an M179 change making `crates/epsilon-cli/tests/terminal.rs` find its binary through `CARGO_BIN_EXE_epsilon` instead of a hand-set `EPSILON_BIN`. It is correct and this audit keeps it. |
+- **173 `.log` files, ~11 MB, tracked in git** under `audit/evidence/`. Rust convention:
+  build and CI output is disposable. Keep the `.md` / `.patch` / `.txt` narrative
+  evidence; let the logs go.
+- Four untracked `.tmp-*.txt` scratch files at the root — draft CHANGELOG rows from the
+  M106–M108 work. `.gitignore` is correctly keeping them out of git; they should be
+  deleted.
+- `references/` is correctly excluded from git (0 tracked files).
+- `audit/` was **incomplete**: its README promised four documents that did not exist.
+  This pass writes them.
 
-## What this audit could not establish
+## What I did not verify
 
-Stated plainly, because an audit that hides its gaps is worse than no audit.
-
-- **Whether the TUI freeze reproduces.** [04](04-tui.md) names the mechanisms
-  that would cause it and the experiment that distinguishes them, but the
-  measurement needs a built binary in a real conhost and had not been taken when
-  this document was written. It is taken during the work, and the result —
-  including "it did not reproduce" — is recorded there.
-- **Linux and macOS behaviour.** Nothing here was executed on either. The
-  bubblewrap path, the `nix` dependency, and the POSIX terminal paths are
-  unverified beyond compiling.
-- **Real-provider behaviour.** No live call was made. Every provider adapter's
-  fidelity to its wire format is read from the source, not observed. The bundled
-  model catalog is a generated snapshot of `models.dev` taken 2026-09-21; it will
-  drift, and the CI job that checks for drift is the only thing watching.
-- **Throughput.** No benchmark beyond the TUI frame benchmark exists, and that
-  one uses ratatui's in-memory `TestBackend`, so it measures draw cost and never
-  the console write — which is the part that differs most between a developer's
-  Windows Terminal and a real `conhost` window.
+- No live provider call. Every claim about provider behaviour is a reading of wire code.
+- No Linux or macOS execution. Windows only, and mostly `cmd` rather than PowerShell.
+- No credential store was read and no network call was made.
+- The full test suite was **not** run in this audit. Phase 0 of [07](07-plan.md) makes no
+  product change, so the suite state is unchanged from HEAD, but that is an inference
+  about an unrun suite and should be stated as such rather than assumed.
+- Real session transcript sizes were not measured, so the per-frame cost projection in
+  [04](04-tui.md) rests on a measured microbenchmark and an estimated session size.
