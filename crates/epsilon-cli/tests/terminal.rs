@@ -66,6 +66,39 @@ struct Session {
 impl Session {
     /// Start the binary in its own pty. `args` are the CLI arguments.
     fn start(binary: &str, args: &[&str], cwd: &std::path::Path) -> Self {
+        let mut cmd = CommandBuilder::new(binary);
+        for arg in args {
+            cmd.arg(arg);
+        }
+        cmd.cwd(cwd);
+        Self::start_with(cmd)
+    }
+
+    /// Start the binary **through a shell**, which is how a user starts it.
+    ///
+    /// The tests above launch `epsilon` as the pty's own process, so no conhost, no
+    /// profile and no shell banner are in the way. That is the right setup for testing
+    /// the TUI and the wrong setup for the owner's actual report, which was about
+    /// launching it from PowerShell. This is that path: the shell is the pty's process
+    /// and the TUI is its child, inheriting the same console.
+    ///
+    /// `script` is the shell's own command text, so the caller owns the quoting rather
+    /// than this helper guessing at it for two different shells.
+    fn start_in_shell(shell: &str, script: &str, cwd: &std::path::Path) -> Self {
+        let mut cmd = CommandBuilder::new(shell);
+        cmd.cwd(cwd);
+        if shell.ends_with("powershell") {
+            cmd.arg("-NoProfile");
+            cmd.arg("-NoLogo");
+            cmd.arg("-Command");
+        } else {
+            cmd.arg("/c");
+        }
+        cmd.arg(script);
+        Self::start_with(cmd)
+    }
+
+    fn start_with(mut cmd: CommandBuilder) -> Self {
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
@@ -76,11 +109,6 @@ impl Session {
             })
             .expect("a pty");
 
-        let mut cmd = CommandBuilder::new(binary);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        cmd.cwd(cwd);
         // A deterministic environment: the test must not depend on the developer's
         // terminal variables, and `NO_COLOR` keeps assertions about text stable.
         cmd.env("TERM", "xterm-256color");
@@ -307,17 +335,36 @@ fn the_screen_reports_what_the_harness_is_doing() {
         screen.contains("?/") || screen.contains('%'),
         "no context gauge on the first frame:\n{screen}"
     );
+    // M178: this used to assert a `$` and the word "cache" on the first frame, and
+    // had been failing since M151 without anyone noticing - it needs EPSILON_BIN, so
+    // the battery skips it. M151 made both of those deliberately untrue: cost is shown
+    // only once there is one, because a fabricated `$0.00` is a lie, and the cache
+    // became a volume/rate form (`R0 W0 CH -`). Asserting the current contract is the
+    // fix; the stale assertion was the bug.
     assert!(
-        screen.contains('$'),
-        "no cost on the first frame:\n{screen}"
+        !screen.contains('$'),
+        "a cost is shown before any turn has run, so it must be fabricated:\n{screen}"
     );
     assert!(
-        screen.contains("cache"),
+        screen.contains("CH"),
         "no cache indicator on the first frame:\n{screen}"
     );
     assert!(
         screen.contains("DeepSeek") || screen.contains("Faux") || screen.contains("offline"),
         "the model is not named on the first frame:\n{screen}"
+    );
+
+    // The other half of the cost contract: it is *hidden* before a turn and *shown*
+    // after one. Asserting only the first half would let a header that never shows a
+    // cost at all pass - which is exactly the kind of test that outlives the thing it
+    // was written for.
+    session.type_text("say hi");
+    session.key(b'\r');
+    session.settle(Duration::from_secs(6));
+    let after = session.screen();
+    assert!(
+        after.contains('$'),
+        "no cost after a turn has run, so the estimate is missing:\n{after}"
     );
 }
 
@@ -381,4 +428,119 @@ fn a_narrow_terminal_is_survived_rather_than_mangled() {
         "a row is wider than the resized terminal:\n{screen}"
     );
     let _ = session;
+}
+/// M178: the same TUI, started the way a user starts it — through a shell.
+///
+/// Everything above launches `epsilon` as the pty's own process. That is the cleanest
+/// way to test a TUI, and it is not what the owner did: the report was about launching
+/// it from CMD and from PowerShell, and M177 measured that only with the out-of-band
+/// probe. This puts the shell in the suite, so a PowerShell-only regression is a test
+/// failure rather than something nobody notices until a user reports it again.
+///
+/// The shell is the pty's process and the TUI is its child. That is the point: a TUI
+/// that draws correctly when it owns the terminal can still fail when it is a child of a
+/// shell that has already written a prompt and a banner to the same screen.
+fn shell_path(shell: &str) -> Option<String> {
+    // A shell that is not installed is a skip, not a failure: this suite also runs on
+    // ubuntu, where neither cmd.exe nor powershell.exe exists.
+    let found = which(shell);
+    match found {
+        Some(p) => Some(p),
+        None => {
+            eprintln!("SKIPPED: {shell} is not on PATH, so this cannot run here");
+            None
+        }
+    }
+}
+
+/// Resolve an executable on PATH. Deliberately small and Windows-tolerant.
+fn which(name: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let exts: Vec<String> = std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase())
+        .collect();
+    for dir in std::env::split_paths(&path) {
+        for ext in &exts {
+            let candidate = dir.join(format!("{name}{ext}"));
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+        }
+        // A bare name on a unix-like PATH still deserves a try.
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// Drive the TUI through a shell: it must open, draw, and accept typed input.
+fn assert_works_through_shell(shell: &str) {
+    let Some(shell_path) = shell_path(shell) else {
+        return;
+    };
+    let Some(bin) = binary() else { return };
+    let ws = workspace();
+    // The command the shell runs. Quoting is the caller's, because cmd and PowerShell
+    // disagree about it and guessing wrong produces a shell error that looks like a TUI
+    // failure — which is the M170 mistake in a different costume.
+    // `&` is PowerShell's call operator and a command separator in cmd.exe, so one
+    // spelling cannot serve both: under cmd it would be a syntax error that looks
+    // exactly like a TUI that never started.
+    let script = if shell_path.to_lowercase().contains("powershell") {
+        format!("& '{bin}'")
+    } else if bin.contains(' ') {
+        // cmd.exe strips the outer quotes of a /c argument according to rules of its
+        // own, and a quoted path is the case where getting them wrong is easiest.
+        format!("\"{bin}\"")
+    } else {
+        // No spaces, no quotes, no ambiguity.
+        bin.clone()
+    };
+    let mut session = Session::start_in_shell(&shell_path, &script, ws.path());
+    session.settle(SETTLE);
+
+    assert!(
+        session.alive(),
+        "the binary exited instead of opening the TUI when started from {shell}. This is
+        the failure a drawing test cannot see: the program never started."
+    );
+    let screen = session.screen();
+    assert!(
+        screen.contains("ask anything") || screen.contains("E P S I L O N"),
+        "started from {shell}, the first frame shows neither the composer placeholder
+        nor the welcome screen, so the TUI opened and drew nothing:\n{screen}"
+    );
+    assert!(
+        screen.contains("idle"),
+        "started from {shell}, no status line, so the header did not draw:\n{screen}"
+    );
+
+    // Typing is the half of the owner's report that matters: the screen froze "the
+    // moment you start typing". Echo proves the keys reached the composer.
+    session.type_text("hello from the shell test");
+    session.settle(STEP);
+    let after = session.screen();
+    assert!(
+        after.contains("hello from the shell test"),
+        "typed text never reached the composer when started from {shell}:\n{after}"
+    );
+    assert!(
+        session.widest_row() <= 100,
+        "a row is wider than the terminal when started from {shell}"
+    );
+}
+
+#[test]
+fn the_tui_works_when_started_from_powershell() {
+    assert_works_through_shell("powershell");
+}
+
+#[test]
+fn the_tui_works_when_started_from_cmd() {
+    assert_works_through_shell("cmd");
 }

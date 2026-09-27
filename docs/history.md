@@ -205,7 +205,7 @@ M174| 001 | Rust on tokio (LTS channel), single binary |
 M175| 002 | Port pi's loop shape verbatim; improve only at named seams |
 M176| 003 | Provider layer: pi-style direct per-provider HTTP behind our own `StreamFn`; wire types never leak (M17 superseded the original genai wrapper); config-declared custom endpoints since M28 |
 M177| 004 | Tools defined as typed structs; schemars-derived JSON Schema; `.txt` descriptions |
-| 005 | Two-layer safety: permission gates over fail-closed confinement; honest per-OS limits |
+M178| 005 | Two-layer safety: permission gates over fail-closed confinement; honest per-OS limits |
 | 006 | Sessions = append-only JSONL trees + offset index + advisory-lock turn leases |
 | 007 | Compaction: prune, clamp tail, strict template, amend prior summaries, shadow view |
 | 008 | Three-tier byte-stable prompt assembly; volatility guarded by hash tests |
