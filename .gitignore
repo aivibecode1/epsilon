@@ -28,3 +28,15 @@ Thumbs.db
 
 # Python bytecode from the diagnostic scripts
 __pycache__/
+
+# Gate and test output under audit/evidence. The narrative evidence — the `.md`
+# write-ups, the `.patch` files, the recorded probe JSON — is what a claim rests
+# on, and it stays. The raw gate logs are 168 files and ~10.7 MB of the same
+# numbers over and over; `target/` is disposable, and so is CI output. They
+# remain on disk for anyone who wants them; they just do not belong in the
+# history, where every clone pays for them forever.
+#
+# Matched at the top level only, on purpose: `audit/evidence/reference-studies-*/`
+# holds a handful of small `.log` files that are NOT gate output but the research
+# transcripts a reference comparison rests on. Those stay tracked.
+audit/evidence/*.log

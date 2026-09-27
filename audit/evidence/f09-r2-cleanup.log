@@ -1,9 +1,0 @@
-# Round-A cleanup (M84 candidate) — 2026-09-18
-# Removed: C:/Users/Hp/AppData/Local/Temp/epsilon-f09-r2 (isolated candidate: archive of
-#          d9c1810 + only find.rs/search.rs) and its external target epsilon-f09-r2-target.
-# Gate log preserved first at audit/evidence/gate-f09-r2.log (sha256 6c333c23…).
-# No cargo/rustc processes remained (checked with the process tool).
-$ df -h /c | tail -1
-C:              477G  420G   57G  89% /c
-# 57G free after cleanup; 50G free before it (the round-A target held ≈7 GB).
-# Note: RED/GREEN for the next round reuse C:/Users/Hp/AppData/Local/Temp/epsilon-shared-target.

@@ -1,9 +1,0 @@
-    Checking epsilon-llm v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-llm)
-    Checking epsilon-core v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-core)
-    Checking epsilon-safety v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-safety)
-    Checking epsilon-mcp v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-mcp)
-    Checking epsilon-tools v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-tools)
-    Checking epsilon-tui v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-tui)
-    Checking epsilon-server v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-server)
-    Checking epsilon-cli v0.1.0 (C:\Users\Hp\AppData\Local\Temp\epsilon-integration-parent-candidate-350c9ec\crates\epsilon-cli)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.81s
