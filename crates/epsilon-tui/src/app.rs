@@ -85,125 +85,6 @@ const MAX_INPUT_DRAIN: usize = 128;
 /// Editor history depth.
 const HISTORY_MAX: usize = 100;
 
-/// M59: which editor to run — explicit config wins, then `$VISUAL`, then
-/// `$EDITOR` (pi's `getExternalEditorCommand` order), else a telling error.
-/// Pure so the order is testable without touching the environment.
-fn editor_command_from(
-    configured: Option<&str>,
-    visual: Option<&str>,
-    editor: Option<&str>,
-) -> Result<String, String> {
-    for candidate in [configured, visual, editor] {
-        if let Some(cmd) = candidate.map(str::trim).filter(|c| !c.is_empty()) {
-            return Ok(cmd.to_string());
-        }
-    }
-    Err("no editor configured — set $EDITOR or $VISUAL, or add\n    [editor]\n    command = \"code --wait\"\nto ~/.config/epsilon/config.toml".to_string())
-}
-
-/// M59: the terminal-free half of the external editor — write the draft to a
-/// temp file, hand it to `spawn`, read it back. Split out (spawner injected) so
-/// the whole round trip is testable without a real editor, a TTY, or a suspend.
-fn edit_with(
-    draft: &str,
-    spawn: &dyn Fn(&std::path::Path) -> Result<i32, String>,
-) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!(
-        "epsilon-editor-{}",
-        epsilon_contracts::new_id("ed")
-    ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let file = dir.join("prompt.md");
-    let result = (|| -> Result<String, String> {
-        std::fs::write(&file, draft).map_err(|e| format!("write {}: {e}", file.display()))?;
-        let code = spawn(&file)?;
-        if code != 0 {
-            return Err(format!("editor exited with status {code} — draft kept"));
-        }
-        let edited =
-            std::fs::read_to_string(&file).map_err(|e| format!("read {}: {e}", file.display()))?;
-        // pi trims exactly one trailing newline (editors love adding one).
-        Ok(edited.strip_suffix('\n').unwrap_or(&edited).to_string())
-    })();
-    let _ = std::fs::remove_dir_all(&dir);
-    result
-}
-
-/// Launch `command <file>` with the terminal handed over, and wait for it. The
-/// platform shell expands the user's own command line (`code --wait`,
-/// `vim -u NONE`, `notepad`) exactly as a shell would.
-fn spawn_editor(command: &str, file: &std::path::Path) -> Result<i32, String> {
-    use std::process::{Command, Stdio};
-    let quoted = format!("\"{}\"", file.display());
-    #[cfg(windows)]
-    let mut child = {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(format!("{command} {quoted}"));
-        c
-    };
-    #[cfg(not(windows))]
-    let mut child = {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(format!("{command} {quoted}"));
-        c
-    };
-    let status = child
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .map_err(|e| format!("cannot start '{command}': {e}"))?;
-    Ok(status.code().unwrap_or(-1))
-}
-
-/// M59: suspend the TUI, run the editor on the draft, resume. The event loop
-/// owns the terminal, so this is called between frames — never from a handler.
-fn open_external_editor(terminal: &mut ratatui::DefaultTerminal, app: &mut App) {
-    let Ok(command) = editor_command(epsilon_core::config::load_config_string(
-        "editor", "command",
-    )) else {
-        return;
-    };
-    let draft = app.input.clone();
-    // Leave the alternate screen + raw mode so the child owns the terminal (pi
-    // `ui.stop()`); bracketed paste is re-armed on the way back.
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
-    if let Err(e) = ratatui::try_restore() {
-        app.ui
-            .push_notice(format!("editor: terminal restore failed: {e}"));
-        return;
-    }
-    let outcome = edit_with(&draft, &|path| spawn_editor(&command, path));
-    match ratatui::try_init() {
-        Ok(mut fresh) => {
-            // A fresh terminal starts with blank buffers, so the next draw is a
-            // full repaint — no stale half-screen after the editor exits.
-            let _ = fresh.clear();
-            *terminal = fresh;
-        }
-        Err(e) => app
-            .ui
-            .push_notice(format!("editor: cannot re-enter the UI: {e}")),
-    }
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
-    match outcome {
-        Ok(text) => {
-            let trimmed = text.trim_end_matches('\n').to_string();
-            app.cursor_chars = trimmed.chars().count();
-            app.input = trimmed;
-            app.ui.push_notice("editor: draft updated");
-        }
-        Err(e) => app.ui.push_notice(format!("editor: {e}")),
-    }
-}
-
-/// [`editor_command_from`] reading the real environment.
-fn editor_command(configured: Option<String>) -> Result<String, String> {
-    let visual = std::env::var("VISUAL").ok();
-    let editor = std::env::var("EDITOR").ok();
-    editor_command_from(configured.as_deref(), visual.as_deref(), editor.as_deref())
-}
-
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1657,76 +1538,6 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     }
 }
 
-// ---- OAuth login plumbing (M52) ---------------------------------------
-/// M52: what the background OAuth login thread tells the UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(feature = "real"), allow(dead_code))]
-enum OauthUiEvent {
-    /// The flow is ready for a pasted authorization code / redirect URL.
-    NeedCode {
-        /// Provider whose login is waiting.
-        provider: String,
-    },
-    /// The ceremony finished (success or failure) — close the overlay.
-    Done(String),
-}
-
-/// M52: the login thread's view of the terminal. Notices and events travel
-/// over the app's channels; the pasted code arrives from the overlay.
-#[cfg(feature = "real")]
-struct TuiLoginUi {
-    notices: tokio::sync::mpsc::UnboundedSender<String>,
-    events: tokio::sync::mpsc::UnboundedSender<OauthUiEvent>,
-    code_rx: std::sync::mpsc::Receiver<String>,
-    provider: String,
-}
-
-#[cfg(feature = "real")]
-impl epsilon_llm::oauth_login::LoginUi for TuiLoginUi {
-    fn notify(&mut self, message: &str) {
-        let _ = self.notices.send(message.to_string());
-    }
-
-    fn device_code(&mut self, prompt: &epsilon_llm::oauth_login::DevicePrompt) {
-        let _ = self.notices.send(format!(
-            "device login: open {} and enter code {} (valid for {}s)",
-            prompt.verification_uri, prompt.user_code, prompt.expires_in_seconds
-        ));
-    }
-
-    fn wait_for_code(
-        &mut self,
-        callback: Option<&epsilon_llm::oauth_login::CallbackListener>,
-    ) -> Option<String> {
-        let _ = self.events.send(OauthUiEvent::NeedCode {
-            provider: self.provider.clone(),
-        });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-        loop {
-            match self.code_rx.try_recv() {
-                Ok(line) if !line.trim().is_empty() => return Some(line),
-                Ok(_) => {}
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // Esc (or shutdown) dropped the sender: the user cancelled.
-                    return None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-            }
-            if let Some(cb) = callback {
-                match cb.try_recv() {
-                    Some(Ok(code)) => return Some(code.code),
-                    Some(Err(_)) => return None,
-                    None => {}
-                }
-            }
-            if std::time::Instant::now() >= deadline {
-                return None;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(60));
-        }
-    }
-}
-
 /// Write any parked OSC 52 clipboard sequence and return what it was.
 ///
 /// Called by the event loop immediately after `terminal.draw` returns — never
@@ -1748,6 +1559,12 @@ pub(crate) fn flush_osc52<W: std::io::Write>(app: &mut App, out: &mut W) -> Opti
 // The keyboard model lives in `app/keys.rs`: one handler per owner, in
 // precedence order. It is a child of this module, so it still reaches
 // `App` and its private methods.
+mod editor;
+use editor::*;
+
+mod login;
+use login::*;
+
 mod view;
 
 mod commands;

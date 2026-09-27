@@ -511,6 +511,55 @@ async fn slash_models_opens_picker_via_real_key_path() {
     assert!(!app.picker_open);
 }
 
+/// The `LoginUi` adapter is the only thing the OAuth worker thread can say through.
+///
+/// Found by a control, not by reading: making `TuiLoginUi::notify` a no-op left the whole
+/// suite green, because nothing constructed the adapter. `OauthUiEvent` has tests; the type
+/// that produces events and notices had none, and it compiles only under `--features real`,
+/// so an ordinary `cargo test` never even builds it.
+///
+/// These two are the adapter's entire observable surface: a notice that arrives, and a
+/// device-code line that reaches the user with all three values in it.
+#[cfg(feature = "real")]
+#[test]
+fn the_login_adapter_carries_notices_and_the_device_code_to_the_transcript() {
+    use epsilon_llm::oauth_login::{DevicePrompt, LoginUi};
+
+    let (notices_tx, mut notices_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (events_tx, _events_rx) = tokio::sync::mpsc::unbounded_channel::<OauthUiEvent>();
+    let (code_tx, code_rx) = std::sync::mpsc::channel::<String>();
+    let _keep_code_sender = code_tx;
+    let mut ui = TuiLoginUi {
+        notices: notices_tx,
+        events: events_tx,
+        code_rx,
+        provider: "anthropic".to_string(),
+    };
+
+    ui.notify("opening your browser");
+    ui.device_code(&DevicePrompt {
+        verification_uri: "https://example.invalid/device".to_string(),
+        user_code: "WXYZ-1234".to_string(),
+        expires_in_seconds: 900,
+    });
+
+    assert_eq!(
+        notices_rx
+            .try_recv()
+            .expect("notify must reach the transcript"),
+        "opening your browser"
+    );
+    let device = notices_rx
+        .try_recv()
+        .expect("device_code must reach the transcript");
+    assert!(
+        device.contains("https://example.invalid/device"),
+        "{device}"
+    );
+    assert!(device.contains("WXYZ-1234"), "{device}");
+    assert!(device.contains("900"), "{device}");
+}
+
 #[tokio::test]
 async fn oauth_need_code_opens_the_overlay_and_done_closes_it() {
     let (mut app, agent, (_f, _n)) = test_app();
