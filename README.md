@@ -84,7 +84,7 @@ OAuth needs provider-specific setup: see [Auth](docs/user/auth.md).
 
 **An incomplete port, not production-ready.** The verification this rests on, and
 what each number does and does not prove, is
-[audit/11 — current assessment](audit/11-current-assessment.md). Read that before
+[audit/11 — current assessment](./audit/history/11-current-assessment.md). Read that before
 trusting any claim here.
 
 What is solid: the agent loop, the tool set, session storage, compaction, the

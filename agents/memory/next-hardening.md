@@ -3,7 +3,7 @@
 **This is procedure and open threads, not status.** The open-item map of record is
 [`../../audit/evidence/open-items-at-head-2026-09-25.md`](../../audit/evidence/open-items-at-head-2026-09-25.md)
 — re-derived from the code, with a verified tier and an unverified tier kept apart. The live
-assessment is [`../../audit/11-current-assessment.md`](../../audit/11-current-assessment.md) and
+assessment is [`../../audit/11-current-assessment.md`](../../audit/history/11-current-assessment.md) and
 `git log` (what landed). When a number here disagrees with a battery log, the log wins.
 
 ## Verification on this machine

@@ -374,7 +374,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M99 — `.gitignore` is honoured instead of merely promised](milestones/M99-gitignore.md)
   *(reconstructed)*: `find`'s description claimed it and nothing read one. The matcher lives in
   `epsilon-core::ignore` so the tools and the TUI share one answer — one half of which is still
-  not true; see the `@`-file note in [`../audit/11-current-assessment.md`](../audit/11-current-assessment.md).
+  not true; see the `@`-file note in [`../audit/11-current-assessment.md`](../audit/history/11-current-assessment.md).
 - [M98 — the six-second stall that read as a hang](milestones/M98-windows-shell-stall.md)
   *(reconstructed)*: every Windows `bash` call ran `powershell -Command`, which loads the user's
   interactive profile first — 6.2 s for a one-word `echo` against 1.06 s with `-NoProfile`. From

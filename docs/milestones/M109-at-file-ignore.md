@@ -7,7 +7,7 @@ its own hardcoded skip list — `.git`, `target`, `node_modules`, `dist`, `.epsi
 no knowledge of `.gitignore`. The tools (`read`, `grep`, `find`, `edit`) walk the same
 workspace through `epsilon_core::ignore`, so on any repository with a `.gitignore` the two
 disagreed: `@` offered files the model could not read, and the harness's own
-[`audit/11`](../../audit/11-current-assessment.md) row for M99 claimed one shared answer
+[`audit/11`](../../audit/history/11-current-assessment.md) row for M99 claimed one shared answer
 while only half of it was true.
 
 The fix is that the completion walk now asks `epsilon_core::ignore` — the same `IgnoreSet`

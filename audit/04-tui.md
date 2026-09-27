@@ -5,7 +5,7 @@ moment you start typing, in both CMD and PowerShell, even though tokens are clea
 consumed underneath.*
 
 **This document retracts the previous explanation.** The earlier assessment, now kept at
-[`history/13-tui-superseded.md`](../history/13-tui-superseded.md), concluded the cause was
+[`history/13-tui-superseded.md`](./history/13-tui-superseded.md), concluded the cause was
 a `bash` permission dialog that silently swallowed keystrokes and presented three console
 readbacks as decisive evidence. I re-ran those measurements. **The conclusion does not
 survive.** Below is what I measured, what that rules out, what remains, and the honest
