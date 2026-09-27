@@ -504,15 +504,21 @@ def main():
         )
     else:
         comspec = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
-        # The trailing `""` is deliberate and is what the original probe used:
-        # cmd's /c rule strips one layer of quotes, so the command must be wrapped
-        # to survive being parsed as a single string. The important detail when
-        # adding `exe_args` is that the *opening* quote before the path must stay a
-        # single `"` — doubling it (`""{exe}"`) makes cmd read the executable name
-        # and the typed text as one quoted token and the TUI never launches.
-        # Verified by launching the real binary through all four spellings; this is
-        # the one that returns 0. Cost one probe run whose screen blamed cmd.
-        line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}" {exe_args}""'
+        # This is the ORIGINAL probe quoting, kept exactly. cmd's /c rule strips one
+        # layer of quotes, so the command is wrapped in a pair; the inner pair quotes
+        # the path. The subtle part is that the two must be balanced the way they
+        # were before `exe_args` existed.
+        #
+        # Two wrong spellings, both tried here, both of which produce a screen full of
+        # "unknown argument:" and the usage dump — an error that looks like the TUI
+        # refusing to start rather than a shell quoting mistake:
+        #   - `... & "{exe}" {exe_args}` leaves a trailing space when exe_args is
+        #     empty, and cmd passes the empty quotes as an argument.
+        #   - `... & ""{exe}" {exe_args}""` doubles the opening quote, so cmd reads
+        #     the path as one token and the TUI never launches.
+        # So: one opening quote, the path, its arguments, and the closing pair.
+        tail = f' {exe_args}' if exe_args else ""
+        line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}"{tail}""'
     result["shell"] = shell_kind
     result["exe_args"] = exe_args
     shell = subprocess.Popen(line, creationflags=CREATE_NEW_CONSOLE)

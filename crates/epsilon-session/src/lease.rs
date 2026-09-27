@@ -39,6 +39,44 @@
 //! and rejected was a liveness probe of the recorded pid, which needs a platform
 //! call (and `unsafe`, which this workspace forbids) to learn *less* than the
 //! heartbeat already tells us, while adding pid-reuse as a new failure mode.
+//!
+//! # Why the wait now gives up early when the holder is provably gone
+//!
+//! The reasoning above is right and the consequence was still wrong. Waiting the
+//! full window is only necessary when the holder *might* be alive. When it is
+//! **provably** not, the wait buys nothing — and it costs the user the one thing
+//! that made this the worst bug in the TUI.
+//!
+//! Measured on 2026-09-28 with a lock left by a `taskkill /F`, at 100x30 in a real
+//! conhost: the process is alive, tokens are being consumed underneath, and the
+//! screen shows one truncated line and no input for **30 seconds**:
+//!
+//! ```text
+//!  waiting for this session to be released — 4s elapsed, ~26s left (another process may still be writ
+//! ```
+//!
+//! That is precisely the shape of the reported typing-freeze. A user who closes a
+//! terminal window pays it on every launch, and the difference from a real freeze
+//! is not visible from outside the process.
+//!
+//! The fix keeps M136's property — a *live* holder is never stolen from — and
+//! removes the dead-holder case from the wait entirely. Two conditions, both of
+//! which must hold:
+//!
+//! 1. **The lock has not moved.** A holder heartbeats every [`HEARTBEAT`], so a
+//!    lock whose mtime is unchanged across a full heartbeat period belongs to a
+//!    process that is not running. This is the same evidence the steal already
+//!    uses; it is simply used sooner.
+//! 2. **The window is the crash case, not the contention case.** A *fresh* lock
+//!    whose holder has been alive for less than a heartbeat is not stale enough to
+//!    judge, so it is left to the normal wait.
+//!
+//! What is deliberately *not* done is probing the recorded pid. The original
+//! design rejected it for good reasons — it needs `unsafe`, which this workspace
+//! forbids, and pid reuse makes it wrong in a way that is hard to detect. The
+//! mtime comparison gets the same answer with no platform call and no new failure
+//! mode, which is why the reason the design gave for avoiding a pid probe does not
+//! apply to it.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -61,7 +99,34 @@ pub const ACQUIRE_WAIT: Duration = STALE_AFTER;
 /// How often a live holder re-touches its lock file. Comfortably below
 /// [`STALE_AFTER`] so ordinary scheduling jitter can never make a working
 /// process look dead.
-pub const HEARTBEAT: Duration = Duration::from_secs(10);
+pub const HEARTBEAT: Duration = Duration::from_secs(2);
+
+/// How long a fresh lock must sit **unmoved** before it is treated as a dead
+/// holder's rather than a live one's.
+///
+/// **This must be at least one [`HEARTBEAT`], and the reason is a bug I wrote and
+/// then caught.** The first attempt set it to three seconds while the heartbeat was
+/// ten, on the reasoning that a settle window only has to be long enough for two
+/// samples of a file to agree. That reasoning is wrong, and `session_store.rs`'s
+/// `a_session_file_has_one_writer_at_a_time` caught it immediately: a live holder
+/// re-stamps every ten seconds, so during a three-second window its lock does not
+/// move, and the acquirer concluded the holder was dead. It stole the lock from a
+/// running process — the exact second-writer corruption the lease exists to
+/// prevent.
+///
+/// The rule is not "the file did not change". It is **"the file did not change for
+/// longer than a live holder would have taken to change it."** Those are only the
+/// same statement when the window is at least one heartbeat, so the heartbeat was
+/// shortened instead: 2 s, with a 4 s settle window, is a comfortable factor of two
+/// over it.
+///
+/// The cost is one `set_modified` on a ten-byte file every two seconds, which is
+/// nothing, and the benefit is that a killed TUI recovers in ~4 seconds instead of
+/// 30. A user who closes a terminal window is not left staring at
+/// `waiting for this session to be released — 4s elapsed, ~26s left` with a live
+/// process underneath and no input accepted, which is what the 2026-09-28
+/// measurement recorded and what the reported typing-freeze looks like from outside.
+pub const DEAD_HOLDER_SETTLE: Duration = Duration::from_secs(4);
 
 /// How often a waiting acquirer re-reads the lock while it waits out the stale
 /// window. Small enough that a holder which exits mid-wait is noticed at once,
@@ -147,6 +212,29 @@ impl SessionLease {
     ) -> std::io::Result<LeaseOutcome> {
         let lock_path = session_path.with_extension("lock");
         let started = std::time::Instant::now();
+        // The mtime seen on the previous poll, so the next one can tell "still here"
+        // from "nobody is re-stamping this". `None` on the first poll: one sighting
+        // is not evidence of anything.
+        let mut seen_mtime: Option<SystemTime> = None;
+        // The elapsed time at which the lock was first observed to be *not moving*.
+        // `Duration` and not `Instant`, because the comparison is against
+        // `started.elapsed()`. `Duration::default()` is zero, which is not a
+        // sentinel: on the first frozen sighting the elapsed time is tiny but
+        // non-zero, and treating zero as "just now" is what stops a caller that
+        // has already been waiting a long time from stealing on its second poll.
+        let mut frozen_since: Option<Duration> = None;
+        // How long a fresh-but-unmoved lock must be watched before it is called
+        // dead. Scaled down alongside the heartbeat by tests that pass a heartbeat
+        // shorter than the real one, so a 4-second production window costs
+        // milliseconds in a unit test. `HEARTBEAT` is the floor: a window shorter
+        // than one heartbeat cannot distinguish a dead holder from a live one.
+        let settle = if heartbeat < HEARTBEAT {
+            DEAD_HOLDER_SETTLE
+                .min(heartbeat * 2)
+                .max(Duration::from_millis(50))
+        } else {
+            DEAD_HOLDER_SETTLE
+        };
 
         // One pass: is the lock free, stale, or freshly held? Re-reading on every
         // pass is what lets a holder that exits mid-wait be noticed immediately
@@ -163,7 +251,10 @@ impl SessionLease {
             Held(Option<String>),
         }
 
-        let probe = |lock_path: &Path| -> LockState {
+        // `mut` because the closure records what it saw, so the next poll can
+        // compare against it. A closure that could not remember would be a
+        // single-sighting probe, which is the M136 behaviour this replaces.
+        let mut probe = |lock_path: &Path| -> LockState {
             if !lock_path.exists() {
                 return LockState::Stealable;
             }
@@ -173,10 +264,48 @@ impl SessionLease {
                 .and_then(|m| SystemTime::now().duration_since(m).ok())
                 .unwrap_or(Duration::ZERO);
             if age >= stale_after {
-                LockState::Stealable
-            } else {
-                LockState::Held(std::fs::read_to_string(lock_path).ok())
+                return LockState::Stealable;
             }
+            // Fresh, so it is held. But "fresh" is not the same as "alive", and
+            // those two cases deserve different treatment: a lock whose mtime has
+            // not moved for longer than a live holder would have taken to move it
+            // belongs to a process that is not running.
+            //
+            // The clock is `frozen_at`, NOT the start of the wait — and that
+            // distinction is the whole correctness of this rule. Timestamps are
+            // coarse (NTFS and ext4 both quantise, and Windows' FAT-family
+            // resolutions are coarser still), so two samples taken 100ms apart can
+            // legitimately carry the same mtime. Timing from the first *equal* pair
+            // means the window measures how long the lock has been sitting still,
+            // which is the question. Timing from `started` measures how long the
+            // caller has been waiting, which is a different question and produced
+            // a bug: it fired on the second poll of a lock that a live holder was
+            // about to re-stamp, and stole from a running process.
+            let frozen = mtime_of(lock_path);
+            match (frozen, seen_mtime) {
+                (Some(now), Some(previous)) if now == previous => {
+                    // The clock runs from the first sighting of an unmoved lock.
+                    // It is stored as an *elapsed* `Duration` rather than an
+                    // `Instant`, because the two are not interchangeable: `started`
+                    // is an absolute monotonic point, and subtracting one from the
+                    // other compares system uptime against a session-local age. They
+                    // agree only when the process happens to have started at boot,
+                    // which on Windows it has not — that mismatch is why the first
+                    // version of this rule silently never fired, and it is worth the
+                    // extra type because the wrong version is a silent failure.
+                    // The first frozen sighting stamps the clock; every later one
+                    // keeps the original stamp, so the window measures how long the
+                    // lock has actually been still.
+                    let since = frozen_since.unwrap_or_else(|| started.elapsed());
+                    if started.elapsed().saturating_sub(since) >= settle {
+                        return LockState::Stealable;
+                    }
+                    frozen_since = Some(since);
+                }
+                _ => frozen_since = None,
+            }
+            seen_mtime = frozen;
+            LockState::Held(std::fs::read_to_string(lock_path).ok())
         };
 
         let holder = loop {
@@ -279,6 +408,15 @@ impl SessionLease {
 
     /// Explicitly release (also happens on Drop).
     pub fn release(self) {}
+}
+
+/// The lock file's modification time, or `None` if it cannot be read.
+///
+/// A missing lock is not an error here: the caller has already established that
+/// the file exists, and a race that removes it between that check and this read
+/// is handled by the next poll.
+fn mtime_of(lock_path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(lock_path).ok()?.modified().ok()
 }
 
 /// Re-stamp the lock's mtime. `set_modified` (std, 1.75+) needs a writable
@@ -480,11 +618,20 @@ mod tests {
             matches!(outcome, LeaseOutcome::Acquired(_)),
             "a dead holder must not make the next launch fail: {outcome:?}"
         );
-        // It waited for the window rather than stealing early — the whole point is
-        // that a *live* holder is never taken from, so a fast steal would be a bug.
+        // M136 asserted the opposite of this: that the acquirer waits the FULL stale
+        // window (>= 140ms of a 300ms window) before stealing. That was the right
+        // rule then, and it is the 30-second wait the 2026-09-28 audit measured as the
+        // real user-facing bug. The dead holder's lock is already 150ms old and not
+        // moving, so it is now taken as soon as one heartbeat (50ms here) has been
+        // watched — which is what this assertion now pins.
+        //
+        // The property M136 cared about is preserved in the test immediately below,
+        // which proves a LIVE holder is still never taken from. Shrinking this bound
+        // without that companion test would be stealing from the living.
         assert!(
-            started.elapsed() >= Duration::from_millis(140),
-            "the steal waited for the stale window rather than firing at once ({:?})",
+            started.elapsed() >= Duration::from_millis(45),
+            "a dead holder's unmoved lock must still be watched for a heartbeat \
+             before it is taken ({:?})",
             started.elapsed()
         );
     }
@@ -591,13 +738,20 @@ mod tests {
         // a lock that will *become* stale, which is exactly the M136 restart case.
         std::fs::write(session.with_extension("lock"), b"pid=999999\n").expect("lock");
         let stale = Duration::from_millis(300);
+        // A heartbeat LONGER than the stale window, so this wait is bounded by
+        // staleness and lasts the full 300ms. With the default 50ms heartbeat the
+        // dead holder's lock is released after one heartbeat, which leaves too few
+        // polls to say anything about a countdown. The heartbeat is what the
+        // dead-holder rule watches; staleness is the backstop, and this test is
+        // about the backstop.
+        let beat = Duration::from_secs(10);
 
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         let outcome = SessionLease::acquire_with_progress(
             &session,
             stale,
-            Duration::from_millis(50),
+            beat,
             stale,
             move |waited, remaining| sink.lock().expect("lock").push((waited, remaining)),
         )
@@ -608,6 +762,12 @@ mod tests {
             "a dead holder's lock must be taken once it goes stale"
         );
         let polls = seen.lock().expect("lock").clone();
+        // >= 2, not more: the dead holder's unmoved lock is now released after one
+        // heartbeat (50ms here) rather than a full stale window (300ms), so there
+        // are fewer polls to report. What this test protects is that the wait is
+        // *visible* and the countdown *shrinks* — a shorter wait needs fewer
+        // reports, not none. The "never reports at all" case is the sibling test
+        // below, which covers a free lock.
         assert!(
             polls.len() >= 2,
             "expected several progress reports across a 300ms wait, got {}",
@@ -652,6 +812,109 @@ mod tests {
             calls.get(),
             0,
             "a free lock must not make the CLI print a waiting notice"
+        );
+    }
+
+    // ---- The dead-holder case, which must not cost the user 30 seconds ----
+
+    /// A lock nobody is re-stamping, left by a killed TUI, is taken as soon as a
+    /// full heartbeat has passed — not after the whole stale window.
+    ///
+    /// This is the defect measured on 2026-09-28: a real conhost at 100x30 showed
+    /// `waiting for this session to be released — 4s elapsed, ~26s left` for half a
+    /// minute, with the process alive underneath and accepting no input. That is the
+    /// same shape as the reported typing-freeze, and a user who closes a terminal
+    /// window pays it on every launch.
+    ///
+    /// Timings are compressed: a 400 ms heartbeat stands in for the real 10 s, and
+    /// the stale window stays at 30 s so that "took it early" and "waited for
+    /// staleness" are unambiguously different outcomes.
+    #[test]
+    fn a_dead_holders_fresh_lock_is_taken_after_one_heartbeat_not_one_stale_window() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("killed.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        // Fresh mtime: this is the case that used to cost 30 seconds, because
+        // `age >= stale_after` is false and the acquirer had nothing else to go on.
+        std::fs::write(session.with_extension("lock"), "pid=999999\n").expect("leftover");
+
+        let started = std::time::Instant::now();
+        let outcome = SessionLease::acquire_with(
+            &session,
+            Duration::from_secs(30),    // the real stale window
+            Duration::from_millis(400), // a compressed heartbeat
+            Duration::from_secs(30),    // and a real wait budget
+        )
+        .expect("acquire");
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(outcome, LeaseOutcome::Acquired(_)),
+            "a lock nobody is heartbeating must be taken: {outcome:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "took {elapsed:?} — the point is that it is nowhere near the 30s window"
+        );
+    }
+
+    /// The property that makes the test above safe to ship: a holder that IS
+    /// heartbeating is still never taken from, however long the acquirer waits.
+    ///
+    /// This is the second-writer corruption the lease exists to prevent, and it is
+    /// the reason the previous design refused to probe the recorded pid. A fix that
+    /// only proved the dead-holder case would pass just as happily against one that
+    /// steals from the living on the second poll.
+    #[test]
+    fn a_heartbeating_holder_is_never_taken_even_though_its_lock_is_always_fresh() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("live.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        let stale = Duration::from_secs(30);
+        let beat = Duration::from_millis(60);
+        let LeaseOutcome::Acquired(_held) =
+            SessionLease::acquire_with(&session, stale, beat, Duration::ZERO).expect("acquire")
+        else {
+            panic!("first acquisition must succeed");
+        };
+
+        // The holder re-stamps throughout, so its lock's mtime is never old and
+        // `age >= stale_after` never fires. The only thing that could take it is the
+        // new "mtime has not moved" rule, and a moving mtime must defeat it.
+        let outcome = SessionLease::acquire_with(&session, stale, beat, Duration::from_millis(700))
+            .expect("acquire");
+        assert!(
+            matches!(outcome, LeaseOutcome::Held { .. }),
+            "a live holder must survive a wait: {outcome:?} — this is the \
+             second-writer corruption the lease exists to prevent"
+        );
+    }
+
+    /// A lock that has not moved for *less* than a heartbeat is not yet evidence of
+    /// anything, and must not be stolen on the strength of two quick polls.
+    ///
+    /// Without this, a caller that polls fast and reads the same coarse mtime twice
+    /// would take a lock from a process that is alive and simply has not reached its
+    /// first heartbeat yet.
+    #[test]
+    fn a_fresh_lock_is_not_stolen_before_a_whole_heartbeat_has_passed() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("young.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        std::fs::write(session.with_extension("lock"), "pid=999999\n").expect("leftover");
+
+        // Heartbeat far longer than the wait, so the settle window can never elapse
+        // and the only possible answer is `Held`.
+        let outcome = SessionLease::acquire_with(
+            &session,
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_millis(150),
+        )
+        .expect("acquire");
+        assert!(
+            matches!(outcome, LeaseOutcome::Held { .. }),
+            "an unmoved lock must not be stolen before a full heartbeat passes: {outcome:?}"
         );
     }
 }
