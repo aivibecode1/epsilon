@@ -1,4 +1,5 @@
 # Documentation
+M170 | [The real-console check, and a tool gap it exposed](milestones/M170-the-real-console-check.md) | 1,295 | `/tree` and `/export` measured in a genuine conhost window; the probe gained `--submit` because `--keys` could not type a slash command at all |
 M169 | [The correction M168 needed, and a hazard I could not test](milestones/M169-the-correction-m168-needed.md) | 1,295 | M168's severity claim was wrong and is retracted; a `live_resume` early return could leave an agent with no store — fixed, and honestly untested |
 M168 | [The duplicate timeline, and the crash it hid](milestones/M168-the-duplicate-timeline-and-the-crash-it-hid.md) | 1,295 | `/tree` was a byte-identical copy of `/timeline`; closing the gap found **nine** production call sites that panicked the TUI when no session store is attached |
 M167 | [Paying down a debt I created in M162, and the 18 commands no test runs](milestones/M167-paying-down-a-debt-i-created.md) | 1,289 | `run_session_command` split three ways; a vacuous control exposed that 18 of 30 slash commands are never executed by any test |

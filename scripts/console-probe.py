@@ -268,11 +268,12 @@ def main():
             "--enter",
             "--settle",
             "--keys",
+            "--submit",
         ):
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
             sys.stderr.write(
                 "options: --early --late --maximize --at SECONDS --size COLSxROWS"
-                " --enter --settle SECONDS --keys TEXT\n"
+                " --enter --settle SECONDS --keys TEXT --submit\n"
             )
             return 2
     mode = "late"
@@ -280,6 +281,7 @@ def main():
     maximize = False
     wait_s = 7.0
     press_enter = False
+    submit_keys = False
     settle_s = 9.0
     keys = ""
     text = "hello from the probe"
@@ -300,6 +302,8 @@ def main():
             # keystroke a TUI's key handler actually recognises as Enter; a probe that
             # only wrote characters could type `/help` forever and never run it.
             press_enter = True
+        elif argv[i] == "--submit":
+            submit_keys = True
         elif argv[i] == "--keys":
             # Keys to send after submitting, to unblock whatever the turn is waiting on.
             i += 1
@@ -401,6 +405,23 @@ def main():
                 time.sleep(settle_s)
                 result["after_keys"] = snapshot(out)
                 result["settled_screen"] = screen_text(out, limit_rows=64)
+
+    if mode == "late" and submit_keys and keys and not press_enter:
+        # `--submit` types the keys into the composer and *then* presses Enter.
+        #
+        # This exists because `--keys` alone cannot: it only runs after `--enter` has
+        # submitted a turn, and only to answer whatever that turn is blocked on. Asking it
+        # to type a slash command therefore submits an empty line first and types the
+        # command afterwards, leaving the popup open - which is a perfectly good photograph
+        # of the wrong moment, and reads as "the command did nothing" if taken at face
+        # value. A command probe has to type and then submit.
+        result["submit_typed"] = type_text(inp, keys)
+        time.sleep(2.0)
+        result["submit_screen"] = screen_text(out, limit_rows=64)
+        result["submit_enter"] = type_text(inp, "\r")
+        time.sleep(settle_s)
+        result["after_submit"] = snapshot(out)
+        result["settled_screen"] = screen_text(out, limit_rows=64)
 
     kill(shell.pid)
     print(json.dumps(result, indent=2))

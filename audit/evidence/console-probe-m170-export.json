@@ -1,0 +1,223 @@
+{
+  "exe": "C:\\Users\\Hp\\AppData\\Local\\Temp\\eps-m170-target\\debug\\epsilon.exe",
+  "typed_text": "",
+  "mode": "late",
+  "size": [
+    100,
+    30
+  ],
+  "wait_s": 8.0,
+  "host_class": "ConsoleWindowClass",
+  "resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": true
+  },
+  "before": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      0,
+      0
+    ]
+  },
+  "after": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "after_screen": [
+    "idle                                                     ?/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH \u2014 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  model    DeepSeek V3.1",
+    "  context  ?/164k",
+    "",
+    "  ready \u2014 describe a task and press enter",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "typed": {
+    "ok": true,
+    "written": 0,
+    "err": 87
+  },
+  "after_typing": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "typed_screen": [
+    "idle                                                     ?/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH \u2014 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  model    DeepSeek V3.1",
+    "  context  ?/164k",
+    "",
+    "  ready \u2014 describe a task and press enter",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "submit_typed": {
+    "ok": true,
+    "written": 14,
+    "err": 87
+  },
+  "submit_screen": [
+    "idle                                                     ?/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH \u2014 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  model    DeepSeek V3.1",
+    "  context  ?/164k",
+    "",
+    "  ready \u2014 describe a task and press enter",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u256d commands \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
+    "\u2502 \u258e /export export session (HTML default, or specify p \u2502",
+    "\u2502 \u2191\u2193 pick \u00b7 tab apply \u00b7 esc dismiss                    \u2502",
+    "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+    "\u2022 /export",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "submit_enter": {
+    "ok": true,
+    "written": 2,
+    "err": 87
+  },
+  "after_submit": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "settled_screen": [
+    "idle                                                     ?/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH \u2014 \u00b7 DeepSeek V3.1",
+    "\u2022 \u2022 exported html \u2192 C:\\Users\\Hp\\Desktop\\My Agent",
+    "\u2022 Space\\Epsilon\\.epsilon\\exports\\session-export_1a0e1e49d550.html (16 entries)",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ]
+}
