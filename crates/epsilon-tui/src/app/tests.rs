@@ -6,6 +6,7 @@
 //! would be testing a different thing.
 
 use super::*;
+use crate::app::commands::{timeline_kind_tag, timeline_snip};
 // The key handlers are one module down (they were moved out of `app.rs`),
 // so the tests that drive them name the module rather than a re-export.
 use super::keys::{begin_auth_key_prompt, handle_key};
@@ -2287,4 +2288,202 @@ async fn theme_command_toggles_and_names_the_palette() {
             .any(|t| t.contains("unknown palette 'solarized'")),
         "and it must say what was wrong: {texts:?}"
     );
+}
+/// M168: `/tree` and `/timeline` used to be two 96-line copies of the same picker. These
+/// exercise the one body they now share, through both of its entry points, and through the
+/// pure helpers that decide what a row says.
+fn seed_branch(agent: &std::sync::Arc<epsilon_core::Agent>, texts: &[&str]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tmp");
+    let store =
+        epsilon_session::SessionStore::open_in(dir.path().join("session.jsonl"), dir.path())
+            .expect("session store");
+    agent.attach_session_store(std::sync::Arc::new(std::sync::Mutex::new(store)));
+    let guard = agent.store_handle_for_tests();
+    let mut st = guard.lock().expect("store lock");
+    for (i, t) in texts.iter().enumerate() {
+        let user = epsilon_contracts::message::UserMessage {
+            id: format!("seed-{i}"),
+            timestamp_ms: 0,
+            content: vec![epsilon_contracts::content::UserContent::Text {
+                text: (*t).to_string(),
+            }],
+        };
+        st.append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(user),
+            api_request_sha256: None,
+        })
+        .expect("append");
+    }
+    dir
+}
+#[tokio::test]
+async fn tree_and_timeline_open_one_picker_and_say_which_one_ran() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    let _dir = seed_branch(&agent, &["first thing", "second thing"]);
+
+    // Both entry points reach the same picker, populated from the branch tree.
+    for cmd in ["/tree", "/timeline"] {
+        app.timeline_open = false;
+        app.timeline_entries.clear();
+        type_and_enter(&mut app, &agent, cmd);
+        assert!(app.timeline_open, "{cmd} did not open the picker");
+        assert_eq!(
+            app.timeline_entries.len(),
+            2,
+            "{cmd} should list both branch entries, got {:?}",
+            app.timeline_entries
+        );
+        let kinds: Vec<&str> = app
+            .timeline_entries
+            .iter()
+            .map(|(_, k, _)| k.as_str())
+            .collect();
+        assert_eq!(kinds, vec!["user", "user"], "{cmd}: {kinds:?}");
+        let snippets: Vec<&str> = app
+            .timeline_entries
+            .iter()
+            .map(|(_, _, s)| s.as_str())
+            .collect();
+        assert_eq!(snippets, vec!["first thing", "second thing"], "{cmd}");
+    }
+}
+
+#[tokio::test]
+async fn an_empty_session_says_which_picker_was_asked_for() {
+    // The notice is the only thing that differs between the two commands, so it is the
+    // only thing that can catch a label that stopped being passed through.
+    let (mut app, agent, (_f, _n)) = test_app();
+    let _dir = seed_branch(&agent, &[]);
+    type_and_enter(&mut app, &agent, "/tree");
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.join("\n").contains("tree: session is empty"),
+        "the /tree notice must name tree, got {texts:?}"
+    );
+
+    let (mut app2, agent2, (_f2, _n2)) = test_app();
+    let _dir2 = seed_branch(&agent2, &[]);
+    type_and_enter(&mut app2, &agent2, "/timeline");
+    let texts2: Vec<String> = app2.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts2.join("\n").contains("timeline: session is empty"),
+        "the /timeline notice must name timeline, got {texts2:?}"
+    );
+}
+
+#[test]
+fn a_long_entry_is_cut_and_marked_rather_than_pushed_off_screen() {
+    let long = "x".repeat(500);
+    let entry = epsilon_contracts::session_entry::SessionEntry {
+        id: "e1".into(),
+        seq: 0,
+        parent_id: None,
+        timestamp_ms: 0,
+        kind: epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m1".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text { text: long }],
+                },
+            ),
+            api_request_sha256: None,
+        },
+    };
+    let snip = timeline_snip(&entry);
+    assert_eq!(
+        snip.chars().count(),
+        101,
+        "100 characters plus the ellipsis"
+    );
+    assert!(
+        snip.ends_with('\u{2026}'),
+        "a cut preview must say it was cut: {snip:?}"
+    );
+}
+
+#[test]
+fn a_whitespace_only_entry_reads_as_empty_rather_than_blank() {
+    // A blank row is indistinguishable from a row scrolled out of view; `(empty)` is not.
+    let entry = epsilon_contracts::session_entry::SessionEntry {
+        id: "e1".into(),
+        seq: 0,
+        parent_id: None,
+        timestamp_ms: 0,
+        kind: epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m1".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text {
+                        text: "   \n  ".into(),
+                    }],
+                },
+            ),
+            api_request_sha256: None,
+        },
+    };
+    assert_eq!(timeline_snip(&entry), "(empty)");
+}
+/// M168: the regression test for the bug the coverage gap was hiding. An agent with no
+/// durable session store is a normal state - a plain `--tui` run, a child before its store
+/// exists - and `Agent::store_handle_for_tests` panics on exactly that. Nine production
+/// call sites used it, so `/tree`, `/timeline`, `/fork`, `/clone`, `/name`, `/export`,
+/// `/share` and the Enter-to-follow-up key all crashed the TUI instead of saying so.
+#[tokio::test]
+async fn a_command_needing_the_session_store_says_so_instead_of_crashing() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    assert!(
+        agent.session_store().is_none(),
+        "test_app builds an agent with no store; if that changed, this test is vacuous"
+    );
+    for cmd in ["/tree", "/timeline", "/fork", "/clone", "/name", "/export"] {
+        type_and_enter(&mut app, &agent, cmd);
+        let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        let joined = texts.join("\n");
+        assert!(
+            joined.contains("no session store attached"),
+            "`{cmd}` must report the missing store, not panic; got {joined:?}"
+        );
+    }
+}
+#[test]
+fn each_entry_kind_gets_the_tag_the_picker_shows() {
+    // The narrow column is how a user tells a user turn from a tool result at a glance.
+    // An entry kind added later must fall into `other` rather than break the column.
+    let mk = |kind| epsilon_contracts::session_entry::SessionEntry {
+        id: "e1".into(),
+        seq: 0,
+        parent_id: None,
+        timestamp_ms: 0,
+        kind,
+    };
+    use epsilon_contracts::session_entry::EntryKind as K;
+    let user = K::Message {
+        message: epsilon_contracts::message::Message::User(
+            epsilon_contracts::message::UserMessage {
+                id: "m".into(),
+                timestamp_ms: 0,
+                content: vec![],
+            },
+        ),
+        api_request_sha256: None,
+    };
+    assert_eq!(timeline_kind_tag(&mk(user)), "user");
+    assert_eq!(
+        timeline_kind_tag(&mk(K::Compaction {
+            summary: "s".into(),
+            tokens_before: 0,
+            retained_tail: vec![],
+            details: None,
+            model_id: None,
+            usage: None,
+        })),
+        "compact"
+    );
+    // A turn end is not a message, and saying `msg` for it would be a lie about the shape.
+    let turn = K::TurnEnd {
+        reason: epsilon_contracts::agent_event::TurnEndReason::Completed,
+    };
+    assert_eq!(timeline_kind_tag(&mk(turn)), "turn");
 }

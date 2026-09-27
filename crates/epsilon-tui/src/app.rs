@@ -848,7 +848,9 @@ fn write_export_html(
     dest: &std::path::Path,
     _workspace: &std::path::Path,
 ) -> Result<usize, String> {
-    let store = agent.store_handle_for_tests();
+    let Some(store) = agent.session_store() else {
+        return Err("no session store attached".to_string());
+    };
     let entries = store
         .lock()
         .map_err(|_| "store unavailable".to_string())?
@@ -877,7 +879,9 @@ fn write_export_json(
     agent: &std::sync::Arc<epsilon_core::Agent>,
     dest: &std::path::Path,
 ) -> Result<usize, String> {
-    let store = agent.store_handle_for_tests();
+    let Some(store) = agent.session_store() else {
+        return Err("no session store attached".to_string());
+    };
     let entries = store
         .lock()
         .map_err(|_| "store unavailable".to_string())?

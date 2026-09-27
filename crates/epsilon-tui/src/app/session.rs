@@ -225,7 +225,7 @@ impl App {
             }
             // Re-hydrate session_name from the newly attached store (survives swap).
             self.session_name = (|| {
-                let store = agent.store_handle_for_tests();
+                let store = agent.session_store()?;
                 let st = store.lock().ok()?;
                 let entries = st.read_all().ok()?;
                 for e in entries.iter().rev() {

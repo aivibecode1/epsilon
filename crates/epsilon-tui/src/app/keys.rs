@@ -484,7 +484,9 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             }
             KeyCode::Enter => {
                 if let Some((seq, _, _)) = app.timeline_entries.get(app.timeline_index).cloned() {
-                    let store = agent.store_handle_for_tests();
+                    let Some(store) = agent.session_store() else {
+                        return false;
+                    };
                     let jumped = if let Ok(mut st) = store.lock() {
                         let id = st.branch_entries().ok().and_then(|entries| {
                             entries.into_iter().find(|e| e.seq == seq).map(|e| e.id)

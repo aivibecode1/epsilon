@@ -1,4 +1,5 @@
 # Documentation
+M168 | [The duplicate timeline, and the crash it hid](milestones/M168-the-duplicate-timeline-and-the-crash-it-hid.md) | 1,295 | `/tree` was a byte-identical copy of `/timeline`; closing the gap found **nine** production call sites that panicked the TUI when no session store is attached |
 M167 | [Paying down a debt I created in M162, and the 18 commands no test runs](milestones/M167-paying-down-a-debt-i-created.md) | 1,289 | `run_session_command` split three ways; a vacuous control exposed that 18 of 30 slash commands are never executed by any test |
 M166 | [The 929-line `impl App`, in three](milestones/M166-the-929-line-impl-in-three.md) | 1,289 | 30 methods into `session.rs` / `editing.rs` / `completion.rs`; a three-mutant control proves all three are live |
 M165 | [Two seams, and a coverage hole a control found](milestones/M165-two-seams-and-a-coverage-hole.md) | 1,289 | Editor bridge and OAuth adapter moved out; a control proved the adapter was untested, so it is now tested |

@@ -34,6 +34,80 @@
 
 use super::*;
 
+/// The one-line preview the timeline picker shows for a session entry.
+///
+/// Long text is cut at 100 characters and marked with an ellipsis, because a picker's row
+/// width is the terminal's, not the entry's: a 40,000-character assistant message would
+/// push every other row off screen. Whitespace-only text reads `(empty)` rather than
+/// nothing, so "this entry has no text" stays distinguishable from "this row is cut off".
+pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
+    match &e.kind {
+        epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
+            let txt: String = match message {
+                epsilon_contracts::message::Message::User(u) => u
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        epsilon_contracts::content::UserContent::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                epsilon_contracts::message::Message::Assistant(a) => a.text(),
+                epsilon_contracts::message::Message::ToolResult(t) => t
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        epsilon_contracts::content::ContentBlock::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<String>(),
+                _ => String::new(),
+            };
+            let mut s: String = txt.chars().take(100).collect();
+            if txt.chars().count() > 100 {
+                s.push('…');
+            }
+            if s.trim().is_empty() {
+                "(empty)".into()
+            } else {
+                s
+            }
+        }
+        epsilon_contracts::session_entry::EntryKind::Compaction { summary, .. } => {
+            let mut s: String = summary.chars().take(100).collect();
+            if summary.chars().count() > 100 {
+                s.push('…');
+            }
+            format!("[compaction] {s}")
+        }
+        epsilon_contracts::session_entry::EntryKind::TurnEnd { reason, .. } => {
+            format!("[turn_end {reason:?}]")
+        }
+        _ => "[other]".into(),
+    }
+}
+
+/// The narrow column naming what kind of entry a row is: `user`, `assistant`, `tool`,
+/// `compact`, `turn`, or `other` for any entry kind added after this was written.
+pub(super) fn timeline_kind_tag(e: &epsilon_contracts::SessionEntry) -> &'static str {
+    match &e.kind {
+        epsilon_contracts::session_entry::EntryKind::Message { message, .. } => match message {
+            epsilon_contracts::message::Message::User(_) => "user",
+            epsilon_contracts::message::Message::Assistant(_) => "assistant",
+            epsilon_contracts::message::Message::ToolResult(_) => "tool",
+            _ => "msg",
+        },
+        epsilon_contracts::session_entry::EntryKind::Compaction { .. } => "compact",
+        epsilon_contracts::session_entry::EntryKind::TurnEnd { .. } => "turn",
+        _ => "other",
+    }
+}
+
 impl App {
     /// Route a parsed slash command to the executor that owns it.
     ///
@@ -256,8 +330,11 @@ impl App {
             }
             crate::picker::Command::Session => {
                 // No durable mirror is a normal state (a plain `--tui` run, a child agent), not a
-                // crash: `store_handle_for_tests` panics on it, so the command asks for the
-                // Option instead.
+                // crash, so every command that needs the store asks for the Option.
+                // M168: nine call sites used `Agent::store_handle_for_tests` instead, which
+                // panics on exactly this state — `/tree`, `/timeline`, `/fork`, `/clone`,
+                // `/name`, `/export` and `/share` all took the TUI down. `session_store` is
+                // the accessor for this; the test-only one is `#[doc(hidden)]` for a reason.
                 let (path, leaf, count) = match agent.session_store() {
                     Some(store) => match store.lock() {
                         Ok(st) => (
@@ -321,101 +398,7 @@ impl App {
                 }
             }
             crate::picker::Command::Tree => {
-                // Alias for /timeline — open the same picker (pi parity: /branch → timeline).
-                let entries = {
-                    let guard = agent.store_handle_for_tests();
-                    let Ok(st) = guard.lock() else {
-                        self.ui.push_notice("tree: store unavailable");
-                        return false;
-                    };
-                    match st.branch_entries() {
-                        Ok(v) => v,
-                        Err(e) => {
-                            self.ui.push_notice(format!("tree failed: {e}"));
-                            return false;
-                        }
-                    }
-                };
-                if entries.is_empty() {
-                    self.ui.push_notice("tree: session is empty");
-                    return false;
-                }
-                fn snip2(e: &epsilon_contracts::SessionEntry) -> String {
-                    match &e.kind {
-                        epsilon_contracts::session_entry::EntryKind::Message {
-                            message, ..
-                        } => {
-                            let txt: String = match message {
-                                epsilon_contracts::message::Message::User(u) => u
-                                    .content
-                                    .iter()
-                                    .filter_map(|c| match c {
-                                        epsilon_contracts::content::UserContent::Text { text } => {
-                                            Some(text.as_str())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(" "),
-                                epsilon_contracts::message::Message::Assistant(a) => a.text(),
-                                epsilon_contracts::message::Message::ToolResult(t) => t
-                                    .content
-                                    .iter()
-                                    .filter_map(|c| match c {
-                                        epsilon_contracts::content::ContentBlock::Text { text } => {
-                                            Some(text.as_str())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<String>(),
-                                _ => String::new(),
-                            };
-                            let mut s: String = txt.chars().take(100).collect();
-                            if txt.chars().count() > 100 {
-                                s.push('…');
-                            }
-                            if s.trim().is_empty() {
-                                "(empty)".into()
-                            } else {
-                                s
-                            }
-                        }
-                        epsilon_contracts::session_entry::EntryKind::Compaction {
-                            summary, ..
-                        } => {
-                            let mut s: String = summary.chars().take(100).collect();
-                            if summary.chars().count() > 100 {
-                                s.push('…');
-                            }
-                            format!("[compaction] {s}")
-                        }
-                        epsilon_contracts::session_entry::EntryKind::TurnEnd { reason, .. } => {
-                            format!("[turn_end {reason:?}]")
-                        }
-                        _ => "[other]".into(),
-                    }
-                }
-                fn kind_tag2(e: &epsilon_contracts::SessionEntry) -> &'static str {
-                    match &e.kind {
-                        epsilon_contracts::session_entry::EntryKind::Message {
-                            message, ..
-                        } => match message {
-                            epsilon_contracts::message::Message::User(_) => "user",
-                            epsilon_contracts::message::Message::Assistant(_) => "assistant",
-                            epsilon_contracts::message::Message::ToolResult(_) => "tool",
-                            _ => "msg",
-                        },
-                        epsilon_contracts::session_entry::EntryKind::Compaction { .. } => "compact",
-                        epsilon_contracts::session_entry::EntryKind::TurnEnd { .. } => "turn",
-                        _ => "other",
-                    }
-                }
-                self.timeline_entries = entries
-                    .iter()
-                    .map(|e| (e.seq, kind_tag2(e).to_string(), snip2(e)))
-                    .collect();
-                self.timeline_index = self.timeline_entries.len().saturating_sub(1);
-                self.timeline_open = true;
+                let _ = self.open_timeline_picker(agent, "tree");
             }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
@@ -434,7 +417,10 @@ impl App {
     fn run_branch_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
             crate::picker::Command::Fork => {
-                let store = agent.store_handle_for_tests();
+                let Some(store) = agent.session_store() else {
+                    self.ui.push_notice("no session store attached");
+                    return false;
+                };
                 let (path, leaf) = match store.lock() {
                     Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
                     Err(_) => {
@@ -467,7 +453,10 @@ impl App {
                 }
             }
             crate::picker::Command::Clone => {
-                let store = agent.store_handle_for_tests();
+                let Some(store) = agent.session_store() else {
+                    self.ui.push_notice("no session store attached");
+                    return false;
+                };
                 let (path, leaf) = match store.lock() {
                     Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
                     Err(_) => {
@@ -510,7 +499,7 @@ impl App {
                     } else {
                         // Also check persisted Custom entry (survives resume before in-memory is set).
                         let persisted: Option<String> = (|| {
-                            let store = agent.store_handle_for_tests();
+                            let store = agent.session_store()?;
                             let st = store.lock().ok()?;
                             let entries = st.read_all().ok()?;
                             for e in entries.iter().rev() {
@@ -544,7 +533,7 @@ impl App {
                     // the same session file pi/gap-analysis parity intended (extend
                     // to a dedicated EntryKind when a UI needs to render it).
                     let _ = (|| -> Result<(), String> {
-                        let store = agent.store_handle_for_tests();
+                        let store = agent.session_store().ok_or("no session store attached")?;
                         let mut st = store.lock().map_err(|_| "store lock".to_string())?;
                         st.append(epsilon_contracts::session_entry::EntryKind::Custom {
                             custom_type: "session_name".into(),
@@ -781,6 +770,44 @@ impl App {
         false
     }
 
+    /// `/timeline` and `/tree` are the same picker, opened by the same code.
+    ///
+    /// pi parity: `/branch` is an alias for the timeline view, and so is `/tree`.
+    /// They were two 96-line copies differing only in the label inside three notice
+    /// strings - the exact shape that lets a fix land in one copy and not the other.
+    /// `label` is the only difference that survives.
+    fn open_timeline_picker(&mut self, agent: &Arc<Agent>, label: &str) -> bool {
+        let entries = {
+            let Some(guard) = agent.session_store() else {
+                self.ui
+                    .push_notice(format!("{label}: no session store attached"));
+                return false;
+            };
+            let Ok(st) = guard.lock() else {
+                self.ui.push_notice(format!("{label}: store unavailable"));
+                return false;
+            };
+            match st.branch_entries() {
+                Ok(v) => v,
+                Err(e) => {
+                    self.ui.push_notice(format!("{label} failed: {e}"));
+                    return false;
+                }
+            }
+        };
+        if entries.is_empty() {
+            self.ui.push_notice(format!("{label}: session is empty"));
+            return false;
+        }
+        self.timeline_entries = entries
+            .iter()
+            .map(|e| (e.seq, timeline_kind_tag(e).to_string(), timeline_snip(e)))
+            .collect();
+        self.timeline_index = self.timeline_entries.len().saturating_sub(1);
+        self.timeline_open = true;
+        false
+    }
+
     /// Commands that show the user something and change nothing: `/help`, `/skills`,
     /// `/tasks`, `/timeline`, `/hotkeys`, `/settings`, `/changelog`.
     fn run_view_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
@@ -869,100 +896,7 @@ impl App {
                 }
             }
             crate::picker::Command::Timeline => {
-                let entries = {
-                    let guard = agent.store_handle_for_tests();
-                    let Ok(st) = guard.lock() else {
-                        self.ui.push_notice("timeline: store unavailable");
-                        return false;
-                    };
-                    match st.branch_entries() {
-                        Ok(v) => v,
-                        Err(e) => {
-                            self.ui.push_notice(format!("timeline failed: {e}"));
-                            return false;
-                        }
-                    }
-                };
-                if entries.is_empty() {
-                    self.ui.push_notice("timeline: session is empty");
-                    return false;
-                }
-                fn snip(e: &epsilon_contracts::SessionEntry) -> String {
-                    match &e.kind {
-                        epsilon_contracts::session_entry::EntryKind::Message {
-                            message, ..
-                        } => {
-                            let txt: String = match message {
-                                epsilon_contracts::message::Message::User(u) => u
-                                    .content
-                                    .iter()
-                                    .filter_map(|c| match c {
-                                        epsilon_contracts::content::UserContent::Text { text } => {
-                                            Some(text.as_str())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(" "),
-                                epsilon_contracts::message::Message::Assistant(a) => a.text(),
-                                epsilon_contracts::message::Message::ToolResult(t) => t
-                                    .content
-                                    .iter()
-                                    .filter_map(|c| match c {
-                                        epsilon_contracts::content::ContentBlock::Text { text } => {
-                                            Some(text.as_str())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<String>(),
-                                _ => String::new(),
-                            };
-                            let mut s: String = txt.chars().take(100).collect();
-                            if txt.chars().count() > 100 {
-                                s.push('…');
-                            }
-                            if s.trim().is_empty() {
-                                "(empty)".into()
-                            } else {
-                                s
-                            }
-                        }
-                        epsilon_contracts::session_entry::EntryKind::Compaction {
-                            summary, ..
-                        } => {
-                            let mut s: String = summary.chars().take(100).collect();
-                            if summary.chars().count() > 100 {
-                                s.push('…');
-                            }
-                            format!("[compaction] {s}")
-                        }
-                        epsilon_contracts::session_entry::EntryKind::TurnEnd { reason, .. } => {
-                            format!("[turn_end {reason:?}]")
-                        }
-                        _ => "[other]".into(),
-                    }
-                }
-                fn kind_tag(e: &epsilon_contracts::SessionEntry) -> &'static str {
-                    match &e.kind {
-                        epsilon_contracts::session_entry::EntryKind::Message {
-                            message, ..
-                        } => match message {
-                            epsilon_contracts::message::Message::User(_) => "user",
-                            epsilon_contracts::message::Message::Assistant(_) => "assistant",
-                            epsilon_contracts::message::Message::ToolResult(_) => "tool",
-                            _ => "msg",
-                        },
-                        epsilon_contracts::session_entry::EntryKind::Compaction { .. } => "compact",
-                        epsilon_contracts::session_entry::EntryKind::TurnEnd { .. } => "turn",
-                        _ => "other",
-                    }
-                }
-                self.timeline_entries = entries
-                    .iter()
-                    .map(|e| (e.seq, kind_tag(e).to_string(), snip(e)))
-                    .collect();
-                self.timeline_index = self.timeline_entries.len().saturating_sub(1);
-                self.timeline_open = true;
+                let _ = self.open_timeline_picker(agent, "timeline");
             }
             crate::picker::Command::Hotkeys => {
                 for line in [

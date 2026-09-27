@@ -195,7 +195,7 @@ M164| M135 | **An `edit` no longer hands the model the rest of a partly-read fil
 M165| 018 | Model selection: TUI picker over bundled generated catalog; flag > saved config > default precedence |
 M166
 M167## Decision-log index
-
+M168
 Full reasoning lives in [`docs/design/epsilon-decisions.md`](design/epsilon-decisions.md);
 one line per ADR:
 
