@@ -33,5 +33,18 @@ real = ["dep:reqwest"]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 tempfile = { workspace = true }
 
+# `usage_arithmetic` exercises `providers::test_support`, which is behind `real`.
+# Without this, `cargo test -p epsilon-llm --no-default-features` fails to COMPILE
+# with E0433 rather than skipping — and nothing in the gate battery builds without
+# default features, so the breakage was invisible until a per-crate sweep hit it.
+#
+# `required-features` is the honest expression of the dependency: the test cannot
+# exist without the feature. The alternative — a `#[cfg(feature = "real")]` on
+# every test fn — compiles but reports success having run nothing, which is worse
+# than not compiling.
+[[test]]
+name = "usage_arithmetic"
+required-features = ["real"]
+
 [lints]
 workspace = true
