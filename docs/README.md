@@ -1,4 +1,5 @@
 # Documentation
+M167 | [Paying down a debt I created in M162, and the 18 commands no test runs](milestones/M167-paying-down-a-debt-i-created.md) | 1,289 | `run_session_command` split three ways; a vacuous control exposed that 18 of 30 slash commands are never executed by any test |
 M166 | [The 929-line `impl App`, in three](milestones/M166-the-929-line-impl-in-three.md) | 1,289 | 30 methods into `session.rs` / `editing.rs` / `completion.rs`; a three-mutant control proves all three are live |
 M165 | [Two seams, and a coverage hole a control found](milestones/M165-two-seams-and-a-coverage-hole.md) | 1,289 | Editor bridge and OAuth adapter moved out; a control proved the adapter was untested, so it is now tested |
 M164 | [The read side of `app.rs`, and a test that named a file](milestones/M164-the-read-side-and-a-test-that-named-a-file.md) | 1,288 | `impl App #2`'s 22 methods moved to `app/view.rs`; a source-grep test stopped naming one file |

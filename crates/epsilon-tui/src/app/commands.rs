@@ -223,80 +223,34 @@ impl App {
     /// Session-identity commands.
     fn run_session_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
-            crate::picker::Command::Fork => {
-                let store = agent.store_handle_for_tests();
-                let (path, leaf) = match store.lock() {
-                    Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
-                    Err(_) => {
-                        self.ui.push_notice("fork: session store unavailable");
-                        return false;
-                    }
-                };
-                if leaf.is_none() {
-                    self.ui
-                        .push_notice("fork: nothing to fork — session is empty");
-                    return false;
-                }
-                let fork_path = {
-                    let stem = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("session");
-                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
-                    let fork_name =
-                        format!("{stem}-fork-{}.{}", epsilon_contracts::new_id("fork"), ext);
-                    path.with_file_name(fork_name)
-                };
-                match std::fs::copy(&path, &fork_path) {
-                    Ok(_) => self.ui.push_notice(format!(
-                        "forked session → {} (open with --session {})",
-                        fork_path.display(),
-                        fork_path.display()
-                    )),
-                    Err(e) => self.ui.push_notice(format!("fork failed: {e}")),
-                }
+            crate::picker::Command::Sessions
+            | crate::picker::Command::Session
+            | crate::picker::Command::Tree => self.run_navigate_command(agent, command),
+            crate::picker::Command::Fork
+            | crate::picker::Command::Clone
+            | crate::picker::Command::Name(_) => self.run_branch_command(agent, command),
+            crate::picker::Command::New
+            | crate::picker::Command::Resume(_)
+            | crate::picker::Command::Reload => self.run_restore_command(agent, command),
+            // `run_command` owns the routing, so reaching a variant here means the
+            // dispatcher sent it to the wrong executor. `debug_assert` catches that in
+            // every test build and stays silent in release - a user's release binary
+            // must not panic over an internal routing mistake, and a test must not be
+            // able to pass by quietly doing nothing.
+            #[allow(unreachable_patterns)]
+            other => {
+                debug_assert!(false, "{other:?} is not a run_session case");
+                false
             }
-            crate::picker::Command::New => {
-                let (tin, tout) = self.ui.usage();
-                self.ui.clear_lines();
-                self.ui.push_notice(format!(
-                    "new session — transcript cleared (session file continues; use /fork for a branch file) (tokens {tin}/{tout})"
-                ));
-            }
-            crate::picker::Command::Resume(path) => {
-                let p = path.trim();
-                if p.is_empty() {
-                    // M57: bare `/resume` opens the browser — the path form is
-                    // still there for scripts and muscle memory.
-                    self.open_session_browser(agent);
-                } else if self.ui.running() || agent.is_running() {
-                    self.ui.push_notice(
-                        "resume: busy — wait for the current run to finish, then /resume again",
-                    );
-                } else {
-                    let raw = std::path::PathBuf::from(p);
-                    let abs = if raw.is_absolute() {
-                        raw
-                    } else {
-                        self.workspace_root.join(raw)
-                    };
-                    if !abs.exists() {
-                        self.ui.push_notice(format!(
-                            "resume: no file at '{}' — check the path",
-                            abs.display()
-                        ));
-                    } else {
-                        match self.switch_session_file(agent, &abs, Some(p)) {
-                            Ok(count) => self.ui.push_notice(format!(
-                                "resumed {} messages from {} (history restored, store swapped)",
-                                count,
-                                abs.display()
-                            )),
-                            Err(e) => self.ui.push_notice(format!("resume failed: {e}")),
-                        }
-                    }
-                }
-            }
+        }
+    }
+
+    fn run_navigate_command(
+        &mut self,
+        agent: &Arc<Agent>,
+        command: crate::picker::Command,
+    ) -> bool {
+        match command {
             crate::picker::Command::Sessions => {
                 self.open_session_browser(agent);
             }
@@ -463,6 +417,55 @@ impl App {
                 self.timeline_index = self.timeline_entries.len().saturating_sub(1);
                 self.timeline_open = true;
             }
+            // `run_command` owns the routing, so reaching a variant here means the
+            // dispatcher sent it to the wrong executor. `debug_assert` catches that in
+            // every test build and stays silent in release - a user's release binary
+            // must not panic over an internal routing mistake, and a test must not be
+            // able to pass by quietly doing nothing.
+            #[allow(unreachable_patterns)]
+            other => {
+                debug_assert!(false, "{other:?} is not a run_navigate case");
+                return false;
+            }
+        }
+        false
+    }
+
+    fn run_branch_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
+        match command {
+            crate::picker::Command::Fork => {
+                let store = agent.store_handle_for_tests();
+                let (path, leaf) = match store.lock() {
+                    Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
+                    Err(_) => {
+                        self.ui.push_notice("fork: session store unavailable");
+                        return false;
+                    }
+                };
+                if leaf.is_none() {
+                    self.ui
+                        .push_notice("fork: nothing to fork — session is empty");
+                    return false;
+                }
+                let fork_path = {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("session");
+                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
+                    let fork_name =
+                        format!("{stem}-fork-{}.{}", epsilon_contracts::new_id("fork"), ext);
+                    path.with_file_name(fork_name)
+                };
+                match std::fs::copy(&path, &fork_path) {
+                    Ok(_) => self.ui.push_notice(format!(
+                        "forked session → {} (open with --session {})",
+                        fork_path.display(),
+                        fork_path.display()
+                    )),
+                    Err(e) => self.ui.push_notice(format!("fork failed: {e}")),
+                }
+            }
             crate::picker::Command::Clone => {
                 let store = agent.store_handle_for_tests();
                 let (path, leaf) = match store.lock() {
@@ -498,48 +501,6 @@ impl App {
                     )),
                     Err(e) => self.ui.push_notice(format!("clone failed: {e}")),
                 }
-            }
-            crate::picker::Command::Reload => {
-                let mut roots = Vec::new();
-                if let Some(dir) = epsilon_core::config::global_dir() {
-                    roots.push(dir.join("skills"));
-                }
-                roots.push(self.workspace_root.join(".agents").join("skills"));
-                roots.push(self.workspace_root.join(".epsilon").join("skills"));
-                let skills = epsilon_core::skills::discover(&roots);
-                let n = skills.len();
-                agent.set_skills(skills);
-                // M50: agent defs reload alongside skills (same roots pattern —
-                // global always, project pair gated by the trust bit pi's
-                // agentScope maps onto: trust_review_pending means untrusted).
-                let agents = epsilon_core::agents::discover_agents(
-                    &{
-                        let mut r = Vec::new();
-                        if let Some(dir) = epsilon_core::config::global_dir() {
-                            r.push(dir.join("agents"));
-                        }
-                        r
-                    },
-                    &[
-                        self.workspace_root.join(".agents").join("agents"),
-                        self.workspace_root.join(".epsilon").join("agents"),
-                    ],
-                    !self.trust_review_pending,
-                );
-                let an = agents.len();
-                agent.set_agents(agents);
-                // G6: re-read keybindings.json so a remap takes effect without restart (pi reload()).
-                let kb_before = self.keybindings.effective();
-                self.keybindings.reload();
-                let kb_note = if self.keybindings.effective() != kb_before {
-                    " · keybindings reloaded"
-                } else {
-                    ""
-                };
-                self.ui.push_notice(format!(
-                    "reload: {n} skill(s) + {an} agent(s) loaded (prompt tier re-read on next turn){kb_note}"
-                ));
-                self.invalidate_picker();
             }
             crate::picker::Command::Name(arg) => {
                 let name = arg.as_deref().unwrap_or("").trim();
@@ -602,7 +563,106 @@ impl App {
             // able to pass by quietly doing nothing.
             #[allow(unreachable_patterns)]
             other => {
-                debug_assert!(false, "{other:?} is not a run_session_command case");
+                debug_assert!(false, "{other:?} is not a run_branch case");
+                return false;
+            }
+        }
+        false
+    }
+
+    fn run_restore_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
+        match command {
+            crate::picker::Command::New => {
+                let (tin, tout) = self.ui.usage();
+                self.ui.clear_lines();
+                self.ui.push_notice(format!(
+                    "new session — transcript cleared (session file continues; use /fork for a branch file) (tokens {tin}/{tout})"
+                ));
+            }
+            crate::picker::Command::Resume(path) => {
+                let p = path.trim();
+                if p.is_empty() {
+                    // M57: bare `/resume` opens the browser — the path form is
+                    // still there for scripts and muscle memory.
+                    self.open_session_browser(agent);
+                } else if self.ui.running() || agent.is_running() {
+                    self.ui.push_notice(
+                        "resume: busy — wait for the current run to finish, then /resume again",
+                    );
+                } else {
+                    let raw = std::path::PathBuf::from(p);
+                    let abs = if raw.is_absolute() {
+                        raw
+                    } else {
+                        self.workspace_root.join(raw)
+                    };
+                    if !abs.exists() {
+                        self.ui.push_notice(format!(
+                            "resume: no file at '{}' — check the path",
+                            abs.display()
+                        ));
+                    } else {
+                        match self.switch_session_file(agent, &abs, Some(p)) {
+                            Ok(count) => self.ui.push_notice(format!(
+                                "resumed {} messages from {} (history restored, store swapped)",
+                                count,
+                                abs.display()
+                            )),
+                            Err(e) => self.ui.push_notice(format!("resume failed: {e}")),
+                        }
+                    }
+                }
+            }
+            crate::picker::Command::Reload => {
+                let mut roots = Vec::new();
+                if let Some(dir) = epsilon_core::config::global_dir() {
+                    roots.push(dir.join("skills"));
+                }
+                roots.push(self.workspace_root.join(".agents").join("skills"));
+                roots.push(self.workspace_root.join(".epsilon").join("skills"));
+                let skills = epsilon_core::skills::discover(&roots);
+                let n = skills.len();
+                agent.set_skills(skills);
+                // M50: agent defs reload alongside skills (same roots pattern —
+                // global always, project pair gated by the trust bit pi's
+                // agentScope maps onto: trust_review_pending means untrusted).
+                let agents = epsilon_core::agents::discover_agents(
+                    &{
+                        let mut r = Vec::new();
+                        if let Some(dir) = epsilon_core::config::global_dir() {
+                            r.push(dir.join("agents"));
+                        }
+                        r
+                    },
+                    &[
+                        self.workspace_root.join(".agents").join("agents"),
+                        self.workspace_root.join(".epsilon").join("agents"),
+                    ],
+                    !self.trust_review_pending,
+                );
+                let an = agents.len();
+                agent.set_agents(agents);
+                // G6: re-read keybindings.json so a remap takes effect without restart (pi reload()).
+                let kb_before = self.keybindings.effective();
+                self.keybindings.reload();
+                let kb_note = if self.keybindings.effective() != kb_before {
+                    " · keybindings reloaded"
+                } else {
+                    ""
+                };
+                self.ui.push_notice(format!(
+                    "reload: {n} skill(s) + {an} agent(s) loaded (prompt tier re-read on next turn){kb_note}"
+                ));
+                self.invalidate_picker();
+            }
+            // `run_command` owns the routing, so reaching a variant here means the
+            // dispatcher sent it to the wrong executor. `debug_assert` catches that in
+            // every test build and stays silent in release - a user's release binary
+            // must not panic over an internal routing mistake, and a test must not be
+            // able to pass by quietly doing nothing.
+            #[allow(unreachable_patterns)]
+            other => {
+                debug_assert!(false, "{other:?} is not a run_restore case");
                 return false;
             }
         }
