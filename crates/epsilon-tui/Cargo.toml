@@ -7,6 +7,20 @@ license.workspace = true
 authors.workspace = true
 
 [features]
+# M175: `real` is on by default here, for the same reason `epsilon-cli` turns it on by
+# default at M63.
+#
+# It used to be off, and the only thing that turned it on was `epsilon-cli`'s default
+# feature — which meant `cargo test --workspace` built the real path (feature unification
+# carries `epsilon-tui/real` in from the CLI) while `cargo test -p epsilon-tui` did not.
+# Measured, not argued: the workspace run collected 1,298 tests and ran the OAuth adapter
+# test; the per-crate run collected 373 instead of 374 and silently skipped it. A crate
+# whose own test count depends on which other crates happen to be in the invocation is a
+# crate nobody can test honestly, and the test that vanished is the one M165 added after a
+# no-op `TuiLoginUi::notify` passed 364/364.
+#
+# Offline/air-gapped builds of the whole workspace: `--no-default-features`.
+default = ["real"]
 real = ["epsilon-core/real"]
 
 [dependencies]

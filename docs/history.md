@@ -202,7 +202,7 @@ M171
 M172| ADR | Decision |
 M173|---|---|
 M174| 001 | Rust on tokio (LTS channel), single binary |
-| 002 | Port pi's loop shape verbatim; improve only at named seams |
+M175| 002 | Port pi's loop shape verbatim; improve only at named seams |
 | 003 | Provider layer: pi-style direct per-provider HTTP behind our own `StreamFn`; wire types never leak (M17 superseded the original genai wrapper); config-declared custom endpoints since M28 |
 | 004 | Tools defined as typed structs; schemars-derived JSON Schema; `.txt` descriptions |
 | 005 | Two-layer safety: permission gates over fail-closed confinement; honest per-OS limits |

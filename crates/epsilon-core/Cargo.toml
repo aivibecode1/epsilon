@@ -7,6 +7,13 @@ license.workspace = true
 authors.workspace = true
 
 [features]
+# M175: see `epsilon-tui/Cargo.toml` for why `real` is on by default here too. Before
+# this, only `epsilon-cli`'s default feature turned the real path on, so a per-crate
+# `cargo test -p epsilon-core` exercised a different build than `cargo test --workspace`.
+# `epsilon-llm` keeps its own path off by default — that one is deliberate and documented
+# there (it keeps the faux provider free and deterministic) — and this default re-enables
+# it through the same forwarding the CLI already relies on.
+default = ["real"]
 real = ["epsilon-llm/real"]
 
 [dependencies]
