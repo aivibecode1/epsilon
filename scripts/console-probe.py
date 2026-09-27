@@ -366,6 +366,7 @@ def main():
             "--settle",
             "--keys",
             "--submit",
+            "--shell",
         ):
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
             sys.stderr.write(
@@ -382,6 +383,7 @@ def main():
     wait_s = 7.0
     press_enter = False
     submit_keys = False
+    shell_kind = "cmd"
     settle_s = 9.0
     keys = ""
     text = "hello from the probe"
@@ -402,6 +404,11 @@ def main():
             # keystroke a TUI's key handler actually recognises as Enter; a probe that
             # only wrote characters could type `/help` forever and never run it.
             press_enter = True
+        elif argv[i] == "--shell":
+            i += 1
+            shell_kind = argv[i]
+            if shell_kind not in ("cmd", "powershell"):
+                raise SystemExit(f"--shell takes cmd or powershell, not {shell_kind!r}")
         elif argv[i] == "--submit":
             submit_keys = True
         elif argv[i] == "--keys":
@@ -436,8 +443,21 @@ def main():
     # 1. A console of our own, created the way a user creates one. `ping` is the
     #    sleep: it does not read stdin, so nothing competes with the TUI for keys.
     K32.FreeConsole()
-    comspec = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
-    line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}""'
+    # M177: the shell is selectable, because the owner's report names both CMD and
+    # PowerShell and every real-console measurement so far was taken under `cmd`. The
+    # sleep is a stand-in for "do nothing for a moment" that does not read stdin, so
+    # nothing competes with the TUI for keys: `ping` under cmd, `Start-Sleep` under
+    # PowerShell. Both are chosen for that property, not for being idiomatic.
+    if shell_kind == "powershell":
+        ps = os.environ.get("PSEXE", "powershell.exe")
+        line = (
+            f'"{ps}" -NoProfile -NoLogo -Command '
+            f'"Start-Sleep -Seconds 6; & \'{exe}\'"'
+        )
+    else:
+        comspec = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        line = f'{comspec} /c "ping -n 6 127.0.0.1 >nul & "{exe}""'
+    result["shell"] = shell_kind
     shell = subprocess.Popen(line, creationflags=CREATE_NEW_CONSOLE)
     time.sleep(1.5)
 

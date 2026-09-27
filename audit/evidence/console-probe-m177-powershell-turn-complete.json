@@ -1,0 +1,246 @@
+{
+  "exe": "C:\\Users\\Hp\\AppData\\Local\\Temp\\eps-m177-target\\debug\\epsilon.exe",
+  "typed_text": "how many tokens so far",
+  "mode": "late",
+  "size": [
+    100,
+    30
+  ],
+  "wait_s": 9.0,
+  "shell": "powershell",
+  "host_class": "ConsoleWindowClass",
+  "resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": true
+  },
+  "before": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      0,
+      0
+    ]
+  },
+  "after": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "after_screen": [
+    "idle                                                     ?/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH \u2014 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  model    DeepSeek V3.1",
+    "  context  ?/164k",
+    "",
+    "  ready \u2014 describe a task and press enter",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "typed": {
+    "ok": true,
+    "written": 44,
+    "err": 87
+  },
+  "after_typing": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      24,
+      27
+    ]
+  },
+  "typed_screen": [
+    "idle                                                     ?/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH \u2014 \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "  model    DeepSeek V3.1",
+    "  context  ?/164k",
+    "",
+    "  ready \u2014 describe a task and press enter",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 how many tokens so far",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "enter": {
+    "ok": true,
+    "written": 2,
+    "err": 87
+  },
+  "after_turn": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      1,
+      0
+    ]
+  },
+  "turn_screen": [
+    "\u280b running 5s \u00b7 streaming\u2026             ctx <1%/164k \u00b7 \u2191100 \u219350 \u00b7 R0 W0 CH \u2014 \u00b7 $0.0001 \u00b7 DeepSeek V3.1",
+    "\u258e \u276f how many tokens so far",
+    "\u25b8 \u25b8 bash $ echo epsilon-ready \u00b7 pending",
+    "\u25b8 echo epsilon-ready",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "                    \u256d permission required \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
+    "                    \u2502 cap  bash                                                \u2502",
+    "                    \u2502 what echo epsilon-ready                                  \u2502",
+    "                    \u2502 y allow once   a always (session)                        \u2502",
+    "                    \u2502 n deny         e deny + guidance                         \u2502",
+    "                    \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "approval \u00b7 y allow once \u00b7 a always \u00b7 n deny \u00b7 e deny + guidance      \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ],
+  "keys": {
+    "ok": true,
+    "written": 2,
+    "err": 87,
+    "items": [
+      [
+        "text",
+        "y"
+      ]
+    ]
+  },
+  "after_keys": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      2,
+      27
+    ]
+  },
+  "settled_screen": [
+    "idle                                 ctx <1%/164k \u00b7 \u2191200 \u2193100 \u00b7 R0 W0 CH \u2014 \u00b7 $0.0001 \u00b7 DeepSeek V3.1",
+    "\u258e \u276f how many tokens so far",
+    "\u2713 \u2713 bash $ echo epsilon-ready \u00b7 ok \u00b7 6455ms",
+    "\u2713 epsilon-ready",
+    "\u2022 \u2022 permission allowed",
+    "\u2022 Run complete.",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u2022 ask anything",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward \u00b7 \u2026\\My Agent Space\\Epsilon \u00b7 main"
+  ]
+}
