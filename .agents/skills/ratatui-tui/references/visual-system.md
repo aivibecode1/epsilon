@@ -31,6 +31,39 @@ Honor `NO_COLOR`. When set, every token becomes `Reset` plus `BOLD` / `DIM` / `R
 
 Do not use `Color::White` or `Color::Black` as "defaults". They fight the user's terminal theme.
 
+## Light backgrounds
+
+`assets/theme.rs` ships one palette, `Palette::DARK`, tuned for a dark
+background — every `rgb` value in it would read as low-contrast on white. Two
+things are true and in tension: most terminal users who run a light theme have
+already told their terminal so, and there is no reliable cross-platform way
+for the app to ask it back. `COLORTERM` and `WT_SESSION` say something about
+colour depth, not about light or dark; the one live query that would answer it
+(`OSC 11`, "what is your background colour") needs a round-trip the terminal
+may not answer at all inside a pipe, over SSH, or inside `tmux`, and blocking
+startup on a timeout is worse than guessing wrong.
+
+Add a second `Palette::LIGHT` with the same role names and gate it on a
+`--light` flag or a `theme.mode` config entry rather than detecting it. That
+keeps the failure mode a one-time manual toggle instead of a flicker, or a
+wrong guess, every session.
+
+## Contrast
+
+Treat 4.5:1 (WCAG AA for body text) as the floor for `text.primary` against
+`bg.base`, and hold accent and status colours to at least 3:1 — they are short
+words and icons, not paragraphs, but a status word a low-vision reader can't
+separate from the background is a status word that doesn't work. Check a
+truecolor pair before committing it to the palette; `border` and `text.muted`
+are the two roles most often shipped under that floor, precisely because they
+are deliberately quiet and "quiet" is easy to overshoot into "gone."
+
+The ANSI-16 fallback carries no contrast guarantee of its own —
+`Color::DarkGray` on the wrong terminal background can sit close to invisible.
+That is what `Emphasis` in `assets/theme.rs` is for: a role that must survive a
+bad ANSI mapping gets `BOLD` or `DIM+ITALIC` as well as a colour, so losing the
+colour costs polish, not legibility.
+
 ## Palette discipline
 
 One accent. The AI-harness default is a single cool accent (cyan or a truecolor `#7aa2f7`) plus semantic red/yellow/green.

@@ -111,6 +111,17 @@ frame.render_widget(dialog, popup);
 
 Optional 0.30.1+ drop shadow: `Block::bordered().shadow(Default::default())` on the overlay only.
 
+### Confirm / approval dialogs
+
+A `Mode::Confirm` prompt uses the same `centered()` popup as the command
+palette, just shorter — around 5–7 rows (question, one or two lines of detail,
+a `y / n` footer line) rather than `min(16, area.height - 4)`. Do not stretch
+it to match the palette's default height. A tall dialog for a one-line yes/no
+reads as more consequential than it is; a genuinely consequential action
+(force-push, recursive delete) should say so in the text, not through the
+box's size. See `references/ai-harness.md` for what routes to this modal
+versus the lighter inline pending-tool-card prompt.
+
 ## Focus chrome without nested frames
 
 Do not wrap the whole app in `Borders::ALL` and then wrap every pane again.

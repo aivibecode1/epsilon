@@ -1,10 +1,10 @@
 ---
 name: ratatui-tui
-description: Design and implement clean professional Ratatui TUIs in Rust, especially AI harness layouts. Use when building or reviewing terminal UIs with ratatui 0.30, crossterm, color-eyre, tokio, widgets, themes, keyboard focus, async streaming, or when the user mentions TUI, ratatui, terminal layout, composer, sessions pane, or command palette.
+description: Design and implement clean, professional Ratatui TUIs in Rust — especially AI-harness / coding-agent layouts (sessions pane, transcript, composer, tool cards, approval prompts, diffs). Use this whenever the user is building or reviewing a terminal UI with ratatui 0.30, crossterm, color-eyre, or tokio, or mentions TUI, ratatui, terminal layout, composer, sessions pane, command palette, tool-call approval, diff view, or streaming chat in a terminal — even when they describe the feature without naming ratatui, e.g. "a box that shows the command before it runs".
 license: MIT
 compatibility: opencode
 metadata:
-  version: "1.0"
+  version: "1.1"
   audience: rust-tui
   stack: ratatui-0.30
 ---
@@ -17,16 +17,18 @@ Load only the reference the current task needs:
 
 | Need | File |
 |---|---|
-| Event loop, MVU, panic restore, async streaming | `references/architecture.md` |
-| Constraints, nested splits, resize, popups | `references/layout.md` |
-| Theme tokens, borders, density, clutter audit | `references/visual-system.md` |
-| Sessions / transcript / composer / tools / palette | `references/ai-harness.md` |
-| Widget recipes and third-party crates | `references/widgets.md` |
+| Event loop, MVU, panic restore, async streaming, cancellation, crash recovery | `references/architecture.md` |
+| Constraints, nested splits, resize, popups, confirm dialogs | `references/layout.md` |
+| Theme tokens, borders, density, contrast, light/dark, clutter audit | `references/visual-system.md` |
+| Sessions / transcript / composer / tools / approval / diffs / palette | `references/ai-harness.md` |
+| Widget recipes, tool cards, diffs, markdown rendering, third-party crates | `references/widgets.md` |
 
 There is also a **working** theme to copy rather than re-derive: `assets/theme.rs`
 (role-based palette, colour-depth detection, `NO_COLOR` fallback, column-accurate
 width helpers, and tests). It compiles as-is and encodes four decisions that a
 naive token struct gets wrong — read its header comment before adapting it.
+It ships one dark palette by design; see `references/visual-system.md` before
+adding a light variant rather than trying to detect the terminal's background.
 
 ## Target versions
 
@@ -34,6 +36,8 @@ naive token struct gets wrong — read its header comment before adapting it.
 - crossterm `0.29` with feature `event-stream` when async
 - color-eyre `0.6` installed **before** `ratatui::init()`
 - tokio `1` for LLM streams, tool jobs, and file work
+- `unicode-width` `0.2` always; add `unicode-segmentation` `1` once the composer edits by grapheme rather than just measuring by column
+- `tokio-util` `0.7` once more than one in-flight job needs to stop together
 
 Apps depend on `ratatui`. Widget libraries depend on `ratatui-core`.
 
@@ -57,8 +61,9 @@ Do not hand-roll raw-mode + alt-screen + panic restore unless the project alread
 5. Define theme tokens first. Never scatter `Color::Cyan` through widgets.
 6. Separate `App` state, `Message`/`Action` update, and `draw`. Rendering must be a pure function of state.
 7. Wire keys and focus next. Mouse is optional acceleration, never a required path.
-8. Stream work off the UI thread. Token chunks, tool output, and HTTP never block `terminal.draw`.
-9. Run the two review reflexes below before calling the UI done.
+8. Decide the tool-approval policy before the first tool card exists: what runs unattended, what waits for a `y`/`n`, and what needs the heavier confirm modal. Retrofitting this after the transcript renderer is built means redesigning the card, not adding a flag.
+9. Stream work off the UI thread. Token chunks, tool output, and HTTP never block `terminal.draw`.
+10. Run the two review reflexes below before calling the UI done.
 
 ## Non-negotiable contracts
 
@@ -68,6 +73,7 @@ Do not hand-roll raw-mode + alt-screen + panic restore unless the project alread
 - Relayout from `frame.area()` every draw. Do not cache pixel-like coordinates across resize.
 - Logs go to a file or a dedicated pane. Never print to stdout while the TUI owns the terminal.
 - Suspend/handoff (`Ctrl-Z`, `$EDITOR`) must restore the shell, wait, re-enter, then full redraw.
+- Persist the transcript after every completed turn (JSON Lines is enough), not only at exit. A crash should cost at most one in-flight message, not the session. See `references/architecture.md`.
 
 ### Rendering
 
@@ -98,6 +104,12 @@ Do not hand-roll raw-mode + alt-screen + panic restore unless the project alread
   already runs; a missing one just looks plainer, and the gutter glyph still
   carries the distinction.
 
+### Safety
+
+- Ask before a tool call mutates the filesystem, spawns a process, or reaches the network. "Always allow" is an explicit per-session opt-in the user reaches for, never the state the harness starts in.
+- Route destructive-looking calls (recursive delete, force-push, anything outside the project directory) through the heavier `Mode::Confirm` modal, not the inline pending card. The card is for "did you want this," the modal is for "are you sure."
+- An unanswered approval blocks that tool call, never the event loop. Scrolling, other panes, and queuing the next message all stay live while one card waits on `y`/`n`/`a`. See `references/ai-harness.md`.
+
 ## Default AI-harness chrome
 
 Use this unless the user specified another map:
@@ -111,7 +123,7 @@ footer     1 row   context-sensitive keys · focus · mode
 
 Sidebar (22–32 cols, hide under 80 cols): sessions, then a compact activity/tools list.
 
-Overlays (command palette, session picker, confirm, help) render last, centered, with `Clear` behind them. `Esc` dismisses. Focus never leaks into the overlay and the pane beneath at the same time.
+Overlays (command palette, session picker, confirm, help) render last, centered, with `Clear` behind them. `Esc` dismisses. Focus never leaks into the overlay and the pane beneath at the same time. A pending tool approval is a state of the tool card in the transcript, not a fourth chrome region — see `references/ai-harness.md`.
 
 Full layout rules live in `references/ai-harness.md`.
 
@@ -191,6 +203,20 @@ you know it is there.
   one-word `echo` against 1.1 s without it. From the TUI that is
   indistinguishable from a deadlock, and it looked exactly like a rendering bug
   for a long time. `cargo build` + a stopwatch beats reading the draw loop.
+- **Bracketed paste, or a chat message arrives as five.** Enabling `Enter`-to-send
+  without enabling bracketed paste means a multi-line paste sends after its first
+  line and inserts the rest as newlines into whatever composer is left.
+  `crossterm::event::EnableBracketedPaste` turns the whole paste into one
+  `Event::Paste(String)`. See `references/architecture.md`.
+- **Column width and grapheme boundaries are two different crates.**
+  `unicode-width` says how many cells a string draws; it does not say where a
+  cursor may land. Backspacing a flag emoji or a combining accent by `char`
+  instead of by grapheme cluster (`unicode-segmentation`) mangles the glyph
+  instead of removing it. See `references/widgets.md`.
+- **The OS clipboard doesn't exist over SSH.** `arboard`/`copypasta` reach a
+  local display server. A "yank" that only calls them fails silently the moment
+  the harness runs on a remote box, with nothing in the UI to explain why. Emit
+  OSC 52 too. See `references/ai-harness.md`.
 
 ## Implementation defaults
 
@@ -201,6 +227,8 @@ you know it is there.
 - Filter `KeyEventKind::Press` (Windows repeats key-release)
 - `ListState` / `TableState` live on `App`, not inside the widget constructor
 - Bounded `tokio::sync::mpsc` channels for token and tool streams
+- `crossterm::event::EnableBracketedPaste` at startup, disabled again on restore, once the composer accepts multi-line paste
+- One `CancellationToken` per run, cloned into each spawned worker, once more than one job needs to stop together
 
 ## Do not
 
@@ -211,6 +239,8 @@ you know it is there.
 - Steal `Ctrl-C` without a quit path that restores the terminal
 - Depend on mouse hover for essential status
 - Introduce a second TUI framework (Cursive, ratatui-kit, iced) unless the user asked
+- Auto-approve a tool call because the last one of the same kind was approved — "always" is a session-scoped opt-in the user chose, not a pattern the harness infers
+- Re-parse markdown, or re-run a diff's line cap, on every streamed token instead of once the message completes
 
 ## When reviewing existing code
 
@@ -221,3 +251,4 @@ you know it is there.
 5. Check resize and minimum size.
 6. Check theme tokens vs raw colors.
 7. Check streaming path does not clone the whole history per token.
+8. Check a pending tool-call approval can't be skipped by a keypress the terminal had already buffered before the prompt appeared, and that its `y`/`n`/`a` keys don't collide with whatever those keys already do in the surrounding mode.
