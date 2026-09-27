@@ -1,4 +1,5 @@
 # Documentation
+M171 | [Every command executed at least once](milestones/M171-every-command-executed-at-least-once.md) | 1,296 | 29 of 30 slash commands driven on a fresh App each; a control restoring the M168 panic fails it at `lib.rs:1002` |
 M170 | [The real-console check, and a tool gap it exposed](milestones/M170-the-real-console-check.md) | 1,295 | `/tree` and `/export` measured in a genuine conhost window; the probe gained `--submit` because `--keys` could not type a slash command at all |
 M169 | [The correction M168 needed, and a hazard I could not test](milestones/M169-the-correction-m168-needed.md) | 1,295 | M168's severity claim was wrong and is retracted; a `live_resume` early return could leave an agent with no store — fixed, and honestly untested |
 M168 | [The duplicate timeline, and the crash it hid](milestones/M168-the-duplicate-timeline-and-the-crash-it-hid.md) | 1,295 | `/tree` was a byte-identical copy of `/timeline`; closing the gap found **nine** production call sites that panicked the TUI when no session store is attached |

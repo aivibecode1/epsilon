@@ -2487,3 +2487,79 @@ fn each_entry_kind_gets_the_tag_the_picker_shows() {
     };
     assert_eq!(timeline_kind_tag(&mk(turn)), "turn");
 }
+/// M171: every slash command the user can type, driven once, asserting none of them panics.
+///
+/// M167 measured that 18 of the 30 user-typable commands were never executed by any test,
+/// and M168 found a real defect in the gap - nine of them called an accessor that panics.
+/// `console-probe.py --submit` can now check them for real, but only one serialised run
+/// each, at roughly 40 minutes of wall clock per batch, and the evidence does not survive
+/// the next change. This does.
+///
+/// The assertion is deliberately weak - "did not panic" - because that is the failure mode
+/// the gap was hiding. A command that reports a missing session store, an empty session, or
+/// a usage string has done its job; a command that panics has not. Stronger per-command
+/// assertions belong beside each command, where the expectation is knowable.
+#[tokio::test]
+async fn no_slash_command_panics_when_typed() {
+    // Taken from the same `picker` mapping the parser uses, so a command added without a
+    // test here is a gap in this list rather than a silent omission.
+    const COMMANDS: &[&str] = &[
+        "model",
+        "think",
+        "compact",
+        "theme",
+        "branch",
+        "tree",
+        "fork",
+        "clone",
+        "new",
+        "resume",
+        "sessions",
+        "editor",
+        "session",
+        "trust",
+        "reload",
+        "export",
+        "import",
+        "share",
+        "copy",
+        "name",
+        "changelog",
+        "tasks",
+        "hotkeys",
+        "settings",
+        "scoped_models",
+        "clear",
+        "skills",
+        "search",
+        "logout",
+    ];
+    for cmd in COMMANDS {
+        // A fresh app per command: several of these open pickers or start state machines
+        // that would otherwise bleed into the next iteration.
+        let (mut app, agent, (_f, _n)) = test_app();
+        let before = app.ui.lines().len();
+        // `exit` is deliberately absent: it is the one command whose job is to end the
+        // session, and running it here would prove nothing about the other 29.
+        type_and_enter(&mut app, &agent, &format!("/{cmd}"));
+        let after: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+        // A command can answer in the transcript, or by opening something. Both count, and
+        // the second list is every `*open` flag on `App` plus the trust review - missing one
+        // is how the first version of this test failed on `/model`, which opens the model
+        // picker rather than printing.
+        let opened_something = app.timeline_open
+            || app.session_browser.is_some()
+            || app.picker_open
+            || app.auth_pick_open
+            || app.auth_prompt_open
+            || app.palette_open
+            || app.trust_review_pending;
+        assert!(
+            after.len() > before || opened_something,
+            "`/{cmd}` produced no notice and opened no overlay - it may have done nothing \
+             at all, which is how the M168 defect hid: after.len()={} before.len()={}",
+            after.len(),
+            before
+        );
+    }
+}
