@@ -40,14 +40,36 @@ const SETTLE: Duration = Duration::from_secs(7);
 const STEP: Duration = Duration::from_millis(600);
 
 /// The built binary, or a skip.
+///
+/// M179: this used to require `EPSILON_BIN` to be set by hand, which meant the whole
+/// suite was skipped by `cargo test --workspace` — and a test that is skipped by the
+/// battery rots. `the_screen_reports_what_the_harness_is_doing` sat broken from M151 to
+/// M178 for exactly that reason: nothing ran it for twenty-seven milestones.
+///
+/// Cargo already solves this. For an integration test in a package that has a binary
+/// called `epsilon`, `CARGO_BIN_EXE_epsilon` points at the binary Cargo has just built,
+/// so the suite can find it with no environment variable at all. `EPSILON_BIN` stays
+/// honoured, because pointing the suite at a specific build is occasionally the point.
+///
+/// It still skips, loudly, in the one case that cannot be helped: running the compiled
+/// test binary on its own with no build having happened (`cargo test --no-run`, a stray
+/// binary). A skip is then honest; a silent pass would not be.
 fn binary() -> Option<String> {
-    match std::env::var("EPSILON_BIN") {
-        Ok(path) if !path.trim().is_empty() => Some(path),
-        _ => {
+    if let Ok(path) = std::env::var("EPSILON_BIN")
+        && !path.trim().is_empty()
+    {
+        return Some(path);
+    }
+    // `option_env!` rather than `env!`: the variable is absent when this crate is
+    // compiled as a library or with `--no-run`, and a hard `env!` would make the whole
+    // test binary fail to compile for a condition that has a correct answer.
+    match option_env!("CARGO_BIN_EXE_epsilon") {
+        Some(path) => Some(path.to_string()),
+        None => {
             eprintln!(
-                "SKIPPED: set EPSILON_BIN to the built binary to run the terminal \
-                 integration test, e.g.\n  \
-                 cargo build -p epsilon-cli && EPSILON_BIN=target/debug/epsilon epsilon..."
+                "SKIPPED: no EPSILON_BIN and no CARGO_BIN_EXE_epsilon. Run the suite
+                through cargo, which builds the binary first: cargo test -p epsilon-cli
+                --test terminal -- --test-threads=1"
             );
             None
         }
