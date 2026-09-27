@@ -62,6 +62,21 @@ impl App {
             | crate::picker::Command::Clone
             | crate::picker::Command::Reload
             | crate::picker::Command::Name(_) => self.run_session_command(agent, command),
+            // Show the user something.
+            crate::picker::Command::Help
+            | crate::picker::Command::Skills
+            | crate::picker::Command::Tasks
+            | crate::picker::Command::Timeline
+            | crate::picker::Command::Hotkeys
+            | crate::picker::Command::Settings
+            | crate::picker::Command::Changelog => self.run_view_command(agent, command),
+            // Move bytes or permissions across the trust boundary.
+            crate::picker::Command::Trust(_)
+            | crate::picker::Command::Export(_)
+            | crate::picker::Command::Import(_)
+            | crate::picker::Command::Share
+            | crate::picker::Command::Copy => self.run_transfer_command(agent, command),
+            // The catch-all: the conversation and the frame.
             _ => self.run_workspace_command(agent, command),
         }
     }
@@ -595,101 +610,24 @@ impl App {
     }
 
     /// Everything the frame and the workspace do.
+    /// Commands that act on the running conversation or the frame itself.
+    ///
+    /// This is the dispatcher's **catch-all**: a new `Command` variant lands here, where
+    /// the compiler demands its arm, rather than going unrouted. That is why it is allowed
+    /// to be the vague one - and why it is also kept small. The two executors it used to
+    /// hold are `run_view_command` and `run_transfer_command`.
     fn run_workspace_command(
         &mut self,
         agent: &Arc<Agent>,
         command: crate::picker::Command,
     ) -> bool {
         match command {
-            crate::picker::Command::Help => {
-                for item in crate::picker::SLASH_ITEMS {
-                    self.ui.push_notice(format!(
-                        "{} — {}",
-                        item.value.trim_end(),
-                        item.description
-                    ));
-                }
-                for line in [
-                    "auth: /login anthropic sk-...  (paste inside TUI, masked) · /logout anthropic · keys saved to ~/.config/epsilon/auth.json",
-                    "subscription login: /login anthropic oauth · /login xai oauth (device code) · /login openrouter oauth — browser round-trip, same store",
-                    "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
-                    "thinking: Ctrl+T cycles · current level in the status bar",
-                    // The header is the harness's own report on itself, and a report with
-                    // no legend is only transparent to the person who wrote it. These two
-                    // lines decode it, including the two placeholders that mean "unknown"
-                    // rather than "zero".
-                    "header: 42%/200k = context used/window (warns at 70%, red at 90%) · ↑12k ↓3.4k = tokens in/out this session",
-                    "header: cache 87% = share of the LAST prompt served from cache (— = none yet) · $0.42 = estimated cost at list prices",
-                    "header: a trailing + on the cost means the session moved tokens the model registry does not price, so the figure is a lower bound",
-                    "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
-                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
-                ] {
-                    self.ui.push_notice(line);
-                }
-            }
             crate::picker::Command::Clear => {
                 let (tin, tout) = self.ui.usage();
                 self.ui.clear_lines();
                 self.ui.push_notice(format!(
                     "transcript cleared — session totals kept (tokens {tin}/{tout})"
                 ));
-            }
-            crate::picker::Command::Skills => {
-                let names = agent.skill_names();
-                if names.is_empty() {
-                    self.ui.push_notice(
-                        "no skills discovered — drop SKILL.md dirs into .epsilon/skills/",
-                    );
-                } else {
-                    self.ui.push_notice(format!("skills: {}", names.join(", ")));
-                }
-            }
-            crate::picker::Command::Tasks => {
-                // M54: the registry is the only place a delegated child's state
-                // is visible; Esc (abort) now reaches running children too, so
-                // this doubles as the "what am I still waiting on" view.
-                let snapshots = agent.task_snapshots();
-                if snapshots.is_empty() {
-                    self.ui.push_notice(
-                        "no subagent tasks — the model starts them with the `task` tool (background=true runs detached and reports back here)",
-                    );
-                } else {
-                    let mut running = 0usize;
-                    for s in &snapshots {
-                        let state = match s.state {
-                            epsilon_contracts::tool::TaskState::Running => "running",
-                            epsilon_contracts::tool::TaskState::Completed => "completed",
-                            epsilon_contracts::tool::TaskState::Failed => "failed",
-                        };
-                        if s.state == epsilon_contracts::tool::TaskState::Running {
-                            running += 1;
-                        }
-                        let head = s.output.lines().next().unwrap_or("").trim();
-                        let preview: String = head.chars().take(120).collect();
-                        // M56: name the model the child runs on, so a scout on
-                        // a cheap model is distinguishable at a glance.
-                        let on_model = s
-                            .model
-                            .as_deref()
-                            .map(|m| format!(" · @{m}"))
-                            .unwrap_or_default();
-                        self.ui.push_notice(format!(
-                            "task {} · {state}{on_model} · {} · {} turn(s) · {}",
-                            s.id,
-                            s.description,
-                            s.turns,
-                            if preview.is_empty() {
-                                "(no output yet)"
-                            } else {
-                                preview.as_str()
-                            }
-                        ));
-                    }
-                    self.ui.push_notice(format!(
-                        "{} task(s) · {running} running — resume one with the task tool (task_id) or Esc a run to stop them",
-                        snapshots.len()
-                    ));
-                }
             }
             crate::picker::Command::Search(query) => {
                 // M157: this scanned the session *log on disk* and printed its hits as
@@ -756,6 +694,118 @@ impl App {
                         let mut produced = Vec::new();
                         let _ = a.compact_now(&mut produced).await;
                     });
+                }
+            }
+            crate::picker::Command::Unknown(word) => {
+                let hint = crate::picker::suggest_slash(&word)
+                    .map(|item| format!(" — did you mean '{}'?", item.value.trim()))
+                    .unwrap_or_default();
+                self.ui.push_notice(format!(
+                    "unknown command '/{word}'{hint} — /help lists commands"
+                ));
+            }
+            crate::picker::Command::Editor => {
+                self.request_external_editor();
+            }
+            // `run_command` owns the routing, so reaching a variant here means the
+            // dispatcher sent it to the wrong executor. `debug_assert` catches that in
+            // every test build and stays silent in release - a user's release binary
+            // must not panic over an internal routing mistake, and a test must not be
+            // able to pass by quietly doing nothing.
+            #[allow(unreachable_patterns)]
+            other => {
+                debug_assert!(false, "{other:?} is not a run_workspace_command case");
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Commands that show the user something and change nothing: `/help`, `/skills`,
+    /// `/tasks`, `/timeline`, `/hotkeys`, `/settings`, `/changelog`.
+    fn run_view_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
+        match command {
+            crate::picker::Command::Help => {
+                for item in crate::picker::SLASH_ITEMS {
+                    self.ui.push_notice(format!(
+                        "{} — {}",
+                        item.value.trim_end(),
+                        item.description
+                    ));
+                }
+                for line in [
+                    "auth: /login anthropic sk-...  (paste inside TUI, masked) · /logout anthropic · keys saved to ~/.config/epsilon/auth.json",
+                    "subscription login: /login anthropic oauth · /login xai oauth (device code) · /login openrouter oauth — browser round-trip, same store",
+                    "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
+                    "thinking: Ctrl+T cycles · current level in the status bar",
+                    // The header is the harness's own report on itself, and a report with
+                    // no legend is only transparent to the person who wrote it. These two
+                    // lines decode it, including the two placeholders that mean "unknown"
+                    // rather than "zero".
+                    "header: 42%/200k = context used/window (warns at 70%, red at 90%) · ↑12k ↓3.4k = tokens in/out this session",
+                    "header: cache 87% = share of the LAST prompt served from cache (— = none yet) · $0.42 = estimated cost at list prices",
+                    "header: a trailing + on the cost means the session moved tokens the model registry does not price, so the figure is a lower bound",
+                    "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
+                    "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
+                ] {
+                    self.ui.push_notice(line);
+                }
+            }
+            crate::picker::Command::Skills => {
+                let names = agent.skill_names();
+                if names.is_empty() {
+                    self.ui.push_notice(
+                        "no skills discovered — drop SKILL.md dirs into .epsilon/skills/",
+                    );
+                } else {
+                    self.ui.push_notice(format!("skills: {}", names.join(", ")));
+                }
+            }
+            crate::picker::Command::Tasks => {
+                // M54: the registry is the only place a delegated child's state
+                // is visible; Esc (abort) now reaches running children too, so
+                // this doubles as the "what am I still waiting on" view.
+                let snapshots = agent.task_snapshots();
+                if snapshots.is_empty() {
+                    self.ui.push_notice(
+                        "no subagent tasks — the model starts them with the `task` tool (background=true runs detached and reports back here)",
+                    );
+                } else {
+                    let mut running = 0usize;
+                    for s in &snapshots {
+                        let state = match s.state {
+                            epsilon_contracts::tool::TaskState::Running => "running",
+                            epsilon_contracts::tool::TaskState::Completed => "completed",
+                            epsilon_contracts::tool::TaskState::Failed => "failed",
+                        };
+                        if s.state == epsilon_contracts::tool::TaskState::Running {
+                            running += 1;
+                        }
+                        let head = s.output.lines().next().unwrap_or("").trim();
+                        let preview: String = head.chars().take(120).collect();
+                        // M56: name the model the child runs on, so a scout on
+                        // a cheap model is distinguishable at a glance.
+                        let on_model = s
+                            .model
+                            .as_deref()
+                            .map(|m| format!(" · @{m}"))
+                            .unwrap_or_default();
+                        self.ui.push_notice(format!(
+                            "task {} · {state}{on_model} · {} · {} turn(s) · {}",
+                            s.id,
+                            s.description,
+                            s.turns,
+                            if preview.is_empty() {
+                                "(no output yet)"
+                            } else {
+                                preview.as_str()
+                            }
+                        ));
+                    }
+                    self.ui.push_notice(format!(
+                        "{} task(s) · {running} running — resume one with the task tool (task_id) or Esc a run to stop them",
+                        snapshots.len()
+                    ));
                 }
             }
             crate::picker::Command::Timeline => {
@@ -854,17 +904,123 @@ impl App {
                 self.timeline_index = self.timeline_entries.len().saturating_sub(1);
                 self.timeline_open = true;
             }
-            crate::picker::Command::Unknown(word) => {
-                let hint = crate::picker::suggest_slash(&word)
-                    .map(|item| format!(" — did you mean '{}'?", item.value.trim()))
-                    .unwrap_or_default();
+            crate::picker::Command::Hotkeys => {
+                for line in [
+                    "hotkeys: Enter submit · Esc aborts run (quits when idle) · Ctrl+X expands tool output",
+                    "         PgUp/PgDn scroll · Ctrl+M model picker · Ctrl+P command palette · Ctrl+T think",
+                    "         Ctrl+U kill to start · Ctrl+W kill word · Ctrl+Y yank · Ctrl+F favorite",
+                    "         /help lists slash commands · /models switches model",
+                ] {
+                    self.ui.push_notice(line);
+                }
+                // G6 polish: prove the remap in the transcript — effective
+                // bindings from ~/.config/epsilon/keybindings.json (sorted).
+                let mut eff: Vec<(String, Vec<String>)> =
+                    self.keybindings.effective().into_iter().collect();
+                eff.sort_by(|a, b| a.0.cmp(&b.0));
+                if !eff.is_empty() {
+                    self.ui
+                        .push_notice("bindings (effective — ~/.config/epsilon/keybindings.json):");
+                    for (id, keys) in eff {
+                        self.ui.push_notice(format!("  {id}: {}", keys.join(" | ")));
+                    }
+                }
+            }
+            crate::picker::Command::Settings => {
+                // Ponytail: no overlay form at v1 (pi SettingsSelectorComponent is ~30 toggles).
+                // Instead show actionable guidance: what exists + where it lives + how to change it.
+                let global = epsilon_core::config::global_config_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "~/.config/epsilon/config.toml".to_string());
+                let project = self.workspace_root.join(".epsilon").join("config.toml");
                 self.ui.push_notice(format!(
-                    "unknown command '/{word}'{hint} — /help lists commands"
+                    "settings: global {global} · project {}",
+                    project.display()
                 ));
+                self.ui.push_notice(format!(
+                    "  current model: {} · think: {}",
+                    self.model_id,
+                    self.thinking.as_str()
+                ));
+                let rec = if self.recents.is_empty() {
+                    "(none yet)".to_string()
+                } else {
+                    self.recents[..self.recents.len().min(5)].join(", ")
+                };
+                let fav = if self.favorites.is_empty() {
+                    "(none — Ctrl+F to star)".to_string()
+                } else {
+                    self.favorites[..self.favorites.len().min(5)].join(", ")
+                };
+                self.ui.push_notice(format!("  recents: {rec}"));
+                self.ui.push_notice(format!("  favorites: {fav}"));
+                self.ui
+                    .push_notice("edit the toml directly (model: [model] id, favorites: [picker] favorite), then /reload to apply without restart");
             }
-            crate::picker::Command::Editor => {
-                self.request_external_editor();
+            crate::picker::Command::Changelog => {
+                // Ponytail: read workspace CHANGELOG.md (pi parseChangelog parity, first section)
+                // and emit it into the transcript — no new dep, reuses read_to_string.
+                let candidates = [
+                    self.workspace_root.join("CHANGELOG.md"),
+                    self.workspace_root.join("docs/CHANGELOG.md"),
+                ];
+                let mut found: Option<(std::path::PathBuf, String)> = None;
+                for c in candidates {
+                    if let Ok(s) = std::fs::read_to_string(&c)
+                        && !s.trim().is_empty()
+                    {
+                        found = Some((c, s));
+                        break;
+                    }
+                }
+                if let Some((path, raw)) = found {
+                    // Emit header + first ~120 lines (header + Unreleased + last release) to keep
+                    // the transcript bounded; the full file stays on disk at `path`.
+                    let lines: Vec<&str> = raw.lines().collect();
+                    let take = lines.len().min(120);
+                    self.ui.push_notice(format!(
+                        "changelog: {} ({} lines, showing {} — see file for full history)",
+                        path.display(),
+                        lines.len(),
+                        take
+                    ));
+                    for line in &lines[..take] {
+                        self.ui.push_notice((*line).to_string());
+                    }
+                    if lines.len() > take {
+                        self.ui.push_notice(format!(
+                            "… {} more lines in {}",
+                            lines.len() - take,
+                            path.display()
+                        ));
+                    }
+                } else {
+                    self.ui
+                        .push_notice("changelog: no CHANGELOG.md in workspace (see docs/milestones/ for milestone logs)");
+                }
             }
+            // `run_command` owns the routing, so reaching a variant here means the
+            // dispatcher sent it to the wrong executor. `debug_assert` catches that in
+            // every test build and stays silent in release - a user's release binary
+            // must not panic over an internal routing mistake, and a test must not be
+            // able to pass by quietly doing nothing.
+            #[allow(unreachable_patterns)]
+            other => {
+                debug_assert!(false, "{other:?} is not a run_view_command case");
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Commands that move bytes or permissions across the trust boundary: `/trust`,
+    /// `/export`, `/import`, `/share`, `/copy`.
+    fn run_transfer_command(
+        &mut self,
+        agent: &Arc<Agent>,
+        command: crate::picker::Command,
+    ) -> bool {
+        match command {
             crate::picker::Command::Trust(arg) => {
                 let a = arg.as_deref().unwrap_or("").trim().to_ascii_lowercase();
                 if a.is_empty() {
@@ -1154,101 +1310,6 @@ impl App {
                     None => self.ui.push_notice("copy: no assistant message to copy"),
                 }
             }
-            crate::picker::Command::Changelog => {
-                // Ponytail: read workspace CHANGELOG.md (pi parseChangelog parity, first section)
-                // and emit it into the transcript — no new dep, reuses read_to_string.
-                let candidates = [
-                    self.workspace_root.join("CHANGELOG.md"),
-                    self.workspace_root.join("docs/CHANGELOG.md"),
-                ];
-                let mut found: Option<(std::path::PathBuf, String)> = None;
-                for c in candidates {
-                    if let Ok(s) = std::fs::read_to_string(&c)
-                        && !s.trim().is_empty()
-                    {
-                        found = Some((c, s));
-                        break;
-                    }
-                }
-                if let Some((path, raw)) = found {
-                    // Emit header + first ~120 lines (header + Unreleased + last release) to keep
-                    // the transcript bounded; the full file stays on disk at `path`.
-                    let lines: Vec<&str> = raw.lines().collect();
-                    let take = lines.len().min(120);
-                    self.ui.push_notice(format!(
-                        "changelog: {} ({} lines, showing {} — see file for full history)",
-                        path.display(),
-                        lines.len(),
-                        take
-                    ));
-                    for line in &lines[..take] {
-                        self.ui.push_notice((*line).to_string());
-                    }
-                    if lines.len() > take {
-                        self.ui.push_notice(format!(
-                            "… {} more lines in {}",
-                            lines.len() - take,
-                            path.display()
-                        ));
-                    }
-                } else {
-                    self.ui
-                        .push_notice("changelog: no CHANGELOG.md in workspace (see docs/milestones/ for milestone logs)");
-                }
-            }
-            crate::picker::Command::Hotkeys => {
-                for line in [
-                    "hotkeys: Enter submit · Esc aborts run (quits when idle) · Ctrl+X expands tool output",
-                    "         PgUp/PgDn scroll · Ctrl+M model picker · Ctrl+P command palette · Ctrl+T think",
-                    "         Ctrl+U kill to start · Ctrl+W kill word · Ctrl+Y yank · Ctrl+F favorite",
-                    "         /help lists slash commands · /models switches model",
-                ] {
-                    self.ui.push_notice(line);
-                }
-                // G6 polish: prove the remap in the transcript — effective
-                // bindings from ~/.config/epsilon/keybindings.json (sorted).
-                let mut eff: Vec<(String, Vec<String>)> =
-                    self.keybindings.effective().into_iter().collect();
-                eff.sort_by(|a, b| a.0.cmp(&b.0));
-                if !eff.is_empty() {
-                    self.ui
-                        .push_notice("bindings (effective — ~/.config/epsilon/keybindings.json):");
-                    for (id, keys) in eff {
-                        self.ui.push_notice(format!("  {id}: {}", keys.join(" | ")));
-                    }
-                }
-            }
-            crate::picker::Command::Settings => {
-                // Ponytail: no overlay form at v1 (pi SettingsSelectorComponent is ~30 toggles).
-                // Instead show actionable guidance: what exists + where it lives + how to change it.
-                let global = epsilon_core::config::global_config_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "~/.config/epsilon/config.toml".to_string());
-                let project = self.workspace_root.join(".epsilon").join("config.toml");
-                self.ui.push_notice(format!(
-                    "settings: global {global} · project {}",
-                    project.display()
-                ));
-                self.ui.push_notice(format!(
-                    "  current model: {} · think: {}",
-                    self.model_id,
-                    self.thinking.as_str()
-                ));
-                let rec = if self.recents.is_empty() {
-                    "(none yet)".to_string()
-                } else {
-                    self.recents[..self.recents.len().min(5)].join(", ")
-                };
-                let fav = if self.favorites.is_empty() {
-                    "(none — Ctrl+F to star)".to_string()
-                } else {
-                    self.favorites[..self.favorites.len().min(5)].join(", ")
-                };
-                self.ui.push_notice(format!("  recents: {rec}"));
-                self.ui.push_notice(format!("  favorites: {fav}"));
-                self.ui
-                    .push_notice("edit the toml directly (model: [model] id, favorites: [picker] favorite), then /reload to apply without restart");
-            }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
             // every test build and stays silent in release - a user's release binary
@@ -1256,7 +1317,7 @@ impl App {
             // able to pass by quietly doing nothing.
             #[allow(unreachable_patterns)]
             other => {
-                debug_assert!(false, "{other:?} is not a run_workspace_command case");
+                debug_assert!(false, "{other:?} is not a run_transfer_command case");
                 return false;
             }
         }
