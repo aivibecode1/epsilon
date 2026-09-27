@@ -1,4 +1,5 @@
 # Documentation
+M176 | [Driving a picker in a real console](milestones/M176-driving-a-picker-in-a-real-console.md) | 1,298 | The probe could send characters but not arrow keys, so every interactive path was unreachable from a real console; an A/B proves `<up>`×4 moves the timeline cursor 4 rows |
 M175 | [A test count that depended on the command](milestones/M175-a-test-count-that-depended-on-the-command.md) | 1,298 | Census of 1,305 test functions; a CI gap I was about to claim was false, and the real trap was `cargo test -p epsilon-tui` silently dropping the M165 OAuth test (373 vs 374) |
 M174 | [Every source-shaped test, and whether each one bites](milestones/M174-every-source-shaped-test.md) | 1,298 | Census of all 19 `include_str!` sites; the four that assert on source text each have a recorded control, two run here |
 M173 | [The "acceptable trade" that was not one](milestones/M173-the-trade-that-was-not-one.md) | 1,298 | M172 filtered `/exit` out of the sweep and called the resulting gap a trade; `type_and_enter` only *returns* the quit signal, so all 32 heads now run |

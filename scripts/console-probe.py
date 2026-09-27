@@ -218,7 +218,104 @@ def set_size(out_handle, cols, rows, buffer_rows=None):
 #: application reads the *key*, not the character: `\r` with a zero VK code is a
 #: keystroke no application recognises as Enter, which is why a probe that only sent
 #: characters could type `/help` into the composer and never submit it.
-VK_BY_CHAR = {"\r": 0x0D, "\n": 0x0D, "\t": 0x09, "\x1b": 0x1B}
+#:
+#: M176: extended with the printable repertoire. These are the US-layout virtual-key codes
+#: for unshifted characters, which is what ConPTY and conhost use to place a character into
+#: the console's input buffer. The four control entries above are NOT part of that
+#: repertoire and must stay: they are how this probe sends a key that has no character.
+VK_BY_CHAR = {
+    "\r": 0x0D, "\n": 0x0D, "\t": 0x09, "\x1b": 0x1B,
+    " ": 0x20, "a": 0x41, "b": 0x42, "c": 0x43, "d": 0x44, "e": 0x45, "f": 0x46,
+    "g": 0x47, "h": 0x48, "i": 0x49, "j": 0x4A, "k": 0x4B, "l": 0x4C, "m": 0x4D,
+    "n": 0x4E, "o": 0x4F, "p": 0x50, "q": 0x51, "r": 0x52, "s": 0x53, "t": 0x54,
+    "u": 0x55, "v": 0x56, "w": 0x57, "x": 0x58, "y": 0x59, "z": 0x5A,
+    "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34,
+    "5": 0x35, "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
+    "/": 0xBF, "\\": 0xDC, "-": 0xBD, "_": 0xDF, "=": 0xBB,
+    ".": 0xBE, ",": 0xBC, "?": 0xBF, ":": 0xBA, ";": 0xBA,
+    "'": 0xDE, '"': 0xDE, "!": 0x31, "@": 0x32, "#": 0x33,
+    "$": 0x34, "%": 0x35, "^": 0x36, "&": 0x37, "*": 0x38,
+    "(": 0x39, ")": 0x30, "+": 0xBB, "[": 0xDB, "]": 0xDD,
+    "{": 0xDB, "}": 0xDD, "<": 0xBC, ">": 0xBE, "|": 0xDC, "~": 0xC0, "`": 0xC0,
+}
+
+# M176: keys that have no character, so `type_text` cannot express them. Without these the
+# probe could compose a command and press Enter, but could not drive a picker - the
+# commands whose whole behaviour is "you move through rows and choose one" were the ones
+# no real-console run could reach.
+SPECIAL_KEYS = {
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "enter": 0x0D, "tab": 0x09, "esc": 0x1B, "backspace": 0x08,
+    "home": 0x24, "end": 0x23, "pgup": 0x21, "pgdn": 0x22,
+    "space": 0x20, "delete": 0x2E,
+}
+
+
+def parse_key_sequence(text):
+    """Turn `<up><down><enter>/tree` into a list of what to type.
+
+    `<name>` is a special key from `SPECIAL_KEYS`; anything else is literal text. The
+    angle-bracket syntax is deliberately not something a slash command can contain, so
+    `--keys` stays usable for plain text without quoting rules.
+    """
+    out, i, buf = [], 0, ""
+    while i < len(text):
+        if text[i] == "<":
+            end = text.find(">", i)
+            if end > i:
+                name = text[i + 1:end].lower()
+                if name in SPECIAL_KEYS:
+                    if buf:
+                        out.append(("text", buf))
+                        buf = ""
+                    out.append(("key", name))
+                    i = end + 1
+                    continue
+        buf += text[i]
+        i += 1
+    if buf:
+        out.append(("text", buf))
+    return out
+
+
+def send_sequence(in_handle, text):
+    """Type a key sequence: literal text plus `<up>`-style special keys.
+
+    Each item produces a key-down and a key-up record, which is what a real keyboard does
+    and what `type_text` already did for characters.
+    """
+    items = parse_key_sequence(text)
+    total = sum(2 if kind == "key" else 2 * len(value) for kind, value in items)
+    records = (INPUT_RECORD * max(1, total))()
+    i = 0
+    for kind, value in items:
+        if kind == "key":
+            for down in (True, False):
+                rec = records[i]
+                rec.EventType = KEY_EVENT
+                rec.Event.KeyEvent.bKeyDown = 1 if down else 0
+                rec.Event.KeyEvent.wRepeatCount = 1
+                rec.Event.KeyEvent.wVirtualKeyCode = SPECIAL_KEYS[value]
+                rec.Event.KeyEvent.wVirtualScanCode = 0
+                rec.Event.KeyEvent.UnicodeChar = "\0"
+                rec.Event.KeyEvent.dwControlKeyState = 0
+                i += 1
+        else:
+            for ch in value:
+                for down in (True, False):
+                    rec = records[i]
+                    rec.EventType = KEY_EVENT
+                    rec.Event.KeyEvent.bKeyDown = 1 if down else 0
+                    rec.Event.KeyEvent.wRepeatCount = 1
+                    rec.Event.KeyEvent.wVirtualKeyCode = VK_BY_CHAR.get(ch, 0)
+                    rec.Event.KeyEvent.wVirtualScanCode = 0
+                    rec.Event.KeyEvent.UnicodeChar = ch
+                    rec.Event.KeyEvent.dwControlKeyState = 0
+                    i += 1
+    written = wintypes.DWORD(0)
+    ok = K32.WriteConsoleInputW(in_handle, records, i, ctypes.byref(written))
+    return {"ok": bool(ok), "written": written.value, "err": ctypes.get_last_error(),
+            "items": [list(x) for x in items]}
 
 
 def type_text(in_handle, text):
@@ -273,7 +370,10 @@ def main():
             sys.stderr.write(f"console-probe: unknown option {a!r}\n")
             sys.stderr.write(
                 "options: --early --late --maximize --at SECONDS --size COLSxROWS"
-                " --enter --settle SECONDS --keys TEXT --submit\n"
+                " --enter --settle SECONDS --keys SEQ --submit\n"
+            "        SEQ is literal text plus <up> <down> <left> <right> <enter>\n"
+            "        <tab> <esc> <home> <end> <pgup> <pgdn> <space> <backspace>\n"
+            "        <delete>, e.g. \"<down><down><enter>\" (M176)\n"
             )
             return 2
     mode = "late"
@@ -401,7 +501,7 @@ def main():
                 # dialog and waits, so without this the probe photographs a turn that is
                 # *parked*, not one that is *done* — and a header read while a dialog is up
                 # says nothing about what the header says when the work has landed.
-                result["keys"] = type_text(inp, keys)
+                result["keys"] = send_sequence(inp, keys)
                 time.sleep(settle_s)
                 result["after_keys"] = snapshot(out)
                 result["settled_screen"] = screen_text(out, limit_rows=64)
@@ -415,7 +515,7 @@ def main():
         # command afterwards, leaving the popup open - which is a perfectly good photograph
         # of the wrong moment, and reads as "the command did nothing" if taken at face
         # value. A command probe has to type and then submit.
-        result["submit_typed"] = type_text(inp, keys)
+        result["submit_typed"] = send_sequence(inp, keys)
         time.sleep(2.0)
         result["submit_screen"] = screen_text(out, limit_rows=64)
         result["submit_enter"] = type_text(inp, "\r")
