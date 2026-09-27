@@ -1,4 +1,5 @@
 # Documentation
+M162 | [Slash commands by subject](milestones/M162-slash-commands-by-subject.md) | 1,288 | `run_command`'s 1,147 lines split into three themed executors in `app/commands.rs`; a routing tripwire replaces silent fall-through |
 M161 | [The first seam out of `app.rs`](milestones/M161-the-first-seam-out-of-app-rs.md) | 1,288 | 4,526 → 3,757 lines in `app.rs`; eleven panel `draw_*` functions moved verbatim to `app/panels.rs` |
 
 For users and contributors finding current guides, design intent and historical records.
