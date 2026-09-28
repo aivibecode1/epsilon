@@ -70,3 +70,24 @@ M190's milestone recorded `epoch_millis_to_iso8601` as *"reasoned, not measured"
 - **The `prompt` frame started a run but no assistant text came back**, because the
   configured provider has no credentials on this machine. The `started` acknowledgement is
   what is being verified here, not a completed turn.
+
+## Provenance correction, 2026-09-28
+
+Two `cargo install --force` runs were launched **concurrently against the same
+`D:/eps-target`** — one intended for the M189 source, one for M190. That violates the
+one-build-owner-at-a-time rule, and the audit trail initially looked alarming: the M189
+install reported `Finished release profile in 18m 19s` and `Replacing ... epsilon.exe`
+*after* the M190 install had reported success and been probed.
+
+**Resolved by measurement, not by argument.** Re-probing the installed binary after both
+completed returns `get_messages` = `ARRAY[1]` and `get_tree` with
+`entry_keys = [id, parentId, timestamp, type]` — **M190/D27 shapes**. An M189 binary
+would return `data = OBJECT{messages}` and a flat branch. The 18-minute run therefore
+compiled the M190 source: it waited on the shared target-dir lock until after the M190
+edits were on disk, then built those bytes. Both runs report 21,312,000 bytes.
+
+So the claim above stands — the installed binary is the M190 build — but it now rests on a
+re-run probe rather than on the install log's ordering. The lesson is recorded in
+`agents/memory/01-plan-execution.md`: a `cargo install` that finishes late describes the
+tree it *compiled*, not the tree it was *launched* against, and two installs sharing a
+target directory are two installs racing for one lock.

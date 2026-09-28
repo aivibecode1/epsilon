@@ -230,6 +230,17 @@ Two things the battery does NOT cover, both found after it passed:
   force-add it. `git checkout -- target/` restored them after the wipe. **Before wiping,
   `git status --short` — and if logs show as ` D`, restore rather than commit the
   deletion.**
+- **A `cargo install` that finishes late compiled the tree it FOUND, not the tree it was
+  LAUNCHED against.** Two installs launched concurrently on one `CARGO_TARGET_DIR`
+  (2026-09-28, M189 + M190): the older one blocked on the lock, the newer finished first
+  and was probed, then the older finished and printed `Replacing epsilon.exe` — which
+  looked like a regression to M189. It was not: the re-probe returned M190/D27 shapes, so
+  the late run compiled the *current* source. Resolved by re-probing, not by arguing from
+  log order. **Two builds on one target dir are two builds racing for one lock — never
+  launch an install while another is in flight.**
+- **After any late async result, re-verify the artifact rather than the log.** The install
+  log described provenance; only a re-probe of the shipped bytes settled it.
+
 - **Before splicing a file by character offset, print the surrounding text and assert on
   it.** I used `s.find("fn ok_line(")` as an anchor, inserted there, and destroyed 1,944
   lines of `rpc_mode.rs` — `wc -l` caught it (872 vs 2,622) and `git checkout` restored it.
