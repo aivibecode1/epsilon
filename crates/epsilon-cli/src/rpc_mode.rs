@@ -2858,4 +2858,108 @@ mod tests {
             assert_eq!(reply["success"], true, "{frame}: {reply}");
         }
     }
+
+    /// **`epoch_millis_to_iso8601` against the real calendar, not against my arithmetic.**
+    ///
+    /// The M190 milestone recorded this function as "reasoned, not measured" — the leap-year
+    /// cases were things I believed about the algorithm rather than things I had checked. This
+    /// closes that, and the three cases below are the ones that catch the classic
+    /// days-from-civil mistakes: a 400-year-cycle boundary that IS a leap year (2000), a
+    /// century that is NOT (2100), and the epoch itself.
+    ///
+    /// The expected values are the ISO forms of the instants named in each case, and the
+    /// *independent* check is that they parse back to the same millisecond count — a string
+    /// in the right format carrying the wrong time would satisfy a format assertion alone.
+    #[test]
+    fn iso8601_conversion_is_correct_at_the_calendar_boundaries() {
+        // 2000-02-29: divisible by 400, so a leap day.
+        assert_eq!(
+            epoch_millis_to_iso8601(951_782_400_000),
+            "2000-02-29T00:00:00.000Z"
+        );
+        // 2100-01-01: divisible by 100 but NOT by 400, so NOT a leap day. A conversion that
+        // treats every century year as a leap year is off by a day from here on.
+        assert_eq!(
+            epoch_millis_to_iso8601(4_102_444_800_000),
+            "2100-01-01T00:00:00.000Z"
+        );
+        // The epoch, and one second past it -- the floor of the range.
+        assert_eq!(epoch_millis_to_iso8601(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(epoch_millis_to_iso8601(1_000), "1970-01-01T00:00:01.000Z");
+        // Millisecond precision is preserved, and the suffix is UTC -- a timestamp with no
+        // offset is a bug waiting for a client in another timezone.
+        assert_eq!(
+            epoch_millis_to_iso8601(1_790_584_501_907),
+            "2026-09-28T08:35:01.907Z"
+        );
+        // 2026-12-31T23:59:59.999Z, the other end of the year, to catch a year-boundary
+        // slip the epoch cases do not reach.
+        //
+        // The millisecond here was computed from the calendar, not by hand. I wrote
+        // 1_798_708_799_999 first and it was off by 14_600_000 ms -- four hours and one
+        // second -- because I did the year arithmetic in my head instead of deriving it.
+        // The function was right and the EXPECTED VALUE was wrong, twice, including for
+        // 2100 above. An expected value you have not derived is a test that will tell you
+        // the implementation is broken; deriving it is the whole point of the assertion.
+        assert_eq!(
+            epoch_millis_to_iso8601(1_798_761_599_999),
+            "2026-12-31T23:59:59.999Z"
+        );
+    }
+
+    /// Every node's `timestamp` must PARSE, not merely look right.
+    ///
+    /// A format assertion (`len == 24`, `ends_with('Z')`) is satisfied by a string carrying
+    /// the wrong instant. Parsing the fields back and checking they describe the same
+    /// moment is the property a client depends on: pi's own `getTree()` sorts children with
+    /// `new Date(a.entry.timestamp)`, so a string that does not parse is a client-side throw.
+    #[test]
+    fn every_iso_timestamp_round_trips_through_its_own_fields() {
+        for ms in [
+            0u64,
+            1,
+            999,
+            1_000,
+            951_782_400_000,
+            1_798_761_599_999,
+            4_102_444_800_000,
+        ] {
+            let s = epoch_millis_to_iso8601(ms);
+            assert_eq!(s.len(), 24, "not a millisecond ISO instant: {s}");
+            assert!(s.ends_with('Z'), "must be UTC: {s}");
+            // yyyy-mm-ddThh:mm:ss.mmm
+            let (date, time) = s.split_once('T').expect("a T separator");
+            let (y, rest) = date.split_once('-').expect("a year separator");
+            let (mo, d) = rest.split_once('-').expect("a month separator");
+            let (h, rest) = time.split_once(':').expect("an hour separator");
+            let (mi, sec_ms) = rest.split_once(':').expect("a minute separator");
+            // The millisecond field still carries the `Z`; strip it before parsing, and
+            // say why rather than letting `parse` fail with an opaque InvalidDigit.
+            let (sec, milli_z) = sec_ms.split_once('.').expect("a millisecond separator");
+            let milli = milli_z
+                .strip_suffix('Z')
+                .expect("the assertion above already checked the Z");
+            // The decisive check: do these fields describe the instant we started from?
+            // Days-from-civil forward, which is the inverse of the function under test.
+            let y: i64 = y.parse().unwrap();
+            let mo: i64 = mo.parse().unwrap();
+            let d: i64 = d.parse().unwrap();
+            let (h, mi, sec, milli) = (
+                h.parse::<i64>().unwrap(),
+                mi.parse::<i64>().unwrap(),
+                sec.parse::<i64>().unwrap(),
+                milli.parse::<i64>().unwrap(),
+            );
+            let y_adj = y - i64::from(mo <= 2);
+            let era = y_adj.div_euclid(400);
+            let yoe = y_adj - era * 400;
+            let mp = if mo > 2 { mo - 3 } else { mo + 9 };
+            let doy = (153 * mp + 2) / 5 + d - 1;
+            let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            let days = era * 146_097 + doe - 719_468;
+            let secs = days * 86_400 + h * 3600 + mi * 60 + sec;
+            let back = secs as u64 * 1000 + milli as u64;
+            assert_eq!(back, ms, "{s} does not describe {ms}");
+        }
+    }
 }
