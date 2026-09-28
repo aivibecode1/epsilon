@@ -5,6 +5,19 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Prompt templates.** Type `/review src/parser.rs` and the model receives the body of
+  your `review.md` with the argument substituted. Templates live in
+  `~/.config/epsilon/prompts/` and `<workspace>/{.agents,.epsilon}/prompts/`; project
+  scope wins on a name clash, and `/reload` picks up changes. `/templates` lists what is
+  installed with descriptions and argument hints. Supports `$1..$N`, `$@`, `${N:-default}`
+  and `${@:N[:L]}`, with `$$` for a literal dollar. See `docs/user/prompt-templates.md`
+  (M184, M185).
+
+- **Extensions can participate in a run.** An extension may veto a tool call, rewrite the
+  result the model sees, end the run, and choose the next model. Requests to an extension
+  are now answered concurrently instead of serialised, so one slow child no longer stalls
+  everything behind it. See `docs/user/extensions.md` (M181, M182, M183).
+
 - `/theme` switches the light/dark palette **while the TUI is running**; it was
   previously settable only before launch, via `EPSILON_THEME` or `[tui] theme` (M160).
 
