@@ -2760,3 +2760,74 @@ async fn templates_command_explains_where_to_put_files_when_empty() {
         "an empty list should say where to put files: {shown:?}"
     );
 }
+
+/// The user guide states the substitution grammar in a table. If the grammar changes, the
+/// table is wrong, and a user following it sends a prompt that does not do what the page
+/// said. Whole-token comparisons: `contains("turn_end")` passes against `turn_ending`, which
+/// is how the extensions doc-drift test was caught after it initially passed.
+#[test]
+fn the_prompt_template_guide_documents_every_placeholder_the_code_implements() {
+    let doc = include_str!("../../../../docs/user/prompt-templates.md");
+
+    // Every form `expand_braced` / `parse_placeholder` recognises must be in the guide.
+    for form in [
+        "$1",
+        "$2",
+        "$@",
+        "$ARGUMENTS",
+        "${1:-none}",
+        "${@:-none}",
+        "${@:2}",
+    ] {
+        assert!(
+            doc.contains(form),
+            "docs/user/prompt-templates.md does not document {form}"
+        );
+    }
+    // And the two forms the guide promises.
+    for form in ["${@:1:2}", "$$"] {
+        assert!(
+            doc.contains(form),
+            "the guide promises {form} but the guide no longer shows it"
+        );
+    }
+    // The escape must be described, not merely present: the string `$$` appears in the
+    // table, so check the sentence that explains it.
+    assert!(
+        doc.contains("Write `$$` for a dollar sign"),
+        "the guide lists $$ but no longer explains it"
+    );
+}
+
+/// The guide names the directories discovery actually scans. If a root is renamed, the
+/// page sends users to a path that does nothing.
+#[test]
+fn the_prompt_template_guide_names_the_directories_discovery_scans() {
+    let doc = include_str!("../../../../docs/user/prompt-templates.md");
+    for dir in [".agents/prompts/", ".epsilon/prompts/"] {
+        assert!(
+            doc.contains(dir),
+            "docs/user/prompt-templates.md does not mention {dir}"
+        );
+    }
+    // The global path must match config::global_dir(), which resolves ~/.config/epsilon.
+    assert!(
+        doc.contains(".config/epsilon/prompts/"),
+        "the guide's global path does not match config::global_dir()"
+    );
+}
+
+/// The "does not work" section is load-bearing: a feature page listing only what works
+/// invites people to build on capabilities that do not exist. `--prompt` is named as
+/// absent, so when it is added this test fails and the line is removed deliberately.
+#[test]
+fn the_prompt_template_guide_states_what_does_not_work() {
+    let doc = include_str!("../../../../docs/user/prompt-templates.md");
+    for claim in [
+        "cannot be nested",
+        "not shell syntax",
+        "no `--prompt` flag yet",
+    ] {
+        assert!(doc.contains(claim), "the guide no longer states: {claim}");
+    }
+}

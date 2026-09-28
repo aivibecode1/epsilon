@@ -96,9 +96,18 @@ supported. Recorded in `audit/02-port-fidelity.md`.
 
 ## What was not verified
 
-- **No template was exercised in a real terminal.** Every claim is from unit and integration
-  tests plus a manual reading; a `prompts/review.md` in a live session was not driven end to
-  end through the console probe.
+- ~~No template was exercised in a real terminal.~~ **CLOSED after the m184 gate**, in
+  `debcef2`'s follow-up: a `.epsilon/prompts/zzprobe.md` was driven through
+  `scripts/console-probe.py` in a real conhost window.
+  - `/templates` -> `prompt templates: /zzprobe — Probe template for live verification (takes <topic>)`
+  - `/zzprobe auth-tokens` -> `❮ ❯ ZZPROBE_MARKER reviewed auth-tokens for correctness.`
+
+  The argument was substituted from real keystrokes, and the marker is a string that exists
+  only in the template body — so the screen proves expansion, not typing. The probe
+  directory was removed afterwards.
+- **First probe run was inconclusive and the cause was mine**: the probe typed `/templates`
+  without `--enter`, so nothing was submitted and the notice never appeared. The absence of
+  output was a measurement mistake, not a product defect.
 - **The installed release binary was not rebuilt.** `C:/Users/Hp/.cargo/bin/epsilon.exe` is
   the 06:22 build, which has neither the turn hooks nor templates.
 - **The template body is not shown to the user before it is sent.** Expansion is silent, so
