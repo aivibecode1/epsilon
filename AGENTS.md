@@ -210,6 +210,22 @@ on CLI. New edges require review rather than relying on an illustrative layer di
   cargo's error messages list real candidates; use them rather than guessing twice.
 - No new dependency without a stated reason tied to an ADR or milestone need.
 
+## Protocol surfaces (added after D26)
+
+A wire name is part of the contract, and a test that never sends a frame cannot check one.
+
+- **A protocol test must go through the wire.** Deserializing an enum proves the type
+  parses. Only dispatching a real frame and reading the reply proves the protocol accepts
+  what a client will send. `ops_deserialize_with_snake_tags` compared serde's output against
+  the variant list, so it agreed with the code by construction — which is exactly why a
+  mis-spelled op name shipped and a pi-shaped client was refused the name pi documents.
+- **`#[serde(other)] Unknown` swallows `#[serde(alias = ...)]`.** A catch-all variant
+  absorbs an unrecognised name before serde reaches the alias check, so the alias compiles,
+  looks correct, and silently does nothing. For a name that must work, use an explicit
+  `#[serde(rename = "...")]` and keep the old spelling as the alias.
+- **When an op's name is taken from a reference implementation, quote the reference's line.**
+  `rpc-types.ts:30`, not a memory of what it said.
+
 ## Code quality
 
 - `unsafe_code = "forbid"` workspace-wide; exceptions need a per-crate override + justification.
