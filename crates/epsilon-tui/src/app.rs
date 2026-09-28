@@ -302,7 +302,8 @@ pub(crate) struct App {
     prompt_templates: Vec<epsilon_contracts::prompt_template::PromptTemplate>,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
     branch_cache: (Option<String>, std::time::Instant),
-    /// Cached ignore rules for `@` completion, with the time they were read.
+    /// Cached `@`-completion inputs: the ignore rules, the file list they produced, and
+    /// when they were read.
     ///
     /// `IgnoreSet::load` searches the workspace for `.gitignore` files, which is not work
     /// a keystroke can pay for: typing `@Cargo` re-derives the popup once per character.
@@ -311,7 +312,19 @@ pub(crate) struct App {
     /// which is how the regression was found (M110). The branch cache above uses the same
     /// TTL shape for the same reason; the TTL is what bounds how long an edited
     /// `.gitignore` goes unnoticed.
-    at_ignore: Option<(epsilon_core::ignore::IgnoreSet, std::time::Instant)>,
+    ///
+    /// **M194 added the file list.** M110 cached the *rules* and left the traversal to
+    /// run per keystroke, on the reasoning that the rules were the expensive part. They
+    /// are not: measured by mirroring `at_files::walk_inner`, one walk costs 4.2 ms in
+    /// this repository and up to 9.2 ms against a large home tree, paid on every
+    /// character typed after an `@` to rebuild a list that cannot have changed since the
+    /// previous character. The rules and the list now expire together, so the list is
+    /// never fresher than the rules that shaped it.
+    at_ignore: Option<(
+        epsilon_core::ignore::IgnoreSet,
+        std::time::Instant,
+        Vec<String>,
+    )>,
     /// G6: pi `KeybindingsManager` parity — `~/.config/epsilon/keybindings.json`.
     keybindings: crate::keybindings::KeybindingsManager,
     /// M25: mirror of the agent's thinking level for the footer. Written ONLY

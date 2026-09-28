@@ -42,6 +42,53 @@ smaller — not a window resize. The next measurement is a **frame**-geometry di
 typing, not a window-geometry one. `Regions::split` is at
 `crates/epsilon-tui/src/ui/layout.rs:79-99`; `composer_cap` at `:105-108`.
 
+## Four theories of the freeze, four measured and disproved as *the* cause
+
+| # | Theory | Measured | Verdict |
+|---|---|---|---|
+| 1 | a permission dialog silently eats keys | it renders `y/a/n/e`; `y` works | **disproved** (session 1) |
+| 2 | per-frame transcript deep clone | 144 µs → 276 ns, flat | **disproved** (D18, fixed anyway) |
+| 3 | the console window gets resized | TUI touches no console geometry; crossterm takes the VT path, not the buffer swap | **disproved** (this session) |
+| 4 | `@` re-walks the workspace per keystroke | **4.2 ms** here, **9.2 ms** worst case = 28% of a 33 ms frame | **real cost, not the freeze** |
+
+Theory 4 is the one the port study ranked first, and it is genuinely there:
+`completion.rs:43` re-derives whenever `at_fragment` changes, and `at_file_rows` calls
+`at_files::walk` every time. The ignore *rules* are cached for 5 s (`AT_IGNORE_TTL`); the
+walk is not. The code's own comment says "this runs once per keystroke" — the authors
+knew. But `AT_ROW_BUDGET = 200` caps it, so the cost is bounded and small. **Worth caching,
+not a freeze.** Four theories down, and the honest position is still "not reproduced".
+
+## The fourth inert control: an assertion that could not see the thing it named
+
+The `@`-cache test passed **three times against a control that re-walked on every
+keystroke**. Each version was wrong in a different way, and each was invisible until the
+control was armed:
+
+1. **Asserted the cached list's contents before and after.** Identical either way — a
+   re-walking implementation still produces the same list for the same fragment. Said
+   nothing about the traversal.
+2. **Asserted the cache field is untouched.** A re-walking implementation never *writes*
+   that field, so it is untouched in both cases. Read the wrong side of the change.
+3. **Asserted the popup's rows, with a fixture that could not match the query.**
+   `fuzzy_filter` splits on `/` and requires every token, so `created_while_typing.rs`
+   against the query `src/app` was absent from the popup whether or not the walk ran —
+   **vacuous in both directions**. The control passed.
+4. **Renamed the fixture to `src/app_created.rs` so it MATCHES the query.** The control
+   then failed with `shown=["src/app.rs", "src/app_created.rs"]` — the re-walking
+   implementation offered the file, the cached one did not.
+
+**The rule, now stated once and worth more than the fix:** a control that passes is a
+control you have not yet proven works. And an assertion is only worth what it can
+*distinguish* — ask what the broken version would produce, and confirm it is different,
+before believing a green test says anything. A fixture that cannot match the query tests
+nothing in either direction.
+
+**Method note:** measured with a standalone script in scratch, not a Rust test.
+`write_file` silently failed to land a test file twice this session, and `patch` then
+matched fuzzily and corrupted it. For a throwaway measurement, a scratch file *outside* the
+repo is safer than one inside it. Verify what is on disk before believing a compiler
+error about a file you have just written.
+
 ## M194 — the delivered set, and the gate that passed
 
 **GATE PASS `m194` — all five gates `exit=0` on a frozen tree: fmt, clippy, test, demo,

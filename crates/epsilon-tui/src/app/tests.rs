@@ -2224,6 +2224,103 @@ fn at_insert_replaces_fragment() {
     assert_eq!(c2, 5);
 }
 
+/// M194: typing after an `@` must not re-walk the workspace on every character.
+///
+/// The `@`-popup re-derives whenever the fragment changes, so every keystroke after
+/// an `@` reached `at_file_rows`. M110 cached the ignore *rules* and assumed the
+/// traversal was cheap; measured, one walk is 4.2 ms here and up to 9.2 ms against a
+/// large tree, paid per keystroke to rebuild a list that cannot have changed.
+///
+/// The assertion is on the cache being **reused**, not on a duration: a timing
+/// assertion would be a flaky test that fails on a busy machine and passes on a
+/// warm page cache, which is the opposite of evidence. The list identity is what
+/// the property actually is.
+#[tokio::test]
+async fn the_at_popup_walks_the_workspace_once_not_once_per_keystroke() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(ws.path().join("src")).unwrap();
+    std::fs::write(ws.path().join("src/app.rs"), "").unwrap();
+    let (mut app, _agent) = {
+        let (mut a, ag, _) = test_app();
+        a.workspace_root = ws.path().to_path_buf();
+        (a, ag)
+    };
+
+    // First character after the `@` populates the cache.
+    app.insert_char('@');
+    app.sync_at_state();
+    let first = app
+        .at_ignore
+        .as_ref()
+        .expect("the first @-fragment must populate the cache")
+        .2
+        .clone();
+    assert!(!first.is_empty(), "the walk found the fixture file");
+
+    // The rest of the word must reuse that list rather than walk again.
+    //
+    // **Asserted on a file that appears mid-word, not on list contents.** The first
+    // version of this test compared the list before and after and passed against a
+    // control that re-walked on every keystroke — the contents are identical either
+    // way, so the assertion could not see the traversal at all. A control that passes
+    // is not evidence; this one did, and it is why the property is now stated as an
+    // *observable effect* instead.
+    //
+    // Creating a file after the cache is filled is the discriminator: a walk that
+    // runs again finds it, and a walk that is cached does not — until the TTL
+    // expires, which is the documented bargain.
+    // Named so it MATCHES the fragment typed below: `fuzzy_filter` splits the query
+    // on `/` and requires every token, so a file that does not match would be absent
+    // from the popup whether or not the walk re-ran — and the assertion would be
+    // vacuous in both directions. That is not a hypothetical: the first version of
+    // this test used `created_while_typing.rs` against the query `src/app` and
+    // passed against a re-walking control for exactly that reason.
+    std::fs::write(ws.path().join("src/app_created.rs"), "").unwrap();
+    for c in "src/app".chars() {
+        app.insert_char(c);
+        app.sync_at_state();
+    }
+    let after_typing = app
+        .at_ignore
+        .as_ref()
+        .expect("the cache is still valid inside the TTL")
+        .2
+        .clone();
+
+    assert_eq!(first, after_typing, "the list itself must be untouched");
+    assert!(
+        !after_typing.iter().any(|p| p == "src/app_created.rs"),
+        "the cached list must not gain the new file"
+    );
+    // **The popup's own rows** are the observable the control can move. The cache
+    // field is unreadable from here in the sense that matters: a re-walking
+    // implementation leaves it untouched too, so asserting on it proved nothing
+    // (this test passed against that control once already). What differs is what the
+    // user is shown.
+    let shown = app
+        .at_rows
+        .as_ref()
+        .expect("rows are derived on every fragment change");
+    assert!(
+        !shown.iter().any(|p| p == "src/app_created.rs"),
+        "inside the TTL the popup must serve the CACHED list, so a file created \
+         after it was filled is not offered. A re-walking implementation would \
+         offer it, and that is the difference this test exists to see. shown={shown:?}"
+    );
+
+    // And the popup still works, because caching must not cost correctness.
+    assert!(app.at_open, "the popup is still open after typing the path");
+    assert!(
+        app.at_rows
+            .as_ref()
+            .expect("rows are derived from the cached list")
+            .iter()
+            .any(|p| p == "src/app.rs"),
+        "the cached list still answers the fragment: {rows:?}",
+        rows = app.at_rows
+    );
+}
+
 #[tokio::test]
 async fn at_file_popup_opens_and_tab_inserts_path() {
     let ws = tempfile::tempdir().unwrap();

@@ -79,27 +79,45 @@ impl App {
         // that must see everything. One ignore answer, two walks with different budgets —
         // if a third consumer appears, the walk belongs in core beside `IgnoreSet`.
         //
-        // The rules are cached, because this runs once per keystroke and loading them
-        // searches the workspace. A stale cache for a few seconds is the price, and it is
-        // the same price the branch cache above pays.
+        // **The file list is cached, not just the ignore rules** (M194).
+        //
+        // This function runs once per keystroke — the caller re-derives whenever the
+        // `@`-fragment changes, so every character typed after an `@` lands here. The
+        // rules were cached but the *walk* was not, so each of those keystrokes
+        // re-traversed the workspace to produce a list that cannot have changed between
+        // two characters of the same word.
+        //
+        // Measured on this machine by mirroring `at_files::walk_inner`: **4.2 ms** in this
+        // repository (847 files), **9.2 ms** against a large home tree — 28% of a 33 ms
+        // frame at 30 fps. `AT_ROW_BUDGET` bounds it, so it was never a freeze, and this
+        // is not offered as the cause of one. It is a cost paid on every keystroke for an
+        // answer that is identical to the previous keystroke's, which is waste whatever
+        // its size.
+        //
+        // The cache expires on the same 5-second TTL as the rules, so the list is at most
+        // as stale as the rules that shaped it — a file created while the popup is open
+        // appears on the next `@`, not instantly, which is the same bargain the rules
+        // already make and the one the branch cache pays.
         const AT_IGNORE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
-        let fresh = matches!(&self.at_ignore, Some((_, at)) if at.elapsed() <= AT_IGNORE_TTL);
+        let fresh = matches!(&self.at_ignore, Some((_, at, _)) if at.elapsed() <= AT_IGNORE_TTL);
         if !fresh {
-            self.at_ignore = Some((
-                epsilon_core::ignore::IgnoreSet::load(
-                    &self.workspace_root,
-                    crate::at_files::AT_IGNORE_FILES,
-                ),
-                std::time::Instant::now(),
-            ));
+            let ignore = epsilon_core::ignore::IgnoreSet::load(
+                &self.workspace_root,
+                crate::at_files::AT_IGNORE_FILES,
+            );
+            let mut budget = crate::at_files::AT_ROW_BUDGET;
+            let files = crate::at_files::walk(&self.workspace_root, &ignore, &mut budget);
+            self.at_ignore = Some((ignore, std::time::Instant::now(), files));
         }
-        let ignore = &self
+        // Cloned because the fuzzy filter below takes ownership for sorting. A 200-row
+        // `Vec<String>` is a few kilobytes, which is the point: the walk behind it costs
+        // milliseconds, and this costs microseconds.
+        let files = self
             .at_ignore
             .as_ref()
             .expect("the cache was just filled")
-            .0;
-        let mut budget = crate::at_files::AT_ROW_BUDGET;
-        let files = crate::at_files::walk(&self.workspace_root, ignore, &mut budget);
+            .2
+            .clone();
         let needle = fragment.trim();
         if needle.is_empty() {
             let mut out = files;
