@@ -99,7 +99,7 @@ everything else on this list.
 | # | Work | Evidence |
 |---|---|---|
 | 4.1 | ~~**R1** — make `/tree` navigate.~~ **DONE 2026-09-28** (`7489c00`): navigation was already wired; the defect was that the transcript did not follow the leaf. Re-projection added, negative control confirmed | Leaf moved ⇒ the visible conversation is that branch |
-| 4.2 | Prompt templates (`/name` expansion) — the cheapest genuinely-missing pi feature | A template expands and is testable |
+| 4.2 | ~~Prompt templates (`/name` expansion).~~ **DONE** (`3902461` engine, `d9efe9f` TUI wiring). Full bash-style substitution grammar, ported from `prompt-templates.ts`. Control: removing the submit-site call fails the wiring test while the three direct-call tests pass | ✅ |
 | 4.3 | ~~Decide the extension surface.~~ **DONE `e9d5b94`** — ADR-019. Follow-ups deliberately not decided: the 27 UI methods, 7 registration APIs, message injection, provider registration | ✅ |
 | 4.4 | Refresh the catalog and add a drift check | CI fails when the snapshot ages past its window |
 | 4.5a | ~~Bidirectional event frames.~~ **DONE `ece3af4`** — `interpose` / `interpose_result` over a demultiplexing reader task. Control: forwarding an event during a slow invoke took 9.74 s before, ms after | ✅ |
