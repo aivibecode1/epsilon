@@ -18,15 +18,51 @@ is not in the repository.
 ===== GATE PASS =====
 ```
 
-**The battery reports 1315 passing test results across 63 binaries. The real number is
-1253, and the difference is worth explaining rather than rounding away.**
+**The battery reports 1315 passing test results across 63 result lines, 51 of which are
+test binaries. The real number is 1253, and the difference is worth explaining rather than
+rounding away.**
 
-`tests/builtin_tools.rs` (62 tests) appears **twice** in the log — the battery's
-`--workspace` run executes it, and something in the battery then runs it again. So 1315
-double-counts 62 tests.
+**Correction (2026-09-28).** This file previously said `tests/builtin_tools.rs` (62 tests)
+appears twice, and that 1315 therefore double-counts it. **That was wrong, and the
+explanation is a coincidence that made it plausible.** Parsing the log properly — walking
+each `Running` / `Doc-tests` header and attributing the `test result` that follows it —
+shows the extra 62 lines are something else entirely:
 
-Per-crate totals, measured directly with a `cargo test -p <crate>` sweep
-(`epsilon-llm` is 101, not the 74 a `--lib`-only run reports):
+- **51 test binaries** produce 51 result lines. `builtin_tools` appears **once**.
+- **12 more result lines are `Doc-tests`**, one per crate, each reporting
+  `running 0 tests` → `test result: ok. 0 passed`. 51 + 12 = 63 lines.
+- The 12 zeros sum to 0, which is not 62. So arithmetic alone never made the
+  `builtin_tools` story add up; it was never checked against the log.
+
+Why it was believable: `builtin_tools` (62) and `session_store` (62) are two unrelated
+binaries with **identical counts**, and every *crate lib target* appears under its
+`epsilon_*` name twice — once as `Running unittests src\lib.rs`, once as
+`Doc-tests epsilon_*`. So "this 62 is counted twice" was easy to see in a partial reading
+and wrong on inspection. 1315 − 1253 = 62 is a real difference with the wrong explanation
+attached to it.
+
+**The honest form of the claim:** the log's 1316 is the count of test results in one
+`cargo test --workspace` run: **51 test binaries plus 12 `Doc-tests` targets**, where the
+12 doc-test targets each report 0 passed. Every one of them is a real, distinct test target;
+no binary runs twice, and `builtin_tools` appears exactly once.
+
+It is therefore **not** legitimate to subtract a per-crate sweep from it. The earlier draft
+did that (1315 − 62 = "1253 real tests"), and it does not survive contact with the log. A
+`cargo test -p <crate>` sweep measures what was **built at that moment**; a battery measures
+a tree that has since gained targets. The difference here is 63, and at least three
+binaries in the log — `live_smoke`, `ext_fixture`, `bwrap_unix` — post-date the sweep in my
+notes, so the two numbers were never comparable.
+
+**What can be stated without subtraction:** this run executed 63 test targets and reported
+**zero failures**, and every per-crate figure in the table below was measured on its own.
+Both were true when measured. The lesson is recorded rather than a corrected total, because
+a corrected total would be the third number to look authoritative in this file and the only
+honest one is "1316 results, 0 failures, 63 targets".
+
+Per-crate totals, measured by a `cargo test -p <crate>` sweep run **separately** from the
+battery above (`epsilon-llm` is 101, not the 74 a `--lib`-only run reports). This table
+sums to 1253 and is **not** a decomposition of 1316 — the two were measured at different
+times against different target sets, which is the mistake the correction above is about:
 
 | Crate | Tests |
 |---|---:|
@@ -42,7 +78,7 @@ Per-crate totals, measured directly with a `cargo test -p <crate>` sweep
 | `epsilon-server` | 15 |
 | `epsilon-cli` | 81 (incl. the 8-test terminal suite) |
 | `epsilon-mcp` | 6 |
-| **Total** | **1253** |
+| **Sweep total** | **1253** (a separate measurement, not a sum of the battery's parts) |
 
 `epsilon-safety`'s `bwrap_unix.rs` contributes 0 on Windows: it is `#![cfg(unix)]` and
 runs in CI on ubuntu-latest. That is the one place where this machine's total and CI's

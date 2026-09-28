@@ -16,10 +16,16 @@ This is the battery for the bytes that are actually shipped.
 ===== GATE PASS =====
 ```
 
-**0 failures.** The log's own total is 1316; see [`gate-m180-1.md`](gate-m180-1.md) for why
-that is 1254 real tests plus a 62-test double count (`tests/builtin_tools.rs` runs twice in
-the battery) — so 1253 carried over from the previous run, plus **one** new test, which is
-`jumping_the_tree_leaf_re_projects_the_visible_conversation` from `7489c00`.
+**0 failures.** The log reports 1316 results across 63 test targets: 51 test binaries plus
+12 `Doc-tests` targets, each of the latter reporting 0 passed. No binary runs twice.
+
+**Do not subtract a per-crate sweep from this.** An earlier draft of
+[`gate-m180-1.md`](gate-m180-1.md) claimed 1315 double-counted `builtin_tools`' 62 tests and
+so "the real number is 1253". Parsing the log — attributing each `test result` to the
+`Running`/`Doc-tests` header above it — refutes it: `builtin_tools` appears **once**, and the
+extra 12 lines are doc-test zeros. The two measurements were taken at different times against
+different target sets, so their difference means nothing. The correction is recorded in
+full there, because a wrong number that looks authoritative is worse than no number.
 
 ## What changed between this battery and `m180-1`
 

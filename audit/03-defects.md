@@ -582,8 +582,13 @@ carry a reply before the seam can be reached.
 - **146 broken links**, all in `audit/history/` — deliberately unrepaired, because a
   blind rewrite points readers at the wrong document.
 - **Phases 4 and 5** (pi port parity, repository structure) not started.
-- **The battery ran, and it passed** — `audit/evidence/gate-m180-1.md`, 1253 tests,
-  0 failures. Two things it does not cover: `--no-default-features` (which found a
-  real pre-existing compile failure, now fixed in `57812ca`), and anything whose
+- **The batteries ran, and they passed** — `audit/evidence/gate-m180-1.md` and
+  `gate-m180-final.md`; the latter reports 1316 results across 63 targets, 0 failures. (The
+  "1253 tests" figure that used to sit here was derived by subtracting a per-crate sweep
+  from a battery total, which does not survive parsing the log; the correction is in
+  `gate-m180-1.md`.) Two things the battery does not cover: `--no-default-features` (which
+  found a real pre-existing compile failure, now fixed in `57812ca`), and anything whose
   symptom is a broken console rather than a wrong value.
-- The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` is still the pre-session build.
+- The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` **is** the post-session release build
+  (reinstalled and verified by string + probe; see
+  [`installed-binary-2026-09-28.md`](installed-binary-2026-09-28.md)).

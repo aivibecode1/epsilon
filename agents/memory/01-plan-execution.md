@@ -84,8 +84,15 @@ test *and* by watching a real TUI's mtime advance every 2s.
 
 **Gate `m180-final`: PASS** at `1790944` — fmt, clippy, test, demo, real-check.
 **0 failures.** Log committed at `audit/evidence/gate-m180-final.log`; narrative at
-`audit/evidence/gate-m180-final.md`. The log's 1316 is **1254 real tests** plus the
-62-test `builtin_tools` double count, plus 1 new (`/tree` re-projection).
+`audit/evidence/gate-m180-final.md`. The log reports **1316 results across 63 targets** —
+51 test binaries + 12 `Doc-tests` (each 0 passed).
+
+**Never subtract a per-crate sweep from a battery total.** I published "1253 real tests,
+1315 double-counts builtin_tools' 62" and it was false: parsing the log shows
+`builtin_tools` runs once, the extra 12 lines are doc-test zeros, and the sweep and battery
+were measured at different times against different target sets. Both numbers were real
+measurements; the subtraction between them was not. See the correction in
+`audit/evidence/gate-m180-1.md`.
 
 Two batteries this session: `m180-1` (also PASS, committed) and `m180-final`.
 Per-crate: tui 380 · core 263 · tools 168 · llm 101 · session 94 · safety 55 ·
@@ -109,6 +116,14 @@ Two things the battery does NOT cover, both found after it passed:
   tests.** A sweep that sums `test result: ok.` lines gets nothing from a broken build, and
   "0" reads as "no tests" instead of "this is broken". Always confirm a 0 by running that
   crate directly. This is how `epsilon-llm` hid a real compile failure.
+- **Never subtract a per-crate sweep from a battery total, and never publish "the real
+  number is X".** I wrote that 1315 double-counted `builtin_tools`' 62 tests. Parsing the
+  log showed `builtin_tools` runs once, the extra 12 result lines are `Doc-tests` reporting
+  0 passed, and the sweep and battery were measured at different times against different
+  target sets. A subtraction whose inputs were never measured against each other is a
+  guess wearing arithmetic. To check a log, attribute each `test result:` to the
+  `Running`/`Doc-tests` line above it — `builtin_tools` (62) and `session_store` (62) having
+  identical counts is what made the false story plausible.
 - **`MSYS_NO_PATHCONV=1 taskkill /F /IM epsilon.exe /T`** — without it, `//F` is invalid
   and the kill silently fails, leaving `epsilon.exe` locked (then `os error 5`).
 - The **write_file / patch linter reports false Rust 2015 errors** (`async fn not
