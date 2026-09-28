@@ -109,8 +109,20 @@ fn resume_on_a_pi_session_names_the_file_and_the_command_that_converts_it() {
         stderr.contains("is a current pi session"),
         "the diagnosis names what the file is: {stderr}"
     );
+    // The command is quoted **when the path needs it**, and this test's temp
+    // directory is under whatever TEMP points at -- which on a developer machine
+    // is regularly a path containing a space. `resume_open_error` quotes exactly
+    // then (main.rs:2038-2042), so the assertion has to agree: checking for the
+    // bare path passed on a space-free TEMP and failed on every machine that
+    // keeps its temp directory somewhere sensible.
+    //
+    // Asserting "the command names this file" is the property. The exact
+    // spelling is a presentation decision that is allowed to differ.
+    let display = source.display().to_string();
+    let quoted = format!("epsilon --import \"{display}\"");
+    let bare = format!("epsilon --import {display}");
     assert!(
-        stderr.contains(&format!("epsilon --import {}", source.display())),
+        stderr.contains(&quoted) || stderr.contains(&bare),
         "…and prints the exact command to run, path included: {stderr}"
     );
     assert!(

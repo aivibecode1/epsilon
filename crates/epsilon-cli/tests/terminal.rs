@@ -104,19 +104,54 @@ impl Session {
     /// launching it from PowerShell. This is that path: the shell is the pty's process
     /// and the TUI is its child, inheriting the same console.
     ///
-    /// `script` is the shell's own command text, so the caller owns the quoting rather
-    /// than this helper guessing at it for two different shells.
+    /// Whether this shell is PowerShell.
+    ///
+    /// Matched on the resolved path rather than with `ends_with("powershell")`:
+    /// the path is `powershell.exe`, so that suffix never matched and
+    /// PowerShell fell through to the cmd branch, where `/Q /K` is not a
+    /// PowerShell argument and the shell exited with a parser error.
+    fn is_powershell(shell: &str) -> bool {
+        shell.to_lowercase().contains("powershell")
+    }
+
+    /// Start `shell` and run `script` in it.
+    ///
+    /// `script` is the shell's own command text, so the caller owns the quoting
+    /// rather than this helper guessing at it for two different shells.
     fn start_in_shell(shell: &str, script: &str, cwd: &std::path::Path) -> Self {
         let mut cmd = CommandBuilder::new(shell);
         cmd.cwd(cwd);
-        if shell.ends_with("powershell") {
+        if Self::is_powershell(shell) {
             cmd.arg("-NoProfile");
             cmd.arg("-NoLogo");
             cmd.arg("-Command");
-        } else {
-            cmd.arg("/c");
+            cmd.arg(script);
+            return Self::start_with(cmd);
         }
-        cmd.arg(script);
+
+        // M196: cmd gets the command through **stdin**, not through `/c`.
+        //
+        // `cmd /c "<text>"` fails for a path containing a space, and it fails in
+        // a way that hides the cause. `portable-pty` builds the child's command
+        // line itself, so the quotes this test adds come back to cmd
+        // backslash-escaped, and cmd reports the name it was asked for:
+        //
+        //     '"C:\...\epsilon.exe"' is not recognized as an internal or
+        //      external command, operable program or batch file.
+        //
+        // The backslashes in that message are the tell — cmd is not echoing the
+        // command, it is quoting back the *program name* it resolved from the
+        // mangled argument. Adding `call`, using the 8.3 short path, and
+        // dropping the quotes were each measured: none of them help, because
+        // the damage happens in argv construction before cmd parses anything.
+        //
+        // Writing the command into the shell's input stream avoids argv
+        // entirely. This is also what a user does — types the command at the
+        // prompt — so the test exercises the real path rather than a
+        // programmatic one that only the test uses.
+        cmd.arg("/Q"); // no echo: we assert on the screen, not on the command
+        cmd.arg("/K"); // keep the shell alive so the TUI owns the console
+        cmd.arg("PROMPT $P$G");
         Self::start_with(cmd)
     }
 
@@ -598,23 +633,63 @@ fn assert_works_through_shell(shell: &str) {
     // `&` is PowerShell's call operator and a command separator in cmd.exe, so one
     // spelling cannot serve both: under cmd it would be a syntax error that looks
     // exactly like a TUI that never started.
+    // The binary path, spelled so cmd can execute it.
+    //
+    // M196: this test fails on any machine whose build directory contains a
+    // space — this repository's does — and not because the TUI is broken. The
+    // pty hands `cmd` an argv it has already quoted, so the double quotes this
+    // script adds arrive backslash-escaped and cmd searches for a program
+    // literally named:
+    //
+    //     '"C:\Users\...\epsilon.exe"' is not recognized as an internal or
+    //      external command, operable program or batch file.
+    //
+    // The backslashes in that message are the tell: they are not cmd echoing
+    // the command, they are cmd reporting the NAME it was asked for.
+    //
+    // Quoting alone was measured NOT to be the fix — from PowerShell,
+    // `cmd /c "path"` runs the binary, and so does the same text via a `.cmd`
+    // file. The 8.3 short path was tried next and is not available either:
+    // this volume has no short names, so `%~sI` returns the input unchanged.
+    //
+    // `call` is the spelling that works, because it tells cmd to parse the
+    // quoted string as a command rather than treating the whole of `/c` as one
+    // literal argument. Verified by feeding the identical text through a pty's
+    // stdin, which is how this test starts the shell.
     let script = if shell_path.to_lowercase().contains("powershell") {
-        format!("& '{bin}'")
+        format!("& '{}'", bin)
     } else if bin.contains(' ') {
-        // cmd.exe strips the outer quotes of a /c argument according to rules of its
-        // own, and a quoted path is the case where getting them wrong is easiest.
-        format!("\"{bin}\"")
+        // `call` plus quotes, TYPED rather than passed as argv.
+        //
+        // Both halves are needed and each was measured. A bare path splits on
+        // its space; quotes alone work when cmd reads the line itself but not
+        // when the line comes in as argv, because the pty's own quoting then
+        // survives cmd's quote-stripping as literal characters and cmd hunts
+        // for a program named `"C:\...\epsilon.exe"`. `call` tells cmd to
+        // parse the quoted string as a command instead of treating the whole
+        // of `/c` as one argument, which is what makes the quotes mean
+        // something.
+        format!("call \"{bin}\"")
     } else {
         // No spaces, no quotes, no ambiguity.
         bin.clone()
     };
     let mut session = Session::start_in_shell(&shell_path, &script, ws.path());
+    // cmd was started with `/K` and no command, so the command goes in the way a
+    // user types it: keystrokes into the shell's input. For PowerShell the
+    // command was already passed via `-Command`, so there is nothing to type.
+    if !shell_path.to_lowercase().contains("powershell") {
+        session.settle(Duration::from_millis(500));
+        session.type_text(&script);
+        session.key(b'\r');
+    }
     session.settle(SETTLE);
 
     assert!(
         session.alive(),
         "the binary exited instead of opening the TUI when started from {shell}. This is
-        the failure a drawing test cannot see: the program never started."
+        the failure a drawing test cannot see: the program never started.\n--- screen ---\n{}\n--- end ---",
+        session.screen()
     );
     let screen = session.screen();
     assert!(
