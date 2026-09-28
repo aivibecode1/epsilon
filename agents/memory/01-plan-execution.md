@@ -73,6 +73,9 @@ test *and* by watching a real TUI's mtime advance every 2s.
 - **`branch_with_summary` still has no production caller** — confirmed three times now.
 - **`TurnHooks` is still unwired** (10/10 setters in tests). The `ToolHooks` half is done;
   the `TurnHooks` half is not, and the interpose transport now makes it reachable.
+- **D23 CLOSED** (`f6636ff`): the 18 glued lines in `docs/history.md` repaired, all 18 rows
+  reconstructed from the dev logs, and two structural tests added so it cannot recur
+  silently (`38e7a5e`). D25 remains: one row numbered `| 018 |` that predates the corruption.
 - Phase 5 (structure) not started. **Known Phase 5 work, newly found:** `docs/history.md`
   is corrupt below M160 (D23, in `audit/03-defects.md`) — milestone numbers M161–M171 sit
   on their own lines with their rows' leading `|` stripped, verified present before this
@@ -163,6 +166,11 @@ Two things the battery does NOT cover, both found after it passed:
   from `submit_editor`. The fix is one test that types the command and submits, through the
   only path a user takes. Keep the direct tests (they test the engine's contract) but never
   treat them as wiring evidence. Fourth occurrence of this class.
+- **`docs/history.md` has TWO tables, and assuming one is a recurring error.** The
+  `## Milestone timeline` runs to ~M186; `## Original acceptance criteria` is a second table
+  restarting at M6. I scoped a check to one table (79 "missing" milestones, all false) and
+  then scoped another to the whole file ("M6 after M186", also false) — same mistake, opposite
+  directions. Check across both, or reset at every heading.
 - **A control that does not remove what it claims to remove proves nothing.** Two
   instances this session: a parse default that was unreachable behind a digits predicate
   (control passed, correctly), and a directory-name drift control that replaced one of two
