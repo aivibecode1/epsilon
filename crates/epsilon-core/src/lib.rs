@@ -794,6 +794,48 @@ impl Agent {
         self.history.lock().map(|h| h.len()).unwrap_or(0)
     }
 
+    /// Re-derive the model view from the store's *current* leaf and restore it into
+    /// runtime history. Returns the number of messages now visible.
+    ///
+    /// This is what makes a session-tree jump a navigation rather than an
+    /// inspection. `/tree` has always moved the store's leaf
+    /// (`store.navigate_to`) and printed the resulting branch — which is why the
+    /// audit called it a viewer: the file changed, the conversation did not. The
+    /// user was left reading a transcript that no longer described the session.
+    ///
+    /// Deliberately **not** [`Self::live_resume`]. That reopens the file, which
+    /// means dropping and re-acquiring the cross-process write lease — a jump
+    /// within one session does not need that, and doing it would briefly release
+    /// the lease on a file we are the only writer for, which is precisely the
+    /// window another epsilon is waiting to steal (see the lease's dead-holder
+    /// rule). It also runs `repair_on_open`, which is for a file that has been
+    /// closed by someone else, not for one we are mid-conversation with.
+    ///
+    /// The leaf was already moved by the caller, so this only reads.
+    ///
+    /// Fails without touching runtime history if the store is absent or locked: a
+    /// half-restored transcript is worse than the stale one the user was reading,
+    /// because it is neither the old state nor the new one.
+    pub fn reproject_current_branch(&self) -> Result<usize, String> {
+        let Some(handle) = self.store() else {
+            return Err("no session store attached".into());
+        };
+        // Derive the view under the store's lock, then release it before touching
+        // `self.history` — two different locks, and holding both at once is how a
+        // future caller deadlocks this.
+        let messages: Vec<Message> = {
+            let st = handle.lock().map_err(|_| "store lock".to_string())?;
+            st.model_view()
+                .map_err(|e| format!("read the session tree: {e}"))?
+                .into_iter()
+                .map(|v| v.into_message())
+                .collect()
+        };
+        let count = messages.len();
+        self.restore_history(messages);
+        Ok(count)
+    }
+
     /// Live in-TUI session switch (pi parity: `/resume` + `/import` without restart).
     ///
     /// Opens `path` as a [`SessionStore`], repairs dangling tool calls (same as CLI

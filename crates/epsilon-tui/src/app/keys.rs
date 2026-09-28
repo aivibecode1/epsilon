@@ -500,12 +500,33 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         false
                     };
                     if jumped {
+                        // Re-project the transcript. Moving the store's leaf without
+                        // this left the user reading a conversation that no longer
+                        // described the session -- which is why `/tree` was a viewer.
                         let branch = store
                             .lock()
                             .ok()
                             .and_then(|st| st.branch_entries().ok())
                             .unwrap_or_default();
                         app.ui.clear_lines();
+                        match agent.reproject_current_branch() {
+                            Ok(n) => {
+                                let messages = agent.history();
+                                app.ui.hydrate_from_history(&messages);
+                                app.ui.push_notice(format!(
+                                    "jumped to #{seq} · {n} messages on this branch"
+                                ));
+                            }
+                            // The leaf already moved, so a failed re-projection leaves
+                            // the store and the screen disagreeing. Say so instead of
+                            // printing a branch list that describes neither.
+                            Err(why) => app.ui.push_notice(format!(
+                                "jumped to #{seq}, but the transcript could not be re-read \
+                                 ({why}) — the view below no longer matches the session"
+                            )),
+                        }
+                        // Still list the branch, so the user can see what they jumped into
+                        // without re-opening the picker.
                         for e in &branch {
                             let snippet = match &e.kind {
                                 epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
@@ -528,7 +549,6 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             };
                             app.ui.push_notice(format!("#{seq} {snippet}", seq = e.seq));
                         }
-                        app.ui.push_notice(format!("jumped to #{seq}"));
                     }
                     app.timeline_open = false;
                     app.timeline_index = 0;

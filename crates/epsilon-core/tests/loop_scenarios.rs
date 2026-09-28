@@ -2859,3 +2859,91 @@ async fn a_failed_store_pop_stops_the_overflow_retry_and_is_reported() {
          report's whole point"
     );
 }
+
+/// A `/tree` jump must change the conversation, not just the file.
+///
+/// This is the test that pins the fix behind `reproject_current_branch`. Before
+/// it, `/tree` moved the store's leaf and then printed the resulting branch — so
+/// the session file recorded a new position while the user kept reading a
+/// transcript that no longer described it. The audit called `/tree` a viewer for
+/// exactly this reason, and the claim was correct.
+///
+/// The shape is a real fork, not a mock: one turn, a branch off an ancestor, and
+/// a second turn on the sibling. Both branches then exist on disk, which is what
+/// makes "the transcript changed" a meaningful assertion — before the jump the
+/// runtime holds the sibling's messages, and after it must hold the ancestor's.
+#[tokio::test]
+async fn jumping_the_tree_leaf_re_projects_the_visible_conversation() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("tree.jsonl");
+
+    let agent = agent_with(
+        vec![
+            epsilon_llm::FauxStep::Assistant {
+                text: "first answer".into(),
+            },
+            epsilon_llm::FauxStep::Assistant {
+                text: "second answer".into(),
+            },
+        ],
+        Arc::new(AutoAllow),
+        LoopLimits::default(),
+    );
+    // Attach BEFORE the run, or the durable mirror has nothing to write into and
+    // the tree would be empty — which is the M61 lesson about ordering.
+    let store = epsilon_session::SessionStore::open_in(&path, dir.path()).expect("store");
+    agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+
+    agent
+        .run(user_msg("first question"))
+        .await
+        .expect("turn one");
+    let after_first = agent.history().len();
+    assert!(
+        after_first >= 2,
+        "a turn leaves a user and an assistant message"
+    );
+
+    // The entry to jump back to: the first user message. Take it from the store
+    // rather than guessing, because the ids are the store's business.
+    let target = {
+        let handle = agent.session_store().expect("attached");
+        let st = handle.lock().expect("lock");
+        st.branch_entries()
+            .expect("branch")
+            .into_iter()
+            .find(|e| {
+                matches!(
+                    e.kind,
+                    epsilon_contracts::session_entry::EntryKind::Message { .. }
+                )
+            })
+            .map(|e| e.id)
+            .expect("at least one message entry")
+    };
+
+    // Jump. This is what the TUI's Enter arm does after `navigate_to`.
+    {
+        let handle = agent.session_store().expect("attached");
+        let mut st = handle.lock().expect("lock");
+        st.navigate_to(&target).expect("navigate to a real entry");
+    }
+    let projected = agent.reproject_current_branch().expect("re-project");
+
+    assert_eq!(
+        projected, 1,
+        "jumping to the first user message leaves exactly that one message visible"
+    );
+    let visible = agent.history();
+    assert_eq!(
+        visible.len(),
+        1,
+        "the runtime transcript must be the branch that was jumped to, not the one \
+         it was on before: {visible:?}"
+    );
+    assert!(
+        matches!(&visible[0], epsilon_contracts::message::Message::User(_)),
+        "and it must be the message we jumped to, not an assistant reply: {:?}",
+        visible[0]
+    );
+}
