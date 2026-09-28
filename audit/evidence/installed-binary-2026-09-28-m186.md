@@ -41,12 +41,27 @@ Three things this proves that the unit tests could not:
 - **`r8` refuses honestly.** An unimplemented pi command gets `unknown op: get_tree` with its
   id echoed, not a fabricated success.
 
+## The largest reply the surface can produce
+
+`get_available_models` with no filter was driven afterwards, since it is the case most likely
+to stress the line writer:
+
+```
+exit=0  elapsed=0.08s  stdout=365,819 bytes  reply lines=1
+rows=557  providers=15  malformed rows=0  credentials_ready=7/557
+```
+
+One line, not 557 — the payload did not break the framing. 0.08 s for a 366 KB reply.
+
+**`credentials_ready: 7/557` is the field earning its place.** Without it a client would offer
+550 models this machine cannot run, and the failure would surface on the first request as a
+provider auth error. The picker avoids this by grouping providers; the wire now carries the
+same fact per row.
+
 ## Not verified here
 
-- **`get_available_models` unfiltered** (no `provider` field) was not driven in this run; it
-  returns the whole catalog, which is the largest single reply the surface can produce and the
-  case most likely to stress the line writer. It is covered in-process.
 - **No real provider, no live extension, no `set_model` to a credentialed model** — this
-  machine has no provider keys, so `faux-1` is the only row that can be selected.
+  machine has no provider keys, so `faux-1` is the only row that can be selected, and the
+  credential-refusal branch is still only exercised by reading the code.
 - **The prompt-template probe was not re-run**; the binary carries those markers unchanged and
   the M185 evidence covers the behaviour.
