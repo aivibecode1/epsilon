@@ -157,6 +157,12 @@ Two things the battery does NOT cover, both found after it passed:
   requires a fresh label per attempt; it does not say what to do when the source moves
   underneath a running battery, and the answer is: re-run, and keep the failed log named for
   what it is.
+- **A test that calls the new function directly cannot see whether anything calls it.**
+  Reproduced in *new* code this session: three prompt-template tests called
+  `expand_template` directly and all three PASSED against a control that removed the call
+  from `submit_editor`. The fix is one test that types the command and submits, through the
+  only path a user takes. Keep the direct tests (they test the engine's contract) but never
+  treat them as wiring evidence. Fourth occurrence of this class.
 - **A doc-drift test needs anchored assertions.** `assert doc.contains("1")` passed a control
   that changed the documented budget; `contains("turn_end")` passed a control that renamed it
   to `turn_ending`. Anchor to the exact table cell and compare whole tokens. Sixth instance of
