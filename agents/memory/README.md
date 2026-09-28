@@ -26,7 +26,7 @@ next.
 | [`02-tui-truth-first.md`](02-tui-truth-first.md) | **Session 2: "shrinks" ruled out, M194 + M195 landed** | live |
 | [`03-port-gaps.md`](03-port-gaps.md) | **Session 2: the 24 missing pi capabilities; `branch_with_summary` wiring first** | live |
 | [`04-session3-env-and-structure.md`](04-session3-env-and-structure.md) | **Session 3: the MSVC-env build blocker, the link-debt repair, G7 markdown** | live |
-| [`d8050-open.md`](d8050-open.md) | **OPEN BLOCKER: the D8050 build failure, and everything already ruled out** | live — read before touching the build |
+| [`build-blockers-resolved.md`](build-blockers-resolved.md) | **Five stacked environment faults that made this repo unbuildable — now fixed** | live |
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 
 ## Superseded notes (kept for history, not for direction)

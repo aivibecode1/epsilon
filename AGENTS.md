@@ -467,17 +467,25 @@ lying one costs the user the belief that the feature exists.
 
 Hard-won, and mostly learned the hard way — the details are in `docs/milestones/M4`.
 
-- **A non-interactive shell cannot build this repo, and the error does not say so.**
-  `reqwest`'s `rustls` feature compiles `aws-lc-sys`, a C library. `cc-rs` finds
-  `cl.exe` by itself, so the failure is not "no compiler" — `cl.exe` *runs* and
-  exits 2, because a non-interactive shell never runs `vcvars` and so `INCLUDE`
-  and `LIB` are empty and it cannot find the Windows SDK headers. The visible
-  symptom is `error: failed to run custom build command for aws-lc-sys v0.44.0`
-  in **all four** compile gates at once, which reads as a catastrophically
-  broken tree. `scripts/gate.ps1` now loads `vcvars64.bat` when `INCLUDE` is
-  empty. **When every gate fails simultaneously, suspect the environment before
-  the code** — `env | grep` answers it in seconds, and the alternative is an
-  hour reading a diff that cannot be the cause.
+- **Five environment faults stack up here, and each hides the next one.** A
+  non-interactive shell cannot build this repo, and every one of them is
+  reported by cargo as `failed to run custom build command for 'aws-lc-sys'`
+  — a sentence that reads as a broken dependency and is not one. Only the
+  outermost is visible at any time, so fixing it exposes the next and can look
+  like a failed fix:
+  1. `vcvars` never runs, so `INCLUDE`/`LIB` are empty and `cl.exe` exits 2.
+  2. MSBuild cannot write `$TEMP\MSBuildTemp` (an intermittent
+     `UnauthorizedAccessException`).
+  3. `D8050: cannot execute c1.dll: failed to get command line into debug
+     records` — deterministic under cargo, and **impossible to reproduce by
+     running `cl.exe` by hand** with the same arguments, environment and CWD.
+  4. The msys2 perl on PATH (bundled with some agent toolchains) dies with
+     `NtCreateDirectoryObject(...): 0xC0000022` while generating assembly.
+  5. NASM is not installed here.
+  `scripts/gate.ps1` handles all five; see
+  [`agents/memory/build-blockers-resolved.md`](agents/memory/build-blockers-resolved.md)
+  for the flags and the traps. **When a build fails in a way you did not
+  cause, dump the whole environment the build script sees, not its last line.**
 - Append-only handles cannot `set_len` (FILE_APPEND_DATA ≠ FILE_WRITE_DATA); truncation needs a
   read+write handle opened without append.
 - A write-only handle cannot be read back through later. Open purpose-built handles instead of

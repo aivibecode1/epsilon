@@ -27,17 +27,15 @@ if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = "1" }
 
 # The MSVC build environment, loaded before anything runs.
 #
-# Why this is here: `reqwest`'s `rustls` feature compiles `aws-lc-sys`, a C
-# library. `cc` finds `cl.exe` on its own, but `cl.exe` then fails with exit
-# code 2 because it has no INCLUDE/LIB and cannot find the Windows SDK headers
-# - so the failure reads as a broken dependency tree when it is a missing
-# environment. A non-interactive shell never runs `vcvars`, so a build that
-# works in a Developer Prompt fails here, and it fails in clippy, test, demo
-# and real-check alike: four red gates for one missing variable.
-#
-# Cost when it is already loaded: one `cmd /c` that returns immediately.
-# Cost when it is missing: a build that cannot succeed at all. Cheap insurance
-# on a machine where the battery is the only evidence a change is sound.
+# M196 moved TLS to `ring`, so the workspace no longer has a C dependency and
+# this is no longer load-bearing for a clean build. It stays because a
+# developer with a native crate in their tree still needs it, and because the
+# failure it prevents is the worst-shaped one this repository has: a
+# non-interactive shell does not run `vcvars`, so INCLUDE/LIB are empty, `cc`
+# finds `cl.exe` and it exits 2 with no useful message, and every compile gate
+# reports a broken dependency tree. Cost when already loaded: one `cmd /c` that
+# returns immediately.
+
 $vcvars = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 if (-not $env:INCLUDE) {
     if (Test-Path $vcvars) {
@@ -55,25 +53,61 @@ if (-not $env:INCLUDE) {
 # dependency tree when the real problem is one missing environment variable, and
 # the only way to tell those apart in a month is a line in the log.
 if (-not $env:INCLUDE) {
-    Write-Warning "gate.ps1: INCLUDE is still empty after vcvars. The C dependency (aws-lc-sys, via reqwest/rustls) cannot compile; every compile gate will fail with exit 101 and the error will name the dependency, not the environment."
+    Write-Warning "gate.ps1: INCLUDE is still empty after vcvars. Any crate with a C build step will fail with exit 101, and the error will name the dependency rather than the environment."
     exit 101
 }
 
-# MSBuild's scratch directory, created up front.
+# Scratch directory for the build.
 #
-# `aws-lc-sys` falls back to a CMake+MSBuild build on Windows, and MSBuild
-# creates this directory itself with `Directory.CreateDirectory`. That call
-# intermittently loses a race and throws
-# `System.UnauthorizedAccessException: Access to the path
-# '...\Temp\MSBuildTemp' is denied`, which CMake reports as
-# `Failed to run MSBuild command` and cargo reports as a failed custom build
-# command -- naming the dependency, never the cause. Creating it here removes
-# the race instead of losing it. It costs one `New-Item` on a path that is
-# either absent (we create it) or already ours (we do not).
-$msbuildTemp = Join-Path $env:TEMP "MSBuildTemp"
-if ($env:TEMP -and -not (Test-Path $msbuildTemp)) {
-    New-Item -ItemType Directory -Force -Path $msbuildTemp -ErrorAction SilentlyContinue | Out-Null
+# MSBuild (reached through any remaining native toolchain) creates
+# `$TEMP\MSBuildTemp` itself and that intermittently throws
+# `UnauthorizedAccessException`, so TEMP is pointed somewhere we control.
+#
+# The two constraints, both learned the hard way here:
+#
+# 1. NOT inside the repository. `load_project_instructions` walks UP from a
+#    workspace looking for AGENTS.md/CLAUDE.md (prompt.rs:213-223), so a temp
+#    directory at `<repo>/target/buildtmp` inherits the repository's own
+#    AGENTS.md and two prompt tests fail with one extra entry -- a failure
+#    caused entirely by where the scratch directory is.
+# 2. NOT a fresh directory under %LOCALAPPDATA%. A newly created tree there
+#    draws `PermissionDenied` from the antivirus on the first `tempfile`
+#    directory created inside it, which failed 40 epsilon-cli tests at once. The
+#    OS's own %TEMP% is the one tree that is created once, scanned, and left
+#    alone -- so the fix is to use a subdirectory of %TEMP%, not a sibling.
+$buildTmp = Join-Path $env:TEMP "epsilon-build"
+New-Item -ItemType Directory -Force -Path $buildTmp | Out-Null
+$env:TEMP = $buildTmp
+$env:TMP = $buildTmp
+New-Item -ItemType Directory -Force -Path (Join-Path $buildTmp "MSBuildTemp") -ErrorAction SilentlyContinue | Out-Null
+
+# A WINDOWS-NATIVE perl, and no MSYS perl.
+#
+# The perl that happens to be first on PATH in some agent shells is the msys2
+# build, and it dies with
+# `NtCreateDirectoryObject(...): 0xC0000022` (ACCESS_DENIED) on anything that
+# needs a shared object. Git for Windows' perl is a native win32 build and works.
+# We copy perl alone into a clean directory rather than putting `Git\usr\bin` on
+# PATH, because that directory also ships GNU coreutils' `link.exe`, which
+# shadows the MSVC linker and fails the Rust link with `extra operand`.
+#
+# M196 moved TLS to `ring`, so no C library needs perl or NASM any more. This
+# stays because it costs one directory copy and a PATH edit, and because a
+# future native dependency would fail the same way if it were removed.
+
+$perlBin = Join-Path $buildTmp "perlbin"
+if (-not (Test-Path (Join-Path $perlBin "perl.exe"))) {
+    New-Item -ItemType Directory -Force -Path $perlBin | Out-Null
+    foreach ($f in @("perl.exe", "perl538.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll", "gmsys-2.0.dll")) {
+        $src = Join-Path "C:\Program Files\Git\usr\bin" $f
+        if (Test-Path $src) { Copy-Item $src $perlBin -Force }
+    }
 }
+$env:PATH = (@($perlBin) + @(
+    $env:PATH -split ';' | Where-Object {
+        $_ -and $_ -notmatch 'hermes\\tools\\git-' -and $_ -notmatch 'msys64'
+    }
+)) -join ';'
 
 $cargo = (Get-Command cargo -ErrorAction SilentlyContinue).Source
 if (-not $cargo) {
