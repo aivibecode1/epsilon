@@ -56,3 +56,4 @@ audit/evidence/*.log
 !audit/evidence/gate-m180-1.log
 !audit/evidence/gate-m180-final.log
 !audit/evidence/gate-m181.log
+!audit/evidence/gate-m182.log
