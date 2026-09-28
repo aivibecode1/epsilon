@@ -2567,3 +2567,82 @@ mod ext_turn_hooks_e2e {
         );
     }
 }
+
+#[cfg(test)]
+mod protocol_doc_tests {
+    /// Read the protocol page.
+    fn doc() -> String {
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/user/extensions.md"),
+        )
+        .expect("docs/user/extensions.md should exist; it is linked from docs/README.md")
+    }
+
+    /// The user-facing protocol page must not drift from the constants it documents.
+    ///
+    /// A protocol doc quoting a timeout the code no longer uses is worse than no doc: an
+    /// author reads it, writes to it, and hits a failure they cannot explain. This reads the
+    /// page and asserts the numbers in it are the ones in force, so a change to either side
+    /// fails here rather than in someone else's extension.
+    ///
+    /// **It is asserted as a table row, not a bare substring.** The first version of this
+    /// test searched for the digits alone and passed against a control that had changed the
+    /// documented interpose budget from 1s to 3s — because the page mentions "1" and "2"
+    /// dozens of times for unrelated reasons. A test that cannot fail is worse than no test,
+    /// and this is the fifth time this session that has been true. Anchoring to the row is
+    /// what makes the claim mean something.
+    #[test]
+    fn the_documented_limits_are_the_limits_in_force() {
+        let doc = doc();
+        // (constant, the exact cell the page must contain for it)
+        // Rendered to `String` before the tuple: the constants are deliberately different
+        // integer types, and this sidesteps that rather than casting one to the other.
+        let expected: [(&str, String); 3] = [
+            (
+                "interpose",
+                format!("**{} second**", epsilon_ext::INTERPOSE_TIMEOUT_SECS),
+            ),
+            (
+                "invoke",
+                format!("**{} seconds**", epsilon_ext::INVOKE_TIMEOUT_SECS),
+            ),
+            ("crash", format!("**{}**", epsilon_ext::CRASH_BUDGET)),
+        ];
+        for (label, needle) in expected {
+            assert!(
+                doc.contains(&needle),
+                "docs/user/extensions.md does not contain `{needle}` for the {label} limit; \
+                 the constant or the doc changed and one of them is now wrong"
+            );
+        }
+    }
+
+    /// Every event tag the bridge sends must appear as a word in the protocol page.
+    ///
+    /// The tags are the contract's vocabulary: an author keys off them, and a tag living
+    /// only in `runtime.rs` is one nobody outside this repository can discover.
+    ///
+    /// Matched with word boundaries on purpose. `turn_end` is a substring of `turn_ending`,
+    /// so a plain `contains` passed a control that had renamed the tag everywhere — the
+    /// sixth near-miss of this kind, and the reason the previous two checks are anchored.
+    #[test]
+    fn every_event_tag_the_bridge_sends_is_documented() {
+        let doc = doc();
+        for tag in [
+            "before_tool_call",
+            "tool_result",
+            "turn_end",
+            "interpose_result",
+        ] {
+            // A tag must appear as a standalone token, not as a prefix of a longer word.
+            let hit = doc
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|word| word == tag);
+            assert!(
+                hit,
+                "the protocol page never names `{tag}` as a standalone token; a third \
+                 party cannot discover a tag that exists only in the source"
+            );
+        }
+    }
+}
