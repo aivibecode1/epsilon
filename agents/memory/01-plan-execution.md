@@ -46,6 +46,54 @@ a live process, no input, no output. Fixed by heartbeat 10s→2s + a 4s settle w
 an unmoved lock. Safety proven: a live holder is never stolen from, checked in a unit
 test *and* by watching a real TUI's mtime advance every 2s.
 
+## Controls that pass for the wrong reason (three now — check the mutation bites)
+
+A control is evidence only once you have shown the mutation changed the code path it
+claims to change. Three separate controls "passed" and all three were my own error:
+
+1. **M189 billing** — replaced `message.model_id` with `self.model_id()`. At fold time
+   the two are already equal, so it was a no-op. The suite passed because nothing had
+   been broken. Real control: charge every response to the session's FIRST model.
+2. **M189 tree** — replaced `branch_entries()` with `read_all()`. Identical on a linear
+   history. Real control needs a genuine middle-entry fork (`navigate_to`).
+3. **M192 control H** — added `if false { reproject_current_branch()?; }` ABOVE the live
+   call instead of deleting the call. The re-projection still ran, so the control passed
+   while claiming to disable exactly that. Re-armed by deletion: 2 failures.
+
+The third is a *new shape* of the mistake, and the cheapest guard against it is a
+mechanical one: after arming a control, assert the disabled construct is **absent from
+the file** — `s.count("reproject_current_branch()?") == 0` — not merely wrapped in a
+branch. A control that greps for its own mutation is evidence the mutation is present;
+a control that greps for the *absence* of what it disabled is evidence it is off.
+
+Read the diff you are about to run, not the edit you intended to make.
+
+## RPC parity — measured, not inherited (M186-M192)
+
+**23 of 33** pi client commands. Derive it by matching pi's 33-member `RpcCommand` union
+against the `Op` enum variant by variant, resolving each name through **serde**, not the
+Rust identifier. The inherited "18" was off by one because `follow_up`'s primary name is
+in a `serde(rename)` — the same blindness a marker search has.
+
+Ten left, and **not all are wiring**:
+
+| Status | Ops |
+|---|---|
+| **Wirable** — capability exists, needs a live setter | `set_steering_mode`, `set_follow_up_mode` (`LoopLimits` carries both; `PendingQueue::drain` honours `QueueMode`) |
+| **Needs new core capability** | `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry`, `bash`, `abort_bash`, `export_html`, `get_fork_messages` |
+
+An RPC op that cannot refuse is worse than an absent one, so the second group is not
+getting acknowledgements.
+
+**Session swap is `rebind_to`, and the order is the whole point**: swap the durable mirror
+*first*, then re-derive the conversation. Reverse reads the old file. pi shows this only in
+`rpc-mode.ts` (all four of `fork`/`clone`/`new_session`/`switch_session` call
+`rebindSession()`), never in `rpc-types.ts`.
+
+`SessionStore::fork_branch_at` had **8 references, every one a test, and no production
+caller** until M192 — the `branch_with_summary` pattern again. Grepping for callers and
+checking that *at least one is production code* is a cheap triage worth repeating.
+
 ## Still open
 
 - **Phase 4 (pi port parity)** — `/tree` re-projection (`7489c00`), delegated recheck folded
