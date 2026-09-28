@@ -40,3 +40,12 @@ __pycache__/
 # holds a handful of small `.log` files that are NOT gate output but the research
 # transcripts a reference comparison rests on. Those stay tracked.
 audit/evidence/*.log
+
+# ...except a named exception, and the reason is the difference between *repeating*
+# a result and *being* the result. `gate-<label>.log` files are 168 near-identical
+# captures of the same five gates; a tenth copy of "1253 passed" is noise. But the log
+# a specific claim in a specific commit names is the primary artifact — AGENTS.md
+# requires every claim to be traceable to a log, and a cited log that is not in the
+# repository is not traceable. So the battery that a commit message names is tracked
+# even though the other 167 are not.
+!audit/evidence/gate-*.log
