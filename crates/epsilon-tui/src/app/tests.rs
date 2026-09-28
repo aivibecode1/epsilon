@@ -2548,3 +2548,152 @@ async fn no_slash_command_panics_when_typed() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_prompt_template_expands_before_the_command_parser_sees_it() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    std::fs::create_dir_all(dir.path().join(".epsilon").join("prompts")).unwrap();
+    std::fs::write(
+        dir.path()
+            .join(".epsilon")
+            .join("prompts")
+            .join("review.md"),
+        "---\ndescription: Review a file\n---\nReview $1 for correctness and say what is wrong.\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        app.discover_prompt_templates(),
+        1,
+        "one template discovered"
+    );
+
+    // The whole point: the template's BODY is what goes to the model, not `/review`.
+    let expanded = app
+        .expand_template("/review src/parser.rs")
+        .expect("/review names a template");
+    // No trailing newline: the frontmatter parser rejoins body lines with `\n`, so a
+    // file's final newline does not survive. Asserted explicitly here because the
+    // contracts test already established the behaviour and this is the second consumer.
+    assert_eq!(
+        expanded,
+        "Review src/parser.rs for correctness and say what is wrong."
+    );
+
+    // And a text naming no template is returned untouched, so every existing path holds.
+    assert_eq!(app.expand_template("just a question"), None);
+    assert_eq!(app.expand_template("/no-such-template"), None);
+}
+
+/// Expansion happens BEFORE command parsing, so a template may reuse a built-in's name.
+///
+/// If it happened after, `/help` would be permanently shadowed and the user could never
+/// reach the built-in one. This test is the reason for the ordering.
+#[tokio::test]
+async fn a_template_may_shadow_a_built_in_command_name() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    std::fs::create_dir_all(dir.path().join(".epsilon").join("prompts")).unwrap();
+    std::fs::write(
+        dir.path().join(".epsilon").join("prompts").join("help.md"),
+        "Custom help for this repository.",
+    )
+    .unwrap();
+    app.discover_prompt_templates();
+
+    let expanded = app
+        .expand_template("/help")
+        .expect("a template named help is found");
+    assert_eq!(expanded, "Custom help for this repository.");
+    // ...and with no such template, `/help` is still the built-in command.
+    let (mut bare, _a, (_f2, _n2)) = test_app();
+    bare.workspace_root = dir.path().join("does-not-exist").to_path_buf();
+    bare.discover_prompt_templates();
+    assert!(
+        bare.expand_template("/help").is_none(),
+        "with no template, /help must remain the built-in command"
+    );
+}
+
+/// A project template overrides a user one of the same name.
+///
+/// The precedence is the reason a repository can ship its own `review` without the user
+/// editing their personal config, and it is a claim worth pinning rather than assuming.
+#[tokio::test]
+async fn a_project_template_overrides_a_user_template() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    let prompts = dir.path().join(".epsilon").join("prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::write(prompts.join("greet.md"), "project greeting").unwrap();
+
+    app.discover_prompt_templates();
+    let found: Vec<_> = app
+        .prompt_templates
+        .iter()
+        .filter(|t| t.name == "greet")
+        .map(|t| t.content.trim().to_string())
+        .collect();
+    assert_eq!(
+        found,
+        vec!["project greeting"],
+        "exactly one greet, and it is the project's"
+    );
+}
+
+/// No `prompts/` directory is the common case, not an error.
+#[tokio::test]
+async fn a_workspace_with_no_prompts_directory_discovers_nothing() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    assert_eq!(app.discover_prompt_templates(), 0);
+    assert!(app.prompt_templates.is_empty());
+    // And submitting still works -- expansion is a no-op, not a failure.
+    assert_eq!(app.expand_template("/compact"), None);
+}
+
+/// The wiring test: a template's BODY reaches the model through a real submit.
+///
+/// The three tests above call `expand_template` directly, and that is a limitation worth
+/// naming rather than hiding — **they all pass when the submit path is disconnected.** A
+/// control that removes the `expand_template` call from `submit_editor` leaves them green,
+/// because the engine is reachable from a test and from nowhere else. That is precisely the
+/// "tested but never wired" defect class this repository has already been bitten by twice
+/// (`ToolHooks`, `TurnHooks`), so the fix is a test that goes through the only path a user
+/// takes: `type_and_enter` -> `submit_editor` -> the agent.
+#[tokio::test]
+async fn a_typed_template_reaches_the_agent_as_its_expanded_body() {
+    let (mut app, agent, _receivers) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    let prompts = dir.path().join(".epsilon").join("prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::write(
+        prompts.join("audit.md"),
+        "Audit $1 for secrets and report anything found.",
+    )
+    .unwrap();
+    app.discover_prompt_templates();
+
+    // Type it the way a user would, and submit.
+    let quit = type_and_enter(&mut app, &agent, "/audit .env");
+    assert!(!quit, "submitting a prompt is not quitting");
+
+    // The expanded body is in the transcript, and the `/audit .env` text is not: the
+    // template REPLACED the input rather than being appended to it.
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    let joined = texts.join("\n");
+    assert!(
+        joined.contains("Audit .env for secrets"),
+        "the expanded body must reach the transcript: {joined:?}"
+    );
+    assert!(
+        !joined.contains("/audit"),
+        "the raw slash text must not also be sent: {joined:?}"
+    );
+}

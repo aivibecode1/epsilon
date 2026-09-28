@@ -99,6 +99,8 @@ impl App {
             // every keystroke after it reads the cached rules.
             at_ignore: None,
             workspace_root,
+            // Populated immediately below; see `discover_prompt_templates`.
+            prompt_templates: Vec::new(),
             keybindings: crate::keybindings::KeybindingsManager::create(),
             thinking: epsilon_contracts::ThinkingLevel::default(),
             session_name: None,

@@ -612,6 +612,12 @@ impl App {
                 let skills = epsilon_core::skills::discover(&roots);
                 let n = skills.len();
                 agent.set_skills(skills);
+                // Templates reload with the skills: both are markdown in the same two
+                // directories, and a user who edits one and types `/reload` expects both.
+                let t = self.discover_prompt_templates();
+                if t > 0 {
+                    self.ui.push_notice(format!("prompt templates: {t}"));
+                }
                 // M50: agent defs reload alongside skills (same roots pattern —
                 // global always, project pair gated by the trust bit pi's
                 // agentScope maps onto: trust_review_pending means untrusted).

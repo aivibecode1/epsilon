@@ -51,6 +51,10 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         app.theme.set_palette(mode);
     }
     app.live = live;
+    // Prompt templates are discovered once here rather than per submit: expansion runs on
+    // every message, and walking two directories to find files that have not changed would
+    // tax the one path that has to stay fast. `/reload` refreshes them.
+    app.discover_prompt_templates();
     // M16b: seed the recall ring from the persisted global history so Up works
     // across restarts.
     for entry in epsilon_core::config::load_prompt_history() {

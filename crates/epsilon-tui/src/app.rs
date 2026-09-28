@@ -294,6 +294,12 @@ pub(crate) struct App {
     auth_pick_index: usize,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
+    /// Prompt templates discovered at startup and on `/reload`.
+    ///
+    /// Cached rather than re-read per submit: expansion happens on every message, and
+    /// walking two directories to discover files that have not changed would tax the
+    /// one path that must stay fast. `/reload` is the refresh, same as for skills.
+    prompt_templates: Vec<epsilon_contracts::prompt_template::PromptTemplate>,
     /// Cached git branch + when it was read (2s TTL — no git dependency).
     branch_cache: (Option<String>, std::time::Instant),
     /// Cached ignore rules for `@` completion, with the time they were read.
@@ -506,6 +512,47 @@ impl App {
     ///
     /// M16b: paste markers expand back into their payloads here, so the model sees
     /// the real pasted text while the editor only ever held the compact marker.
+    /// Discover prompt templates from the user's config and the workspace.
+    ///
+    /// The roots mirror skills exactly, and the reason is that a user who has learned where
+    /// their skills live has learned where everything else project-scoped lives. Two
+    /// directories rather than one because `.agents/` is the convention shared with other
+    /// agent tools and `.epsilon/` is ours; a workspace may use either or both.
+    pub(super) fn discover_prompt_templates(&mut self) -> usize {
+        use epsilon_contracts::prompt_template as pt;
+
+        let mut user = Vec::new();
+        if let Some(dir) = epsilon_core::config::global_dir() {
+            user = pt::load_from_dir(&dir.join("prompts"), pt::TemplateScope::User);
+        }
+        let project = [
+            pt::load_from_dir(
+                &self.workspace_root.join(".agents").join("prompts"),
+                pt::TemplateScope::Project,
+            ),
+            pt::load_from_dir(
+                &self.workspace_root.join(".epsilon").join("prompts"),
+                pt::TemplateScope::Project,
+            ),
+        ]
+        .concat();
+
+        // Project wins on a name clash, so a repository can ship its own `review` without
+        // the user editing their personal config. Explicit paths would go last; the CLI
+        // has no `--prompt` flag yet, so there is nothing to append.
+        self.prompt_templates = pt::merge(user, project, Vec::new());
+        self.prompt_templates.len()
+    }
+
+    /// Expand `text` if it names a prompt template, else `None`.
+    ///
+    /// Returning the input unchanged (as `None`) is what lets a template name coexist with
+    /// a slash command: a user with a `help` template who types `/help` gets whichever the
+    /// lookup finds first, and a text naming neither template nor command is untouched.
+    pub(super) fn expand_template(&self, text: &str) -> Option<String> {
+        epsilon_contracts::prompt_template::expand_prompt_template(text, &self.prompt_templates)
+    }
+
     fn submit_editor(&mut self, agent: &Arc<Agent>) -> bool {
         let raw = std::mem::take(&mut self.input);
         self.cursor_chars = 0;
@@ -573,6 +620,21 @@ impl App {
             }
             return false;
         }
+        // Prompt templates expand BEFORE slash-command parsing, and that order is the
+        // feature: a repository can ship a `review` template, and a user's personal
+        // `review` template must be able to do something the built-in commands cannot.
+        // Expanding afterwards would make every template name a candidate for a command
+        // name, and `/help` would need to arbitrate between two things that are both
+        // legitimately called `help`.
+        //
+        // Expansion happens on the raw text, not on a parsed command, so a template can
+        // take arguments (`/review src/parser.rs`) that the command parser would otherwise
+        // have consumed. A text that does not name a template is returned unchanged, so
+        // every existing path below is untouched when no templates are installed.
+        let text = match self.expand_template(&text) {
+            Some(expanded) => expanded,
+            None => text,
+        };
         if let Some(command) = crate::picker::parse_command(&text) {
             return self.run_command(agent, command);
         }
