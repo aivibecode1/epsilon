@@ -46,6 +46,30 @@ a live process, no input, no output. Fixed by heartbeat 10s→2s + a 4s settle w
 an unmoved lock. Safety proven: a live holder is never stolen from, checked in a unit
 test *and* by watching a real TUI's mtime advance every 2s.
 
+## A script that says "wrote it" is not a write
+
+An `execute_code` cell printed `SessionStore::session_name added` and the method was
+**not on disk** — the file was unmodified in `git status`, and the failure surfaced two
+steps later as `no method named session_name`. Raw `open(p,"w").write(s)` reports nothing
+and verifies nothing; a later cell in the same session wrote a *different* file fine, so
+nothing looked wrong.
+
+Two habits that would have caught it:
+
+1. **Use `patch` or `write_file`.** Both verify and both report a diff. A raw Python write
+   is invisible when it fails and silent when it half-works.
+2. **After a batch of scripted edits, assert every one landed** before building — a loop
+   over `(file, needle)` pairs is twenty lines and turns a confusing compile error into a
+   list:
+
+```python
+for f, needle in checks:
+    assert needle in open(R + f, encoding="utf-8").read(), (f, needle)
+```
+
+Nine of nineteen edits in one M194 batch would have been reported missing in one second
+instead of surfacing as a compiler error about a method that "was added".
+
 ## Byte-offset splices break things — use exact text, always
 
 Three times this session, an edit anchored to a **byte offset** damaged the file:
