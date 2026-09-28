@@ -2573,12 +2573,10 @@ mod tests {
         // ARRAY, and a node below the root level proves the tree actually nests. A flat
         // array of entries has no `children` key at all, so this is the assertion that
         // would have caught D27.
-        fn walk(
-            nodes: &[serde_json::Value],
-            depth: usize,
-            seen: &mut Vec<String>,
-            file: &[serde_json::Value],
-        ) {
+        // No `depth` parameter: the depth is measured once, afterwards, by `deep()`. A
+        // parameter threaded through the recursion purely to be ignored is one clippy
+        // rightly refuses, and the m190 gate caught exactly that.
+        fn walk(nodes: &[serde_json::Value], seen: &mut Vec<String>, file: &[serde_json::Value]) {
             for n in nodes {
                 assert!(
                     n["children"].is_array(),
@@ -2612,11 +2610,11 @@ mod tests {
                 let id = n["entry"]["id"].as_str().unwrap().to_string();
                 assert!(!seen.contains(&id), "an entry appeared twice: {id}");
                 seen.push(id);
-                walk(n["children"].as_array().unwrap(), depth + 1, seen, file);
+                walk(n["children"].as_array().unwrap(), seen, file);
             }
         }
         let mut seen = Vec::new();
-        walk(roots, 0, &mut seen, file);
+        walk(roots, &mut seen, file);
         assert!(
             seen.len() >= 3,
             "a two-run session has several entries, all of which must be in the tree: {tree}"
