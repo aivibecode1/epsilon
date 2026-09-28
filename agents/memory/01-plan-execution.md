@@ -163,6 +163,14 @@ Two things the battery does NOT cover, both found after it passed:
   from `submit_editor`. The fix is one test that types the command and submits, through the
   only path a user takes. Keep the direct tests (they test the engine's contract) but never
   treat them as wiring evidence. Fourth occurrence of this class.
+- **A control that does not remove what it claims to remove proves nothing.** Two
+  instances this session: a parse default that was unreachable behind a digits predicate
+  (control passed, correctly), and a directory-name drift control that replaced one of two
+  occurrences (control passed, because my control was wrong, not the test). Renaming every
+  occurrence failed it. Check that a control changed the live path before believing a pass.
+- **Bash heredocs mangle commit messages containing backticks.** `` `@:` `` was read as a
+  command and the text vanished. Write messages to a file and use `git commit -F` when the
+  message contains markup — which is what AGENTS.md already says.
 - **A doc-drift test needs anchored assertions.** `assert doc.contains("1")` passed a control
   that changed the documented budget; `contains("turn_end")` passed a control that renamed it
   to `turn_ending`. Anchor to the exact table cell and compare whole tokens. Sixth instance of
