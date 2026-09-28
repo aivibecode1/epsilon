@@ -46,6 +46,50 @@ a live process, no input, no output. Fixed by heartbeat 10s→2s + a 4s settle w
 an unmoved lock. Safety proven: a live holder is never stolen from, checked in a unit
 test *and* by watching a real TUI's mtime advance every 2s.
 
+## Byte-offset splices break things — use exact text, always
+
+Three times this session, an edit anchored to a **byte offset** damaged the file:
+
+1. `old[:s.find(");")]` matched the first `);` in the file — the module doc — and injected a
+   test body into line 1 of `rpc_mode.rs`.
+2. `s[:i] + new + s[j:]` where `j = s.find("\n}", i)` cut at the *inner* brace, leaving an
+   unbalanced fn.
+3. `new_session_path` inserted between `fork_branch_at`'s doc block and its `pub fn`, so
+   the documentation described a different function and clippy reported "missing
+   documentation" on a method that had plenty.
+
+**Rule: replace by exact `old_string`, asserted present.** When a splice is unavoidable,
+verify afterwards by *reading the region* — not by re-running the tool that made the mess,
+which will happily compile the first two.
+
+The `patch` tool enforces uniqueness and is the right default; `write_file` for a whole
+file. Reach for offsets only when the text is genuinely unrepeatable, and check the
+neighbours when you do.
+
+## A wire probe is a different KIND of check
+
+D27 and D29 were the same defect twice: a handler asserted against its own output, so
+1,446 then 1,458 tests passed while the wrong shape reached a client.
+
+**An in-process assertion compares epsilon to epsilon. Only a real frame in and JSON out
+compares epsilon to the reference.** Not a stricter test — a different one.
+
+And when two paths serve the same reference type, **the test that matters compares THEM to
+each other**: that is the only comparison whose expected value does not come from the
+implementation. A test pinning the right shape still leaves a third path free to invent one.
+
+Probing the installed binary also found a naming inconsistency no test could see (a fork
+named `<ts>_ses_….jsonl`, a new session `ses_….jsonl`, same directory) — **list the
+directory**, not just the responses.
+
+Three probe-authoring traps hit in one session, all worth remembering:
+- Comparing against a **pre-run** list when the first run *creates* the file prints a false
+  negative beside the file it just listed.
+- An **undrained stderr pipe** blocks the child at 64 KB. Drain it on a thread.
+- `--rpc` hardcodes `.epsilon/sessions/rpc.jsonl` against the **process's** cwd, so a probe
+  launched from elsewhere silently writes into the repo's own session file while appearing
+  to work in a temp dir.
+
 ## Controls that pass for the wrong reason (three now — check the mutation bites)
 
 A control is evidence only once you have shown the mutation changed the code path it

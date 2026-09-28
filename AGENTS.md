@@ -212,6 +212,19 @@ on CLI. New edges require review rather than relying on an illustrative layer di
 
 ## Protocol surfaces (added after D26)
 
+**A wire probe is not a stricter unit test — it is a different kind of check.** Every
+in-process assertion compares epsilon to epsilon; only a real frame in and JSON out
+compares epsilon to the reference. D27 and D29 were the same defect in two functions: a
+handler asserted against its own output passed 1,446 and then 1,458 results while serving
+the wrong shape to a client. Found both times by driving the *installed* binary.
+
+**When two code paths serve the same reference type, the test that matters compares THEM
+TO EACH OTHER.** That is the only comparison whose expected value does not come from the
+implementation. A test pinning the correct shape still leaves a third path free to invent
+one; a test asserting the two agree catches it wherever it appears.
+
+
+
 A wire name is part of the contract, and a test that never sends a frame cannot check one.
 
 - **A protocol test must go through the wire.** Deserializing an enum proves the type

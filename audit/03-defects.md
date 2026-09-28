@@ -768,3 +768,69 @@ M186, M188, M189, M190 and M191 unmodified because every milestone that repeated
 *believed* it, and belief is not measurement. This is the same failure as D27 in a
 different costume: **an assertion that agrees with its own author by construction**. The
 defects that survive longest are the ones nothing is positioned to disagree with.
+
+## D29 — one reference type, two wire shapes, and 1,458 tests agreed with neither
+
+**Status: closed in M193 (`6a19af1`).** D27's twin, found one function over, and the
+second time the same root cause has cost this project real work.
+
+**The defect.** `get_entries` returned epsilon's internal `SessionEntry` structs while
+`get_tree` returned pi's. Measured on the installed binary, same session, same entry:
+
+```json
+// get_entries -- WRONG
+{"id":"ent_1a0e7861a211",
+ "kind":{"custom_type":"session_name","data":{"name":"…"},"type":"custom"},
+ "parent_id":null,"seq":0,"timestamp_ms":1790590720545}
+
+// get_tree -- RIGHT
+{"id":"ent_1a0e7861a211",
+ "parentId":null,"timestamp":"2026-09-28T10:18:40.545Z","type":"custom"}
+```
+
+pi returns the same `SessionEntryBase` behind both
+(`session-manager.ts`; `rpc-mode.ts:638-648`), so a client reading `entry.parentId` from
+`get_entries` got `undefined`, and `entry.timestamp` was epoch millis where pi sends an
+ISO-8601 string.
+
+**Why it survived M190 and M192B.** 63 targets, 1,458 results, 0 failed. The M190 tests
+asserted `get_entries` against **epsilon's own output** — raw and converted agreed by
+construction, so the assertion could not fail. D27's exact mechanism, and I had already
+written the lesson down: *"a type declaration gives field names; only the implementation
+and the consumer give structure."* The structure was right in one function and wrong in
+its neighbour, and no test compared them.
+
+**How it was found.** Driving the **installed** release over real stdio and reading raw
+JSON. Not a stricter unit test — a different kind of check. Every in-process assertion was
+comparing epsilon to epsilon; only a wire probe compares epsilon to the reference.
+
+**The fix, chosen for the class rather than the instance.** Both ops now call
+`entry_as_pi`. One conversion, two callers, so a second shape is *impossible* rather than
+merely absent. Adding a test that pins the correct shape would have left the third op free
+to invent one.
+
+**The tests are deliberately two kinds:**
+
+- `get_entries_and_get_tree_agree_on_every_entries_shape` **compares the two ops** field by
+  field and by JSON value type. A fixed literal would be my guess again, and a guess is
+  what produced both defects. What cannot be wrong is that one reference type cannot be
+  served two ways — and that is checkable without knowing the right answer.
+- `every_get_entries_entry_has_pis_four_fields` pins the four names against the reference
+  line, and asserts `parent_id`, `seq`, `timestamp_ms` and `kind` are **absent**. The
+  defect was their presence, so their absence is what pins the fix.
+
+**Control I** (raw structs restored) fails both, printing the defect:
+`left: [id, kind, parent_id, seq, timestamp_ms]` vs `right: [id, parentId, timestamp, type]`.
+
+**The generalisation, now twice earned.** An assertion that agrees with its own author by
+construction is not a test — and neither is a *pair* of such assertions. When two code paths
+serve the same reference type, the test that matters is the one that compares **them to each
+other**, because that is the only comparison whose expected value does not come from the
+implementation.
+
+**A third finding, not a defect but the same lesson:** a new session was named
+`ses_….jsonl` while a fork was named `2026-09-28T10-28-30-472Z_ses_….jsonl`, in the same
+directory. Nothing failed; every test passed. Found by *listing the directory* after the
+wire probe. Two spellings in one place sort into two groups and there is no visible reason
+why. Fixed by moving the convention into `SessionStore::new_session_path()` — a second
+caller cannot invent a third name — in `1b79f8a`.

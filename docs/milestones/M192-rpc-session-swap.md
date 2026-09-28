@@ -138,6 +138,30 @@ reference's own type union (33, exact) and to resolve every implementation name 
 serde rather than through the identifier. A count that requires trusting the previous
 count is a count that drifts.
 
+## Verified over a real wire, and what that found
+
+`audit/evidence/installed-binary-2026-09-28-m192-m193.md` — frames into the installed
+release's stdin, JSON out of its stdout.
+
+All four ops work, and the properties that matter were measured rather than asserted:
+`fork` names what it forked from and shortens the conversation from 2 entries to 1; the
+tree re-derives to 1 root; `new_session` is empty in **both** senses (0 entries, 0
+messages); `switch_session` restores the original's 2 entries.
+
+**It also found two defects that 1,458 passing tests did not:**
+
+- **D29** — `get_entries` was serving epsilon's internal entry shape
+  (`kind`, `parent_id`, `seq`, `timestamp_ms`) while `get_tree`, four lines away, served
+  pi's. Two ops, one reference type, two shapes. The in-process tests passed because they
+  asserted `get_entries` against itself. This is D27's twin, and the lesson is the same
+  one twice: **a wire probe is not a stricter unit test, it is the only kind of check that
+  can see what a client receives.**
+- **A new session was named differently from a fork** — `ses_….jsonl` beside
+  `2026-09-28T10-28-30-472Z_ses_….jsonl` in the same directory. Nothing failed; two
+  spellings in one directory simply sort into two groups.
+
+Both are fixed in M193 (`6a19af1`, `1b79f8a`).
+
 ## Verification
 
 Battery **`m192b` — GATE PASS**. Source `3baff78`, clippy fix `a6ab1bf`.
