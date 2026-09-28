@@ -198,6 +198,10 @@ Two things the battery does NOT cover, both found after it passed:
 - **`docs/history.md` is `include_str!`'d, so editing it during a battery edits the source
   under test.** Caught by the m187 history test in m188 (`GATE FAIL`: "no row for milestones
   [187]"). Preserve the failure under a label; it is a truthful record, not a stale snapshot.
+- **A binary marker check (`strings | grep`) is blind to serde renames.** A wire name fixed
+  by `#[serde(rename = ...)]` leaves NO literal string in the binary, so the marker technique
+  that has worked all session reports 0 and proves nothing. Wire names must be verified by
+  dispatching real frames. (D26: `follow_up` -> 0 markers, but works.)
 - **A long background build can die hours later, and its failure is about ITS tree.** On
   2026-09-28 a `cargo install` launched in the M184 era (~07:48) reported
   `could not compile epsilon-tui` at ~10:15, long after M186/M187/M188 landed and after the
