@@ -48,16 +48,17 @@ test *and* by watching a real TUI's mtime advance every 2s.
 
 ## Still open
 
-- **Phase 4 (pi port parity)** — `/tree` re-projection landed (`7489c00`). Delegated recheck
-  folded in (`586cc09`). **4.3 done** (`e9d5b94`, ADR-019). **4.5a done** (`ece3af4`):
-  bidirectional event frames + `interpose`; an extension can now veto an event. Control:
-  forwarding an event during a long invoke took **9.74 s** before, ms after.
-  **4.5b next**: bridge `ExtHost` → `ToolHooks` in `epsilon-cli` (only crate seeing both),
-  then call `set_tool_hooks` from `runtime.rs`. The seam is finally reachable — the point
-  of 4.5a was to make that possible.
-- **`branch_with_summary` still has no production caller** — confirmed twice, still true.
-- **`ToolHooks`/`TurnHooks`**: shape correct, loop calls them, 10/10 setters in tests. 4.5b
-  is the fix. See the class note in `audit/03-defects.md`.
+- **Phase 4 (pi port parity)** — `/tree` re-projection (`7489c00`), delegated recheck folded
+  in (`586cc09`), **4.3 done** (`e9d5b94`, ADR-019), **4.5a done** (`ece3af4`, transport),
+  **4.5b done** (`9f73a5f`, `ExtensionToolHooks` in `epsilon-cli`). An extension can now veto
+  a tool call; first production `set_tool_hooks` in the project's history. Milestone log:
+  `docs/milestones/M181-extension-interception.md`.
+  - **`after_tool_call` is deliberately NOT wired** — result rewriting is still missing. The
+    seam is shaped for it. That is the obvious next slice of 4.5.
+- **`branch_with_summary` still has no production caller** — confirmed three times now.
+- **`TurnHooks` is still unwired** (10/10 setters in tests). The `ToolHooks` half is done;
+  the `TurnHooks` half is not, and the interpose transport now makes it reachable.
+- Phase 5 (structure) not started.
 - **`branch_with_summary` still has no production caller** — confirmed twice, still true.
 - **`ToolHooks`/`TurnHooks` are the same defect**: correct shape, loop calls them, 10/10
   setters are in tests. See the class note in `audit/03-defects.md`.
@@ -118,7 +119,15 @@ Two things the battery does NOT cover, both found after it passed:
 - **Do not write a number you have not measured.** I invented a per-crate table from a
   `--lib`-only run, published it, and had to retract it. `cargo test -p X` ≠
   `cargo test -p X --lib`.
-- **A concurrency test that has never failed is not a test.** Twice now: `TerminalGuard`'s
+- **"Must not block" and "must not delay" are different requirements.** ADR-019 only wrote
+  the first, so `interpose` reused `INVOKE_TIMEOUT_SECS` and a silent extension held every
+  tool call open for 10 s — a 30-call turn would add 5 minutes. Found by a test that *expected*
+  the policy to be enough. `INTERPOSE_TIMEOUT_SECS = 1` now. When writing a failure policy,
+  ask what a *misbehaving* peer costs per call, not just whether it can stop the run.
+- **A test that "runs" is not the same as a test that ran.** The CLI e2e tests locate the ext
+  fixture by path and **skip** when it is absent. I built the fixture and checked the skip
+  count was 0 — otherwise four green tests could be four tests that did nothing.
+- **A concurrency test that has never failed is not a test.** Three now: `TerminalGuard`'s
   drop test (a unit struct's empty `Drop` is optimised away), and the ADR-019 forward-latency
   test. In the second case two earlier versions **passed against the control** — one asserted
   the answer arrived (the old design serialises, so it does, just late), one asserted a second
