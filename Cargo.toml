@@ -35,7 +35,25 @@ futures-util = "=0.3.31"
 # in-tree via rmcp; pinned exact per ADR-016.
 # `rustls` enables TLS for https (default-tls) — without it every https request
 # fails with "no TLS backend" / network error (root cause of blank replies).
-reqwest = { version = "=0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+# M196: the TLS crypto provider is `ring`, not `aws-lc-rs`.
+#
+# `reqwest`'s `rustls` feature pulls in `aws-lc-rs`, which compiles the BoringSSL
+# fork in C. That needs a working MSVC toolchain, NASM and CMake+MSBuild, and
+# where they are missing it fails as `failed to run custom build command for
+# aws-lc-sys` -- naming a dependency rather than the missing tools, which cost a
+# full session to find. `ring` is a Rust build with no assembly step, so it
+# removes the whole class of failure instead of working around it.
+#
+# The cost is real and worth stating plainly: `ring` does not implement P-521,
+# so a server presenting a P-521-only chain cannot be verified. The trade is
+# deliberate: "builds anywhere a Rust toolchain exists" beats "builds only where
+# a C toolchain and NASM happen to be installed".
+#
+# `rustls-no-provider` is the half that needs a companion line: it enables rustls
+# with NO default provider, so `ring` must be installed before the first client
+# is built (see `epsilon_llm::http::http_client`).
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 # Already in the tree via reqwest (same 1.12.1 in Cargo.lock — declaring it adds no new
 # compilation, it only makes the type nameable). Needed because M137's F03 fix turns
 # `WireStream`'s body into a boxed `Stream`, whose item type is `bytes::Bytes`, and

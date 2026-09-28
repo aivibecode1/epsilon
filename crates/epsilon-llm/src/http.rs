@@ -66,9 +66,25 @@ impl SseDecoder {
 
 /// Shared HTTP client: connection pooling + a connect timeout, no overall timeout
 /// (streams legitimately run for minutes).
+///
+/// M196: install the `ring` crypto provider before the first client exists.
+///
+/// The build uses reqwest's `rustls-no-provider`, so rustls has **no** default
+/// provider. Without this line reqwest panics at client construction with
+/// "no process-level CryptoProvider available" — a panic on the first HTTPS
+/// request, in a path that is otherwise a network error. `install_default`
+/// is idempotent, so calling it here on every init costs one atomic load.
+///
+/// `ring` rather than `aws-lc-rs` is a deliberate trade, recorded in the
+/// workspace manifest: `aws-lc-rs` is a C library needing MSVC, NASM and
+/// CMake+MSBuild, and `ring` does not implement P-521.
 pub(crate) fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
+        // An error here means another provider was installed first, which is
+        // fine and not worth failing a user's request over -- the process-level
+        // default is still usable.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .build()

@@ -23,11 +23,14 @@ base64 = { workspace = true }
 getrandom = { workspace = true }
 
 reqwest = { workspace = true, optional = true }
+# M196: named so `http_client` can install the `ring` crypto provider. The build
+# uses reqwest's `rustls-no-provider`, which deliberately has no default.
+rustls = { workspace = true, optional = true }
 
 [features]
 # Real network providers (pi-style direct HTTP adapters). Off by default: the faux
 # provider keeps tests offline, deterministic, and free.
-real = ["dep:reqwest"]
+real = ["dep:reqwest", "dep:rustls"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
