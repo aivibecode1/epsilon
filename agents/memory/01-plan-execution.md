@@ -150,6 +150,17 @@ Two things the battery does NOT cover, both found after it passed:
   restored and responsive *because nothing crashed*. Watch `crash_reported`, not the verdict
   string alone. Third time this session a control passed because the thing under test never
   ran (after the two reducer-test attempts).
+- **Never dispatch a battery and then edit source while it runs.** It produced a `GATE FAIL`
+  log describing a `u32`/`u64` mismatch at a line that no longer existed — the battery
+  compiled the pre-fix snapshot (log 06:53, fix 06:47). The log is preserved as
+  `audit/evidence/gate-m183-FAILED-stale-snapshot.log` and the re-run is `m183b`. AGENTS.md
+  requires a fresh label per attempt; it does not say what to do when the source moves
+  underneath a running battery, and the answer is: re-run, and keep the failed log named for
+  what it is.
+- **A doc-drift test needs anchored assertions.** `assert doc.contains("1")` passed a control
+  that changed the documented budget; `contains("turn_end")` passed a control that renamed it
+  to `turn_ending`. Anchor to the exact table cell and compare whole tokens. Sixth instance of
+  this pattern.
 - **A test that "runs" is not the same as a test that ran.** The CLI e2e tests locate the ext
   fixture by path and **skip** when it is absent. I built the fixture and checked the skip
   count was 0 — otherwise four green tests could be four tests that did nothing.
