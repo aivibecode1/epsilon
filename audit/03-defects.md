@@ -581,7 +581,24 @@ carry a reply before the seam can be reached.
 - **0.6** promote `docs/design/epsilon-architecture.draft.md`.
 - **146 broken links**, all in `audit/history/` — deliberately unrepaired, because a
   blind rewrite points readers at the wrong document.
-- **Phases 4 and 5** (pi port parity, repository structure) not started.
+- **Phase 4** is in progress: `/tree` re-projection landed, then ADR-019 through transport
+  (`ece3af4`) and the production bridge (`9f73a5f`). **Phase 5** (repository structure) not
+  started. Remaining in Phase 4: `AfterToolCallResult` wiring (result rewriting), and
+  `TurnHooks`, which is still test-only — the interpose transport now makes it reachable.
+- **D22 — the installed release binary predates ADR-019.** `epsilon.exe` was reinstalled and
+  verified at `5632db2`, before `e9d5b94`/`ece3af4`/`9f73a5f`. Every claim in
+  [`gate-m181.md`](gate-m181.md) is about the source tree and the debug build only. Reinstall
+  and probe before describing shipped behaviour.
+- **D23 — `docs/history.md` is corrupt below M160, in a commit this session did not
+  introduce.** Verified present in `5d5dda7~1`: milestone numbers M161–M171 sit on their own
+  lines with their rows' leading `|` stripped, so `M163| M144 | **Read side only...` reads
+  as one glued row, and `M167## Decision-log index` has swallowed a section heading. The
+  per-milestone suite table also stops at M160 — **no M161–M180 rows exist at all**, so it
+  is 20+ milestones stale independently of the corruption. Both are recorded rather than
+  fixed: reconstructing 20 missing rows means reading 20 milestone logs, and guessing at
+  milestone *descriptions* would put fabricated claims in the permanent record. Repair is a
+  Phase 5 task with a mechanical check (every `M<n>` appears exactly once, in a well-formed
+  row).
 - **The batteries ran, and they passed** — `audit/evidence/gate-m180-1.md` and
   `gate-m180-final.md`; the latter reports 1316 results across 63 targets, 0 failures. (The
   "1253 tests" figure that used to sit here was derived by subtracting a per-crate sweep
