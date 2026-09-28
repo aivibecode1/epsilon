@@ -1,5 +1,6 @@
 //! The host side: spawn, handshake, invoke-with-timeout, crash accounting.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -7,7 +8,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 
 use crate::manifest::ExtManifest;
 use crate::{CRASH_BUDGET, INVOKE_TIMEOUT_SECS};
@@ -32,7 +33,12 @@ const MAX_INVOKE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Errors surfaced by the host. All are values — a crashing extension must degrade the
 /// extension, never the harness.
-#[derive(Debug)]
+///
+/// `Clone` because the reader reports one structural failure to every request waiting on
+/// the pipe, and each needs its own copy. Every variant is owned data (a `String` and two
+/// scalars), so this is a memcpy rather than a deep clone, and it removes a footgun: a
+/// hand-written `Clone` that quietly dropped a variant's payload would be invisible.
+#[derive(Debug, Clone)]
 pub enum ExtError {
     /// The extension exceeded its per-invoke timeout.
     Timeout,
@@ -61,23 +67,87 @@ impl std::fmt::Display for ExtError {
 /// A live extension process.
 pub struct ExtHost {
     name: String,
+    /// **Write side only** — see [`ChildIo`]. Holding this across an await that waits
+    /// for the child to speak would deadlock, because the child cannot speak until
+    /// something is reading its stdout, and reading is the reader task's job (ADR-019).
     io: Mutex<ChildIo>,
     disabled: AtomicBool,
     crashes: AtomicU32,
     /// Plan 007: the manifest's declared event interests (`["*"]` = all). Empty list
     /// means the extension receives nothing. Evaluated by `wants_event`.
     events: Vec<String>,
+    /// In-flight requests keyed by the `id` sent in the request frame.
+    ///
+    /// The reader task owns the child's stdout and is the only thing that reads it: it
+    /// parses each frame, takes the `id`, and completes the matching oneshot. Two
+    /// requests can therefore be outstanding at once, and a reply for `i_7` can never be
+    /// handed to whoever is waiting on `i_8`. One mutex over one pipe could not do that —
+    /// a reader looping until it sees *its* id would block every other request behind the
+    /// first, and the same mutex is what `send_event` needs to write a line.
+    ///
+    /// `i_*` is an invoke, `x_*` an interpose. They share the map because they share the
+    /// pipe, and a single reader cannot tell them apart without looking.
+    pending: Arc<Mutex<PendingMap>>,
+    /// The child's `{"type":"log"}` lines. Split out of [`ChildIo`] because the reader
+    /// task is the only thing that sees stdout now, and it must not take the write mutex
+    /// to append a diagnostic — doing so would reintroduce exactly the coupling ADR-019
+    /// removes.
+    logs: Arc<Mutex<Vec<String>>>,
+    /// The stdout reader. Kept so the host owns its lifetime: dropping the host stops it.
+    _reader: ReaderTask,
+}
+
+/// Outstanding requests, keyed by frame id.
+///
+/// The channel carries a `Result`, not a bare value, because **the reason a request failed
+/// is part of the answer**. The pre-ADR-019 code read the pipe inside `invoke`, so it knew
+/// whether it had seen a malformed line, an oversized frame, or a spent byte budget. A
+/// demultiplexer sees those same conditions but cannot tell which request they belong to,
+/// so it reports them to the requests that are in flight and lets `validate_result` handle
+/// a well-formed frame. Collapsing all of that to a single `Null` marker would have
+/// silently turned three protocol violations into "the child died" — which is both a lie
+/// and, per the crash budget, a behaviour change.
+#[derive(Default)]
+struct PendingMap {
+    map: HashMap<String, oneshot::Sender<Result<serde_json::Value, ExtError>>>,
 }
 
 struct ChildIo {
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
     next_id: u64,
-    /// Diagnostics/receipts the child sends via {"type":"log"} lines (capped).
-    logs: Vec<String>,
     /// Held so kill_on_drop applies when the host is dropped.
     #[allow(dead_code)]
     child: Child,
+}
+
+/// Cap on retained child log lines. Oldest are dropped, not the newest: a runaway
+/// extension is best explained by its first complaints.
+const MAX_LOG_LINES: usize = 1000;
+
+/// The reader task's handle. Held so the host owns the reader's lifetime.
+///
+/// The shutdown signal is carried by **dropping the sender**, not by sending on it: a
+/// `oneshot::Sender` that is dropped makes the receiver resolve to `Err`, which ends the
+/// reader's `select!` without needing a running task to deliver anything. That is why the
+/// field looks unread — it is load-bearing by existing. `Drop` says so out loud, and drops
+/// the `JoinHandle` without awaiting it: the task observes channel closure and exits on
+/// its next frame, and blocking a `Drop` on a task that might be mid-read would risk
+/// hanging whichever runtime is tearing the host down.
+struct ReaderTask {
+    /// Dropped to signal shutdown. See the type comment.
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Detached on drop; see the type comment.
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ReaderTask {
+    fn drop(&mut self) {
+        // Dropping the sender resolves the reader's `select!` with `Err`, which ends the
+        // loop. Taken explicitly so the field is genuinely read, and so the intent
+        // survives a later edit that would otherwise drop it as unused.
+        drop(self.shutdown.take());
+        self.handle.abort();
+    }
 }
 
 impl ExtHost {
@@ -104,7 +174,9 @@ impl ExtHost {
             .ok_or_else(|| ExtError::Protocol("no stdout".into()))?;
         let mut reader = BufReader::new(stdout);
 
-        // Handshake with timeout: first line must be a hello.
+        // Handshake with timeout: first line must be a hello. Read DIRECTLY rather than
+        // through the reader task, because the task is not started yet and no id has been
+        // allocated — the hello is not a reply to anything.
         let hello = tokio::time::timeout(
             Duration::from_secs(INVOKE_TIMEOUT_SECS),
             read_line_str(&mut reader),
@@ -120,18 +192,34 @@ impl ExtHost {
             return Err(ExtError::Protocol("first message must be hello".into()));
         }
 
+        // From here on the reader task owns stdout. `self` must exist before it starts,
+        // because the task holds a clone of the pending map the host also holds.
+        let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(PendingMap::default()));
+        let logs: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(read_frames(
+            reader,
+            pending.clone(),
+            logs.clone(),
+            shutdown_rx,
+        ));
+
         Ok(Arc::new(Self {
             name: manifest.name.clone(),
             io: Mutex::new(ChildIo {
                 stdin,
-                stdout: reader,
                 next_id: 0,
                 child,
-                logs: Vec::new(),
             }),
             disabled: AtomicBool::new(false),
             crashes: AtomicU32::new(0),
             events: manifest.events.clone(),
+            pending,
+            logs,
+            _reader: ReaderTask {
+                shutdown: Some(shutdown_tx),
+                handle: task,
+            },
         }))
     }
 
@@ -174,9 +262,24 @@ impl ExtHost {
         let _ = io.stdin.flush().await;
     }
 
+    /// How long a forwarded event was blocked by concurrent activity on the write lock.
+    ///
+    /// Named for what it measures, and public, because the number is the claim: under the
+    /// pre-ADR-019 design an `invoke` held the pipe's lock for its whole duration, so this
+    /// returned the remaining length of that invoke (measured at ~2.0 s against a 10 s
+    /// timeout). It now returns the time to write one line.
+    pub async fn probe_event_forward_latency(
+        &self,
+        event: &serde_json::Value,
+    ) -> std::time::Duration {
+        let t0 = std::time::Instant::now();
+        self.send_event(event).await;
+        t0.elapsed()
+    }
+
     /// Log receipts the child sent via {"type":"log"} lines.
     pub async fn logs(&self) -> Vec<String> {
-        self.io.lock().await.logs.clone()
+        self.logs.lock().await.clone()
     }
 
     /// Invoke one tool by name. Serialized per extension (extensions own their ordering);
@@ -203,128 +306,325 @@ impl ExtHost {
             "tool": tool, "args": args,
         });
 
-        let result = self.write_and_read(&id, req).await;
-        match result {
-            Ok(ok) => Ok(ok),
+        match self.request(id, req).await {
+            Ok(frame) => self.validate_result(&frame),
+            // A dead child spends the budget; a malformed frame does not. That distinction
+            // is the reason `request` returns a typed error rather than a bare value, and
+            // losing it here would let one stray line disable an extension for the session.
             Err(ExtError::Crashed(d)) => {
-                let n = self.crashes.fetch_add(1, Ordering::SeqCst) + 1;
-                if n >= CRASH_BUDGET {
-                    self.disabled.store(true, Ordering::SeqCst);
-                }
+                self.count_crash();
                 Err(ExtError::Crashed(d))
             }
             Err(other) => Err(other),
         }
     }
 
-    async fn write_and_read(
+    /// Charge one crash against the budget, disabling the extension once it is spent.
+    ///
+    /// Two crashes is a deliberate number rather than one: a single death is often a race
+    /// between the host closing stdin and the child exiting, and disabling on that would
+    /// make ordinary shutdown look like a fault.
+    fn count_crash(&self) {
+        let n = self.crashes.fetch_add(1, Ordering::SeqCst) + 1;
+        if n >= CRASH_BUDGET {
+            self.disabled.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Turn a `result` frame into a tool result, or into the protocol error it is.
+    ///
+    /// A frame is validated before anything in it is believed. Accepting a frame with no
+    /// `text`, or a `details` that is not an object, would turn a broken child into a
+    /// successful empty tool result — indistinguishable, in the transcript, from a tool
+    /// that legitimately returned nothing. So the host names the problem instead of
+    /// quoting the payload, and `ExtError::Protocol` becomes `ToolFailure` text that
+    /// lands in the transcript where the user can see it.
+    fn validate_result(
         &self,
-        id: &str,
-        req: serde_json::Value,
+        v: &serde_json::Value,
     ) -> Result<(String, serde_json::Value), ExtError> {
-        let mut io = self.io.lock().await;
-
-        let mut line =
-            serde_json::to_string(&req).map_err(|e| ExtError::Protocol(e.to_string()))?;
-        line.push('\n');
-        io.stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| ExtError::Crashed(format!("write: {e}")))?;
-        io.stdin
-            .flush()
-            .await
-            .map_err(|e| ExtError::Crashed(format!("flush: {e}")))?;
-
-        // The deadline is for the whole invoke, not for each line. A child that emits any
-        // complete frame inside the window would otherwise restart a per-read timer and
-        // hold the call open indefinitely while the documented contract promises it ends.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(INVOKE_TIMEOUT_SECS);
-        let mut bytes_read = 0usize;
-
-        loop {
-            let line = tokio::time::timeout_at(deadline, read_line_bytes(&mut io.stdout))
-                .await
-                .map_err(|_| ExtError::Timeout)?
-                .map_err(|e| ExtError::Crashed(format!("read: {e}")))?;
-            let line = match line {
-                Frame::Line(l) => l,
-                Frame::Eof => return Err(ExtError::Crashed("stdout closed".into())),
-                Frame::TooLong => {
-                    return Err(ExtError::Protocol(format!(
-                        "frame exceeds {MAX_FRAME_BYTES} bytes"
-                    )));
-                }
-            };
-            bytes_read += line.len();
-            if bytes_read > MAX_INVOKE_BYTES {
+        let text = match v.get("text") {
+            Some(serde_json::Value::String(t)) => t.clone(),
+            Some(other) => {
                 return Err(ExtError::Protocol(format!(
-                    "child produced more than {MAX_INVOKE_BYTES} bytes for one invoke without \
-                     answering it"
+                    "result.text must be a string, got {}",
+                    json_kind(other)
                 )));
             }
-            // Child diagnostics channel: {"type":"log","text":...} — collected, never
-            // treated as a result.
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&line)
-                && v.get("type").and_then(|t| t.as_str()) == Some("log")
-            {
-                if let (Some(text), true) =
-                    (v.get("text").and_then(|t| t.as_str()), io.logs.len() < 1000)
-                {
-                    io.logs.push(text.to_string());
+            None => return Err(ExtError::Protocol("result has no text".into())),
+        };
+        let details = match v.get("details") {
+            Some(d @ serde_json::Value::Object(_)) => d.clone(),
+            Some(other) => {
+                return Err(ExtError::Protocol(format!(
+                    "result.details must be an object, got {}",
+                    json_kind(other)
+                )));
+            }
+            None => return Err(ExtError::Protocol("result has no details".into())),
+        };
+        let is_error = match v.get("is_error") {
+            Some(serde_json::Value::Bool(b)) => *b,
+            Some(other) => {
+                return Err(ExtError::Protocol(format!(
+                    "result.is_error must be a bool, got {}",
+                    json_kind(other)
+                )));
+            }
+            None => return Err(ExtError::Protocol("result has no is_error".into())),
+        };
+        if is_error {
+            Err(ExtError::ToolFailed { message: text })
+        } else {
+            Ok((text, details))
+        }
+    }
+
+    /// Write one request frame and wait for the frame whose `id` matches.
+    ///
+    /// The wait is a `oneshot` completed by the reader task, not a read loop. That is the
+    /// whole point of ADR-019: because the reply arrives through a shared demultiplexer
+    /// rather than through a stream this call owns, **the write mutex is released before
+    /// anything is awaited**. Two invocations can be in flight, an `event` frame can be
+    /// written while a tool call is outstanding, and a reply for one request can never be
+    /// consumed by another.
+    ///
+    /// The deadline covers the whole request, and a timeout is reported as `ExtError::Timeout`
+    /// so the caller applies the usual crash accounting.
+    async fn request(
+        &self,
+        id: String,
+        req: serde_json::Value,
+    ) -> Result<serde_json::Value, ExtError> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut io = self.io.lock().await;
+            // Register BEFORE writing. The reader can reply the instant the bytes land, so
+            // a write-then-register order would race and drop a perfectly good reply.
+            self.pending.lock().await.map.insert(id.clone(), tx);
+            let mut line =
+                serde_json::to_string(&req).map_err(|e| ExtError::Protocol(e.to_string()))?;
+            line.push('\n');
+            if let Err(e) = io.stdin.write_all(line.as_bytes()).await {
+                self.pending.lock().await.map.remove(&id);
+                return Err(ExtError::Crashed(format!("write: {e}")));
+            }
+            if let Err(e) = io.stdin.flush().await {
+                self.pending.lock().await.map.remove(&id);
+                return Err(ExtError::Crashed(format!("flush: {e}")));
+            }
+        }
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(INVOKE_TIMEOUT_SECS);
+        match tokio::time::timeout_at(deadline, rx).await {
+            Ok(Ok(Ok(v))) => Ok(v),
+            // The reader reports a structural failure (malformed line, oversized frame,
+            // spent budget) to every request in flight, and reports the stream ending as a
+            // crash. Both are the reader's account of what it saw.
+            Ok(Ok(Err(e))) => Err(e),
+            // The reader task is gone without answering: the channel closed. Treat as a
+            // crash, because the child is what stopped answering.
+            Ok(Err(_)) => Err(ExtError::Crashed("extension reader stopped".into())),
+            Err(_) => {
+                // Stop a late reply from completing a request nobody is waiting for.
+                self.pending.lock().await.map.remove(&id);
+                Err(ExtError::Timeout)
+            }
+        }
+    }
+
+    /// Ask every extension that declared interest in `event` for a decision, and collect
+    /// the answers. Extensions are asked concurrently; one that hangs is bounded by the
+    /// shared invoke timeout, not by the others.
+    ///
+    /// Returns a list of decisions **in the order hosts were attached**, so a caller can
+    /// attribute a veto to the extension that cast it. An empty list means no extension had
+    /// an opinion, which is the common case and the only one that leaves the call alone.
+    pub async fn interpose(&self, event: &serde_json::Value) -> Vec<serde_json::Value> {
+        let tag = event
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown");
+        if !self.events.iter().any(|e| e == "*" || e == tag) {
+            return Vec::new();
+        }
+        if self.is_disabled() {
+            return Vec::new();
+        }
+        let id = {
+            let mut io = self.io.lock().await;
+            io.next_id += 1;
+            format!("x_{}", io.next_id)
+        };
+        let req = serde_json::json!({
+            "type": "interpose",
+            "id": id,
+            "event": event,
+        });
+        match self.request(id, req).await {
+            Ok(v) if v.is_null() => Vec::new(),
+            Ok(v) => vec![v],
+            // Timeout, crash, or protocol violation: no opinion. The run continues, which
+            // is the whole failure policy (ADR-019). An interpose is allowed to add
+            // friction deliberately; it is never allowed to remove the harness's ability
+            // to finish, so an extension that cannot answer does not get a veto.
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+/// Own the child's stdout for the life of the host, routing each frame to whoever is
+/// waiting for its id.
+///
+/// Four outcomes per frame, and the distinctions matter more than they look:
+///
+/// 1. **Not JSON** — a protocol violation. Every request in flight is told so. Skipping it
+///    instead would make a child that answers everything with prose indistinguishable from
+///    one that has gone silent.
+/// 2. **`{"type":"log"}`** — the child's diagnostics channel. Collected, never a reply.
+/// 3. **Valid JSON with no `id`** — chatter. Skipped, and the wait continues.
+/// 4. **Valid JSON with an `id`** — handed to that request's oneshot. An id nobody is
+///    waiting on is dropped, which is the normal outcome for a reply that arrives after
+///    its own timeout fired.
+///
+/// A demultiplexer cannot attribute an id-less failure to one request, so a structural
+/// failure is reported to all of them. That is the conservative direction: a caller that
+/// gets an error still lets the run continue, whereas a caller left waiting does not.
+///
+/// `MAX_FRAME_BYTES` and `MAX_INVOKE_BYTES` bound the read *here*, because this is now the
+/// only place stdout is read: a bound enforced by a caller that no longer reads is a bound
+/// that no longer bounds anything.
+async fn read_frames(
+    mut reader: BufReader<ChildStdout>,
+    pending: Arc<Mutex<PendingMap>>,
+    logs: Arc<Mutex<Vec<String>>>,
+    mut shutdown: tokio::sync::oneshot::Receiver<()>,
+) {
+    let mut total_bytes: u64 = 0;
+    // Why the loop stopped, if it did. `None` means the host shut us down, which is not a
+    // failure and must not be reported as one.
+    let mut abort: Option<String> = None;
+
+    loop {
+        let line = tokio::select! {
+            biased;
+            _ = &mut shutdown => break,
+            read = read_line_bytes(&mut reader) => match read {
+                Ok(Frame::Line(l)) => l,
+                Ok(Frame::Eof) | Err(_) => {
+                    // The child stopped talking. That is a crash, and it is charged to the
+                    // crash budget — but only by the awaiting caller, which knows whether
+                    // anything was actually in flight.
+                    break;
                 }
+                Ok(Frame::TooLong) => {
+                    // The rest of the line is still in the pipe, so the stream is now
+                    // desynchronized: reading on would splice that remainder into the next
+                    // frame. Stop, and say why.
+                    abort = Some(format!("frame exceeds {MAX_FRAME_BYTES} bytes"));
+                    break;
+                }
+            },
+        };
+
+        total_bytes = total_bytes.saturating_add(line.len() as u64);
+        if total_bytes > MAX_INVOKE_BYTES as u64 {
+            abort = Some(format!(
+                "child produced more than {MAX_INVOKE_BYTES} bytes without answering"
+            ));
+            break;
+        }
+
+        // A line that is not JSON is a protocol violation, not chatter: the old loop
+        // reported it as one, and quietly skipping it would let a child that answers
+        // everything with prose look like a child that has gone quiet. It is charged to
+        // the requests in flight, because there is no id to attribute it to and refusing
+        // to answer is the honest outcome for a caller waiting on a broken peer.
+        //
+        // The child's own text is deliberately not quoted: this text would otherwise reach
+        // the model transcript behind a `[harness]` prefix, carrying the extension's words
+        // as though the harness had written them.
+        let v: serde_json::Value = match serde_json::from_slice(&line) {
+            Ok(v) => v,
+            Err(_) => {
+                fail_all(
+                    &pending,
+                    ExtError::Protocol("a response line was not valid JSON".to_string()),
+                )
+                .await;
                 continue;
             }
-            let v: serde_json::Value = serde_json::from_slice(&line)
-                .map_err(|e| ExtError::Protocol(format!("{e} in a {}-byte line", line.len())))?;
-            if v.get("type").and_then(|t| t.as_str()) != Some("result") {
-                continue; // ignore non-result chatter v1
+        };
+
+        if v.get("type").and_then(|t| t.as_str()) == Some("log") {
+            if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                let mut l = logs.lock().await;
+                if l.len() < MAX_LOG_LINES {
+                    l.push(text.to_string());
+                }
             }
-            if v.get("id").and_then(|i| i.as_str()) != Some(id) {
-                continue; // stale/unknown id: skip
-            }
-            // A result frame is validated before anything in it is believed. Accepting a
-            // frame with no `text`, or with a `details` that is not an object, would turn
-            // a broken child into a successful empty tool result — indistinguishable, in
-            // the transcript, from a tool that legitimately returned nothing. The host
-            // names the problem instead of quoting the payload (`ExtError::Protocol` goes
-            // into `ToolFailure` text, which lands in the transcript).
-            let text = match v.get("text") {
-                Some(serde_json::Value::String(t)) => t.clone(),
-                Some(other) => {
-                    return Err(ExtError::Protocol(format!(
-                        "result.text must be a string, got {}",
-                        json_kind(other)
-                    )));
-                }
-                None => return Err(ExtError::Protocol("result has no text".into())),
-            };
-            let details = match v.get("details") {
-                Some(d @ serde_json::Value::Object(_)) => d.clone(),
-                Some(other) => {
-                    return Err(ExtError::Protocol(format!(
-                        "result.details must be an object, got {}",
-                        json_kind(other)
-                    )));
-                }
-                None => return Err(ExtError::Protocol("result has no details".into())),
-            };
-            let is_error = match v.get("is_error") {
-                Some(serde_json::Value::Bool(b)) => *b,
-                Some(other) => {
-                    return Err(ExtError::Protocol(format!(
-                        "result.is_error must be a bool, got {}",
-                        json_kind(other)
-                    )));
-                }
-                None => return Err(ExtError::Protocol("result has no is_error".into())),
-            };
-            return if is_error {
-                Err(ExtError::ToolFailed { message: text })
-            } else {
-                Ok((text, details))
-            };
+            continue;
         }
+
+        // Well-formed JSON that is not a reply is chatter: keep serving.
+        //
+        // A bare scalar (`42`) has no fields to be wrong about, so it is plainly noise. A
+        // JSON *object* that claims to be a reply but cannot be addressed — `id` missing, or
+        // `id` a number — is a different case: it is a frame the child meant as an answer
+        // and got wrong. Either way it is not the answer to the request in flight, and the
+        // caller must not be handed it, so the wait continues. What matters is that
+        // neither is mistaken for a result, which is what the pre-ADR-019 loop guaranteed
+        // and what `--shape-noise` exists to check.
+        // Only a *reply* frame is an answer, and there are now two of them: `result` for an
+        // invoke, `interpose_result` for a mutating event (ADR-019).
+        //
+        // This check is load-bearing and is *not* redundant with the id match: a child can
+        // stamp a real request id on a frame of any other type, and demultiplexing on the
+        // id alone would hand that through as the reply. `--shape-noise` sends exactly
+        // such a frame, and the pre-ADR-019 loop filtered on type for the same reason.
+        //
+        // Kept as a match on both names rather than "anything with an id", because the
+        // permissive version is precisely the bug this guards.
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("result") | Some("interpose_result") => {}
+            _ => continue,
+        }
+        if !v.is_object() {
+            continue;
+        }
+        let Some(id) = v.get("id").and_then(|i| i.as_str()).map(str::to_owned) else {
+            continue;
+        };
+        let tx = pending.lock().await.map.remove(&id);
+        if let Some(tx) = tx {
+            let _ = tx.send(Ok(v));
+        }
+    }
+
+    if let Some(why) = abort {
+        fail_all(&pending, ExtError::Protocol(why)).await;
+    } else {
+        // The stream ended without a verdict. Whoever was waiting learns the child is gone,
+        // which the caller charges to the crash budget.
+        fail_all(
+            &pending,
+            ExtError::Crashed("extension closed the connection".to_string()),
+        )
+        .await;
+    }
+}
+
+/// Tell every request in flight why it is not going to be answered, then forget them.
+///
+/// `ExtError` is not `Clone` (it carries owned text), so each waiter gets its own
+/// construction of the same reason rather than a shared value.
+async fn fail_all(pending: &Arc<Mutex<PendingMap>>, why: ExtError) {
+    let drained: Vec<_> = {
+        let mut m = pending.lock().await;
+        m.map.drain().map(|(_, tx)| tx).collect()
+    };
+    for tx in drained {
+        let _ = tx.send(Err(why.clone()));
     }
 }
 

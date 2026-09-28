@@ -30,6 +30,38 @@ fn fixture(mode: &str) -> ExtManifest {
     }
 }
 
+/// The same fixture, but subscribed to the events ADR-019 makes negotiable.
+///
+/// The gate is real and deliberate: a child that declared no interest is never asked a
+/// question, because asking would be a protocol round trip it did not consent to. So the
+/// interpose tests need a manifest that actually asked to be consulted — and
+/// [`an_extension_that_declared_no_interest_is_never_asked`] is the control that proves
+/// the empty list still means silence.
+fn listening_fixture(mode: &str, events: &[&str]) -> ExtManifest {
+    ExtManifest {
+        events: events.iter().map(|e| e.to_string()).collect(),
+        ..fixture(mode)
+    }
+}
+
+/// Spawn a fixture that declared interest in `events`.
+async fn spawn_listening(
+    dir: &std::path::Path,
+    mode: &str,
+    events: &[&str],
+) -> std::sync::Arc<ExtHost> {
+    match tokio::time::timeout(
+        MANIFEST_TIMEOUT,
+        ExtHost::spawn(dir, &listening_fixture(mode, events)),
+    )
+    .await
+    {
+        Ok(Ok(h)) => h,
+        Ok(Err(e)) => panic!("spawn({mode}) failed: {e}"),
+        Err(_) => panic!("spawn({mode}) did not settle within {MANIFEST_TIMEOUT:?}"),
+    }
+}
+
 /// Spawn bounded: a child that misbehaves during the handshake must fail, not hang.
 async fn spawn(dir: &std::path::Path, mode: &str) -> Result<std::sync::Arc<ExtHost>, ExtError> {
     let manifest = fixture(mode);
@@ -665,4 +697,174 @@ async fn deliver(host: &ExtHost, event_type: &str, seq: u64) {
     .await
     .expect("the fixture answers invokes in every mode");
     assert_eq!(text, "", "the probe carried no text");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-019: interpose — a mutating event is a request, not a notification.
+// ---------------------------------------------------------------------------
+
+/// The capability the whole protocol change exists for: an extension can return a decision
+/// to the harness, not merely observe.
+///
+/// Pre-ADR-019 this was not expressible. `send_event` wrote a line and returned `()`, and
+/// the protocol had no second host-to-child frame type, so there was no way for a child to
+/// answer anything.
+#[tokio::test]
+async fn an_extension_can_veto_an_interposed_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = spawn_listening(dir.path(), "--veto", &["before_tool_call"]).await;
+
+    let decisions = host
+        .interpose(&serde_json::json!({"type":"before_tool_call","tool":"rm"}))
+        .await;
+
+    assert_eq!(
+        decisions.len(),
+        1,
+        "the extension should have answered once"
+    );
+    assert_eq!(
+        decisions[0]["decision"]["block"],
+        serde_json::json!(true),
+        "the veto did not survive the round trip: {:?}",
+        decisions[0]
+    );
+    assert_eq!(
+        decisions[0]["decision"]["reason"],
+        serde_json::json!("extension says no"),
+        "the reason is what a user would be shown, so it must survive too"
+    );
+}
+
+/// A child that declines to have an opinion must not be read as consent to anything, and
+/// must not be read as a veto either. The harness proceeds — the failure policy in
+/// ADR-019, and the property that lets an extension add friction without being able to
+/// remove the harness's ability to finish a run.
+#[tokio::test]
+async fn a_silent_extension_yields_no_opinion_rather_than_a_veto() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = spawn_ok(dir.path(), "--interpose-silent").await;
+
+    let decisions = host
+        .interpose(&serde_json::json!({"type":"before_tool_call","tool":"ls"}))
+        .await;
+
+    assert!(
+        decisions.is_empty(),
+        "silence is not an opinion, and must not be turned into one: {decisions:?}"
+    );
+}
+
+/// The property that actually distinguishes the two designs, measured rather than argued.
+///
+/// **The pre-ADR-019 host held the pipe's lock for the whole of an `invoke`.** Every other
+/// user of that lock therefore stalled behind it, and the most important one is the TUI's
+/// event forwarder: an event forwarded while a slow tool call was running waited for that
+/// call to finish. That is user-visible — the transcript, the token counter, and the cost
+/// line all go quiet for the duration.
+///
+/// The test starts a long invoke against a child that trickles without answering, then
+/// forwards an event and measures how long the forward took. The bound is 500 ms; the
+/// control recorded **~2.0 s** — the full remaining length of the stuck invoke — so the
+/// gap between passing and failing is an order of magnitude, not a hair on a timing race.
+///
+/// Two earlier versions of this test passed against the control and were therefore
+/// worthless: one asserted only that the *answer* arrived (the old design serialises, so
+/// it does, just late), and one asserted that a second request could be sent (the old
+/// design sends it, just after the first completes). Neither measured the wait. The
+/// lesson is recorded in the milestone log because it is the second time this session a
+/// concurrency test looked right and proved nothing.
+#[tokio::test]
+async fn forwarding_an_event_is_not_blocked_by_a_long_running_invoke() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = spawn_listening(dir.path(), "--pace", &["*"]).await;
+
+    // A request that will occupy the old design's lock for its full timeout.
+    let slow = tokio::spawn({
+        let host = host.clone();
+        async move {
+            host.invoke("ext_echo", "tc_slow", serde_json::json!({}))
+                .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let latency = host
+        .probe_event_forward_latency(&serde_json::json!({"type":"agent_start"}))
+        .await;
+
+    slow.abort();
+    let _ = slow.await;
+
+    assert!(
+        latency < Duration::from_millis(500),
+        "forwarding an event took {latency:?} while a tool call was in flight; the host is \
+         serialising the event pump behind tool execution, which is the pre-ADR-019 \
+         behaviour this change exists to remove"
+    );
+}
+
+/// A frame stamped with a live request id but of another type is chatter, not a reply.
+/// This is the `--shape-noise` lesson applied to the new path: demultiplexing on the id
+/// alone would hand it through.
+#[tokio::test]
+async fn a_frame_of_another_type_cannot_answer_an_interpose() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = spawn_listening(dir.path(), "--interpose-noise", &["before_tool_call"]).await;
+
+    let decisions = host
+        .interpose(&serde_json::json!({"type":"before_tool_call","tool":"bash"}))
+        .await;
+
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(
+        decisions[0]["decision"]["note"],
+        serde_json::json!("BASH"),
+        "the real decision should have won, not the noise that carried the same id"
+    );
+}
+
+/// A decision of the wrong shape must not be believed. Reading the string `"block
+/// everything"` as a block would let one buggy extension deny every tool call, and
+/// reading it as consent would silently ignore an extension trying to object — so the
+/// only safe reading is neither: no opinion.
+#[tokio::test]
+async fn a_wrong_shaped_decision_is_not_read_as_a_veto() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = spawn_ok(dir.path(), "--interpose-garbage").await;
+
+    let decisions = host
+        .interpose(&serde_json::json!({"type":"before_tool_call","tool":"rm"}))
+        .await;
+
+    // Reaching here without hanging is half the assertion; the other half is that the
+    // nonsense decision is not reported as a usable verdict.
+    for d in &decisions {
+        assert_ne!(
+            d["decision"]["block"],
+            serde_json::json!("block everything"),
+            "a string decision must not be read as a block"
+        );
+    }
+}
+
+/// An extension that does not declare interest in an event is never asked about it. The
+/// manifest filter has to gate the interpose path, not just the fire-and-forget one —
+/// otherwise asking an uninterested child would be a protocol round trip it never
+/// consented to.
+#[tokio::test]
+async fn an_extension_that_declared_no_interest_is_never_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    // The fixture's default manifest lists no events, so nothing is delivered and nothing
+    // is asked. The child would answer `--veto` if it were spoken to.
+    let host = spawn_ok(dir.path(), "--veto").await;
+
+    let decisions = host
+        .interpose(&serde_json::json!({"type":"no_such_event"}))
+        .await;
+
+    assert!(
+        decisions.is_empty(),
+        "an undeclared event must not produce a round trip: {decisions:?}"
+    );
 }

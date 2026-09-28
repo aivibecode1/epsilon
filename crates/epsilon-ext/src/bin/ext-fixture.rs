@@ -103,6 +103,82 @@ fn main() {
             continue;
         }
 
+        // --- interpose (ADR-019) -------------------------------------------------
+        // A mutating event is a request, so it is answered like one. These modes exist so
+        // the new path is exercised against a real process rather than a mock: the whole
+        // point of the demultiplexing reader is that a reply has to arrive while other
+        // work is in flight, and a mock cannot demonstrate that.
+        if v.get("type").and_then(|t| t.as_str()) == Some("interpose") {
+            let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
+            match mode.as_str() {
+                // A real decision, and the reason the whole protocol exists.
+                "--veto" => {
+                    writeln!(
+                        out,
+                        r#"{{"type":"interpose_result","id":{id},"decision":{{"block":true,"reason":"extension says no"}}}}"#
+                    )
+                    .unwrap();
+                    out.flush().unwrap();
+                }
+                // Trickles like --pace but still answers an interpose. This is the mode
+                // that makes the concurrency property testable: it holds an invoke open
+                // indefinitely AND is willing to decide, so a host that serialises the
+                // two behind one lock cannot answer until the invoke's timeout expires.
+                "--pace-veto" => {
+                    writeln!(out, r#"{{"type":"log","text":"still here"}}"#).unwrap();
+                    out.flush().unwrap();
+                    writeln!(
+                        out,
+                        r#"{{"type":"interpose_result","id":{id},"decision":{{"block":true,"reason":"extension says no"}}}}"#
+                    )
+                    .unwrap();
+                    out.flush().unwrap();
+                }
+                // A well-formed answer with no opinion in it: the call proceeds.
+                "--abstain" => {
+                    writeln!(
+                        out,
+                        r#"{{"type":"interpose_result","id":{id},"decision":{{"block":false}}}}"#
+                    )
+                    .unwrap();
+                    out.flush().unwrap();
+                }
+                // Says nothing at all. The harness must proceed: an extension may add
+                // friction deliberately, but it may never stall a run.
+                "--interpose-silent" => {
+                    invokes_seen += 1;
+                    continue;
+                }
+                // Emits a frame of the wrong type while a request is outstanding, to prove
+                // the type filter runs before the id match.
+                "--interpose-noise" => {
+                    writeln!(out, r#"{{"type":"something_else","id":{id}}}"#).unwrap();
+                    let text = v["event"]["tool"]
+                        .as_str()
+                        .unwrap_or("NOISE")
+                        .to_uppercase();
+                    writeln!(
+                        out,
+                        r#"{{"type":"interpose_result","id":{id},"decision":{{"block":false,"note":"{text}"}}}}"#
+                    )
+                    .unwrap();
+                    out.flush().unwrap();
+                }
+                // A wrong-typed decision, which must not be read as a block. Failing closed
+                // here would let a buggy extension deny every tool call.
+                "--interpose-garbage" => {
+                    writeln!(
+                        out,
+                        r#"{{"type":"interpose_result","id":{id},"decision":"block everything"}}"#
+                    )
+                    .unwrap();
+                    out.flush().unwrap();
+                }
+                _ => {}
+            }
+            continue;
+        }
+
         let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
         invokes_seen += 1;
 
