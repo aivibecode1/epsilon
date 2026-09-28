@@ -116,6 +116,33 @@ pub struct SessionEntry {
     pub kind: EntryKind,
 }
 
+/// One node of a session rendered as a tree: an entry plus everything descended from it.
+///
+/// pi's `SessionTreeNode` (`core/session-manager.ts:159-166`), and it exists in
+/// `epsilon-contracts` rather than in the store because **two frontends need it**
+/// and must not be able to disagree: the TUI's `/tree` picker and the RPC
+/// `get_tree` op. D27 shipped `get_tree` as a flat array and D29 shipped
+/// `get_entries` in a different shape from the same reference type — each passed
+/// every test, because each was asserted against its own output.
+///
+/// The label fields are `None` until labels exist, and they are `Option` rather
+/// than absent for the same reason pi's are always present: a client reading
+/// `node.label` should see `null`, not `undefined`, and a missing key and a
+/// null one are different answers to "does this node have a label".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionTreeNode {
+    /// The entry itself.
+    pub entry: SessionEntry,
+    /// Direct children, in pi's order (timestamp ascending at every level).
+    pub children: Vec<SessionTreeNode>,
+    /// The node's label, once labels are written; `None` until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// When [`SessionTreeNode::label`] was set, in unix epoch milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_timestamp: Option<u64>,
+}
+
 /// The `type` tags this build understands, as written on the wire.
 ///
 /// The single source of truth for "known kind", needed in two places that must agree: the

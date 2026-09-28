@@ -9,7 +9,8 @@ use epsilon_contracts::agent_event::TurnEndReason;
 use epsilon_contracts::content::{ContentBlock, UserContent};
 use epsilon_contracts::message::{Message, Usage, UserMessage};
 use epsilon_contracts::session_entry::{
-    CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind, SessionLine,
+    CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind,
+    SessionLine, SessionTreeNode,
 };
 
 use crate::lease::{LeaseOutcome, SessionLease};
@@ -1261,6 +1262,34 @@ impl SessionStore {
             out.push(self.read_entry(s)?.expect("index and file agree"));
         }
         Ok(out)
+    }
+
+    /// The whole session as a forest: every entry in the file, not just the active branch.
+    ///
+    /// This is pi's `getTree` (`core/session-manager.ts:1324-1362`) and it exists here
+    /// because [`SessionStore::branch_entries`] cannot answer the question `/tree` asks.
+    /// `branch_entries` walks from the leaf, so an abandoned branch is **invisible** to
+    /// it — which means the TUI could not see a branch to summarise, label, or return to.
+    /// That is the whole reason `branch_with_summary` and `reset_leaf` had no production
+    /// caller: not a missing primitive, a missing *view*.
+    ///
+    /// Three ways an entry is a root, matching pi exactly:
+    ///
+    /// 1. no parent (`parent_id == None`) — the start of the session;
+    /// 2. it is its own parent — a hand-edited file;
+    /// 3. its parent is not in the file — an orphan, which pi promotes rather than drops,
+    ///    because a child whose parent is missing is still something the user wrote.
+    ///
+    /// A parent that is a **descendant** of the entry would close a cycle
+    /// (`a → b → a`). pi cannot produce that, but a hand-edited file can, and an
+    /// infinitely recursive tree is a stack overflow in a renderer. Such an entry becomes
+    /// a root, so it is still drawn — exactly once — rather than lost.
+    ///
+    /// Children are sorted by `timestamp_ms` ascending, as in pi, so the order a reader
+    /// sees is chronological rather than file-order by accident of branching.
+    pub fn tree(&self) -> Result<Vec<SessionTreeNode>, StoreError> {
+        let all = self.read_all()?;
+        Ok(build_forest(&all))
     }
 
     /// Every billed summarization call in the file, grouped by the model that was charged.
@@ -2535,6 +2564,99 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let doy = (153 * mp + 2) / 5 + d - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
     era * 146_097 + doe - 719_468
+}
+
+/// Order a flat entry list into a forest.
+///
+/// Shared by [`SessionStore::tree`] and every consumer that has to render the
+/// session as a tree, so the TUI and the RPC surface cannot disagree about what
+/// the tree is — D27/D29's lesson, which is that two implementations of one
+/// reference type are one defect waiting to happen.
+///
+/// Children sort by `timestamp_ms` ascending, which is pi's rule
+/// (`session-manager.ts:1355-1360`): the order a reader sees is chronological,
+/// not an artefact of which branch happened to be written first.
+fn build_forest(entries: &[SessionEntry]) -> Vec<SessionTreeNode> {
+    let index: std::collections::HashMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.id.as_str(), i))
+        .collect();
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
+    let mut is_root = vec![false; entries.len()];
+    for (i, e) in entries.iter().enumerate() {
+        // pi's three root cases, in one place: no parent, a self-parent, or a
+        // parent that is not in this file. An orphan is promoted rather than
+        // dropped, so a truncated or hand-edited session still renders.
+        let parent = e.parent_id.as_deref().filter(|p| *p != e.id.as_str());
+        is_root[i] = match parent {
+            None => true,
+            Some(p) => match index.get(p) {
+                // A parent that is a descendant of this entry would close a cycle
+                // (`a -> b -> a`). pi cannot write that; a hand-edited file can, and
+                // the alternatives to promoting the entry are losing it or recursing
+                // forever. Root keeps it, exactly once.
+                Some(&pi) => reaches(entries, &index, pi, i),
+                None => true,
+            },
+        };
+        if !is_root[i] {
+            children[index[parent.expect("a non-root has a resolved parent")]].push(i);
+        }
+    }
+    for kids in &mut children {
+        kids.sort_by_key(|&c| entries[c].timestamp_ms);
+    }
+
+    fn emit(entries: &[SessionEntry], i: usize, children: &[Vec<usize>]) -> SessionTreeNode {
+        SessionTreeNode {
+            entry: entries[i].clone(),
+            children: children[i]
+                .iter()
+                .map(|&c| emit(entries, c, children))
+                .collect(),
+            // Labels are not written yet, so there is nothing to resolve. The
+            // fields exist because pi's node has them and a client reading
+            // `node.label` must get null rather than undefined.
+            label: None,
+            label_timestamp: None,
+        }
+    }
+
+    let mut roots: Vec<usize> = (0..entries.len()).filter(|&i| is_root[i]).collect();
+    roots.sort_by_key(|&i| entries[i].timestamp_ms);
+    roots
+        .into_iter()
+        .map(|i| emit(entries, i, &children))
+        .collect()
+}
+
+/// Does `from` appear anywhere in `target`'s parent chain? True means making
+/// `target` a child of `from` would close a cycle.
+fn reaches(
+    entries: &[SessionEntry],
+    index: &std::collections::HashMap<&str, usize>,
+    from: usize,
+    target: usize,
+) -> bool {
+    let mut cursor = Some(from);
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    while let Some(i) = cursor {
+        if i == target {
+            return true;
+        }
+        if !seen.insert(i) {
+            // A pre-existing cycle elsewhere in the file. Stop rather than loop;
+            // the entry is already not a root for some other reason.
+            return false;
+        }
+        cursor = entries[i]
+            .parent_id
+            .as_deref()
+            .and_then(|p| index.get(p).copied());
+    }
+    false
 }
 
 /// pi's v2→v3 rename: `hookMessage`-role messages become `custom`.

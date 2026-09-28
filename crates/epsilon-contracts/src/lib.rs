@@ -30,7 +30,8 @@ pub use message::{
 };
 pub use queue_mode::{KNOWN_QUEUE_MODES, QueueMode};
 pub use session_entry::{
-    CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind, SessionLine,
+    CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind,
+    SessionLine, SessionTreeNode,
 };
 pub use session_state::SessionState;
 pub use stream::StreamEvent;

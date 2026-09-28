@@ -3533,3 +3533,175 @@ fn a_pop_that_discards_a_turn_takes_its_bill_with_it() {
          was thrown away"
     );
 }
+
+/// The tree must show a branch that the active-branch walk cannot.
+///
+/// This is the whole reason `SessionStore::tree` exists. `branch_entries`
+/// walks from the leaf, so once a branch is abandoned it becomes invisible —
+/// and an invisible branch is a branch the TUI cannot summarise, label, or
+/// return to. The assertion is deliberately a **comparison against
+/// `branch_entries`**, not a count: a test that pinned "6 nodes" would pass
+/// against an implementation that had dropped the abandoned branch and
+/// re-numbered, and the two functions disagreeing is the defect.
+#[test]
+fn the_tree_contains_a_branch_that_the_active_walk_cannot_reach() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+
+    let a = store
+        .append(EntryKind::Message {
+            message: user_msg("a"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let b = store
+        .append(EntryKind::Message {
+            message: user_msg("b"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    // Abandon b: the leaf moves back to a, so b and everything after it are on
+    // a branch nothing walks any more.
+    store.navigate_to(&a.id).unwrap();
+    let after = store
+        .append(EntryKind::Message {
+            message: user_msg("after"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    let on_branch: std::collections::HashSet<String> = store
+        .branch_entries()
+        .unwrap()
+        .iter()
+        .map(|e| e.id.clone())
+        .collect();
+    let in_tree = flatten_ids(&store.tree().unwrap());
+    let in_tree: std::collections::HashSet<String> = in_tree.into_iter().collect();
+
+    assert!(
+        !on_branch.contains(&b.id),
+        "precondition: b left the active branch, or this test proves nothing"
+    );
+    assert!(
+        in_tree.contains(&b.id) && in_tree.contains(&after.id),
+        "the tree must still contain the abandoned branch -- in_tree has {:?}, b={} after={}",
+        in_tree,
+        b.id,
+        after.id
+    );
+    assert!(
+        in_tree.len() > on_branch.len(),
+        "the tree is a superset of the active branch: tree={} branch={}",
+        in_tree.len(),
+        on_branch.len()
+    );
+}
+
+/// Every node's `children` sorts by timestamp, and nesting is real, at every level.
+#[test]
+fn the_tree_nests_by_parentage_and_orders_children_chronologically() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    for text in ["one", "two", "three"] {
+        store
+            .append(EntryKind::Message {
+                message: user_msg(text),
+                api_request_sha256: None,
+            })
+            .unwrap();
+    }
+
+    // Ids are generated, so compare against what the store actually wrote: a
+    // hardcoded `ent_0` encodes an assumption about id generation, which is
+    // not what this test is about.
+    let written: Vec<String> = store
+        .read_all()
+        .unwrap()
+        .iter()
+        .map(|e| e.id.clone())
+        .collect();
+
+    let forest = store.tree().unwrap();
+    assert_eq!(forest.len(), 1, "a straight-line session is one root");
+    let root = &forest[0];
+    assert_eq!(root.entry.id, written[0], "first entry is the root");
+    assert_eq!(
+        root.children.len(),
+        1,
+        "a straight chain has one child at each level"
+    );
+    assert_eq!(
+        root.children[0].children[0].children.len(),
+        0,
+        "and it ends"
+    );
+    assert_eq!(root.children[0].entry.id, written[1]);
+    assert_eq!(root.children[0].children[0].entry.id, written[2]);
+}
+
+/// The three root cases, which are pi's and not this implementation's.
+///
+/// A test that only walked a clean file would pass against an implementation
+/// that simply took the first entry as the root — which is exactly the bug
+/// this guards.
+#[test]
+fn a_self_parent_and_a_missing_parent_are_both_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let real = {
+        let mut store = SessionStore::open(&path).unwrap();
+        store
+            .append(EntryKind::Message {
+                message: user_msg("root"),
+                api_request_sha256: None,
+            })
+            .unwrap();
+        store.read_all().unwrap()[0].clone()
+    };
+
+    // Write the two malformed shapes by taking a REAL entry and changing only
+    // `id` and `parent_id`. Hand-writing the JSON instead means inventing a
+    // message shape, and an invented shape is how this test first failed
+    // (`Corrupt { line: 3, diagnosis: UnknownLineShape }`) -- the store
+    // rejected the line before the tree ever saw it, so the assertion was
+    // testing nothing.
+    let line = |id: &str, parent: Option<&str>, seq: u64, ts: u64| {
+        let mut e = real.clone();
+        e.id = id.to_string();
+        e.parent_id = parent.map(str::to_string);
+        e.seq = seq;
+        e.timestamp_ms = ts;
+        serde_json::to_string(&e).unwrap()
+    };
+
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str(&line("ent_self", Some("ent_self"), 1, 2));
+    text.push('\n');
+    text.push_str(&line("ent_orphan", Some("ent_gone"), 2, 3));
+    text.push('\n');
+    std::fs::write(&path, text).unwrap();
+
+    let store = SessionStore::open(&path).unwrap();
+    let ids = flatten_ids(&store.tree().unwrap());
+    assert!(
+        ids.contains(&"ent_self".to_string()),
+        "a self-parented entry is a root, not dropped: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"ent_orphan".to_string()),
+        "an entry whose parent is missing is a root, not dropped: {ids:?}"
+    );
+    assert_eq!(ids.len(), 3, "every entry appears exactly once: {ids:?}");
+}
+
+/// Every node's id, depth-first, for order-independent assertions.
+fn flatten_ids(nodes: &[epsilon_contracts::session_entry::SessionTreeNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for n in nodes {
+        out.push(n.entry.id.clone());
+        out.extend(flatten_ids(&n.children));
+    }
+    out
+}
