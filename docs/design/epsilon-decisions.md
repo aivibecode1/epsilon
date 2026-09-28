@@ -679,6 +679,84 @@ skill reuse at zero format cost. Progressive disclosure keeps prompt cost O(skil
 
 ---
 
+## ADR-019: Extensions participate through a request/response channel, not a shared event stream
+
+**Status: accepted. Decides Phase 4 item 4.3 and constrains 4.5.**
+
+**The problem, stated precisely.** Today `ExtHost::send_event` writes one line to a child's
+stdin and returns `()` (`crates/epsilon-ext/src/host.rs:156-175`). The protocol has exactly
+two host-to-child frame types, `event` and `invoke`. An extension therefore *observes*; it
+cannot affect a run. The `ToolHooks` and `TurnHooks` traits in `epsilon-contracts` are the
+correctly-shaped seam for pi's mutating events — `BeforeToolCallResult { block, reason,
+terminate }`, result override, context transform, system-prompt replacement, compaction
+cancellation — and the agent loop already calls both correctly (`exec.rs:654,782`). But
+`set_tool_hooks` and `set_turn_hooks` appear **ten times in this repository and every one is
+in `tests/loop_scenarios.rs`**. The seam is built, tested, and unreachable.
+
+**Decision.** Host-to-child frames become a request/response channel. A mutating event is a
+*request*: the host writes `{"type":"interpose","id":…,"event":…}` and the child answers
+`{"type":"interpose_result","id":…,"decision":…}`. The host applies the answer to the
+in-flight tool call. Extension-to-host direction is unchanged and stays fire-and-forget:
+`event` frames remain, because a child with nothing to say must never be able to stall a run.
+
+**The constraint that decides the shape** — and the reason this is not a three-line change.
+`ExtHost::invoke` holds `ChildIo`'s `Mutex<ChildIo>` for the *entire* invocation, across
+write, read, and timeout (`host.rs:220-328`); `send_event` takes the same mutex to write one
+line. Awaiting an `interpose_result` while holding that mutex **deadlocks the moment any
+tool invoke overlaps an interposed event** — which is the normal case, since `before_tool_call`
+fires inside the very loop that is invoking tools. A mutex-per-host cannot carry this
+protocol. The fix is structural: the read side of the pipe is owned by a single long-lived
+reader task that demultiplexes frames by `id` and completes per-request oneshots; the mutex
+shrinks to the write side only. Every existing bound — `INVOKE_TIMEOUT_SECS`, `CRASH_BUDGET`,
+`MAX_FRAME_BYTES`, `MAX_INVOKE_BYTES` — moves to the interpose path unchanged.
+
+**Where the bridge lives.** Not in `epsilon-ext`: it depends only on `epsilon-contracts`
+(`Cargo.toml`), and must keep doing so. `epsilon-core` does not depend on it either.
+`epsilon-cli` is the sole crate that sees both (`Cargo.toml:40-43`), and it already owns
+`spawn_event_forwarder` (`runtime.rs:733`). The bridge is a `ToolHooks` implementation in
+`epsilon-cli` that fans an interpose out to each attached host, and `epsilon-core` gains
+nothing but a test that a *foreign* `ToolHooks` can block a call.
+
+**Ordering, which is the point of 4.5 being one item.** The protocol must be able to carry a
+reply before the seam is worth wiring. Implementing `ToolHooks`-to-`ExtHost` first would
+build a bridge to a fire-and-forget channel — a seam that still cannot reach a real extension,
+and a second bridge to rebuild once it can. So: bidirectional frames, then the bridge, then
+`ToolHooks`.
+
+**Failure policy, stated because it is the whole design.** An interpose that times out, is
+malformed, or comes from a child over its crash budget is treated as **"no opinion"** — the
+tool call proceeds. An extension may *add* friction deliberately (that is the feature); it
+may never remove the harness's ability to finish a run. This is the same rule
+`send_event`'s fire-and-forget design already encodes, and the reason the mutating path is
+worth building on top of rather than instead of it.
+
+**Alternatives.**
+
+- **Keep fire-and-forget; expose blocking through the filesystem.** Rejected: it reintroduces
+  the IPC-over-a-shared-file pattern the process boundary exists to avoid, and cannot express
+  a decision tied to one in-flight call.
+- **Have extensions import Rust and implement `ToolHooks` in-process.** Rejected: it is the
+  strongest capability and the weakest isolation. A crash in extension code would take the
+  harness with it, which is precisely what the 668-line adversarial protocol test suite in
+  `tests/host_protocol.rs` exists to make impossible. Capability without a boundary is not
+  worth the risk; a boundary with capability is.
+- **A single bidirectional RPC with the host as a general server.** Rejected for now: it is
+  pi's eventual shape and it is a much larger protocol (32 commands, `rpc_mode.rs` is at 9).
+  Worth revisiting once interpose is proven; recorded rather than dismissed.
+
+**Not decided here, and deliberately:** the 27 `ExtensionUIContext` methods, command /
+shortcut / flag / renderer registration, message injection, and provider registration. Those
+are capabilities *on top of* a channel that can answer, and scoping them is item 4.3's follow
+up. Deciding them before the channel exists would be designing an API no transport can carry.
+
+**Best possible?** Not yet, and this ADR says so rather than implying the gap is closed. It
+closes the *transport* half of the largest measured port gap (pi: 153 exports / 26 areas;
+`epsilon-ext`: 979 LOC, no path from a child to the agent at all). The honest summary after
+this lands is "an extension can block a tool call and rewrite its result", not "the extension
+SDK is complete".
+
+---
+
 ## ADR-016: Supply-chain policy inherited from pi
 
 **Decision.** cargo pinned exact versions for direct deps; `cargo deny` advisories+licenses CI;
