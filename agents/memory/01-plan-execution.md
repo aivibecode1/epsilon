@@ -1,6 +1,6 @@
 # Plan execution — phases 0-7
 
-**Status: Phases 0-3 done, Phase 4 started. Defects D17-D21 all closed.**
+**Status: Phases 0-3 done, Phase 4 in progress. Defects D17-D21 all closed.**
 
 Source of truth for *what* to do: `audit/07-plan.md`. This file tracks *where I am* and
 *what I verified on the way*, so a context loss does not lose the position.
@@ -48,10 +48,16 @@ test *and* by watching a real TUI's mtime advance every 2s.
 
 ## Still open
 
-- **Phase 4 (pi port parity)** — `/tree` re-projection landed (`7489c00`). The delegated
-  recheck is folded in (`586cc09`): the port audit's "navigation Missing" row is retracted
-  (it was wired at `keys.rs:495`), and the extension SDK gap is enlarged. New item **4.5**:
-  bidirectional event frames, then wire `ToolHooks`/`TurnHooks`.
+- **Phase 4 (pi port parity)** — `/tree` re-projection landed (`7489c00`). Delegated recheck
+  folded in (`586cc09`). **4.3 done** (`e9d5b94`, ADR-019). **4.5a done** (`ece3af4`):
+  bidirectional event frames + `interpose`; an extension can now veto an event. Control:
+  forwarding an event during a long invoke took **9.74 s** before, ms after.
+  **4.5b next**: bridge `ExtHost` → `ToolHooks` in `epsilon-cli` (only crate seeing both),
+  then call `set_tool_hooks` from `runtime.rs`. The seam is finally reachable — the point
+  of 4.5a was to make that possible.
+- **`branch_with_summary` still has no production caller** — confirmed twice, still true.
+- **`ToolHooks`/`TurnHooks`**: shape correct, loop calls them, 10/10 setters in tests. 4.5b
+  is the fix. See the class note in `audit/03-defects.md`.
 - **`branch_with_summary` still has no production caller** — confirmed twice, still true.
 - **`ToolHooks`/`TurnHooks` are the same defect**: correct shape, loop calls them, 10/10
   setters are in tests. See the class note in `audit/03-defects.md`.
@@ -112,6 +118,19 @@ Two things the battery does NOT cover, both found after it passed:
 - **Do not write a number you have not measured.** I invented a per-crate table from a
   `--lib`-only run, published it, and had to retract it. `cargo test -p X` ≠
   `cargo test -p X --lib`.
+- **A concurrency test that has never failed is not a test.** Twice now: `TerminalGuard`'s
+  drop test (a unit struct's empty `Drop` is optimised away), and the ADR-019 forward-latency
+  test. In the second case two earlier versions **passed against the control** — one asserted
+  the answer arrived (the old design serialises, so it does, just late), one asserted a second
+  request could be sent (it can, just after the first finishes). Neither measured the *wait*.
+  The fix in both cases: assert on a **measured quantity** (elapsed time, observed effect) with
+  a bound an order of magnitude away from the control's value, not on an outcome the broken
+  design also produces.
+- **A plausible mechanism is not a verified one.** I wrote "this deadlocks" into ADR-019 from
+  reading `invoke`'s lock scope. It does not deadlock — the caller was its own reader. It
+  serialises, which is bad in a different way (head-of-line blocking, measured at 9.74 s). Same
+  family as publishing the 1315/1253 arithmetic. Write the mechanism down, then measure it,
+  then correct the mechanism in place.
 - **A background process can deliver a result for code that no longer exists.** One
   measurement dispatched at 00:33 (pre-fix) sat on disk and completed hours later, reporting
   `context_mirror_cost_does_not_track_transcript_length` FAILED at 16.8µs → 216µs (12.9x).

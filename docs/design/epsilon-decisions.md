@@ -681,7 +681,9 @@ skill reuse at zero format cost. Progressive disclosure keeps prompt cost O(skil
 
 ## ADR-019: Extensions participate through a request/response channel, not a shared event stream
 
-**Status: accepted. Decides Phase 4 item 4.3 and constrains 4.5.**
+**Status: accepted and implemented (`ece3af4`, 2026-09-28). Decides Phase 4 item 4.3 and
+constrains 4.5.** The transport described here ships; the bridge from `ExtHost` to
+`ToolHooks` is the next piece of 4.5 and is not in that commit.
 
 **The problem, stated precisely.** Today `ExtHost::send_event` writes one line to a child's
 stdin and returns `()` (`crates/epsilon-ext/src/host.rs:156-175`). The protocol has exactly
@@ -700,15 +702,32 @@ in-flight tool call. Extension-to-host direction is unchanged and stays fire-and
 `event` frames remain, because a child with nothing to say must never be able to stall a run.
 
 **The constraint that decides the shape** — and the reason this is not a three-line change.
-`ExtHost::invoke` holds `ChildIo`'s `Mutex<ChildIo>` for the *entire* invocation, across
-write, read, and timeout (`host.rs:220-328`); `send_event` takes the same mutex to write one
-line. Awaiting an `interpose_result` while holding that mutex **deadlocks the moment any
-tool invoke overlaps an interposed event** — which is the normal case, since `before_tool_call`
-fires inside the very loop that is invoking tools. A mutex-per-host cannot carry this
-protocol. The fix is structural: the read side of the pipe is owned by a single long-lived
-reader task that demultiplexes frames by `id` and completes per-request oneshots; the mutex
-shrinks to the write side only. Every existing bound — `INVOKE_TIMEOUT_SECS`, `CRASH_BUDGET`,
-`MAX_FRAME_BYTES`, `MAX_INVOKE_BYTES` — moves to the interpose path unchanged.
+`ExtHost::invoke` held `ChildIo`'s `Mutex<ChildIo>` for the *entire* invocation, across
+write, read, and timeout, and `send_event` took the same mutex to write a single line. So
+**every other user of that lock stalled behind a running tool call.**
+
+*Correction (2026-09-28, after implementing and measuring).* This paragraph originally said
+the old design would **deadlock**. It would not: the old code read the pipe itself, so a
+waiting request *was* the reader, and its own reply reached it. What the single lock actually
+caused was **serialisation**, which is bad in two measurable ways rather than by hanging:
+
+1. An event forwarded during a slow tool call waited for that call. Measured against the
+   pre-ADR-019 design: **9.74 s** to write one line, against a 10 s invoke timeout. The TUI's
+   event forwarder is the caller, so the transcript, token counter and cost line all go quiet
+   for the duration of every slow tool.
+2. A reply cannot be routed to the requester that wanted it, because whoever holds the lock is
+   whoever read it first. Correctness under overlap depends on the child never interleaving.
+
+The design decision is unchanged and the fix is the same — a single long-lived reader task
+owns stdout and demultiplexes by `id` into per-request oneshots, and the mutex shrinks to
+writes — but the *reason* is head-of-line blocking, not deadlock. Recorded here because an ADR
+that names a nonexistent failure mode will eventually be used to justify something that does
+not help, and because this is the second time in one session a plausible mechanism turned out
+to be wrong on contact with a measurement (`docs/history.md`, M181).
+
+Every existing bound — `INVOKE_TIMEOUT_SECS`, `CRASH_BUDGET`, `MAX_FRAME_BYTES`,
+`MAX_INVOKE_BYTES` — carries across unchanged, and the last two now bind in the reader
+rather than in a caller that no longer reads.
 
 **Where the bridge lives.** Not in `epsilon-ext`: it depends only on `epsilon-contracts`
 (`Cargo.toml`), and must keep doing so. `epsilon-core` does not depend on it either.

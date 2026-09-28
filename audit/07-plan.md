@@ -100,7 +100,7 @@ everything else on this list.
 |---|---|---|
 | 4.1 | ~~**R1** — make `/tree` navigate.~~ **DONE 2026-09-28** (`7489c00`): navigation was already wired; the defect was that the transcript did not follow the leaf. Re-projection added, negative control confirmed | Leaf moved ⇒ the visible conversation is that branch |
 | 4.2 | Prompt templates (`/name` expansion) — the cheapest genuinely-missing pi feature | A template expands and is testable |
-| 4.3 | Decide the extension surface deliberately, and write down the decision. **Scope enlarged 2026-09-28** — read 4.5 first | An ADR, not an omission |
+| 4.3 | ~~Decide the extension surface.~~ **DONE `e9d5b94`** — ADR-019. Follow-ups deliberately not decided: the 27 UI methods, 7 registration APIs, message injection, provider registration | ✅ |
 | 4.4 | Refresh the catalog and add a drift check | CI fails when the snapshot ages past its window |
 | 4.5 | **Bidirectional event frames, then wire `ToolHooks`/`TurnHooks`** — new, from [`evidence/delegation-port-gaps-2026-09-28.md`](evidence/delegation-port-gaps-2026-09-28.md) | A child can block a tool call and rewrite a result; a negative control shows the child *can* block |
 
