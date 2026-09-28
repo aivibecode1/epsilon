@@ -53,8 +53,15 @@ test *and* by watching a real TUI's mtime advance every 2s.
   **4.5b done** (`9f73a5f`, `ExtensionToolHooks` in `epsilon-cli`). An extension can now veto
   a tool call; first production `set_tool_hooks` in the project's history. Milestone log:
   `docs/milestones/M181-extension-interception.md`.
-  - **`after_tool_call` is deliberately NOT wired** — result rewriting is still missing. The
-    seam is shaped for it. That is the obvious next slice of 4.5.
+  - **`after_tool_call` is now wired** (`2fb5219`) — result rewriting shipped, completing pi's
+    tool-call event surface. `Option<AfterToolCallResult>`, `None` when nothing was modified
+    (pi's `undefined`, and load-bearing: the loop uses it to keep the message byte-for-byte).
+  - **Two divergences from pi, both deliberate and recorded** in `audit/02-port-fidelity.md`:
+    (1) pi mutates `ToolCallEvent.input` in place with **no re-validation** — Epsilon's `args`
+    crosses a process boundary so honouring it means re-validating, which pi does not do;
+    porting the unsafe half is worse than the honest gap. (2) pi returns on the FIRST block;
+    Epsilon asks all extensions so the reason names every objector. Veto semantics identical.
+  - **`TurnHooks` is the remaining unwired seam** in 4.5.
 - **`branch_with_summary` still has no production caller** — confirmed three times now.
 - **`TurnHooks` is still unwired** (10/10 setters in tests). The `ToolHooks` half is done;
   the `TurnHooks` half is not, and the interpose transport now makes it reachable.
