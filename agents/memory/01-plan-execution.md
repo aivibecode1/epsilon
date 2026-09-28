@@ -86,6 +86,10 @@ test *and* by watching a real TUI's mtime advance every 2s.
   principle. Added `Agent::session_usage()` + `session_usage_by_model()` — the per-model split
   is load-bearing because price belongs to the model that consumed the tokens.
   **D26:** pi's `follow_up` was refused as `unknown op`; only `followup` worked.
+- **M189 shipped 3 more RPC commands** (`get_entries`, `get_tree`, `set_session_name`) and
+  closed the two gaps M188 named as unverified. **18 of pi's 33 implemented.** Also added
+  `Message::text()` to contracts (pi's `clear_queue` returns the cleared TEXT, not counts --
+  my first version returned counts and was wrong).
 - **D23 CLOSED** (`f6636ff`): the 18 glued lines in `docs/history.md` repaired, all 18 rows
   reconstructed from the dev logs, and two structural tests added so it cannot recur
   silently (`38e7a5e`). D25 remains: one row numbered `| 018 |` that predates the corruption.
@@ -208,6 +212,19 @@ Two things the battery does NOT cover, both found after it passed:
   m188b gate proved clippy+tests clean on HEAD. It had snapshotted a tree two hours stale.
   **Check the process's launch time against the commits before believing its error** — and
   note that it shared `D:/eps-target` with a live install, which is the one real hazard here.
+- **A control must actually CHANGE BEHAVIOUR, and prove it did before trusting its result.**
+  M189, twice:
+  - *Invalid control:* billed every response to `self.model_id()`. All 48 tests passed.
+    The fold runs DURING each run, when `model_id` is already that run's model, so the
+    mutation was a no-op. The production code was fine; my control proved nothing.
+  - *Weak test:* `get_tree` vs `get_entries` on a LINEAR session. Swapping `branch_entries()`
+    for `read_all()` passed all 48 — on a linear session the branch IS the file. Needed a
+    `navigate_to` to a **MIDDLE** entry (first or last leaves the branch == the file) to make
+    the two ops distinguishable.
+- **A test that cannot fail should say so in its own failure message.** The forked
+  `get_tree` test asserts `branch.len() < file.len()` with the reason in the string, so when
+  the fork did not happen it reported "this test cannot distinguish the two ops" instead of
+  a bare number mismatch.
 - **A control that does not remove what it claims to remove proves nothing.** Two
   instances this session: a parse default that was unreachable behind a digits predicate
   (control passed, correctly), and a directory-name drift control that replaced one of two
