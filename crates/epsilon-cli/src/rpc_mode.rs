@@ -861,10 +861,32 @@ async fn dispatch_line(
                     None => all,
                 },
             };
+            // **D29, and it is D27's twin.** `get_entries` returned the raw
+            // `SessionEntry` structs, so a client saw epsilon's internal shape --
+            // `parent_id`, `seq`, `timestamp_ms`, and a `kind` OBJECT -- while
+            // `get_tree`, four lines below, returned pi's. Two ops, one reference type,
+            // two shapes.
+            //
+            //   raw:      { id, kind: { type, ... }, parent_id, seq, timestamp_ms }
+            //   pi:       { type, id, parentId, timestamp: "2026-09-28T10:18:40.545Z" }
+            //
+            // Found by driving the INSTALLED binary over real stdio, not by a test: the
+            // in-process M190 tests asserted `get_entries` against itself, so raw and
+            // converted agreed by construction -- the same defect as D27, one function
+            // over. `entry_as_pi` is the single conversion both ops now share, which is
+            // what makes a second shape here impossible rather than merely absent.
+            //
+            // pi's `SessionEntryBase` is one type behind both ops
+            // (`session-manager.ts`), and its subclasses add per-type payloads
+            // (`message`, `thinkingLevel`, `modelId`, `summary`, ...). Those are NOT
+            // ported here -- see the milestone's Limits. The base four are what a client
+            // needs to rebuild the tree, and inventing the rest from epsilon's `kind`
+            // enum would be another shape guessed rather than read.
+            let entries: Vec<serde_json::Value> = filtered.iter().map(entry_as_pi).collect();
             ok_line(
                 "get_entries",
                 id,
-                serde_json::json!({ "entries": filtered, "leafId": leaf }),
+                serde_json::json!({ "entries": entries, "leafId": leaf }),
             )
         }
         Op::GetTree => {
@@ -3646,5 +3668,158 @@ mod tests {
             texts.iter().any(|t| t.contains("only me")),
             "the new session's own reply must be present: {texts:?}"
         );
+    }
+
+    /// **`get_entries` and `get_tree` must emit the SAME entry shape.**
+    ///
+    /// This is D29, and it is D27's twin: `get_tree` returned pi's
+    /// `{type, id, parentId, timestamp}` while `get_entries` returned epsilon's internal
+    /// `{id, kind, parent_id, seq, timestamp_ms}`. Two ops, one reference type, two
+    /// shapes — and **the M190 in-process tests passed**, because they asserted
+    /// `get_entries` against itself. Found only by driving the installed binary over real
+    /// stdio and reading the raw JSON.
+    ///
+    /// The assertion is deliberately a *comparison* rather than a fixed literal. A literal
+    /// would be my guess again, and a guess is what produced both defects. What cannot be
+    /// wrong is that one reference type cannot be served two ways: whichever fields each op
+    /// emits, they must be the same fields with the same names and the same value types.
+    /// That is checkable without knowing the right answer, which is the point.
+    #[tokio::test]
+    async fn get_entries_and_get_tree_agree_on_every_entries_shape() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+
+        let entries_reply =
+            parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        let tree_reply = parse(&dispatch_line(r#"{"op":"get_tree"}"#, &agent, &approvals).await);
+        assert_eq!(entries_reply["success"], true, "{entries_reply}");
+        assert_eq!(tree_reply["success"], true, "{tree_reply}");
+
+        let entries = entries_reply["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {entries_reply}"));
+        assert!(!entries.is_empty(), "the precondition: entries must exist");
+
+        // Every tree node's entry, flattened out of the forest.
+        fn flatten(nodes: &[serde_json::Value], out: &mut Vec<serde_json::Value>) {
+            for n in nodes {
+                out.push(n["entry"].clone());
+                if let Some(kids) = n["children"].as_array() {
+                    flatten(kids, out);
+                }
+            }
+        }
+        let mut tree_entries = Vec::new();
+        flatten(
+            tree_reply["data"]["tree"].as_array().expect("a tree array"),
+            &mut tree_entries,
+        );
+        assert_eq!(
+            tree_entries.len(),
+            entries.len(),
+            "both ops must cover the SAME entries: {} vs {}",
+            tree_entries.len(),
+            entries.len()
+        );
+
+        // The comparison. Same key set, same order-insensitive, same JSON value types.
+        for (from_list, from_tree) in entries.iter().zip(tree_entries.iter()) {
+            let mut a: Vec<String> = from_list
+                .as_object()
+                .expect("an object")
+                .keys()
+                .cloned()
+                .collect();
+            let mut b: Vec<String> = from_tree
+                .as_object()
+                .expect("an object")
+                .keys()
+                .cloned()
+                .collect();
+            a.sort();
+            b.sort();
+            assert_eq!(
+                a, b,
+                "get_entries and get_tree disagree on the entry's fields: {from_list} vs {from_tree}"
+            );
+            for k in &a {
+                assert_eq!(
+                    type_name(&from_list[k]),
+                    type_name(&from_tree[k]),
+                    "field `{k}` has a different JSON type between the two ops: \
+                     {} vs {}",
+                    from_list[k],
+                    from_tree[k]
+                );
+            }
+            // And the identifying value must be the identical STRING, not merely a
+            // string-shaped thing: the same entry id in both.
+            assert_eq!(
+                from_list["id"].as_str(),
+                from_tree["id"].as_str(),
+                "the same entry must carry the same id in both ops"
+            );
+        }
+
+        /// The JSON type name, so a number-vs-string difference is caught rather than
+        /// compared loosely.
+        fn type_name(v: &serde_json::Value) -> &'static str {
+            match v {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+            }
+        }
+    }
+
+    /// The emitted fields are pi's four, and `timestamp` is an ISO string.
+    ///
+    /// The comparison test above cannot tell a *consistent* wrong shape from the right
+    /// one — two ops agreeing on `{id, kind, seq}` would satisfy it. This test pins the
+    /// four names and the timestamp's type against `session-manager.ts`'s
+    /// `SessionEntryBase`, which is the reference line rather than my reading of it.
+    #[tokio::test]
+    async fn every_get_entries_entry_has_pis_four_fields() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        let entries = reply["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {reply}"));
+        assert!(!entries.is_empty(), "{reply}");
+        for e in entries {
+            // pi: `SessionEntryBase { type; id; parentId; timestamp }` -- and `type` is a
+            // plain string, not the nested `kind` OBJECT epsilon serialized internally.
+            let obj = e.as_object().expect("an object");
+            let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+            keys.sort();
+            assert_eq!(
+                keys,
+                vec!["id", "parentId", "timestamp", "type"],
+                "an entry must carry exactly pi's four fields: {e}"
+            );
+            assert!(
+                e["type"].is_string(),
+                "`type` must be a string, not epsilon's nested kind object: {e}"
+            );
+            assert!(
+                e["timestamp"].is_string(),
+                "`timestamp` must be an ISO-8601 STRING, not epoch millis: {e}"
+            );
+            let ts = e["timestamp"].as_str().expect("a string");
+            assert_eq!(ts.len(), 24, "millisecond ISO instant: {ts}");
+            assert!(ts.ends_with('Z'), "must be UTC: {ts}");
+            // And the four internal names must be GONE -- the defect was their presence,
+            // so asserting their absence is what pins the fix.
+            for gone in ["parent_id", "seq", "timestamp_ms", "kind"] {
+                assert!(
+                    !obj.contains_key(gone),
+                    "`{gone}` is epsilon's internal name and must not reach the wire: {e}"
+                );
+            }
+        }
     }
 }
