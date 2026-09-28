@@ -138,6 +138,30 @@ getting acknowledgements.
 caller** until M192 — the `branch_with_summary` pattern again. Grepping for callers and
 checking that *at least one is production code* is a cheap triage worth repeating.
 
+## Where the work stands after M193 (2026-09-28)
+
+| | |
+|---|---|
+| HEAD | `60313c2`, tree clean |
+| Gate | **m193b GATE PASS** — 63 targets, **1,461** results, 0 failed; `epsilon-cli --lib` **128** |
+| Installed | 21,466,112 bytes, re-probed: both `get_entries` and `get_tree` return byte-identical pi-shaped entries |
+| RPC parity | **23 of 33** (see the section above for how to derive it) |
+| D: free | 60 GB after wiping `D:/eps-target` (15 GB) |
+
+Milestones M192–M193 added `fork`, `clone`, `new_session`, `switch_session`, fixed D29
+and the session-naming split, and produced **three inert controls** (M189 billing, M189
+tree, M192 control H) that all had to be re-armed.
+
+**Next concrete step:** the 10 remaining ops. Only `set_steering_mode` and
+`set_follow_up_mode` are wiring — `LoopLimits` carries both and `PendingQueue::drain`
+honours `QueueMode`; what is missing is a live setter on `Agent`. The other eight need
+capability core does not have (`compact`, auto-retry, auto-compaction, bash, export_html,
+`get_fork_messages`), and an op that cannot refuse is worse than an absent one.
+
+**When touching RPC again, probe the wire first.** Two of the last three defects were
+invisible to 1,458 tests and appeared immediately in a stdio probe. Install, probe, then
+believe.
+
 ## Still open
 
 - **Phase 4 (pi port parity)** — `/tree` re-projection (`7489c00`), delegated recheck folded
