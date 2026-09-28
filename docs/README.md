@@ -9,7 +9,7 @@ claims are not proof that a capability works today.
 | File | What lives there | Read it when |
 |---|---|---|
 | [`../README.md`](../README.md) | the entry point: what Epsilon is, install, quick start | first |
-| [`user/`](user) | product guides: install, configuration, auth, permissions, sessions, troubleshooting | you are using or configuring Epsilon |
+| [`user/`](user) | product guides: install, configuration, auth, permissions, sessions, [extensions](user/extensions.md), [prompt templates](user/prompt-templates.md), troubleshooting | you are using or configuring Epsilon |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | user-visible changes, milestone by milestone, newest first | you want to know what changed |
 
 ## Contributor documentation
