@@ -198,6 +198,12 @@ Two things the battery does NOT cover, both found after it passed:
 - **`docs/history.md` is `include_str!`'d, so editing it during a battery edits the source
   under test.** Caught by the m187 history test in m188 (`GATE FAIL`: "no row for milestones
   [187]"). Preserve the failure under a label; it is a truthful record, not a stale snapshot.
+- **A long background build can die hours later, and its failure is about ITS tree.** On
+  2026-09-28 a `cargo install` launched in the M184 era (~07:48) reported
+  `could not compile epsilon-tui` at ~10:15, long after M186/M187/M188 landed and after the
+  m188b gate proved clippy+tests clean on HEAD. It had snapshotted a tree two hours stale.
+  **Check the process's launch time against the commits before believing its error** — and
+  note that it shared `D:/eps-target` with a live install, which is the one real hazard here.
 - **A control that does not remove what it claims to remove proves nothing.** Two
   instances this session: a parse default that was unreachable behind a digits predicate
   (control passed, correctly), and a directory-name drift control that replaced one of two
