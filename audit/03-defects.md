@@ -730,3 +730,41 @@ no caller — and it is the honest next candidate for this rule.
   The gate rule this earned: **read the reference's IMPLEMENTATION, and read the client
   that CONSUMES the payload, not only the type declaration.** A declaration gives field
   names; only the implementation and the consumer give structure.
+
+## D28 — the parity count was wrong, and nothing could have caught it
+
+**Status: closed in M192.** Not a code defect: a *measurement* defect, which is worse in one
+respect and better in another. It was wrong in every document that repeated it, across
+several milestones, and no test, clippy, or gate stage consulted it.
+
+**The claim:** "18 of pi's 33 RPC client commands are implemented."
+
+**The truth before M192:** 19. **`follow_up`'s primary wire name lives in
+`#[serde(rename = "follow_up", alias = "followup")]`**, so the Rust variant is `Followup`
+and the string `follow_up` never appears as an identifier. Any count derived by grepping
+the `Op` enum for wire names misses it — precisely the blindness `AGENTS.md` records under
+"Protocol surfaces" for D26, where the same attribute pair is why a marker search is
+useless. I had written that rule down and then did the thing it warns about, to measure
+parity.
+
+**How it was found:** writing M192, I needed the *remainder* to know what was left, and
+found that "18 plus four" did not reconcile with a count derived from the reference's own
+`RpcCommand` union. The union has exactly 33 members, so the denominator is exact and the
+numerator is not.
+
+**The correct method**, now written into `agents/memory/01-plan-execution.md`:
+
+1. Take the denominator from the reference's own type union — 33, exact, not estimated.
+2. Match each member against the implementation **variant by variant**.
+3. Resolve every implementation name through **serde**, not through the Rust identifier.
+4. Never carry a count forward. Re-derive it; a count that requires trusting the previous
+   count is a count that drifts.
+
+**Result:** **23 of 33** after M192, ten named in
+`audit/02-port-fidelity.md` and `audit/evidence/gate-m192b.md`.
+
+**The generalisation.** A number in a document is a claim with no reviewer. It survived
+M186, M188, M189, M190 and M191 unmodified because every milestone that repeated it also
+*believed* it, and belief is not measurement. This is the same failure as D27 in a
+different costume: **an assertion that agrees with its own author by construction**. The
+defects that survive longest are the ones nothing is positioned to disagree with.
