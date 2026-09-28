@@ -51,19 +51,28 @@ bash scripts/gate.sh <label>          # POSIX and CI
 
 ### The terminal integration test
 
-Separate, because it needs a built binary and a real pseudo-console and so cannot
-run from `cargo test` alone:
+**As of M179 it runs inside the battery, with no setup.** It used to need a built
+binary named by hand, which meant `cargo test --workspace` skipped it — and a test the
+battery skips is a test that rots. `the_screen_reports_what_the_harness_is_doing` sat
+broken from M151 to M178 for exactly that reason: twenty-seven milestones of TUI work
+and nothing ran it. The fix is Cargo's own:
 
 ```sh
-cargo build -p epsilon-cli
+cargo build -p epsilon-cli                          # the binary itself
 EPSILON_BIN=target/debug/epsilon cargo test -p epsilon-cli --test terminal -- --test-threads=1
 ```
 
-It skips — loudly — when `EPSILON_BIN` is unset, so the workspace suite stays green
-without it. Run it whenever TUI startup, input, resize or rendering changes: it is
-the only test that can fail because the binary never reached a terminal at all, and
-it takes about 45 seconds. Two things learned building it, both of which cost real
-time:
+Run it directly when you want it on its own — the `--test-threads=1` matters, because
+each test opens its own console and serialising them keeps a failure attributable to one
+session. `EPSILON_BIN` is still honoured, because pointing the suite at a specific build
+is occasionally the point, but it is no longer required: the test falls back to
+`CARGO_BIN_EXE_epsilon`, which Cargo sets for an integration test whose package has a
+binary of that name. It skips only when neither is available — a compiled test binary
+run on its own — and it says so.
+
+It is the only test that can fail because the binary never reached a terminal at all, and
+it adds about 70 seconds to the battery. Two things learned building it, both of which
+cost real time:
 
 - **Answer the pseudo-console's `ESC [ 6 n`.** ConPTY asks where the cursor is and
   emits nothing else until it hears back, so a harness with no responder looks
