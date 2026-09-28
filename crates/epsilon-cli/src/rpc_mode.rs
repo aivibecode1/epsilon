@@ -1093,7 +1093,17 @@ async fn dispatch_line(
                 .parent()
                 .map(std::path::Path::to_path_buf)
                 .unwrap_or_else(|| dir.clone());
-            let file = dir.join(format!("{}.jsonl", epsilon_contracts::new_id("ses")));
+            // The store's OWN naming convention, not a name invented here. A fork and a
+            // new session must land in the same directory under the same spelling, or a
+            // listing shows two groups with no visible reason. Found by listing the
+            // directory after driving the installed binary: a fork read
+            // `2026-09-28T10-28-30-472Z_ses_….jsonl` and this read `ses_….jsonl`.
+            let file = match handle.lock() {
+                Ok(guard) => guard.new_session_path(),
+                Err(_) => {
+                    return err_line(Some("new_session"), id, "session store poisoned");
+                }
+            };
             let built = match parent_session {
                 Some(parent) => epsilon_core::SessionStore::open_child_in(&file, &cwd, &parent),
                 None => epsilon_core::SessionStore::open_in(&file, &cwd),
@@ -3821,5 +3831,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **A fork and a new session must be named the same way.**
+    ///
+    /// The wire probe found this: after driving the installed binary, one directory held
+    /// `2026-09-28T10-28-30-472Z_ses_….jsonl` (the fork, named by the store) and
+    /// `ses_….jsonl` (the RPC `new_session`, named by a `format!` in the handler).
+    /// Nothing failed, and every test passed — two spellings in one directory simply sort
+    /// into two groups, and there is no visible reason why.
+    ///
+    /// The assertion is a COMPARISON between the two names, not a fixed pattern, because
+    /// the convention belongs to the store and is free to change. What cannot be right is
+    /// one directory holding two conventions.
+    #[tokio::test]
+    async fn a_fork_and_a_new_session_are_named_by_the_same_convention() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+
+        let target = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.branch_entries()
+                .expect("branch")
+                .first()
+                .expect("an entry")
+                .id
+                .clone()
+        };
+        let forked = parse(
+            &dispatch_line(
+                &format!(r#"{{"op":"fork","entryId":"{target}"}}"#),
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(forked["success"], true, "{forked}");
+        let fork_path = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.path().to_path_buf()
+        };
+
+        let made = parse(&dispatch_line(r#"{"op":"new_session"}"#, &agent, &approvals).await);
+        assert_eq!(made["success"], true, "{made}");
+        let new_path =
+            std::path::PathBuf::from(made["data"]["sessionFile"].as_str().expect("sessionFile"));
+
+        // Same directory -- a client listing sessions must see both.
+        assert_eq!(
+            fork_path.parent(),
+            new_path.parent(),
+            "both must land in the sessions directory: {fork_path:?} vs {new_path:?}"
+        );
+
+        // And the same SHAPE of name. The store's convention is a timestamp prefix plus a
+        // fresh `ses_` id; what matters here is that both names have that shape, so a
+        // listing sorts them together and a human can read the order off the names.
+        let name_of = |p: &std::path::Path| {
+            p.file_name()
+                .expect("a file name")
+                .to_string_lossy()
+                .into_owned()
+        };
+        let (a, b) = (name_of(&fork_path), name_of(&new_path));
+        for (label, n) in [("fork", &a), ("new_session", &b)] {
+            assert!(
+                n.starts_with("20") && n.contains("_ses_") && n.ends_with(".jsonl"),
+                "{label} must use the store's `<timestamp>_<ses_ id>.jsonl` convention, \
+                 got {n}"
+            );
+        }
+        // The two ids must differ, or the second file would overwrite the first.
+        assert_ne!(
+            a, b,
+            "two different sessions must not share a name: {a} vs {b}"
+        );
     }
 }
