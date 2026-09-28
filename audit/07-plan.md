@@ -105,7 +105,7 @@ everything else on this list.
 | 4.5a | ~~Bidirectional event frames.~~ **DONE `ece3af4`** — `interpose` / `interpose_result` over a demultiplexing reader task. Control: forwarding an event during a slow invoke took 9.74 s before, ms after | ✅ |
 | 4.5b | ~~Wire `ToolHooks`.~~ **DONE `9f73a5f` (before) / `2fb5219` (after)** — a child blocks a call and rewrites the result. Controls fail for the reason they name | ✅ |
 | 4.5c | ~~Wire `TurnHooks`.~~ **DONE `570819e`**, and a **partial port by decision**: `transform_context`/`convert_to_llm` are pass-through, so extensions cannot reshape the prompt. Reasoning in [`02-port-fidelity.md`](02-port-fidelity.md) | ✅ (partial, deliberately) |
-| 4.6 | **Real extension** — write one that is not a test binary, and document the protocol somewhere a third party could follow it. Every claim in 4.5a–c is proven against `ext-fixture`; whether an author could actually use this is untested | A documented extension works without reading the source |
+| 4.6 | **Real extension** — the *documentation* half is **DONE** (`cfdf94c`): `docs/user/extensions.md` with anchored drift tests over it. The **real extension** half is still open — every claim in 4.5a–c is proven against `ext-fixture`, a binary in this repository, so whether an author could actually use this is untested. Next concrete step: write one that is not a test binary | A documented extension works without reading the source |
 
 **4.4 is small and prevents a class of bug that has already happened**: the
 2026-09-21 snapshot is stale and silently wrong for some rows.
