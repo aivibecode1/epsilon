@@ -553,6 +553,29 @@ binary, and the owner's own terminal and real provider.
   real and now fixed but measured at ~0.4% of a frame. Both are recorded because
   inferring a cause from a symptom is exactly what this pass was hired to stop doing.
 
+## The class, not just the instance: seams that pass tests and are never wired
+
+`branch_with_summary` and `ToolHooks`/`TurnHooks` are the same defect wearing different
+clothes, and a third may exist. Worth writing down as a class, because the symptom is
+invisible by construction:
+
+- The primitive is ported faithfully and reads well against the reference.
+- It has **passing tests**, because the tests call it directly.
+- Nothing on the user path calls it.
+- A reader checking for the capability sees green tests and concludes it works.
+
+`set_tool_hooks` / `set_turn_hooks` appear **10 times in the repository and every one is in
+`crates/epsilon-core/tests/loop_scenarios.rs`**. The traits are the right shape for pi's
+mutating extension events and the agent loop invokes them correctly — and a real extension
+child cannot reach either, because `send_event` returns `()` with no reply to carry a
+decision. Verified 2026-09-28; see
+[`evidence/delegation-port-gaps-2026-09-28.md`](evidence/delegation-port-gaps-2026-09-28.md).
+
+**The detection rule that follows:** for any capability a reference harness has and this one
+claims, count the callers by *path*, not by name. Zero non-test callers on a primitive with
+tests is a defect, not a proof of depth. Phase 4 item 4.5 is the fix; the protocol has to
+carry a reply before the seam can be reached.
+
 ## Still open
 
 - **0.6** promote `docs/design/epsilon-architecture.draft.md`.

@@ -46,7 +46,7 @@ model is a superset of pi's; the compaction reserve is numerically identical.
 
 | Capability | pi evidence | Epsilon evidence | Status |
 |---|---|---|---|
-| **Branch navigation** (move the leaf to any ancestor, re-enter) | `agent-session.ts:3116` `navigateTree` | `/tree` is a *viewer*: `tui/src/app/commands.rs:401` → `picker.rs` | **Missing** |
+| **Branch navigation** (move the leaf to any ancestor, re-enter) | `agent-session.ts:3116` `navigateTree` | **Ported and wired** — `session/src/store.rs:1329` `navigate_to`, called by the timeline picker on Enter at `tui/src/app/keys.rs:495` | **Corrected 2026-09-28** (was "Missing") |
 | **Branch summary in production** | `agent-session.ts:3116-3270`, 5 callers, bills usage | `store.rs:1372-1400` exists — **only tests call it** | **Store primitive ported; nothing wires it** |
 | **Extension SDK** | `coding-agent/core/extensions/types.ts:1198-1346` — 157 exports: event bus, `addCommand`, `registerProvider`, `setStatus`, `newSession` | `ext/src/manifest.rs:18-37`, `host.rs:130-263` — process tools and declared events | **Subset only** |
 | **Prompt templates** (`/name` expansion) | `coding-agent/core/prompt-templates.ts:24,70,194,269` | zero references to `PromptTemplate` in any crate | **Missing** |
@@ -131,9 +131,26 @@ honesty is worth preserving through the restructure.
 repository's own documentation understates that gap rather than exaggerating it.**
 
 That is a defensible place to be, and the remaining work is well-chosen rather than
-scattered. But three of the missing items are not "features we might add someday" — they
-are pi capabilities a user would immediately notice are absent: branch navigation, prompt
-templates, and a workable extension surface.
+scattered. Two of the missing items are not "features we might add someday" — they are pi
+capabilities a user would immediately notice are absent: prompt templates, and a workable
+extension surface.
+
+**The extension gap is worse than the 60% figure suggests, and this paragraph was wrong
+until a delegated recheck on 2026-09-28.** Counting the SDK by whether *some* counterpart
+exists flatters the result: an extension can contribute a tool and observe events, which
+looks like a working SDK. It cannot participate in a run, appear in the UI, or survive its
+own process. pi declares 153 exports across 26 areas; `epsilon-ext` is 979 LOC and depends
+only on `epsilon-contracts`, so a child process has no path to the agent at all. See
+[`evidence/delegation-port-gaps-2026-09-28.md`](evidence/delegation-port-gaps-2026-09-28.md).
+
+**And the same recheck corrected a claim above rather than confirming it.** Branch navigation
+was listed here as **Missing**; it is wired (`keys.rs:495`). The audit searched for pi's
+identifier, found no `navigate_to`, and concluded absence — while
+`evidence/port-gap-recheck-2026-09-21.md` and `evidence/F22-compaction-usage-never-read.md`
+had already said so, in this repository, a week earlier. The conclusion was right by luck
+(there *was* a real defect, the missing re-projection, now fixed in `7489c00`) and the
+mechanism was wrong. Treat the other rows in this table as less settled than they look: a
+negative here has only been checked by reading, and one such check has already failed.
 
 ## Honest limits
 
