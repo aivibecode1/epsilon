@@ -1483,33 +1483,6 @@ impl SessionStore {
     /// verification pass is removed (its lease released first) — so an `Err` means
     /// nothing this call created is left behind, and anything that existed before the
     /// call is never touched.
-    /// Build the path a NEW session file gets, in this store's own naming convention:
-    /// `<ISO-8601 timestamp with separators flattened>_<fresh ses_ id>.jsonl`.
-    ///
-    /// **Why a method rather than a caller-side `format!`.** `fork_branch_at` already
-    /// follows this convention, and a second caller that invented its own name produced
-    /// two spellings in the same directory — found by driving the installed binary and
-    /// listing the files, where a fork read `2026-09-28T10-28-30-472Z_ses_….jsonl` and
-    /// the RPC `new_session` read `ses_….jsonl`. Nothing broke; a session list would just
-    /// sort them into two groups and a human would have no way to know why.
-    ///
-    /// The convention is not arbitrary: pi names sessions the same way, and the timestamp
-    /// prefix is what makes a directory listing read in chronological order. The `ses_` id
-    /// is what makes it unique — the timestamp alone collides within a millisecond.
-    ///
-    /// Returns a path only. Creating the file is the caller's business, so this cannot
-    /// half-create a session as a side effect of computing where it goes.
-    pub fn new_session_path(&self) -> PathBuf {
-        self.path()
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(format!(
-                "{}_{}.jsonl",
-                iso_now().replace([':', '.'], "-"),
-                epsilon_contracts::new_id("ses")
-            ))
-    }
-
     pub fn fork_branch_at(
         &self,
         leaf_id: &str,
@@ -1613,6 +1586,33 @@ impl SessionStore {
             ));
         }
         Ok(dest)
+    }
+
+    /// Build the path a NEW session file gets, in this store's own naming convention:
+    /// `<ISO-8601 timestamp with separators flattened>_<fresh ses_ id>.jsonl`.
+    ///
+    /// **Why a method rather than a caller-side `format!`.** `fork_branch_at` already
+    /// follows this convention, and a second caller that invented its own name produced
+    /// two spellings in the same directory — found by driving the installed binary and
+    /// listing the files, where a fork read `2026-09-28T10-28-30-472Z_ses_….jsonl` and
+    /// the RPC `new_session` read `ses_….jsonl`. Nothing broke; a session list would just
+    /// sort them into two groups and a human would have no way to know why.
+    ///
+    /// The convention is not arbitrary: pi names sessions the same way, and the timestamp
+    /// prefix is what makes a directory listing read in chronological order. The `ses_` id
+    /// is what makes it unique — the timestamp alone collides within a millisecond.
+    ///
+    /// Returns a path only. Creating the file is the caller's business, so this cannot
+    /// half-create a session as a side effect of computing where it goes.
+    pub fn new_session_path(&self) -> PathBuf {
+        self.path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(format!(
+                "{}_{}.jsonl",
+                iso_now().replace([':', '.'], "-"),
+                epsilon_contracts::new_id("ses")
+            ))
     }
 
     /// The model-visible view of the active branch: message entries plus the synthetic
