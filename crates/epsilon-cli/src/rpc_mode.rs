@@ -354,6 +354,159 @@ fn normalize_tag(value: &mut serde_json::Value) {
         map.insert("op".to_string(), tag);
     }
 }
+/// pi's `SessionEntry` as RPC sends it: `{ type, id, parentId, timestamp }`.
+///
+/// Three conversions, each load-bearing. pi uses camelCase (`parentId`); the store's Rust
+/// struct is snake_case. pi's `timestamp` is an **ISO-8601 string**; ours is epoch millis,
+/// and a client doing `new Date(entry.timestamp)` on a number gets 1970. The `type` tag
+/// comes from the entry's own codec, so an entry this build cannot decode still reports the
+/// tag the file gave it rather than vanishing from the tree.
+fn entry_as_pi(e: &epsilon_contracts::session_entry::SessionEntry) -> serde_json::Value {
+    serde_json::json!({
+        "type": e.kind.wire_tag(),
+        "id": e.id,
+        "parentId": e.parent_id,
+        "timestamp": epoch_millis_to_iso8601(e.timestamp_ms),
+    })
+}
+
+/// Epoch millis to an ISO-8601 string, the way JavaScript's `new Date(n).toISOString()`
+/// renders it.
+///
+/// A civil-date conversion by hand, on purpose: a date library is a new dependency for one
+/// formatting call, and this is the standard days-from-civil algorithm (Hinnant's, inverted
+/// so the era shift keeps every term positive) with that attribution in the name. UTC only,
+/// with a `Z` suffix, because a timestamp with no offset is a bug waiting for a client in
+/// another timezone -- and pi's `toISOString()` is always UTC with a `Z`.
+fn epoch_millis_to_iso8601(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        y,
+        m,
+        d,
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60,
+        ms % 1000
+    )
+}
+
+/// True when following `parent_id` from `start` upward reaches `goal`.
+///
+/// Linking `start` under `goal` is safe only if `goal` is not one of `start`'s own
+/// ancestors. A file edited by hand can contain `a → b → a`; without this check those two
+/// entries are unreachable from any root, the emitter would build them as nodes that are
+/// never attached, and the session would silently lose them.
+///
+/// The walk is bounded by the entry count. A longer walk means a cycle, which by definition
+/// means `goal` IS reachable, so the bound cannot produce a wrong answer -- it only stops a
+/// walk that would otherwise not terminate.
+fn reaches(
+    entries: &[epsilon_contracts::session_entry::SessionEntry],
+    index: &std::collections::HashMap<&str, usize>,
+    start: usize,
+    goal: usize,
+) -> bool {
+    let mut cursor = start;
+    for _ in 0..entries.len() {
+        if cursor == goal {
+            return true;
+        }
+        let next = match entries[cursor].parent_id.as_deref() {
+            None => return false,
+            Some(p) => match index.get(p) {
+                Some(&n) => n,
+                None => return false, // orphan: the chain ends here
+            },
+        };
+        cursor = next;
+    }
+    true // the bounded walk hit a cycle, so goal is reachable
+}
+
+/// Build pi's nested `SessionTreeNode[]` from a flat entry list.
+///
+/// pi's `getTree()` (`core/session-manager.ts`), reproduced rather than approximated:
+///
+/// - every entry becomes a node `{ entry, children, label, labelTimestamp }`;
+/// - a node is a **root** when its `parentId` is `None`, equals its own id (pi explicitly
+///   tolerates a self-parent), or names a parent that is **not in this file** -- orphans
+///   become roots, so a truncated or hand-edited JSONL renders everything rather than
+///   dropping the tail silently;
+/// - children are sorted by timestamp ascending **at every level**.
+///
+/// The emitter recurses, which is safe because the link pass above has already broken every
+/// cycle: no node is its own ancestor, so depth is bounded by the entry count. That buys
+/// the same guarantee as pi's iterative stack, by a cheaper route -- pi cannot mutate its
+/// input, so it has nowhere to record the decision.
+fn build_tree(
+    entries: &[epsilon_contracts::session_entry::SessionEntry],
+) -> Vec<serde_json::Value> {
+    let index: std::collections::HashMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.id.as_str(), i))
+        .collect();
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
+    let mut is_root = vec![false; entries.len()];
+    for (i, e) in entries.iter().enumerate() {
+        // pi's three root cases, in one place: no parent, a self-parent, or a parent that
+        // is not in the file. Anything else is linked, unless the link would close a loop.
+        let parent = e.parent_id.as_deref().filter(|p| *p != e.id.as_str());
+        match parent {
+            None => is_root[i] = true,
+            Some(p) => match index.get(p) {
+                // A parent that is an ancestor of this entry would close a loop; make the
+                // entry a root so it is still rendered, exactly once.
+                Some(&pi) if reaches(entries, &index, pi, i) => is_root[i] = true,
+                Some(&pi) => children[pi].push(i),
+                None => is_root[i] = true, // orphan
+            },
+        }
+    }
+
+    fn emit(
+        entries: &[epsilon_contracts::session_entry::SessionEntry],
+        i: usize,
+        children: &[Vec<usize>],
+    ) -> serde_json::Value {
+        let mut kids = children[i].clone();
+        kids.sort_by_key(|&c| entries[c].timestamp_ms);
+        serde_json::json!({
+            "entry": entry_as_pi(&entries[i]),
+            "children": kids
+                .iter()
+                .map(|&c| emit(entries, c, children))
+                .collect::<Vec<_>>(),
+            // pi fills these from its label maps; epsilon has no per-entry labels, so
+            // they are present-and-null rather than absent, so a client reading
+            // `node.label` sees null instead of undefined.
+            "label": serde_json::Value::Null,
+            "labelTimestamp": serde_json::Value::Null,
+        })
+    }
+
+    let mut roots: Vec<usize> = (0..entries.len()).filter(|&i| is_root[i]).collect();
+    roots.sort_by_key(|&i| entries[i].timestamp_ms);
+    roots
+        .into_iter()
+        .map(|i| emit(entries, i, &children))
+        .collect()
+}
 
 /// Interpret one request line and return its reply line (no trailing newline).
 ///
@@ -657,13 +810,18 @@ async fn dispatch_line(
             )
         }
         Op::GetTree => {
-            // pi: `{ tree: SessionTreeNode[]; leafId: string | null }`.
+            // pi: `{ tree: SessionTreeNode[]; leafId: string | null }`, where
+            // `SessionTreeNode` is `{ entry, children, label?, labelTimestamp? }` -- a
+            // RECURSIVE forest over EVERY entry, not a flat list of the current branch.
             //
-            // Read through the store's OWN branch walk rather than by following parent
-            // links here. `branch_entries` already handles parent cycles, `seq`/line
-            // mismatches and truncated chains, all of which happen in a hand-edited or
-            // partially-written JSONL file; a second walker in this file would be a second
-            // set of answers about the same data, disagreeing exactly when it mattered.
+            // **This is D27, and it was my own M189 work.** The first version returned
+            // `tree` as a flat array of the branch with `{id, parentId, seq, timestampMs,
+            // kind}`. Three separate mismatches: flat vs nested, branch vs whole file, and
+            // a number where pi sends an ISO-8601 string. It passed 1,446 tests because
+            // the tests asserted my shape. `rpc-types.ts` says `SessionTreeNode[]`, and
+            // that type gives the field NAMES; only `session-manager.ts`'s `getTree()`
+            // gives the structure. A client written against pi would find
+            // `node.children === undefined` and draw nothing.
             let Some(store) = agent.session_store() else {
                 return err_line(
                     Some("get_tree"),
@@ -671,34 +829,16 @@ async fn dispatch_line(
                     "no session store attached: this agent is not persisting a session",
                 );
             };
-            let walk = store
+            let read = store
                 .lock()
                 .map_err(|_| "session store poisoned".to_string())
-                .and_then(|guard| {
-                    Ok((
-                        guard.branch_entries().map_err(|e| e.to_string())?,
-                        guard.leaf_id(),
-                    ))
-                });
-            let (chain, leaf) = match walk {
-                Ok(v) => v,
+                .map(|guard| (guard.read_all().map_err(|e| e.to_string()), guard.leaf_id()));
+            let (all, leaf) = match read {
+                Ok((Ok(all), leaf)) => (all, leaf),
+                Ok((Err(why), _)) => return err_line(Some("get_tree"), id, why),
                 Err(why) => return err_line(Some("get_tree"), id, why),
             };
-            // Nodes carry linkage, not payloads. The entries themselves are one
-            // `get_entries` away, and a tree of a thousand messages should not re-send a
-            // thousand message bodies to render a thousand lines.
-            let tree: Vec<serde_json::Value> = chain
-                .iter()
-                .map(|e| {
-                    serde_json::json!({
-                        "id": e.id,
-                        "parentId": e.parent_id,
-                        "seq": e.seq,
-                        "timestampMs": e.timestamp_ms,
-                        "kind": e.kind.wire_tag(),
-                    })
-                })
-                .collect();
+            let tree = build_tree(&all);
             ok_line(
                 "get_tree",
                 id,
@@ -740,11 +880,23 @@ async fn dispatch_line(
             // pi returns the conversation as `SessionMessage[]`. Epsilon's `Message` is a
             // serde `tag = "role"` enum, so it lands as an array of role-tagged objects --
             // the same JSON shape a pi client expects, from a different Rust type.
+            // pi's client reads `getData<AgentMessage[]>(response).messages` -- a BARE
+            // array, unwrapped. M188 sent `{messages: [...]}`, which was wrong: a client
+            // written against pi iterates the object, gets key names instead of messages,
+            // and renders nothing. Part of D27.
             let history = agent.history();
             ok_line(
                 "get_messages",
                 id,
-                serde_json::json!({ "messages": history }),
+                serde_json::Value::Array(
+                    history
+                        .into_iter()
+                        .map(|m| {
+                            serde_json::to_value(m)
+                                .unwrap_or_else(|e| panic!("a message must serialize: {e}"))
+                        })
+                        .collect(),
+                ),
             )
         }
         Op::GetCommands => {
@@ -800,11 +952,11 @@ async fn dispatch_line(
                     }),
                 }));
             }
-            ok_line(
-                "get_commands",
-                id,
-                serde_json::json!({ "commands": commands, "count": commands.len() }),
-            )
+            // A bare array, like `get_messages`: pi's client reads
+            // `getData<RpcSlashCommand[]>(response).commands`. The `count` key is not in
+            // pi's shape, and a client doing `reply.length` on the wrapper would get the
+            // number of object keys (1) rather than the number of commands.
+            ok_line("get_commands", id, serde_json::Value::Array(commands))
         }
         Op::GetSessionStats => {
             // pi returns `{ contextTokens, inputTokens, outputTokens, cacheReadTokens,
@@ -1952,9 +2104,12 @@ mod tests {
 
         let reply = parse(&dispatch_line(r#"{"op":"get_messages"}"#, &agent, &approvals).await);
         assert_eq!(reply["success"], true, "{reply}");
-        let messages = reply["data"]["messages"]
+        // D27: pi's `getMessages()` returns a BARE array. Reading `data.messages` here is
+        // what M188's test did, and it agreed with the wrong shape for the same reason
+        // the shape was wrong: the test and the code were written from the same guess.
+        let messages = reply["data"]
             .as_array()
-            .unwrap_or_else(|| panic!("messages must be an array: {reply}"));
+            .unwrap_or_else(|| panic!("data must BE the array, as pi sends it: {reply}"));
         assert!(messages.len() >= 2, "user and assistant at least: {reply}");
         assert_eq!(messages[0]["role"], "user", "{reply}");
         assert!(
@@ -1970,7 +2125,7 @@ mod tests {
         let approvals = approvals();
         let reply = parse(&dispatch_line(r#"{"op":"get_messages"}"#, &agent, &approvals).await);
         assert_eq!(reply["success"], true, "{reply}");
-        assert_eq!(reply["data"]["messages"], serde_json::json!([]), "{reply}");
+        assert_eq!(reply["data"], serde_json::json!([]), "{reply}");
     }
 
     /// `get_commands` reports the TUI's own registry, not a second hand-kept list.
@@ -1985,9 +2140,11 @@ mod tests {
         let approvals = approvals();
         let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals).await);
         assert_eq!(reply["success"], true, "{reply}");
-        let commands = reply["data"]["commands"]
+        // D27: pi's `getCommands()` returns a bare `RpcSlashCommand[]`, so `data` IS the
+        // array. The `{commands, count}` wrapper M188 sent is not in pi's shape at all.
+        let commands = reply["data"]
             .as_array()
-            .unwrap_or_else(|| panic!("commands must be an array: {reply}"));
+            .unwrap_or_else(|| panic!("data must BE the array, as pi sends it: {reply}"));
 
         let expected: Vec<String> = epsilon_tui::picker::SLASH_ITEMS
             .iter()
@@ -2023,9 +2180,11 @@ mod tests {
         let agent = agent_with(vec![], 0);
         let approvals = approvals();
         let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals).await);
-        let commands = reply["data"]["commands"]
+        // D27: pi's `getCommands()` returns a bare `RpcSlashCommand[]`, so `data` IS the
+        // array. The `{commands, count}` wrapper M188 sent is not in pi's shape at all.
+        let commands = reply["data"]
             .as_array()
-            .unwrap_or_else(|| panic!("commands must be an array: {reply}"));
+            .unwrap_or_else(|| panic!("data must BE the array, as pi sends it: {reply}"));
         for c in commands {
             if c["name"] == "!define" {
                 continue; // explicitly unsupported, so it carries no path
@@ -2379,15 +2538,20 @@ mod tests {
         );
     }
 
-    /// `get_tree` reports the branch the store walked, and the leaf it landed on.
+    /// **`get_tree` returns pi's nested forest, and every entry appears exactly once.**
+    ///
+    /// **This test is the second half of fixing D27.** The first version asserted a flat
+    /// array of the current branch, which is why the wrong shape passed 1,446 tests: the
+    /// test and the handler were written from the same guess. The assertions below read
+    /// the shape off pi's `SessionTreeNode` and its `getTree()` implementation, so they
+    /// would now fail against the old handler.
     #[tokio::test]
-    async fn get_tree_reports_the_current_branch_and_its_leaf() {
+    async fn get_tree_is_a_nested_forest_of_every_entry() {
         let (agent, _dir) = agent_with_store(vec![
             epsilon_llm::FauxStep::say("one"),
             epsilon_llm::FauxStep::say("two"),
         ]);
         let approvals = approvals();
-
         let mut events = agent.subscribe();
         let _ = dispatch_line(r#"{"op":"prompt","task":"first"}"#, &agent, &approvals).await;
         wait_for_end(&mut events).await;
@@ -2395,22 +2559,112 @@ mod tests {
         let _ = dispatch_line(r#"{"op":"prompt","task":"second"}"#, &agent, &approvals).await;
         wait_for_end(&mut events2).await;
 
-        // **Fork, or this test cannot tell `get_tree` from `get_entries`.**
-        //
-        // The control that made this necessary replaced `branch_entries()` with
-        // `read_all()` and all 48 tests still passed — on a LINEAR session the branch
-        // and the whole file are the same list, so the two ops are indistinguishable. The
-        // property "get_tree returns the branch" only means anything once an entry sits
-        // on the file that the branch does not contain, which takes a `navigate_to` back
-        // to an earlier entry followed by a run on the new branch.
-        // **A MIDDLE message entry, and the choice is load-bearing.**
-        //
-        // Navigating to the FIRST message leaves the branch exactly as long as the file,
-        // because everything after it is still on the branch -- so the first two versions
-        // of this test asserted `branch.len() < file.len()` and got 6 == 6. Navigating to
-        // the LAST strands nothing either, for the same reason in reverse. Only a middle
-        // entry leaves entries on both sides, which is the only state in which "the
-        // branch" and "the file" are different things and the two ops can be told apart.
+        let tree = parse(&dispatch_line(r#"{"op":"get_tree"}"#, &agent, &approvals).await);
+        let all = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        assert_eq!(tree["success"], true, "{tree}");
+        let roots = tree["data"]["tree"]
+            .as_array()
+            .unwrap_or_else(|| panic!("tree must be an array: {tree}"));
+        let file = all["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {all}"));
+
+        // **Nesting is the property the old handler lacked.** Every node has a `children`
+        // ARRAY, and a node below the root level proves the tree actually nests. A flat
+        // array of entries has no `children` key at all, so this is the assertion that
+        // would have caught D27.
+        fn walk(
+            nodes: &[serde_json::Value],
+            depth: usize,
+            seen: &mut Vec<String>,
+            file: &[serde_json::Value],
+        ) {
+            for n in nodes {
+                assert!(
+                    n["children"].is_array(),
+                    "every node needs a children ARRAY (pi's SessionTreeNode): {n}"
+                );
+                assert_eq!(
+                    n["label"],
+                    serde_json::Value::Null,
+                    "labels are null, not absent: {n}"
+                );
+                assert!(
+                    n["labelTimestamp"].is_null(),
+                    "labelTimestamp is null too: {n}"
+                );
+                // pi's SessionEntry as RPC sends it: camelCase, and an ISO STRING.
+                assert!(n["entry"]["id"].is_string(), "{n}");
+                assert!(n["entry"].get("parentId").is_some(), "{n} needs parentId");
+                assert!(n["entry"]["type"].is_string(), "{n} needs a type tag");
+                let ts = n["entry"]["timestamp"].as_str().unwrap_or_else(|| {
+                    panic!("timestamp must be an ISO STRING, not a number: {n}")
+                });
+                assert!(
+                    ts.ends_with('Z') && ts.contains('T') && ts.len() == 24,
+                    "timestamp must be ISO-8601 UTC with a Z and millis: {ts}"
+                );
+                // Every node must correspond to a real entry -- no invented nodes.
+                assert!(
+                    file.iter().any(|e| e["id"] == n["entry"]["id"]),
+                    "the tree invented an entry not in the file: {n}"
+                );
+                let id = n["entry"]["id"].as_str().unwrap().to_string();
+                assert!(!seen.contains(&id), "an entry appeared twice: {id}");
+                seen.push(id);
+                walk(n["children"].as_array().unwrap(), depth + 1, seen, file);
+            }
+        }
+        let mut seen = Vec::new();
+        walk(roots, 0, &mut seen, file);
+        assert!(
+            seen.len() >= 3,
+            "a two-run session has several entries, all of which must be in the tree: {tree}"
+        );
+        let max_depth = {
+            fn deep(nodes: &[serde_json::Value]) -> usize {
+                nodes
+                    .iter()
+                    .map(|n| 1 + deep(n["children"].as_array().unwrap()))
+                    .max()
+                    .unwrap_or(0)
+            }
+            deep(roots)
+        };
+        assert!(
+            max_depth >= 2,
+            "pi's tree NESTS -- a linear session must still be depth 2 or more: {tree}"
+        );
+    }
+
+    /// The forest's roots carry the whole file, not just the current branch.
+    ///
+    /// pi's `getTree()` iterates `getEntries()` -- the WHOLE file -- and orphans become
+    /// roots, so an abandoned branch still appears. The old handler returned
+    /// `branch_entries()`, so after a fork the off-branch entries simply vanished from the
+    /// reply. This is the assertion that distinguishes the two, and the control that
+    /// restores `branch_entries()` fails here.
+    #[tokio::test]
+    async fn get_tree_includes_entries_off_the_current_branch() {
+        let (agent, _dir) = agent_with_store(vec![
+            epsilon_llm::FauxStep::say("one"),
+            epsilon_llm::FauxStep::say("two"),
+            epsilon_llm::FauxStep::say("three"),
+        ]);
+        let approvals = approvals();
+        for task in ["first", "second"] {
+            let mut e = agent.subscribe();
+            let _ = dispatch_line(
+                &format!(r#"{{"op":"prompt","task":"{task}"}}"#),
+                &agent,
+                &approvals,
+            )
+            .await;
+            wait_for_end(&mut e).await;
+        }
+        // Jump back to a MIDDLE message and run again, so the old branch is stranded.
+        // First and last are both wrong: navigating to the first leaves the branch as long
+        // as the file, and navigating to the last strands nothing.
         let target = {
             let handle = agent.session_store().expect("store attached");
             let st = handle.lock().expect("lock");
@@ -2426,57 +2680,44 @@ mod tests {
                 })
                 .map(|e| e.id)
                 .collect();
-            let mid = msgs.len() / 2;
-            assert!(
-                msgs.len() >= 3,
-                "a middle entry needs entries on both sides; got {msgs:?}"
-            );
-            msgs[mid].clone()
+            assert!(msgs.len() >= 3, "need entries on both sides: {msgs:?}");
+            msgs[msgs.len() / 2].clone()
         };
         {
             let handle = agent.session_store().expect("store attached");
             let mut st = handle.lock().expect("lock");
-            st.navigate_to(&target).expect("navigate to a real entry");
+            st.navigate_to(&target).expect("navigate");
         }
-        let mut events3 = agent.subscribe();
+        let mut e3 = agent.subscribe();
         let _ = dispatch_line(r#"{"op":"prompt","task":"third"}"#, &agent, &approvals).await;
-        wait_for_end(&mut events3).await;
+        wait_for_end(&mut e3).await;
 
         let tree = parse(&dispatch_line(r#"{"op":"get_tree"}"#, &agent, &approvals).await);
         let all = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
-        assert_eq!(tree["success"], true, "{tree}");
-        assert_eq!(all["success"], true, "{all}");
-
-        let branch = tree["data"]["tree"]
-            .as_array()
-            .unwrap_or_else(|| panic!("tree must be an array: {tree}"));
         let file = all["data"]["entries"]
             .as_array()
             .unwrap_or_else(|| panic!("entries must be an array: {all}"));
-        assert!(
-            branch.len() < file.len(),
-            "the fork must make the branch SHORTER than the file, or this test cannot \
-             distinguish the two ops: branch={} file={}",
-            branch.len(),
-            file.len()
-        );
 
-        // Every node carries linkage — that is what a tree IS. A node without a parent
-        // field would render as a flat list in a client.
-        for node in branch {
-            assert!(node["id"].is_string(), "{node} has no id: {tree}");
-            assert!(
-                node.get("parentId").is_some(),
-                "{node} has no parentId key: {tree}"
-            );
-            assert!(node["seq"].is_u64(), "{node} has no seq: {tree}");
+        // Count the ids in the forest, recursively.
+        fn ids(nodes: &[serde_json::Value], out: &mut Vec<String>) {
+            for n in nodes {
+                out.push(n["entry"]["id"].as_str().unwrap().to_string());
+                ids(n["children"].as_array().unwrap(), out);
+            }
         }
-        // The leaf must be the LAST node's id: the chain ends where the store says it does.
-        let last = branch.last().expect("non-empty");
-        assert_eq!(
-            tree["data"]["leafId"].as_str(),
-            last["id"].as_str(),
-            "the leaf must be the final node: {tree}"
+        let mut in_tree = Vec::new();
+        ids(tree["data"]["tree"].as_array().unwrap(), &mut in_tree);
+        for e in file {
+            let id = e["id"].as_str().unwrap();
+            assert!(
+                in_tree.contains(&id.to_string()),
+                "entry {id} is in the file but missing from the tree; pi renders the WHOLE \\
+                 file and orphans as roots, so a stranded branch must still appear"
+            );
+        }
+        assert!(
+            in_tree.len() > tree["data"]["leafId"].as_str().map(|_| 0).unwrap_or(0),
+            "sanity: the forest is non-empty"
         );
     }
 

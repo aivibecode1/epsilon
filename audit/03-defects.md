@@ -679,3 +679,36 @@ no caller — and it is the honest next candidate for this rule.
   `--exe-args "--crash"` to `console-probe.py` yields a **false PASS**, because the probe sets
   `EPSILON_TUI_CRASH` in the child environment itself and the argument only makes the CLI exit
   normally. The console is healthy precisely because nothing crashed.
+
+- **D27 — M189 shipped `get_tree` with the WRONG SHAPE: a flat array where pi returns a
+  nested forest. OPEN; fix in flight.** Found while verifying M189's installed binary, by
+  reading pi's `session-manager.ts` rather than its type declarations.
+
+  pi's `getTree()` (`core/session-manager.ts`) builds a **recursive** structure over **every**
+  entry: a node is `{ entry, children: SessionTreeNode[], label?, labelTimestamp? }`, roots
+  are entries with `parentId === null` **or a broken parent chain** (orphans become roots),
+  and each level's children are sorted by `entry.timestamp` ascending. `SessionEntry` itself
+  is `{ type, id, parentId, timestamp }` — camelCase, and `timestamp` is an **ISO string**,
+  not epoch millis.
+
+  What M189 shipped: `tree` as a **flat array of the current branch**, with
+  `{id, parentId, seq, timestampMs, kind}`. Three separate mismatches — flat vs nested,
+  branch vs whole file, and `timestampMs: number` vs `timestamp: string`. A client written
+  against pi would render no tree at all: `node.children` is `undefined`, so the walk that
+  draws a tree throws or draws nothing.
+
+  **It passed 1,446 tests including two controls**, because the tests asserted against my
+  own shape. This is D26's lesson in a new form: *reading a reference's TYPE proves the
+  field names, and reading its IMPLEMENTATION proves the structure.* `rpc-types.ts` says
+  `tree: SessionTreeNode[]` and I checked the element type; that array is trees, not entries,
+  and only the implementation says so.
+
+  Also found in the same reading, same severity class: **pi's `getMessages()` returns
+  `AgentMessage[]` directly** (`rpc-client.ts`: `this.getData<AgentMessage[]>(...).messages`),
+  and `getCommands()` returns `RpcSlashCommand[]` — M188 wrapped both in an object
+  (`{messages: [...]}`, `{commands: [...], count}`). `getEntries`/`getTree`/`getSessionStats`
+  are the ones that really are objects in pi. So three of the M188/M189 replies carry a
+  wrapper pi's client does not unwrap.
+
+  Not yet fixed at the time of writing; the fix rebuilds `get_tree` as a recursive forest
+  and re-shapes the three list replies to bare arrays.
