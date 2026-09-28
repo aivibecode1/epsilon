@@ -585,10 +585,12 @@ carry a reply before the seam can be reached.
   (`ece3af4`) and the production bridge (`9f73a5f`). **Phase 5** (repository structure) not
   started. Remaining in Phase 4: `AfterToolCallResult` wiring (result rewriting), and
   `TurnHooks`, which is still test-only — the interpose transport now makes it reachable.
-- **D22 — the installed release binary predates ADR-019.** `epsilon.exe` was reinstalled and
-  verified at `5632db2`, before `e9d5b94`/`ece3af4`/`9f73a5f`. Every claim in
-  [`gate-m181.md`](gate-m181.md) is about the source tree and the debug build only. Reinstall
-  and probe before describing shipped behaviour.
+- ~~**D22 — the installed release binary predates ADR-019.**~~ **Closed** by reinstall at
+  05:27 (15m 09s release build) and verified by marker plus two live probes — see
+  [`installed-binary-2026-09-28-post-adr019.md`](installed-binary-2026-09-28-post-adr019.md).
+  All six ADR-019 and session markers are present, typing during a paced stream rendered
+  **40 characters** in the editor, and the crash probe reports
+  `PASS: the terminal was restored and the crash was reported`.
 - **D23 — `docs/history.md` is corrupt below M160, in a commit this session did not
   introduce.** Verified present in `5d5dda7~1`: milestone numbers M161–M171 sit on their own
   lines with their rows' leading `|` stripped, so `M163| M144 | **Read side only...` reads
@@ -606,6 +608,11 @@ carry a reply before the seam can be reached.
   `gate-m180-1.md`.) Two things the battery does not cover: `--no-default-features` (which
   found a real pre-existing compile failure, now fixed in `57812ca`), and anything whose
   symptom is a broken console rather than a wrong value.
-- The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` **is** the post-session release build
-  (reinstalled and verified by string + probe; see
-  [`installed-binary-2026-09-28.md`](installed-binary-2026-09-28.md)).
+- The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` **is** the current release build, verified
+  for the session/TUI work at [`installed-binary-2026-09-28.md`](installed-binary-2026-09-28.md)
+  and for ADR-019 at
+  [`installed-binary-2026-09-28-post-adr019.md`](installed-binary-2026-09-28-post-adr019.md).
+  One caveat is now recorded rather than left for the next reader to rediscover: passing
+  `--exe-args "--crash"` to `console-probe.py` yields a **false PASS**, because the probe sets
+  `EPSILON_TUI_CRASH` in the child environment itself and the argument only makes the CLI exit
+  normally. The console is healthy precisely because nothing crashed.

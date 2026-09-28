@@ -129,6 +129,12 @@ Two things the battery does NOT cover, both found after it passed:
   tool call open for 10 s — a 30-call turn would add 5 minutes. Found by a test that *expected*
   the policy to be enough. `INTERPOSE_TIMEOUT_SECS = 1` now. When writing a failure policy,
   ask what a *misbehaving* peer costs per call, not just whether it can stop the run.
+- **`console-probe.py --exe-args "--crash"` is a FALSE PASS.** The probe sets
+  `EPSILON_TUI_CRASH` in the child env itself (`console-probe.py:555`); passing `--crash` as
+  an argument only makes the CLI print `unknown argument` and exit cleanly, so the console is
+  restored and responsive *because nothing crashed*. Watch `crash_reported`, not the verdict
+  string alone. Third time this session a control passed because the thing under test never
+  ran (after the two reducer-test attempts).
 - **A test that "runs" is not the same as a test that ran.** The CLI e2e tests locate the ext
   fixture by path and **skip** when it is absent. I built the fixture and checked the skip
   count was 0 — otherwise four green tests could be four tests that did nothing.
