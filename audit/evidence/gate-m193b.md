@@ -95,7 +95,39 @@ runs, and only clippy could.
 
 ## Installation
 
-Refreshed after M192 (`3baff78`, 21,486,080 bytes) and probed — that probe is what found
-D29. **The installed binary does not yet contain the M193 fixes**; it must be reinstalled
-before the D29 and naming claims can be said to hold on the shipped artifact rather than
-only in the source and the suite.
+Refreshed after M193 and re-probed. Installed `epsilon.exe` is **21,466,112 bytes** — a
+different size from M192's 21,486,080, which is the first sign the artifact changed at all.
+
+**D29 confirmed on the shipped binary.** Same session, same entry, both ops:
+
+```json
+// get_entries
+{"id":"ent_1a0e7aa7b682","parentId":null,
+ "timestamp":"2026-09-28T10:58:24.744Z","type":"message"}
+// get_tree  -- identical
+{"id":"ent_1a0e7aa7b682","parentId":null,
+ "timestamp":"2026-09-28T10:58:24.744Z","type":"message"}
+```
+
+Before the fix, `get_entries` returned `kind` / `parent_id` / `seq` / `timestamp_ms` and
+`type` read `None`. It now reads `message`.
+
+**The naming fix confirmed on the shipped binary.** Three files in one directory, all the
+store's convention:
+
+```
+2026-09-28T10-58-18-021Z_ses_1a0e7aa61250.jsonl   <- the fork        500 bytes
+2026-09-28T10-58-18-051Z_ses_1a0e7aa61430.jsonl   <- new_session     160 bytes
+rpc.jsonl                                          <- the original
+```
+
+Before the fix, `new_session` produced `ses_1a0e78f1aa70.jsonl` — no timestamp, no
+convention, sitting beside a fork that had both.
+
+**The full M192 op set re-verified end to end** on this binary: `fork` shortens 2 entries
+to 1 with the tree re-deriving to one root; `new_session` reports 0 entries and
+`get_messages` returns a bare `ARRAY[0]`; `switch_session` restores the original's 2
+entries.
+
+No real provider was called; stderr reports no credentials and the runs completed on the
+offline faux provider. These are protocol measurements, not model behaviour.

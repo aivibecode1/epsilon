@@ -129,3 +129,34 @@ same failure as a test that asserts itself — just further from the code.
   already active` is a *run* guard, not a session guard; two concurrent sessions in one
   process were not exercised.
 - **`export_html` and `bash` were not probed** — both unimplemented.
+
+---
+
+## Re-probe after M193 — both defects fixed on the shipped artifact
+
+**Binary:** 21,466,112 bytes (M192's was 21,486,080 — the size moved, which is the first
+sign anything changed).
+
+`type` went from `None` to `message`, and both ops now return **byte-identical** entries:
+
+```json
+{"id":"ent_1a0e7aa7b682","parentId":null,
+ "timestamp":"2026-09-28T10:58:24.744Z","type":"message"}
+```
+
+The internal names are gone: no `kind`, no `parent_id`, no `seq`, no `timestamp_ms`.
+
+All three session files in one directory now use the store's convention:
+
+```
+2026-09-28T10-58-18-021Z_ses_1a0e7aa61250.jsonl   <- fork       500 bytes
+2026-09-28T10-58-18-051Z_ses_1a0e7aa61430.jsonl   <- new_session 160 bytes
+rpc.jsonl                                          <- original
+```
+
+And the M192 op set still holds end to end: fork 2 → 1 entry with the tree at one root;
+`new_session` at 0 entries and `get_messages` a bare `ARRAY[0]`; `switch_session` back to
+2 entries.
+
+Still no real provider call — stderr reports no credentials and the runs used the offline
+faux provider. Protocol shape only.

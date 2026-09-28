@@ -121,6 +121,19 @@ function. Nothing was wrong with either method. Its other stages passed with the
 targets and 1,461 results the passing battery later reported — so the test total could not
 distinguish the two runs, and only clippy could.
 
+## Closed on the shipped artifact
+
+Installed and re-probed: **21,466,112 bytes** (M192's was 21,486,080). Both ops now return
+**byte-identical** entries, with the internal names gone:
+
+```json
+{"id":"ent_1a0e7aa7b682","parentId":null,
+ "timestamp":"2026-09-28T10:58:24.744Z","type":"message"}
+```
+
+`type` read `None` before the fix and reads `message` now. All three session files in one
+directory use the store's convention, the fork included.
+
 ## Limits
 
 - **pi's per-type entry payloads are not ported.** `SessionEntryBase` gives the four common
