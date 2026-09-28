@@ -3,7 +3,9 @@
 **Date: 2026-09-28. Commit: `cac8c35`. Log: [`gate-m180-1.log`](gate-m180-1.log).**
 
 Run with `pwsh -File scripts/gate.ps1 m180-1`, one build job, `CARGO_TARGET_DIR=D:/eps-target`.
-The log is copied out of `target/` before any cleanup, per AGENTS.md.
+The log is committed alongside this file. It is the one exception to the `audit/evidence/*.log`
+ignore rule (see `.gitignore`), because a claim that cites a log is not traceable if the log
+is not in the repository.
 
 ## Result
 
