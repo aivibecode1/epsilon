@@ -59,3 +59,8 @@ audit/evidence/*.log
 !audit/evidence/gate-m182.log
 !audit/evidence/gate-m183-FAILED-stale-snapshot.log
 !audit/evidence/gate-m183b.log
+
+# M196: the battery that first produced a fully green run on this machine, and
+# the one the D8050 fix is cited from. Named individually like the rest, because
+# the distinction being drawn is WHICH battery, not what shape it has.
+!audit/evidence/gate-m196.log

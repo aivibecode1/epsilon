@@ -25,6 +25,37 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = "1" }
 
+# Build output goes OUTSIDE this repository, and that is load-bearing rather
+# than tidiness.
+#
+# M196: writing build output inside this directory makes `cl.exe` fail with
+#
+#   Command line error D8050 : cannot execute '...\c1.dll': failed to get
+#   command line into debug records
+#
+# which cargo reports as `failed to run custom build command for <crate>` --
+# naming a dependency rather than the cause. It is **specific to this
+# directory**, measured by varying one thing at a time with a forced
+# `cargo clean -p <crate>` each time so a cache hit could not pass for a fix:
+#
+#   ...\Desktop\Epsilon-target                       len 34   D8050 0
+#   ...\My Agent Space\Eps2\target  (sibling)       len 46   D8050 0
+#   ...\My Agent Space\Another Name Here\target     len 44   D8050 0
+#   ...\Temp\bt aaaaaaaaaaaaaaaaaaaaaaaa (long+space) len 60  D8050 0
+#   ...\My Agent Space\Epsilon\t2   (inside repo)   len 45   D8050 1
+#   ...\My Agent Space\Epsilon\target                len 49   D8050 1
+#
+# A longer path passes and a shorter one fails, so it is not path length; and
+# changing only the last name -- `Epsilone`, `EpsilonX`, `Xpsilon`, `epsilonn`
+# -- all pass, so it is not the name. Something outside the compiler is holding
+# this tree, and this is what that looks like from inside `c1.dll`. See
+# `agents/memory/build-blockers-resolved.md`.
+#
+# `%TEMP%\epsilon-target` is used rather than a fixed drive path: it is on the
+# same volume, it survives no configuration, and it is the one place a build
+# artifact is expected to be disposable.
+$env:CARGO_TARGET_DIR = Join-Path $env:TEMP "epsilon-target"
+
 # The MSVC build environment, loaded before anything runs.
 #
 # M196 moved TLS to `ring`, so the workspace no longer has a C dependency and

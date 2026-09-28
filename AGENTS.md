@@ -233,8 +233,16 @@ cargo install --path crates/epsilon-cli --features real --force   # when CLI/TUI
 df -h /c
 ```
 
-Do **not** set `CARGO_TARGET_DIR`, and do not create a `[build] target-dir` in any
-`cargo.toml`. Builds go to the repo's own `target/`. The 21 GB that used to sit in
+**Build output goes to `%TEMP%\epsilon-target`, not the repo's `target/` — this is
+load-bearing, not tidiness.** Writing build output *inside this repository* makes
+`cl.exe` fail with `Command line error D8050 : cannot execute c1.dll`, which cargo
+reports as a failed custom build command for some C dependency, naming the crate
+rather than the cause. It is specific to this directory: a sibling repo, a longer
+path, and a path with more spaces all build fine, and so does any other name in
+the same folder. `scripts/gate.ps1` sets it; the measurements are in
+[`agents/memory/build-blockers-resolved.md`](agents/memory/build-blockers-resolved.md).
+Do not add a `[build] target-dir` to any `cargo.toml` — the setting is per-machine and
+belongs to the gate script, not to the project. The 21 GB that used to sit in
 `D:/eps-target` was deleted; `D:` is not a build drive and is not to be written to.
 
 Budget a cold round at **~30–45 min with one job** (the C dependency build dominates; a

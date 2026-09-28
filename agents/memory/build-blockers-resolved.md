@@ -42,25 +42,76 @@ build again; the ruled-out list is the expensive part.
    (1,547 chars against a 32,767 limit), path spaces, `-Z7`, the MSVC env,
    `TEMP`, 8-way parallelism, build-dir CWD, non-ASCII paths, NASM.
 
-## NOT RESOLVED
+## SOLVED: D8050 is caused by building INSIDE the Epsilon repo directory
 
-**D8050 survives.** Switching TLS from `aws-lc-rs` to `ring` cleared the NASM
-and perl problems and removed `aws-lc-sys` entirely — but `ring` is *also* a C
-build, and now fails with **the same D8050**, on the same machine, in the same
-environment where `cl.exe` compiles the identical file by hand with exit 0.
+**A delegated investigation proposed a cause and I checked it. The proposal was
+wrong on both of its claims, and the controlled experiment that refuted it also
+produced the real answer.**
 
-So the fault belongs to `cl.exe` on this machine, not to any one crate. Worth
-recording: D8050 is **undocumented by Microsoft** (only its sibling D8049 has
-official docs); the identical string appears in
-[microsoft/vcpkg#25955](https://github.com/microsoft/vcpkg/issues/25955), closed
-as "not enough information"; and a StackOverflow answer attributes it to user
-rights with a session missing `USERPROFILE` (which is set here).
+The proposal was that D8050 is a debug-record path-length bug, triggered by a
+long path containing a space. Two measurements kill it:
 
-**Left to try — all owner's decisions, none to be taken silently from an agent
-session:** install NASM and revert to `aws-lc-rs`; or repair/reinstall the
-Visual Studio toolchain, which was the vcpkg maintainer's only suggestion; or
-run the battery where MSVC is known good. Changing antivirus configuration or
-installing software is out of scope for an automated session.
+| target dir | `-Fo` path len | D8050 |
+|---|---|---|
+| `…\Temp\bt aaaaaaaaaaaaaaaaaaaaaaaaaa` | **128** | **0** |
+| `…\My Agent Space\Epsilon\target` | **117** | **7** |
+
+**A longer path passes and a shorter one fails**, so it is not length. And
+`C:\b t` (short, with a space) also passes, so it is not the space.
+
+What is actually the variable, from five controlled runs varying one thing at a
+time — every one with a forced `cargo clean -p ring` so a cache hit could not
+pass for a fix:
+
+| target dir | len | D8050 |
+|---|---|---|
+| `…\Desktop\Epsilon-target` | 34 | 0 |
+| `…\Desktop\MYAGEN~1\Epsilon\target` (8.3) | 43 | 0 |
+| `…\My Agent Space\Eps2\target` (sibling) | 46 | 0 |
+| `…\My Agent Space\Another Name Here\target` | 44 | 0 |
+| `…\Temp\bt aaaa…` (long, spaces) | 60 | 0 |
+| **`…\My Agent Space\Epsilon\t2`** (inside the repo) | 45 | **1** |
+| **`…\My Agent Space\Epsilon\target`** | 49 | **1** |
+
+and then, holding everything else fixed and changing only the final name:
+
+| final name, all under `My Agent Space` | D8050 |
+|---|---|
+| **`Epsilon`** | **1** |
+| `Epsilone` (one char longer) | 0 |
+| `EpsilonX` (a superset) | 0 |
+| `Xpsilon` (same length) | 0 |
+| `epsilonn` (lower case) | 0 |
+
+**The failure occurs only when build output is written inside the real Epsilon
+directory.** A sibling with the same parent, the same depth, the same length,
+the same spaces, and a name that is a prefix, a superstring, or the same length
+— all pass.
+
+**Conclusion: the directory is being watched or held by something outside the
+compiler**, and D8050 is what that looks like from inside `cl.exe`. Reaching
+`c1.dll` requires a handle the scanner is holding. That is consistent with the
+avalanche of unexplained `UnauthorizedAccessException`s on `%TEMP%` earlier in
+the same session, and with this repository's own recorded experience of Avira
+blocking writes on freshly created files (AGENTS.md, "Windows notes").
+
+**The fix that requires nothing:** build somewhere else.
+
+```sh
+export CARGO_TARGET_DIR=C:/bt   # or wherever, outside this directory
+```
+
+Verified: `exit=0, D8050=0` on a full rebuild.
+
+**And a corollary about how this was found:** nine hypotheses were measured and
+thrown away before a delegated agent supplied one that was also wrong, and the
+controlled experiment designed to *confirm* it is what isolated the real cause.
+A test built to confirm a belief is worth more when it can fail.
+
+**What is still an owner's decision:** the underlying reason. Identifying the
+exact component holding the handle, and excluding the directory from the
+scanner, both require administrator rights and a security-configuration change.
+Not something to do silently from an agent session.
 
 ## Two failures I caused, both fixed, both instructive
 
@@ -103,6 +154,11 @@ rather than allowed to finish.
 
 ## Machine
 
-Build on `C:` only, in the repo's `target/`. `CARGO_BUILD_JOBS=1`. One build
-owner. `pwsh -File scripts/gate.ps1 <label>`. Fresh label per attempt.
-`gate.sh` is WSL here and cannot find cargo.
+- `CARGO_BUILD_JOBS=1`. One build owner. Fresh label per attempt.
+- `pwsh -File scripts/gate.ps1 <label>`. `gate.sh` is WSL here and cannot find
+  cargo.
+- **Build output goes to `%TEMP%\epsilon-target`, NOT the repo's `target/`.**
+  See the D8050 section above: building inside this directory fails. The
+  battery's own log still lands in `<repo>/target/gate-<label>.log` so it is
+  found where the docs say it is.
+- Never on `D:` — the owner's rule.
