@@ -230,6 +230,18 @@ Two things the battery does NOT cover, both found after it passed:
   The find had succeeded; the *anchor choice* was wrong. A line count is the cheapest
   possible check that an edit did what you meant.
 
+  **This has now happened THREE times (bill at `self.model_id()`; `get_tree` on a linear
+  session; two inert date controls). A control that passes is a control you have not yet
+  proven works.** Before believing a passing control, check that the mutation changes the
+  VALUE the test asserts on — run the mutated function standalone, or read the branch
+  condition and confirm a test instant reaches it. I have twice discovered a control was a
+  no-op only because it passed.
+
+- **Derive an expected value; never compute it in your head.** M191: two hand-computed
+  ISO instants were wrong (one by 14,600,000 ms — four hours and a second) and the
+  implementation was right both times. 200,000 fuzzed instants against Python's
+  `datetime` gave 0 mismatches. A test whose expected value you guessed will tell you the
+  code is broken.
 - **A control must actually CHANGE BEHAVIOUR, and prove it did before trusting its result.**
   M189, twice:
   - *Invalid control:* billed every response to `self.model_id()`. All 48 tests passed.
