@@ -160,29 +160,33 @@ contention, and single-job builds with an external target have passed every roun
 
 ## Disk hygiene (this machine has a small, chronically-full C: drive)
 
-Rust build artifacts are enormous — this repo's `target/` alone grows past 35 GB and
-has pushed C: to 96% full. **Clear the cache after every test/build round**, not just
-at the end of a session (owner's standing rule, 2026-09-14):
+Rust build artifacts are enormous — this repo's `target/` alone grows past 35 GB and has
+pushed C: to 96% full. So builds go to an external target dir, and **C: is the drive to
+watch** (repo, `~/.cargo`, the user):
 
 ```sh
-cargo install --path crates/epsilon-cli --features real --force  # ONLY when CLI/TUI behavior changed: refresh the global exe FIRST
-cargo clean && rm -rf target                                     # then wipe build artifacts (~35-40 GB here)
-df -h /c                                                         # confirm free space recovered
+export CARGO_TARGET_DIR=D:/eps-target   # the scratch space; NOT to be deleted — see below
+export CARGO_BUILD_JOBS=1               # parallel jobs fail here with 0xc0000142
+cargo install --path crates/epsilon-cli --features real --force   # when CLI/TUI behavior changed
+df -h /c
 ```
 
-Budget a cold round at **~30–45 min with one job** (the C dependency build dominates; a release
-`cargo install` measured 28 min with deps warm). Recent rounds build into an external
-`CARGO_TARGET_DIR` rather than an in-repo `target/` — the wipe below then applies to that
-directory. Run the full gate battery once per round, then wipe. Never clean mid-round, and never
-leave a `target/` behind after reporting results.
+**Do not delete `D:\eps-target`.** The owner overrode the old "wipe after every round" rule
+on 2026-09-28: *"leave D:"*. That directory is the warm cache, and rebuilding it costs
+30–45 minutes — it is the reason C: is not full, not a problem to solve. Budget a cold
+round at **~30–45 min with one job** (the C dependency build dominates; a release
+`cargo install` measures ~28 min with deps warm).
 
-- When CLI/TUI behavior changed and gates pass, reinstall the global `epsilon.exe`
-  before cleaning: the user tests the installed binary. No reinstall for docs-only work.
-- If gates fail, preserve the failure evidence, do not install the failing baseline,
-  then clean after the verification round. A failed round does not justify retaining
-  a large cache indefinitely. Never clean while a build/test process is still running.
-- Do not indiscriminately purge shared dependency caches or user runtime data.
-  Clean this repository's disposable artifacts and confirm recovered disk space.
+The rule this replaces said to wipe after every round, and following it is how an agent
+ends up deleting the only thing keeping the disk healthy. **If disk pressure ever makes a
+build impossible, say so and ask — do not resolve it by deleting the build cache.**
+
+- When CLI/TUI behavior changed and gates pass, reinstall the global `epsilon.exe`: the
+  user tests the installed binary, and an un-reinstalled change is invisible to them. No
+  reinstall for docs-only work.
+- If gates fail, preserve the failure evidence and do not install the failing baseline.
+- Never clean while a build/test process is running.
+- Do not purge shared dependency caches or user runtime data under any circumstances.
 
 ## Architecture law
 

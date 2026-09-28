@@ -20,7 +20,33 @@ $env:CARGO_BUILD_JOBS = "1"
 `CARGO_BUILD_JOBS=1` is not superstition here: every gate failure at parallel jobs on this box has
 been `0xc0000142` (compiler startup contention), not a code error.
 
-## Clean up after every round
+## Do NOT wipe `D:\eps-target` — owner override, 2026-09-28
+
+**The cleanup rule below is withdrawn. Leave `D:` alone.**
+
+I announced I would wipe `D:/eps-target` (20 GB) after a round, quoting the disk-hygiene
+rule in `AGENTS.md` and the note that used to live here. The owner's answer was **"leave
+D:"**, followed by **"you are on C: not D:"**.
+
+Read that as: the build target is the scratch space, and it is not mine to reclaim. The
+`AGENTS.md` rule ("clear the cache after every test/build round") and this file both told me
+to delete a directory that was the only reason C: was not full. **I applied an inherited
+rule without asking whether it still served the person who owns the disk.**
+
+What to do instead:
+
+- **Do not delete `D:\eps-target` at the end of a round.** It is a warm cache, and
+  rebuilding it costs 30–45 minutes. Its 20 GB is the price of a fast next round.
+- If disk pressure ever makes a build impossible, **say so and ask** — do not resolve it
+  unilaterally by deleting the thing that is holding the build.
+- `C:` is the one to watch (repo, `~/.cargo`, the user). It sat at 36 GB free / 93% with
+  no action needed from me.
+
+The old rule is kept below only so its error is visible. Do not follow it.
+
+<details><summary>withdrawn rule, kept for the record</summary>
+
+## Clean up after every round — **WITHDRAWN, see above**
 
 ```powershell
 Remove-Item -Recurse -Force D:\eps-target -ErrorAction SilentlyContinue
@@ -28,6 +54,7 @@ Remove-Item -Recurse -Force D:\eps-target -ErrorAction SilentlyContinue
 
 Do not clean while a build or test is running. Do not purge the shared `~/.cargo` registry or user
 runtime data — only this repo's disposable artifacts.
+</details>
 
 ## Build is the long pole
 
