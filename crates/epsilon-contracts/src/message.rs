@@ -273,6 +273,48 @@ impl Message {
     pub fn is_llm_visible(&self) -> bool {
         !matches!(self, Message::Custom(_))
     }
+
+    /// The message's text blocks joined by newlines; empty when it carries none.
+    ///
+    /// Added for RPC's `clear_queue`, which must return the *text* of what it cleared
+    /// (pi's `data: { steering: string[]; followUp: string[] }`) rather than a count, so
+    /// a client can show the user what it dropped and put it back. Matching every text
+    /// block rather than only the first is deliberate: a message with two paragraphs is
+    /// one message, and returning half of it would put a truncated string in front of a
+    /// user deciding whether to restore it.
+    ///
+    /// Text blocks only. An image block contributes nothing, because a base64 payload
+    /// rendered into a text field is not something a client should be asked to display.
+    pub fn text(&self) -> String {
+        let blocks: Vec<&str> = match self {
+            Message::User(m) => m
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    crate::content::UserContent::Text { text } => Some(text.as_str()),
+                    crate::content::UserContent::Image(_) => None,
+                })
+                .collect(),
+            Message::Assistant(m) => m
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            Message::ToolResult(m) => m
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            Message::Custom(_) => Vec::new(),
+        };
+        blocks.join("\n")
+    }
 }
 
 #[cfg(test)]

@@ -101,6 +101,16 @@ enum Op {
     GetCommands,
     /// Token, cost and cache totals for the session.
     GetSessionStats,
+    /// The session's raw entries, optionally only those after `since`.
+    GetEntries {
+        /// The last entry id the caller already has.
+        #[serde(default)]
+        since: Option<String>,
+    },
+    /// The current branch as nodes, plus the leaf's id.
+    GetTree,
+    /// Name the session (a `Custom { "session_name" }` entry, as `/name` writes).
+    SetSessionName { name: String },
 
     /// A well-formed frame naming an op this build does not implement.
     ///
@@ -576,20 +586,155 @@ async fn dispatch_line(
             )
         }
         Op::ClearQueue => {
-            // pi's shape is `{ steering, followUp }` (rpc-types.ts:59) -- BOTH queues. Draining
-            // only steering would leave every follow-up queued and still report a clear, and
-            // follow-ups are the messages that run *after* the agent would otherwise stop, so
-            // the user would watch the run continue and have no way to see why.
-            let steering = agent.drain_steering_all();
-            let follow_up = agent.drain_followups_all();
+            // pi's payload is `{ steering: string[], followUp: string[] }`
+            // (`rpc-types.ts`, RpcResponse) -- the cleared messages' TEXT, not a count.
+            // I first wrote `len()` here, which satisfies "both keys are present" and is
+            // what a reader would expect from a clear, but a client that wants to show
+            // the user what it just dropped has nothing to show. Returning the text is
+            // also what lets a client put it back, which is the entire point of a queue
+            // clear the user might regret.
+            //
+            // Both queues are drained. Leaving follow-ups queued while reporting a clear
+            // is the shape of the TUI defect where steering was restored to the editor
+            // and follow-ups had nowhere to go -- and follow-ups are the messages that
+            // run *after* the agent would otherwise stop, so the run would continue with
+            // no visible reason.
+            let text_of = |msgs: Vec<epsilon_contracts::Message>| -> Vec<String> {
+                msgs.into_iter().map(|m| m.text()).collect()
+            };
+            let steering = text_of(agent.drain_steering_all());
+            let follow_up = text_of(agent.drain_followups_all());
             ok_line(
                 "clear_queue",
                 id,
-                serde_json::json!({
-                    "steering": steering.len(),
-                    "followUp": follow_up.len(),
-                }),
+                serde_json::json!({ "steering": steering, "followUp": follow_up }),
             )
+        }
+        Op::GetEntries { since } => {
+            // pi: `{ entries: SessionEntry[]; leafId: string | null }`, optionally
+            // `since` to fetch only what is newer.
+            //
+            // The store is optional, and an agent with no session mirror is a real state
+            // (RPC mode run without a session). An error naming the cause beats an empty
+            // list, which reads like "this session has no history" and would send a client
+            // hunting for a bug that is not there.
+            let Some(store) = agent.session_store() else {
+                return err_line(
+                    Some("get_entries"),
+                    id,
+                    "no session store attached: this agent is not persisting a session",
+                );
+            };
+            // One lock, one read. The first version of this re-locked the store inside an
+            // `and_then` to fetch the leaf, which is both a clippy `and_then(|x| Ok(y))`
+            // and a self-deadlock waiting for a debug build to notice -- `Mutex` is not
+            // reentrant. Both reads come from the same guard.
+            let read = store
+                .lock()
+                .map_err(|_| "session store poisoned".to_string())
+                .map(|guard| (guard.read_all().map_err(|e| e.to_string()), guard.leaf_id()));
+            let (all, leaf) = match read {
+                Ok((Ok(all), leaf)) => (all, leaf),
+                Ok((Err(why), _)) => return err_line(Some("get_entries"), id, why),
+                Err(why) => return err_line(Some("get_entries"), id, why),
+            };
+            // `since` names the last entry the caller saw; the reply is everything after
+            // it. An id matching nothing returns the WHOLE file rather than nothing: a
+            // `since` the client cannot resolve means it has fallen behind, and an empty
+            // reply would have it conclude the session is empty. The asymmetry is
+            // deliberate -- over-sending is recoverable, under-sending looks like loss.
+            let filtered = match since.as_deref() {
+                None => all,
+                Some(from) => match all.iter().position(|e| e.id == from) {
+                    Some(pos) => all[pos + 1..].to_vec(),
+                    None => all,
+                },
+            };
+            ok_line(
+                "get_entries",
+                id,
+                serde_json::json!({ "entries": filtered, "leafId": leaf }),
+            )
+        }
+        Op::GetTree => {
+            // pi: `{ tree: SessionTreeNode[]; leafId: string | null }`.
+            //
+            // Read through the store's OWN branch walk rather than by following parent
+            // links here. `branch_entries` already handles parent cycles, `seq`/line
+            // mismatches and truncated chains, all of which happen in a hand-edited or
+            // partially-written JSONL file; a second walker in this file would be a second
+            // set of answers about the same data, disagreeing exactly when it mattered.
+            let Some(store) = agent.session_store() else {
+                return err_line(
+                    Some("get_tree"),
+                    id,
+                    "no session store attached: this agent is not persisting a session",
+                );
+            };
+            let walk = store
+                .lock()
+                .map_err(|_| "session store poisoned".to_string())
+                .and_then(|guard| {
+                    Ok((
+                        guard.branch_entries().map_err(|e| e.to_string())?,
+                        guard.leaf_id(),
+                    ))
+                });
+            let (chain, leaf) = match walk {
+                Ok(v) => v,
+                Err(why) => return err_line(Some("get_tree"), id, why),
+            };
+            // Nodes carry linkage, not payloads. The entries themselves are one
+            // `get_entries` away, and a tree of a thousand messages should not re-send a
+            // thousand message bodies to render a thousand lines.
+            let tree: Vec<serde_json::Value> = chain
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "id": e.id,
+                        "parentId": e.parent_id,
+                        "seq": e.seq,
+                        "timestampMs": e.timestamp_ms,
+                        "kind": e.kind.wire_tag(),
+                    })
+                })
+                .collect();
+            ok_line(
+                "get_tree",
+                id,
+                serde_json::json!({ "tree": tree, "leafId": leaf }),
+            )
+        }
+        Op::SetSessionName { name } => {
+            // pi: `{ type: "set_session_name", name }`, success with no payload.
+            //
+            // A session's name is a `Custom { "session_name" }` entry, not a header
+            // field -- that is how `/name` already stores it and how `discover.rs` reads
+            // it back off the tail. Writing it the same way is what makes the RPC op and
+            // the slash command agree; a parallel header field would be invisible to both.
+            let Some(store) = agent.session_store() else {
+                return err_line(
+                    Some("set_session_name"),
+                    id,
+                    "no session store attached: this agent is not persisting a session",
+                );
+            };
+            let written = store
+                .lock()
+                .map_err(|_| "session store poisoned".to_string())
+                .and_then(|mut guard| {
+                    guard
+                        .append(epsilon_contracts::session_entry::EntryKind::Custom {
+                            custom_type: "session_name".to_string(),
+                            data: Some(serde_json::json!({ "name": name })),
+                        })
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                });
+            if let Err(why) = written {
+                return err_line(Some("set_session_name"), id, why);
+            }
+            ok_line("set_session_name", id, serde_json::json!({ "name": name }))
         }
         Op::GetMessages => {
             // pi returns the conversation as `SessionMessage[]`. Epsilon's `Message` is a
@@ -1053,12 +1198,15 @@ mod tests {
         // genuinely unimplemented -- which is a smaller and shrinking set, so the next
         // person to implement one has to update this too. That is the intended friction.
 
+        // `get_entries` and `set_session_name` were the M189 examples here and are
+        // implemented now, so the first example moved to `new_session`, which is not.
+        // The comment above explains why the set keeps shrinking.
         let v =
-            parse(&dispatch_line(r#"{"id":"req_9","op":"get_tree"}"#, &agent, &approvals).await);
+            parse(&dispatch_line(r#"{"id":"req_9","op":"new_session"}"#, &agent, &approvals).await);
         assert_eq!(v["success"], false, "{v}");
         assert_eq!(v["id"], "req_9", "the correlation id still echoes: {v}");
-        assert_eq!(v["command"], "get_tree");
-        assert_eq!(v["error"], "unknown op: get_tree");
+        assert_eq!(v["command"], "new_session");
+        assert_eq!(v["error"], "unknown op: new_session");
 
         // The same op under pi's `type` tag: both dialects reach the same fallback, so a
         // pi-shaped client is not the one that gets a parse error instead of a named one.
@@ -1933,16 +2081,20 @@ mod tests {
 
         let reply = parse(&dispatch_line(r#"{"op":"clear_queue"}"#, &agent, &approvals).await);
         assert_eq!(reply["success"], true, "{reply}");
-        // pi's shape is `{ steering, followUp }` (rpc-types.ts:59) -- both counts.
+        // pi's payload is `{ steering: string[], followUp: string[] }` -- the cleared
+        // messages' TEXT, not a count, so a client can show the user what it dropped and
+        // put it back. Asserting the text is also a stronger check than the count was:
+        // a count of 1 is satisfied by the wrong message, the text is not.
         assert_eq!(
-            reply["data"]["steering"].as_u64(),
-            Some(1),
-            "one steering message was queued and must be reported as cleared: {reply}"
+            reply["data"]["steering"],
+            serde_json::json!(["actually stop"]),
+            "the cleared steering text must come back: {reply}"
         );
         assert_eq!(
-            reply["data"]["followUp"].as_u64(),
-            Some(1),
-            "one follow-up was queued and must be reported as cleared: {reply}"
+            reply["data"]["followUp"],
+            serde_json::json!(["and this too"]),
+            "the cleared follow-up text must come back -- this is what the control breaks: \
+             {reply}"
         );
         assert_eq!(
             agent.steer_queue_len(),
@@ -2008,5 +2160,463 @@ mod tests {
         let reply =
             parse(&dispatch_line(r#"{"op":"followup","text":"x"}"#, &agent, &approvals).await);
         assert_eq!(reply["success"], true, "{reply}");
+    }
+
+    /// **The case `session_usage_by_model` exists for: a session that switched models.**
+    ///
+    /// M188 shipped the per-model split on the argument that price belongs to the model that
+    /// *consumed* the tokens, and asserted it through one model's worth of rows. That is
+    /// half the claim. This is the other half: two runs, two models, two rows, each priced
+    /// with its own rate.
+    ///
+    /// The faux provider reports whatever `ModelRef` it is handed (`faux.rs`:
+    /// `build_events(&model.id, step)`), so switching `Agent::set_model_id` between runs
+    /// produces genuinely differently-billed messages without a credential or a network.
+    /// `deepseek/deepseek-chat-v3.1` is a real priced catalog row; `faux-1` is priced at
+    /// zero. The test therefore proves the *split* and the *per-row pricing* together —
+    /// a single flat total could not produce these two different answers.
+    #[tokio::test]
+    async fn a_session_that_switches_models_is_billed_per_model() {
+        let agent = agent_with(
+            vec![
+                epsilon_llm::FauxStep::say("first"),
+                epsilon_llm::FauxStep::say("second"),
+            ],
+            0,
+        );
+        let approvals = approvals();
+
+        // The precondition, stated explicitly. `Agent::new` defaults to `faux-1`
+        // (epsilon-core/src/lib.rs), which is priced at ZERO -- so without this line
+        // "run 1 on the priced model" is a comment rather than a fact, and both runs
+        // are billed to the same free model. That is not a hypothetical: the first
+        // version of this test failed with one row instead of two, and the cause was
+        // here and not in the split.
+        agent.set_model_id("deepseek/deepseek-chat-v3.1");
+        assert_eq!(agent.model_id(), "deepseek/deepseek-chat-v3.1");
+
+        // Run 1 on the real priced model.
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"one"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events).await;
+
+        // Run 2 after switching to the free one.
+        agent.set_model_id("faux-1");
+        let mut events2 = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"two"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events2).await;
+
+        let by_model = agent.session_usage_by_model();
+        assert_eq!(
+            by_model.len(),
+            2,
+            "two models ran, so there must be two rows: {by_model:?}"
+        );
+        let priced = by_model
+            .get("deepseek/deepseek-chat-v3.1")
+            .unwrap_or_else(|| panic!("the first run's model must have its own row: {by_model:?}"));
+        let free = by_model.get("faux-1").expect("the second run's model too");
+        assert!(priced.output > 0, "{priced:?}");
+        assert!(free.output > 0, "{free:?}");
+
+        // The flat total is the sum of both, which is what makes the split a split rather
+        // than a second copy.
+        let flat = agent.session_usage();
+        assert_eq!(
+            flat.output,
+            priced.output + free.output,
+            "the flat total must be the sum of the per-model rows: {flat:?} vs {by_model:?}"
+        );
+
+        // The reply names BOTH models -- the thing no flat total could report.
+        let reply =
+            parse(&dispatch_line(r#"{"op":"get_session_stats"}"#, &agent, &approvals).await);
+        let mut named: Vec<String> = reply["data"]["models"]
+            .as_array()
+            .unwrap_or_else(|| panic!("models must be an array: {reply}"))
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default().to_string())
+            .collect();
+        named.sort();
+        assert_eq!(
+            named,
+            vec![
+                "deepseek/deepseek-chat-v3.1".to_string(),
+                "faux-1".to_string()
+            ],
+            "the reply must name every model it priced: {reply}"
+        );
+    }
+
+    /// The cost of a switched session is the sum of each model's own rate, not one rate
+    /// applied twice — the concrete arithmetic the split exists to get right.
+    ///
+    /// `faux-1` is priced at 0/Mtok, so it contributes nothing. If the implementation
+    /// priced the flat total at the *current* (free) model, the whole session would read
+    /// as free; if it priced it at the first, the second would be over-billed. Neither
+    /// equals the sum, and the test says which figure it expects.
+    #[tokio::test]
+    async fn a_switched_sessions_cost_is_not_its_cheapest_models_price() {
+        let agent = agent_with(
+            vec![
+                epsilon_llm::FauxStep::say("first"),
+                epsilon_llm::FauxStep::say("second"),
+            ],
+            0,
+        );
+        let approvals = approvals();
+        // Priced first, then free -- see the sibling test for why this line is the
+        // precondition and not a detail.
+        agent.set_model_id("deepseek/deepseek-chat-v3.1");
+
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"one"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events).await;
+        // Switch to the zero-priced model for the second run.
+        agent.set_model_id("faux-1");
+        let mut events2 = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"two"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events2).await;
+
+        let reply =
+            parse(&dispatch_line(r#"{"op":"get_session_stats"}"#, &agent, &approvals).await);
+        let cost = reply["data"]["totalCostUsd"]
+            .as_f64()
+            .expect("a cost must be reported");
+
+        // The faux run is genuinely free, so the session's cost is exactly the priced run's
+        // -- and strictly greater than zero, which is the assertion that would fail if the
+        // whole session were priced at the free model.
+        assert!(
+            cost > 0.0,
+            "one run was on a priced model, so the session cannot be free: {reply}"
+        );
+        // And the free run must not have *added* to it: cost is the priced row alone.
+        let priced_only = *agent
+            .session_usage_by_model()
+            .get("deepseek/deepseek-chat-v3.1")
+            .expect("the priced run's row");
+        let priced_cost = epsilon_tui::ui::cost::breakdown_per_model(
+            &std::collections::BTreeMap::from([(
+                "deepseek/deepseek-chat-v3.1".to_string(),
+                epsilon_tui::ui::cost::TokenCounts {
+                    input: priced_only.input,
+                    output: priced_only.output,
+                    cache_read: priced_only.cache_read,
+                    cache_write: priced_only.cache_write,
+                },
+            )]),
+            |id| {
+                epsilon_llm::catalog::lookup_model(id).map(|info| {
+                    epsilon_tui::ui::cost::TokenPrices {
+                        input: info.input_cost_micro_per_mtok,
+                        output: info.output_cost_micro_per_mtok,
+                        cache_read: info.cache_read_cost_micro_per_mtok,
+                        cache_write: info.cache_write_cost_micro_per_mtok,
+                    }
+                })
+            },
+        )
+        .total() as f64
+            / 1_000_000.0;
+        assert!(
+            (cost - priced_cost).abs() < 1e-12,
+            "the session's cost must be the priced row alone ({priced_cost}), not a rate \
+             applied to the flat total ({cost}): {reply}"
+        );
+    }
+
+    // ---- M189: get_entries, get_tree, set_session_name ----
+
+    /// An agent with a real session store, so the store-backed ops can be exercised.
+    fn agent_with_store(steps: Vec<epsilon_llm::FauxStep>) -> (Arc<Agent>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "epsilon-rpc-store-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("session.jsonl");
+        let store = epsilon_core::SessionStore::open_in(&file, &dir).expect("session store");
+        let agent = agent_with(steps, 0);
+        agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+        (agent, dir)
+    }
+
+    /// `set_session_name` writes what `discover.rs` reads, so the RPC op and `/name` agree.
+    ///
+    /// The assertion is on the ENTRY the store now holds, not on the reply. A handler that
+    /// echoed the name back without writing anything would pass a reply-only test — and the
+    /// whole point is that the name survives into the session file.
+    #[tokio::test]
+    async fn set_session_name_appends_a_name_entry_the_discoverer_can_read() {
+        let (agent, dir) = agent_with_store(vec![]);
+        let approvals = approvals();
+
+        let reply = parse(
+            &dispatch_line(
+                r#"{"op":"set_session_name","name":"the audit run"}"#,
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(reply["success"], true, "{reply}");
+
+        // Read it back through the session crate's OWN reader (`list_sessions`, the same
+        // call the resume picker makes), not by peeking at the file. That is the point:
+        // if the RPC op wrote the entry in a shape the discoverer cannot read, this fails
+        // where a hand-rolled parse of the same file would not.
+        let found = epsilon_session::list_sessions(&dir)
+            .into_iter()
+            .find(|s| s.path.ends_with("session.jsonl"))
+            .and_then(|s| s.name);
+        assert_eq!(
+            found.as_deref(),
+            Some("the audit run"),
+            "the name must be readable by the discoverer, which is what /name writes: {found:?}"
+        );
+    }
+
+    /// `get_tree` reports the branch the store walked, and the leaf it landed on.
+    #[tokio::test]
+    async fn get_tree_reports_the_current_branch_and_its_leaf() {
+        let (agent, _dir) = agent_with_store(vec![
+            epsilon_llm::FauxStep::say("one"),
+            epsilon_llm::FauxStep::say("two"),
+        ]);
+        let approvals = approvals();
+
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"first"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events).await;
+        let mut events2 = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"second"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events2).await;
+
+        // **Fork, or this test cannot tell `get_tree` from `get_entries`.**
+        //
+        // The control that made this necessary replaced `branch_entries()` with
+        // `read_all()` and all 48 tests still passed — on a LINEAR session the branch
+        // and the whole file are the same list, so the two ops are indistinguishable. The
+        // property "get_tree returns the branch" only means anything once an entry sits
+        // on the file that the branch does not contain, which takes a `navigate_to` back
+        // to an earlier entry followed by a run on the new branch.
+        // **A MIDDLE message entry, and the choice is load-bearing.**
+        //
+        // Navigating to the FIRST message leaves the branch exactly as long as the file,
+        // because everything after it is still on the branch -- so the first two versions
+        // of this test asserted `branch.len() < file.len()` and got 6 == 6. Navigating to
+        // the LAST strands nothing either, for the same reason in reverse. Only a middle
+        // entry leaves entries on both sides, which is the only state in which "the
+        // branch" and "the file" are different things and the two ops can be told apart.
+        let target = {
+            let handle = agent.session_store().expect("store attached");
+            let st = handle.lock().expect("lock");
+            let msgs: Vec<String> = st
+                .branch_entries()
+                .expect("branch")
+                .into_iter()
+                .filter(|e| {
+                    matches!(
+                        e.kind,
+                        epsilon_contracts::session_entry::EntryKind::Message { .. }
+                    )
+                })
+                .map(|e| e.id)
+                .collect();
+            let mid = msgs.len() / 2;
+            assert!(
+                msgs.len() >= 3,
+                "a middle entry needs entries on both sides; got {msgs:?}"
+            );
+            msgs[mid].clone()
+        };
+        {
+            let handle = agent.session_store().expect("store attached");
+            let mut st = handle.lock().expect("lock");
+            st.navigate_to(&target).expect("navigate to a real entry");
+        }
+        let mut events3 = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"third"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events3).await;
+
+        let tree = parse(&dispatch_line(r#"{"op":"get_tree"}"#, &agent, &approvals).await);
+        let all = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        assert_eq!(tree["success"], true, "{tree}");
+        assert_eq!(all["success"], true, "{all}");
+
+        let branch = tree["data"]["tree"]
+            .as_array()
+            .unwrap_or_else(|| panic!("tree must be an array: {tree}"));
+        let file = all["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {all}"));
+        assert!(
+            branch.len() < file.len(),
+            "the fork must make the branch SHORTER than the file, or this test cannot \
+             distinguish the two ops: branch={} file={}",
+            branch.len(),
+            file.len()
+        );
+
+        // Every node carries linkage — that is what a tree IS. A node without a parent
+        // field would render as a flat list in a client.
+        for node in branch {
+            assert!(node["id"].is_string(), "{node} has no id: {tree}");
+            assert!(
+                node.get("parentId").is_some(),
+                "{node} has no parentId key: {tree}"
+            );
+            assert!(node["seq"].is_u64(), "{node} has no seq: {tree}");
+        }
+        // The leaf must be the LAST node's id: the chain ends where the store says it does.
+        let last = branch.last().expect("non-empty");
+        assert_eq!(
+            tree["data"]["leafId"].as_str(),
+            last["id"].as_str(),
+            "the leaf must be the final node: {tree}"
+        );
+    }
+
+    /// `get_entries` returns the raw file, and `since` returns only what came after it.
+    #[tokio::test]
+    async fn get_entries_since_returns_only_the_newer_entries() {
+        let (agent, _dir) = agent_with_store(vec![
+            epsilon_llm::FauxStep::say("one"),
+            epsilon_llm::FauxStep::say("two"),
+        ]);
+        let approvals = approvals();
+
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"first"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events).await;
+
+        let all = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        assert_eq!(all["success"], true, "{all}");
+        let entries = all["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {all}"));
+        assert!(entries.len() >= 2, "{all}");
+        let first_id = entries[0]["id"].as_str().expect("an id").to_string();
+
+        // A second run, then ask only for what is newer than the first entry.
+        let mut events2 = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"second"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events2).await;
+
+        let since = parse(
+            &dispatch_line(
+                &format!(r#"{{"op":"get_entries","since":"{first_id}"}}"#),
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(since["success"], true, "{since}");
+        let newer = since["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {since}"));
+        // Exclusive, and checked against the FILE rather than against a number I
+        // predicted: the tail must be exactly the entries whose position is after the
+        // named one. Asserting "the same count as before" was my first attempt and it was
+        // wrong -- the second run appended more entries, so the tail is legitimately
+        // longer. The property is the set difference, not a length.
+        let all_now = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        let everything = all_now["data"]["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("entries must be an array: {all_now}"));
+        let cut = everything
+            .iter()
+            .position(|e| e["id"].as_str() == Some(first_id.as_str()))
+            .expect("the first entry is still in the file");
+        let expected: Vec<_> = everything[cut + 1..].iter().collect();
+        let got: Vec<_> = newer.iter().collect();
+        assert_eq!(
+            got.len(),
+            expected.len(),
+            "the tail must be everything after the named entry: {since}"
+        );
+        for (g, e) in got.iter().zip(expected.iter()) {
+            assert_eq!(
+                g["id"], e["id"],
+                "the tail must be the file's own suffix, in order: {since}"
+            );
+        }
+        assert_ne!(
+            newer[0]["id"].as_str(),
+            Some(first_id.as_str()),
+            "`since` is EXCLUSIVE -- the named entry must not be in its own tail: {since}"
+        );
+    }
+
+    /// A `since` that names nothing returns everything, not nothing.
+    ///
+    /// An unresolvable `since` means the client has fallen behind. An empty reply would
+    /// have it conclude the session is empty, which is unrecoverable; over-sending is not.
+    #[tokio::test]
+    async fn get_entries_with_an_unresolvable_since_returns_everything() {
+        let (agent, _dir) = agent_with_store(vec![epsilon_llm::FauxStep::say("hi")]);
+        let approvals = approvals();
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"hi"}"#, &agent, &approvals).await;
+        wait_for_end(&mut events).await;
+
+        let all = parse(&dispatch_line(r#"{"op":"get_entries"}"#, &agent, &approvals).await);
+        let bogus = parse(
+            &dispatch_line(
+                r#"{"op":"get_entries","since":"ent_does_not_exist"}"#,
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(bogus["success"], true, "{bogus}");
+        assert_eq!(
+            bogus["data"]["entries"], all["data"]["entries"],
+            "an unknown `since` must over-send rather than look like an empty session: {bogus}"
+        );
+    }
+
+    /// The three store-backed ops refuse, by name, when no store is attached.
+    ///
+    /// An empty `entries: []` would read as "this session has no history" and send a client
+    /// hunting a bug that is not there; the real cause is that there is no store.
+    #[tokio::test]
+    async fn store_backed_ops_say_why_when_there_is_no_store() {
+        let agent = agent_with(vec![], 0);
+        let approvals = approvals();
+        for op in ["get_entries", "get_tree", "set_session_name"] {
+            let frame = if op == "set_session_name" {
+                r#"{"op":"set_session_name","name":"x"}"#.to_string()
+            } else {
+                format!(r#"{{"op":"{op}"}}"#)
+            };
+            let reply = parse(&dispatch_line(&frame, &agent, &approvals).await);
+            assert_eq!(reply["success"], false, "{op}: {reply}");
+            assert!(
+                reply["error"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("no session store"),
+                "{op} must name the real cause: {reply}"
+            );
+        }
+    }
+
+    /// The three new ops accept pi's `type` tag.
+    #[tokio::test]
+    async fn the_m189_ops_accept_pis_type_tag() {
+        let (agent, _dir) = agent_with_store(vec![]);
+        let approvals = approvals();
+        for frame in [
+            r#"{"type":"get_entries"}"#,
+            r#"{"type":"get_tree"}"#,
+            r#"{"type":"set_session_name","name":"tagged"}"#,
+        ] {
+            let reply = parse(&dispatch_line(frame, &agent, &approvals).await);
+            assert_eq!(reply["success"], true, "{frame}: {reply}");
+        }
     }
 }
