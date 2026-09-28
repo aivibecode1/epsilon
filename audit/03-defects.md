@@ -592,13 +592,21 @@ no caller — and it is the honest next candidate for this rule.
 - **Phase 4** is in progress: `/tree` re-projection landed, then ADR-019 through transport
   (`ece3af4`) and the production bridge (`9f73a5f`). **Phase 5** (repository structure) not
   started. Remaining in Phase 4: `AfterToolCallResult` wiring (result rewriting), and
-  `TurnHooks`, which is still test-only — the interpose transport now makes it reachable.
+  ~~TurnHooks still test-only.~~ **Closed** in `570819e`: `ExtensionTurnHooks`
+  is the first production `set_turn_hooks` caller. `transform_context`/`convert_to_llm`
+  remain pass-through **by decision** and are not a defect.
 - ~~**D22 — the installed release binary predates ADR-019.**~~ **Closed** by reinstall at
   05:27 (15m 09s release build) and verified by marker plus two live probes — see
   [`installed-binary-2026-09-28-post-adr019.md`](installed-binary-2026-09-28-post-adr019.md).
   All six ADR-019 and session markers are present, typing during a paced stream rendered
   **40 characters** in the editor, and the crash probe reports
   `PASS: the terminal was restored and the crash was reported`.
+- **D24 — `docs/README.md` listed `user/` generically, orphaning every user guide
+  added in a hurry.** `docs/user/extensions.md` (M183) and `docs/user/prompt-templates.md`
+  (M184) were both reachable only by knowing the filename, which is the "new documentation
+  files must be added to the docs map" rule in AGENTS.md unenforced. **Closed** in `363a0ee`
+  by naming both in the product-documentation row. Not a code defect, but it is the same
+  failure as a dead link: a document nothing points at is a document nobody finds.
 - **D23 — `docs/history.md` is corrupt below M160, in a commit this session did not
   introduce.** Verified present in `5d5dda7~1`: milestone numbers M161–M171 sit on their own
   lines with their rows' leading `|` stripped, so `M163| M144 | **Read side only...` reads
