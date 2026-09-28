@@ -58,3 +58,4 @@ audit/evidence/*.log
 !audit/evidence/gate-m181.log
 !audit/evidence/gate-m182.log
 !audit/evidence/gate-m183-FAILED-stale-snapshot.log
+!audit/evidence/gate-m183b.log
