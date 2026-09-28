@@ -73,6 +73,13 @@ test *and* by watching a real TUI's mtime advance every 2s.
 - **`branch_with_summary` still has no production caller** — confirmed three times now.
 - **`TurnHooks` is still unwired** (10/10 setters in tests). The `ToolHooks` half is done;
   the `TurnHooks` half is not, and the interpose transport now makes it reachable.
+- **M186 shipped 6 pi RPC commands** (`80a91b3`): cycle_thinking_level,
+  get_available_thinking_levels, set_model, get_available_models, cycle_model,
+  get_last_assistant_text. All mapped onto EXISTING core capability, so it was a wiring gap.
+  Battery `m186` 1,425 / `m187` 1,427, both GATE PASS. Installed release verified over real
+  stdio: 557-row model list, 365,819 bytes, one line, 0.08s. **22 of pi's 33 RPC commands
+  remain**; the next cheap batch is get_messages, get_commands, get_session_stats,
+  clear_queue.
 - **D23 CLOSED** (`f6636ff`): the 18 glued lines in `docs/history.md` repaired, all 18 rows
   reconstructed from the dev logs, and two structural tests added so it cannot recur
   silently (`38e7a5e`). D25 remains: one row numbered `| 018 |` that predates the corruption.
