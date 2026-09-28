@@ -102,10 +102,21 @@ everything else on this list.
 | 4.2 | Prompt templates (`/name` expansion) — the cheapest genuinely-missing pi feature | A template expands and is testable |
 | 4.3 | ~~Decide the extension surface.~~ **DONE `e9d5b94`** — ADR-019. Follow-ups deliberately not decided: the 27 UI methods, 7 registration APIs, message injection, provider registration | ✅ |
 | 4.4 | Refresh the catalog and add a drift check | CI fails when the snapshot ages past its window |
-| 4.5 | **Bidirectional event frames, then wire `ToolHooks`/`TurnHooks`** — new, from [`evidence/delegation-port-gaps-2026-09-28.md`](evidence/delegation-port-gaps-2026-09-28.md) | A child can block a tool call and rewrite a result; a negative control shows the child *can* block |
+| 4.5a | ~~Bidirectional event frames.~~ **DONE `ece3af4`** — `interpose` / `interpose_result` over a demultiplexing reader task. Control: forwarding an event during a slow invoke took 9.74 s before, ms after | ✅ |
+| 4.5b | ~~Wire `ToolHooks`.~~ **DONE `9f73a5f` (before) / `2fb5219` (after)** — a child blocks a call and rewrites the result. Controls fail for the reason they name | ✅ |
+| 4.5c | ~~Wire `TurnHooks`.~~ **DONE `570819e`**, and a **partial port by decision**: `transform_context`/`convert_to_llm` are pass-through, so extensions cannot reshape the prompt. Reasoning in [`02-port-fidelity.md`](02-port-fidelity.md) | ✅ (partial, deliberately) |
+| 4.6 | **Real extension** — write one that is not a test binary, and document the protocol somewhere a third party could follow it. Every claim in 4.5a–c is proven against `ext-fixture`; whether an author could actually use this is untested | A documented extension works without reading the source |
 
 **4.4 is small and prevents a class of bug that has already happened**: the
 2026-09-21 snapshot is stale and silently wrong for some rows.
+
+**4.5 is done, and 4.6 exists because "done" is not the same as "usable."** Four contracts
+seams are now reachable from a real child process, every one proved against a live process
+with a negative control that fails for the reason it names. But every proof used
+`ext-fixture` — a binary in this repository. Nothing here demonstrates that a third party
+could write an extension from the documentation, because the protocol's request/response
+frames, the decision shapes, and the failure policy are currently described only in a
+milestone log. That is the last honest gap in this area, and it is cheap.
 
 ## Phase 5 — structure (only after the above is green)
 
