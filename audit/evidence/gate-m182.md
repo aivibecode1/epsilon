@@ -76,9 +76,10 @@ Read from `references/pi-0.85.1/packages/coding-agent/src/core/extensions/`:
 
 ## What was not verified
 
-- **The installed release binary was not rebuilt.** `C:/Users/Hp/.cargo/bin/epsilon.exe` is
-  the 05:27 build, which has the **before-arm only**. No shipped-binary claim covers result
-  rewriting. Reinstall before describing it as delivered.
+- **The installed release binary has since been rebuilt and probed** — see
+  [`installed-binary-2026-09-28-post-adr019.md`](installed-binary-2026-09-28-post-adr019.md).
+  It now carries both arms (`rewritten_by_extension` present), and the crash and live-stream
+  probes both pass against it. The gap recorded here is closed.
 - **No real extension exists.** Every claim is against `ext-fixture`, a test binary in this
   repository.
 - **Multi-extension result rewriting is tested on the fold only**, never with two live

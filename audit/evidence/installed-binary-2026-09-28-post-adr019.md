@@ -92,3 +92,27 @@ that never fails.
   it is the only evidence.
 - **The `--crash` false-PASS above** means the crash path was verified only by the corrected
   invocation. Both were run; only the second had the panic actually occur.
+
+## Updated 06:22 — both arms of ADR-019
+
+Reinstalled after `2fb5219` (15m 06s release build, 20,957,696 bytes). The before-arm-only
+build this file first described is superseded.
+
+| Marker | Meaning | Found |
+|---|---|---|
+| `rewritten_by_extension` | the note `after_tool_call` writes — **after-arm only** | **yes** |
+| `tool_result` | the pi-shaped result event tag | **yes** |
+
+The other five markers from the 05:27 build are still present. `rewritten_by_extension` is
+the discriminating one: it exists in no other string in the tree, so its presence is proof
+that this is not the earlier binary under a new timestamp.
+
+Both probes re-run against this build:
+
+| Probe | Result |
+|---|---|
+| crash / terminal restoration | `crash_reported: true` — **PASS** |
+| typing during a paced stream | `• typed while streaming` in the editor, footer live |
+
+Invocation note from the first version of this file still applies and was re-confirmed: the
+crash probe sets `EPSILON_TUI_CRASH` itself, and `--exe-args "--crash"` yields a false PASS.
