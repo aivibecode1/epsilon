@@ -44,6 +44,10 @@ epsilon-ext = { path = "../epsilon-ext" }
 sha2 = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
+# ADR-019: `ExtensionToolHooks` implements `ToolHooks`, which is `#[async_trait]`. Every
+# other crate that implements a contracts trait declares this the same way; epsilon-cli had
+# no use for it until now, which is why it is absent rather than forgotten.
+async-trait = { workspace = true }
 futures-util = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }

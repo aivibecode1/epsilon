@@ -1785,6 +1785,8 @@ async fn build_runtime(
         )])
     };
     let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
+    // `Agent::new` already returns an `Arc`, which is why the extension hooks below can be
+    // installed through it without unwrapping or re-wrapping.
     let agent = Agent::new(
         LoopLimits::for_model(model_id),
         stream_fn,
@@ -1792,6 +1794,17 @@ async fn build_runtime(
         gate,
         workspace.to_path_buf(),
     );
+
+    // ADR-019: let extensions intercept tool calls. Installed only when something is
+    // actually attached, because a harness with no extensions must not pay a round trip
+    // per tool call to discover there is nobody to ask. This is the first production
+    // `set_tool_hooks` call in the repository -- until now every one was a test.
+    if epsilon_cli::runtime::install_extension_hooks(&agent, ext_hosts.clone()) {
+        eprintln!(
+            "[harness] {} extension(s) may intercept tool calls",
+            ext_hosts.len()
+        );
+    }
     let mut store = epsilon_session::SessionStore::open_in_with_progress(
         workspace.join(session_file),
         workspace,

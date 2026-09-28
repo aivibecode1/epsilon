@@ -11,7 +11,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, oneshot};
 
 use crate::manifest::ExtManifest;
-use crate::{CRASH_BUDGET, INVOKE_TIMEOUT_SECS};
+use crate::{CRASH_BUDGET, INTERPOSE_TIMEOUT_SECS, INVOKE_TIMEOUT_SECS};
 
 /// Largest single protocol frame accepted from a child (2 MiB, aligned with
 /// `epsilon_tools::checkpoint::MAX_FILE_BYTES`).
@@ -306,7 +306,10 @@ impl ExtHost {
             "tool": tool, "args": args,
         });
 
-        match self.request(id, req).await {
+        match self
+            .request(id, req, Duration::from_secs(INVOKE_TIMEOUT_SECS))
+            .await
+        {
             Ok(frame) => self.validate_result(&frame),
             // A dead child spends the budget; a malformed frame does not. That distinction
             // is the reason `request` returns a typed error rather than a bare value, and
@@ -395,6 +398,7 @@ impl ExtHost {
         &self,
         id: String,
         req: serde_json::Value,
+        budget: Duration,
     ) -> Result<serde_json::Value, ExtError> {
         let (tx, rx) = oneshot::channel();
         {
@@ -415,7 +419,7 @@ impl ExtHost {
             }
         }
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(INVOKE_TIMEOUT_SECS);
+        let deadline = tokio::time::Instant::now() + budget;
         match tokio::time::timeout_at(deadline, rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
             // The reader reports a structural failure (malformed line, oversized frame,
@@ -461,7 +465,10 @@ impl ExtHost {
             "id": id,
             "event": event,
         });
-        match self.request(id, req).await {
+        match self
+            .request(id, req, Duration::from_secs(INTERPOSE_TIMEOUT_SECS))
+            .await
+        {
             Ok(v) if v.is_null() => Vec::new(),
             Ok(v) => vec![v],
             // Timeout, crash, or protocol violation: no opinion. The run continues, which

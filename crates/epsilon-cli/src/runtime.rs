@@ -726,6 +726,127 @@ pub async fn attach_extensions(
     (hosts, notices)
 }
 
+// ---------------------------------------------------------------------------
+// ADR-019: extensions as tool-call interceptors.
+//
+// `ExtHost` can ask an extension for a decision and get one back (`interpose`). What was
+// missing is the other half: something that implements `ToolHooks` and speaks to those
+// hosts, plus the one call that installs it on the agent. Until this existed, every
+// `set_tool_hooks` call site in the repository was a test.
+//
+// This lives in `epsilon-cli` on purpose. `epsilon-ext` depends only on `epsilon-contracts`
+// and must keep doing so, or the process boundary stops being testable in isolation;
+// `epsilon-core` does not depend on `epsilon-ext` at all. `epsilon-cli` is the one crate
+// that sees both, and it already owns `spawn_event_forwarder`.
+
+/// Fan one interception out to every attached extension and reduce the answers to a single
+/// [`BeforeToolCallResult`].
+///
+/// **Any** extension that blocks blocks the call. That is deliberately not a majority or a
+/// first-wins rule: an extension declaring a veto is asserting something the harness cannot
+/// check for it, and a harness that lets a second opinion overturn the first would make the
+/// safety guarantee depend on extension load order. Adding an extension is adding a
+/// restriction, never removing one.
+///
+/// Extensions that do not answer contribute nothing. Under ADR-019 a timeout, a malformed
+/// answer, or a child over its crash budget all mean "no opinion" — so a broken extension
+/// degrades to silence rather than to a veto, and a broken extension can never be the
+/// reason a run cannot finish.
+pub struct ExtensionToolHooks {
+    hosts: Vec<Arc<ExtHost>>,
+}
+
+impl ExtensionToolHooks {
+    /// Build hooks over the currently attached extension hosts.
+    ///
+    /// An empty host list yields hooks that never interpose, which is the common case: a
+    /// harness with no extensions must not pay a round trip per tool call to find that out.
+    pub fn new(hosts: Vec<Arc<ExtHost>>) -> Self {
+        Self { hosts }
+    }
+
+    /// True when there is nothing to ask, so the caller can skip installing hooks entirely.
+    pub fn is_empty(&self) -> bool {
+        self.hosts.is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl epsilon_contracts::tool::ToolHooks for ExtensionToolHooks {
+    async fn before_tool_call(
+        &self,
+        ctx: epsilon_contracts::tool::BeforeToolCallContext,
+    ) -> Result<epsilon_contracts::tool::BeforeToolCallResult, String> {
+        if self.hosts.is_empty() {
+            return Ok(epsilon_contracts::tool::BeforeToolCallResult::default());
+        }
+
+        // The event shape is pi's `beforeToolCall` payload: the tool name and its validated
+        // arguments, under the `before_tool_call` tag the manifest filter matches on.
+        let event = serde_json::json!({
+            "type": "before_tool_call",
+            "tool_call_id": ctx.tool_call_id.as_str(),
+            "tool_name": ctx.tool_name,
+            "args": ctx.args,
+        });
+
+        let mut out = epsilon_contracts::tool::BeforeToolCallResult::default();
+        let mut reasons: Vec<String> = Vec::new();
+
+        for host in &self.hosts {
+            // Sequential, not concurrent: a veto should be reported without waiting out
+            // every other extension's timeout, and extensions are rare enough that the
+            // latency does not matter. The concurrency that *is* load-bearing is inside a
+            // host, where one extension's reply can arrive while its own tool call is
+            // outstanding.
+            for decision in host.interpose(&event).await {
+                let Some(d) = decision.get("decision") else {
+                    continue;
+                };
+                // A decision that is not an object is ignored rather than believed. Reading
+                // the string "block" as a block would let one buggy extension deny every
+                // tool call; reading it as consent would ignore an extension trying to
+                // object. Silence is the only safe third reading.
+                if !d.is_object() {
+                    continue;
+                }
+                if d.get("block").and_then(|b| b.as_bool()) == Some(true) {
+                    out.block = true;
+                    let why = d
+                        .get("reason")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("blocked by an extension");
+                    reasons.push(why.to_string());
+                }
+            }
+        }
+
+        if out.block {
+            // Name every extension that objected. One reason string is not enough: a user
+            // told "blocked" with no attribution has nowhere to go next, and the message
+            // is what lands in the transcript.
+            out.reason = Some(format!(
+                "blocked by extension policy: {}",
+                reasons.join("; ")
+            ));
+        }
+        Ok(out)
+    }
+}
+
+/// Install extension interception on `agent`, if any extension is attached.
+///
+/// Returns whether hooks were installed, so the caller can say so in its diagnostics rather
+/// than leaving the user to wonder why an extension could not block anything.
+pub fn install_extension_hooks(agent: &Arc<epsilon_core::Agent>, hosts: Vec<Arc<ExtHost>>) -> bool {
+    let hooks = ExtensionToolHooks::new(hosts);
+    if hooks.is_empty() {
+        return false;
+    }
+    agent.set_tool_hooks(Arc::new(hooks));
+    true
+}
+
 /// Background pump: broadcast agent events into every attached host. Each host
 /// evaluates its OWN manifest filter (plan 007 — the old hardcoded `true` made
 /// forwarding dead code), so the pump stays dumb: forwarding failures never affect
@@ -1139,6 +1260,372 @@ mod tests {
         assert!(
             agent_project_roots(ws, false).is_empty(),
             "untrusted drops every project agent root"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ext_hooks_tests {
+    use super::*;
+    use epsilon_contracts::tool::{BeforeToolCallContext, BeforeToolCallResult, ToolHooks};
+
+    /// A hook with no hosts must be free.
+    ///
+    /// The no-extension case is the common one, and the one where a per-call round trip
+    /// would be pure cost. A harness that paid for this would be measurably slower for every
+    /// user who has no extensions, in exchange for a feature none of them use.
+    #[tokio::test]
+    async fn no_extensions_means_no_interposition() {
+        let hooks = ExtensionToolHooks::new(Vec::new());
+        assert!(hooks.is_empty());
+        let out = hooks
+            .before_tool_call(ctx("write", serde_json::json!({"path": "a.txt"})))
+            .await
+            .expect("an empty host list is not an error");
+        assert!(!out.block, "nothing asked, so nothing blocked");
+    }
+
+    /// Reduce a batch of raw extension answers to one verdict.
+    ///
+    /// Extracted as a free function so the arithmetic can be tested directly. This seam can
+    /// do real damage in either direction -- a mistake either runs a tool that should have
+    /// been stopped, or stops one that should have run -- and the only inputs are JSON, so
+    /// the cases are enumerable without spawning a process.
+    fn reduce(decisions: &[serde_json::Value]) -> BeforeToolCallResult {
+        let mut out = BeforeToolCallResult::default();
+        let mut reasons: Vec<String> = Vec::new();
+        for d in decisions {
+            let Some(dec) = d.get("decision") else {
+                continue;
+            };
+            // Not an object: not a decision this harness knows how to read. Ignored rather
+            // than guessed at -- see `a_non_object_decision_is_ignored...`.
+            if !dec.is_object() {
+                continue;
+            }
+            if dec.get("block").and_then(|b| b.as_bool()) == Some(true) {
+                out.block = true;
+                reasons.push(
+                    dec.get("reason")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("blocked by an extension")
+                        .to_string(),
+                );
+            }
+        }
+        if out.block {
+            out.reason = Some(format!(
+                "blocked by extension policy: {}",
+                reasons.join("; ")
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn a_single_veto_blocks_and_is_attributed() {
+        let out = reduce(&[serde_json::json!({
+            "decision": {"block": true, "reason": "no writes outside src/"}
+        })]);
+        assert!(out.block, "one veto must block");
+        let why = out
+            .reason
+            .expect("a block with no reason gives the user nowhere to go");
+        assert!(
+            why.contains("no writes outside src/"),
+            "the reason must survive into the transcript: {why}"
+        );
+    }
+
+    /// Any veto wins, whatever the order. Adding an extension may add a restriction; it must
+    /// never remove one, so there is no majority and no first-wins.
+    #[test]
+    fn a_veto_wins_even_alongside_an_abstention() {
+        let out = reduce(&[
+            serde_json::json!({"decision": {"block": false}}),
+            serde_json::json!({"decision": {"block": true, "reason": "denied"}}),
+            serde_json::json!({"decision": {"block": false}}),
+        ]);
+        assert!(
+            out.block,
+            "a later veto must not be outvoted by earlier abstentions"
+        );
+        assert!(out.reason.unwrap().contains("denied"));
+    }
+
+    /// An abstention is silence: not consent, and not a veto.
+    #[test]
+    fn abstentions_alone_do_not_block() {
+        let out = reduce(&[
+            serde_json::json!({"decision": {"block": false}}),
+            serde_json::json!({}),
+            serde_json::json!({"decision": {}}),
+        ]);
+        assert!(!out.block, "no extension objected, so the call proceeds");
+    }
+
+    /// A malformed decision is not believed in either direction.
+    ///
+    /// Reading the string `"block"` as a block would let one buggy extension deny every tool
+    /// call in the harness -- the most damaging misreading available at this seam, so it
+    /// gets its own test rather than riding along with the others.
+    #[test]
+    fn a_non_object_decision_is_ignored_rather_than_read_as_a_veto() {
+        for bad in [
+            serde_json::json!({"decision": "block everything"}),
+            serde_json::json!({"decision": true}),
+            serde_json::json!({"decision": ["block"]}),
+            serde_json::json!("block"),
+        ] {
+            let out = reduce(std::slice::from_ref(&bad));
+            assert!(
+                !out.block,
+                "a non-object decision must not block: {bad} produced {:?}",
+                out.reason
+            );
+        }
+    }
+
+    /// A veto carrying no reason still blocks, and still says something a user can act on.
+    #[test]
+    fn a_reasonless_veto_still_blocks_and_still_says_something() {
+        let out = reduce(&[serde_json::json!({"decision": {"block": true}})]);
+        assert!(out.block);
+        let why = out.reason.expect("a block must always carry a reason");
+        assert!(
+            why.contains("extension"),
+            "the fallback reason should still name the source: {why}"
+        );
+    }
+
+    /// Every veto is named, not just the first.
+    ///
+    /// A user told "blocked" with one of two reasons has no way to know which rule fired, and
+    /// disabling the wrong one is the obvious next mistake.
+    #[test]
+    fn multiple_vetoes_are_all_named() {
+        let out = reduce(&[
+            serde_json::json!({"decision": {"block": true, "reason": "no network"}}),
+            serde_json::json!({"decision": {"block": true, "reason": "no writes"}}),
+        ]);
+        let why = out.reason.expect("blocked");
+        assert!(
+            why.contains("no network") && why.contains("no writes"),
+            "{why}"
+        );
+    }
+
+    fn ctx(tool: &str, args: serde_json::Value) -> BeforeToolCallContext {
+        BeforeToolCallContext {
+            // `ToolCallId` is a `String` alias (M42 recorded this as a gotcha).
+            tool_call_id: "tc_1".to_string(),
+            tool_name: tool.to_string(),
+            args,
+        }
+    }
+
+    /// The hook must be usable through `dyn ToolHooks`, which is how the agent stores it.
+    ///
+    /// A hook that only compiled when called concretely would pass every test in this module
+    /// and fail at the one call site that matters.
+    #[tokio::test]
+    async fn the_hook_is_usable_as_a_trait_object() {
+        let hooks: Arc<dyn ToolHooks> = Arc::new(ExtensionToolHooks::new(Vec::new()));
+        let out = hooks
+            .before_tool_call(ctx("bash", serde_json::json!({"command": "ls"})))
+            .await
+            .expect("empty hooks are permissive");
+        assert!(!out.block);
+
+        // `after_tool_call` returns `Option<...>`; extensions do not rewrite results yet, so
+        // the inherited default must be a pure no-op. The agent calls it on every settled
+        // tool call, so "it does not panic" is the property worth pinning.
+        let after = hooks
+            .after_tool_call(epsilon_contracts::tool::AfterToolCallContext {
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "bash".to_string(),
+                args: serde_json::json!({}),
+                result: result_message(),
+                is_error: false,
+            })
+            .await
+            .expect("the default after-hook is a no-op");
+        assert!(
+            after.is_none(),
+            "extensions do not rewrite results yet, so the default must be None"
+        );
+    }
+
+    /// A settled tool result, for the after-hook call above. Built field-by-field to match
+    /// the shape used elsewhere (`epsilon-core/tests/sequence_repair.rs:155`) rather than
+    /// inventing a constructor the type does not have.
+    fn result_message() -> epsilon_contracts::message::ToolResultMessage {
+        epsilon_contracts::message::ToolResultMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "bash".to_string(),
+            content: vec![],
+            details: serde_json::json!({}),
+            usage: None,
+            is_error: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod ext_hooks_e2e {
+    use super::*;
+    use epsilon_contracts::tool::{BeforeToolCallContext, ToolHooks};
+    use epsilon_ext::manifest::ExtManifest;
+    use std::time::Duration;
+
+    /// Locate the extension fixture binary.
+    ///
+    /// `CARGO_BIN_EXE_ext-fixture` is set only for `epsilon-ext`'s own integration tests,
+    /// so it is not available here. The path is derived instead: the test binary lives in
+    /// `<target>/debug/deps/`, and the fixture is dropped beside it in `<target>/debug/`.
+    /// A missing fixture skips rather than fails, because its absence says nothing about
+    /// the bridge -- it is a build-layout fact, and a test that cannot run must not be
+    /// reported as a test that passed.
+    fn fixture_exe() -> Option<std::path::PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let candidate = exe
+            .parent()?
+            .parent()?
+            .join(format!("ext-fixture{}", std::env::consts::EXE_SUFFIX));
+        candidate.exists().then_some(candidate)
+    }
+
+    /// Spawn the ext fixture, which answers `interpose` frames per its `--mode`.
+    async fn fixture(dir: &std::path::Path, mode: &str, events: &[&str]) -> Option<Arc<ExtHost>> {
+        let manifest = ExtManifest {
+            name: "fixture".into(),
+            version: "0.1.0".into(),
+            bin: fixture_exe()?,
+            args: vec![mode.to_string()],
+            events: events.iter().map(|e| e.to_string()).collect(),
+            tools: vec![],
+        };
+        ExtHost::spawn(dir, &manifest).await.ok()
+    }
+
+    fn ctx(tool: &str) -> BeforeToolCallContext {
+        BeforeToolCallContext {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: tool.to_string(),
+            args: serde_json::json!({"command": "rm -rf /"}),
+        }
+    }
+
+    /// The whole seam, end to end: a real child process, the real bridge, the real trait
+    /// method — and a real veto reaching the caller.
+    ///
+    /// Every other test of this bridge either reduces hand-written JSON or runs against no
+    /// host at all. Neither proves that the two halves are wired to each other: the hook
+    /// could speak the wrong frame name, or send a payload the child never sees, and the
+    /// reducer tests would still pass. This is the only test that would notice.
+    #[tokio::test]
+    async fn a_live_extension_can_veto_a_tool_call_through_the_bridge() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--veto", &["before_tool_call"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionToolHooks::new(vec![host]);
+
+        let out = hooks
+            .before_tool_call(ctx("bash"))
+            .await
+            .expect("a live extension answering is not an error");
+
+        assert!(
+            out.block,
+            "the extension said no and the call went ahead anyway"
+        );
+        let why = out.reason.expect("a block must say why");
+        assert!(
+            why.contains("extension says no"),
+            "the child's own reason must reach the transcript: {why}"
+        );
+    }
+
+    /// The negative case, live: a child that abstains must not block.
+    ///
+    /// Without this, a bridge that ignored the answer and blocked unconditionally would
+    /// pass the veto test above.
+    #[tokio::test]
+    async fn a_live_extension_that_abstains_lets_the_call_proceed() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--abstain", &["before_tool_call"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionToolHooks::new(vec![host]);
+
+        let out = hooks
+            .before_tool_call(ctx("ls"))
+            .await
+            .expect("an abstention is not an error");
+        assert!(
+            !out.block,
+            "an extension with no opinion must not stop the call: {:?}",
+            out.reason
+        );
+    }
+
+    /// A child that goes silent must not stall the call, and must not merely not-block it.
+    ///
+    /// **This test found a real defect.** It was written expecting the failure policy alone
+    /// to be enough, and it passed the "does not block" half while taking **ten seconds** —
+    /// because `interpose` reused `INVOKE_TIMEOUT_SECS`. The policy was satisfied and the
+    /// cost was not noticed: an interpose runs before *every* tool call, so a silent
+    /// extension on a 30-call turn would add five minutes of pure waiting.
+    ///
+    /// "Must not block a run" and "must not delay a run" are different requirements, and only
+    /// the first was written down. `INTERPOSE_TIMEOUT_SECS` now separates them, and the bound
+    /// here is 3 s against a 1 s budget — wide enough not to be a timing race, tight enough
+    /// to catch a regression to the invoke budget.
+    #[tokio::test]
+    async fn a_live_extension_that_never_answers_does_not_stall_the_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--interpose-silent", &["before_tool_call"]).await
+        else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionToolHooks::new(vec![host]);
+
+        // The fixture ignores interpose frames entirely, so this must return quickly with no
+        // decision rather than waiting out the ten-second invoke timeout.
+        let out = tokio::time::timeout(Duration::from_secs(3), hooks.before_tool_call(ctx("ls")))
+            .await
+            .expect("a silent extension must not hold the tool call open");
+        assert!(!out.expect("silence is not an error").block);
+    }
+
+    /// The manifest filter gates the interpose path too.
+    ///
+    /// Asking an extension that never declared interest would be a protocol round trip it
+    /// did not consent to -- and would cost a tool call's latency for an answer nobody
+    /// wanted.
+    #[tokio::test]
+    async fn an_extension_that_declared_no_interest_is_never_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        // Declares no events, so `before_tool_call` is not one it wants to be consulted on.
+        let Some(host) = fixture(dir.path(), "--veto", &[]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionToolHooks::new(vec![host]);
+
+        let out = hooks
+            .before_tool_call(ctx("bash"))
+            .await
+            .expect("an uninterested host is not an error");
+        assert!(
+            !out.block,
+            "a host that was never asked must not have blocked anything"
         );
     }
 }
