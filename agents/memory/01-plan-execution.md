@@ -1,6 +1,6 @@
 # Plan execution — phases 0-7
 
-**Status: Phase 3 starting. Phases 0, 1, 2 largely done.**
+**Status: Phases 0-3 done, Phase 4 started. Defects D17-D21 all closed.**
 
 Source of truth for *what* to do: `audit/07-plan.md`. This file tracks *where I am* and
 *what I verified on the way*, so a context loss does not lose the position.
@@ -48,20 +48,25 @@ test *and* by watching a real TUI's mtime advance every 2s.
 
 ## Still open
 
-- **Phase 4 (pi port parity)** and **Phase 5 (structure)** — not started.
+- **Phase 4 (pi port parity)** — `/tree` re-projection landed (`7489c00`). Two delegated
+  audits of the remaining gaps (`deleg_bf96cf7a`: branch navigation, extension SDK) were
+  dispatched and their findings are not yet folded in.
+- **Phase 5 (structure)** — not started.
+- `branch_with_summary` still has **no production caller**. The store primitive is
+  complete and correct; nothing invokes it. `audit/02-port-fidelity.md` says so and it is
+  still true.
 - **0.6** promote `docs/design/epsilon-architecture.draft.md`.
 - **146 broken links**, all in `audit/history/` — deliberately unrepaired.
-- **Reinstall `C:/Users/Hp/.cargo/bin/epsilon.exe`** before the user tests it: the
-  installed binary is still the pre-session build. Per AGENTS.md, CLI/TUI behavior
-  changed, so a reinstall is required.
-- **Wipe `D:/eps-target`** after the battery finishes (C: at 93%, 37 G free).
+- **Wipe `D:/eps-target`** when the install finishes (C: was at 93%).
 
 ## Verified state
 
-**Gate battery `m180-1`: PASS** at `cac8c35` — fmt, clippy, test, demo, real-check.
-**1253 tests, 0 failures.** (The log's own 1315 double-counts `builtin_tools`' 62; the
-per-crate sweep in `audit/evidence/gate-m180-1.md` is the measured breakdown.)
+**Gate `m180-final`: PASS** at `1790944` — fmt, clippy, test, demo, real-check.
+**0 failures.** Log committed at `audit/evidence/gate-m180-final.log`; narrative at
+`audit/evidence/gate-m180-final.md`. The log's 1316 is **1254 real tests** plus the
+62-test `builtin_tools` double count, plus 1 new (`/tree` re-projection).
 
+Two batteries this session: `m180-1` (also PASS, committed) and `m180-final`.
 Per-crate: tui 380 · core 263 · tools 168 · llm 101 · session 94 · safety 55 ·
 contracts 34 · ext 33 · lsp 23 · cli 81 · server 15 · mcp 6.
 
