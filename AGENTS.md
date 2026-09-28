@@ -1,23 +1,82 @@
 # AGENTS.md — Developing Epsilon
 
 This file governs anyone (human or agent) writing code in THIS repository. It loads
-automatically into coding-agent context. For the behavior contract of the Epsilon *product*,
-see `crates/epsilon-core/assets/agent-contract.md`.
+automatically into coding-agent context, so **the first thing it has to do is tell you where
+you are and what to read next.** For the behavior contract of the Epsilon *product*, see
+`crates/epsilon-core/assets/agent-contract.md`.
+
+## Start here
+
+| You want to | Read |
+|---|---|
+| know what this project is | [`README.md`](README.md) |
+| find any document | [`docs/README.md`](docs/README.md) — the index; add new files to it |
+| know what is true of the code right now | [`audit/01-current-state.md`](audit/01-current-state.md) |
+| know what is broken, ranked | [`audit/03-defects.md`](audit/03-defects.md) |
+| know what happens next, in order | [`audit/07-plan.md`](audit/07-plan.md) |
+| know what pi-agent has that we do not | [`audit/02-port-fidelity.md`](audit/02-port-fidelity.md) |
+| know what the header numbers actually are | [`audit/05-metrics.md`](audit/05-metrics.md) |
+| resume work another agent left | [`agents/memory/README.md`](agents/memory/README.md) |
+| see what actually landed | `git log`, [`docs/history.md`](docs/history.md) |
+
+**`audit/history/` is superseded.** It is kept because some of the reasoning is still worth
+reading, and because deleting a record of what someone believed is its own kind of
+dishonesty. It is not current, and nothing in it is authorization. Where it contradicts
+`audit/01`–`07`, `01`–`07` win.
+
+## Contents
+
+- [Identity](#identity) · [Where the port stands](#where-the-port-stands-2026-09-28)
+  · [Verification commands](#verification-commands-run-after-every-code-change)
+  · [The TUI invariant](#the-tui-invariant-m194) · [Testing philosophy](#testing-philosophy)
+- [The "faithful port, no production caller" class](#the-faithful-port-no-production-caller-class-seen-five-times)
+  · [Accuracy fixes move calibrated thresholds](#accuracy-fixes-move-calibrated-thresholds-m194)
+  · [Protocol surfaces](#protocol-surfaces-added-after-d26)
+- [Evidence discipline](#evidence-discipline-four-ways-a-claim-goes-wrong-without-a-test-noticing)
+- [Architecture law](#architecture-law) · [Dependency policy](#dependency-policy) · [Code quality](#code-quality)
+- **This machine** — [verification rounds](#verification-rounds-on-this-machine-hard-won-rules),
+  [disk hygiene](#disk-hygiene-this-machine-has-a-small-chronically-full-c-drive),
+  [Windows notes](#windows-notes)
+- **Working practice** — [milestone workflow](#milestone-workflow), [git discipline](#git-discipline),
+  [agent memory](#agent-memory-agentsmemory), [documentation](#documentation-while-building),
+  [conflict resolution](#conflict-resolution)
 
 ## Identity
 
-- You are working on **Epsilon**, a Rust coding-agent harness. The full picture lives in
-  `README.md`; the reasoning in `docs/qa/` and `docs/design/`. The docs index is
-  `docs/README.md` — start there when you need to find something, and add new files to it.
-  `audit/` holds the review (usability, defect ledger, port plan, verification record,
-  reference comparison); `audit/09-revalidation.md` re-validates the earlier allegations
-  against the code and names the verified baseline, so treat pre-revalidation claims as
-  history until that file confirms them. Read `audit/04-roadmap.md` before starting new work so
-  you build the thing that is actually next.
+- You are working on **Epsilon**, a Rust coding-agent harness that is being made a complete
+  port of the TypeScript harness `pi-agent`. **It is not complete** — see
+  [Where the port stands](#where-the-port-stands-2026-09-28) below before estimating work.
+  The reasoning behind the design lives in `docs/qa/` and `docs/design/`; the *current*
+  assessment of the code lives in `audit/01`–`07`.
+- **Your engineering judgment overrides this file** whenever you have a good reason. It is a
+  record of lessons, not a constitution — see [Conflict resolution](#conflict-resolution).
 - Answer questions before acting; act before narrating when asked to implement.
-- Repo-local skills live in `.agents/skills/` — read the one matching your task before working;
-  each carries the proven procedure for that kind of work.
+- Repo-local skills live in `.agents/skills/` — read the one matching your task before working.
+  **They are fallible and were written by earlier agents.** If one contradicts the code, the
+  code wins, and fix the skill.
 - Keep responses short and technical.
+
+## Where the port stands (2026-09-28)
+
+**Read this before estimating the work.** A fresh study against `pi-0.85.1`
+([`audit/evidence/port-fidelity-study-2026-09-28.md`](audit/evidence/port-fidelity-study-2026-09-28.md))
+surveyed **84 TUI/loop capabilities: 38 DONE, 22 PARTIAL, 24 MISSING**. So the port is
+roughly **45% complete by capability**, and the 24 missing ones concentrate in one place:
+everything pi renders through a `Component` that Epsilon has no equivalent of — a foldable
+session tree, a settings selector, an editor with jump-to-character.
+
+Recent verified work, each with a gate log in `audit/evidence/`:
+
+| Milestone | What | Gate |
+|---|---|---|
+| **M194** | `set_model` refused pi's own documented frame (D32); `cycle_model` answered with a different key than `set_model` (D31); `app.clear` was advertised and read by nothing (G1); `/fork` was `fs::copy` while the correct primitive sat wired only to RPC (G2); cache rate printed "measured 0%" for a provider that cannot report it (K1); the context estimate ignored 1,633 tokens of system prompt (C2) | `m194` PASS, 1,491 tests |
+| **M195** | `@`-completion re-walked the workspace on every keystroke | `m195` PASS, 1,492 tests |
+
+**The reported TUI freeze is still not reproduced.** Four theories have been measured and
+disproved as *the* cause — a permission dialog that eats keys, the per-frame transcript
+clone, a console-window resize, and the `@` walk. Each was a real cost, none was the bug.
+**Do not present a fourth guess as a fifth**; the honest position is that the state has not
+been reached yet. See [`audit/04-tui.md`](audit/04-tui.md).
 
 ## Verification commands (run after every code change)
 
@@ -108,7 +167,12 @@ so far: [`audit/evidence/console-probe-2026-09-21.md`](audit/evidence/console-pr
 
 Fix or honestly report failures; never weaken a gate to make it pass.
 
-## Verification rounds on this machine (hard-won rules)
+## This machine
+
+Facts about *this box*, not about the project. They are here because every one of them
+cost real time to learn, and because they change: re-verify before relying on a number.
+
+### Verification rounds on this machine (hard-won rules)
 
 One build owner at a time: a gate round, a delegated build and a `cargo install` must never
 share the machine. Run long work with `CARGO_BUILD_JOBS=1` and `CARGO_TARGET_DIR` on an external
@@ -292,6 +356,37 @@ implementation sat next to the wrong one.
 test is not a feature. When a primitive has two callers and one is a test, the *shipped*
 surface is the one without it.
 
+## Evidence discipline (four ways a claim goes wrong without a test noticing)
+
+These are the failure modes this repository has actually paid for. They are listed
+together because they share a shape: **something reports success while the thing you
+wanted did not happen.**
+
+- **A control that passes is a control you have not yet proven works.** This has happened
+  four times in two sessions. The `@`-cache test passed *three times* against a control
+  that re-walked on every keystroke, because each version asserted on something the broken
+  build produced identically — list contents, then an internal field, then popup rows whose
+  fixture could not match the query. Before believing a control: **ask what the broken
+  version would print, and confirm it differs.**
+- **Measure the number the code reads, not the number you reasoned about.** Six compaction
+  thresholds were tried by reading the source; all six were wrong in the same direction. One
+  `eprintln!` in the deciding function showed `tokens=1674 limit=2400 tail=2000` — and
+  revealed that `tail` is clamped *up* to 2,000 whatever the fixture asked for, which three
+  attempts had been tuning around.
+- **Prove causation instead of assuming it.** A `git worktree` at HEAD with its own
+  `CARGO_TARGET_DIR` answers "was this failing before?" in minutes. A one-line temporary
+  edit answers "did my change cause it?" in seconds. Both are far cheaper than six guesses.
+- **Do not edit source while a battery is running.** Three logs were lost in one session
+  (`m194-d30`, `m194b-d30`, `m194c`) — each described a tree that no longer existed. Freeze
+  the tree, then start the gate.
+- **Verify what is on disk before believing a compiler error about a file you just wrote.**
+  `write_file` reported success twice while leaving the old content, and `patch` then
+  matched fuzzily and corrupted it. For a throwaway measurement, use scratch **outside** the
+  repository.
+- **Never quote a test count you did not measure.** Sum the `test result: ok. N passed`
+  lines from the log. A per-crate sweep and a battery total are measured at different times
+  against different target sets, so subtracting them is a guess wearing arithmetic.
+
 ## Code quality
 
 - `unsafe_code = "forbid"` workspace-wide; exceptions need a per-crate override + justification.
@@ -367,7 +462,9 @@ lying one costs the user the belief that the feature exists.
   repeated approval; old audit checkpoint wording is historical. A new unrelated
   task does not inherit permission to push, publish or use paid services.
 
-## Windows notes (learned the hard way — see docs/milestones/M4)
+## Windows notes
+
+Hard-won, and mostly learned the hard way — the details are in `docs/milestones/M4`.
 
 - Append-only handles cannot `set_len` (FILE_APPEND_DATA ≠ FILE_WRITE_DATA); truncation needs a
   read+write handle opened without append.
