@@ -224,6 +224,12 @@ Two things the battery does NOT cover, both found after it passed:
   up: both are "I checked the declaration and assumed the rest."
   Same reading found `getMessages`/`getCommands` return BARE ARRAYS
   (`getData<T[]>(r).x`), not objects — M188 wrapped both.
+- **Tracked gate logs live in `target/`, and `rm -rf target` deletes tracked files.** The
+  cleanup rule ("wipe the cache after every round") and the evidence rule ("track the
+  battery log") collide, because the battery writes to `target/gate-<label>.log` and I
+  force-add it. `git checkout -- target/` restored them after the wipe. **Before wiping,
+  `git status --short` — and if logs show as ` D`, restore rather than commit the
+  deletion.**
 - **Before splicing a file by character offset, print the surrounding text and assert on
   it.** I used `s.find("fn ok_line(")` as an anchor, inserted there, and destroyed 1,944
   lines of `rpc_mode.rs` — `wc -l` caught it (872 vs 2,622) and `git checkout` restored it.
