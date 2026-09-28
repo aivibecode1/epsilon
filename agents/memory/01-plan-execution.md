@@ -80,6 +80,12 @@ test *and* by watching a real TUI's mtime advance every 2s.
   stdio: 557-row model list, 365,819 bytes, one line, 0.08s. **22 of pi's 33 RPC commands
   remain**; the next cheap batch is get_messages, get_commands, get_session_stats,
   clear_queue.
+- **M188 shipped 4 more RPC commands** (`30cb04c`): clear_queue, get_messages, get_commands,
+  get_session_stats. **15 of pi's 33 now implemented.** get_session_stats needed real work: the
+  session total existed only in the TUI's `UiState` (a VIEW), so RPC could not read it in
+  principle. Added `Agent::session_usage()` + `session_usage_by_model()` — the per-model split
+  is load-bearing because price belongs to the model that consumed the tokens.
+  **D26:** pi's `follow_up` was refused as `unknown op`; only `followup` worked.
 - **D23 CLOSED** (`f6636ff`): the 18 glued lines in `docs/history.md` repaired, all 18 rows
   reconstructed from the dev logs, and two structural tests added so it cannot recur
   silently (`38e7a5e`). D25 remains: one row numbered `| 018 |` that predates the corruption.
@@ -178,6 +184,20 @@ Two things the battery does NOT cover, both found after it passed:
   restarting at M6. I scoped a check to one table (79 "missing" milestones, all false) and
   then scoped another to the whole file ("M6 after M186", also false) — same mistake, opposite
   directions. Check across both, or reset at every heading.
+- **`#[serde(other)] Unknown` swallows `#[serde(alias = ...)]`.** A catch-all variant absorbs
+  an unrecognised name before serde checks aliases, so the alias compiles, looks right, and
+  silently does nothing. Use an explicit `#[serde(rename = "...")]` for the name that must
+  work (D26, `follow_up`).
+- **A protocol test must go through the wire.** Deserializing an enum proves the type parses;
+  only dispatching a frame and reading the reply proves the protocol accepts what a client
+  will send. `ops_deserialize_with_snake_tags` agreed with the code by construction and so
+  could never have caught a wrong wire name.
+- **An in-flight run drains both queues at its own pace.** A test that queues a follow-up
+  against a RUNNING agent races the loop; measured, the item is gone before the next
+  statement. Use an idle agent for queue assertions.
+- **`docs/history.md` is `include_str!`'d, so editing it during a battery edits the source
+  under test.** Caught by the m187 history test in m188 (`GATE FAIL`: "no row for milestones
+  [187]"). Preserve the failure under a label; it is a truthful record, not a stale snapshot.
 - **A control that does not remove what it claims to remove proves nothing.** Two
   instances this session: a parse default that was unreachable behind a digits predicate
   (control passed, correctly), and a directory-name drift control that replaced one of two
