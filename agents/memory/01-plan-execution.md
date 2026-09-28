@@ -112,6 +112,15 @@ Two things the battery does NOT cover, both found after it passed:
 - **Do not write a number you have not measured.** I invented a per-crate table from a
   `--lib`-only run, published it, and had to retract it. `cargo test -p X` ≠
   `cargo test -p X --lib`.
+- **A background process can deliver a result for code that no longer exists.** One
+  measurement dispatched at 00:33 (pre-fix) sat on disk and completed hours later, reporting
+  `context_mirror_cost_does_not_track_transcript_length` FAILED at 16.8µs → 216µs (12.9x).
+  That is the *pre-fix* profile exactly, and it contradicted the fix committed at 01:46 and
+  the battery that passed 63 targets. Six clean re-runs were flat at ~300-500ns.
+  **Before acting on any async result that contradicts a commit, check
+  `git log -1 --format=%ad <sha>` against when the job was dispatched.** A late "FAILED" is
+  evidence about the tree it ran on, not the tree you have. (Recorded as a near-miss: the
+  mistake was briefly treating it as a regression, not as stale.)
 - **A test count of 0 usually means the crate did not compile, not that it has no
   tests.** A sweep that sums `test result: ok.` lines gets nothing from a broken build, and
   "0" reads as "no tests" instead of "this is broken". Always confirm a 0 by running that
