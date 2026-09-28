@@ -48,16 +48,37 @@ test *and* by watching a real TUI's mtime advance every 2s.
 
 ## Still open
 
-- **Phase 4 (pi port parity)** — `/tree` re-projection landed (`7489c00`). Two delegated
-  audits of the remaining gaps (`deleg_bf96cf7a`: branch navigation, extension SDK) were
-  dispatched and their findings are not yet folded in.
+- **Phase 4 (pi port parity)** — `/tree` re-projection landed (`7489c00`). The delegated
+  recheck is folded in (`586cc09`): the port audit's "navigation Missing" row is retracted
+  (it was wired at `keys.rs:495`), and the extension SDK gap is enlarged. New item **4.5**:
+  bidirectional event frames, then wire `ToolHooks`/`TurnHooks`.
+- **`branch_with_summary` still has no production caller** — confirmed twice, still true.
+- **`ToolHooks`/`TurnHooks` are the same defect**: correct shape, loop calls them, 10/10
+  setters are in tests. See the class note in `audit/03-defects.md`.
 - **Phase 5 (structure)** — not started.
-- `branch_with_summary` still has **no production caller**. The store primitive is
-  complete and correct; nothing invokes it. `audit/02-port-fidelity.md` says so and it is
-  still true.
 - **0.6** promote `docs/design/epsilon-architecture.draft.md`.
 - **146 broken links**, all in `audit/history/` — deliberately unrepaired.
 - **Wipe `D:/eps-target`** when the install finishes (C: was at 93%).
+
+## Delegation: a child's summary is a claim, verify it before you act
+
+- **A subagent can catch YOUR error, and will.** `deleg_bf96cf7a` found that
+  `audit/02-port-fidelity.md` called branch navigation "Missing" when it is wired
+  (`keys.rs:495`). It was right; I had written the claim. The audit searched for pi's
+  identifier (`navigateTree`), found no `navigate_to`, and concluded absence.
+- **Check whether the repo already refuted it.** Two evidence files
+  (`port-gap-recheck-2026-09-21.md`, `F22-compaction-usage-never-read.md`) had
+  already recorded navigation as wired. I superseded them without reconciling. Before
+  publishing a verdict, grep `audit/evidence/` for the capability first.
+- **`git worktree` is the right way to audit a tree a concurrent agent is editing.**
+  The subagent used one at HEAD instead of reading my dirty files, and flagged my
+  in-flight compile error rather than misattributing it. Worth doing again.
+- **The subagent noticed a tool-state trap I was in.** It said "my probe is gone; the
+  three modified files are the concurrent agent's" — i.e. it checked before blaming. Good
+  discipline to keep in mind when reading a report that claims a defect.
+- Ask a delegation to **compare two trees** (`references/pi-0.85.1` vs `crates/`) and
+  explicitly *not* read the audit. Both tasks ignored the audit, which is the only reason
+  they produced findings rather than paraphrasing my own conclusions.
 
 ## Verified state
 
