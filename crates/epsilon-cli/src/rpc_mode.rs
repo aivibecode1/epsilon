@@ -33,6 +33,18 @@ enum Op {
     /// Queue a mid-run interjection.
     Steer { text: String },
     /// Queue post-run work.
+    ///
+    /// **The wire name is pi's `follow_up` (`rpc-types.ts:30`), not `followup`.** Serde's
+    /// `rename_all = "snake_case"` would have produced `followup`, and that is what this
+    /// op was called until a probe printed its own reply: `unknown op: follow_up`. A
+    /// pi-shaped client sending the documented name was refused, and the pre-existing test
+    /// had never dispatched this op at all — it read the *variant* name, not the wire one,
+    /// so it agreed with the code and missed the wire.
+    ///
+    /// Both spellings are accepted from here on: `follow_up` is what pi documents and what
+    /// a client will send, and refusing a name pi uses is the failure mode this whole
+    /// surface is supposed to avoid.
+    #[serde(rename = "follow_up", alias = "followup")]
     Followup { text: String },
     /// List pending permission asks.
     Approvals,
@@ -80,6 +92,15 @@ enum Op {
     CycleModel,
     /// The most recent assistant message's text, or null when there is none.
     GetLastAssistantText,
+
+    /// Empty both pending queues and return what was in them.
+    ClearQueue,
+    /// The conversation so far, as `Message` values.
+    GetMessages,
+    /// Everything invocable by name: built-in commands, skills, prompt templates.
+    GetCommands,
+    /// Token, cost and cache totals for the session.
+    GetSessionStats,
 
     /// A well-formed frame naming an op this build does not implement.
     ///
@@ -554,6 +575,157 @@ async fn dispatch_line(
                 serde_json::json!({ "text": text }),
             )
         }
+        Op::ClearQueue => {
+            // pi's shape is `{ steering, followUp }` (rpc-types.ts:59) -- BOTH queues. Draining
+            // only steering would leave every follow-up queued and still report a clear, and
+            // follow-ups are the messages that run *after* the agent would otherwise stop, so
+            // the user would watch the run continue and have no way to see why.
+            let steering = agent.drain_steering_all();
+            let follow_up = agent.drain_followups_all();
+            ok_line(
+                "clear_queue",
+                id,
+                serde_json::json!({
+                    "steering": steering.len(),
+                    "followUp": follow_up.len(),
+                }),
+            )
+        }
+        Op::GetMessages => {
+            // pi returns the conversation as `SessionMessage[]`. Epsilon's `Message` is a
+            // serde `tag = "role"` enum, so it lands as an array of role-tagged objects --
+            // the same JSON shape a pi client expects, from a different Rust type.
+            let history = agent.history();
+            ok_line(
+                "get_messages",
+                id,
+                serde_json::json!({ "messages": history }),
+            )
+        }
+        Op::GetCommands => {
+            // pi's `RpcSlashCommand` (rpc-types.ts:130-141) carries name, description, and a
+            // `sourceInfo` with a path and line range, so a client can offer "open the file
+            // that defines this command". Epsilon has no line numbers for skills (the front
+            // matter is parsed, not indexed), so `line` is 0 and `endLine` is null rather
+            // than a fabricated range -- a client that jumps to a wrong line is worse than
+            // one that knows it cannot.
+            //
+            // `!define` is reported as not-defined rather than omitted: a palette that hides
+            // it looks broken when the key does nothing.
+            // The TUI's own `picker::SLASH_ITEMS` — already "pi's command registry shape" by
+            // its own doc comment, so reading it here means the palette a user sees and the
+            // list a client fetches cannot describe different sets of commands. A second
+            // hand-maintained table in this file would drift from it, and a client building
+            // a command list would then offer commands the harness does not accept.
+            let mut commands: Vec<serde_json::Value> = epsilon_tui::picker::SLASH_ITEMS
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "name": c.value.trim_start_matches('/'),
+                        "description": c.description,
+                        "sourceInfo": serde_json::json!({
+                            "path": "builtin",
+                            "line": 0,
+                            "endLine": serde_json::Value::Null,
+                        }),
+                    })
+                })
+                .collect();
+
+            // pi's `get_commands` appends `!define` (`rpc-types.ts:141`), which writes new
+            // slash commands into a config file. Epsilon has no equivalent, so it is
+            // reported as explicitly not-defined rather than omitted: a palette that hides
+            // it looks broken, and one that lists it without the flag would have a client
+            // write a file nothing reads.
+            commands.push(serde_json::json!({
+                "name": "!define",
+                "defined": false,
+                "description": "Not supported by this build: epsilon has no !define.",
+                "sourceInfo": serde_json::Value::Null,
+            }));
+
+            for skill in agent.skills() {
+                commands.push(serde_json::json!({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "sourceInfo": serde_json::json!({
+                        "path": skill.dir.to_string_lossy(),
+                        "line": 0,
+                        "endLine": serde_json::Value::Null,
+                    }),
+                }));
+            }
+            ok_line(
+                "get_commands",
+                id,
+                serde_json::json!({ "commands": commands, "count": commands.len() }),
+            )
+        }
+        Op::GetSessionStats => {
+            // pi returns `{ contextTokens, inputTokens, outputTokens, cacheReadTokens,
+            // cacheWriteTokens, totalCostUsd }` (`rpc-types.ts:48-56`).
+            let usage = agent.session_usage();
+            let by_model = agent.session_usage_by_model();
+
+            // Price per model, then sum — the same `breakdown_per_model` the TUI's header
+            // uses, fed the same way, so an RPC client and a user looking at the screen see
+            // one number rather than two implementations that agree today. Pricing a flat
+            // total at the *current* model would under-bill every response a previous model
+            // produced, so the per-model split is load-bearing rather than a nicety.
+            //
+            // `None` when nothing has run: a session that never called a provider has no
+            // bill, and inventing `$0.00` would be a fact about a request that never
+            // happened. `isFloor` is carried because a model missing from the price
+            // registry makes the total a lower bound, and a client showing it as exact
+            // would be lying by omission.
+            let cost = if by_model.is_empty() {
+                None
+            } else {
+                Some(epsilon_tui::ui::cost::breakdown_per_model(
+                    &by_model
+                        .iter()
+                        .map(|(id, u)| {
+                            (
+                                id.clone(),
+                                epsilon_tui::ui::cost::TokenCounts {
+                                    input: u.input,
+                                    output: u.output,
+                                    cache_read: u.cache_read,
+                                    cache_write: u.cache_write,
+                                },
+                            )
+                        })
+                        .collect(),
+                    |model_id| {
+                        epsilon_llm::catalog::lookup_model(model_id).map(|info| {
+                            epsilon_tui::ui::cost::TokenPrices {
+                                input: info.input_cost_micro_per_mtok,
+                                output: info.output_cost_micro_per_mtok,
+                                cache_read: info.cache_read_cost_micro_per_mtok,
+                                cache_write: info.cache_write_cost_micro_per_mtok,
+                            }
+                        })
+                    },
+                ))
+            };
+            ok_line(
+                "get_session_stats",
+                id,
+                serde_json::json!({
+                    "contextTokens": agent.estimated_context_tokens(),
+                    "inputTokens": usage.input,
+                    "outputTokens": usage.output,
+                    "cacheReadTokens": usage.cache_read,
+                    "cacheWriteTokens": usage.cache_write,
+                    // pi's field is dollars; ours is micro-USD internally, as in the TUI.
+                    // Both the exact figure and the flag are reported so a client cannot
+                    // mistake a lower bound for a bill.
+                    "totalCostUsd": cost.as_ref().map(|c| c.total() as f64 / 1_000_000.0),
+                    "costIsFloor": cost.as_ref().is_some_and(|c| c.is_floor()),
+                    "models": by_model.keys().collect::<Vec<_>>(),
+                }),
+            )
+        }
         Op::Unknown => err_line(Some(op_name), id, format!("unknown op: {op_name}")),
     }
 }
@@ -634,6 +806,34 @@ mod tests {
 
     fn parse(reply: &str) -> serde_json::Value {
         serde_json::from_str(reply).unwrap_or_else(|e| panic!("reply is not one JSON line: {e}"))
+    }
+
+    /// Consume events until the run's terminal `AgentEnd`, or fail.
+    ///
+    /// Waiting for the EVENT rather than for `history()` to look settled is deliberate and
+    /// was learned the hard way in M186: a run appends messages and *then* emits `AgentEnd`,
+    /// so a poll can observe a half-built transcript and report numbers that are about to
+    /// change. The event is the only moment the run's accounting is final.
+    async fn wait_for_end(
+        events: &mut tokio::sync::broadcast::Receiver<
+            Arc<epsilon_contracts::agent_event::AgentEvent>,
+        >,
+    ) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(Ok(ev)) => {
+                    if matches!(
+                        &*ev,
+                        epsilon_contracts::agent_event::AgentEvent::AgentEnd { .. }
+                    ) {
+                        return;
+                    }
+                }
+                Ok(Err(e)) => panic!("event stream failed before the run ended: {e}"),
+                Err(_) => panic!("the run did not reach its terminal event within 10s"),
+            }
+        }
     }
 
     #[test]
@@ -1493,5 +1693,320 @@ mod tests {
             reply["data"]["model_id"].as_str().unwrap_or(""),
             "core holds the cycled model: {reply}"
         );
+    }
+
+    // ---- M188: clear_queue, get_messages, get_commands, get_session_stats ----
+    //
+    // These four were refused as `unknown op` not because the work was missing but because
+    // the numbers `get_session_stats` needs lived in the TUI's `UiState` — a view that RPC
+    // has no instance of. The fix moved the session total onto `Agent`, which is where a
+    // fact about a session belongs.
+
+    /// A fresh agent has spent nothing, and says so with `null` rather than `$0.00`.
+    ///
+    /// A session that never called a provider has no bill. Reporting zero would be a fact
+    /// about a request that never happened, and a client cannot tell it from a free run.
+    #[tokio::test]
+    async fn session_stats_cost_is_null_before_anything_runs() {
+        let agent = agent_with(vec![], 0);
+        let approvals = approvals();
+        let reply =
+            parse(&dispatch_line(r#"{"op":"get_session_stats"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        assert_eq!(reply["data"]["inputTokens"], 0, "{reply}");
+        assert_eq!(reply["data"]["outputTokens"], 0, "{reply}");
+        assert_eq!(
+            reply["data"]["totalCostUsd"],
+            serde_json::Value::Null,
+            "an unrun session has no bill to report: {reply}"
+        );
+    }
+
+    /// After a run the totals are the ones core accumulated, and `contextTokens` is live.
+    ///
+    /// The control for this test removes the `session_usage` fold-in. It must fail here: a
+    /// handler that echoed the reply it was given, or that re-derived zeros, would otherwise
+    /// pass a "before" test and fail nothing.
+    #[tokio::test]
+    async fn session_stats_report_the_run_core_actually_recorded() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("counted")], 0);
+        let approvals = approvals();
+        let mut events = agent.subscribe();
+        let started = parse(
+            &dispatch_line(
+                r#"{"op":"prompt","task":"say counted"}"#,
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(started["data"]["started"], true, "{started}");
+        let _ = wait_for_end(&mut events).await;
+
+        // Core's own accumulator, read directly. The reply below must equal THIS, and the
+        // assertion is written against it rather than against a hard-coded number, so a
+        // change in what the faux provider bills does not silently unmake the test.
+        let core = agent.session_usage();
+        let reply =
+            parse(&dispatch_line(r#"{"op":"get_session_stats"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        assert_eq!(reply["data"]["inputTokens"], core.input, "{reply}");
+        assert_eq!(reply["data"]["outputTokens"], core.output, "{reply}");
+        assert!(
+            core.output > 0,
+            "the precondition: the faux provider must actually bill, or this asserts nothing"
+        );
+        assert!(
+            reply["data"]["contextTokens"].as_u64().unwrap_or(0) > 0,
+            "a session with an assistant message has context in use: {reply}"
+        );
+    }
+
+    /// The per-model map is what makes the cost a real number rather than a guess.
+    ///
+    /// Price is a property of the model that consumed the tokens, so a reply that summed
+    /// everything and priced it at one row would pass every test above and be wrong for any
+    /// session that switched models. This asserts the split exists and names the model.
+    #[tokio::test]
+    async fn session_stats_bill_each_response_to_its_own_model() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("hi")], 0);
+        let approvals = approvals();
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"hi"}"#, &agent, &approvals).await;
+        let _ = wait_for_end(&mut events).await;
+
+        let by_model = agent.session_usage_by_model();
+        assert_eq!(by_model.len(), 1, "one model ran: {by_model:?}");
+        let (model, usage) = by_model.iter().next().expect("checked above");
+        assert_eq!(model, "faux-1", "{by_model:?}");
+        assert!(usage.output > 0, "{usage:?}");
+
+        let reply =
+            parse(&dispatch_line(r#"{"op":"get_session_stats"}"#, &agent, &approvals).await);
+        assert_eq!(
+            reply["data"]["models"],
+            serde_json::json!(["faux-1"]),
+            "the reply must name the models it priced: {reply}"
+        );
+    }
+
+    /// `get_messages` returns the conversation as role-tagged objects.
+    ///
+    /// Epsilon's `Message` is a serde `tag = "role"` enum, so this is an array of
+    /// role-tagged objects — the shape a pi client expects, from a different Rust type.
+    #[tokio::test]
+    async fn get_messages_returns_the_conversation() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("pong")], 0);
+        let approvals = approvals();
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(r#"{"op":"prompt","task":"ping"}"#, &agent, &approvals).await;
+        let _ = wait_for_end(&mut events).await;
+
+        let reply = parse(&dispatch_line(r#"{"op":"get_messages"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        let messages = reply["data"]["messages"]
+            .as_array()
+            .unwrap_or_else(|| panic!("messages must be an array: {reply}"));
+        assert!(messages.len() >= 2, "user and assistant at least: {reply}");
+        assert_eq!(messages[0]["role"], "user", "{reply}");
+        assert!(
+            messages.iter().any(|m| m["role"] == "assistant"),
+            "the agent spoke, so an assistant message must be present: {reply}"
+        );
+    }
+
+    /// `get_messages` on a fresh agent is an empty array, not an error.
+    #[tokio::test]
+    async fn get_messages_is_empty_before_anything_is_said() {
+        let agent = agent_with(vec![], 0);
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"get_messages"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        assert_eq!(reply["data"]["messages"], serde_json::json!([]), "{reply}");
+    }
+
+    /// `get_commands` reports the TUI's own registry, not a second hand-kept list.
+    ///
+    /// A duplicate table would drift, and a client building a command palette would then
+    /// offer commands the harness does not accept. The assertion reads the same constant
+    /// the handler reads, so a drift between them is a compile error rather than a silent
+    /// divergence.
+    #[tokio::test]
+    async fn get_commands_reads_the_tuis_own_registry() {
+        let agent = agent_with(vec![], 0);
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        let commands = reply["data"]["commands"]
+            .as_array()
+            .unwrap_or_else(|| panic!("commands must be an array: {reply}"));
+
+        let expected: Vec<String> = epsilon_tui::picker::SLASH_ITEMS
+            .iter()
+            .map(|c| c.value.trim_start_matches('/').to_string())
+            .collect();
+        for name in &expected {
+            assert!(
+                commands.iter().any(|c| c["name"] == name.as_str()),
+                "every slash command the TUI offers must be listed here: missing {name:?} in {reply}"
+            );
+        }
+        assert!(
+            commands.iter().any(|c| c["name"] == "!define"),
+            "pi appends !define; reported as not-defined rather than omitted, so a palette \
+             does not look broken: {reply}"
+        );
+        let define = commands
+            .iter()
+            .find(|c| c["name"] == "!define")
+            .expect("checked above");
+        assert_eq!(
+            define["defined"], false,
+            "epsilon has no !define and must not claim it does: {reply}"
+        );
+    }
+
+    /// `get_commands` lists a discovered skill with the path a client would open.
+    ///
+    /// pi's `RpcSlashCommand` carries `sourceInfo` so an editor can jump to the file that
+    /// defines the command; a command with no path is only half of what the shape is for.
+    #[tokio::test]
+    async fn get_commands_carries_a_source_path_for_each_command() {
+        let agent = agent_with(vec![], 0);
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"get_commands"}"#, &agent, &approvals).await);
+        let commands = reply["data"]["commands"]
+            .as_array()
+            .unwrap_or_else(|| panic!("commands must be an array: {reply}"));
+        for c in commands {
+            if c["name"] == "!define" {
+                continue; // explicitly unsupported, so it carries no path
+            }
+            assert!(
+                c["sourceInfo"]["path"].is_string(),
+                "{} carries no source path: {reply}",
+                c["name"]
+            );
+        }
+    }
+
+    /// `clear_queue` empties BOTH queues and reports both counts.
+    ///
+    /// The control here is draining only steering. Follow-ups are the messages that run
+    /// *after* the agent would otherwise stop, so leaving them queued while reporting a
+    /// clear means the user watches the run continue with no way to see why — the exact
+    /// shape of the TUI defect where steering was restored to the editor and follow-ups
+    /// had nowhere to go.
+    #[tokio::test]
+    async fn clear_queue_empties_both_queues_and_reports_both_counts() {
+        let approvals = approvals();
+        // An IDLE agent, deliberately. A run in flight drains both queues at its own
+        // drain points, and a measured probe showed a follow-up queued mid-run is consumed
+        // before the next statement -- so a test against a running agent is a race that
+        // passes when the scheduler is kind. `clear_queue` is most useful exactly when a
+        // run is NOT yet going to consume the work, which is also the only state in which
+        // the assertion below is deterministic.
+        let agent = agent_with(vec![], 0);
+        let _ = dispatch_line(
+            r#"{"op":"steer","text":"actually stop"}"#,
+            &agent,
+            &approvals,
+        )
+        .await;
+        let _ = dispatch_line(
+            r#"{"op":"follow_up","text":"and this too"}"#,
+            &agent,
+            &approvals,
+        )
+        .await;
+
+        // The precondition, as an assertion rather than an assumption. A queue that was
+        // already empty makes every count below pass for the wrong reason -- and the
+        // control for this test (drain steering only) still empties a one-item queue, so
+        // "0" alone proves nothing.
+        assert_eq!(agent.steer_queue_len(), 1, "the steer must be queued");
+        assert_eq!(
+            agent.followup_queue_len(),
+            1,
+            "the follow-up must be queued, or this asserts nothing"
+        );
+
+        let reply = parse(&dispatch_line(r#"{"op":"clear_queue"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        // pi's shape is `{ steering, followUp }` (rpc-types.ts:59) -- both counts.
+        assert_eq!(
+            reply["data"]["steering"].as_u64(),
+            Some(1),
+            "one steering message was queued and must be reported as cleared: {reply}"
+        );
+        assert_eq!(
+            reply["data"]["followUp"].as_u64(),
+            Some(1),
+            "one follow-up was queued and must be reported as cleared: {reply}"
+        );
+        assert_eq!(
+            agent.steer_queue_len(),
+            0,
+            "steering must be empty: {reply}"
+        );
+        assert_eq!(
+            agent.followup_queue_len(),
+            0,
+            "the followup queue must be empty too -- this is what the control breaks: {reply}"
+        );
+    }
+
+    /// Both tags reach the four new ops, and unknown names still fail.
+    #[tokio::test]
+    async fn the_four_new_ops_accept_pis_type_tag() {
+        let agent = agent_with(vec![], 0);
+        let approvals = approvals();
+        for op in [
+            "clear_queue",
+            "get_messages",
+            "get_commands",
+            "get_session_stats",
+        ] {
+            let reply =
+                parse(&dispatch_line(&format!(r#"{{"type":"{op}"}}"#), &agent, &approvals).await);
+            assert_eq!(reply["success"], true, "{op} via pi's type tag: {reply}");
+        }
+    }
+
+    /// pi's documented op name reaches the handler — the test whose absence let a
+    /// mis-spelled wire name ship.
+    ///
+    /// The pre-existing `ops_deserialize_with_snake_tags` test could not catch this: it
+    /// deserialized the enum and read the *variant* name, so it agreed with whatever the
+    /// code did. Only dispatching a frame through `dispatch_line` and reading the reply
+    /// exercises the wire. That is the whole difference between this test and the one it
+    /// replaces, and it is why the assertion is on the reply's `success`, not on a
+    /// deserialized value.
+    #[tokio::test]
+    async fn pi_spelled_op_names_reach_their_handlers() {
+        let approvals = approvals();
+        let agent = agent_with(vec![], 0);
+        // The exact strings from `rpc-types.ts:27-31`, dispatched as sent.
+        for frame in [
+            r#"{"op":"steer","text":"x"}"#,
+            // pi: `type: "follow_up"`, NOT "followup" (rpc-types.ts:30)
+            r#"{"op":"follow_up","text":"x"}"#,
+        ] {
+            let reply = parse(&dispatch_line(frame, &agent, &approvals).await);
+            assert_eq!(
+                reply["success"], true,
+                "{frame} must reach its handler, not the unknown-op arm: {reply}"
+            );
+        }
+    }
+
+    /// The legacy `followup` spelling still works, so nothing already in flight broke.
+    #[tokio::test]
+    async fn the_legacy_followup_spelling_still_reaches_its_handler() {
+        let approvals = approvals();
+        let agent = agent_with(vec![], 0);
+        let reply =
+            parse(&dispatch_line(r#"{"op":"followup","text":"x"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
     }
 }

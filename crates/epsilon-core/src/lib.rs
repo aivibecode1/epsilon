@@ -493,6 +493,29 @@ pub struct Agent {
     history_epoch: std::sync::atomic::AtomicU64,
     steering: Mutex<PendingQueue>,
     followups: Mutex<PendingQueue>,
+    /// Provider usage summed over every run this agent has served, since construction.
+    ///
+    /// **The run loop's own `usage_total` is deliberately run-scoped** (CORE-02 keeps a
+    /// run's turn context, model and transcript out of the session), and this is the
+    /// session-level total the run loop cannot provide. It exists because the only
+    /// cumulative accounting in the workspace lived in the TUI's `UiState` — a *view*.
+    ///
+    /// That was the actual reason pi's `get_session_stats` could not be answered: not
+    /// missing arithmetic, but a number that only existed somewhere a view happened to
+    /// be. `RpcMode` has no `UiState`, so it could not read it even in principle.
+    ///
+    /// Folded in once per completed run, from the run's own total, so the two cannot
+    /// drift. A lock rather than an atomic because `Usage` is a five-field struct and a
+    /// lock is not measurably slower at one write per run.
+    session_usage: Mutex<Usage>,
+    /// The same usage, split by the model that actually produced it.
+    ///
+    /// **Why a map and not just the flat total.** Price is a property of the model that
+    /// consumed the tokens, so a session that switched models cannot be priced from a
+    /// single row — summing the flat total and pricing it at the *current* model
+    /// under-bills every response the previous model produced. This is the same reason
+    /// `UiState` has `usage_by_model`, arrived at independently.
+    session_usage_by_model: Mutex<std::collections::BTreeMap<String, Usage>>,
 
     events_tx: broadcast::Sender<Arc<AgentEvent>>,
     running: AtomicBool,
@@ -612,6 +635,8 @@ impl Agent {
             history: Mutex::new(Vec::new()),
             observation_scope: Mutex::new(Arc::new(())),
             history_epoch: std::sync::atomic::AtomicU64::new(0),
+            session_usage: Mutex::new(Usage::default()),
+            session_usage_by_model: Mutex::new(std::collections::BTreeMap::new()),
             steering: Mutex::new(steering_queue),
             followups: Mutex::new(followup_queue),
             events_tx,
@@ -758,6 +783,16 @@ impl Agent {
         self.task_depth
             .lock()
             .map_err(|_| "task depth poisoned".to_string())
+    }
+
+    /// The discovered skills with their descriptions and paths.
+    ///
+    /// `skill_names` is enough for a count badge, but pi's `get_commands` returns
+    /// `RpcSlashCommand` carrying a description and a `sourceInfo` path
+    /// (`rpc-types.ts:130-141`), so a client building a command palette needs the whole
+    /// row. Public because that is now a real caller rather than a future one.
+    pub fn skills(&self) -> Vec<crate::skills::Skill> {
+        self.skill_list()
     }
 
     fn skill_list(&self) -> Vec<crate::skills::Skill> {
@@ -1903,11 +1938,41 @@ impl Agent {
             pending = followups;
         }
 
+        // Fold this run's usage into the session total BEFORE handing it back, so there is
+        // one commit point rather than two places that could each be forgotten. A caller
+        // that reads `session_usage()` immediately after `run()` returns therefore sees
+        // the run it just made.
+        if let Ok(mut session) = self.session_usage.lock() {
+            *session = session.combine(usage_total);
+        }
+
         Ok(RunOutcome {
             produced,
             reason,
             usage: usage_total,
         })
+    }
+
+    /// Provider usage summed over every run this agent has served.
+    ///
+    /// Read by pi's `get_session_stats` and by anything else that needs the session's
+    /// spend without owning a `UiState`. Deliberately independent of the TUI's own
+    /// accumulator: a fresh agent that has run one turn reports it, and an agent restored
+    /// by `/resume` reports only what ran in this process — which is why the TUI keeps its
+    /// hydration path and this is not a replacement for it.
+    pub fn session_usage(&self) -> Usage {
+        self.session_usage.lock().map(|u| *u).unwrap_or_default()
+    }
+
+    /// [`Agent::session_usage`] split by the model that produced each response.
+    ///
+    /// A clone rather than a borrow because the lock is a `Mutex` and the caller prices
+    /// the rows; at one call per RPC request the copy is not worth a guard's lifetime.
+    pub fn session_usage_by_model(&self) -> std::collections::BTreeMap<String, Usage> {
+        self.session_usage_by_model
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_default()
     }
 
     fn drain_steering(&self) -> Vec<Message> {
@@ -1932,6 +1997,27 @@ impl Agent {
             }
         }
         out
+    }
+
+    /// Drain ALL queued follow-up messages, ignoring queue mode.
+    ///
+    /// The follow-up counterpart to [`Agent::drain_steering_all`], and it exists because
+    /// pi's `clear_queue` returns **both** queues (`rpc-types.ts:59`: `data: { steering,
+    /// followUp }`). Without this, a client asking to clear the queue would silently leave
+    /// every follow-up queued — the messages that run *after* the agent would otherwise stop
+    /// — and the reply would claim a clear that did not happen. That is the same
+    /// acknowledge-without-acting failure the TUI hit when it restored steering to the
+    /// editor but had nowhere to put follow-ups.
+    pub fn drain_followups_all(&self) -> Vec<Message> {
+        self.followups
+            .lock()
+            .map(|mut q| q.drain_all())
+            .unwrap_or_default()
+    }
+
+    /// Number of queued follow-up messages, for a queue-depth reply.
+    pub fn followup_queue_len(&self) -> usize {
+        self.followups.lock().map(|q| q.len()).unwrap_or(0)
     }
 
     /// M30: drain ALL queued steering messages on abort (ignoring queue mode)
@@ -2553,6 +2639,16 @@ impl Agent {
                     match ev {
                         Some(StreamEvent::Done { message }) => {
                             *usage_total = usage_total.combine(message.usage);
+                            // Bill the response to the model that produced it, read from
+                            // the message rather than from `self` — a response that lands
+                            // after a `/model` switch belongs to the model that generated
+                            // it, which is what makes a multi-model session price correctly.
+                            if let Ok(mut by_model) = self.session_usage_by_model.lock() {
+                                let row = by_model
+                                    .entry(message.model_id.clone())
+                                    .or_default();
+                                *row = row.combine(message.usage);
+                            }
                             // Cache bookkeeping (port plan item 4): what this call cost the
                             // prompt cache, and if it missed, why.
                             if let Ok(mut cache) = self.cache.lock() {

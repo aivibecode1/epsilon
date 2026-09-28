@@ -631,6 +631,32 @@ no caller — and it is the honest next candidate for this rule.
   second table by design and M96–M178 belong to it. The missing list was an artefact of my
   slice, not a defect. The check that answers the real question spans both tables.
 
+- **D26 — the RPC `follow_up` op was reachable under a name pi does not use. FIXED** in M188.
+
+  pi documents `{ type: "follow_up" }` (`rpc-types.ts:30`). Epsilon accepted only
+  `followup`, because serde's `rename_all = "snake_case"` turns the variant `Followup` into
+  `followup` and nothing corrected it. A pi-shaped client sending the documented name got
+  `unknown op: follow_up` — a refusal of the exact name the reference implementation says to
+  use, on a surface whose purpose is pi compatibility.
+
+  **It survived because the test read the wrong side of the boundary.**
+  `ops_deserialize_with_snake_tags` deserialized the enum and compared serde's output against
+  the variant list, so it agreed with the code by construction. Nothing in the suite ever
+  dispatched the op and read the reply, which is the only thing that exercises a wire name.
+
+  Found by a precondition assertion I added while writing M188, and diagnosed by a probe
+  that printed its own reply:
+  `{"command":"follow_up","error":"unknown op: follow_up","success":false}`.
+
+  **Fixed with an explicit `rename`, not an `alias` alone.** `#[serde(other)] Unknown` on the
+  same enum absorbs any unrecognised name before serde reaches the alias check, so
+  `#[serde(alias = "followup")]` compiled, looked right, and did nothing. The working form is
+  `#[serde(rename = "follow_up", alias = "followup")]`.
+
+  Two tests now close it, and the rule they encode is general: **a protocol test must go
+  through the wire.** Deserializing a type proves the type parses; only dispatching a frame
+  and reading the reply proves the protocol accepts what a client will send.
+
 - **D25 — a history row numbered `| 018 |`, which predates the D23 corruption and is still
   not explained.** Present in `1873cc8~1`, the README-era history, so it is not this session's
   work. It reads as an `M1…` with the `M` eaten, and M11 is the model-picker milestone whose
