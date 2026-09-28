@@ -2645,4 +2645,101 @@ mod protocol_doc_tests {
             );
         }
     }
+
+    /// `docs/history.md` was corrupt for twenty-plus milestones (D23): 18 consecutive
+    /// lines carried a spurious `M161`–`M178` prefix glued onto whatever followed, which
+    /// destroyed three rows and a section heading, and the 18 milestone rows themselves were
+    /// lost entirely. The repair was manual; this is the check that stops it recurring.
+    ///
+    /// Every assertion here is a property of the FILE's structure, not of what it says, so it
+    /// cannot be satisfied by editing prose. `D23` is closed in `f6636ff`.
+    #[test]
+    fn the_history_timeline_is_structurally_sound() {
+        let doc = include_str!("../../../docs/history.md");
+
+        // A glued line: a bare milestone number at the start of a line, which is how the
+        // corruption presented (`M163| M144 | ...`).
+        let glued: Vec<&str> = doc
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with('M') && t[1..].chars().next().is_some_and(|c| c.is_ascii_digit())
+            })
+            .collect();
+        assert!(
+            glued.is_empty(),
+            "docs/history.md has bare milestone numbers at line start (the D23 signature): {glued:?}"
+        );
+
+        // Every numbered row is well-formed: it ends with the closing pipe.
+        let unclosed: Vec<&str> = doc
+            .lines()
+            .filter(|l| l.starts_with("| M") && !l.trim_end().ends_with('|'))
+            .collect();
+        assert!(
+            unclosed.is_empty(),
+            "docs/history.md rows missing their closing pipe: {:?}",
+            unclosed
+                .iter()
+                .map(|l| &l[..l.len().min(60)])
+                .collect::<Vec<_>>()
+        );
+
+        // Milestone numbers ascend WITHIN each table, which catches a row inserted in the
+        // wrong place -- the symptom of the displaced M135/M144 rows.
+        //
+        // Scoped per table, not across the file: `## Original acceptance criteria` is a
+        // second table that starts again at M6, so a whole-file ascending check reports
+        // "M6 after M186" and is wrong. This test did exactly that on its first run, which
+        // is the same scoping mistake the missing-milestones test documents -- caught here
+        // from the other side, by a check that was too broad instead of too narrow.
+        let mut prev: Option<u32> = None;
+        for line in doc.lines() {
+            if line.starts_with('#') {
+                // A heading starts a new table, and the sequence restarts with it.
+                prev = None;
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("| M") else {
+                continue;
+            };
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let Ok(n) = digits.parse::<u32>() else {
+                continue;
+            };
+            if let Some(p) = prev
+                && n < p
+            {
+                panic!("docs/history.md goes backwards within one table: M{n} after M{p}");
+            }
+            prev = Some(n);
+        }
+    }
+
+    /// Every milestone up to the newest has a row, in one table or the other.
+    ///
+    /// Scoped across BOTH tables on purpose. An earlier check of mine sliced only the
+    /// timeline section, reported 79 missing milestones, and I started reconstructing them —
+    /// until M96 turned up at line 143 under `## Original acceptance criteria`, a second
+    /// table by design. The missing list was an artefact of the slice. Checking across both
+    /// answers the question that was actually being asked.
+    #[test]
+    fn every_milestone_has_a_row_somewhere_in_the_history() {
+        let doc = include_str!("../../../docs/history.md");
+        let present: std::collections::BTreeSet<u32> = doc
+            .lines()
+            .filter_map(|l| l.strip_prefix("| M"))
+            .filter_map(|rest| {
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                digits.parse().ok()
+            })
+            .collect();
+
+        let newest = *present.iter().max().expect("at least one milestone row");
+        let missing: Vec<u32> = (1..=newest).filter(|n| !present.contains(n)).collect();
+        assert!(
+            missing.is_empty(),
+            "docs/history.md has no row for milestones {missing:?} (newest is M{newest})"
+        );
+    }
 }

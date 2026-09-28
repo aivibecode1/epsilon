@@ -607,16 +607,37 @@ no caller — and it is the honest next candidate for this rule.
   files must be added to the docs map" rule in AGENTS.md unenforced. **Closed** in `363a0ee`
   by naming both in the product-documentation row. Not a code defect, but it is the same
   failure as a dead link: a document nothing points at is a document nobody finds.
-- **D23 — `docs/history.md` is corrupt below M160, in a commit this session did not
-  introduce.** Verified present in `5d5dda7~1`: milestone numbers M161–M171 sit on their own
-  lines with their rows' leading `|` stripped, so `M163| M144 | **Read side only...` reads
-  as one glued row, and `M167## Decision-log index` has swallowed a section heading. The
-  per-milestone suite table also stops at M160 — **no M161–M180 rows exist at all**, so it
-  is 20+ milestones stale independently of the corruption. Both are recorded rather than
-  fixed: reconstructing 20 missing rows means reading 20 milestone logs, and guessing at
-  milestone *descriptions* would put fabricated claims in the permanent record. Repair is a
-  Phase 5 task with a mechanical check (every `M<n>` appears exactly once, in a well-formed
-  row).
+- ~~**D23 — `docs/history.md` is corrupt below M160.**~~ **CLOSED** in `f6636ff`.
+
+  The corruption was 18 consecutive lines (196–213) each carrying a spurious `M161`–`M178`
+  prefix glued onto whatever followed: `M163| M144 | **Read side only…`, and
+  `M167## Decision-log index` swallowing a section heading. **The 18 milestone rows were lost,
+  not merely glued.** Verified the pattern before editing — exactly 18 lines, M161–M178 in
+  order, each a prefix — then stripped the prefixes, which recovered the three displaced rows
+  intact, and reconstructed all 18 rows **from the dev logs** (every one of M161–M178 has
+  one, so no description is guessed). M154, M186, M16, M80, M179 and M180 recovered the same
+  way, each row naming the record it came from.
+
+  Also repaired: three rows truncated mid-sentence by an eaten `|`, the M185 row that had
+  swallowed two lines of trailing prose, and a duplicate M6.
+
+  Verified afterwards: timeline table 105 rows, acceptance table 85 rows, **0 out-of-order,
+  0 duplicates, 0 unclosed, 0 glued lines**, and every milestone 1–186 has a row somewhere.
+  M6/M7/M8/M10 appear in both tables — legitimately, since they are different tables.
+
+  **A verification of mine was wrong first, and is worth recording.** I sliced the table to
+  lines 9–130, found 79 "missing" milestones, and began reconstructing them — until M96
+  turned up at line 143 under a *different* heading. `## Original acceptance criteria` is a
+  second table by design and M96–M178 belong to it. The missing list was an artefact of my
+  slice, not a defect. The check that answers the real question spans both tables.
+
+- **D25 — a history row numbered `| 018 |`, which predates the D23 corruption and is still
+  not explained.** Present in `1873cc8~1`, the README-era history, so it is not this session's
+  work. It reads as an `M1…` with the `M` eaten, and M11 is the model-picker milestone whose
+  log matches the row's text — but *confirming that is a historical question, and guessing
+  would put an unverified claim in the permanent record*. Left verbatim and flagged. A
+  mechanical check (`every | M<n> | row is a well-formed milestone number`) will catch it.
+
 - **The batteries ran, and they passed** — `audit/evidence/gate-m180-1.md` and
   `gate-m180-final.md`; the latter reports 1316 results across 63 targets, 0 failures. (The
   "1253 tests" figure that used to sit here was derived by subtracting a per-crate sweep
