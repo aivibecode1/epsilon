@@ -47,6 +47,11 @@ run() {
   return $rc
 }
 overall=0
+# Documentation links are a gate, not a chore.  The audit renumbering of
+# 2026-09-28 left 40 dead relative links across the docs, and nothing noticed,
+# because a dead citation looks exactly like a live one until a reader follows
+# it.  It costs a second and it is the only check that can see this class.
+run "check-links"    python scripts/check-links.py --quiet        || overall=1
 run "fmt --check"   "$CARGO" fmt --all -- --check            || overall=1
 run "clippy"        "$CARGO" clippy --workspace --all-targets -- -D warnings || overall=1
 # `-D warnings`: the workspace denies its configured lints, but clippy's own `-W clippy::all`

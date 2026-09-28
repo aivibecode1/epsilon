@@ -1,27 +1,25 @@
-"""Repair the broken relative links left by the `audit/NN-*.md` -> `audit/history/` move.
+"""Repair the broken relative links left by the 2026-09-28 audit renumbering.
 
-Why this exists
----------------
-On 2026-09-28 the audit documents that had been moved into `audit/history/` were
-never relinked. 155 links across 41 files point at paths that no longer exist, and
-the damage is not uniform: it ranges from the README's own honesty disclaimer
-(`audit/11-current-assessment.md`) to a `../docs/history.md` that is only wrong
-because of the depth of the file citing it.
+Run order: `python scripts/check-links.py` first.  This script fixes the
+document renames; the checker is what proves there is nothing else wrong.
 
-Two failure modes make a blind search-and-replace the wrong tool, so this script
-does not do one:
+Why this is a table and not a search
+------------------------------------
+`audit/NN-*.md` was renumbered, and the old files moved to `audit/history/`.
+The naive repair matches on the numeric prefix -- `audit/04-roadmap.md` becomes
+whatever file is now called `04-*`.  That is **wrong here**, and wrong in the
+worst way, because the numbers were reassigned to different subjects:
 
-1. **Depth.** The same document is cited as `audit/04-roadmap.md` from the repo
-   root and as `../../audit/04-roadmap.md` from `docs/milestones/`. A rename has
-   to fix the *tail* and leave the *prefix* alone, because the prefix encodes
-   where the citing file lives.
-2. **Ambiguity.** A basename can match more than one file. `audit/01-*.md` and
-   `audit/14-*.md` are both "current state" in spirit; guessing which one a
-   citation meant is how a link gets silently pointed at the wrong document.
+    old 02-defect-ledger      ->  new 02 is *port fidelity*
+    old 03-port-plan          ->  new 03 is *the defect ledger*
+    old 06-reference-comparison -> new 06 is *what to take from the references*
 
-So each candidate link is resolved by *searching* for a real file with a matching
-numeric prefix, and anything ambiguous or unresolvable is reported rather than
-rewritten. Run with `--dry-run` first; it prints every change it would make.
+A prefix rewrite sends every reader of the defect ledger to the port-fidelity
+document and calls it a fix.  So the mapping below is keyed on the **old
+filename**, and each row was checked against the *text of the citation* at every
+site -- a link whose label says "defect ledger" must not land on a document about
+port fidelity.  `docs/design/epsilon-architecture.md:14` says "the [defect
+ledger]'s"; pointing that at port fidelity would be a working link that lies.
 
     python scripts/fix-links.py --dry-run
     python scripts/fix-links.py --apply
@@ -33,19 +31,37 @@ import argparse
 import os
 import re
 import sys
-from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-LINK = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
-# Files that are deliberately absent: milestone numbers the history skipped, and
-# documents this repository has never had. Left alone on purpose.
-SKIP_DIRS = {".git", "references", "target", "node_modules", "__pycache__"}
+SKIP_DIRS = {".git", "references", "target", "node_modules", "__pycache__", "history"}
+
+# old basename -> current path, repo-relative.
+#
+# 02-07 were renumbered onto DIFFERENT subjects; 08-12 were retired into
+# audit/history/ with no successor.  A retired document still gets a link, but
+# one that says it is history: a live document that does not contain the claim
+# is worse than an honest pointer to the record that does.
+RENAMES = {
+    "02-defect-ledger.md": "audit/03-defects.md",
+    "03-port-plan.md": "audit/02-port-fidelity.md",
+    "04-roadmap.md": "audit/07-plan.md",
+    "06-reference-comparison.md": "audit/06-references.md",
+    "01-usability-review.md": "audit/01-current-state.md",
+    "05-verification-log.md": "audit/history/05-verification-log.md",
+    "07-inconsistencies.md": "audit/history/07-inconsistencies.md",
+    "08-restructure-record.md": "audit/history/08-restructure-record.md",
+    "09-revalidation.md": "audit/history/09-revalidation.md",
+    "10-tui-enhancement.md": "audit/history/10-tui-enhancement.md",
+    "11-current-assessment.md": "audit/history/11-current-assessment.md",
+    "12-fresh-reference-audit.md": "audit/history/12-fresh-reference-audit.md",
+}
 
 
 def markdown_files() -> list[str]:
-    out = []
+    out: list[str] = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
@@ -54,91 +70,55 @@ def markdown_files() -> list[str]:
     return out
 
 
-def numeric_prefix(stem: str) -> str | None:
-    """`04-roadmap` -> `04`; `README` -> None."""
-    m = re.match(r"^(\d+)", stem)
-    return m.group(1) if m else None
-
-
-def build_index() -> dict[str, list[str]]:
-    """Map a numeric prefix to every tracked path carrying it.
-
-    Two files can share a prefix after a move (`audit/01-...` and
-    `audit/history/14-...` do not, but renames make it possible), so the value is
-    a list and ambiguity is detected rather than resolved by guessing.
-    """
-    index: dict[str, list[str]] = defaultdict(list)
-    for path in markdown_files():
-        rel = os.path.relpath(path, ROOT).replace("\\", "/")
-        prefix = numeric_prefix(os.path.basename(path)[: -len(".md")])
-        if prefix:
-            index[prefix].append(rel)
-    return index
-
-
-def resolve(target: str, citing: str, index: dict[str, list[str]]) -> tuple[str | None, str]:
-    """Return (fixed_target, status) for one link.
-
-    status is one of: ok, ambiguous, missing, external.
-    """
-    if target.startswith(("http://", "https://", "#", "mailto:")):
-        return None, "external"
-
-    path_part, _, anchor = target.partition("#")
-    if not path_part:
-        return None, "external"
-
-    resolved = os.path.normpath(os.path.join(os.path.dirname(citing), path_part))
-    if os.path.exists(resolved):
-        return None, "ok"
-
-    # What was it called, and does a number survive in the basename?
-    stem = os.path.basename(path_part)[: -len(".md")] if path_part.endswith(".md") else os.path.basename(path_part)
-    prefix = numeric_prefix(stem)
-    if not prefix:
-        return None, "missing"
-
-    candidates = index.get(prefix, [])
-    if not candidates:
-        return None, "missing"
-    if len(candidates) > 1:
-        return None, f"ambiguous({len(candidates)})"
-
-    # Keep the citing file's depth, change only the tail. This is the whole
-    # reason a global find-and-replace is wrong: `../docs/history.md` and
-    # `../../docs/history.md` are different correct answers from different
-    # depths.
-    new_abs = os.path.join(ROOT, candidates[0])
-    new_rel = os.path.relpath(new_abs, os.path.dirname(citing)).replace("\\", "/")
-    if not new_rel.startswith("."):
-        new_rel = "./" + new_rel
-    return (new_rel + ("#" + anchor if anchor else "")), "repaired"
+def relativise(new_abs: str, citing_abs: str) -> str:
+    """Repo-relative link from the citing file's directory to the target."""
+    rel = os.path.relpath(new_abs, os.path.dirname(citing_abs)).replace("\\", "/")
+    return rel if rel.startswith(".") else "./" + rel
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--apply", action="store_true", help="write the changes (default is a dry run)")
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="write the changes (default: report only)",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report only; the default, accepted so the flag in the docstring works",
+    )
     args = ap.parse_args()
 
-    index = build_index()
     changes: list[tuple[str, str, str]] = []
-    unresolved: list[tuple[str, str, str]] = []
+    unresolved: list[tuple[str, str]] = []
 
-    for path in markdown_files():
+    for path in sorted(markdown_files()):
         rel = os.path.relpath(path, ROOT).replace("\\", "/")
         with open(path, encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
-        original = text
+            text = original = fh.read()
 
         def repl(m: re.Match) -> str:
-            label, target = m.group(1), m.group(2)
-            fixed, status = resolve(target, path, index)
-            if status == "repaired" and fixed:
-                changes.append((rel, target, fixed))
-                return f"[{label}]({fixed})"
-            if status.startswith(("ambiguous", "missing")):
-                unresolved.append((rel, target, status))
-            return m.group(0)
+            whole, target = m.group(0), m.group(1).strip().strip("<>").strip()
+            if target.startswith(("http://", "https://", "mailto:", "tel:", "#")):
+                return whole
+            path_part = target.split("#", 1)[0]
+            if not path_part:
+                return whole
+            if os.path.exists(
+                os.path.normpath(os.path.join(os.path.dirname(path), path_part))
+            ):
+                return whole
+
+            base = os.path.basename(path_part)
+            if base not in RENAMES:
+                unresolved.append((rel, target))
+                return whole
+            new_rel = relativise(os.path.join(ROOT, RENAMES[base]), path)
+            if "#" in target:
+                new_rel += "#" + target.split("#", 1)[1]
+            changes.append((rel, target, new_rel))
+            return whole.replace(f"({target})", f"({new_rel})")
 
         text = LINK.sub(repl, text)
         if text != original and args.apply:
@@ -147,16 +127,12 @@ def main() -> int:
 
     verb = "repaired" if args.apply else "would repair"
     print(f"{verb} {len(changes)} links in {len({c[0] for c in changes})} files")
-    for rel, old, new in changes[:15]:
+    for rel, old, new in changes:
         print(f"  {rel}: {old}  ->  {new}")
-    if len(changes) > 15:
-        print(f"  ... and {len(changes) - 15} more")
-
     if unresolved:
-        print(f"\n{len(unresolved)} left alone (no unique target found):")
-        for rel, target, status in unresolved:
-            print(f"  [{status}] {rel}: {target}")
-
+        print(f"\n{len(unresolved)} left alone (no verified mapping):")
+        for rel, target in unresolved:
+            print(f"  {rel}: {target}")
     if not args.apply:
         print("\nDry run. Re-run with --apply to write.")
     return 0
