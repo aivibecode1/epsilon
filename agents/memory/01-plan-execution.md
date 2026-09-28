@@ -58,7 +58,12 @@ test *and* by watching a real TUI's mtime advance every 2s.
 - **`branch_with_summary` still has no production caller** — confirmed three times now.
 - **`TurnHooks` is still unwired** (10/10 setters in tests). The `ToolHooks` half is done;
   the `TurnHooks` half is not, and the interpose transport now makes it reachable.
-- Phase 5 (structure) not started.
+- Phase 5 (structure) not started. **Known Phase 5 work, newly found:** `docs/history.md`
+  is corrupt below M160 (D23, in `audit/03-defects.md`) — milestone numbers M161–M171 sit
+  on their own lines with their rows' leading `|` stripped, verified present before this
+  session's changes, and the per-milestone suite table has no M161–M180 rows at all. Repair
+  it by reading the milestone logs, with a mechanical check that every `M<n>` appears
+  exactly once in a well-formed row. Do not invent milestone descriptions.
 - **`branch_with_summary` still has no production caller** — confirmed twice, still true.
 - **`ToolHooks`/`TurnHooks` are the same defect**: correct shape, loop calls them, 10/10
   setters are in tests. See the class note in `audit/03-defects.md`.
