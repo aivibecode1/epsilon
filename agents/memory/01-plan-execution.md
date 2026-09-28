@@ -86,6 +86,8 @@ test *and* by watching a real TUI's mtime advance every 2s.
   principle. Added `Agent::session_usage()` + `session_usage_by_model()` — the per-model split
   is load-bearing because price belongs to the model that consumed the tokens.
   **D26:** pi's `follow_up` was refused as `unknown op`; only `followup` worked.
+- **M190 closed D27** (get_tree rebuilt as pi's nested forest; get_messages/get_commands to bare
+  arrays) after the M189 install verification found M189's get_tree was flat.
 - **M189 shipped 3 more RPC commands** (`get_entries`, `get_tree`, `set_session_name`) and
   closed the two gaps M188 named as unverified. **18 of pi's 33 implemented.** Also added
   `Message::text()` to contracts (pi's `clear_queue` returns the cleared TEXT, not counts --
@@ -212,6 +214,22 @@ Two things the battery does NOT cover, both found after it passed:
   m188b gate proved clippy+tests clean on HEAD. It had snapshotted a tree two hours stale.
   **Check the process's launch time against the commits before believing its error** — and
   note that it shared `D:/eps-target` with a live install, which is the one real hazard here.
+- **D27 — a reference's TYPE is not its BEHAVIOUR. `rpc-types.ts` said
+  `tree: SessionTreeNode[]`; only `session-manager.ts`'s `getTree()` says the array is
+  NESTED trees, not entries.** M189's `get_tree` returned a flat branch array with
+  snake_case fields and `timestampMs: number`; pi returns a recursive
+  `{entry, children, label, labelTimestamp}` forest over the WHOLE file, with
+  `parentId` camelCase and `timestamp` an ISO STRING. It passed 1,446 tests and two
+  controls because the tests asserted my shape. Same failure class as D26, one level
+  up: both are "I checked the declaration and assumed the rest."
+  Same reading found `getMessages`/`getCommands` return BARE ARRAYS
+  (`getData<T[]>(r).x`), not objects — M188 wrapped both.
+- **Before splicing a file by character offset, print the surrounding text and assert on
+  it.** I used `s.find("fn ok_line(")` as an anchor, inserted there, and destroyed 1,944
+  lines of `rpc_mode.rs` — `wc -l` caught it (872 vs 2,622) and `git checkout` restored it.
+  The find had succeeded; the *anchor choice* was wrong. A line count is the cheapest
+  possible check that an edit did what you meant.
+
 - **A control must actually CHANGE BEHAVIOUR, and prove it did before trusting its result.**
   M189, twice:
   - *Invalid control:* billed every response to `self.model_id()`. All 48 tests passed.

@@ -681,7 +681,7 @@ no caller — and it is the honest next candidate for this rule.
   normally. The console is healthy precisely because nothing crashed.
 
 - **D27 — M189 shipped `get_tree` with the WRONG SHAPE: a flat array where pi returns a
-  nested forest. OPEN; fix in flight.** Found while verifying M189's installed binary, by
+  nested forest. FIXED in M190.** Found while verifying M189's installed binary, by
   reading pi's `session-manager.ts` rather than its type declarations.
 
   pi's `getTree()` (`core/session-manager.ts`) builds a **recursive** structure over **every**
@@ -710,5 +710,23 @@ no caller — and it is the honest next candidate for this rule.
   are the ones that really are objects in pi. So three of the M188/M189 replies carry a
   wrapper pi's client does not unwrap.
 
-  Not yet fixed at the time of writing; the fix rebuilds `get_tree` as a recursive forest
-  and re-shapes the three list replies to bare arrays.
+  **FIXED in M190** (`d4df88e` fix, `b2b06c5` D27 record, `968dd15` gate evidence).
+  `get_tree` is rebuilt as a recursive forest over `read_all()`, roots on no-parent,
+  self-parent and orphan, children sorted by timestamp at every level, and — beyond pi —
+  a parent that is an ancestor of the child is promoted to a root so a hand-edited
+  `a → b → a` cycle renders both entries exactly once instead of losing them.
+  `entry_as_pi` emits `parentId` camelCase and an ISO-8601 UTC string with millis and a
+  `Z`, matching JavaScript's `toISOString()`. `get_messages` and `get_commands` now return
+  bare arrays.
+
+  **Two controls, both failing on the defect they name:**
+  - **D** — `get_tree` reverted to M189's flat shape → **2 failed**:
+    *"every node needs a children ARRAY (pi's SessionTreeNode)"*, and an entry present in
+    the file but missing from the tree.
+  - **E** — `get_messages`/`get_commands` restored to M188's object wrappers → **4 failed**.
+
+  `epsilon-cli --lib`: 114 passed. Focused rpc: 49 passed.
+
+  The gate rule this earned: **read the reference's IMPLEMENTATION, and read the client
+  that CONSUMES the payload, not only the type declaration.** A declaration gives field
+  names; only the implementation and the consumer give structure.
