@@ -79,5 +79,5 @@ decision is recorded in M108.
   the input price. The bundled catalog has no cache prices to use
   (`ModelInfo` carries input and output cost only), so fixing it means extending
   `scripts/regen_catalog.py`, the `ModelInfo` schema and the generated table. Recorded as
-  G18 in [`../../audit/11-current-assessment.md`](../../audit/history/11-current-assessment.md)
+  G18 in [`../../audit/history/11-current-assessment.md`](../../audit/history/11-current-assessment.md)
   rather than guessed at.

@@ -65,14 +65,14 @@ on the strength of either. See below.
   failed** (4 new, 5 pre-existing).
 - `cargo test --workspace --features real` — **62 binaries, 1,242 passed, 0 failed, 0 ignored**,
   exit 0. Up from 1,232 at M145: 6 new unit tests in `verify.rs` and 4 new scenarios here.
-- Evidence: [`evidence/f05-negative-control.md`](../audit/evidence/f05-negative-control.md),
+- Evidence: [`audit/evidence/f05-negative-control.md`](../../audit/evidence/f05-negative-control.md),
   and the test log is reproducible from the commands above.
 
 ### Negative controls
 
 Two, one per half, because F05 is two defects and a single control proves neither on its own.
 Full captured output in
-[`audit/evidence/f05-negative-control.md`](../audit/evidence/f05-negative-control.md).
+[`audit/evidence/f05-negative-control.md`](../../audit/evidence/f05-negative-control.md).
 
 **Control 1 — `ok = delivered` (exit-code rule reverted).** 2 failed, 7 passed.
 `a_delivered_check_that_exited_nonzero_is_not_verification` and

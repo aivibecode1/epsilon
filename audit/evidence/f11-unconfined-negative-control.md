@@ -3,7 +3,7 @@
 **Date:** 2026-09-26 · **Milestone:** M148 · **Defect:** F11 (second half, `shell.rs`)
 
 The bwrap half of F11 is in
-[`m147-one-deadline-for-the-whole-run.md`](../../../docs/milestones/M147-one-deadline-for-the-whole-run.md)
+[`m147-one-deadline-for-the-whole-run.md`](../../docs/milestones/M147-one-deadline-for-the-whole-run.md)
 and has no control, because this host cannot run bwrap. This half *can* be controlled, and the
 control is unambiguous.
 

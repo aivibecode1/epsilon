@@ -70,4 +70,4 @@ the refactor both opencode and pi eventually paid for.
 
 - docs/qa/04-finished-harness-vision.md (the full destination)
 - [Current architecture](../design/epsilon-architecture.md) and
-  [pi scope](../../audit/03-port-plan.md) (the former section 14 was replaced)
+  [pi scope](../../audit/02-port-fidelity.md) (the former section 14 was replaced)

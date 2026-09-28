@@ -84,7 +84,7 @@ OAuth needs provider-specific setup: see [Auth](docs/user/auth.md).
 
 **An incomplete port, not production-ready.** The verification this rests on, and
 what each number does and does not prove, is
-[audit/11 — current assessment](./audit/history/11-current-assessment.md). Read that before
+[audit/11 — the 2026-09-16 assessment (history)](./audit/history/11-current-assessment.md). Read that before
 trusting any claim here.
 
 What is solid: the agent loop, the tool set, session storage, compaction, the
@@ -175,7 +175,7 @@ The reference harnesses studied while building this, none of them vendored:
 | [Hermes Agent 2026.9.14](https://github.com/NousResearch/hermes-agent) | Observer identity, verification evidence, prompts, recovery |
 | [opencode 1.18.31](https://github.com/anomalyco/opencode) | Permissions, change provenance, language-server edit feedback |
 
-[Reference comparison](audit/06-reference-comparison.md) explains which mechanisms
+[Reference comparison](./audit/06-references.md) explains which mechanisms
 fit and which do not. [models.dev](https://models.dev) supplies catalog research
 via `scripts/regen_catalog.py`. These acknowledgements credit the ideas; they are
 not a claim of complete fidelity, nor a substitute for a licence review before

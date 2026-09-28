@@ -39,7 +39,7 @@ Clippy, demo and real-provider compilation passed. Workspace tests stopped befor
 wire_fixtures ran: Windows Access is denied (error 5). Two retries failed to link
 that same executable with LNK1104. No relevant running process or Defender detection
 was found by the checks performed; the cause is now established — see
-[the verification log](../../audit/05-verification-log.md): Avira Security's
+[the verification log (history)](../../audit/history/05-verification-log.md): Avira Security's
 heuristic (`HEUR/APC.Misc`) quarantined the freshly linked wire_fixtures test
 executable in this repository's target directory. The full workspace suite
 (53 summaries, 786 passed, 0 failed) and all five gates pass under an alternate

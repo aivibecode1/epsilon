@@ -130,4 +130,4 @@ asserts the absence of guard activity. Both mutations were reverted before the g
 Verification enforcement (port plan item 5, the last behavioural item in Phase 3), cache-miss
 attribution (Phase 2 item 4), provider-side message sanitization (item 18), and the standing
 items: committing M33–M67 (D-12), live-provider evidence for every wire (D-13), release artifacts
-(D-21). See [`audit/04-roadmap.md`](../../audit/04-roadmap.md).
+(D-21). See [`audit/07-plan.md`](../../audit/07-plan.md).

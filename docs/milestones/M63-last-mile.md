@@ -103,4 +103,4 @@ Behavioural checks with the built binary (raw transcripts in `audit/05-verificat
 Live-provider end-to-end coverage for every wire (D-13), committing the M33–M62 body of work
 (D-12), release artifacts (D-21), and the port plan's Tier 1 items — usage-anchored token
 accounting, legal-cut compaction, verification enforcement and the stale-read guard. See
-[`audit/04-roadmap.md`](../../audit/04-roadmap.md).
+[`audit/07-plan.md`](../../audit/07-plan.md).

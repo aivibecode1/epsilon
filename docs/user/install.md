@@ -10,8 +10,8 @@ backend. Default shell execution refuses when no backend exists. Linux needs
 
 This is a development build, not a release: it is not certified on Linux or macOS beyond
 CI compiling it, and the defects still open are tracked in
-[the defect ledger](../../audit/02-defect-ledger.md). What the recorded verification does and
-does not prove is in [the current assessment](../../audit/history/11-current-assessment.md); read that
+[the defect ledger](../../audit/03-defects.md). What the recorded verification does and
+does not prove is in [the 2026-09-16 assessment (history)](../../audit/history/11-current-assessment.md); read that
 before trusting a claim here. Run the commands below from the repository root.
 
 ```sh

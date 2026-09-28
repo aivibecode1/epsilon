@@ -124,7 +124,7 @@ one of them can tell whether the two halves are connected.
   unmodified.
 - `cargo fmt --all -- --check` clean; `cargo clippy -p epsilon-cli -p epsilon-ext
   --all-targets -- -D warnings` clean.
-- Full battery `m181`: see [`../evidence/gate-m181.md`](../evidence/gate-m181.md).
+- Full battery `m181`: see [`../../audit/evidence/gate-m181.md`](../../audit/evidence/gate-m181.md).
 
 ## What nothing exercises
 

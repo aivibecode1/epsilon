@@ -45,7 +45,7 @@ epsilon auth login github-copilot --oauth   # GitHub Copilot subscription
 - Refresh is implemented but not reliable across all paths: configuration-only IDs,
   Copilot preparation, proactive rotation and cached fallback credentials have open
   integration findings (F16). A successful login is not proof of later refresh.
-  See [the ledger](../../audit/02-defect-ledger.md).
+  See [the ledger](../../audit/03-defects.md).
 
 ## Custom providers with credentials
 

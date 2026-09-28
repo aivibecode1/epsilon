@@ -2,7 +2,7 @@
 
 ## What this is
 
-Closing gap **G1** from [`audit/12-fresh-reference-audit.md`](../../audit/history/12-fresh-reference-audit.md).
+Closing gap **G1** from [`audit/history/12-fresh-reference-audit.md`](../../audit/history/12-fresh-reference-audit.md).
 Small slice, and the interesting part is that the audit that produced it was **half wrong** and
 the correction is the substance of this milestone.
 

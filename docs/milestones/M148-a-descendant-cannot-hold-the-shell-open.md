@@ -88,7 +88,7 @@ result, which is right for most assertions and wrong for any question about `det
 
 Reverted to the pre-M148 lines **verbatim** (the unbounded `out_task.await.unwrap_or_default()`
 pair, with the `output_complete` flag removed so the old code compiles as it did). Captured in
-[`audit/evidence/f11-unconfined-negative-control.md`](../audit/evidence/f11-unconfined-negative-control.md).
+[`audit/evidence/f11-unconfined-negative-control.md`](../../audit/evidence/f11-unconfined-negative-control.md).
 
 ```
 test a_descendant_holding_the_pipe_does_not_hang_the_call ... FAILED

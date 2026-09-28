@@ -25,6 +25,7 @@ next.
 | [`01-plan-execution.md`](01-plan-execution.md) | Session 1's phase tracker, its traps, and three classes of self-inflicted error | live — the *lessons* still apply |
 | [`02-tui-truth-first.md`](02-tui-truth-first.md) | **Session 2: "shrinks" ruled out, M194 + M195 landed** | live |
 | [`03-port-gaps.md`](03-port-gaps.md) | **Session 2: the 24 missing pi capabilities; `branch_with_summary` wiring first** | live |
+| [`04-session3-env-and-structure.md`](04-session3-env-and-structure.md) | **Session 3: the MSVC-env build blocker, the link-debt repair, G7 markdown** | live |
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 
 ## Superseded notes (kept for history, not for direction)

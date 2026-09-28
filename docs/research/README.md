@@ -6,8 +6,8 @@ verification. Some claim complete parity or green gates that the later audit
 explicitly contradicts. Do not execute embedded plans without fresh authorization.
 
 Current source-based conclusions live in [the audit](../../audit/README.md),
-[pi fidelity](../../audit/03-port-plan.md) and
-[reference comparison](../../audit/06-reference-comparison.md).
+[pi fidelity](../../audit/02-port-fidelity.md) and
+[reference comparison](../../audit/06-references.md).
 
 | Report | Historical purpose |
 |---|---|

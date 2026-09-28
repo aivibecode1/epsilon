@@ -148,4 +148,4 @@ Both mutations were reverted before the gate run quoted above.
 Provider-side sanitization (Hermes' argument repair and interrupted-sequence closing, item 18),
 the remaining Phase 3 guardrails (verification enforcement, no-progress and empty-response guards),
 and the standing items: committing M33–M66 (D-12), live-provider evidence for every wire (D-13),
-release artifacts (D-21). See [`audit/04-roadmap.md`](../../audit/04-roadmap.md).
+release artifacts (D-21). See [`audit/07-plan.md`](../../audit/07-plan.md).

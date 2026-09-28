@@ -140,4 +140,4 @@ Tier 3 items (edit-matcher stages, LSP diagnostics, middleware, per-model guidan
 skill lint, workspace checkpoints, background process registry). Standing items: committing
 M33–M69 (D-12) — the largest open risk, now ~190 files — live-provider evidence (D-13, blocked on
 the expired stored key) and release artifacts (D-21). See
-[`audit/04-roadmap.md`](../../audit/04-roadmap.md).
+[`audit/07-plan.md`](../../audit/07-plan.md).

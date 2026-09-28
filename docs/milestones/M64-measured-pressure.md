@@ -148,4 +148,4 @@ them; the `if true` blocks were removed before the gate run that produced the nu
 
 The remaining Tier 1 items — cache-miss telemetry with attribution, verification enforcement and the
 stale-read guard — plus the standing ones: committing M33–M64 (D-12), live-provider evidence for
-every wire (D-13), release artifacts (D-21). See [`audit/04-roadmap.md`](../../audit/04-roadmap.md).
+every wire (D-13), release artifacts (D-21). See [`audit/07-plan.md`](../../audit/07-plan.md).

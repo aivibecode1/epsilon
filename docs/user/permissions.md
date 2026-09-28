@@ -42,7 +42,7 @@ subjects keep their raw spelling (known prompt-dedup limitation, no bypass).
 
 Backends: **Job Objects** on Windows, **bubblewrap** on Linux.
 
-Honest limits (evidence in [`../../audit/02-defect-ledger.md`](../../audit/02-defect-ledger.md)):
+Honest limits (evidence in [`../../audit/03-defects.md`](../../audit/03-defects.md)):
 
 - Windows Job Object confinement is **partial** relative to bwrap: it bounds process
   resources and process ownership, but does not restrict filesystem or network access.

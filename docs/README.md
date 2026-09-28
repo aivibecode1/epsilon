@@ -51,11 +51,11 @@ that crate.
 ([`design/epsilon-decisions.md`](design/epsilon-decisions.md)) for the behaviour it changes,
 then the milestone log that introduces it.
 
-**Deciding what to build next?** [`../audit/02-defect-ledger.md`](../audit/02-defect-ledger.md) —
+**Deciding what to build next?** [`../audit/03-defects.md`](../audit/03-defects.md) —
 every row now carries a status (OPEN / CLOSED / CLOSED with a named residual / FIXED pending
 verification), and the status is only as good as the milestone log it names —
-[`../audit/03-port-plan.md`](../audit/03-port-plan.md) and
-[`../audit/04-roadmap.md`](../audit/04-roadmap.md), then the relevant study in `research/`.
+[`../audit/02-port-fidelity.md`](../audit/02-port-fidelity.md) and
+[`../audit/07-plan.md`](../audit/07-plan.md), then the relevant study in `research/`.
 
 ## Current hardening work
 
@@ -356,7 +356,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M99 — `.gitignore` is honoured instead of merely promised](milestones/M99-gitignore.md)
   *(reconstructed)*: `find`'s description claimed it and nothing read one. The matcher lives in
   `epsilon-core::ignore` so the tools and the TUI share one answer — one half of which is still
-  not true; see the `@`-file note in [`../audit/11-current-assessment.md`](../audit/history/11-current-assessment.md).
+  not true; see the `@`-file note in [`../audit/history/11-current-assessment.md`](../audit/history/11-current-assessment.md).
 - [M98 — the six-second stall that read as a hang](milestones/M98-windows-shell-stall.md)
   *(reconstructed)*: every Windows `bash` call ran `powershell -Command`, which loads the user's
   interactive profile first — 6.2 s for a one-word `echo` against 1.06 s with `-NoProfile`. From
@@ -426,7 +426,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M85 — follow-up default](milestones/M85-followup-default.md): one-at-a-time
   default restored; explicit All preserved; verification and coverage limits.
 
-- [Fresh audit and port-first plan](../audit/09-revalidation.md): named baseline,
+- [Fresh audit and port-first plan](../audit/history/09-revalidation.md): named baseline,
   verified gate evidence, unresolved fidelity gaps and independent review reports.
 
 - [M84 — find directory resource](milestones/M84-find-directory-resource.md):
@@ -451,5 +451,5 @@ first, newest at the top, and it is kept current from M83 forward.
 
 Product reference material lives in `user/`. Existing moves, instruction corrections,
 verification limits and the Phase 2 review handoff are recorded in
-[the restructure record](../audit/08-restructure-record.md). Those moves predate this
+[the restructure record](../audit/history/08-restructure-record.md). Those moves predate this
 phase; the verification log is not their move map.

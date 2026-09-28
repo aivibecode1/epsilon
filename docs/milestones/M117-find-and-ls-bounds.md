@@ -4,7 +4,7 @@
 
 The port re-check put "Epsilon registers twelve tools where pi's default active set is four"
 on the gap list. Working out which part of that is a defect produced three answers, recorded as
-G20 in [`audit/11`](../../audit/history/11-current-assessment.md): the **active set is a product
+G20 in [`audit/history/11`](../../audit/history/11-current-assessment.md): the **active set is a product
 choice** (this harness's contract is its own, and removing capability to match a count would
 make it worse, not more faithful), while **two things inside the row are bugs**:
 

@@ -1,6 +1,6 @@
 # Implementation Plans
 
-For contributors tracing historical plans. The status rows preserve earlier reports, not freshly rerun acceptance results or complete pi compatibility. Current work follows [the reviewed roadmap](../../audit/04-roadmap.md); old executor instructions are not active authorization. Session, transport, permission and recovery findings remain open despite historical DONE labels.
+For contributors tracing historical plans. The status rows preserve earlier reports, not freshly rerun acceptance results or complete pi compatibility. Current work follows [the reviewed roadmap](../../audit/07-plan.md); old executor instructions are not active authorization. Session, transport, permission and recovery findings remain open despite historical DONE labels.
 
 > **STATUS (2026-09-16, reconciled):** Plans 001–011 and 013–016 are DONE; 012 was REJECTED
 > (superseded by 016); 017 has no plan file — it was fulfilled by the TUI rung recorded in its

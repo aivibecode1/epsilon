@@ -11,7 +11,7 @@ of implemented behavior. The pi port remains incomplete.
 > moved, and some `file:line` references have drifted onto unrelated lines. Four of its
 > defect claims were corrected on 2026-09-23 by the ledger sweep — the F04, F06, F07, F08,
 > F15 and F17 paragraphs now say what closed them and where the evidence is — and the
-> positions of those findings are the [defect ledger](../../audit/02-defect-ledger.md)'s,
+> positions of those findings are the [defect ledger](../../audit/03-defects.md)'s,
 > not this file's. **Everything else here has not been re-verified against the code.**
 > The honest fix for the rest is a re-derivation pass or removing the guide, not a patch
 > per line; until one of those happens, read a specific claim here as a hypothesis to check
@@ -66,7 +66,7 @@ Pi's two-level loop is the reference; bounded conflict-aware scheduling is an
 intentional difference. M85 aligns the follow-up default with pi's one-at-a-time
 mode; explicit all-at-once remains available. Tool hooks exist, but configurable next-turn/stop
 callbacks are not established, despite ADR-002's commitment. The
-[port matrix](../../audit/03-port-plan.md) distinguishes mechanisms from compatibility.
+[port matrix](../../audit/02-port-fidelity.md) distinguishes mechanisms from compatibility.
 
 ## Tools and execution boundaries
 
@@ -101,7 +101,7 @@ shared knowledge, not resolved-object identity or race-resistant containment (F0
 `epsilon-session/src/store.rs` owns append/read/index/navigation and active-branch
 model projection. Compaction appends summaries rather than deleting old messages.
 Three defects in this area were found in the audit era and have since been closed,
-each with a regression — see the [defect ledger](../../audit/02-defect-ledger.md) for
+each with a regression — see the [defect ledger](../../audit/03-defects.md) for
 the evidence rather than taking this list's word for it:
 
 - Earlier summaries accumulating in later compacted projections (F04): closed in M86,
@@ -160,8 +160,8 @@ Shared SSE buffering/EOF behavior and refresh/fallback preparation have open def
 ## Maintenance and correction record
 
 [AGENTS.md](../../AGENTS.md) owns contributor rules and verification commands.
-[Internal inconsistencies](../../audit/07-inconsistencies.md) records competing
-ownership models; [the roadmap](../../audit/04-roadmap.md) orders their repair.
+[Internal inconsistencies](../../audit/history/07-inconsistencies.md) records competing
+ownership models; [the roadmap](../../audit/07-plan.md) orders their repair.
 
 The previous guide mixed proposals with implementation: Landlock, Seatbelt,
 tree-sitter shell analysis, complete callback parity, branch summaries, exact replay,

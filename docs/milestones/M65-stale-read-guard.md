@@ -119,6 +119,6 @@ guard's tests should have. Reverted before the gate run above.
 Attribution (was it a sibling or an external writer?) needs a writer map like Hermes'
 `path → (task_id, ts)`; the guard's protection is the same either way, so it is a diagnosis
 improvement rather than a gap. The rest of Phase 3 — verification enforcement, no-progress and
-empty-response guards, untrusted-result wrapping — is listed in [`audit/04-roadmap.md`](../../audit/04-roadmap.md),
+empty-response guards, untrusted-result wrapping — is listed in [`audit/07-plan.md`](../../audit/07-plan.md),
 along with the standing items: committing M33–M65 (D-12), live-provider evidence for every wire
 (D-13), release artifacts (D-21).

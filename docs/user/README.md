@@ -23,5 +23,5 @@ What lives where:
 - Historical capability claims (what was true at milestone N) stay in
   [`../milestones/`](../milestones) and [`../history.md`](../history.md) — they are records,
   not current references.
-- Known current defects and their evidence live in [`../../audit/02-defect-ledger.md`](../../audit/02-defect-ledger.md);
+- Known current defects and their evidence live in [`../../audit/03-defects.md`](../../audit/03-defects.md);
   do not turn a finding into a usage instruction while it is open.

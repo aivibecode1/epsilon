@@ -597,7 +597,7 @@ no caller — and it is the honest next candidate for this rule.
   remain pass-through **by decision** and are not a defect.
 - ~~**D22 — the installed release binary predates ADR-019.**~~ **Closed** by reinstall at
   05:27 (15m 09s release build) and verified by marker plus two live probes — see
-  [`installed-binary-2026-09-28-post-adr019.md`](installed-binary-2026-09-28-post-adr019.md).
+  [`installed-binary-2026-09-28-post-adr019.md`](evidence/installed-binary-2026-09-28-post-adr019.md).
   All six ADR-019 and session markers are present, typing during a paced stream rendered
   **40 characters** in the editor, and the crash probe reports
   `PASS: the terminal was restored and the crash was reported`.
@@ -672,9 +672,9 @@ no caller — and it is the honest next candidate for this rule.
   found a real pre-existing compile failure, now fixed in `57812ca`), and anything whose
   symptom is a broken console rather than a wrong value.
 - The installed `C:/Users/Hp/.cargo/bin/epsilon.exe` **is** the current release build, verified
-  for the session/TUI work at [`installed-binary-2026-09-28.md`](installed-binary-2026-09-28.md)
+  for the session/TUI work at [`installed-binary-2026-09-28.md`](evidence/installed-binary-2026-09-28.md)
   and for ADR-019 at
-  [`installed-binary-2026-09-28-post-adr019.md`](installed-binary-2026-09-28-post-adr019.md).
+  [`installed-binary-2026-09-28-post-adr019.md`](evidence/installed-binary-2026-09-28-post-adr019.md).
   One caveat is now recorded rather than left for the next reader to rediscover: passing
   `--exe-args "--crash"` to `console-probe.py` yields a **false PASS**, because the probe sets
   `EPSILON_TUI_CRASH` in the child environment itself and the argument only makes the CLI exit

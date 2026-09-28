@@ -133,4 +133,4 @@ Cache-miss attribution (Phase 2 item 4) and provider-side message sanitization (
 remain of the port plan's ranked list. Standing items: committing M33–M68 (D-12) — now 180+
 files, and the largest open risk in the repository — live-provider evidence for every wire (D-13,
 blocked on an expired stored key), and release artifacts (D-21). See
-[`audit/04-roadmap.md`](../../audit/04-roadmap.md).
+[`audit/07-plan.md`](../../audit/07-plan.md).

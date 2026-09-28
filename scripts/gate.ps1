@@ -25,6 +25,56 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = "1" }
 
+# The MSVC build environment, loaded before anything runs.
+#
+# Why this is here: `reqwest`'s `rustls` feature compiles `aws-lc-sys`, a C
+# library. `cc` finds `cl.exe` on its own, but `cl.exe` then fails with exit
+# code 2 because it has no INCLUDE/LIB and cannot find the Windows SDK headers
+# - so the failure reads as a broken dependency tree when it is a missing
+# environment. A non-interactive shell never runs `vcvars`, so a build that
+# works in a Developer Prompt fails here, and it fails in clippy, test, demo
+# and real-check alike: four red gates for one missing variable.
+#
+# Cost when it is already loaded: one `cmd /c` that returns immediately.
+# Cost when it is missing: a build that cannot succeed at all. Cheap insurance
+# on a machine where the battery is the only evidence a change is sound.
+$vcvars = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+if (-not $env:INCLUDE) {
+    if (Test-Path $vcvars) {
+        $vars = & cmd /c "`"$vcvars`" >nul 2>&1 && set"
+        foreach ($line in $vars) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                Set-Item -Path "env:$($matches[1])" -Value $matches[2] -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+# Record the toolchain the gates will actually run against. This exists because
+# the failure above is *silent about its own cause*: four gates report a broken
+# dependency tree when the real problem is one missing environment variable, and
+# the only way to tell those apart in a month is a line in the log.
+if (-not $env:INCLUDE) {
+    Write-Warning "gate.ps1: INCLUDE is still empty after vcvars. The C dependency (aws-lc-sys, via reqwest/rustls) cannot compile; every compile gate will fail with exit 101 and the error will name the dependency, not the environment."
+    exit 101
+}
+
+# MSBuild's scratch directory, created up front.
+#
+# `aws-lc-sys` falls back to a CMake+MSBuild build on Windows, and MSBuild
+# creates this directory itself with `Directory.CreateDirectory`. That call
+# intermittently loses a race and throws
+# `System.UnauthorizedAccessException: Access to the path
+# '...\Temp\MSBuildTemp' is denied`, which CMake reports as
+# `Failed to run MSBuild command` and cargo reports as a failed custom build
+# command -- naming the dependency, never the cause. Creating it here removes
+# the race instead of losing it. It costs one `New-Item` on a path that is
+# either absent (we create it) or already ours (we do not).
+$msbuildTemp = Join-Path $env:TEMP "MSBuildTemp"
+if ($env:TEMP -and -not (Test-Path $msbuildTemp)) {
+    New-Item -ItemType Directory -Force -Path $msbuildTemp -ErrorAction SilentlyContinue | Out-Null
+}
+
 $cargo = (Get-Command cargo -ErrorAction SilentlyContinue).Source
 if (-not $cargo) {
     $fallback = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
@@ -42,21 +92,29 @@ Set-Content -Path $log -Value "cargo: $cargo`nCARGO_BUILD_JOBS: $env:CARGO_BUILD
 # Each gate: a name, then the argument list. Kept as data so the log records what
 # actually ran rather than what the script hoped it ran.
 $gates = @(
-    @{ Name = "fmt --check"; Args = @("fmt", "--all", "--", "--check") },
+    # Documentation links are a gate, not a chore. The audit renumbering of
+    # 2026-09-28 left 40 dead relative links across the docs and nothing
+    # noticed, because a dead citation looks exactly like a live one until a
+    # reader follows it. It costs a second and it is the only check that can
+    # see this class. `audit/history/` is excluded on purpose: it is superseded
+    # and deliberately unrepaired (AGENTS.md).
+    @{ Name = "check-links"; Exe = "python"; Args = @("scripts/check-links.py", "--quiet") },
+    @{ Name = "fmt --check"; Exe = $cargo; Args = @("fmt", "--all", "--", "--check") },
     # `-D warnings`: the workspace denies its configured lints, but clippy's own
     # `-W clippy::all` findings exit 0 by default - which is how a warning got past
     # this gate once (M69).
-    @{ Name = "clippy"; Args = @("clippy", "--workspace", "--all-targets", "--", "-D", "warnings") },
-    @{ Name = "test"; Args = @("test", "--workspace") },
-    @{ Name = "demo"; Args = @("run", "-q", "-p", "epsilon-cli", "--", "--demo") },
-    @{ Name = "real-check"; Args = @("check", "-p", "epsilon-cli", "--features", "real") }
+    @{ Name = "clippy"; Exe = $cargo; Args = @("clippy", "--workspace", "--all-targets", "--", "-D", "warnings") },
+    @{ Name = "test"; Exe = $cargo; Args = @("test", "--workspace") },
+    @{ Name = "demo"; Exe = $cargo; Args = @("run", "-q", "-p", "epsilon-cli", "--", "--demo") },
+    @{ Name = "real-check"; Exe = $cargo; Args = @("check", "-p", "epsilon-cli", "--features", "real") }
 )
 
 $overall = 0
 foreach ($gate in $gates) {
     Add-Content -Path $log -Value "`n===== $($gate.Name) =====" -Encoding utf8
     $start = Get-Date
-    & $cargo @($gate.Args) *>&1 | Tee-Object -FilePath $log -Append | Out-Null
+    $exe = if ($gate.Exe) { $gate.Exe } else { $cargo }
+    & $exe @($gate.Args) *>&1 | Tee-Object -FilePath $log -Append | Out-Null
     $rc = $LASTEXITCODE
     $seconds = [int]((Get-Date) - $start).TotalSeconds
     Add-Content -Path $log -Value "[exit=$rc ${seconds}s]" -Encoding utf8

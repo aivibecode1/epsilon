@@ -82,6 +82,7 @@ been reached yet. See [`audit/04-tui.md`](audit/04-tui.md).
 
 ```sh
 cargo fmt --all -- --check              # formatting gate — no diffs tolerated
+python scripts/check-links.py            # documentation links — no dead citations
 cargo clippy --workspace --all-targets -- -D warnings  # enforce zero warnings
 cargo test --workspace                  # report actual outcomes; the executed record of record is
                                          # audit/evidence/gate-<label>.log, cited by the milestone that
@@ -462,10 +463,21 @@ lying one costs the user the belief that the feature exists.
   repeated approval; old audit checkpoint wording is historical. A new unrelated
   task does not inherit permission to push, publish or use paid services.
 
-## Windows notes
+### Windows notes
 
 Hard-won, and mostly learned the hard way — the details are in `docs/milestones/M4`.
 
+- **A non-interactive shell cannot build this repo, and the error does not say so.**
+  `reqwest`'s `rustls` feature compiles `aws-lc-sys`, a C library. `cc-rs` finds
+  `cl.exe` by itself, so the failure is not "no compiler" — `cl.exe` *runs* and
+  exits 2, because a non-interactive shell never runs `vcvars` and so `INCLUDE`
+  and `LIB` are empty and it cannot find the Windows SDK headers. The visible
+  symptom is `error: failed to run custom build command for aws-lc-sys v0.44.0`
+  in **all four** compile gates at once, which reads as a catastrophically
+  broken tree. `scripts/gate.ps1` now loads `vcvars64.bat` when `INCLUDE` is
+  empty. **When every gate fails simultaneously, suspect the environment before
+  the code** — `env | grep` answers it in seconds, and the alternative is an
+  hour reading a diff that cannot be the cause.
 - Append-only handles cannot `set_len` (FILE_APPEND_DATA ≠ FILE_WRITE_DATA); truncation needs a
   read+write handle opened without append.
 - A write-only handle cannot be read back through later. Open purpose-built handles instead of

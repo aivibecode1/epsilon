@@ -18,7 +18,7 @@ held bare JSON of any shape, had that line truncated at open — while the same 
 mid-file position were refused with a typed diagnosis. Position decided whether the data
 survived, which is not a rule anybody would choose deliberately.
 
-This is F08 in [`audit/02-defect-ledger.md`](../../audit/02-defect-ledger.md), whose
+This is F08 in [`audit/03-defects.md`](../../audit/03-defects.md), whose
 acceptance criterion was already written down and unmet: *"unknown complete final entry …
 refused with the entire file unchanged."* The repository's own test asserted the opposite
 behavior and named it as intended (`a_torn_tail_is_still_tolerated_whatever_its_shape`,
