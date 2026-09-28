@@ -87,12 +87,21 @@ session's real results came from the second kind.
 
 ## Not covered
 
-- **`--no-default-features`.** Found by a per-crate sweep *after* this battery reported
-  1315/1315 (really 1253): `cargo test -p epsilon-llm` did not compile, because `usage_arithmetic`
-  calls `providers::test_support` behind `#[cfg(feature = "real")]`. Pre-existing (M140),
-  and invisible here because `real` has been a default feature since M63 — no gate builds
-  without default features. Fixed in `57812ca` with `required-features`, which skips the
-  test honestly rather than compiling to a green line that ran nothing.
+- **`--no-default-features`.** Found by a per-crate sweep *after* the first battery
+  reported 1315/1315 (really 1253): `cargo test -p epsilon-llm` did not compile, because
+  `usage_arithmetic` calls `providers::test_support` behind `#[cfg(feature = "real")]`.
+  Pre-existing (M140), and invisible here because `real` has been a default feature since
+  M63 — no gate builds without default features. Fixed in `57812ca` with
+  `required-features`, which skips the test honestly rather than compiling to a green line
+  that ran nothing.
+
+  The sweep is worth keeping as a record, because the number it produced is the evidence:
+  it reported **`epsilon-llm: 0`** — not a failing count, a *silently absent* one, since
+  the sweep sums `test result: ok.` lines and a crate that does not compile produces none.
+  A count of zero reads like "no tests" rather than "this crate is broken", which is
+  exactly why the error only surfaced when somebody read the per-crate line closely. After
+  the fix the same sweep reports **101**.
+
 - The **installed** `C:/Users/Hp/.cargo/bin/epsilon.exe` was the pre-session build when
   this battery started. Reinstalled after it passed, per AGENTS.md, since CLI/TUI
   behaviour changed.

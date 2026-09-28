@@ -79,6 +79,10 @@ Two things the battery does NOT cover, both found after it passed:
 - **Do not write a number you have not measured.** I invented a per-crate table from a
   `--lib`-only run, published it, and had to retract it. `cargo test -p X` ≠
   `cargo test -p X --lib`.
+- **A test count of 0 usually means the crate did not compile, not that it has no
+  tests.** A sweep that sums `test result: ok.` lines gets nothing from a broken build, and
+  "0" reads as "no tests" instead of "this is broken". Always confirm a 0 by running that
+  crate directly. This is how `epsilon-llm` hid a real compile failure.
 - **`MSYS_NO_PATHCONV=1 taskkill /F /IM epsilon.exe /T`** — without it, `//F` is invalid
   and the kill silently fails, leaving `epsilon.exe` locked (then `os error 5`).
 - The **write_file / patch linter reports false Rust 2015 errors** (`async fn not
