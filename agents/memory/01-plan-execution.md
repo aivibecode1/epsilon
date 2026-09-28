@@ -61,7 +61,15 @@ test *and* by watching a real TUI's mtime advance every 2s.
     crosses a process boundary so honouring it means re-validating, which pi does not do;
     porting the unsafe half is worse than the honest gap. (2) pi returns on the FIRST block;
     Epsilon asks all extensions so the reason names every objector. Veto semantics identical.
-  - **`TurnHooks` is the remaining unwired seam** in 4.5.
+  - **`TurnHooks` shipped** (`570819e`) — the last test-only setter. **It is a PARTIAL port
+    and that is the decision**: `transform_context`/`convert_to_llm` are **pass-through by
+    design**, so extensions cannot reshape the prompt. Reasoning (not trust — the host is the
+    user's own process and pi allows it): a malformed answer on that seam is a *silently
+    corrupted conversation* with no error result and nothing to roll back, unlike a malformed
+    veto. `prepare_next_turn` (model swap) and `should_stop_after_turn` ARE reachable.
+  - **Fourth contracts seam wired; all four `ToolHooks`/`TurnHooks` methods are now
+    reachable from a real extension process.** The "tested but never wired" defect class in
+    `audit/03-defects.md` has no remaining instance on these two traits.
 - **`branch_with_summary` still has no production caller** — confirmed three times now.
 - **`TurnHooks` is still unwired** (10/10 setters in tests). The `ToolHooks` half is done;
   the `TurnHooks` half is not, and the interpose transport now makes it reachable.

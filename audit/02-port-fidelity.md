@@ -50,6 +50,7 @@ model is a superset of pi's; the compaction reserve is numerically identical.
 | **Branch summary in production** | `agent-session.ts:3116-3270`, 5 callers, bills usage | `store.rs:1372-1400` exists — **only tests call it** | **Store primitive ported; nothing wires it** |
 | **Extension SDK** | `coding-agent/core/extensions/types.ts:1198-1346` — 157 exports: event bus, `addCommand`, `registerProvider`, `setStatus`, `newSession` | `ext/src/manifest.rs:18-37`, `host.rs:130-263` — process tools and declared events | **Subset only** |
 | **Tool-call interception** (block, and rewrite the result) | `runner.ts:30975` `emitToolCall` (returns on first `block`), `runner.ts:29468-30490` `emitToolResult` (folds each handler into a running event, returns `undefined` if unmodified) | `cli/src/runtime.rs` `ExtensionToolHooks` implements both `ToolHooks` arms, wired by `install_extension_hooks` in `main.rs` | **Ported** (`e9d5b94`, `ece3af4`, `9f73a5f`, this slice) |
+| **Turn-level hooks** (reshape context, swap model, end the run) | `runner.ts` `turn_end` + `shouldStopAfterTurn`; `agent-loop.ts:248-257` ends the run without another request | `cli/src/runtime.rs` `ExtensionTurnHooks` implements all four `TurnHooks` methods, wired by `install_extension_turn_hooks` in `main.rs` | **Partial — see the divergence below** |
 | **Tool-call argument mutation** | `types.ts` `ToolCallEvent`: "`event.input` is mutable. Mutate it in place to patch tool arguments before execution... **No re-validation is performed after mutation.**" | `BeforeToolCallContext.args` is passed by value and never returned; a decision carries only `block`/`reason`/`terminate` | **Missing, and deliberately so — see below** |
 | **`terminate` early-exit hint** | `types.ts` `ToolCallEventResult.terminate`: honoured only when *every* blocked call in a batch sets it | carried on both `BeforeToolCallResult` and `AfterToolCallResult`; `exec.rs:788` encodes it in `details` | **Ported; the all-blocked rule is the loop's, not the bridge's** |
 | **Prompt templates** (`/name` expansion) | `coding-agent/core/prompt-templates.ts:24,70,194,269` | zero references to `PromptTemplate` in any crate | **Missing** |
@@ -85,6 +86,23 @@ name every extension that objected rather than whichever loaded first. This is a
 divergence in load-order behaviour**: it is more informative, and it costs one round trip per
 remaining extension on a call that was going to be refused anyway. The veto *semantics* match
 pi exactly — a block is a block.
+
+**3. Epsilon does not let extensions reshape the context; pi does.** `TurnHooks` has four
+methods. `transform_context` and `convert_to_llm` return the messages the provider will
+receive, and this bridge implements **both as pass-through**. Only `prepare_next_turn` (a
+model swap) and `should_stop_after_turn` (a clean run exit) are reachable from a child.
+
+The reasoning is about failure modes rather than trust. The extension host is the user's own
+process and pi deliberately allows context rewriting — a harness that blocked it would be
+useless for the extensions it exists to support. But a *malformed or buggy* answer on this
+seam is not a refused tool call: it is a corrupted conversation, silently, with the model
+behaving as though it had been told something false. There is no error result to show the user
+and nothing to roll back, and the harness has no way to distinguish "this extension is
+rewriting my prompt on purpose" from "this extension has a bug in its fourth handler".
+
+`prepare_next_turn` is the reachable part because the loop already treats its result as
+optional: a broken host yields `None` and the run continues. That is a real capability gap
+and it is preferable to a port that lets a third-party binary corrupt the prompt by accident.
 
 ## What Epsilon has that pi does not
 

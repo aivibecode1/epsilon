@@ -555,26 +555,34 @@ binary, and the owner's own terminal and real provider.
 
 ## The class, not just the instance: seams that pass tests and are never wired
 
-`branch_with_summary` and `ToolHooks`/`TurnHooks` are the same defect wearing different
-clothes, and a third may exist. Worth writing down as a class, because the symptom is
-invisible by construction:
+`branch_with_summary` and `ToolHooks`/`TurnHooks` were the same defect wearing different
+clothes. Worth writing down as a class, because the symptom is invisible by construction:
 
 - The primitive is ported faithfully and reads well against the reference.
 - It has **passing tests**, because the tests call it directly.
 - Nothing on the user path calls it.
 - A reader checking for the capability sees green tests and concludes it works.
 
-`set_tool_hooks` / `set_turn_hooks` appear **10 times in the repository and every one is in
-`crates/epsilon-core/tests/loop_scenarios.rs`**. The traits are the right shape for pi's
-mutating extension events and the agent loop invokes them correctly — and a real extension
-child cannot reach either, because `send_event` returns `()` with no reply to carry a
-decision. Verified 2026-09-28; see
+`set_tool_hooks` / `set_turn_hooks` appeared **10 times in the repository and every one was
+in `crates/epsilon-core/tests/loop_scenarios.rs`**. The traits were the right shape for pi's
+mutating extension events and the agent loop invoked them correctly — and a real extension
+child could reach neither, because `send_event` returned `()` with no reply to carry a
+decision. Found 2026-09-28; see
 [`evidence/delegation-port-gaps-2026-09-28.md`](evidence/delegation-port-gaps-2026-09-28.md).
 
-**The detection rule that follows:** for any capability a reference harness has and this one
-claims, count the callers by *path*, not by name. Zero non-test callers on a primitive with
-tests is a defect, not a proof of depth. Phase 4 item 4.5 is the fix; the protocol has to
-carry a reply before the seam can be reached.
+**Closed 2026-09-28** across `e9d5b94` (ADR), `ece3af4` (transport), `9f73a5f` (tool
+before-arm), `2fb5219` (tool after-arm) and `570819e` (turn hooks). All four `ToolHooks` and
+all four `TurnHooks` methods are now reachable from a real extension process, through
+`install_extension_hooks` and `install_extension_turn_hooks` in `main.rs`. Each is proved
+against a live child, and each has a negative control that fails for the reason it names.
+
+**The detection rule that follows, and it still stands:** for any capability a reference
+harness has and this one claims, count the callers by *path*, not by name. Zero non-test
+callers on a primitive with tests is a defect, not a proof of depth.
+
+**One instance of the class remains:** `branch_with_summary` (`session/src/store.rs:1372`).
+Confirmed three times over this session. It is a different fix — no protocol is missing, just
+no caller — and it is the honest next candidate for this rule.
 
 ## Still open
 
