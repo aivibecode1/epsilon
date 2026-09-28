@@ -307,8 +307,10 @@ disagree (the D29 lesson). **Never committed, never gated.** Must compile-check 
 
 ## Machine (re-verified this session)
 
-C: 36 GB free (93%) · D: 56 GB (94%). `CARGO_TARGET_DIR=D:/eps-target`, `JOBS=1`.
-`pwsh -File scripts/gate.ps1 <label>` is the battery. Wipe `D:/eps-target` after a round.
+**Build on C: only** (owner's rule 2026-09-28). No `CARGO_TARGET_DIR`; `JOBS=1`.
+`pwsh -File scripts/gate.ps1 <label>` is the battery. `D:/eps-target` is deleted and must
+never be recreated — see [`05-machine.md`](05-machine.md) for how it got there and what to
+check before trusting a path in a note.
 **One build owner at a time** — a gate and a delegated build must never share the target.
 
 ## Next safe action

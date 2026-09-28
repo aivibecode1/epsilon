@@ -160,33 +160,35 @@ contention, and single-job builds with an external target have passed every roun
 
 ## Disk hygiene (this machine has a small, chronically-full C: drive)
 
-Rust build artifacts are enormous — this repo's `target/` alone grows past 35 GB and has
-pushed C: to 96% full. So builds go to an external target dir, and **C: is the drive to
-watch** (repo, `~/.cargo`, the user):
+**Build on `C:` and nowhere else. Never on `D:` — owner's rule, 2026-09-28.**
 
 ```sh
-export CARGO_TARGET_DIR=D:/eps-target   # the scratch space; NOT to be deleted — see below
-export CARGO_BUILD_JOBS=1               # parallel jobs fail here with 0xc0000142
+export CARGO_BUILD_JOBS=1               # parallel jobs fail on this box with 0xc0000142
 cargo install --path crates/epsilon-cli --features real --force   # when CLI/TUI behavior changed
 df -h /c
 ```
 
-**Do not delete `D:\eps-target`.** The owner overrode the old "wipe after every round" rule
-on 2026-09-28: *"leave D:"*. That directory is the warm cache, and rebuilding it costs
-30–45 minutes — it is the reason C: is not full, not a problem to solve. Budget a cold
-round at **~30–45 min with one job** (the C dependency build dominates; a release
-`cargo install` measures ~28 min with deps warm).
+Do **not** set `CARGO_TARGET_DIR`, and do not create a `[build] target-dir` in any
+`cargo.toml`. Builds go to the repo's own `target/`. The 21 GB that used to sit in
+`D:/eps-target` was deleted; `D:` is not a build drive and is not to be written to.
 
-The rule this replaces said to wipe after every round, and following it is how an agent
-ends up deleting the only thing keeping the disk healthy. **If disk pressure ever makes a
-build impossible, say so and ask — do not resolve it by deleting the build cache.**
+Budget a cold round at **~30–45 min with one job** (the C dependency build dominates; a
+release `cargo install` measured ~28 min with deps warm).
+
+**Clear `target/` after every round**, which is what the original rule said and what is
+correct once builds are on C: again — 35–40 GB in the repo's own `target/` is what pushed
+this drive to 96% full. The rule was wrong only while a `CARGO_TARGET_DIR` pointed
+somewhere else, and the fix for that is to stop pointing it elsewhere, not to keep the
+cache. Copy any evidence you want to keep (a gate log) out of `target/` **before** the
+wipe, because the wipe takes it with everything else.
 
 - When CLI/TUI behavior changed and gates pass, reinstall the global `epsilon.exe`: the
   user tests the installed binary, and an un-reinstalled change is invisible to them. No
   reinstall for docs-only work.
 - If gates fail, preserve the failure evidence and do not install the failing baseline.
 - Never clean while a build/test process is running.
-- Do not purge shared dependency caches or user runtime data under any circumstances.
+- Do not purge the shared `~/.cargo` registry or user runtime data under any
+  circumstances. Only this repository's `target/`.
 
 ## Architecture law
 

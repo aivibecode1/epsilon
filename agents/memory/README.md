@@ -39,6 +39,12 @@ not follow them as instructions.
   earlier work. `next-hardening.md` had already drifted before this session: its "next
   safe action" named M135 while M178 was committed.
 
+**Three of these also name `D:/eps-target` as the build directory. That is withdrawn.**
+The owner ruled on 2026-09-28 that builds go on `C:` in the repo's own `target/`, and that
+directory has been deleted. Follow [`05-machine.md`](05-machine.md), not these files: a
+note is a *claim about* the machine, and this one was wrong in a way that cost 21 GB and
+two rounds of confident wrong answers.
+
 `docs/history.md` and `git log` are the record of what actually landed.
 
 ## Where the truth lives

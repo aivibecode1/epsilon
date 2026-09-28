@@ -4,57 +4,52 @@ Durable notes about the *environment*, not about the project. Re-read before any
 
 ## Disk
 
-| Drive | Free (2026-09-27) | Use |
-|---|---|---|
-| `C:` | ~36.7 GB | repo, `~/.cargo`, the antivirus, the user |
-| `D:` | ~59.7 GB | **build target dir** — use this, not `C:` |
+**Build on `C:`, in the repo's own `target/`. Never on `D:` — owner's rule, 2026-09-28.**
 
-A full workspace build produces tens of GB. In-repo `target/` has historically grown past 35 GB and
-pushed `C:` to 96% full. **Always** set:
+| Drive | Use |
+|---|---|
+| `C:` | the repo, `~/.cargo`, the antivirus, the user, and **all build artifacts** |
+| `D:` | **nothing. Do not build there. Do not write build output there. Leave it alone.** |
 
-```powershell
-$env:CARGO_TARGET_DIR = "D:\eps-target"
-$env:CARGO_BUILD_JOBS = "1"
+A full workspace build produces tens of GB: in-repo `target/` has historically grown past
+35 GB and pushed `C:` to 96% full. So:
+
+```sh
+export CARGO_BUILD_JOBS=1     # NOT superstition: parallel jobs fail here with 0xc0000142
+df -h /c                       # watch C:, it is the only drive that matters now
 ```
 
-`CARGO_BUILD_JOBS=1` is not superstition here: every gate failure at parallel jobs on this box has
-been `0xc0000142` (compiler startup contention), not a code error.
+**Do not set `CARGO_TARGET_DIR`, and do not add a `[build] target-dir` to any config.**
+Builds go where cargo puts them by default: `C:/Users/Hp/Desktop/My Agent Space/Epsilon/target`.
 
-## Do NOT wipe `D:\eps-target` — owner override, 2026-09-28
+`D:/eps-target` held 21 GB of build output and **has been deleted**. It is not coming back.
 
-**The cleanup rule below is withdrawn. Leave `D:` alone.**
+## How this went wrong twice, and what to actually check
 
-I announced I would wipe `D:/eps-target` (20 GB) after a round, quoting the disk-hygiene
-rule in `AGENTS.md` and the note that used to live here. The owner's answer was **"leave
-D:"**, followed by **"you are on C: not D:"**.
+**1. I inherited the convention and never verified it.** `01-plan-execution.md` said builds
+go to `D:/eps-target`. My first command of the session was
+`export CARGO_TARGET_DIR=D:/eps-target && cargo check ...`, and because this shell keeps
+state, every later command inherited it. I never asked *why* — and when the owner asked
+"how eps-target goes to D: ?", the honest answer was: **I typed it into my own shell.**
+It was not in `~/.cargo/config.toml`, not in the repo, not in the Windows environment, and
+not in `scripts/gate.ps1`.
 
-Read that as: the build target is the scratch space, and it is not mine to reclaim. The
-`AGENTS.md` rule ("clear the cache after every test/build round") and this file both told me
-to delete a directory that was the only reason C: was not full. **I applied an inherited
-rule without asking whether it still served the person who owns the disk.**
+**2. Then I nearly deleted it.** `AGENTS.md` said "clear the cache after every test/build
+round", and I reached for that rule — which would have destroyed the only thing keeping C:
+free. The owner said *"leave D:"*.
 
-What to do instead:
+**The real sequence, which is the part worth keeping:** the owner stopped me from wiping
+D:, I "corrected" the docs to say *never delete D:*, and the actual answer turned out to be
+neither — **D: should never have been used at all.** Two rounds of confidently following
+and then confidently un-following a rule, because nobody checked where it came from.
 
-- **Do not delete `D:\eps-target` at the end of a round.** It is a warm cache, and
-  rebuilding it costs 30–45 minutes. Its 20 GB is the price of a fast next round.
-- If disk pressure ever makes a build impossible, **say so and ask** — do not resolve it
-  unilaterally by deleting the thing that is holding the build.
-- `C:` is the one to watch (repo, `~/.cargo`, the user). It sat at 36 GB free / 93% with
-  no action needed from me.
+**What to check before acting on a location, a path, or a convention in a memory note:**
+where does it actually come from? `reg query "HKCU\Environment"`, `cat ~/.cargo/config.toml`,
+`env | grep CARGO`. Thirty seconds. A note is a *claim about* the machine; the machine is
+the fact.
 
-The old rule is kept below only so its error is visible. Do not follow it.
-
-<details><summary>withdrawn rule, kept for the record</summary>
-
-## Clean up after every round — **WITHDRAWN, see above**
-
-```powershell
-Remove-Item -Recurse -Force D:\eps-target -ErrorAction SilentlyContinue
-```
-
-Do not clean while a build or test is running. Do not purge the shared `~/.cargo` registry or user
-runtime data — only this repo's disposable artifacts.
-</details>
+**Cleanup, correctly this time:** `rm -rf target` at the end of each round, in the repo.
+Copy anything worth keeping (gate logs) out of `target/` first, or the wipe takes it.
 
 ## Build is the long pole
 
