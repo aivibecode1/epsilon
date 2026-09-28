@@ -1,5 +1,4 @@
 //! rpc mode (ADR-011): line-delimited JSON over stdio for editor embedding.
-//!
 //! Protocol: each inbound line is one request — `{"op": "...", ...}`. pi's frames tag
 //! the same object `type` instead of `op` (`rpc-types.ts:20-73`); the tag is accepted as
 //! an alias, and an optional `id` is echoed on that request's reply (pi's client resolves
@@ -111,6 +110,28 @@ enum Op {
     GetTree,
     /// Name the session (a `Custom { "session_name" }` entry, as `/name` writes).
     SetSessionName { name: String },
+    /// Fork the session at `entry_id` into a NEW file, and rebind to it.
+    ///
+    /// pi's field is `entryId` (`rpc-types.ts:70`), and the reply is
+    /// `{ text, cancelled }` -- the selected entry's text, so a client can show what it
+    /// forked from without a second round trip.
+    #[serde(rename = "fork")]
+    Fork {
+        #[serde(rename = "entryId", alias = "entry_id")]
+        entry_id: String,
+    },
+    /// Fork at the current leaf: pi's "duplicate this session here".
+    Clone,
+    /// Start an empty session, optionally recording a parent session path.
+    NewSession {
+        #[serde(rename = "parentSession", alias = "parent_session", default)]
+        parent_session: Option<String>,
+    },
+    /// Reopen a different session file, and rebind to it.
+    SwitchSession {
+        #[serde(rename = "sessionPath", alias = "session_path")]
+        session_path: String,
+    },
 
     /// A well-formed frame naming an op this build does not implement.
     ///
@@ -435,6 +456,43 @@ fn reaches(
         cursor = next;
     }
     true // the bounded walk hit a cycle, so goal is reachable
+}
+
+/// Point the agent at a different session file, and re-derive its conversation from it.
+///
+/// This is the RPC equivalent of pi's `rebindSession()`, which every one of `fork`,
+/// `clone`, `new_session` and `switch_session` calls before replying. Reading pi's
+/// `rpc-mode.ts` rather than its type declarations is what showed the four ops share one
+/// step — a type would have said only `success(id, cmd, result)`.
+///
+/// Two halves, in this order, and the order is the whole point:
+///
+/// 1. **`attach_session_store`** swaps the mirror. Every subsequent append lands in the new
+///    file, so this must happen before anything can write to the old one.
+/// 2. **`reproject_current_branch`** re-derives the model-facing conversation from the new
+///    store's shadowed view. Without it the agent would keep sending the *old* session's
+///    messages to the provider while persisting to the *new* file — a session whose
+///    transcript and whose model context silently disagree, which is worse than either
+///    being wrong alone.
+///
+/// `store` is passed in by the caller when it has already been opened (`new_session` and
+/// `switch_session` need the opened value to read its header); `fork` and `clone` name a
+/// file that exists but has not been opened, so it is opened here.
+fn rebind_to(
+    agent: &Agent,
+    path: &std::path::Path,
+    store: Option<epsilon_core::SessionStore>,
+) -> Result<(), String> {
+    let store = match store {
+        Some(s) => s,
+        None => epsilon_core::SessionStore::open(path).map_err(|e| e.to_string())?,
+    };
+    agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+    // The count is the conversation the new file implies. It is not an error for it to be
+    // 0 -- an empty session is a real state -- but the re-projection failing IS, because it
+    // means the agent is now writing to a file it cannot read back.
+    agent.reproject_current_branch()?;
+    Ok(())
 }
 
 /// Build pi's nested `SessionTreeNode[]` from a flat entry list.
@@ -875,6 +933,206 @@ async fn dispatch_line(
                 return err_line(Some("set_session_name"), id, why);
             }
             ok_line("set_session_name", id, serde_json::json!({ "name": name }))
+        }
+        Op::Fork { entry_id } => {
+            // pi: `success(id, "fork", { text, cancelled })` -- the fork happens and the
+            // client is told what it forked from.
+            //
+            // **This is what pi's `rebindSession()` is for**, and the RPC agent can do the
+            // same thing in two steps: a new store for the forked file, then re-derive the
+            // conversation from it. `attach_session_store` exists precisely so a caller can
+            // hand the agent a different file without rebuilding it -- the same reason pi
+            // re-subscribes instead of re-constructing its host.
+            let Some(handle) = agent.session_store() else {
+                return err_line(
+                    Some("fork"),
+                    id,
+                    "no session store attached: this agent is not persisting a session",
+                );
+            };
+            let (dest, text) = {
+                let st = handle
+                    .lock()
+                    .map_err(|_| "session store poisoned".to_string())
+                    .and_then(
+                        |guard| -> Result<(std::path::PathBuf, serde_json::Value), String> {
+                            // `branch_to` is private; the public read is `branch_entries`,
+                            // which is the same ancestry walk the store itself uses. `fork_branch_at`
+                            // does its own walk, so this lookup is only for the reply's `text`.
+                            let text = guard
+                                .branch_entries()
+                                .map_err(|e| e.to_string())?
+                                .into_iter()
+                                .find(|e| e.id == entry_id)
+                                .map(|e| entry_as_pi(&e))
+                                .unwrap_or(serde_json::Value::Null);
+                            // `fork_branch_at` was written and tested (8 references, every one
+                            // a test) with no production caller until now. It is pi's fork
+                            // primitive: write the selected ancestry into a NEW file.
+                            let dir = guard
+                                .path()
+                                .parent()
+                                .map(std::path::Path::to_path_buf)
+                                .ok_or_else(|| {
+                                    "the session file has no parent directory".to_string()
+                                })?;
+                            let dest = guard
+                                .fork_branch_at(&entry_id, &dir)
+                                .map_err(|e| e.to_string())?;
+                            Ok((dest, text))
+                        },
+                    );
+                match st {
+                    Ok(v) => v,
+                    Err(why) => return err_line(Some("fork"), id, why),
+                }
+            };
+            if let Err(why) = rebind_to(agent.as_ref(), &dest, None) {
+                return err_line(Some("fork"), id, why);
+            }
+            ok_line(
+                "fork",
+                id,
+                serde_json::json!({ "text": text, "cancelled": false }),
+            )
+        }
+        Op::Clone => {
+            // pi refuses when there is no leaf, rather than forking an empty ancestry and
+            // reporting success. Same rule, same reason: a client that asked to duplicate
+            // "here" and got a session with no history has been told a falsehood.
+            let Some(handle) = agent.session_store() else {
+                return err_line(
+                    Some("clone"),
+                    id,
+                    "no session store attached: this agent is not persisting a session",
+                );
+            };
+            let dest = {
+                let leaf = handle
+                    .lock()
+                    .map_err(|_| "session store poisoned".to_string())
+                    .and_then(|guard| {
+                        guard
+                            .leaf_id()
+                            .ok_or_else(|| "no current entry selected".to_string())
+                    });
+                let leaf = match leaf {
+                    Ok(l) => l,
+                    Err(why) => return err_line(Some("clone"), id, why),
+                };
+                let forked = handle
+                    .lock()
+                    .map_err(|_| "session store poisoned".to_string())
+                    .and_then(|guard| {
+                        let dir = guard
+                            .path()
+                            .parent()
+                            .map(std::path::Path::to_path_buf)
+                            .ok_or("the session file has no parent directory")?;
+                        guard.fork_branch_at(&leaf, &dir).map_err(|e| e.to_string())
+                    });
+                match forked {
+                    Ok(p) => p,
+                    Err(why) => return err_line(Some("clone"), id, why),
+                }
+            };
+            if let Err(why) = rebind_to(agent.as_ref(), &dest, None) {
+                return err_line(Some("clone"), id, why);
+            }
+            ok_line("clone", id, serde_json::json!({ "cancelled": false }))
+        }
+        Op::NewSession { parent_session } => {
+            // pi: `success(id, "new_session", result)` where result is the runtime host's
+            // own reply -- it names the new file so a client can show it.
+            //
+            // A new file in the same directory, so `list_sessions` finds it and pi's
+            // `switch_session` can come back to it. `open_child_in` when a parent is named
+            // (that is what records the lineage), plain `open_in` otherwise.
+            let Some(handle) = agent.session_store() else {
+                return err_line(
+                    Some("new_session"),
+                    id,
+                    "no session store attached: this agent is not persisting a session",
+                );
+            };
+            let dir = match handle
+                .lock()
+                .map_err(|_| "session store poisoned".to_string())
+                .and_then(|g| {
+                    g.path()
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                        .ok_or_else(|| "the session file has no parent directory".to_string())
+                }) {
+                Ok(d) => d,
+                Err(why) => return err_line(Some("new_session"), id, why),
+            };
+            let cwd = dir
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| dir.clone());
+            let file = dir.join(format!("{}.jsonl", epsilon_contracts::new_id("ses")));
+            let built = match parent_session {
+                Some(parent) => epsilon_core::SessionStore::open_child_in(&file, &cwd, &parent),
+                None => epsilon_core::SessionStore::open_in(&file, &cwd),
+            };
+            let store = match built {
+                Ok(s) => s,
+                Err(e) => return err_line(Some("new_session"), id, e.to_string()),
+            };
+            if let Err(why) = rebind_to(agent.as_ref(), &file, Some(store)) {
+                return err_line(Some("new_session"), id, why);
+            }
+            ok_line(
+                "new_session",
+                id,
+                serde_json::json!({
+                    "cancelled": false,
+                    "sessionFile": file.to_string_lossy(),
+                }),
+            )
+        }
+        Op::SwitchSession { session_path } => {
+            // pi: `success(id, "switch_session", result)`.
+            //
+            // Opened with the *target's own recorded cwd* when it has one, because that is
+            // the directory the session was created in and the one its relative paths were
+            // written against. Reusing the current session's cwd would silently reinterpret
+            // every relative path in the file we just opened.
+            let path = std::path::PathBuf::from(&session_path);
+            if !path.exists() {
+                return err_line(
+                    Some("switch_session"),
+                    id,
+                    format!("no session file at {session_path}"),
+                );
+            }
+            let opened = epsilon_core::SessionStore::open(&path);
+            let store = match opened {
+                Ok(s) => s,
+                Err(e) => return err_line(Some("switch_session"), id, e.to_string()),
+            };
+            let cwd = store
+                .header()
+                .map(|h| std::path::PathBuf::from(h.cwd.clone()))
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| {
+                    path.parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                });
+            if let Err(why) = rebind_to(agent.as_ref(), &path, Some(store)) {
+                return err_line(Some("switch_session"), id, why);
+            }
+            let _ = cwd;
+            ok_line(
+                "switch_session",
+                id,
+                serde_json::json!({
+                    "cancelled": false,
+                    "sessionFile": path.to_string_lossy(),
+                }),
+            )
         }
         Op::GetMessages => {
             // pi returns the conversation as `SessionMessage[]`. Epsilon's `Message` is a
@@ -1350,15 +1608,16 @@ mod tests {
         // genuinely unimplemented -- which is a smaller and shrinking set, so the next
         // person to implement one has to update this too. That is the intended friction.
 
-        // `get_entries` and `set_session_name` were the M189 examples here and are
-        // implemented now, so the first example moved to `new_session`, which is not.
-        // The comment above explains why the set keeps shrinking.
-        let v =
-            parse(&dispatch_line(r#"{"id":"req_9","op":"new_session"}"#, &agent, &approvals).await);
+        // This set keeps shrinking as ops land, and that is the point of writing the
+        // comment: `set_model` (M186), `get_entries`/`set_session_name` (M189),
+        // `new_session` (M192) have each been the example and each stopped being true
+        // when implemented. A test whose example silently stops being true keeps passing
+        // for the wrong reason, so `compact` takes over until M19x lands it too.
+        let v = parse(&dispatch_line(r#"{"id":"req_9","op":"compact"}"#, &agent, &approvals).await);
         assert_eq!(v["success"], false, "{v}");
         assert_eq!(v["id"], "req_9", "the correlation id still echoes: {v}");
-        assert_eq!(v["command"], "new_session");
-        assert_eq!(v["error"], "unknown op: new_session");
+        assert_eq!(v["command"], "compact");
+        assert_eq!(v["error"], "unknown op: compact");
 
         // The same op under pi's `type` tag: both dialects reach the same fallback, so a
         // pi-shaped client is not the one that gets a parse error instead of a named one.
@@ -1378,9 +1637,12 @@ mod tests {
         // tolerated (serde's internally tagged unit variants ignore the rest of the
         // map), so the reply is still the named `unknown op` with the echoed id —
         // never a serde parse error.
+        // `fork` was the M186-M191 example here and is implemented from M192, so the
+        // third example moved to `set_auto_retry` -- still genuinely absent, and with a
+        // payload that shows unknown fields are tolerated rather than fatal.
         let v = parse(
             &dispatch_line(
-                r#"{"id":"req_11","type":"fork","entryId":"e1"}"#,
+                r#"{"id":"req_11","type":"set_auto_retry","enabled":true}"#,
                 &agent,
                 &approvals,
             )
@@ -1388,8 +1650,8 @@ mod tests {
         );
         assert_eq!(v["success"], false, "{v}");
         assert_eq!(v["id"], "req_11", "{v}");
-        assert_eq!(v["command"], "fork");
-        assert_eq!(v["error"], "unknown op: fork");
+        assert_eq!(v["command"], "set_auto_retry");
+        assert_eq!(v["error"], "unknown op: set_auto_retry");
     }
 
     /// A malformed line still fails in the legacy vocabulary (`error`), and a known op
@@ -2489,10 +2751,15 @@ mod tests {
 
     /// An agent with a real session store, so the store-backed ops can be exercised.
     fn agent_with_store(steps: Vec<epsilon_llm::FauxStep>) -> (Arc<Agent>, std::path::PathBuf) {
+        // A per-TEST unique suffix, not a per-thread one. The fork tests below each create
+        // their own session, and `std::thread::current().id()` is the same for every
+        // `#[tokio::test]` on the same worker -- so with a dozen tests in one binary the
+        // names collided and one test's `rm_dir_all` deleted another's session mid-run.
+        // `new_id` is already a dependency and is unique for exactly this purpose.
         let dir = std::env::temp_dir().join(format!(
-            "epsilon-rpc-store-{}-{:?}",
+            "epsilon-rpc-store-{}-{}",
             std::process::id(),
-            std::thread::current().id()
+            epsilon_contracts::new_id("t")
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
@@ -2961,5 +3228,423 @@ mod tests {
             let back = secs as u64 * 1000 + milli as u64;
             assert_eq!(back, ms, "{s} does not describe {ms}");
         }
+    }
+
+    // ---- M192: fork, clone, new_session, switch_session ----
+
+    /// Run a task to completion, so the store has real entries behind it.
+    async fn run_task(agent: &Arc<Agent>, approvals: &Arc<ChannelApprovalUi>, task: &str) {
+        let mut events = agent.subscribe();
+        let _ = dispatch_line(
+            &format!(r#"{{"op":"prompt","task":"{task}"}}"#),
+            agent,
+            approvals,
+        )
+        .await;
+        wait_for_end(&mut events).await;
+    }
+
+    /// A store-backed agent with two completed runs, so a fork has something to fork.
+    async fn agent_with_two_runs() -> (Arc<Agent>, std::path::PathBuf) {
+        let (agent, dir) = agent_with_store(vec![
+            epsilon_llm::FauxStep::say("one"),
+            epsilon_llm::FauxStep::say("two"),
+        ]);
+        let approvals = approvals();
+        run_task(&agent, &approvals, "first").await;
+        run_task(&agent, &approvals, "second").await;
+        (agent, dir)
+    }
+
+    /// **`fork` writes a new file AND rebinds the agent to it.**
+    ///
+    /// Both halves are asserted, because the rebind is the half a shape test misses. A
+    /// handler that wrote the file and left the agent pointing at the old one would pass a
+    /// "did a new file appear" check and be silently wrong: the next prompt would persist
+    /// to the file nobody is reading. The third assertion — a run AFTER the fork lands in
+    /// the new file — is what actually proves the rebind.
+    #[tokio::test]
+    async fn fork_writes_a_new_file_and_rebinds_the_agent_to_it() {
+        let (agent, dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+
+        let before = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            (g.path().to_path_buf(), g.read_all().expect("read").len())
+        };
+        assert!(
+            before.1 >= 2,
+            "two runs must have written entries: {}",
+            before.1
+        );
+
+        // Fork at the FIRST entry, so the fork is a strictly shorter conversation.
+        let target = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.branch_entries()
+                .expect("branch")
+                .first()
+                .expect("an entry")
+                .id
+                .clone()
+        };
+        let reply = parse(
+            &dispatch_line(
+                &format!(r#"{{"op":"fork","entryId":"{target}"}}"#),
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(reply["success"], true, "{reply}");
+        // pi's payload: `{ text, cancelled }`.
+        assert_eq!(reply["data"]["cancelled"], false, "{reply}");
+        assert!(
+            reply["data"]["text"]["id"].as_str() == Some(target.as_str()),
+            "the reply must name the entry it forked from: {reply}"
+        );
+
+        // Half 1: a DIFFERENT file, and it exists.
+        let after_path = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.path().to_path_buf()
+        };
+        assert_ne!(
+            after_path, before.0,
+            "the agent must point at a new file: {after_path:?}"
+        );
+        assert!(after_path.exists(), "{after_path:?} must exist");
+        assert_ne!(
+            after_path.parent(),
+            None,
+            "the fork lives beside the original, where list_sessions can find it"
+        );
+
+        // Half 2: the conversation was re-derived from the FORK, not carried over. The fork
+        // is at the first entry, so the agent's history is much shorter than it was.
+        let forked_len = agent.history().len();
+        assert!(
+            forked_len < before.1 * 2,
+            "the agent must now hold the FORK's conversation, not the original's: \
+             history={forked_len} entries_in_original_file={}",
+            before.1
+        );
+        // Half 3 — a run after the fork landing in the NEW file — is a separate test,
+        // because this agent has no faux steps left to run with. Naming the gap beats
+        // leaving a stub that looks like coverage.
+    }
+
+    /// A run issued AFTER a fork appends to the forked file, not the original.
+    ///
+    /// This is the assertion the "did a new file appear" check cannot make, and it is the
+    /// one that would catch a handler that wrote the fork and forgot to rebind — the exact
+    /// failure `rebind_to`'s two-step order exists to prevent.
+    #[tokio::test]
+    async fn a_run_after_a_fork_persists_to_the_forked_file() {
+        let (agent, _dir) = agent_with_store(vec![
+            epsilon_llm::FauxStep::say("one"),
+            epsilon_llm::FauxStep::say("two"),
+            epsilon_llm::FauxStep::say("three"),
+        ]);
+        let approvals = approvals();
+        run_task(&agent, &approvals, "first").await;
+        run_task(&agent, &approvals, "second").await;
+
+        let target = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.branch_entries()
+                .expect("branch")
+                .first()
+                .expect("an entry")
+                .id
+                .clone()
+        };
+        let reply = parse(
+            &dispatch_line(
+                &format!(r#"{{"op":"fork","entryId":"{target}"}}"#),
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(reply["success"], true, "{reply}");
+        let forked_path = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.path().to_path_buf()
+        };
+        let forked_entries = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.read_all().expect("read").len()
+        };
+
+        // One more run, with a step still queued.
+        run_task(&agent, &approvals, "third").await;
+
+        let now = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            (g.path().to_path_buf(), g.read_all().expect("read").len())
+        };
+        assert_eq!(now.0, forked_path, "the agent must still be on the fork");
+        assert!(
+            now.1 > forked_entries,
+            "the post-fork run must append to the FORK: {forked_entries} -> {}",
+            now.1
+        );
+    }
+
+    /// `fork` names an entry that is not there, by name.
+    #[tokio::test]
+    async fn fork_refuses_an_entry_id_that_does_not_exist() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        let reply = parse(
+            &dispatch_line(r#"{"op":"fork","entryId":"ent_nope"}"#, &agent, &approvals).await,
+        );
+        assert_eq!(reply["success"], false, "{reply}");
+        assert!(
+            !reply["error"].as_str().unwrap_or_default().is_empty(),
+            "the error must say something: {reply}"
+        );
+    }
+
+    /// `clone` duplicates the current leaf, and pi's refusal when there is no leaf.
+    #[tokio::test]
+    async fn clone_duplicates_the_current_leaf() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        let before = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.path().to_path_buf()
+        };
+        let reply = parse(&dispatch_line(r#"{"op":"clone"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        assert_eq!(reply["data"]["cancelled"], false, "{reply}");
+        let after = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.path().to_path_buf()
+        };
+        assert_ne!(after, before, "clone must produce a new file");
+        assert!(after.exists(), "{after:?}");
+    }
+
+    /// `clone` on a session with nothing in it refuses, as pi does.
+    ///
+    /// pi: `if (!leafId) return error(id, "clone", "Cannot clone session: no current entry
+    /// selected")`. A clone that produced an empty session and reported success would be a
+    /// client told "duplicated" about a session with no history.
+    #[tokio::test]
+    async fn clone_refuses_when_there_is_no_leaf() {
+        let (agent, _dir) = agent_with_store(vec![]);
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"clone"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], false, "{reply}");
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no current entry"),
+            "the error must name the real cause, as pi's does: {reply}"
+        );
+    }
+
+    /// `new_session` starts empty, and `switch_session` goes back to the old file.
+    ///
+    /// The round trip is the point: a client that can only start a new session but never
+    /// return to the previous one has a one-way door. Both files must survive, and the
+    /// second half of the test switches back and proves the original conversation is
+    /// intact — which also exercises `reproject_current_branch` in the restore direction.
+    #[tokio::test]
+    async fn new_session_then_switch_session_round_trips() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        let original = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            (g.path().to_path_buf(), g.read_all().expect("read").len())
+        };
+
+        let made = parse(&dispatch_line(r#"{"op":"new_session"}"#, &agent, &approvals).await);
+        assert_eq!(made["success"], true, "{made}");
+        let fresh = made["data"]["sessionFile"]
+            .as_str()
+            .expect("sessionFile")
+            .to_string();
+        assert!(std::path::Path::new(&fresh).exists(), "{fresh} must exist");
+
+        // The new session is EMPTY — that is what "new" means, and a test that only checked
+        // the file exists would pass a handler that copied the transcript across.
+        let empty = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.read_all().expect("read").len()
+        };
+        assert_eq!(empty, 0, "a new session must start empty: {made}");
+        assert_eq!(
+            agent.history().len(),
+            0,
+            "and the agent must see it as empty"
+        );
+
+        // Go back.
+        let back = parse(
+            &dispatch_line(
+                // Built as a VALUE and serialized, never interpolated into a string
+                // literal: a Windows path is full of backslashes, and `"C:\Users\…"`
+                // inside a JSON string is an escape error. A test that hand-writes the path
+                // fails on Windows and passes on Linux -- the wrong way round for a harness
+                // whose primary platform is Windows.
+                &serde_json::json!({
+                    "op": "switch_session",
+                    "sessionPath": original.0.to_string_lossy(),
+                })
+                .to_string(),
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(back["success"], true, "{back}");
+        let restored = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            (g.path().to_path_buf(), g.read_all().expect("read").len())
+        };
+        assert_eq!(restored.0, original.0, "must be back on the original file");
+        assert_eq!(restored.1, original.1, "with its entries intact");
+        assert!(
+            agent.history().len() >= 2,
+            "and the agent's conversation must be re-derived from it: {}",
+            agent.history().len()
+        );
+    }
+
+    /// `switch_session` to a path that is not there fails by name.
+    #[tokio::test]
+    async fn switch_session_refuses_a_missing_file() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        let reply = parse(
+            &dispatch_line(
+                r#"{"op":"switch_session","sessionPath":"C:/definitely/not/here.jsonl"}"#,
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(reply["success"], false, "{reply}");
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no session file"),
+            "the error must name the real cause: {reply}"
+        );
+    }
+
+    /// The four new ops accept pi's camelCase field names, over the wire.
+    ///
+    /// `entryId`, `parentSession`, `sessionPath` are the spellings in `rpc-types.ts`, and a
+    /// snake_case field would parse as absent rather than as wrong — `fork` would then
+    /// refuse for want of an entry id while reporting a problem the client cannot see.
+    #[tokio::test]
+    async fn the_m192_ops_accept_pis_camel_case_fields() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        let target = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.branch_entries()
+                .expect("branch")
+                .first()
+                .expect("an entry")
+                .id
+                .clone()
+        };
+        for frame in [
+            format!(r#"{{"op":"fork","entryId":"{target}"}}"#),
+            r#"{"op":"new_session","parentSession":null}"#.to_string(),
+        ] {
+            let reply = parse(&dispatch_line(&frame, &agent, &approvals).await);
+            assert_eq!(reply["success"], true, "{frame}: {reply}");
+        }
+    }
+
+    /// **`new_session` must empty the agent's CONVERSATION, not just its file.**
+    ///
+    /// This is the assertion Control H demanded. That control swapped the mirror and left
+    /// the conversation alone, and all 59 tests passed — because the round-trip test only
+    /// checked file paths and entry counts. The defect it hides is the worst kind: the
+    /// session file says "empty" while the agent carries the previous session's messages
+    /// into the next provider call, so the user starts a fresh conversation and the model
+    /// answers as if the old one were still in context.
+    ///
+    /// Two independent facts are asserted, because either alone is satisfiable by accident:
+    /// the store holds no entries, and the agent's own history is empty.
+    #[tokio::test]
+    async fn new_session_empties_the_conversation_not_just_the_file() {
+        let (agent, _dir) = agent_with_two_runs().await;
+        let approvals = approvals();
+        // The precondition, as an assertion. A session that never ran makes "empty" true
+        // for the wrong reason -- this is the M188/M189 precondition lesson again.
+        assert!(
+            agent.history().len() >= 2,
+            "two runs must be in the conversation before we empty it: {}",
+            agent.history().len()
+        );
+
+        let made = parse(&dispatch_line(r#"{"op":"new_session"}"#, &agent, &approvals).await);
+        assert_eq!(made["success"], true, "{made}");
+
+        assert_eq!(
+            agent.history().len(),
+            0,
+            "the agent must carry NO messages from the previous session into the new one: \
+             {} left over",
+            agent.history().len()
+        );
+        // And the file agrees, so the two cannot drift.
+        let file_entries = {
+            let h = agent.session_store().expect("store");
+            let g = h.lock().expect("lock");
+            g.read_all().expect("read").len()
+        };
+        assert_eq!(file_entries, 0, "the new file must be empty too: {made}");
+
+        // The decisive third fact: a run in the new session must produce a conversation
+        // containing ONLY that run. A stale carry-over shows up here even if `history()`
+        // were somehow lazily re-read.
+        let (fresh_agent, _) = agent_with_store(vec![epsilon_llm::FauxStep::say("only me")]);
+        let made2 =
+            parse(&dispatch_line(r#"{"op":"new_session"}"#, &fresh_agent, &approvals).await);
+        assert_eq!(made2["success"], true, "{made2}");
+        let mut events = fresh_agent.subscribe();
+        let _ = dispatch_line(
+            r#"{"op":"prompt","task":"hello"}"#,
+            &fresh_agent,
+            &approvals,
+        )
+        .await;
+        wait_for_end(&mut events).await;
+        let texts: Vec<String> = fresh_agent.history().iter().map(|m| m.text()).collect();
+        assert!(
+            texts.iter().all(|t| t != "one" && t != "two"),
+            "no message from an earlier session may survive: {texts:?}"
+        );
+        // `!t.is_empty()` would be the tempting shorthand here and it is vacuous: it is
+        // true of every message that exists, so it asserts only that the run produced
+        // *something*. The check has to name the content that should be there.
+        assert!(
+            texts.iter().any(|t| t.contains("only me")),
+            "the new session's own reply must be present: {texts:?}"
+        );
     }
 }
