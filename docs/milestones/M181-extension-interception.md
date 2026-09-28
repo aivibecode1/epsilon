@@ -128,10 +128,10 @@ one of them can tell whether the two halves are connected.
 
 ## What nothing exercises
 
-- **`after_tool_call` is not wired.** The bridge inherits the default, which is a pure no-op,
-  and a test pins that. Result rewriting — pi's `tool_result` event, which can replace
-  content, details, usage, and the error flag — is therefore **still missing**, and the seam
-  is already shaped for it. This milestone shipped the *block* half only.
+- ~~**`after_tool_call` is not wired.**~~ **Superseded** — the result-rewriting half shipped
+  in the same milestone's follow-on commit, after reading pi's `emitToolResult` directly
+  rather than inferring it. See `audit/02-port-fidelity.md` for the two divergences that
+  reading surfaced.
 - **The interpose event payload is unvalidated on the way in.** An extension receives
   `tool_name` and `args` and the host trusts it to return well-formed JSON; there is no
   schema for `decision`, so an extension author has no contract to code against beyond this

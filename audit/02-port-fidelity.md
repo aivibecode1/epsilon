@@ -49,6 +49,9 @@ model is a superset of pi's; the compaction reserve is numerically identical.
 | **Branch navigation** (move the leaf to any ancestor, re-enter) | `agent-session.ts:3116` `navigateTree` | **Ported and wired** — `session/src/store.rs:1329` `navigate_to`, called by the timeline picker on Enter at `tui/src/app/keys.rs:495` | **Corrected 2026-09-28** (was "Missing") |
 | **Branch summary in production** | `agent-session.ts:3116-3270`, 5 callers, bills usage | `store.rs:1372-1400` exists — **only tests call it** | **Store primitive ported; nothing wires it** |
 | **Extension SDK** | `coding-agent/core/extensions/types.ts:1198-1346` — 157 exports: event bus, `addCommand`, `registerProvider`, `setStatus`, `newSession` | `ext/src/manifest.rs:18-37`, `host.rs:130-263` — process tools and declared events | **Subset only** |
+| **Tool-call interception** (block, and rewrite the result) | `runner.ts:30975` `emitToolCall` (returns on first `block`), `runner.ts:29468-30490` `emitToolResult` (folds each handler into a running event, returns `undefined` if unmodified) | `cli/src/runtime.rs` `ExtensionToolHooks` implements both `ToolHooks` arms, wired by `install_extension_hooks` in `main.rs` | **Ported** (`e9d5b94`, `ece3af4`, `9f73a5f`, this slice) |
+| **Tool-call argument mutation** | `types.ts` `ToolCallEvent`: "`event.input` is mutable. Mutate it in place to patch tool arguments before execution... **No re-validation is performed after mutation.**" | `BeforeToolCallContext.args` is passed by value and never returned; a decision carries only `block`/`reason`/`terminate` | **Missing, and deliberately so — see below** |
+| **`terminate` early-exit hint** | `types.ts` `ToolCallEventResult.terminate`: honoured only when *every* blocked call in a batch sets it | carried on both `BeforeToolCallResult` and `AfterToolCallResult`; `exec.rs:788` encodes it in `details` | **Ported; the all-blocked rule is the loop's, not the bridge's** |
 | **Prompt templates** (`/name` expansion) | `coding-agent/core/prompt-templates.ts:24,70,194,269` | zero references to `PromptTemplate` in any crate | **Missing** |
 | **Package / resource lifecycle** (npm, git install) | `package-manager.ts:978-1049` (2,699 lines), `package-manager-cli.ts` (1,102) | root discovery only: `cli/src/runtime.rs:564-608` | **Missing** |
 | **RPC breadth** | `modes/rpc/rpc-types.ts:20-73` — 32 commands incl. `bash`, `fork`, `get_tree`, `export_html`, `set_model`, `clear_queue` | `cli/src/rpc_mode.rs:30-68` — 9 ops | **Partial; envelope incompatible** |
@@ -61,6 +64,27 @@ model is a superset of pi's; the compaction reserve is numerically identical.
 The RPC `Unknown` arm at `rpc_mode.rs:68` deserves a note: it is explicitly commented as
 a deliberate refusal to half-wire a command. That is the right call, and it is the
 opposite of the failure mode this audit is looking for.
+
+
+### Two gaps in tool-call interception, read from pi's source rather than assumed
+
+**1. pi mutates tool arguments in place; Epsilon does not.** `types.ts` documents
+`ToolCallEvent.input` as mutable: an extension patches arguments before execution, later
+handlers see earlier mutations, and — stated plainly in the reference — **no re-validation
+happens after the mutation**. That last sentence is the reason this is not simply a missing
+feature. Epsilon's `BeforeToolCallContext.args` crosses a process boundary, so honouring it
+means re-validating against the tool's own schema after the edit, which pi does not do. A
+faithful port of the *unsafe* half without the validation is a worse outcome than the honest
+gap, so `args` stays read-only and the decision carries no `args` field. Recorded as a
+deliberate divergence, not an oversight.
+
+**2. pi returns the first `block` and stops; Epsilon consults every extension.**
+`emitToolCall` returns immediately on a block, so an extension after a blocking one is never
+reached. Epsilon asks all of them, on the stated grounds that the reason a user sees should
+name every extension that objected rather than whichever loaded first. This is a **deliberate
+divergence in load-order behaviour**: it is more informative, and it costs one round trip per
+remaining extension on a call that was going to be refused anyway. The veto *semantics* match
+pi exactly — a block is a block.
 
 ## What Epsilon has that pi does not
 
