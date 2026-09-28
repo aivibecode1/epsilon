@@ -56,9 +56,29 @@ test *and* by watching a real TUI's mtime advance every 2s.
   changed, so a reinstall is required.
 - **Wipe `D:/eps-target`** after the battery finishes (C: at 93%, 37 G free).
 
+## Verified state
+
+**Gate battery `m180-1`: PASS** at `cac8c35` — fmt, clippy, test, demo, real-check.
+**1253 tests, 0 failures.** (The log's own 1315 double-counts `builtin_tools`' 62; the
+per-crate sweep in `audit/evidence/gate-m180-1.md` is the measured breakdown.)
+
+Per-crate: tui 380 · core 263 · tools 168 · llm 101 · session 94 · safety 55 ·
+contracts 34 · ext 33 · lsp 23 · cli 81 · server 15 · mcp 6.
+
+Two things the battery does NOT cover, both found after it passed:
+- `--no-default-features` — found a real pre-existing compile failure in
+  `epsilon-llm/tests/usage_arithmetic.rs`; fixed in `57812ca` with `required-features`.
+- Anything whose symptom is a *broken console* rather than a wrong value.
+
 ## Traps on this machine
 
 - Build owner is one at a time. `CARGO_BUILD_JOBS=1`, `CARGO_TARGET_DIR=D:/eps-target`.
+- **A test binary can run twice in the battery.** `builtin_tools` does, so the log's
+  total is 62 higher than the real one. Compare against a per-crate sweep before
+  quoting any count.
+- **Do not write a number you have not measured.** I invented a per-crate table from a
+  `--lib`-only run, published it, and had to retract it. `cargo test -p X` ≠
+  `cargo test -p X --lib`.
 - **`MSYS_NO_PATHCONV=1 taskkill /F /IM epsilon.exe /T`** — without it, `//F` is invalid
   and the kill silently fails, leaving `epsilon.exe` locked (then `os error 5`).
 - The **write_file / patch linter reports false Rust 2015 errors** (`async fn not
