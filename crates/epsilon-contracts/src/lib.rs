@@ -13,6 +13,7 @@ pub mod diagnostics;
 pub mod ids;
 pub mod lagged_notice;
 pub mod message;
+pub mod prompt_template;
 pub mod session_entry;
 pub mod session_state;
 pub mod stream;
