@@ -565,6 +565,31 @@ impl SessionStore {
         self.header.as_ref()
     }
 
+    /// The session's display name: the newest `Custom { "session_name" }` entry's `name`.
+    ///
+    /// The newest one wins, because `/name` and RPC `set_session_name` append and the
+    /// entry can sit anywhere in the file — reading the first would report the name the
+    /// session *started* with. This is the same rule pi's session listing applies, and it
+    /// is the reader half of the writer in the `set_session_name` handler, which is why it
+    /// lives here rather than in either frontend: a reader and a writer that disagree
+    /// about the entry's shape would show a name the RPC could not have set.
+    ///
+    /// `None` when the session has never been named, which is a normal state and not an
+    /// error — an unnamed session is what most sessions are.
+    pub fn session_name(&self) -> Option<String> {
+        let entries = self.read_all().ok()?;
+        entries.iter().rev().find_map(|e| match &e.kind {
+            EntryKind::Custom {
+                custom_type,
+                data: Some(data),
+            } if custom_type == "session_name" => data
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map(str::to_string),
+            _ => None,
+        })
+    }
+
     /// Effective file format version (1 when the file predates headers).
     pub fn version(&self) -> u32 {
         self.header
@@ -2402,6 +2427,10 @@ fn legacy_usage(value: &serde_json::Value) -> Usage {
         cache_read: n("cacheRead"),
         cache_write: n("cacheWrite"),
         total_tokens: n("totalTokens"),
+        // K1: the keys being *present* is the signal, not their value. pi writes
+        // this object for every call, so a replayed `cacheRead: 0` is a measured
+        // zero and must not come back as "not measurable".
+        cache_reported: value.get("cacheRead").is_some() || value.get("cacheWrite").is_some(),
     }
 }
 

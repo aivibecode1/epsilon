@@ -21,8 +21,9 @@ next.
 
 | File | Work item | Status |
 |------|-----------|--------|
-| [`00-session-takeover.md`](00-session-takeover.md) | What this session established, with the measurements | done |
-| [`01-plan-execution.md`](01-plan-execution.md) | **Where I am in the 0-7 phases; the five audit defects, all closed** | live |
+| [`00-session-takeover.md`](00-session-takeover.md) | What session 1 established, with the measurements | superseded — read for history only |
+| [`01-plan-execution.md`](01-plan-execution.md) | Session 1's phase tracker, its traps, and three classes of self-inflicted error | live — the *lessons* still apply |
+| [`02-tui-truth-first.md`](02-tui-truth-first.md) | **Session 2: "shrinks" ruled out, D30 landed, K1 + C2 metrics fixed** | live |
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 
 ## Superseded notes (kept for history, not for direction)

@@ -1172,7 +1172,7 @@ fn event_type_tag(ev: &AgentEvent) -> &'static str {
         AgentEvent::PermissionRequested { .. } => "permission_requested",
         AgentEvent::PermissionDecided { .. } => "permission_decided",
         AgentEvent::CompactionStarted => "compaction_started",
-        AgentEvent::CompactionFinished => "compaction_finished",
+        AgentEvent::CompactionFinished { .. } => "compaction_finished",
         AgentEvent::Notice { .. } => "notice",
     }
 }

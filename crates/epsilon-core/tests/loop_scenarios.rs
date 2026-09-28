@@ -1864,7 +1864,23 @@ async fn mid_run_compaction_invalidates_the_replacement_context() {
         LoopLimits {
             // The first turn's arguments + result (~2000 estimated tokens) trip this; the
             // bare prompt does not.
-            compaction_threshold_tokens: 1500,
+            //
+            // Raised from 1_500 by M194, preserving the relationship rather than the digit.
+            // The comment above states the property — "the bare prompt does not [trip it]"
+            // — and that stopped being true when the no-anchor context estimate began
+            // counting the system prompt: the fixed prefix is 1_633 tokens of agent
+            // contract (printed by `an_empty_session_still_costs_the_system_prompt` in
+            // `usage_anchor.rs`), so a bare prompt now measures ~1_633 and cleared a
+            // 1_500 budget on its own. The test then compacted on turn one, and
+            // `requests[0]` carried 2 messages instead of the bare prompt it asserts on.
+            //
+            // Measured with `EPSILON_TRACE_COMPACTION` printing what the trigger reads:
+            //   after the bare prompt     1_674
+            //   after the tool result     2_123
+            // The budget goes between them, so the bare prompt does not trip it and the
+            // result does — which is the property the comment above has always claimed.
+            // 2_400 was my first guess and was above *both*, so nothing compacted at all.
+            compaction_threshold_tokens: 1_900,
             compaction_tail_tokens: 300,
             max_turns: 8,
             ..Default::default()

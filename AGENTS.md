@@ -238,6 +238,53 @@ A wire name is part of the contract, and a test that never sends a frame cannot 
   `#[serde(rename = "...")]` and keep the old spelling as the alias.
 - **When an op's name is taken from a reference implementation, quote the reference's line.**
   `rpc-types.ts:30`, not a memory of what it said.
+- **A test that builds its input from the Rust identifier cannot see the wire — and this has
+  now cost four defects (D26, D29, D31, D32).** D32: `set_model` had `model_id` with no
+  alias under a `rename_all = "snake_case"` enum, so *pi's own documented frame* was
+  refused, and the tests passed because they spelled the field the way the code did. Build
+  the frame from the reference's TypeScript, and when a test fails on a frame, **check
+  whether the frame is the bug** before concluding the code is — against the reference,
+  never against the Rust name, which is the thing that was wrong.
+- **A renamed field needs its alias, and the alias needs a test that sends the primary
+  name.** `#[serde(other)]` aside, the general form: one concept, one wire spelling, and
+  both directions exercised. `QueueMode` is the model — `as_wire`/`from_wire` written once
+  and compared by a test, because a derived `Serialize` and a hand-written parser drift.
+
+## Accuracy fixes move calibrated thresholds (M194)
+
+**Making a number more truthful changes the decisions that were calibrated against the lie.**
+C2 began counting the system prompt and tool schemas on the no-anchor context fallback
+(1,633 tokens, measured). `compaction_due` reads that estimate, so compaction correctly
+fired earlier, and three fixtures broke. All three had budgets chosen against an estimate
+that was 1,633 tokens too small.
+
+What to do when an accuracy fix breaks a threshold test:
+
+- **Do not move the number to match the test.** That asserts the regression: a less
+  accurate estimate. Ask what property the fixture's comment claims, and restore *that*.
+- **Prove the causation.** `git worktree` at HEAD with its own `CARGO_TARGET_DIR` answers
+  "was this failing before?" in minutes. One-line temporary edits (`let fixed = 0`) answer
+  "did my change cause it?" in seconds. Both are far cheaper than guessing.
+- **Measure the number the code reads.** Six thresholds were tried by reasoning in M194 and
+  every one was wrong in the same direction. One `eprintln!` in the deciding function would
+  have taken eight seconds. A digit derived from today's measurement is correct today; a
+  **relationship** (budget above the prompt, below the prompt-plus-result) stays correct.
+
+## The "faithful port, no production caller" class (seen five times)
+
+A primitive is ported carefully, reads well against the reference, has **passing tests** —
+because the tests call it directly — and nothing on the path a user actually takes calls
+it. A reader checking for the capability sees green tests and concludes it works.
+
+`set_tool_hooks` / `set_turn_hooks` (10 setters, every one in a test file),
+`branch_with_summary` (still uncalled after four independent confirmations), and now
+**G2**: `SessionStore::fork_branch_at` was correct, wired **only from RPC**, while the
+TUI's `/fork` was `std::fs::copy` — same session id, whole file. The correct
+implementation sat next to the wrong one.
+
+**Grep for callers, then check that at least one is production code.** A definition plus a
+test is not a feature. When a primitive has two callers and one is a test, the *shipped*
+surface is the one without it.
 
 ## Code quality
 
@@ -247,6 +294,32 @@ A wire name is part of the contract, and a test that never sends a frame cannot 
   us to better designs — let it.
 - Match the existing porting discipline: semantics cite their pi/DSH/Hermes/opencode origin in
   doc comments where non-obvious.
+
+## The TUI invariant (M194)
+
+> **"Nothing happened" must never be a state the UI can be in.**
+
+A silently swallowed keystroke is indistinguishable from a frozen program, and that
+ambiguity is what made the reported TUI bug unfixable for two audits: both tested the
+**freeze** and the **no input/output** and cleared both, while the owner's report also said
+**"it shrinks"**, which nobody tested. Chasing that word to ground showed the TUI never
+touches console geometry at all — so "shrinks" is a *perceived frame* change, not a window
+resize. That is what a rule is for.
+
+Two obligations follow, and both have tests:
+
+- **A key the TUI does not act on must say so.** `handle_key` used to end in `_ => false`.
+  It now notices `<key> is not bound here — /hotkeys lists what is`, and a test drives a
+  key that is in no default binding. (Pick a non-`Char` key for that test: a `Char` with a
+  modifier reaches the insert arm, which is *handled*, so it proves nothing.)
+- **Anything the UI advertises must work.** `/hotkeys` prints the effective binding table,
+  so every id in it is a promise. `app.clear` was bound, printed, and read by nothing —
+  while `app.exit` matched the same chord first and quit with the draft in the buffer. Two
+  general forms, both now tested: no chord in the effective table may name two ids, and
+  every palette entry must name a command `parse_command` can read.
+
+**A silent no-op is worse than a missing feature** — a missing one does not lie, and a
+lying one costs the user the belief that the feature exists.
 
 ## Testing philosophy
 

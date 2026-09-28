@@ -963,6 +963,227 @@ async fn unknown_slash_word_errors_instead_of_prompting_the_model() {
     assert!(app.ui.lines()[before].text.contains("/bogus"));
 }
 
+/// G1: the binding `/hotkeys` prints must actually do something.
+///
+/// `app.clear` was in the defaults table, `/hotkeys` printed it as
+/// "Clear editor", and **nothing read it** — while `app.exit` matched the same
+/// chord first. So Ctrl+C quit the process with the draft still in the buffer, and
+/// the one place a user goes to learn the keys was advertising a binding that did
+/// nothing. This is written through `handle_key` rather than by calling
+/// `clear_editor` directly, because a direct call cannot see whether anything
+/// calls it — the exact defect class this test exists to catch.
+/// G9: every palette entry must name a command the parser can actually run.
+///
+/// The "Toggle tool output expand" entry carried a `\u{1}expand` pseudo-command.
+/// `parse_command` requires a leading `/`, so it returned `None` — the palette
+/// closed, the composer cleared, nothing ran, and no notice explained why. A
+/// menu entry that silently does nothing is worse than an absent one, because it
+/// tells the user the feature exists.
+///
+/// Asserted over **every** entry rather than this one: the defect is a class, and
+/// the next entry added with a made-up command would fail the same way.
+/// G10: a key the TUI does not act on must say so.
+///
+/// The invariant is the one this whole investigation turned up: **"nothing
+/// happened" must never be a state the UI can be in.** A silently swallowed
+/// keystroke is indistinguishable from a frozen program — the exact shape of the
+/// report this project received, and the reason an unexplained freeze could not be
+/// told apart from a key that was simply not handled.
+///
+/// The notice travels on the app's own channel, so this asserts on what the user
+/// would actually see rather than on an internal flag.
+/// G2: `/fork` in the TUI must produce a real fork, not a copy of the file.
+///
+/// The TUI's fork was `std::fs::copy` — the whole file, every abandoned branch
+/// included, under the *same* session id in the header, so the two files claimed
+/// one identity. The correct primitive (`SessionStore::fork_branch_at`, which
+/// writes a fresh header and copies only the active branch) already existed and
+/// was wired **only** from the RPC surface, so the transport a human uses had the
+/// worse implementation.
+///
+/// Asserted on the bytes the command produced, because "it called a different
+/// function" is not the property that matters — a distinct session is.
+#[tokio::test]
+async fn fork_creates_a_distinct_session_and_not_a_file_copy() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = seed_branch(&agent, &["first", "second"]);
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/fork").expect("/fork parses"),
+    );
+
+    let source = dir.path().join("session.jsonl");
+    let siblings: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+
+    let forked: Vec<_> = siblings.iter().filter(|p| **p != source).cloned().collect();
+    assert_eq!(
+        forked.len(),
+        1,
+        "exactly one new session file must appear; found {forked:?}"
+    );
+
+    // A different session id in the header — this is what a file copy cannot give,
+    // since it duplicates the header verbatim.
+    let source_id = header_id(&std::fs::read_to_string(&source).expect("read source"));
+    let fork_id = header_id(&std::fs::read_to_string(&forked[0]).expect("read fork"));
+    assert_ne!(
+        source_id, fork_id,
+        "a fork is a new session: it must carry its own id, not the source's"
+    );
+}
+
+/// Read the `id` field out of a session file's header line.
+fn header_id(first_line: &str) -> String {
+    first_line
+        .lines()
+        .next()
+        .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn an_unbound_key_produces_a_visible_response() {
+    let (mut app, agent, (_ftx_rx, mut notice_rx)) = test_app();
+
+    // F1, not ctrl+]: a `Char` with CONTROL reaches `insert_char_tracked` — the
+    // `Char` arm comes before the catch-all — so it is a *handled* key and proves
+    // nothing about the fallback. F1 is in no default binding, and is not a `Char`
+    // at all, so the only arm it can reach is the catch-all.
+    let quit = handle_key(&mut app, &agent, key(KeyCode::F(1)));
+
+    assert!(!quit, "an unbound key must not quit the app");
+    let said = notice_rx.try_recv().expect(
+        "a key the TUI does not act on must produce feedback — a silent no-op is \
+         indistinguishable from a frozen program",
+    );
+    assert!(
+        said.contains("not bound"),
+        "the notice must say the key is unbound, not merely that something happened; got: {said:?}"
+    );
+    assert!(
+        said.contains("/hotkeys"),
+        "the notice should point at the place that lists what IS bound; got: {said:?}"
+    );
+}
+
+/// A key that IS bound must not be reported as unbound.
+///
+/// The other direction of the same property: feedback that fires on working keys
+/// is its own lie, training the user to ignore the notice.
+#[tokio::test]
+async fn a_bound_key_does_not_produce_a_not_bound_notice() {
+    let (mut app, agent, (_ftx_rx, mut notice_rx)) = test_app();
+    // ctrl+x is `app.tools.expand` — a real binding that reports its own outcome.
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('x')));
+    let notices: Vec<String> = std::iter::from_fn(|| notice_rx.try_recv().ok()).collect();
+    assert!(
+        !notices.iter().any(|n| n.contains("not bound")),
+        "a bound key must not be reported as unbound; got: {notices:?}"
+    );
+}
+
+#[tokio::test]
+async fn every_palette_entry_names_a_command_that_parses() {
+    for entry in crate::picker::palette_entries() {
+        assert!(
+            crate::picker::parse_command(&entry.command).is_some(),
+            "palette entry {:?} carries {:?}, which the parser cannot read — \
+             choosing it would close the palette and do nothing",
+            entry.title,
+            entry.command
+        );
+    }
+}
+
+/// The advertised key hint must be the chord that is actually bound.
+///
+/// The same entry advertised a bare `x`, which is the binding the editor
+/// deliberately removed because it made the letter untypable. A hint is only
+/// useful if pressing it does what the hint says.
+#[tokio::test]
+async fn a_palette_entry_that_advertises_a_key_advertises_the_bound_one() {
+    for entry in crate::picker::palette_entries() {
+        if let Some(key) = entry.binding {
+            let normalized = key.trim_start_matches("Ctrl+").to_lowercase();
+            assert!(
+                normalized != "x",
+                "entry {:?} advertises a bare `x`; the real chord is ctrl+x and a \
+                 bare x is the binding that was removed to keep the letter typable",
+                entry.title
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn ctrl_c_clears_the_draft_instead_of_quitting() {
+    let (mut app, agent, _rx) = test_app();
+    for c in "a draft worth keeping".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert!(
+        !app.input.is_empty(),
+        "the draft is in the composer before the chord is pressed"
+    );
+
+    let quit = handle_key(&mut app, &agent, ctrl(KeyCode::Char('c')));
+
+    assert!(
+        !quit,
+        "ctrl+c is 'Clear editor' — it must not terminate the process with a \
+         draft still in the composer"
+    );
+    assert!(
+        app.input.is_empty(),
+        "the advertised behaviour is that ctrl+c empties the composer"
+    );
+    assert_eq!(
+        app.cursor_chars, 0,
+        "the cursor moves with the text, or the next character lands somewhere \
+         the user did not type"
+    );
+
+    // And the way out still works, so "clear does not quit" is not "quit is gone".
+    assert!(
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('q'))),
+        "ctrl+q is the documented exit and must still quit"
+    );
+}
+
+/// The advertised table and the handlers must not disagree about a chord.
+///
+/// Two ids sharing one chord is not a remap — it is a coin toss decided by
+/// handler order, and the user cannot see which way it lands. Asserted over the
+/// *effective* table so a user's own `keybindings.json` is covered too.
+#[tokio::test]
+async fn no_chord_is_bound_to_two_ids_by_default() {
+    let (app, _agent, _rx) = test_app();
+    let mut seen: std::collections::BTreeMap<String, String> = Default::default();
+    let mut clashes: Vec<String> = Vec::new();
+    for (id, keys) in app.keybindings.effective().into_iter() {
+        for k in keys {
+            match seen.get(&k) {
+                Some(other) => clashes.push(format!("{k}: {other} and {id}")),
+                None => {
+                    seen.insert(k.clone(), id.clone());
+                }
+            }
+        }
+    }
+    assert!(
+        clashes.is_empty(),
+        "each chord must name one action; found: {}",
+        clashes.join("; ")
+    );
+}
+
 #[tokio::test]
 async fn ctrl_m_opens_picker_without_typing_slash() {
     let (mut app, agent, (_f, _n)) = test_app();

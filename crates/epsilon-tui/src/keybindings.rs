@@ -26,9 +26,15 @@ struct KeySpec {
 /// a user migrating from pi can reuse the same file.
 const DEFAULTS: &[(&str, &[&str])] = &[
     ("app.interrupt", &["escape"]),
-    // epsilon keeps ctrl+d for forward-delete (tui.editor.deleteCharForward),
-    // so app.exit defaults to ctrl+c / ctrl+q (pi uses ctrl+d there).
-    ("app.exit", &["ctrl+c", "ctrl+q"]),
+    // epsilon keeps ctrl+d for forward-delete (tui.editor.deleteCharForward), so
+    // `app.exit` is not on ctrl+d as pi puts it.
+    // `app.clear` owns ctrl+c and `app.exit` keeps ctrl+q, matching pi's separation
+    // (`app.clear` = ctrl+c "Clear editor", `app.exit` = ctrl+d "Exit when editor is
+    // empty"). Epsilon keeps ctrl+d for forward-delete, so exit is bound to ctrl+q
+    // alone: two actions on one chord is not a remap, it is a coin toss decided by
+    // handler order, and `/hotkeys` prints both. `app.clear` is matched first in
+    // `app/keys.rs`, so ctrl+c empties the draft; ctrl+q is the way out.
+    ("app.exit", &["ctrl+q"]),
     ("app.clear", &["ctrl+c"]),
     ("app.model.select", &["ctrl+m"]),
     ("app.palette", &["ctrl+p"]),
@@ -361,10 +367,16 @@ mod tests {
     #[test]
     fn defaults_match_without_file() {
         let m = KeybindingsManager::from_map(HashMap::new());
-        // app.exit now defaults to ctrl+c / ctrl+q (ctrl+d kept as forward-delete).
-        assert!(m.matches("app.exit", &ev(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        // `app.exit` is ctrl+q alone (ctrl+d stays forward-delete, and pi puts exit
+        // there). It used to be ctrl+c *and* ctrl+q — but ctrl+c is `app.clear`, and
+        // two ids on one chord means the handler order decides which fires. `/hotkeys`
+        // printed both, so the table advertised a binding table that could not be
+        // honoured.
         assert!(m.matches("app.exit", &ev(KeyCode::Char('q'), KeyModifiers::CONTROL)));
+        assert!(!m.matches("app.exit", &ev(KeyCode::Char('c'), KeyModifiers::CONTROL)));
         assert!(!m.matches("app.exit", &ev(KeyCode::Char('d'), KeyModifiers::empty())));
+        // And the chord ctrl+c now belongs to exactly one action — pi's default.
+        assert!(m.matches("app.clear", &ev(KeyCode::Char('c'), KeyModifiers::CONTROL)));
         assert!(m.matches("app.interrupt", &ev(KeyCode::Esc, KeyModifiers::empty())));
     }
 

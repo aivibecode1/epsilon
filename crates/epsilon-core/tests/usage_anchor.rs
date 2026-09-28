@@ -70,6 +70,7 @@ impl StreamFn for Honest {
             stop_reason: StopReason::EndTurn,
             error_message: None,
             usage: Usage {
+                cache_reported: true,
                 input,
                 output: 1,
                 total_tokens: input + 1,
@@ -340,5 +341,121 @@ async fn a_provider_that_reports_no_usage_falls_back_to_the_heuristic() {
     assert!(
         compactions(&mut rx) >= 1,
         "with no reported usage the char heuristic is the only signal left, and it is over budget"
+    );
+}
+
+/// The context figure and its provenance must agree, on a real agent.
+///
+/// The header shows one number and, since D33, a mark saying whether it came from the
+/// provider or from the local heuristic. If the two could disagree, the mark would be
+/// decoration — and decoration on a number a user spends money against is worse than
+/// nothing. So this drives a real `Agent` through real turns and checks the mark
+/// against the anchor it claims to describe.
+///
+/// The property in one line: **the figure is a measurement exactly when the anchor
+/// survived the last turn.**
+#[tokio::test]
+async fn the_figure_is_measured_exactly_when_the_anchor_survives() {
+    let limits = epsilon_core::LoopLimits {
+        compaction_threshold_tokens: 1_000_000,
+        compaction_tail_tokens: 300,
+        max_turns: 40,
+        ..Default::default()
+    };
+    // A provider that reports honest usage, so an anchor lands after each turn.
+    let (agent, _reported) = agent_with(4, limits);
+
+    assert!(
+        agent.context_is_estimated(),
+        "before any turn there is no anchor, so the figure is a guess and must say so"
+    );
+
+    agent.run(user("first")).await.expect("run");
+    assert!(
+        !agent.context_is_estimated(),
+        "after a turn that reported usage, the prefix is provider truth — presenting \
+         it as an estimate would train the reader to ignore the mark"
+    );
+
+    // A provider that reports nothing leaves no anchor, and the figure reverts to
+    // being a guess — the same number, honestly labelled. Built with its own stream
+    // function rather than `agent_with(0, …)`: `Honest` divides by `per_token_chars`,
+    // so 0 is a panic, not a silent provider.
+    struct Silent;
+    #[async_trait]
+    impl StreamFn for Silent {
+        async fn stream(&self, model: &ModelRef, _ctx: LlmContext) -> BoxEventStream {
+            Box::new(Fixed {
+                events: vec![StreamEvent::Done {
+                    message: AssistantMessage {
+                        id: epsilon_contracts::new_id("msg"),
+                        timestamp_ms: 0,
+                        provider: "silent".into(),
+                        model_id: model.id.clone(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text("y")],
+                        stop_reason: StopReason::EndTurn,
+                        error_message: None,
+                        usage: Usage::default(),
+                    },
+                }]
+                .into(),
+            })
+        }
+    }
+    let silent = epsilon_core::Agent::new(
+        LoopLimits {
+            compaction_threshold_tokens: 1_000_000,
+            compaction_tail_tokens: 300,
+            max_turns: 40,
+            ..Default::default()
+        },
+        Arc::new(Silent),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    silent.run(user("first")).await.expect("run");
+    assert!(
+        silent.context_is_estimated(),
+        "a provider that reports no usage anchors nothing, so the figure is a guess"
+    );
+}
+
+/// C2: the no-anchor estimate must not be blind to the fixed prefix every request carries.
+///
+/// The system prompt (the agent contract, ~6.5 KB) and the tool schemas are built per
+/// turn and are **not** in `history`. Before M194 the fallback ignored both, so the
+/// gauge read several thousand tokens low in exactly the states where it is hardest to
+/// notice: turn one, after a compaction, after `/resume`.
+///
+/// This is a measurement, not a threshold: it asserts the prefix is a *material* part of
+/// the request rather than a rounding detail, and it prints the figure so a later change
+/// that silently shrinks it is visible in the test log.
+#[tokio::test]
+async fn an_empty_session_still_costs_the_system_prompt() {
+    let limits = epsilon_core::LoopLimits {
+        compaction_threshold_tokens: 1_000_000,
+        compaction_tail_tokens: 300,
+        max_turns: 40,
+        ..Default::default()
+    };
+    let (agent, _reported) = agent_with(4, limits);
+
+    let empty = agent.estimated_context_tokens();
+    // The agent contract alone is 6_535 bytes, so `chars/4` puts it near 1_600 tokens.
+    // Anything under 1_000 means the prompt is being ignored again.
+    assert!(
+        empty > 1_000,
+        "an empty transcript still carries the system prompt and tool schemas, so the \
+         estimate cannot be near zero; got {empty}"
+    );
+    println!("fixed prefix on an empty session: {empty} tokens");
+
+    // And it is an ESTIMATE, not a measurement — the mark must say so, because this is
+    // exactly the number a reader would otherwise take at face value.
+    assert!(
+        agent.context_is_estimated(),
+        "with no provider anchor behind it, the figure is a local estimate and must be \
+         labelled as one"
     );
 }

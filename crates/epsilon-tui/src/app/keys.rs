@@ -470,6 +470,17 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         return false;
     }
+    // `app.clear` is checked FIRST, and that ordering is the whole fix. Both
+    // `app.clear` and `app.exit` were bound to ctrl+c; `app.exit` was matched here,
+    // so Ctrl+C quit the process and discarded the draft while `/hotkeys` advertised
+    // "Clear editor" for that same chord. pi's own defaults separate them: `app.clear`
+    // is ctrl+c and `app.exit` is ctrl+d. Epsilon keeps ctrl+d for forward-delete, so
+    // `app.exit` stays on ctrl+c/ctrl+q — but it must only win when there is nothing
+    // to clear, which is the behaviour a user pressing Ctrl+C in an editor expects.
+    if app.keybindings.matches("app.clear", &key) {
+        app.clear_editor();
+        return false;
+    }
     if app.keybindings.matches("app.exit", &key) {
         return true;
     }
@@ -503,11 +514,6 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         // Re-project the transcript. Moving the store's leaf without
                         // this left the user reading a conversation that no longer
                         // described the session -- which is why `/tree` was a viewer.
-                        let branch = store
-                            .lock()
-                            .ok()
-                            .and_then(|st| st.branch_entries().ok())
-                            .unwrap_or_default();
                         app.ui.clear_lines();
                         match agent.reproject_current_branch() {
                             Ok(n) => {
@@ -518,37 +524,27 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                                 ));
                             }
                             // The leaf already moved, so a failed re-projection leaves
-                            // the store and the screen disagreeing. Say so instead of
-                            // printing a branch list that describes neither.
+                            // the store and the screen disagreeing. Say exactly that,
+                            // rather than showing a transcript that is not the session.
                             Err(why) => app.ui.push_notice(format!(
                                 "jumped to #{seq}, but the transcript could not be re-read \
                                  ({why}) — the view below no longer matches the session"
                             )),
                         }
-                        // Still list the branch, so the user can see what they jumped into
-                        // without re-opening the picker.
-                        for e in &branch {
-                            let snippet = match &e.kind {
-                                epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
-                                    let txt: String = match message {
-                                        epsilon_contracts::message::Message::User(u) => u.content.iter().filter_map(|c| match c { epsilon_contracts::content::UserContent::Text { text } => Some(text.as_str()), _ => None }).collect::<Vec<_>>().join(" "),
-                                        epsilon_contracts::message::Message::Assistant(a) => a.text(),
-                                        epsilon_contracts::message::Message::ToolResult(t) => t.content.iter().filter_map(|c| match c { epsilon_contracts::content::ContentBlock::Text { text } => Some(text.as_str()), _ => None }).collect::<String>(),
-                                        _ => String::new(),
-                                    };
-                                    let mut s: String = txt.chars().take(120).collect();
-                                    if txt.chars().count() > 120 { s.push('…'); }
-                                    if s.trim().is_empty() { "(empty)".into() } else { s }
-                                }
-                                epsilon_contracts::session_entry::EntryKind::Compaction { summary, .. } => {
-                                    let mut s: String = summary.chars().take(120).collect();
-                                    if summary.chars().count() > 120 { s.push('…'); }
-                                    format!("[compaction] {s}")
-                                }
-                                _ => format!("[{}]", match e.kind { epsilon_contracts::session_entry::EntryKind::Message { .. } => "message", epsilon_contracts::session_entry::EntryKind::Compaction { .. } => "compaction", _ => "entry" }),
-                            };
-                            app.ui.push_notice(format!("#{seq} {snippet}", seq = e.seq));
-                        }
+                        // The branch is NOT listed here any more.
+                        //
+                        // It used to push one notice per entry, "so the user can see
+                        // what they jumped into without re-opening the picker". Jumping
+                        // to entry 3 of a 400-entry session therefore pushed 400 rows
+                        // into the transcript and scrolled the reader away from the
+                        // message they had just jumped to — the opposite of the intent,
+                        // and the more so because the lines are *notices*, which sit at
+                        // the bottom and push everything above them up.
+                        //
+                        // The transcript above is now the branch, re-projected and
+                        // re-read; re-printing it as a list told the user nothing they
+                        // could not read directly. The count is what was actually worth
+                        // keeping, and the jump notice already carries it.
                     }
                     app.timeline_open = false;
                     app.timeline_index = 0;
@@ -1216,35 +1212,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         // value, the key would "helpfully" record the opposite of what it just
         // showed, and pressing it would look like it did nothing at all.
         _ if app.keybindings.matches("app.tools.expand", &key) => {
-            let was_open = app.selected_card_id().map(|id| app.card_is_open(id, true));
-            app.prefs.expand_outputs = !app.prefs.expand_outputs;
-            let label = match (app.selected_card_id(), was_open) {
-                (Some(id), Some(was_open)) => {
-                    // What the card's own entry records, and why it is not simply
-                    // `!was_open` (which is what this used to be, and what made the
-                    // second press close the card the first press had opened):
-                    //
-                    // The key is an *expand*, and the global toggle is what it
-                    // flips. So after the press the selected card is open if the
-                    // global is now on, or if it was already open. Reading it as a
-                    // per-card toggle instead meant "expand all, then collapse all"
-                    // also collapsed the one card the user had deliberately opened —
-                    // the opposite of the exception this whole path exists to
-                    // provide (see the comment above, and the frame test in
-                    // `app/golden.rs` that asserts the card is still open with the
-                    // global off).
-                    let open = app.prefs.expand_outputs || was_open;
-                    app.set_card_open(id, open);
-                    if open {
-                        "card expanded"
-                    } else {
-                        "card collapsed"
-                    }
-                }
-                _ if app.prefs.expand_outputs => "all cards expanded",
-                _ => "all cards collapsed",
-            };
-            app.notice(format!("{label} (Ctrl+X toggles)"));
+            app.toggle_tool_expansion();
             false
         }
         // D11: jump to live — the exit from a frozen view.
@@ -1266,7 +1234,24 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.insert_char_tracked(c);
             false
         }
-        _ => false,
+        // G10: a key the TUI does not act on says so.
+        //
+        // This arm used to be `_ => false` — a silent no-op. A user who presses a
+        // chord they reasonably expect to work (`ctrl+]`, `alt+p`, `shift+tab`) saw a
+        // screen that did not change and had no way to learn why, which is the shape
+        // of the freeze this project was reported to have: **"nothing happened" must
+        // never be a state the UI can be in.** The notice makes the outcome legible
+        // without changing what the key does, and it names the key so the user can
+        // tell "not bound" from "bound to something else".
+        //
+        // `Char` is handled above and is never reported: an ordinary letter always
+        // inserts, so reaching here with one would mean a real bug, not a bad guess.
+        other => {
+            app.notice(format!(
+                "{other} is not bound here — /hotkeys lists what is"
+            ));
+            false
+        }
     }
 }
 

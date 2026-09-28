@@ -55,6 +55,9 @@ impl StreamFn for Wire {
             cache_read: read,
             cache_write: write,
             total_tokens: input + 5 + read + write,
+            // This file exists to exercise cache attribution, so its provider is
+            // one that reports cache traffic (K1).
+            cache_reported: true,
         };
         let message = AssistantMessage {
             id: epsilon_contracts::new_id("msg"),

@@ -434,21 +434,39 @@ impl App {
                         .push_notice("fork: nothing to fork — session is empty");
                     return false;
                 }
-                let fork_path = {
-                    let stem = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("session");
-                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
-                    let fork_name =
-                        format!("{stem}-fork-{}.{}", epsilon_contracts::new_id("fork"), ext);
-                    path.with_file_name(fork_name)
+                // The store's `fork_branch_at`, not `std::fs::copy`.
+                //
+                // A copy duplicated the whole file — every abandoned branch and every
+                // dead path — under the *same* session id in the header, so the two
+                // files claimed one identity. `fork_branch_at` writes a fresh header
+                // (`store.rs:1531-1536`) and copies only `branch_to(leaf)`, which is
+                // what pi's `forkFrom` does (`session-manager.ts:1611-1634`).
+                //
+                // That correct implementation already existed and was wired **only**
+                // from the RPC surface — so the transport a human uses had the worse
+                // one. Same defect class as `branch_with_summary`: a faithful port with
+                // no production caller on the path anyone actually takes.
+                let Some(leaf_id) = leaf else { return false };
+                let dest_dir = match path.parent() {
+                    Some(d) => d.to_path_buf(),
+                    None => {
+                        self.ui
+                            .push_notice("fork: the session file has no parent directory");
+                        return false;
+                    }
                 };
-                match std::fs::copy(&path, &fork_path) {
-                    Ok(_) => self.ui.push_notice(format!(
+                let forked = match store.lock() {
+                    Ok(st) => st.fork_branch_at(&leaf_id, &dest_dir),
+                    Err(_) => {
+                        self.ui.push_notice("fork: session store unavailable");
+                        return false;
+                    }
+                };
+                match forked {
+                    Ok(dest) => self.ui.push_notice(format!(
                         "forked session → {} (open with --session {})",
-                        fork_path.display(),
-                        fork_path.display()
+                        dest.display(),
+                        dest.display()
                     )),
                     Err(e) => self.ui.push_notice(format!("fork failed: {e}")),
                 }
@@ -470,24 +488,32 @@ impl App {
                         .push_notice("clone: nothing to clone — session is empty");
                     return false;
                 }
-                let clone_path = {
-                    let stem = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("session");
-                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
-                    let name = format!(
-                        "{stem}-clone-{}.{}",
-                        epsilon_contracts::new_id("clone"),
-                        ext
-                    );
-                    path.with_file_name(name)
+                // Same correction as `/fork`: pi's clone duplicates the *current
+                // branch* from the current leaf under a fresh id, and a whole-file
+                // `std::fs::copy` duplicated every abandoned branch under the same
+                // one. `fork_branch_at(leaf)` is exactly that, and it is what the RPC
+                // `clone` already calls — so the two surfaces now agree.
+                let Some(leaf_id) = leaf else { return false };
+                let dest_dir = match path.parent() {
+                    Some(d) => d.to_path_buf(),
+                    None => {
+                        self.ui
+                            .push_notice("clone: the session file has no parent directory");
+                        return false;
+                    }
                 };
-                match std::fs::copy(&path, &clone_path) {
-                    Ok(_) => self.ui.push_notice(format!(
+                let cloned = match store.lock() {
+                    Ok(st) => st.fork_branch_at(&leaf_id, &dest_dir),
+                    Err(_) => {
+                        self.ui.push_notice("clone: session store unavailable");
+                        return false;
+                    }
+                };
+                match cloned {
+                    Ok(dest) => self.ui.push_notice(format!(
                         "cloned session → {} (open with --session {})",
-                        clone_path.display(),
-                        clone_path.display()
+                        dest.display(),
+                        dest.display()
                     )),
                     Err(e) => self.ui.push_notice(format!("clone failed: {e}")),
                 }
@@ -684,6 +710,21 @@ impl App {
                 self.ui.push_notice(format!(
                     "transcript cleared — session totals kept (tokens {tin}/{tout})"
                 ));
+            }
+            crate::picker::Command::Expand => {
+                // The same action Ctrl+X performs, through the shared method, so the
+                // menu and the key cannot drift into behaving differently.
+                self.toggle_tool_expansion();
+                // A command leaves a line a reader can find afterwards; the key path
+                // does not, and must not — `app::golden::ctrl_x_opens_the_newest_card…`
+                // asserts the frame is byte-identical, and a notice row there moved the
+                // very card the test is about. Read the state back rather than predicting
+                // it, so the two paths cannot report different things.
+                self.ui.push_notice(if self.prefs.expand_outputs {
+                    "all cards expanded"
+                } else {
+                    "all cards collapsed"
+                });
             }
             crate::picker::Command::Search(query) => {
                 // M157: this scanned the session *log on disk* and printed its hits as

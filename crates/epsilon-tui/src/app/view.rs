@@ -234,12 +234,15 @@ impl App {
             offline: self.model_id.starts_with("faux"),
             context_used: (context_now > 0).then_some(context_now),
             context_window: info.as_ref().map(|i| i.context_window).filter(|w| *w > 0),
+            context_estimated: self.ui.context_estimated,
             tokens_in,
             tokens_out,
             cache_read_session,
             cache_write_session,
             cache_read_last,
             prompt_tokens_last: (latest_prompt > 0).then_some(latest_prompt),
+            // K1: straight from the session, never inferred from a zero count.
+            cache_reported: self.ui.cache_reported(),
             cost_micro_usd,
             cost_is_floor,
         }
@@ -299,6 +302,11 @@ impl App {
     /// taken once per frame rather than once per header fragment.
     pub(crate) fn mirror_context_size(&mut self, agent: &Agent) {
         self.ui.context_now = agent.estimated_context_tokens() as u64;
+        // Provenance travels with the number. A reader who cannot tell a measurement
+        // from a guess cannot calibrate how much to trust the figure, and the moments
+        // where it is a guess — turn one, after a compaction, after `/resume` — are
+        // exactly the moments a user is watching it.
+        self.ui.context_estimated = agent.context_is_estimated();
     }
 
     /// Footer hints for the current state.

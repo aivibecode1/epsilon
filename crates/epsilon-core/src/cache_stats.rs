@@ -323,6 +323,9 @@ mod tests {
             cache_read,
             cache_write,
             total_tokens: input + cache_read + cache_write,
+            // This helper exists to exercise cache attribution, so every usage it
+            // builds is one where the provider reported cache fields.
+            cache_reported: true,
         }
     }
 

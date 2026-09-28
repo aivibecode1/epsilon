@@ -225,19 +225,55 @@ async fn a_compaction_keeps_the_users_own_words() {
         FauxStep::say("finished"),
     ];
     let limits = LoopLimits {
-        // High enough that the pressure check only trips on the *second* turn — when the user's
-        // prompt is behind the protected tail and therefore inside the summarized range. A
-        // threshold of 1 would compact the first turn against an empty middle and prove nothing.
+        // **Measured, and the measurement is the comment.**
         //
-        // The number also has to survive M64's usage anchor: the faux provider reports
-        // `input: 100` for every request, so after the first turn the estimate is 100 plus this
-        // turn's result — hence an 8 KB result rather than a 4 KB one.
-        compaction_threshold_tokens: 1_200,
+        // `compaction_due` is checked at the top of each turn (`lib.rs:1696`). Printing
+        // the value it reads on this fixture gives two numbers that decide everything:
+        //
+        //   first turn, before its tool result exists   ~2_150 tokens
+        //   MIN_TAIL_TOKENS — the protected tail floor    2_000 tokens
+        //
+        // The tail is clamped **up** to 2_000 whatever the fixture asks for
+        // (`clamp_tail_tokens`, `lib.rs:52-57`; `MIN_TAIL_TOKENS`, `compact.rs:135`). So
+        // for the user's first prompt to sit outside the tail — which is this test's
+        // entire premise — the budget has to be **above** the first turn. Below it, the
+        // turn compacts against a tail that swallows it, the summarized range is empty,
+        // and the test cannot prove what it was written to prove.
+        //
+        // 1_200 was above the first turn only while the fixed prefix was invisible to the
+        // estimate. M194 made the prefix real — 1_633 tokens of agent contract, printed
+        // by `an_empty_session_still_costs_the_system_prompt` in `usage_anchor.rs` — and
+        // the turn grew from ~500 to ~2_150, past the budget. Nothing regressed; a
+        // number calibrated against a 1_633-token understatement stopped being true.
+        //
+        // So the fix preserves the **relationship** rather than the digit: budget above
+        // the first turn, tail below it. 2_400 clears 2_150 with room for the prefix to
+        // move again, which is the durable form — a number derived from today's
+        // measurement is correct today; a relationship stays correct.
+        //
+        // Five thresholds were tried here by reasoning before anything was measured, and
+        // every one failed in the same direction: each assumed the estimate had *shrank*
+        // when it had grown. Measure the number the code actually reads.
+        compaction_threshold_tokens: 2_400,
         compaction_tail_tokens: 200,
         max_turns: 12,
         ..Default::default()
     };
-    let agent = agent_with(vec![serves("mcp_echo", &"x".repeat(8_000))], steps, limits);
+    // 24 KB, not 8 KB, and the reason is arithmetic rather than taste.
+    //
+    // `compaction_tail_tokens` is clamped up to `MIN_TAIL_TOKENS` = 2_000
+    // (`clamp_tail_tokens`, `lib.rs:52-57`), so the protected tail is 2_000 tokens
+    // whatever the fixture asks for. The first turn must therefore be *larger* than
+    // 2_000 tokens for the user's prompt to sit outside the tail — which is the whole
+    // premise of the test ("or there would be nothing to carry and the test would pass
+    // vacuously").
+    //
+    // M194 made the fixed prefix (1_633 tokens of agent contract) visible to the context
+    // estimate, which is correct and is not what broke this: the 8 KB result is ~2_000
+    // tokens, so the turn grew from ~2_000 to ~3_600 while the tail floor stayed at
+    // 2_000. A result that clears the floor with room to spare keeps the test testing
+    // what it was written to test, and keeps it independent of the prefix's exact size.
+    let agent = agent_with(vec![serves("mcp_echo", &"x".repeat(24_000))], steps, limits);
     let instruction = "Do NOT touch the parser — only the formatter. Keep the public API stable.";
     // The first turn has to land in the summarized range, not inside the protected tail
     // (200 tokens), or there would be nothing to carry and the test would pass vacuously.

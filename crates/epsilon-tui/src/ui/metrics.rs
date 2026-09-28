@@ -60,6 +60,13 @@ pub struct Metrics {
     pub context_used: Option<u64>,
     /// The active model's context window, when the catalog knows it.
     pub context_window: Option<u64>,
+    /// Whether [`Metrics::context_used`] is a local estimate rather than provider truth.
+    ///
+    /// True on turn one, after every compaction, and after `/resume` — the anchor is
+    /// what makes the figure a measurement, and those are the moments it is missing.
+    /// The gauge marks it rather than silently presenting a heuristic in the same
+    /// typeface as a provider's own count.
+    pub context_estimated: bool,
     /// Session totals.
     pub tokens_in: u64,
     /// Session totals.
@@ -90,6 +97,20 @@ pub struct Metrics {
     /// The denominator of [`Metrics::cache_hit_rate`], and the only figure here that
     /// comes straight from a provider rather than from a heuristic.
     pub prompt_tokens_last: Option<u64>,
+    /// Whether the provider actually **reported** cache fields (K1).
+    ///
+    /// The one thing `cache_read`/`cache_write` cannot express. A wire that speaks
+    /// about caching and a wire that does not both leave those counters at zero, so
+    /// the counts alone render "this provider cannot report cache traffic" as
+    /// `CH 0%` — a confident, styled number that reads as a cache which is present
+    /// and failing. The faux provider, ollama, and any OpenAI-compatible proxy that
+    /// omits `prompt_tokens_details` all land there.
+    ///
+    /// Carried from `Usage::cache_reported` so the answer comes from the response
+    /// body rather than from a static per-provider guess: a gateway can route one
+    /// model id to backends that report differently, and only the reply knows which
+    /// one answered.
+    pub cache_reported: bool,
     /// Estimated session cost in micro-USD, or `None` when unpriced.
     pub cost_micro_usd: Option<u64>,
     /// True when [`Metrics::cost_micro_usd`] is a **lower bound**, not the total.
@@ -167,7 +188,15 @@ impl Metrics {
     /// `None` when there has been no prompt, or when the prompt was too small for a
     /// cache decision to mean anything (a 4-token prompt "hitting" the cache says
     /// nothing about prompt reuse).
+    ///
+    /// Also `None` when the provider never reported cache fields at all (K1) — see
+    /// [`Metrics::cache_reported`]. A percentage is an arithmetic claim about two
+    /// numbers the provider did not send, and printing `0%` there would assert a
+    /// fact about the user's cache that nothing observed.
     pub fn cache_hit_rate(&self) -> Option<f64> {
+        if !self.cache_reported {
+            return None;
+        }
         let prompt = self.prompt_tokens_last?;
         if prompt < 1_000 {
             return None;
@@ -199,8 +228,14 @@ impl Metrics {
             return Self::CONTEXT_UNKNOWN.to_string();
         };
         let window = format_tokens(window);
+        // The provenance mark. A `*` after the percentage, and only then: the figure
+        // is a heuristic estimate whenever the usage anchor is missing, and the
+        // reader's ability to trust it depends on knowing which they are looking at.
+        // Hermes publishes the same distinction as a field on every status payload
+        // (`context_breakdown.py:94-115`).
+        let mark = if self.context_estimated { "*" } else { "" };
         match self.context_ratio() {
-            Some(ratio) => format!("ctx {}/{window}", percent_or_floor(ratio)),
+            Some(ratio) => format!("ctx {}{mark}/{window}", percent_or_floor(ratio)),
             // A window with no measurement behind it: `?/200k`. Reading the
             // window is still worth a reader's glance — it says which model is
             // in play — so the unknown mark replaces the number, not the pair.
@@ -229,8 +264,21 @@ impl Metrics {
         );
         match self.cache_hit_rate() {
             Some(rate) => format!("{volume} CH {}", format_percent(rate * 100.0)),
-            // No rate yet is not the same as no cache. Showing `cache —` hid the volume
-            // entirely, so a session that had already cached 400k tokens read as "no cache".
+            // Two different reasons for no rate, and they must not look alike.
+            //
+            // A provider that never reports cache traffic gets `n/a`: the number is
+            // *unknowable*, and saying so is the honest reading. `CH —` is kept for
+            // "a rate exists but there is not one yet" — no prompt, or a prompt too
+            // small for a cache decision to mean anything — where a percentage would
+            // be premature rather than impossible. Collapsing both into one dash is
+            // what let a provider with caching switched off look like a cache that
+            // is present and failing (K1).
+            //
+            // Volume stays in both: a session that already moved 400k cached tokens
+            // must not read as "no cache" (the earlier bug), and `R400k W0` beside
+            // `CH n/a` is the true sentence — tokens moved, the provider will not say
+            // what fraction came from cache.
+            None if !self.cache_reported => format!("{volume} CH n/a"),
             None => format!("{volume} CH —"),
         }
     }
@@ -245,12 +293,16 @@ impl Metrics {
             model_label: "no model".to_string(),
             context_used: None,
             context_window: None,
+            // Nothing has been measured, so nothing is claimed to be a measurement.
+            context_estimated: true,
             tokens_in: 0,
             tokens_out: 0,
             cache_read_session: 0,
             cache_write_session: 0,
             cache_read_last: 0,
             prompt_tokens_last: None,
+            // Nothing has been reported, so nothing is claimed to be measurable (K1).
+            cache_reported: false,
             cost_micro_usd: None,
             cost_is_floor: false,
             offline: false,
@@ -376,6 +428,9 @@ mod tests {
             cache_write_session: 2_000,
             cache_read_last: 18_000,
             prompt_tokens_last: Some(24_000),
+            // This fixture is a provider that reports cache traffic; the K1 test
+            // below is the one that deliberately does not.
+            cache_reported: true,
             cost_micro_usd: Some(12_345),
             ..Metrics::default()
         }
@@ -488,6 +543,131 @@ mod tests {
     }
 
     #[test]
+    fn a_provider_that_cannot_report_cache_never_prints_a_percentage() {
+        // K1. This is the defect in one test: a wire that says nothing about caching
+        // and a wire that says "zero of your prompt was cached" both leave
+        // `cache_read == 0`, and the header rendered the first as the second — a
+        // confident, styled `CH 0%` that reads as a cache which is present and
+        // failing. The user is being told their cache is broken.
+        //
+        // The three states are now three different sentences:
+        //   not measurable      -> `CH n/a`  (the provider will not say)
+        //   measurable, no rate -> `CH —`    (no prompt yet / too small)
+        //   measured            -> `CH 75%`  (a real number about a real call)
+        // Built from `Metrics::default()` rather than `..metrics()`, because the
+        // spread would overwrite exactly the fields this test is about.
+        let silent = Metrics {
+            cache_read_session: 18_000,
+            cache_write_session: 2_000,
+            prompt_tokens_last: Some(24_000),
+            cache_read_last: 0,
+            cache_reported: false,
+            ..Metrics::default()
+        };
+        assert!(
+            silent.cache_hit_rate().is_none(),
+            "a provider that reports no cache fields has no hit rate, and a rate is a \
+             claim about two numbers that were never sent"
+        );
+        assert_eq!(
+            silent.cache_gauge(),
+            "R18k W2.0k CH n/a",
+            "a wire that cannot report cache traffic must not be rendered as a failing cache"
+        );
+        // The volume still shows: a session that moved 400k tokens read as "no cache"
+        // once already, and hiding the counters is the older version of this same lie.
+        assert!(
+            silent.cache_gauge().contains("R18k"),
+            "volume is a real measurement and survives an unmeasurable rate"
+        );
+
+        // A measured zero is a real answer and must still be a percentage. If this
+        // arm were dropped, "not measurable" and "measured 0%" would have merged
+        // back together, which is the defect again from the other side.
+        let measured_zero = Metrics {
+            prompt_tokens_last: Some(24_000),
+            cache_read_last: 0,
+            cache_reported: true,
+            ..Metrics::default()
+        };
+        assert_eq!(
+            measured_zero.cache_hit_rate(),
+            Some(0.0),
+            "a provider that reports zero cached tokens reported a zero, not a silence"
+        );
+        assert_eq!(measured_zero.cache_gauge(), "R0 W0 CH 0%");
+
+        // The two no-rate states stay distinct from each other.
+        let no_prompt_yet = Metrics {
+            cache_read_session: 18_000,
+            cache_write_session: 2_000,
+            prompt_tokens_last: None,
+            cache_reported: true,
+            ..Metrics::default()
+        };
+        assert_eq!(
+            no_prompt_yet.cache_gauge(),
+            "R18k W2.0k CH —",
+            "a provider that can report, with no prompt yet, is 'not yet', not 'never'"
+        );
+    }
+
+    #[test]
+    fn the_cache_gauge_never_confuses_a_silence_with_a_zero() {
+        // The property above, stated as the thing a reader of the header needs: no
+        // input can produce the same string for "not measurable" and "measured 0%".
+        // Asserted on the two gauges rather than on the flag, because the flag is
+        // an implementation detail and the string is what the user actually reads.
+        let silent = Metrics {
+            prompt_tokens_last: Some(24_000),
+            cache_reported: false,
+            ..metrics()
+        };
+        let zero = Metrics {
+            prompt_tokens_last: Some(24_000),
+            cache_reported: true,
+            ..metrics()
+        };
+        assert_ne!(
+            silent.cache_gauge(),
+            zero.cache_gauge(),
+            "the header must be able to tell 'cannot measure' from 'measured zero'"
+        );
+    }
+
+    /// A figure and the mark that says how it was made.
+    ///
+    /// The number is the same either way; what differs is whether a reader can tell a
+    /// provider's count from a 4-chars-per-token guess. They cannot otherwise, and the
+    /// moments where it *is* a guess — turn one, after a compaction, after `/resume` —
+    /// are exactly the moments a user is watching the figure. Hermes ships the same
+    /// distinction on every status payload for this reason.
+    #[test]
+    fn an_estimated_context_is_marked_as_one() {
+        let measured = Metrics {
+            context_used: Some(40_000),
+            context_window: Some(200_000),
+            context_estimated: false,
+            ..metrics()
+        };
+        assert_eq!(measured.context_gauge(), "ctx 20%/200k");
+
+        let estimated = Metrics {
+            context_estimated: true,
+            ..measured
+        };
+        assert_eq!(
+            estimated.context_gauge(),
+            "ctx 20%*/200k",
+            "a local estimate must not be presented in the same typeface as a \
+             provider's own count"
+        );
+        // The mark rides on the percentage, never on the window: the window is a
+        // capacity from the catalog and is a measurement whenever it is known at all.
+        assert!(estimated.context_gauge().ends_with("/200k"));
+    }
+
+    #[test]
     fn pressure_follows_the_documented_thresholds() {
         let mut m = metrics();
         m.context_used = Some(100_000);
@@ -533,6 +713,10 @@ mod tests {
             context_window: Some(200_000),
             cache_read_session: 90_000,
             cache_read_last: 1_000,
+            // A rate is asserted below, so the provider is one that reports cache
+            // traffic. Without this the rate is "not measurable" (K1) and the
+            // assertion would be testing a different thing than it names.
+            cache_reported: true,
             ..Metrics::default()
         };
         assert_eq!(m.cache_hit_rate(), Some(0.1));
@@ -547,6 +731,11 @@ mod tests {
             prompt_tokens_last: Some(120),
             context_window: Some(200_000),
             cache_read_last: 120,
+            // Reports cache traffic; the prompt is simply too small for a rate to
+            // mean anything. `CH —` is "not yet", which is a different sentence from
+            // the `CH n/a` a silent provider gets — and this test is the one that
+            // keeps the two apart.
+            cache_reported: true,
             ..Metrics::default()
         };
         assert!(m.cache_hit_rate().is_none(), "120 tokens proves nothing");
@@ -561,6 +750,7 @@ mod tests {
             context_used: Some(10_000),
             prompt_tokens_last: Some(10_000),
             cache_read_last: 99_000,
+            cache_reported: true,
             ..Metrics::default()
         };
         assert_eq!(m.cache_hit_rate(), Some(1.0));

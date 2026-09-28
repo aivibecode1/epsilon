@@ -487,6 +487,17 @@ pub struct UiState {
     /// above — this pair is the fix for G16.
     latest_cache_read: u64,
     latest_prompt_tokens: u64,
+    /// Whether the most recent call's provider reported cache fields at all (K1).
+    ///
+    /// Session-lifetime rather than per-call, and that is the point: a header that
+    /// flips between `n/a` and `0%` as the model answers is unreadable, and the
+    /// reader's question is about the *provider*, not about one reply. Set when any
+    /// call in this session carried the keys.
+    ///
+    /// Distinct from a non-zero `latest_cache_read`: "reported zero reads" is a
+    /// measurement, and "reported nothing" is not. The faux provider and any
+    /// OpenAI-compatible proxy that omits `prompt_tokens_details` stay here forever.
+    cache_reported: bool,
     /// Estimated tokens the next request will carry: the whole session's context,
     /// mirrored from `Agent::estimated_context_tokens` once per frame.
     ///
@@ -499,6 +510,11 @@ pub struct UiState {
     /// ([`crate::app::App::mirror_context_size`]) and `app.rs` reads it, so a
     /// test can aim the header at a context size without running a run.
     pub(crate) context_now: u64,
+    /// Whether [`UiState::context_now`] came from provider truth or a local estimate.
+    ///
+    /// Mirrored with the figure itself, from the same call, so the two cannot describe
+    /// different moments — the same discipline the number itself is built on.
+    pub(crate) context_estimated: bool,
     /// `true` once the session has been compacted and no fresh count has arrived,
     /// cleared by the first reply that reports one.
     ///
@@ -632,6 +648,15 @@ impl UiState {
     /// first provider response of the session.
     pub fn latest_prompt_tokens(&self) -> u64 {
         self.latest_prompt_tokens
+    }
+
+    /// Whether any call in this session reported cache fields (K1).
+    ///
+    /// The header needs this to answer "why is there no rate" correctly: without it,
+    /// a provider that cannot report cache traffic prints `CH 0%`, which reads as a
+    /// cache that is present and failing rather than as a number nobody measured.
+    pub fn cache_reported(&self) -> bool {
+        self.cache_reported
     }
 
     /// Cache-read tokens of the **same call** [`UiState::latest_prompt_tokens`]
@@ -901,6 +926,9 @@ impl UiState {
         self.cache_write = 0;
         self.usage_by_model.clear();
         self.latest_prompt_tokens = 0;
+        // A replayed session re-derives this from its own messages, so a stale
+        // `true` from before the switch must not survive into the new one (K1).
+        self.cache_reported = false;
         self.compacted = false;
         // A replayed session has no per-call timings to recover — the store keeps
         // messages, not wall-clock spans — so every card hydrated here is stamped
@@ -952,6 +980,10 @@ impl UiState {
                     if prompt > 0 {
                         self.latest_prompt_tokens = prompt;
                         self.latest_cache_read = a.usage.cache_read;
+                        // K1: one call that saw the keys is enough to say this
+                        // provider can report cache traffic. Sticky, so the header
+                        // does not flicker between `n/a` and a percentage.
+                        self.cache_reported |= a.usage.cache_reported;
                         self.compacted = false;
                     }
                 }
@@ -1068,6 +1100,10 @@ impl UiState {
                     if prompt > 0 {
                         self.latest_prompt_tokens = prompt;
                         self.latest_cache_read = a.usage.cache_read;
+                        // K1: one call that saw the keys is enough to say this
+                        // provider can report cache traffic. Sticky, so the header
+                        // does not flicker between `n/a` and a percentage.
+                        self.cache_reported |= a.usage.cache_reported;
                         self.compacted = false; // fresh counts retire the `?` marker
                     }
                 }
@@ -1212,9 +1248,25 @@ impl UiState {
                 self.status = "compacting context…".into();
                 self.push_system("── compaction started ──");
             }
-            AgentEvent::CompactionFinished => {
+            AgentEvent::CompactionFinished { usage, model_id } => {
                 self.status = "context compacted".into();
                 self.push_system("── compaction finished ──");
+                // The summariser resends the whole history, so it is billed like any
+                // other provider call. Folding it in HERE rather than only on
+                // `/resume` is what stops the cost from appearing to rise when a user
+                // reopens the session they were just working in — the symptom users
+                // read as a bug in the harness.
+                //
+                // Priced through `record_usage` like every other call, so a model
+                // switch mid-session still bills this call at the model that made it.
+                if let Some(usage) = usage {
+                    self.record_usage(model_id.as_deref().unwrap_or(""), *usage);
+                    self.tokens_in += usage.input;
+                    self.tokens_out += usage.output;
+                    self.cache_read += usage.cache_read;
+                    self.cache_write += usage.cache_write;
+                    self.cache_reported |= usage.cache_reported;
+                }
                 // Context size is now unknown until the next provider response
                 // (pi footer: render `?` for the context percentage in this window).
                 self.compacted = true;
@@ -1545,6 +1597,9 @@ mod tests {
             cache_read,
             cache_write: 0,
             total_tokens: input + output + cache_read,
+            // A fixture that carries a cache read is modelling a provider that
+            // reports cache traffic, including the zero case (K1).
+            cache_reported: true,
         }
     }
 
@@ -2564,6 +2619,7 @@ mod tests {
                     cache_read: 0,
                     cache_write: 0,
                     total_tokens: input + 100,
+                    cache_reported: true,
                 },
             );
             out.insert((*model).to_string(), reasons);
@@ -2607,6 +2663,7 @@ mod tests {
                 cache_read: 0,
                 cache_write: 0,
                 total_tokens: input + output,
+                cache_reported: true,
             }),
             is_error: false,
         })
@@ -2703,6 +2760,79 @@ mod tests {
         st.apply(&AgentEvent::MessageEnd {
             message: Box::new(m),
         });
+    }
+
+    /// The compaction bill is visible *while you are watching*, not only after a resume.
+    ///
+    /// The summariser resends the entire history to a model, so it is billed like any
+    /// other call. Its usage was recorded on the durable entry, but `CompactionFinished`
+    /// carried no usage at all — so the live total omitted it and `/resume` folded it
+    /// in afterwards. The user-visible symptom: the cost **goes up** when you reopen a
+    /// session you were just working in, which reads as a bug in the harness rather
+    /// than as a charge already incurred.
+    #[test]
+    fn a_compaction_charge_is_counted_while_the_session_is_live() {
+        let mut st = UiState::new();
+        // A normal turn first, so the assertion below is about the *change* the
+        // compaction makes rather than about an empty session.
+        deliver(
+            &mut st,
+            Message::Assistant(epsilon_contracts::message::AssistantMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                provider: "p".into(),
+                model_id: "deepseek/deepseek-chat-v3.1".into(),
+                content: vec![],
+                stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                error_message: None,
+                usage: epsilon_contracts::message::Usage {
+                    input: 1_000,
+                    output: 200,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: 1_200,
+                    cache_reported: true,
+                },
+            }),
+        );
+        let before_in = st.tokens_in;
+
+        st.apply(&AgentEvent::CompactionFinished {
+            usage: Some(epsilon_contracts::message::Usage {
+                input: 9_000,
+                output: 400,
+                cache_read: 0,
+                cache_write: 0,
+                total_tokens: 9_400,
+                cache_reported: true,
+            }),
+            model_id: Some("deepseek/deepseek-chat-v3.1".into()),
+        });
+
+        assert_eq!(
+            st.tokens_in,
+            before_in + 9_000,
+            "the summariser is a real provider call and its prompt tokens are the \
+             session's prompt tokens, immediately and visibly"
+        );
+        assert_eq!(
+            st.usage_by_model()["deepseek/deepseek-chat-v3.1"].input,
+            10_000,
+            "billed to the model the summariser ran on, in the same per-model row"
+        );
+    }
+
+    /// The same event with no bill — a dry run, or a failure before any tokens were
+    /// spent — must not invent usage.
+    #[test]
+    fn a_compaction_that_billed_nothing_adds_nothing() {
+        let mut st = UiState::new();
+        st.apply(&AgentEvent::CompactionFinished {
+            usage: None,
+            model_id: None,
+        });
+        assert_eq!(st.tokens_in, 0);
+        assert_eq!(st.tokens_out, 0);
     }
 
     #[test]

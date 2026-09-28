@@ -14,6 +14,7 @@ pub mod ids;
 pub mod lagged_notice;
 pub mod message;
 pub mod prompt_template;
+pub mod queue_mode;
 pub mod session_entry;
 pub mod session_state;
 pub mod stream;
@@ -27,6 +28,7 @@ pub use lagged_notice::LaggedNotice;
 pub use message::{
     AssistantMessage, CustomMessage, Message, StopReason, ThinkingLevel, ToolResultMessage, Usage,
 };
+pub use queue_mode::{KNOWN_QUEUE_MODES, QueueMode};
 pub use session_entry::{
     CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind, SessionLine,
 };

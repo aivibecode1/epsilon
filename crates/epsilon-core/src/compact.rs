@@ -43,12 +43,33 @@ pub struct UsageAnchor {
 /// reported nothing (`prompt_tokens == 0`), or when the transcript has *shrunk*
 /// below the anchored length (compaction or a session switch happened, so the
 /// anchor no longer describes this history).
-pub fn anchored_tokens(history: &[Message], anchor: Option<UsageAnchor>) -> usize {
+///
+/// # Why `fixed_prefix` is added only on the fallback arm
+///
+/// Every request also carries a system prompt and a set of tool schemas, and those
+/// are **not** in `history` — they are built per turn at
+/// `epsilon-core/src/lib.rs:2629` and handed to the provider as `LlmContext`. A
+/// provider's `prompt_tokens` already counts them, so on the anchored arm adding
+/// them again would double-count. On the fallback arm nothing counted them, and the
+/// estimate was short by several thousand tokens.
+///
+/// That arm is not a rare edge. It is what runs on turn one, after every
+/// compaction (which clears the anchor), and after `/resume` — so the number was
+/// most wrong exactly where it is hardest to notice: a moment after the user just
+/// compacted. pi makes the same addition, pricing `systemPrompt` and
+/// `JSON.stringify(tools)` in its own no-anchor fallback.
+pub fn anchored_tokens(
+    history: &[Message],
+    anchor: Option<UsageAnchor>,
+    fixed_prefix: usize,
+) -> usize {
     match anchor {
         Some(a) if a.prompt_tokens > 0 && a.covered <= history.len() => {
+            // The provider's count already includes the system prompt and the tool
+            // schemas, because they were in the request it billed.
             a.prompt_tokens + estimate_messages(&history[a.covered..])
         }
-        _ => estimate_messages(history),
+        _ => fixed_prefix + estimate_messages(history),
     }
 }
 
@@ -690,6 +711,7 @@ mod anchor_and_cut_tests {
                 prompt_tokens: 250,
                 covered: 1,
             }),
+            0,
         );
         assert!(anchored < heuristic, "the anchor must correct the estimate");
         assert_eq!(
@@ -705,9 +727,14 @@ mod anchor_and_cut_tests {
                 Some(UsageAnchor {
                     prompt_tokens: 250,
                     covered: 2
-                })
+                }),
+                // A non-zero prefix, to prove the anchored arm does NOT add it: the
+                // provider's own count already included the system prompt and the
+                // tool schemas, so adding them again would double-charge them.
+                3_500
             ),
-            250
+            250,
+            "the anchored arm must not add the fixed prefix — the provider already counted it"
         );
     }
 
@@ -719,14 +746,17 @@ mod anchor_and_cut_tests {
         // No anchor, a provider that reports nothing, or a transcript that shrank
         // under the anchored length (compaction / session switch) all fall back to
         // the heuristic rather than trusting a stale number.
-        assert_eq!(anchored_tokens(&history, None), heuristic);
+        // A zero prefix keeps these assertions about the messages alone; the prefix
+        // is exercised on its own in the test below.
+        assert_eq!(anchored_tokens(&history, None, 0), heuristic);
         assert_eq!(
             anchored_tokens(
                 &history,
                 Some(UsageAnchor {
                     prompt_tokens: 0,
                     covered: 0
-                })
+                }),
+                0
             ),
             heuristic
         );
@@ -736,9 +766,48 @@ mod anchor_and_cut_tests {
                 Some(UsageAnchor {
                     prompt_tokens: 9_000,
                     covered: 7
-                })
+                }),
+                0
             ),
             heuristic
+        );
+    }
+
+    #[test]
+    fn the_fallback_counts_the_prefix_the_transcript_cannot_see() {
+        // C2. Every request also carries a system prompt and tool schemas, and those
+        // bytes are not in `history` — they are built per turn. On the fallback arm
+        // nothing had counted them, so the estimate was short by thousands of tokens
+        // in exactly the states where it is hardest to notice: turn one, after a
+        // compaction (which clears the anchor), and after `/resume`.
+        let history = vec![user("hello")];
+        let messages_only = estimate_messages(&history);
+
+        let with_prefix = anchored_tokens(&history, None, 3_500);
+        assert_eq!(
+            with_prefix,
+            3_500 + messages_only,
+            "the no-anchor fallback must include the fixed prefix, or the gauge reads low \
+             right after a compaction when the user is most likely to be watching it"
+        );
+        assert!(
+            with_prefix > messages_only,
+            "a session whose only cost is the prefix must not measure as an empty context"
+        );
+
+        // And the anchored arm must NOT add it — the same prefix there is a
+        // double-count, because the provider's prompt_tokens already included it.
+        let anchored = anchored_tokens(
+            &history,
+            Some(UsageAnchor {
+                prompt_tokens: 9_000,
+                covered: 1,
+            }),
+            3_500,
+        );
+        assert_eq!(
+            anchored, 9_000,
+            "provider truth is the whole request; adding the prefix again charges it twice"
         );
     }
 

@@ -274,6 +274,11 @@ impl HttpEventStream {
         u.cache_read = get("cache_read_input_tokens");
         u.cache_write = get("cache_creation_input_tokens");
         u.total_tokens = u.input + u.output + u.cache_read + u.cache_write;
+        // K1: Anthropic always speaks about caching, so the mere presence of the
+        // keys is the signal — not a non-zero count. A first call that legitimately
+        // missed still reports both keys as 0, and that is a real 0% worth showing.
+        u.cache_reported = usage.get("cache_read_input_tokens").is_some()
+            || usage.get("cache_creation_input_tokens").is_some();
         if u.input + u.output > 0 {
             self.usage_seed = Some(u);
         }
@@ -323,6 +328,25 @@ impl HttpEventStream {
             .and_then(|v| v.as_u64())
             .unwrap_or_else(|| get_u64(&["cache_creation_input_tokens"]));
         let prompt = get_u64(&["prompt_tokens", "input_tokens", "promptTokenCount"]);
+        // K1: did the body actually *carry* a cache key? Detection, not arithmetic —
+        // `cache_read == 0` is equally what a wire that never mentions caching
+        // produces, and only the key's presence tells the two apart.
+        let cache_reported = [
+            "/prompt_tokens_details/cached_tokens",
+            "/prompt_tokens_details/cache_write_tokens",
+            "/input_tokens_details/cached_tokens",
+        ]
+        .iter()
+        .any(|p| usage.pointer(p).is_some())
+            || [
+                "prompt_cache_hit_tokens",
+                "cached_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "cachedContentTokenCount",
+            ]
+            .iter()
+            .any(|k| usage.get(*k).is_some());
         let u = Usage {
             input: prompt
                 .saturating_sub(cache_read)
@@ -331,6 +355,7 @@ impl HttpEventStream {
             cache_read,
             cache_write,
             total_tokens: get_u64(&["total_tokens", "totalTokenCount"]),
+            cache_reported,
         };
         if u.input + u.output > 0 {
             self.usage_tail = Some(u);

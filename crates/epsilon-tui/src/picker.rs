@@ -479,6 +479,14 @@ pub enum Command {
     Help,
     /// Clear the transcript pane.
     Clear,
+    /// Expand or collapse tool output (`/expand`; same action as Ctrl+X).
+    ///
+    /// Added so the palette entry can name a real command. It used to carry a
+    /// `\u{1}expand` pseudo-command that `parse_command` cannot read — it requires a
+    /// leading `/` — so choosing it closed the palette, cleared the composer, and ran
+    /// nothing, with no notice. A menu entry that silently does nothing is worse than
+    /// a missing one: it tells the user the feature exists.
+    Expand,
     /// List discovered skills.
     Skills,
     /// List installed prompt templates with their descriptions and argument hints.
@@ -576,6 +584,11 @@ pub const COMMAND_HEADS: &[&str] = &[
     "settings",
     "scoped_models",
     "clear",
+    // M194: the palette's "Toggle tool output expand" entry shipped a `\u{1}expand`
+    // pseudo-command this parser cannot read, so choosing it ran nothing. Naming a
+    // real command is what makes the entry work — and listing it here is what the
+    // reverse-drift check compares against the parser.
+    "expand",
     "skills",
     "templates",
     "search",
@@ -738,6 +751,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "scoped-models" | "scoped_models" => Some(Command::ScopedModels),
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
+        "expand" => Some(Command::Expand),
         "skills" => Some(Command::Skills),
         "templates" => Some(Command::Templates),
         "search" => Some(Command::Search(tail.to_string())),
@@ -1002,8 +1016,14 @@ pub fn palette_entries() -> Vec<PaletteEntry> {
         },
         PaletteEntry {
             title: "Toggle tool output expand".into(),
-            command: "\u{1}expand".into(),
-            binding: Some("x"),
+            // A real command. The old `\u{1}expand` was not a spelling this parser
+            // accepts (it requires a leading `/`), so choosing this entry closed the
+            // palette, cleared the composer, and ran nothing.
+            command: "/expand".into(),
+            // The chord is `ctrl+x`, not a bare `x`. A bare `x` is the binding the
+            // editor deliberately removed because it made the letter untypable, and
+            // the palette was advertising it anyway.
+            binding: Some("ctrl+x"),
         },
     ]
 }

@@ -187,8 +187,25 @@ pub enum AgentEvent {
     },
     /// Compaction pass started.
     CompactionStarted,
-    /// Compaction pass finished.
-    CompactionFinished,
+    /// Compaction pass finished, and what the summariser cost.
+    ///
+    /// The usage travels **with** the event rather than only onto the durable
+    /// entry, because a live UI has no other way to learn it. The summariser is a
+    /// real provider call that resends the whole history; before this carried its
+    /// bill, the figure was folded in only on `/resume`, so opening a session you
+    /// had just been working in made the cost *go up* — a change the user reads as a
+    /// bug in the code rather than as a charge they had already incurred.
+    ///
+    /// The durable entry keeps its own copy (pi does the same, `session-manager.ts:68-80`)
+    /// so a replayed session still bills what it actually spent. This field is what
+    /// makes the *live* number agree with the replayed one.
+    CompactionFinished {
+        /// What the summariser call was billed, or `None` when it was not billed
+        /// (a dry run, or a failure before any tokens were spent).
+        usage: Option<crate::message::Usage>,
+        /// The model that answered, so the bill can be priced at the right rates.
+        model_id: Option<String>,
+    },
 }
 
 #[cfg(test)]

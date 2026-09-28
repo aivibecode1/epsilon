@@ -421,6 +421,11 @@ mod tests {
                     // Provider-reported, and deliberately NOT the sum of the fields above:
                     // a round-trip test that set it to the sum could not tell the two apart.
                     total_tokens: 25,
+                    // `true`, not the `false` default: this is the round-trip test, so a
+                    // field left at its default would pass whether or not it survives
+                    // serialization. A replayed session must not come back as "the
+                    // provider never reported cache traffic" (K1).
+                    cache_reported: true,
                 }),
                 // Not `None`: this is the round-trip test for every kind, so a field set
                 // to `None` here would pass whether or not it survives serialization.
@@ -435,6 +440,7 @@ mod tests {
                     cache_read: 0,
                     cache_write: 0,
                     total_tokens: 6,
+                    cache_reported: true,
                 }),
                 model_id: Some("branch-model".into()),
             },

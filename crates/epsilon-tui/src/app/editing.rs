@@ -225,6 +225,68 @@ impl App {
         self.cursor_chars = self.input.chars().count();
     }
 
+    /// Flip tool-output expansion, announcing what changed.
+    ///
+    /// Extracted so the `app.tools.expand` key and the command palette do the *same*
+    /// thing. The palette entry used to carry a `\u{1}expand` pseudo-command that
+    /// `parse_command` cannot read (it requires a leading `/`), so choosing it closed
+    /// the palette, cleared the composer, and ran nothing — with no notice at all.
+    /// A menu entry that silently does nothing is worse than a missing one, because
+    /// the user is told the feature exists.
+    pub(super) fn toggle_tool_expansion(&mut self) {
+        let was_open = self
+            .selected_card_id()
+            .map(|id| self.card_is_open(id, true));
+        self.prefs.expand_outputs = !self.prefs.expand_outputs;
+        let label = match (self.selected_card_id(), was_open) {
+            (Some(id), Some(was_open)) => {
+                // What the card's own entry records, and why it is not simply
+                // `!was_open` (which is what this used to be, and what made the
+                // second press close the card the first press had opened):
+                //
+                // The action is an *expand*, and the global toggle is what it flips.
+                // So after the press the selected card is open if the global is now
+                // on, or if it was already open. Reading it as a per-card toggle
+                // instead meant "expand all, then collapse all" also collapsed the
+                // one card the user had deliberately opened — the opposite of the
+                // exception this whole path exists to provide (see the frame test in
+                // `app/golden.rs` that asserts the card is still open with the
+                // global off).
+                let open = self.prefs.expand_outputs || was_open;
+                self.set_card_open(id, open);
+                if open {
+                    "card expanded"
+                } else {
+                    "card collapsed"
+                }
+            }
+            _ if self.prefs.expand_outputs => "all cards expanded",
+            _ => "all cards collapsed",
+        };
+        // The footer notice only. A palette *command* adds its own transcript line
+        // (see the `Expand` arm in `app/commands.rs`): the key path must leave the
+        // frame byte-identical, and `app::golden::ctrl_x_opens_the_newest_card…`
+        // asserts exactly that — a notice row here moved the card it is about.
+        self.notice(format!("{label} (Ctrl+X toggles)"));
+    }
+
+    /// Empty the composer, as pi's `app.clear` ("Clear editor", ctrl+c) does.
+    ///
+    /// The binding existed in the defaults table and was read by nothing, while
+    /// `app.exit` consumed the same chord first — so Ctrl+C quit the process with the
+    /// draft still in the buffer, and `/hotkeys` advertised a binding that did nothing.
+    /// A keybinding table the UI prints is a promise; this is the promise being kept.
+    ///
+    /// Cursor and history index move with the text. Leaving the cursor past the end of
+    /// an empty string would make the next character land somewhere the user did not
+    /// type, which is the "no input" symptom all over again.
+    pub(super) fn clear_editor(&mut self) {
+        self.input.clear();
+        self.cursor_chars = 0;
+        self.history_idx = None;
+        self.sync_slash_state();
+    }
+
     pub(super) fn submit_text(&mut self, text: String) -> Message {
         self.remember_history(text.clone());
         // M16b: persist to the global history file (best-effort; never blocks).

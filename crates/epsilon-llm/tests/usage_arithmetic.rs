@@ -44,6 +44,66 @@ fn compat_usage(prompt: u64, cached: u64, cache_write: u64, completion: u64) -> 
 /// The case that matters: with the cached prefix left inside `input`, the model appears
 /// to have been billed 8,000 tokens at the input rate *and* to have read 6,000 from
 /// cache — 14,000 tokens of story from an 8,000-token prompt.
+/// K1: a wire that says nothing about caching is distinguishable from one that says
+/// "zero of your prompt was cached" — decided by the *keys in the body*, never by the
+/// value they carry.
+///
+/// This is the boundary the defect lived at. `cache_read == 0` is produced identically
+/// by ollama, by an OpenAI-compatible proxy that omits `prompt_tokens_details`, and by
+/// Anthropic's honest first-call miss. The header turned all three into `CH 0%`. The
+/// two tests below are the two arms, and they must not be able to produce the same
+/// answer.
+#[test]
+fn a_body_without_cache_keys_is_not_a_measured_zero() {
+    let silent = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "prompt_tokens": 24_000,
+        "completion_tokens": 500,
+    }));
+
+    assert_eq!(silent.cache_read, 0, "the counts are identical either way");
+    assert!(
+        !silent.cache_reported,
+        "no cache key appeared in the body, so nothing about the cache was measured"
+    );
+}
+
+#[test]
+fn a_body_reporting_zero_cache_tokens_is_a_measured_zero() {
+    // The exact same token counts, with the keys present and set to zero — which is
+    // what Anthropic sends on a genuine first-call miss.
+    let measured = compat_usage(24_000, 0, 0, 500);
+
+    assert_eq!(measured.cache_read, 0);
+    assert!(
+        measured.cache_reported,
+        "the provider answered the question, and the answer was zero"
+    );
+}
+
+/// The flag must survive aggregation, or a session with one cache-aware call would
+/// report `n/a` for the turn that actually had cache traffic.
+#[test]
+fn combining_usages_keeps_the_cache_evidence_from_either_side() {
+    let silent = epsilon_llm::providers::test_support::compat_usage_from_json(&json!({
+        "prompt_tokens": 1_000,
+        "completion_tokens": 10,
+    }));
+    let measured = compat_usage(1_000, 400, 0, 10);
+
+    assert!(
+        silent.combine(measured).cache_reported,
+        "one cache-aware call is enough for the combined figure to be a measurement"
+    );
+    assert!(
+        measured.combine(silent).cache_reported,
+        "combination is order-independent"
+    );
+    assert!(
+        !silent.combine(silent).cache_reported,
+        "two silent calls are still silence, not a zero"
+    );
+}
+
 #[test]
 fn the_cached_prefix_is_not_counted_twice() {
     let u = compat_usage(8_000, 6_000, 0, 500);

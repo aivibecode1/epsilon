@@ -128,6 +128,25 @@ pub struct Usage {
     pub cache_write: u64,
     /// Total tokens (input + output + cache traffic) as reported by the provider when available.
     pub total_tokens: u64,
+    /// Whether the provider's response **carried cache fields at all** (K1).
+    ///
+    /// # Why this is not `cache_read > 0`
+    ///
+    /// A wire that speaks about caching and a wire that does not both leave
+    /// `cache_read == 0`, so the count alone cannot tell them apart. They are
+    /// different sentences about the user's money: *"0% of your prompt came from
+    /// cache"* is a fact, and *"this provider does not report cache usage"* means no
+    /// percentage can be computed at all. Rendering the first for the second is how
+    /// a provider with caching switched off looks like a cache that is failing.
+    ///
+    /// It is set **only** by a decoder that actually saw a cache key in the
+    /// response body. Defaulting to `false` is the safe direction: an unannotated
+    /// decoder produces "not measurable", never a fabricated zero.
+    ///
+    /// This is deliberately a flag on the *call* and not a static per-provider
+    /// property. A gateway can route the same model id to two backends that
+    /// report differently, and only the response knows which one answered.
+    pub cache_reported: bool,
 }
 
 impl Usage {
@@ -139,7 +158,23 @@ impl Usage {
             cache_read: self.cache_read + other.cache_read,
             cache_write: self.cache_write + other.cache_write,
             total_tokens: self.total_tokens + other.total_tokens,
+            // OR, not AND and not sum: one call that saw cache fields is enough
+            // for the combined figure to be a measurement. Requiring both would
+            // let a long tail of unannotated calls erase the evidence, and
+            // summing would report a number of calls rather than a yes/no.
+            cache_reported: self.cache_reported || other.cache_reported,
         }
+    }
+
+    /// A usage that reports no cache traffic, whatever the token counts are.
+    ///
+    /// The honest constructor for a decoder that looked and found no cache keys.
+    /// Spelling it as a method rather than a struct literal means the flag and
+    /// the counts are set together, so a call site cannot mark tokens as
+    /// "measured" by accident.
+    pub fn without_cache(mut self) -> Usage {
+        self.cache_reported = false;
+        self
     }
 }
 

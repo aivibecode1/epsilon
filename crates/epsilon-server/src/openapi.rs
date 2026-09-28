@@ -71,15 +71,22 @@ pub fn spec() -> serde_json::Value {
                 "TextBody": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" } } },
                 "RequestIdBody": { "type": "object", "properties": { "request_id": { "type": "string" } } },
                 "SessionState": { "type": "object",
-                    "required": ["model", "thinking_level", "is_streaming", "message_count", "pending_message_count", "session_file", "estimated_context_tokens"],
+                    // camelCase, because that is what the payload serializes as and what
+                    // pi's `RpcSessionState` uses (D30). A specification naming fields
+                    // the server does not emit is worse than no specification.
+                    "required": ["model", "thinkingLevel", "isStreaming", "steeringMode", "followUpMode", "messageCount", "pendingMessageCount", "sessionFile", "sessionId", "sessionName", "estimatedContextTokens"],
                     "properties": {
                         "model": { "type": "string" },
-                        "thinking_level": { "type": "string", "enum": thinking_level_enum() },
-                        "is_streaming": { "type": "boolean" },
-                        "message_count": { "type": "integer" },
-                        "pending_message_count": { "type": "integer" },
-                        "session_file": { "type": ["string", "null"] },
-                        "estimated_context_tokens": { "type": "integer" }
+                        "thinkingLevel": { "type": "string", "enum": thinking_level_enum() },
+                        "isStreaming": { "type": "boolean" },
+                        "steeringMode": { "type": "string", "enum": queue_mode_enum() },
+                        "followUpMode": { "type": "string", "enum": queue_mode_enum() },
+                        "messageCount": { "type": "integer" },
+                        "pendingMessageCount": { "type": "integer" },
+                        "sessionFile": { "type": ["string", "null"] },
+                        "sessionId": { "type": ["string", "null"] },
+                        "sessionName": { "type": ["string", "null"] },
+                        "estimatedContextTokens": { "type": "integer" }
                     } },
                 "PermissionRequest": { "type": "object", "required": ["request_id", "capability", "pattern"],
                     "properties": {
@@ -138,6 +145,21 @@ fn thinking_level_enum() -> serde_json::Value {
     )
 }
 
+/// The queue-mode enum, declared from the type rather than written out by hand.
+///
+/// Written by hand it would be a second place to forget: the spec would keep advertising
+/// a spelling the server stopped emitting, which is the failure this whole change is
+/// about. `QueueMode::as_wire` is the single source, and it is the same function the RPC
+/// parser and the `SessionState` serializer use.
+fn queue_mode_enum() -> serde_json::Value {
+    serde_json::Value::Array(
+        epsilon_contracts::QueueMode::ALL
+            .iter()
+            .map(|m| serde_json::Value::String((*m).as_wire().to_string()))
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,15 +209,15 @@ mod tests {
         );
     }
 
-    /// The `SessionState.thinking_level` enum declares what the API emits (serde's
+    /// The `SessionState.thinkingLevel` enum declares what the API emits (serde's
     /// serialization set), not what it accepts: `x_high` is in; pi's input-only alias
     /// `xhigh` is out.
     #[test]
     fn thinking_level_enum_matches_what_is_emitted() {
         let spec = spec();
-        let declared =
-            spec["components"]["schemas"]["SessionState"]["properties"]["thinking_level"]["enum"]
-                .clone();
+        let declared = spec["components"]["schemas"]["SessionState"]["properties"]["thinkingLevel"]
+            ["enum"]
+            .clone();
         let emitted: Vec<serde_json::Value> = epsilon_contracts::ThinkingLevel::ALL
             .iter()
             .map(|level| serde_json::to_value(level).unwrap())

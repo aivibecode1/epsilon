@@ -97,14 +97,10 @@ pub use epsilon_session::{
 
 /// How many queued messages a drain point releases.
 ///
-/// Ported verbatim from pi's `QueueMode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueMode {
-    /// Release everything queued.
-    All,
-    /// Release only the oldest; the rest wait for the next drain point.
-    OneAtATime,
-}
+// `QueueMode` now lives in `epsilon-contracts` -- see that file for why the architecture
+// law pushed it there -- and is re-exported here, so `epsilon_core::QueueMode` resolves
+// exactly as it did before and no caller had to change.
+pub use epsilon_contracts::QueueMode;
 
 #[derive(Debug)]
 struct PendingQueue {
@@ -145,6 +141,14 @@ impl PendingQueue {
     /// Drain all queued messages regardless of mode (used by abort restore).
     fn drain_all(&mut self) -> Vec<Message> {
         self.inner.drain(..).collect()
+    }
+
+    fn set_mode(&mut self, mode: QueueMode) {
+        self.mode = mode;
+    }
+
+    fn mode(&self) -> QueueMode {
+        self.mode
     }
 }
 
@@ -994,6 +998,51 @@ impl Agent {
         self.steering.lock().map(|q| q.len()).unwrap_or(0)
     }
 
+    /// How much of the steering queue releases at a drain point.
+    ///
+    /// pi's `setSteeringMode` (`rpc-mode.ts`). Readable as well as settable because a
+    /// client that changes a setting needs to be able to see what is in effect: an
+    /// unreadable setting is one the client cannot confirm and can only guess at.
+    pub fn steering_mode(&self) -> QueueMode {
+        self.steering
+            .lock()
+            .map(|q| q.mode())
+            .unwrap_or(QueueMode::OneAtATime)
+    }
+
+    /// Set how much of the steering queue releases at a drain point.
+    ///
+    /// **Takes effect at the next drain, and does not disturb what is already queued.**
+    /// The mode is a property of the *drain*, not of the queue's contents, so switching
+    /// from `OneAtATime` to `All` with three messages waiting releases all three at the
+    /// next drain point and switching the other way releases one. The alternative —
+    /// draining on the spot — would deliver messages the user never asked to be released
+    /// now, in the middle of a turn.
+    pub fn set_steering_mode(&self, mode: QueueMode) {
+        if let Ok(mut q) = self.steering.lock() {
+            q.set_mode(mode);
+        }
+    }
+
+    /// How much of the follow-up queue releases at a drain point (pi's
+    /// `setFollowUpMode`).
+    pub fn follow_up_mode(&self) -> QueueMode {
+        self.followups
+            .lock()
+            .map(|q| q.mode())
+            .unwrap_or(QueueMode::OneAtATime)
+    }
+
+    /// Set how much of the follow-up queue releases at a drain point.
+    ///
+    /// The same mid-queue semantics as [`Agent::set_steering_mode`], and the same reason:
+    /// the mode belongs to the drain, so changing it must not itself deliver anything.
+    pub fn set_follow_up_mode(&self, mode: QueueMode) {
+        if let Ok(mut q) = self.followups.lock() {
+            q.set_mode(mode);
+        }
+    }
+
     /// Queue work for after the agent would otherwise stop.
     pub fn follow_up(&self, m: Message) {
         if let Ok(mut q) = self.followups.lock() {
@@ -1094,6 +1143,59 @@ impl Agent {
     pub fn session_path(&self) -> Option<std::path::PathBuf> {
         let store = self.store()?;
         store.lock().ok().map(|st| st.path().to_path_buf())
+    }
+
+    /// The attached session's own id, from its header (`SessionStore::header`).
+    ///
+    /// `None` without a durable mirror, and `None` for a store whose header could not be
+    /// read — the same "absent rather than fiction" rule the rest of this snapshot keeps.
+    /// A client identifies a conversation by this, not by [`Agent::session_path`]: a fork
+    /// moves the conversation to a new file, and a rename moves the file under the
+    /// conversation.
+    pub fn session_id(&self) -> Option<String> {
+        let store = self.store()?;
+        let guard = store.lock().ok()?;
+        guard.header().map(|h| h.id.clone())
+    }
+
+    /// The session's display name, as `/name` or RPC `set_session_name` last set it.
+    ///
+    /// Read from the newest `Custom { "session_name" }` entry, because the name can be
+    /// written anywhere in the file and the newest one wins — the same rule pi's session
+    /// listing uses. `None` when no name was ever set, which is not an error.
+    pub fn session_name(&self) -> Option<String> {
+        let store = self.store()?;
+        let guard = store.lock().ok()?;
+        guard.session_name()
+    }
+
+    /// Build the live state snapshot both wire surfaces serve.
+    ///
+    /// **Why this is a method and not a free function in each frontend.** `rpc_mode.rs`
+    /// and `epsilon-server` each grew their own `SessionState { … }` literal, and they
+    /// were identical — until a field was added and only one of them learned it. That is
+    /// D29's mechanism applied to a *shared* struct: the payload exists in one place
+    /// precisely so the two transports cannot disagree, and two builders put that back
+    /// on a knife edge. One constructor, two callers, no third spelling.
+    ///
+    /// It lives here rather than in `epsilon-contracts` because it needs an `Agent`, and
+    /// contracts may not depend on core — so this is the only crate that can hold it.
+    /// The alternative, a `SessionState::from(&Agent)` in contracts, is forbidden by the
+    /// architecture law and would be the `cli -> server` edge in disguise.
+    pub fn session_state(&self) -> epsilon_contracts::SessionState {
+        epsilon_contracts::SessionState {
+            model: self.model_id(),
+            thinking_level: self.thinking_level(),
+            is_streaming: self.is_running(),
+            steering_mode: self.steering_mode(),
+            follow_up_mode: self.follow_up_mode(),
+            message_count: self.history().len(),
+            pending_message_count: self.steer_queue_len(),
+            session_file: self.session_path().map(|p| p.display().to_string()),
+            session_id: self.session_id(),
+            session_name: self.session_name(),
+            estimated_context_tokens: self.estimated_context_tokens(),
+        }
     }
 
     /// Search the attached session log (pi `search/scanning.ts` parity).
@@ -2094,7 +2196,44 @@ impl Agent {
         // i.e. 10.8x for a 10x larger transcript: the signature of a whole-history
         // scan rather than the anchored walk this intends to be. The tripwire in
         // that test fails until the clone is gone.
-        self.with_history(|h| crate::compact::anchored_tokens(h, anchor))
+        let fixed = self.fixed_prefix_tokens();
+        self.with_history(|h| crate::compact::anchored_tokens(h, anchor, fixed))
+    }
+
+    /// Tokens every request carries that are **not** in the transcript: the system
+    /// prompt and the tool schemas.
+    ///
+    /// Needed only by the no-anchor fallback in [`Self::estimated_context_tokens`],
+    /// where nothing else has counted them — the anchored arm uses the provider's own
+    /// `prompt_tokens`, which already includes them. See
+    /// [`crate::compact::anchored_tokens`] for why adding them twice would be worse
+    /// than the omission.
+    ///
+    /// Measured from the same inputs the real request is built from, so it cannot
+    /// drift from what is actually sent: the descriptors are serialized exactly as a
+    /// provider receives them, and the system prompt uses the same `prompt::build`
+    /// path the turn takes.
+    fn fixed_prefix_tokens(&self) -> usize {
+        let tools = self.tools.descriptors();
+        let schema_tokens = tools
+            .iter()
+            .map(|d| {
+                let name = crate::compact::estimate_tokens(&d.name);
+                let description = crate::compact::estimate_tokens(&d.description);
+                let schema = d
+                    .parameters_schema
+                    .to_string()
+                    .len()
+                    .div_ceil(4)
+                    .saturating_add(8);
+                name + description + schema
+            })
+            .sum::<usize>();
+        // The agent contract is the floor: it is what `prompt::build` emits when no
+        // overlay replaces it, and it is ~6.5 KB, so omitting it understated the
+        // prefix by more than everything else here.
+        let contract = crate::compact::estimate_tokens(crate::prompt::AGENT_CONTRACT);
+        contract + schema_tokens
     }
 
     /// Record what the provider billed for the request that covered `covered`
@@ -2128,6 +2267,30 @@ impl Agent {
     }
 
     /// Drop the anchor: the history it describes no longer exists.
+    /// Whether the context figure is a provider measurement or a local estimate.
+    ///
+    /// The same number either way, and the difference is exactly what a reader cannot
+    /// infer from it. `anchored_tokens` prefers provider truth for the prefix and
+    /// estimates only the tail; when no anchor survives it estimates everything, from a
+    /// 4-chars-per-token heuristic that over-counts prose and under-counts code. The
+    /// result is still the best available figure — but on turn one, after every
+    /// compaction, and after `/resume` it is a *guess*, and the header should say so
+    /// rather than presenting a guess and a measurement in the same typeface.
+    ///
+    /// Hermes ships this on every status payload for the same reason
+    /// (`context_breakdown.py:94-115`), and DSH is blunter: its projection doc calls the
+    /// occupancy figure "a user-facing reference, not a billing or gating input" — which
+    /// is only useful to a user if the figure says how it was made.
+    pub fn context_is_estimated(&self) -> bool {
+        let anchor = self.usage_anchor.lock().ok().and_then(|slot| *slot);
+        // The same guard the estimator applies, kept in step deliberately: if the
+        // anchor cannot describe this history, the number is an estimate. Deriving it
+        // twice from one rule is better than a flag that can disagree with the value.
+        let Some(a) = anchor else { return true };
+        let len = self.history.lock().map(|h| h.len()).unwrap_or(0);
+        a.prompt_tokens == 0 || a.covered > len
+    }
+
     fn clear_usage_anchor(&self) {
         if let Ok(mut slot) = self.usage_anchor.lock() {
             *slot = None;
@@ -2392,7 +2555,13 @@ impl Agent {
                 text: "[context compacted]".into(),
             }],
         }));
-        self.emit(AgentEvent::CompactionFinished);
+        // The same usage that went onto the durable entry above, handed to the live
+        // UI as well. Without it the cost is only visible after `/resume`, so the
+        // number rises when a user reopens a session they were just working in.
+        self.emit(AgentEvent::CompactionFinished {
+            usage: Some(answer.usage),
+            model_id: Some(model.id.clone()),
+        });
         Ok(CompactionOutcome::Committed)
     }
 

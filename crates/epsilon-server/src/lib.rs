@@ -132,15 +132,8 @@ fn outcome_body(
 /// stays behaviour-free (no constructor can take an `Agent` there) and because
 /// `epsilon-server` must not depend on `epsilon-cli`, where the RPC surface lives.
 fn session_state(agent: &Agent) -> epsilon_contracts::SessionState {
-    epsilon_contracts::SessionState {
-        model: agent.model_id(),
-        thinking_level: agent.thinking_level(),
-        is_streaming: agent.is_running(),
-        message_count: agent.history().len(),
-        pending_message_count: agent.steer_queue_len(),
-        session_file: agent.session_path().map(|p| p.display().to_string()),
-        estimated_context_tokens: agent.estimated_context_tokens(),
-    }
+    // One constructor, shared with the RPC surface -- see `Agent::session_state`.
+    agent.session_state()
 }
 
 /// Request body of `POST /steer` and `POST /followup`.
@@ -815,34 +808,84 @@ mod tests {
         assert_eq!(status, 200, "{body}");
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["model"], "m92-serve-model");
-        assert_eq!(v["thinking_level"], "low");
-        assert_eq!(v["is_streaming"], false);
+        // camelCase since D30 — this payload is shared with the RPC surface, and pi's
+        // `RpcSessionState` is camelCase. The assertion below pins the WHOLE key set, so
+        // a spelling cannot drift back without this test failing.
+        assert_eq!(v["thinkingLevel"], "low");
+        assert_eq!(v["isStreaming"], false);
         assert_eq!(
-            v["message_count"].as_u64().unwrap() as usize,
+            v["messageCount"].as_u64().unwrap() as usize,
             st.agent.history().len()
         );
-        assert_eq!(v["pending_message_count"], 0);
-        assert_eq!(v["session_file"], serde_json::Value::Null);
+        assert_eq!(v["pendingMessageCount"], 0);
+        assert_eq!(v["sessionFile"], serde_json::Value::Null);
+        assert_eq!(v["sessionId"], serde_json::Value::Null);
+        assert_eq!(v["sessionName"], serde_json::Value::Null);
         assert_eq!(
-            v["estimated_context_tokens"].as_u64().unwrap() as usize,
+            v["estimatedContextTokens"].as_u64().unwrap() as usize,
             st.agent.estimated_context_tokens()
         );
+        // The two queue modes are pi's fields and this harness now answers them, so a
+        // client can see the defaults rather than inferring them.
+        assert_eq!(v["steeringMode"], "one-at-a-time");
+        assert_eq!(v["followUpMode"], "one-at-a-time");
 
-        // The shape is the shared struct's, exactly.
+        // The shape is the shared struct's, exactly — and it is the same shape the RPC
+        // surface serves, which is the entire reason this payload lives in one struct.
         let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
         keys.sort_unstable();
         assert_eq!(
             keys,
             [
-                "estimated_context_tokens",
-                "is_streaming",
-                "message_count",
+                "estimatedContextTokens",
+                "followUpMode",
+                "isStreaming",
+                "messageCount",
                 "model",
-                "pending_message_count",
-                "session_file",
-                "thinking_level",
+                "pendingMessageCount",
+                "sessionFile",
+                "sessionId",
+                "sessionName",
+                "steeringMode",
+                "thinkingLevel",
             ]
         );
+    }
+
+    /// **The two wire surfaces must emit the same object, byte for byte.**
+    ///
+    /// `rpc_mode.rs` and this file each grew their own `SessionState { … }` literal, and
+    /// they were identical — right up until D30 added a field and only one of them could
+    /// see it. The payload exists in ONE struct precisely so the two transports cannot
+    /// disagree, and two builders put that back on a knife edge; `Agent::session_state()`
+    /// is now the only constructor either of them may use.
+    ///
+    /// This is the HTTP half of D29's lesson. D29's test compared two *RPC* ops because
+    /// one reference type was being served two ways; the same trap exists across
+    /// transports, and a test per surface cannot see it — only a test that compares the
+    /// surfaces can.
+    #[tokio::test]
+    async fn rest_and_rpc_serve_the_identical_state_object() {
+        let (st, app) = test_agent(vec![FauxStep::say("hi")]);
+        st.agent.set_model_id("m194-both-surfaces");
+        st.agent
+            .set_steering_mode(epsilon_contracts::QueueMode::All);
+
+        let (status, body) = json_response(app, "GET", "/state", None).await;
+        assert_eq!(status, 200, "{body}");
+        let rest: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        // The same agent, through the shared constructor the RPC surface also uses. If a
+        // literal reappears in either frontend, this comparison is what notices.
+        let via_constructor =
+            serde_json::to_value(st.agent.session_state()).expect("SessionState serializes");
+        assert_eq!(
+            rest, via_constructor,
+            "GET /state must be `Agent::session_state()` verbatim, not a second literal"
+        );
+        // And the setting the test just made is visible, which is the point of adding the
+        // field: a mode a client can set but not read is half a feature.
+        assert_eq!(rest["steeringMode"], "all", "{rest}");
     }
 
     #[tokio::test]

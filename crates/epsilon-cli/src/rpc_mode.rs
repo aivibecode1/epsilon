@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
+use epsilon_contracts::LaggedNotice;
 use epsilon_contracts::agent_event::PermissionDecision;
-use epsilon_contracts::{LaggedNotice, SessionState};
 use epsilon_core::Agent;
 use epsilon_safety::ChannelApprovalUi;
 use serde::Deserialize;
@@ -76,10 +76,19 @@ enum Op {
     /// pi's shape is `provider` + `modelId` (`rpc-types.ts:33`). The pair is resolved the
     /// way every other entry point resolves it — `provider/model`, or a bare model id — so
     /// a pi-shaped client and a human typing `/model opus` reach the same row.
+    ///
+    /// `modelId` is the **primary** wire name and `model_id` the alias, not the other way
+    /// round. The enum carries `rename_all = "snake_case"`, so without an explicit
+    /// `rename` the field was `model_id` — and a client sending the name pi documents
+    /// was refused with *"set_model needs a model"*, which reads like the model is
+    /// missing rather than like the key was spelled differently. That is D26 (`follow_up`)
+    /// happening again on a field instead of a variant, and it survived because the tests
+    /// built the frame from the Rust field name, so they agreed with the code by
+    /// construction.
     SetModel {
         #[serde(default)]
         provider: Option<String>,
-        #[serde(default)]
+        #[serde(default, rename = "modelId", alias = "model_id")]
         model_id: Option<String>,
     },
     /// List catalog rows, optionally filtered to one provider.
@@ -127,6 +136,10 @@ enum Op {
         #[serde(rename = "parentSession", alias = "parent_session", default)]
         parent_session: Option<String>,
     },
+    /// How much of the steering queue a drain releases (pi's `setSteeringMode`).
+    SetSteeringMode { mode: String },
+    /// How much of the follow-up queue a drain releases (pi's `setFollowUpMode`).
+    SetFollowUpMode { mode: String },
     /// Reopen a different session file, and rebind to it.
     SwitchSession {
         #[serde(rename = "sessionPath", alias = "session_path")]
@@ -309,15 +322,7 @@ fn lag_notice(dropped: u64) -> String {
 /// One struct for both wire surfaces ([`SessionState`], in `epsilon-contracts`), so the
 /// stdio reply and `GET /state` cannot disagree about shape or values.
 fn state_value(agent: &Agent) -> serde_json::Value {
-    let state = SessionState {
-        model: agent.model_id(),
-        thinking_level: agent.thinking_level(),
-        is_streaming: agent.is_running(),
-        message_count: agent.history().len(),
-        pending_message_count: agent.steer_queue_len(),
-        session_file: agent.session_path().map(|p| p.display().to_string()),
-        estimated_context_tokens: agent.estimated_context_tokens(),
-    };
+    let state = agent.session_state();
     // Every field is a scalar/string; serialization cannot fail.
     serde_json::to_value(state).unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
@@ -647,7 +652,7 @@ async fn dispatch_line(
             ok_line(
                 "set_thinking_level",
                 id,
-                serde_json::json!({ "thinking_level": agent.thinking_level() }),
+                serde_json::json!({ "thinkingLevel": agent.thinking_level() }),
             )
         }
         Op::CycleThinkingLevel => {
@@ -658,7 +663,7 @@ async fn dispatch_line(
             ok_line(
                 "cycle_thinking_level",
                 id,
-                serde_json::json!({ "thinking_level": agent.thinking_level() }),
+                serde_json::json!({ "thinkingLevel": agent.thinking_level() }),
             )
         }
         Op::GetAvailableThinkingLevels => ok_line(
@@ -708,7 +713,7 @@ async fn dispatch_line(
                         serde_json::json!({
                             "model": model_value(resolved.info),
                             // The bare id, so a client can round-trip it without reading the object.
-                            "model_id": resolved.info.id,
+                            "modelId": resolved.info.id,
                         }),
                     )
                 }
@@ -767,7 +772,13 @@ async fn dispatch_line(
             ok_line(
                 "cycle_model",
                 id,
-                serde_json::json!({ "model": model_value(same[at]), "model_id": same[at].id }),
+                // `modelId`, not `model_id`. This op and `set_model` are the same
+                // answer to the same question, and `set_model` already spells it
+                // pi's way (`rpc-types.ts:33`). Emitting both spellings across two ops
+                // is the D29 class one level up: a client that read `modelId` after a
+                // `set_model` got a value, cycled the model, and read `undefined` —
+                // with no error, because the frame was well-formed.
+                serde_json::json!({ "model": model_value(same[at]), "modelId": same[at].id }),
             )
         }
         Op::GetLastAssistantText => {
@@ -1123,6 +1134,50 @@ async fn dispatch_line(
                     "sessionFile": file.to_string_lossy(),
                 }),
             )
+        }
+        Op::SetSteeringMode { mode } => {
+            // pi: `session.setSteeringMode(command.mode); return success(id,
+            // "set_steering_mode");`
+            //
+            // **The reply carries no payload, and that is a decision, not an omission.**
+            // Echoing the mode back would be marginally more useful, and it is not done:
+            // a client written against pi reads `success`, and inventing a key makes this
+            // surface differ from the reference in a way nobody chose. The mode is
+            // readable in `get_state`, which is where pi reports it, so a client can still
+            // confirm what took effect.
+            //
+            // `data` is `null` rather than absent, because epsilon's envelope promises
+            // every successful reply carries both `data` and `ok` and a first-wire client
+            // reads `ok`. Omitting the key for two ops would break a documented invariant
+            // to imitate an absence that costs a pi client nothing — `if (response.data)`
+            // is false for `null` and for undefined alike.
+            let Some(parsed) = epsilon_contracts::QueueMode::from_wire(&mode) else {
+                return err_line(
+                    Some("set_steering_mode"),
+                    id,
+                    format!(
+                        "unknown queue mode {mode:?}: expected {}",
+                        epsilon_contracts::KNOWN_QUEUE_MODES
+                    ),
+                );
+            };
+            agent.set_steering_mode(parsed);
+            ok_line("set_steering_mode", id, serde_json::Value::Null)
+        }
+        Op::SetFollowUpMode { mode } => {
+            // The same shape as `set_steering_mode`, and the same reason for it.
+            let Some(parsed) = epsilon_contracts::QueueMode::from_wire(&mode) else {
+                return err_line(
+                    Some("set_follow_up_mode"),
+                    id,
+                    format!(
+                        "unknown queue mode {mode:?}: expected {}",
+                        epsilon_contracts::KNOWN_QUEUE_MODES
+                    ),
+                );
+            };
+            agent.set_follow_up_mode(parsed);
+            ok_line("set_follow_up_mode", id, serde_json::Value::Null)
         }
         Op::SwitchSession { session_path } => {
             // pi: `success(id, "switch_session", result)`.
@@ -1799,18 +1854,28 @@ mod tests {
         // The literal below is the pin: comparing against `agent.model_id()` here would
         // be tautological (the payload is built from that same getter).
         assert_eq!(ok["model"], "m92-test-model");
-        assert_eq!(ok["thinking_level"], "medium");
-        assert_eq!(ok["is_streaming"], false);
+        // camelCase since D30 (pi's `RpcSessionState`); the key-set test below pins the
+        // whole vocabulary, so these spellings cannot drift back one at a time.
+        assert_eq!(ok["thinkingLevel"], "medium");
+        assert_eq!(ok["isStreaming"], false);
         assert_eq!(
-            ok["message_count"].as_u64().unwrap() as usize,
+            ok["messageCount"].as_u64().unwrap() as usize,
             agent.history().len()
         );
-        assert_eq!(ok["pending_message_count"], 1);
-        assert_eq!(ok["session_file"], serde_json::Value::Null);
+        assert_eq!(ok["pendingMessageCount"], 1);
+        assert_eq!(ok["sessionFile"], serde_json::Value::Null);
+        assert_eq!(ok["sessionId"], serde_json::Value::Null);
+        assert_eq!(ok["sessionName"], serde_json::Value::Null);
         assert_eq!(
-            ok["estimated_context_tokens"].as_u64().unwrap() as usize,
+            ok["estimatedContextTokens"].as_u64().unwrap() as usize,
             agent.estimated_context_tokens()
         );
+        // The queue modes are pi's fields, defaulted by `LoopLimits`. Asserted because a
+        // mode a client cannot read back is half a feature, and because this is the
+        // surface that reported `"OneAtATime"` before the two serialization paths in
+        // `QueueMode` were made to agree.
+        assert_eq!(ok["steeringMode"], "one-at-a-time", "{ok}");
+        assert_eq!(ok["followUpMode"], "one-at-a-time", "{ok}");
         assert_eq!(v["data"], v["ok"], "both keys carry the shared payload");
     }
 
@@ -1832,7 +1897,7 @@ mod tests {
             )
             .await,
         );
-        assert_eq!(v["ok"]["thinking_level"], "high");
+        assert_eq!(v["ok"]["thinkingLevel"], "high");
         assert_eq!(
             agent.thinking_level(),
             epsilon_contracts::ThinkingLevel::High,
@@ -1845,7 +1910,7 @@ mod tests {
         );
 
         let v = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
-        assert_eq!(v["ok"]["thinking_level"], "high");
+        assert_eq!(v["ok"]["thinkingLevel"], "high");
     }
 
     /// Review B1: pi's spelling `xhigh` is accepted on input (serde alias) while the
@@ -1874,7 +1939,7 @@ mod tests {
             epsilon_contracts::ThinkingLevel::XHigh
         );
         assert_eq!(
-            v["ok"]["thinking_level"], "x_high",
+            v["ok"]["thinkingLevel"], "x_high",
             "outbound spelling stays the canonical persistence id, not pi's alias"
         );
 
@@ -1993,7 +2058,7 @@ mod tests {
             parse(&dispatch_line(r#"{"op":"cycle_thinking_level"}"#, &agent, &approvals).await);
         assert_eq!(reply["success"], true, "{reply}");
         assert_eq!(
-            reply["data"]["thinking_level"],
+            reply["data"]["thinkingLevel"],
             serde_json::json!(start.next()),
             "the reply names the level now in effect"
         );
@@ -2014,7 +2079,7 @@ mod tests {
         let reply =
             parse(&dispatch_line(r#"{"op":"cycle_thinking_level"}"#, &agent, &approvals).await);
         assert_eq!(
-            reply["data"]["thinking_level"], "off",
+            reply["data"]["thinkingLevel"], "off",
             "max wraps to off: {reply}"
         );
     }
@@ -2217,7 +2282,7 @@ mod tests {
         );
         assert_eq!(reply["success"], true, "{reply}");
         assert_eq!(reply["id"], "req_1", "{reply}");
-        assert_eq!(reply["data"]["model_id"], "faux-1", "{reply}");
+        assert_eq!(reply["data"]["modelId"], "faux-1", "{reply}");
         // THE ASSERTION THE CONTROL WAS CAUGHT BY: core's own state changed.
         assert_eq!(
             agent.model_id(),
@@ -2284,8 +2349,97 @@ mod tests {
         assert_eq!(provider, "faux", "the provider must not change: {reply}");
         assert_eq!(
             agent.model_id(),
-            reply["data"]["model_id"].as_str().unwrap_or(""),
+            reply["data"]["modelId"].as_str().unwrap_or(""),
             "core holds the cycled model: {reply}"
+        );
+    }
+
+    /// D32: a pi client must be able to send the field names pi documents.
+    ///
+    /// `set_model` carried `model_id` with no alias while its own doc comment claimed it
+    /// accepted pi's `modelId` (`rpc-types.ts:33`). A client sending the documented frame
+    /// was refused with *"set_model needs a model"* — an error that blames the model
+    /// rather than the key, so the user goes looking in the wrong place.
+    ///
+    /// Both spellings must work, and the assertion is on the **wire**: the frame is
+    /// dispatched exactly as pi's TypeScript declares it. A test that built the frame
+    /// from the Rust field name is what let this ship — it agreed with the code by
+    /// construction. This is D26 (`follow_up`) recurring on a field.
+    #[tokio::test]
+    async fn set_model_accepts_pis_documented_field_name() {
+        for frame in [
+            // pi's spelling, verbatim from `rpc-types.ts:33`.
+            r#"{"op":"set_model","modelId":"faux-1"}"#,
+            // The Rust-derived spelling, kept working for existing clients.
+            r#"{"op":"set_model","model_id":"faux-1"}"#,
+        ] {
+            let agent = agent_with(vec![], 0);
+            let reply = parse(&dispatch_line(frame, &agent, &approvals()).await);
+            assert_eq!(
+                reply["success"], true,
+                "a client sending {frame} must not be told the model is missing: {reply}"
+            );
+        }
+    }
+
+    /// D31: ops that answer the same question must answer it with the same key.
+    ///
+    /// `set_model` replied `modelId` and `cycle_model` replied `model_id`. Both frames
+    /// were well-formed, both tests passed, and a client that read `modelId` after
+    /// setting a model got a value — then cycled, and read `undefined`. No error, no
+    /// warning, just a field that stopped existing.
+    ///
+    /// Asserted *between the two ops* rather than against a literal: the whole point is
+    /// that one of them was wrong and neither test could tell which. Pinning a
+    /// constant here would have passed against the broken build.
+    #[tokio::test]
+    async fn cycle_model_and_set_model_agree_on_the_key_they_answer_with() {
+        let agent = agent_with(vec![], 0);
+        agent.set_model_id("faux-1");
+        let approvals = approvals();
+
+        // pi's own frame, verbatim (`rpc-types.ts:33`) — which is precisely the frame
+        // that was being refused before D32. A first attempt guessed a `model` key that
+        // this handler has never accepted, so the test was measuring its own malformed
+        // frame and reporting the refusal as a shape disagreement. Assert the frame is
+        // accepted before comparing anything, or the comparison is theatre.
+        let set_reply = parse(
+            &dispatch_line(
+                r#"{"op":"set_model","modelId":"faux-1"}"#,
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(
+            set_reply["success"], true,
+            "the set_model frame must be well-formed for this comparison to mean \
+             anything: {set_reply}"
+        );
+        let cycle_reply =
+            parse(&dispatch_line(r#"{"op":"cycle_model"}"#, &agent, &approvals).await);
+
+        let set_key = set_reply["data"]
+            .as_object()
+            .unwrap_or_else(|| panic!("set_model returns an object; got {set_reply}"))
+            .iter()
+            .find(|(k, _)| k.as_str().to_lowercase().replace('_', "") == "modelid")
+            .map(|(k, _)| k.clone())
+            .unwrap_or_else(|| panic!("set_model answered with no model id at all: {set_reply}"));
+        let cycle_key = cycle_reply["data"]
+            .as_object()
+            .unwrap_or_else(|| panic!("cycle_model returns an object; got {cycle_reply}"))
+            .iter()
+            .find(|(k, _)| k.as_str().to_lowercase().replace('_', "") == "modelid")
+            .map(|(k, _)| k.clone())
+            .unwrap_or_else(|| {
+                panic!("cycle_model answered with no model id at all: {cycle_reply}")
+            });
+
+        assert_eq!(
+            set_key, cycle_key,
+            "one question, one spelling — a client reading the key set_model used \
+             must not find it missing after cycling: {set_reply} / {cycle_reply}"
         );
     }
 
@@ -3907,6 +4061,205 @@ mod tests {
         assert_ne!(
             a, b,
             "two different sessions must not share a name: {a} vs {b}"
+        );
+    }
+
+    // ---- M194: the queue-mode ops, and D30 (get_state's key vocabulary) ----
+
+    /// **`set_steering_mode` and `set_follow_up_mode` take effect and are readable back.**
+    ///
+    /// pi's replies carry no payload, so the only way a client can confirm the setting
+    /// is `get_state` — which is why the assertion goes through the state object rather
+    /// than the reply. A test that only checked "the op succeeded" would pass a handler
+    /// that parsed the mode and threw it away, which is the shape of the
+    /// `set_model` defect M186 found.
+    #[tokio::test]
+    async fn the_queue_mode_ops_take_effect_and_read_back_through_get_state() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("hi")], 0);
+        let approvals = approvals();
+
+        // The precondition, as an assertion: epsilon's default is one-at-a-time for both
+        // queues (`LoopLimits`), so "changed it" is only meaningful from a known start.
+        let start = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+        assert_eq!(start["data"]["steeringMode"], "one-at-a-time", "{start}");
+        assert_eq!(start["data"]["followUpMode"], "one-at-a-time", "{start}");
+
+        for (op, field) in [
+            ("set_steering_mode", "steeringMode"),
+            ("set_follow_up_mode", "followUpMode"),
+        ] {
+            let set = parse(
+                &dispatch_line(
+                    &format!(r#"{{"op":"{op}","mode":"all"}}"#),
+                    &agent,
+                    &approvals,
+                )
+                .await,
+            );
+            assert_eq!(set["success"], true, "{op}: {set}");
+            // pi's reply has no payload. Asserted so a later "helpful" echo is a
+            // deliberate, visible change rather than a silent drift from the reference.
+            assert_eq!(set["data"], serde_json::Value::Null, "{op}: {set}");
+
+            let state = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+            assert_eq!(
+                state["data"][field], "all",
+                "{op} did not take effect: {state}"
+            );
+
+            // And back the other way, so the test cannot pass on a one-way latch.
+            let back = parse(
+                &dispatch_line(
+                    &format!(r#"{{"op":"{op}","mode":"one-at-a-time"}}"#),
+                    &agent,
+                    &approvals,
+                )
+                .await,
+            );
+            assert_eq!(back["success"], true, "{op}: {back}");
+            let state = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+            assert_eq!(state["data"][field], "one-at-a-time", "{op}: {state}");
+        }
+    }
+
+    /// **The two modes are independent.** One op must not move the other.
+    ///
+    /// A handler that wired both setters to the same field passes every test above,
+    /// because each test only ever checks the field it set. This is the M189 two-model
+    /// billing lesson: assert the thing that must NOT change.
+    #[tokio::test]
+    async fn setting_one_queue_mode_does_not_move_the_other() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("hi")], 0);
+        let approvals = approvals();
+        let set = parse(
+            &dispatch_line(
+                r#"{"op":"set_steering_mode","mode":"all"}"#,
+                &agent,
+                &approvals,
+            )
+            .await,
+        );
+        assert_eq!(set["success"], true, "{set}");
+        let state = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+        assert_eq!(state["data"]["steeringMode"], "all", "{state}");
+        assert_eq!(
+            state["data"]["followUpMode"], "one-at-a-time",
+            "set_steering_mode must not touch the follow-up queue: {state}"
+        );
+    }
+
+    /// **A mode pi does not define is refused, by name.**
+    ///
+    /// The tempting implementation defaults an unrecognised spelling to `All`, which
+    /// reports success for a setting the client never asked for. The failure would
+    /// surface as a queue draining everything at once, with nothing in the reply to
+    /// explain it.
+    #[tokio::test]
+    async fn an_undefined_queue_mode_is_refused_and_changes_nothing() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("hi")], 0);
+        let approvals = approvals();
+        for bad in ["oneAtATime", "All", "one_at_a_time", ""] {
+            let reply = parse(
+                &dispatch_line(
+                    &serde_json::json!({"op": "set_steering_mode", "mode": bad}).to_string(),
+                    &agent,
+                    &approvals,
+                )
+                .await,
+            );
+            assert_eq!(reply["success"], false, "{bad:?} must be refused: {reply}");
+            assert!(
+                reply["error"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("queue mode"),
+                "the error must name the real cause: {bad:?} -> {reply}"
+            );
+            // The decisive part: a refusal must not have moved the setting.
+            let state = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+            assert_eq!(
+                state["data"]["steeringMode"], "one-at-a-time",
+                "a refused mode must leave the setting alone: {bad:?} -> {state}"
+            );
+        }
+    }
+
+    /// **D30: `get_state` speaks pi's key vocabulary.**
+    ///
+    /// It used to emit `thinking_level`, `is_streaming`, `message_count`,
+    /// `pending_message_count`, `session_file`, `estimated_context_tokens` — so a pi
+    /// client got `undefined` for every multi-word field on the most-polled object in the
+    /// protocol. The rationale in the file was *"the repo's wire vocabulary is
+    /// snake_case"*, which is circular, and which stopped being true at M190 when
+    /// `get_entries` began emitting `parentId` and `leafId`.
+    ///
+    /// The assertion pins pi's exact spellings, and then asserts the old ones are
+    /// **absent** — because a payload carrying both vocabularies would satisfy a
+    /// "contains these keys" check while still leaving a client to guess which is
+    /// authoritative.
+    #[tokio::test]
+    async fn get_state_uses_pis_camel_case_keys_and_no_snake_case() {
+        let agent = agent_with(vec![epsilon_llm::FauxStep::say("hi")], 0);
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+        assert_eq!(reply["success"], true, "{reply}");
+        let state = reply["data"]
+            .as_object()
+            .unwrap_or_else(|| panic!("data must be an object: {reply}"));
+
+        for key in [
+            "model",
+            "thinkingLevel",
+            "isStreaming",
+            "steeringMode",
+            "followUpMode",
+            "messageCount",
+            "pendingMessageCount",
+            "sessionFile",
+            "sessionId",
+            "sessionName",
+            "estimatedContextTokens",
+        ] {
+            assert!(
+                state.contains_key(key),
+                "get_state must carry `{key}`: {reply}"
+            );
+        }
+        // And the old vocabulary must be GONE. The defect was these keys being present,
+        // so their absence is what pins the fix.
+        for gone in [
+            "thinking_level",
+            "is_streaming",
+            "message_count",
+            "pending_message_count",
+            "session_file",
+            "estimated_context_tokens",
+        ] {
+            assert!(
+                !state.contains_key(gone),
+                "`{gone}` is epsilon's internal spelling and must not reach the wire: {reply}"
+            );
+        }
+    }
+
+    /// **The two wire surfaces must not be able to disagree (D29's mechanism).**
+    ///
+    /// `rpc_mode.rs` and `epsilon-server` each grew their own `SessionState { … }`
+    /// literal, identical until a field was added and only one of them learned it. This
+    /// test cannot see that directly — so it pins the property that makes it impossible:
+    /// one constructor, `Agent::session_state`, and both frontends delegate to it. If a
+    /// third literal appears anywhere, this test's premise is what a reader checks first.
+    #[tokio::test]
+    async fn get_state_is_built_by_the_shared_constructor() {
+        let (agent, _dir) = agent_with_store(vec![epsilon_llm::FauxStep::say("hi")]);
+        let approvals = approvals();
+        let reply = parse(&dispatch_line(r#"{"op":"get_state"}"#, &agent, &approvals).await);
+        // The value the RPC surface sent must equal the constructor's own output, field
+        // for field — not merely "looks the same", but the same struct.
+        assert_eq!(
+            reply["data"],
+            serde_json::to_value(agent.session_state()).expect("SessionState serializes"),
+            "the RPC surface must serve `Agent::session_state()` verbatim, not a second literal"
         );
     }
 }

@@ -3371,6 +3371,9 @@ fn billed(input: u64, output: u64) -> epsilon_contracts::message::Usage {
         cache_read: 0,
         cache_write: 0,
         total_tokens: input + output,
+        // A recorded session entry came from a provider that answered the cache
+        // question; replaying it must not read as "never measurable" (K1).
+        cache_reported: true,
     }
 }
 
