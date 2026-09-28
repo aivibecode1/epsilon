@@ -2697,3 +2697,66 @@ async fn a_typed_template_reaches_the_agent_as_its_expanded_body() {
         "the raw slash text must not also be sent: {joined:?}"
     );
 }
+
+/// `/templates` lists names WITH descriptions, because a name alone does not help a user
+/// who half-remembers writing a template and cannot recall what it did.
+#[tokio::test]
+async fn templates_command_lists_names_descriptions_and_hints() {
+    let (mut app, agent, _receivers) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    let prompts = dir.path().join(".epsilon").join("prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::write(
+        prompts.join("commit.md"),
+        "---\ndescription: Write a commit message\nargument-hint: <path>\n---\nCommit $1.\n",
+    )
+    .unwrap();
+    app.discover_prompt_templates();
+
+    let quit = type_and_enter(&mut app, &agent, "/templates");
+    assert!(!quit);
+
+    let shown = app
+        .ui
+        .lines()
+        .iter()
+        .map(|l| l.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        shown.contains("/commit"),
+        "the name must be listed: {shown:?}"
+    );
+    assert!(
+        shown.contains("Write a commit message"),
+        "the description must be listed, not just the name: {shown:?}"
+    );
+    assert!(shown.contains("<path>"), "the argument hint: {shown:?}");
+    // Crucially, the command LISTED it rather than EXPANDING it -- a template file called
+    // `templates` must not shadow the command that lists templates.
+    assert!(!shown.contains("Commit <path>"), "not the body: {shown:?}");
+}
+
+/// With nothing installed, `/templates` says where to put files rather than nothing.
+#[tokio::test]
+async fn templates_command_explains_where_to_put_files_when_empty() {
+    let (mut app, agent, _receivers) = test_app();
+    let dir = tempfile::tempdir().unwrap();
+    app.workspace_root = dir.path().to_path_buf();
+    app.discover_prompt_templates();
+
+    let quit = type_and_enter(&mut app, &agent, "/templates");
+    assert!(!quit);
+    let shown = app
+        .ui
+        .lines()
+        .iter()
+        .map(|l| l.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        shown.contains(".epsilon/prompts"),
+        "an empty list should say where to put files: {shown:?}"
+    );
+}

@@ -481,6 +481,8 @@ pub enum Command {
     Clear,
     /// List discovered skills.
     Skills,
+    /// List installed prompt templates with their descriptions and argument hints.
+    Templates,
     /// Search the session log (`/search <query>`); empty tail opens with guidance.
     Search(String),
     /// Store a provider API key (`/login <provider> [key]`; empty key prompts).
@@ -575,6 +577,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     "scoped_models",
     "clear",
     "skills",
+    "templates",
     "search",
     "logout",
     "exit",
@@ -736,6 +739,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "help" | "?" => Some(Command::Help),
         "clear" => Some(Command::Clear),
         "skills" => Some(Command::Skills),
+        "templates" => Some(Command::Templates),
         "search" => Some(Command::Search(tail.to_string())),
         "login" | "auth" | "connect" => {
             // `/login <provider> [key]` — key may be pasted; when omitted the

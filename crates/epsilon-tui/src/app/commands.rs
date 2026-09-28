@@ -139,6 +139,7 @@ impl App {
             // Show the user something.
             crate::picker::Command::Help
             | crate::picker::Command::Skills
+            | crate::picker::Command::Templates
             | crate::picker::Command::Tasks
             | crate::picker::Command::Timeline
             | crate::picker::Command::Hotkeys
@@ -852,6 +853,29 @@ impl App {
                     );
                 } else {
                     self.ui.push_notice(format!("skills: {}", names.join(", ")));
+                }
+            }
+            crate::picker::Command::Templates => {
+                // Descriptions, not just names. A template's whole purpose is that you can
+                // forget its body but not want to forget what it does, and a bare list of
+                // names is the thing `/skills` would print. A user who cannot remember
+                // whether they wrote `/commit` or `/commit-msg` has no way to find out
+                // otherwise.
+                if self.prompt_templates.is_empty() {
+                    self.ui.push_notice(
+                        "no prompt templates — drop .md files into .epsilon/prompts/ or .agents/prompts/",
+                    );
+                } else {
+                    let mut out: Vec<String> = Vec::new();
+                    for t in &self.prompt_templates {
+                        let mut line = format!("/{} — {}", t.name, t.description);
+                        if let Some(hint) = &t.argument_hint {
+                            line.push_str(&format!(" (takes {hint})"));
+                        }
+                        out.push(line);
+                    }
+                    self.ui
+                        .push_notice(format!("prompt templates: {}", out.join(" · ")));
                 }
             }
             crate::picker::Command::Tasks => {

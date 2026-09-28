@@ -20,6 +20,16 @@ its own `review` without you editing your personal config.
 
 `/reload` picks up changes you have made since startup.
 
+## Finding one you already wrote
+
+`/templates` lists what is installed, with each template's description and argument hint:
+
+```
+prompt templates: /commit — Write a commit message (takes <path>) · /review — Review a file for correctness
+```
+
+With nothing installed it says where to put files rather than printing an empty list.
+
 ## Writing one
 
 Any `.md` file in those directories becomes a template. The filename is the name:
