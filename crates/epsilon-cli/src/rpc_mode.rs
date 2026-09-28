@@ -3265,7 +3265,7 @@ mod tests {
     /// the new file — is what actually proves the rebind.
     #[tokio::test]
     async fn fork_writes_a_new_file_and_rebinds_the_agent_to_it() {
-        let (agent, dir) = agent_with_two_runs().await;
+        let (agent, _dir) = agent_with_two_runs().await;
         let approvals = approvals();
 
         let before = {
