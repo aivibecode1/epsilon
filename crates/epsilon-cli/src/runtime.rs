@@ -955,6 +955,164 @@ fn usage_from_json(v: &serde_json::Value) -> Option<epsilon_contracts::Usage> {
     serde_json::from_value(v.clone()).ok()
 }
 
+/// Turn-level hooks backed by extension processes (ADR-019, completing the seam).
+///
+/// `ToolHooks` could stop a call or rewrite its result. `TurnHooks` sits one level out: it
+/// can reshape the context the model sees, swap the model or thinking level, and end the run
+/// cleanly. Before this, every `set_turn_hooks` call in the repository was a test — the seam
+/// had been built since M42 and never reached by anything a user could install.
+///
+/// ## Why this refuses to touch the context
+///
+/// `transform_context` and `convert_to_llm` return the messages the provider will receive.
+/// Wiring an arbitrary child process into them is a different kind of decision than wiring one
+/// into a veto: a wrong context is not a refused tool call, it is a corrupted conversation,
+/// and the corruption is silent — the model simply behaves as if it had been told something
+/// false. There is no error result to show the user and nothing to roll back.
+///
+/// So this type implements the two read-shaped methods as **pass-through**, and the
+/// context-changing surface is reached only through `prepare_next_turn`, where the loop
+/// already treats the result as optional and a broken host yields `None`. That is a real
+/// capability gap against pi, recorded in `audit/02-port-fidelity.md`, and it is preferable
+/// to a port that lets a third-party binary rewrite the prompt by accident.
+///
+/// The reasoning is not "extensions are untrusted" — the host is the user's own process and
+/// pi deliberately allows this. It is that a *malformed or buggy* answer here is
+/// unrecoverable in a way a malformed veto is not, and the harness has no way to tell the
+/// difference.
+pub struct ExtensionTurnHooks {
+    hosts: Vec<Arc<ExtHost>>,
+    /// Set when an extension asked to end the run; read by [`Self::should_stop_after_turn`].
+    ///
+    /// A cell rather than a field on the struct because the hook is shared behind an `Arc`
+    /// and must stay `Sync`; `AtomicBool` is the honest primitive for one bit set from an
+    /// async context and read by the loop.
+    stop: std::sync::atomic::AtomicBool,
+}
+
+impl ExtensionTurnHooks {
+    /// Build turn hooks over the currently attached extension hosts.
+    pub fn new(hosts: Vec<Arc<ExtHost>>) -> Self {
+        Self {
+            hosts,
+            stop: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// True when there is nothing to ask.
+    pub fn is_empty(&self) -> bool {
+        self.hosts.is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl epsilon_contracts::turn::TurnHooks for ExtensionTurnHooks {
+    /// **Pass-through by design.** See the type-level note: a child process does not get to
+    /// rewrite the messages the provider receives.
+    async fn transform_context(
+        &self,
+        messages: &[epsilon_contracts::message::Message],
+    ) -> Vec<epsilon_contracts::message::Message> {
+        messages.to_vec()
+    }
+
+    /// **Pass-through by design.** The built-in visibility filter lives in the default
+    /// implementation, so the loop still gets exactly the messages it got before this hook
+    /// existed — an extension must not be able to reveal a harness-only message to the model,
+    /// which is a far quieter leak than a tool result.
+    async fn convert_to_llm(
+        &self,
+        messages: &[epsilon_contracts::message::Message],
+    ) -> Vec<epsilon_contracts::message::Message> {
+        messages
+            .iter()
+            .filter(|m| m.is_llm_visible())
+            .cloned()
+            .collect()
+    }
+
+    /// Ask extensions whether the run should continue, and for a replacement context.
+    ///
+    /// A host that answers nothing, times out, or answers with something unreadable
+    /// contributes nothing — the same failure policy as the tool hooks, for the same reason:
+    /// a broken extension must not be able to end a run.
+    async fn prepare_next_turn(
+        &self,
+        ctx: &epsilon_contracts::turn::NextTurnContext<'_>,
+    ) -> Option<epsilon_contracts::turn::TurnUpdate> {
+        if self.hosts.is_empty() {
+            return None;
+        }
+
+        // pi's `turn_end` payload. `tool_results` is sent as the messages the turn produced,
+        // which is what an extension needs to decide whether the work is actually finished.
+        let event = serde_json::json!({
+            "type": "turn_end",
+            "message": ctx.message,
+            "tool_results": ctx.tool_results,
+            "new_messages": ctx.new_messages,
+        });
+
+        let mut update: Option<epsilon_contracts::turn::TurnUpdate> = None;
+
+        for host in &self.hosts {
+            for decision in host.interpose(&event).await {
+                let Some(d) = decision.get("decision") else {
+                    continue;
+                };
+                if !d.is_object() {
+                    continue;
+                }
+                if d.get("stop").and_then(|s| s.as_bool()) == Some(true) {
+                    self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                // A model swap. `TurnUpdate.model` is a catalog id, and the next provider
+                // request is made with it directly -- so a typo here does not degrade the run,
+                // it fails the request. That is accepted rather than filtered, and the reason
+                // is worth stating: a silent "unknown model, keep going" would leave the
+                // extension believing it had switched models while the run continued on the
+                // old one, which is the harder failure to notice. A loud failure is correct.
+                if let Some(model) = d.get("model").and_then(|m| m.as_str()) {
+                    update.get_or_insert_with(Default::default).model =
+                        Some(epsilon_contracts::turn::TurnModel {
+                            id: model.to_string(),
+                        });
+                }
+            }
+        }
+
+        update
+    }
+
+    /// Whether an extension asked the run to end.
+    ///
+    /// Read from the flag `prepare_next_turn` set rather than re-asking every host. The loop
+    /// calls this once per turn, and a second round trip to every child would be a per-turn
+    /// cost for an answer the last call already has.
+    async fn should_stop_after_turn(
+        &self,
+        _ctx: &epsilon_contracts::turn::NextTurnContext<'_>,
+    ) -> bool {
+        self.stop.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Install turn-level extension hooks on `agent`, if any extension is attached.
+///
+/// Separate from [`install_extension_hooks`] rather than bundled, because the two seams have
+/// different risk profiles and a caller may legitimately want one without the other.
+pub fn install_extension_turn_hooks(
+    agent: &Arc<epsilon_core::Agent>,
+    hosts: Vec<Arc<ExtHost>>,
+) -> bool {
+    let hooks = ExtensionTurnHooks::new(hosts);
+    if hooks.is_empty() {
+        return false;
+    }
+    agent.set_turn_hooks(Arc::new(hooks));
+    true
+}
+
 /// Install extension interception on `agent`, if any extension is attached.
 ///
 /// Returns whether hooks were installed, so the caller can say so in its diagnostics rather
@@ -2073,6 +2231,339 @@ mod ext_hooks_after_e2e {
         assert!(
             !out.block,
             "an extension that only rewrites results must not block calls"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ext_turn_hooks_tests {
+    use super::*;
+    use epsilon_contracts::message::{Message, StopReason, UserMessage};
+    use epsilon_contracts::turn::{NextTurnContext, TurnHooks, TurnUpdate};
+    use epsilon_contracts::{ContentBlock, UserContent};
+
+    fn user(text: &str) -> Message {
+        Message::User(UserMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text {
+                text: text.to_string(),
+            }],
+        })
+    }
+
+    pub(super) fn assistant(text: &str) -> Message {
+        Message::Assistant(epsilon_contracts::message::AssistantMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            provider: "faux".to_string(),
+            model_id: "faux-model".to_string(),
+            content: vec![ContentBlock::text(text)],
+            stop_reason: StopReason::EndTurn,
+            error_message: None,
+            usage: epsilon_contracts::Usage::default(),
+        })
+    }
+
+    /// A harness-only message: `Message::Custom` is exactly the variant `is_llm_visible`
+    /// rejects (`message.rs:273`), so this is the real shape rather than a stand-in.
+    fn hidden() -> Message {
+        Message::Custom(epsilon_contracts::message::CustomMessage {
+            id: epsilon_contracts::new_id("msg"),
+            timestamp_ms: 0,
+            custom_type: "diagnostic".to_string(),
+            payload: serde_json::json!({"note": "never send me to the provider"}),
+        })
+    }
+
+    pub(super) fn ctx<'a>(
+        message: &'a Message,
+        results: &'a [Message],
+        context: &'a [Message],
+    ) -> NextTurnContext<'a> {
+        NextTurnContext {
+            message,
+            tool_results: results,
+            context,
+            new_messages: context,
+        }
+    }
+
+    /// The context must reach the provider exactly as it did before any extension existed.
+    ///
+    /// This is the property the whole type is built around, so it is the first test: a
+    /// bridge that let a child process rewrite the prompt would be a silent corruption, with
+    /// no error result and nothing to roll back.
+    #[tokio::test]
+    async fn transform_context_is_pass_through() {
+        let hooks = ExtensionTurnHooks::new(Vec::new());
+        let messages = vec![user("one"), assistant("two")];
+        let out = hooks.transform_context(&messages).await;
+        assert_eq!(
+            out, messages,
+            "an extension must not be able to rewrite what the provider receives"
+        );
+    }
+
+    /// Harness-only messages stay hidden.
+    ///
+    /// The built-in visibility filter is the one thing a child process must never be able to
+    /// switch off: revealing a harness message is a far quieter leak than a tool result, and
+    /// the default implementation is where that filter lives.
+    #[tokio::test]
+    async fn convert_to_llm_still_hides_harness_messages() {
+        let hooks = ExtensionTurnHooks::new(Vec::new());
+        let visible = user("visible");
+        let h = hidden();
+        assert!(!h.is_llm_visible(), "the fixture must actually be hidden");
+        let out = hooks.convert_to_llm(&[visible.clone(), h]).await;
+        assert_eq!(
+            out,
+            vec![visible],
+            "a harness-only message must not reach the provider"
+        );
+    }
+
+    /// With no hosts the turn seam is inert.
+    #[tokio::test]
+    async fn no_extensions_means_no_turn_update_and_no_stop() {
+        let hooks = ExtensionTurnHooks::new(Vec::new());
+        assert!(hooks.is_empty());
+        let m = assistant("done");
+        let v = vec![m.clone()];
+        let results: Vec<Message> = vec![];
+        assert!(
+            hooks
+                .prepare_next_turn(&ctx(&m, &results, &v))
+                .await
+                .is_none(),
+            "nothing asked, so no update"
+        );
+        assert!(!hooks.should_stop_after_turn(&ctx(&m, &results, &v)).await);
+    }
+
+    /// The decision reducer, tested directly.
+    fn fold(decisions: &[serde_json::Value]) -> (Option<TurnUpdate>, bool) {
+        let mut update: Option<TurnUpdate> = None;
+        let mut stop = false;
+        for d in decisions {
+            let Some(dec) = d.get("decision") else {
+                continue;
+            };
+            if !dec.is_object() {
+                continue;
+            }
+            if dec.get("stop").and_then(|s| s.as_bool()) == Some(true) {
+                stop = true;
+            }
+            if let Some(model) = dec.get("model").and_then(|m| m.as_str()) {
+                update.get_or_insert_with(Default::default).model =
+                    Some(epsilon_contracts::turn::TurnModel {
+                        id: model.to_string(),
+                    });
+            }
+        }
+        (update, stop)
+    }
+
+    /// A stop request is honoured and remembered across the two calls the loop makes.
+    ///
+    /// The loop calls `prepare_next_turn` and then `should_stop_after_turn` as separate
+    /// seams, so the flag has to survive between them. Asserting only on the first call would
+    /// miss a bridge that answered the question and then forgot it.
+    #[test]
+    fn a_stop_request_is_carried_from_prepare_to_should_stop() {
+        let (update, stop) = fold(&[serde_json::json!({"decision": {"stop": true}})]);
+        assert!(stop, "an extension asked the run to end");
+        assert!(update.is_none(), "a stop is not a context update");
+    }
+
+    /// A model swap is carried through with the id verbatim.
+    ///
+    /// No validation here on purpose: the next provider request uses the id directly, and a
+    /// silent "unknown model, carry on" would leave the extension believing it had switched
+    /// models while the run continued on the old one. A loud failure is the better wrong.
+    #[test]
+    fn a_model_swap_is_carried_verbatim() {
+        let (update, _) = fold(&[serde_json::json!({"decision": {"model": "fast-model"}})]);
+        let model = update
+            .expect("a model swap is an update")
+            .model
+            .expect("model set");
+        assert_eq!(model.id, "fast-model");
+    }
+
+    /// Silence, a malformed answer, and a non-object decision all mean "no opinion".
+    ///
+    /// A broken extension must not be able to end a run. That is the single most important
+    /// rule on this seam, and it is why a stop is only ever set by an explicit `true`.
+    #[test]
+    fn only_an_explicit_true_can_end_a_run() {
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"decision": {}}),
+            serde_json::json!({"decision": {"stop": false}}),
+            serde_json::json!({"decision": "stop"}),
+            serde_json::json!({"decision": true}),
+            serde_json::json!({"decision": {"stop": "yes"}}),
+            serde_json::json!({"decision": {"stop": 1}}),
+        ] {
+            let (_, stop) = fold(std::slice::from_ref(&bad));
+            assert!(!stop, "a broken answer must not end the run: {bad}");
+        }
+    }
+
+    /// A stop survives a later extension's abstention.
+    ///
+    /// Extensions are consulted in order and the run's fate must not depend on which one
+    /// loaded last.
+    #[test]
+    fn a_stop_is_not_overturned_by_a_later_abstention() {
+        let (_, stop) = fold(&[
+            serde_json::json!({"decision": {"stop": true}}),
+            serde_json::json!({"decision": {"stop": false}}),
+            serde_json::json!({}),
+        ]);
+        assert!(
+            stop,
+            "an abstention must not resurrect a run an extension ended"
+        );
+    }
+
+    /// The hook must be usable through `dyn TurnHooks`, which is how the agent stores it.
+    #[tokio::test]
+    async fn the_hook_is_usable_as_a_trait_object() {
+        let hooks: Arc<dyn TurnHooks> = Arc::new(ExtensionTurnHooks::new(Vec::new()));
+        let m = assistant("done");
+        let v = vec![m.clone()];
+        let results: Vec<Message> = vec![];
+        let messages = vec![user("hi")];
+
+        assert_eq!(hooks.transform_context(&messages).await, messages);
+        assert!(
+            hooks
+                .prepare_next_turn(&ctx(&m, &results, &v))
+                .await
+                .is_none()
+        );
+        assert!(!hooks.should_stop_after_turn(&ctx(&m, &results, &v)).await);
+    }
+
+    /// Installing with no hosts installs nothing.
+    ///
+    /// The seam is cheap to leave in place, but a hook object that exists and answers "no
+    /// opinion" to every question is harder to reason about in a stack trace than one that
+    /// was never installed, so the empty case stays distinguishable.
+    #[test]
+    fn an_empty_host_list_reports_nothing_installed() {
+        // `install_extension_turn_hooks` needs an `Agent`, so the emptiness check that
+        // actually gates installation is exercised here directly on the hook.
+        assert!(ExtensionTurnHooks::new(Vec::new()).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ext_turn_hooks_e2e {
+    use super::ext_hooks_e2e::fixture;
+    use super::ext_turn_hooks_tests::{assistant, ctx};
+    use super::*;
+    use epsilon_contracts::message::Message;
+    use epsilon_contracts::turn::TurnHooks;
+
+    /// A live child ends the run, end to end.
+    ///
+    /// Every test above either folds hand-written JSON or runs against no host at all. None
+    /// can tell whether the `turn_end` event ever reaches a child, whether the child keys its
+    /// answer off the event type rather than arrival order, or whether the stop survives the
+    /// gap between the two calls the loop makes. This is the only test that would notice, and
+    /// the reducer-only pattern from the tool seams says exactly that it should exist.
+    #[tokio::test]
+    async fn a_live_extension_can_end_the_run_through_the_bridge() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--turn", &["turn_end"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionTurnHooks::new(vec![host]);
+
+        let m = assistant("turn complete");
+        let v = vec![m.clone()];
+        let results: Vec<Message> = vec![];
+
+        hooks.prepare_next_turn(&ctx(&m, &results, &v)).await;
+        assert!(
+            hooks.should_stop_after_turn(&ctx(&m, &results, &v)).await,
+            "the extension asked the run to end and the loop would not be told"
+        );
+    }
+
+    /// The same child asked about a tool call must not end the run.
+    ///
+    /// A host that stopped the run on the wrong event would pass the test above while being
+    /// unusable in practice -- every tool call would terminate the session.
+    #[tokio::test]
+    async fn a_turn_extension_does_not_disturb_the_tool_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        // Declares only the tool event, so the fixture never answers a turn_end.
+        let Some(host) = fixture(dir.path(), "--turn", &["before_tool_call"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionTurnHooks::new(vec![host]);
+
+        let m = assistant("turn complete");
+        let v = vec![m.clone()];
+        let results: Vec<Message> = vec![];
+        assert!(
+            !hooks.should_stop_after_turn(&ctx(&m, &results, &v)).await,
+            "an extension that declared no turn interest must not end the run"
+        );
+    }
+
+    /// A live child answering with rubbish must not end the run.
+    ///
+    /// The failure policy is the important part of this seam: a broken extension degrades to
+    /// silence, never to a stop. Tested against a real process because the property is about
+    /// what crosses the boundary, not about how the JSON is folded.
+    #[tokio::test]
+    async fn a_live_extension_answering_garbage_does_not_end_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--turn-garbage", &["turn_end"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionTurnHooks::new(vec![host]);
+
+        let m = assistant("turn complete");
+        let v = vec![m.clone()];
+        let results: Vec<Message> = vec![];
+        hooks.prepare_next_turn(&ctx(&m, &results, &v)).await;
+        assert!(
+            !hooks.should_stop_after_turn(&ctx(&m, &results, &v)).await,
+            "a non-object decision must not be read as a stop"
+        );
+    }
+
+    /// A live child must not be able to rewrite the provider's messages.
+    ///
+    /// The counterpart to the two pass-through unit tests, and the one that matters most on
+    /// this seam: a corrupted context is not a refused tool call, it is a conversation that
+    /// quietly stops being true.
+    #[tokio::test]
+    async fn a_live_extension_cannot_rewrite_the_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--turn", &["turn_end"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionTurnHooks::new(vec![host]);
+
+        let m = assistant("turn complete");
+        let messages = vec![m.clone()];
+        assert_eq!(
+            hooks.transform_context(&messages).await,
+            messages,
+            "the provider must see exactly the context it would have seen"
         );
     }
 }

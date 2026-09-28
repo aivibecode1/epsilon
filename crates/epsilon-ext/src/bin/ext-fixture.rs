@@ -149,6 +149,46 @@ fn main() {
                         out.flush().unwrap();
                     }
                 }
+                // pi's turn-level surface: end the run cleanly, or swap the model. Keyed on
+                // the event type for the same reason `--rewrite` is -- both events share one
+                // channel, and a fixture that answered both alike would prove nothing.
+                "--turn" => {
+                    if v["event"].get("type").and_then(|t| t.as_str()) == Some("turn_end") {
+                        writeln!(
+                            out,
+                            r#"{{"type":"interpose_result","id":{id},"decision":{{"stop":true}}}}"#
+                        )
+                        .unwrap();
+                        out.flush().unwrap();
+                    } else {
+                        writeln!(
+                            out,
+                            r#"{{"type":"interpose_result","id":{id},"decision":{{}}}}"#
+                        )
+                        .unwrap();
+                        out.flush().unwrap();
+                    }
+                }
+                // A turn handler that answers with rubbish, to prove the failure policy
+                // ("a broken extension must not end a run") against a real process rather
+                // than against hand-written JSON.
+                "--turn-garbage" => {
+                    if v["event"].get("type").and_then(|t| t.as_str()) == Some("turn_end") {
+                        writeln!(
+                            out,
+                            r#"{{"type":"interpose_result","id":{id},"decision":"stop the run"}}"#
+                        )
+                        .unwrap();
+                        out.flush().unwrap();
+                    } else {
+                        writeln!(
+                            out,
+                            r#"{{"type":"interpose_result","id":{id},"decision":{{}}}}"#
+                        )
+                        .unwrap();
+                        out.flush().unwrap();
+                    }
+                }
                 "--pace-veto" => {
                     writeln!(out, r#"{{"type":"log","text":"still here"}}"#).unwrap();
                     out.flush().unwrap();

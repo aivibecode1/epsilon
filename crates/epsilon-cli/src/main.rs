@@ -1805,6 +1805,10 @@ async fn build_runtime(
             ext_hosts.len()
         );
     }
+    // Turn-level hooks: swap the model between turns and end a run cleanly. Installed
+    // separately from the tool hooks because the two have different risk profiles, and a
+    // caller may want one without the other.
+    epsilon_cli::runtime::install_extension_turn_hooks(&agent, ext_hosts.clone());
     let mut store = epsilon_session::SessionStore::open_in_with_progress(
         workspace.join(session_file),
         workspace,
