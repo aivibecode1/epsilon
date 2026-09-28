@@ -817,6 +817,13 @@ impl epsilon_contracts::tool::ToolHooks for ExtensionToolHooks {
                         .and_then(|r| r.as_str())
                         .unwrap_or("blocked by an extension");
                     reasons.push(why.to_string());
+                    // pi's `terminate` is a *hint* honoured only when every blocked call in
+                    // a batch asks for it (`ToolCallEventResult.terminate`). Carried on the
+                    // same struct so the loop can apply that rule rather than this bridge
+                    // guessing at it.
+                    if d.get("terminate").and_then(|t| t.as_bool()) == Some(true) {
+                        out.terminate = true;
+                    }
                 }
             }
         }
@@ -832,6 +839,120 @@ impl epsilon_contracts::tool::ToolHooks for ExtensionToolHooks {
         }
         Ok(out)
     }
+
+    async fn after_tool_call(
+        &self,
+        ctx: epsilon_contracts::tool::AfterToolCallContext,
+    ) -> Result<Option<epsilon_contracts::tool::AfterToolCallResult>, String> {
+        if self.hosts.is_empty() {
+            return Ok(None);
+        }
+
+        // pi's `ToolResultEventBase` shape: the id, the validated input, the content, the
+        // error flag, optional usage, and the per-tool `details` payload. Sending
+        // `details` matters more than it looks — it is what a renderer consumes, and an
+        // extension that redacts a file listing needs to see the listing to redact it.
+        let event = serde_json::json!({
+            "type": "tool_result",
+            "tool_call_id": ctx.tool_call_id.as_str(),
+            "tool_name": ctx.tool_name,
+            "input": ctx.args,
+            "content": ctx.result.content,
+            "is_error": ctx.result.is_error,
+            "details": ctx.result.details,
+            "usage": ctx.result.usage,
+        });
+
+        let mut out: Option<epsilon_contracts::tool::AfterToolCallResult> = None;
+        let mut reasons: Vec<String> = Vec::new();
+
+        for host in &self.hosts {
+            for decision in host.interpose(&event).await {
+                let Some(d) = decision.get("decision") else {
+                    continue;
+                };
+                if !d.is_object() {
+                    continue;
+                }
+                // pi folds each handler's answer into a running event
+                // (`runner.ts:29468-30490`) and returns `undefined` when nothing was
+                // modified. Returning `None` for an untouched result is therefore not a
+                // shortcut -- it is what lets the caller keep its own message identical,
+                // including fields this bridge has no opinion about.
+                let mut touched = false;
+
+                if let Some(content) = d.get("content").and_then(|c| c.as_array()) {
+                    out.get_or_insert_with(Default::default).content =
+                        Some(content.iter().filter_map(content_block_from_json).collect());
+                    touched = true;
+                }
+                if let Some(details) = d.get("details") {
+                    out.get_or_insert_with(Default::default).details = Some(details.clone());
+                    touched = true;
+                }
+                if let Some(is_error) = d.get("is_error").and_then(|e| e.as_bool()) {
+                    out.get_or_insert_with(Default::default).is_error = Some(is_error);
+                    touched = true;
+                }
+                if let Some(usage) = d.get("usage") {
+                    out.get_or_insert_with(Default::default).usage = usage_from_json(usage);
+                    touched = true;
+                }
+                if let Some(terminate) = d.get("terminate").and_then(|t| t.as_bool()) {
+                    out.get_or_insert_with(Default::default).terminate = Some(terminate);
+                    touched = true;
+                }
+                let _ = touched;
+                if let Some(why) = d.get("reason").and_then(|r| r.as_str()) {
+                    reasons.push(why.to_string());
+                }
+            }
+        }
+
+        let Some(mut result) = out else {
+            // Nothing was modified, so there is nothing to hand back. The caller keeps its
+            // own message byte-for-byte, which is the whole point of the `Option`.
+            return Ok(None);
+        };
+
+        // A rewritten result needs a reason in the transcript. An extension that silently
+        // changes what the model sees is the hardest kind of change to notice later, and
+        // pi logs that it modified; here the notice goes where the user will actually look.
+        if !reasons.is_empty() && result.details.is_none() {
+            result.details = Some(serde_json::json!({
+                "rewritten_by_extension": reasons.join("; ")
+            }));
+        }
+        Ok(Some(result))
+    }
+}
+
+/// Decode one content block from an extension's answer.
+///
+/// A block that does not fit is **dropped, not guessed at**. A rewrite is an assertion about
+/// what the model will see, and an extension returning a malformed block has produced an
+/// answer this harness cannot honour; silently coercing it would put text nobody wrote in
+/// front of the model. Dropping it leaves the model's view slightly short rather than
+/// wrong, and the remaining blocks still apply.
+fn content_block_from_json(v: &serde_json::Value) -> Option<epsilon_contracts::ContentBlock> {
+    use epsilon_contracts::ContentBlock;
+    match v.get("type").and_then(|t| t.as_str()) {
+        Some("text") => Some(ContentBlock::text(
+            v.get("text").and_then(|t| t.as_str())?.to_string(),
+        )),
+        // Only the two block kinds the harness can represent without inventing semantics.
+        // Image and tool-use blocks are dropped rather than approximated.
+        _ => None,
+    }
+}
+
+/// Decode a `Usage` patch from an extension's answer.
+///
+/// Returns `None` for anything malformed, which leaves the original usage in place. Usage
+/// feeds the cost readout, so a wrong value here is worse than no value: a number the user
+/// trusts and that is wrong is the exact failure the metrics work was meant to remove.
+fn usage_from_json(v: &serde_json::Value) -> Option<epsilon_contracts::Usage> {
+    serde_json::from_value(v.clone()).ok()
 }
 
 /// Install extension interception on `agent`, if any extension is attached.
@@ -1488,7 +1609,7 @@ mod ext_hooks_e2e {
     /// A missing fixture skips rather than fails, because its absence says nothing about
     /// the bridge -- it is a build-layout fact, and a test that cannot run must not be
     /// reported as a test that passed.
-    fn fixture_exe() -> Option<std::path::PathBuf> {
+    pub(super) fn fixture_exe() -> Option<std::path::PathBuf> {
         let exe = std::env::current_exe().ok()?;
         let candidate = exe
             .parent()?
@@ -1498,7 +1619,11 @@ mod ext_hooks_e2e {
     }
 
     /// Spawn the ext fixture, which answers `interpose` frames per its `--mode`.
-    async fn fixture(dir: &std::path::Path, mode: &str, events: &[&str]) -> Option<Arc<ExtHost>> {
+    pub(super) async fn fixture(
+        dir: &std::path::Path,
+        mode: &str,
+        events: &[&str],
+    ) -> Option<Arc<ExtHost>> {
         let manifest = ExtManifest {
             name: "fixture".into(),
             version: "0.1.0".into(),
@@ -1626,6 +1751,328 @@ mod ext_hooks_e2e {
         assert!(
             !out.block,
             "a host that was never asked must not have blocked anything"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ext_hooks_after_tests {
+    use super::*;
+    use epsilon_contracts::ContentBlock;
+    use epsilon_contracts::tool::{AfterToolCallContext, AfterToolCallResult, ToolHooks};
+
+    /// Fold a batch of extension answers into the one optional patch the hook returns.
+    ///
+    /// Mirrors the body of `after_tool_call` with the host loop removed, so the folding
+    /// rules can be tested as arithmetic. The alternative -- a live child per case -- would
+    /// need a new fixture mode for every one of these, and would be slower without testing
+    /// anything the reducer does not.
+    fn fold(decisions: &[serde_json::Value]) -> Option<AfterToolCallResult> {
+        let mut out: Option<AfterToolCallResult> = None;
+        let mut reasons: Vec<String> = Vec::new();
+        for d in decisions {
+            let Some(dec) = d.get("decision") else {
+                continue;
+            };
+            if !dec.is_object() {
+                continue;
+            }
+            if let Some(content) = dec.get("content").and_then(|c| c.as_array()) {
+                out.get_or_insert_with(Default::default).content =
+                    Some(content.iter().filter_map(content_block_from_json).collect());
+            }
+            if let Some(details) = dec.get("details") {
+                out.get_or_insert_with(Default::default).details = Some(details.clone());
+            }
+            if let Some(is_error) = dec.get("is_error").and_then(|e| e.as_bool()) {
+                out.get_or_insert_with(Default::default).is_error = Some(is_error);
+            }
+            if let Some(usage) = dec.get("usage") {
+                out.get_or_insert_with(Default::default).usage = usage_from_json(usage);
+            }
+            if let Some(terminate) = dec.get("terminate").and_then(|t| t.as_bool()) {
+                out.get_or_insert_with(Default::default).terminate = Some(terminate);
+            }
+            if let Some(why) = dec.get("reason").and_then(|r| r.as_str()) {
+                reasons.push(why.to_string());
+            }
+        }
+        // Mirrors the impl: nothing modified means no patch at all.
+        let mut result = out?;
+        if !reasons.is_empty() && result.details.is_none() {
+            result.details =
+                Some(serde_json::json!({"rewritten_by_extension": reasons.join("; ")}));
+        }
+        Some(result)
+    }
+
+    /// An untouched result must come back as `None`.
+    ///
+    /// This is pi's `if (!modified) return undefined` (`runner.ts:30504`), and it is
+    /// load-bearing rather than cosmetic: the loop uses `None` to keep its own message
+    /// byte-for-byte, and `Some(empty)` would rebuild a message with no field changed --
+    /// same contents, different provenance, and `usage` silently dropped by `unwrap_or`.
+    #[test]
+    fn no_opinion_means_no_patch_at_all() {
+        assert!(
+            fold(&[]).is_none(),
+            "no extension answered, so there is no patch"
+        );
+        assert!(fold(&[serde_json::json!({})]).is_none());
+        assert!(fold(&[serde_json::json!({"decision": {}})]).is_none());
+    }
+
+    /// A content replacement is what the whole feature is for: an extension redacting a
+    /// file listing before the model sees it.
+    #[test]
+    fn content_is_replaced_wholesale() {
+        let out = fold(&[serde_json::json!({
+            "decision": {"content": [{"type": "text", "text": "redacted"}]}
+        })])
+        .expect("a content replacement is a modification");
+        let content = out.content.expect("content was set");
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0], ContentBlock::text("redacted"));
+    }
+
+    /// Several text blocks survive in order.
+    ///
+    /// Order is the model's reading order, so a reordering is a semantic change even when
+    /// the set is identical.
+    #[test]
+    fn multiple_blocks_keep_their_order() {
+        let out = fold(&[serde_json::json!({
+            "decision": {"content": [
+                {"type": "text", "text": "first"},
+                {"type": "text", "text": "second"},
+            ]}
+        })])
+        .expect("modified");
+        let content = out.content.expect("content was set");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0], ContentBlock::text("first"));
+        assert_eq!(content[1], ContentBlock::text("second"));
+    }
+
+    /// A block the harness cannot represent is dropped, never approximated.
+    ///
+    /// A malformed block is an answer this harness cannot honour. Coercing it would put
+    /// text nobody wrote in front of the model; dropping it leaves the model's view short
+    /// rather than wrong.
+    #[test]
+    fn an_unrepresentable_block_is_dropped_rather_than_invented() {
+        let out = fold(&[serde_json::json!({
+            "decision": {"content": [
+                {"type": "text", "text": "kept"},
+                {"type": "image", "data": "..."},
+                {"no_type": true},
+                {"type": "text"},
+            ]}
+        })])
+        .expect("the text block is still a modification");
+        let content = out.content.expect("content was set");
+        assert_eq!(
+            content,
+            vec![ContentBlock::text("kept")],
+            "only the well-formed text block should survive"
+        );
+    }
+
+    /// The error flag can be cleared as well as set.
+    ///
+    /// A tool that failed for a reason an extension understands -- a retryable network
+    /// error, say -- is the case this exists for, so `false` has to survive the round trip
+    /// and not be treated as "no opinion".
+    #[test]
+    fn the_error_flag_can_be_cleared() {
+        let out = fold(&[serde_json::json!({"decision": {"is_error": false}})])
+            .expect("clearing the flag is a modification");
+        assert_eq!(out.is_error, Some(false));
+    }
+
+    /// `details` carries the terminate hint, so it is read as a value and never assumed to
+    /// be an object the harness can merge into.
+    #[test]
+    fn details_are_taken_verbatim() {
+        let out = fold(&[serde_json::json!({
+            "decision": {"details": {"truncated": true, "lines": 3}}
+        })])
+        .expect("details is a modification");
+        assert_eq!(out.details.unwrap()["truncated"], serde_json::json!(true));
+    }
+
+    /// Usage feeds the cost readout, so a malformed patch is discarded rather than guessed.
+    #[test]
+    fn a_malformed_usage_patch_is_discarded() {
+        let out = fold(&[serde_json::json!({
+            "decision": {"usage": {"input_tokens": "lots"}}
+        })])
+        .expect("the decision still counts as a modification");
+        assert!(
+            out.usage.is_none(),
+            "a usage value this harness cannot read must not reach the cost line"
+        );
+    }
+
+    /// A silent rewrite is the hardest kind of change to notice later, so it leaves a note.
+    #[test]
+    fn a_silent_rewrite_records_that_it_happened() {
+        let out = fold(&[serde_json::json!({
+            "decision": {
+                "content": [{"type": "text", "text": "quietly different"}],
+                "reason": "stripped a secret"
+            }
+        })])
+        .expect("modified");
+        let details = out.details.expect("the reason must be recorded");
+        assert!(
+            details["rewritten_by_extension"]
+                .as_str()
+                .unwrap()
+                .contains("stripped a secret"),
+            "{details}"
+        );
+    }
+
+    /// An extension that supplies its own `details` owns them.
+    ///
+    /// The harness's note is appended to what the extension said, never replacing it: a
+    /// renderer consumes `details`, and overwriting one with provenance text would break
+    /// the card the user is looking at.
+    #[test]
+    fn the_harness_note_does_not_overwrite_extension_details() {
+        let out = fold(&[serde_json::json!({
+            "decision": {
+                "details": {"truncated": true},
+                "content": [{"type": "text", "text": "x"}],
+                "reason": "trimmed"
+            }
+        })])
+        .expect("modified");
+        let details = out.details.expect("details");
+        assert_eq!(
+            details,
+            serde_json::json!({"truncated": true}),
+            "the extension's details are the renderer's contract and must survive intact"
+        );
+    }
+
+    fn ctx() -> AfterToolCallContext {
+        AfterToolCallContext {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "read".to_string(),
+            args: serde_json::json!({"path": "a.txt"}),
+            result: epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "read".to_string(),
+                content: vec![ContentBlock::text("original")],
+                details: serde_json::json!({}),
+                usage: None,
+                is_error: false,
+            },
+            is_error: false,
+        }
+    }
+
+    /// With no hosts the hook is a no-op, and `None` is the correct no-op.
+    #[tokio::test]
+    async fn no_extensions_means_no_patch() {
+        let hooks = ExtensionToolHooks::new(Vec::new());
+        let out = hooks
+            .after_tool_call(ctx())
+            .await
+            .expect("an empty host list is not an error");
+        assert!(out.is_none(), "nothing asked, so nothing rewritten");
+    }
+}
+
+#[cfg(test)]
+mod ext_hooks_after_e2e {
+    use super::ext_hooks_e2e::fixture;
+    use super::*;
+    use epsilon_contracts::tool::{AfterToolCallContext, ToolHooks};
+
+    fn read_ctx() -> AfterToolCallContext {
+        AfterToolCallContext {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "read".to_string(),
+            args: serde_json::json!({"path": "secrets.env"}),
+            result: epsilon_contracts::message::ToolResultMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "read".to_string(),
+                content: vec![epsilon_contracts::ContentBlock::text("API_KEY=hunter2")],
+                details: serde_json::json!({"path": "secrets.env"}),
+                usage: None,
+                is_error: false,
+            },
+            is_error: false,
+        }
+    }
+
+    /// A real child rewrites a real result, end to end.
+    ///
+    /// The reducer tests above cover the folding rules; none of them can tell whether the
+    /// `tool_result` event ever reaches the child, whether the child keys its answer off
+    /// the event type rather than arrival order, or whether the rewritten content survives
+    /// the trip back. Those are wiring properties, and wiring is what the last two controls
+    /// in this session proved reducers cannot check.
+    #[tokio::test]
+    async fn a_live_extension_can_rewrite_a_tool_result_through_the_bridge() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--rewrite", &["tool_result"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionToolHooks::new(vec![host]);
+
+        let out = hooks
+            .after_tool_call(read_ctx())
+            .await
+            .expect("a live extension answering is not an error")
+            .expect("the extension rewrote the content, so there must be a patch");
+
+        let content = out.content.expect("content was replaced");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0],
+            epsilon_contracts::ContentBlock::text("[redacted by extension]"),
+            "the extension's replacement must reach the caller verbatim"
+        );
+        assert!(
+            !format!("{content:?}").contains("hunter2"),
+            "the original secret must not survive a rewrite; got {content:?}"
+        );
+    }
+
+    /// The same child, asked about a *before* call, must not rewrite anything.
+    ///
+    /// Both events travel the same channel in a real run, so a host that answered both
+    /// alike would be applying a content patch to a call that has not run. This is the one
+    /// test that distinguishes "keyed on the event type" from "answered whatever arrives".
+    #[tokio::test]
+    async fn a_rewrite_extension_does_not_disturb_the_before_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(host) = fixture(dir.path(), "--rewrite", &["before_tool_call"]).await else {
+            eprintln!("skipping: ext-fixture was not built");
+            return;
+        };
+        let hooks = ExtensionToolHooks::new(vec![host]);
+
+        let out = hooks
+            .before_tool_call(epsilon_contracts::tool::BeforeToolCallContext {
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "read".to_string(),
+                args: serde_json::json!({"path": "secrets.env"}),
+            })
+            .await
+            .expect("an abstention is not an error");
+        assert!(
+            !out.block,
+            "an extension that only rewrites results must not block calls"
         );
     }
 }

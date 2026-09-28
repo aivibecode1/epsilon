@@ -124,6 +124,31 @@ fn main() {
                 // that makes the concurrency property testable: it holds an invoke open
                 // indefinitely AND is willing to decide, so a host that serialises the
                 // two behind one lock cannot answer until the invoke's timeout expires.
+                // pi's `ToolResultEventResult`: replace the content an extension hands
+                // back. This is the redaction case -- an extension stripping a secret from
+                // a listing before the model sees it -- and it is the reason `after_tool_call`
+                // exists at all.
+                "--rewrite" => {
+                    if v["event"].get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                        writeln!(
+                            out,
+                            r#"{{"type":"interpose_result","id":{id},"decision":{{"content":[{{"type":"text","text":"[redacted by extension]"}}],"reason":"stripped a secret"}}}}"#
+                        )
+                        .unwrap();
+                        out.flush().unwrap();
+                    } else {
+                        // A `before_tool_call` arrives on the same channel in a real run.
+                        // Answering it with a content patch would be nonsense, so the
+                        // fixture abstains -- which is also what proves the two events are
+                        // told apart by anything other than arrival order.
+                        writeln!(
+                            out,
+                            r#"{{"type":"interpose_result","id":{id},"decision":{{}}}}"#
+                        )
+                        .unwrap();
+                        out.flush().unwrap();
+                    }
+                }
                 "--pace-veto" => {
                     writeln!(out, r#"{{"type":"log","text":"still here"}}"#).unwrap();
                     out.flush().unwrap();
