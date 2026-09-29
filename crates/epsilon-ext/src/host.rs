@@ -88,6 +88,23 @@ pub struct ExtHost {
     /// `i_*` is an invoke, `x_*` an interpose. They share the map because they share the
     /// pipe, and a single reader cannot tell them apart without looking.
     pending: Arc<Mutex<PendingMap>>,
+    /// Set once the reader task has stopped for any reason other than our own shutdown.
+    ///
+    /// **Why the host needs to know this at all.** The reader calls `fail_all` when it
+    /// stops, which wakes every request that was *already registered* at that moment. A
+    /// request registered *after* the reader is gone has nobody to wake it: its frame
+    /// goes into a pipe no one reads, and it waits out the full invoke timeout —
+    /// ten seconds of silence for a child that died a moment ago. That is the "the
+    /// harness has frozen" symptom, reproduced in miniature, and it is why an extension
+    /// that crashed on the first call made every subsequent call look like a hang.
+    ///
+    /// So the reader marks itself gone, and a request that arrives afterwards is
+    /// refused immediately with the reason the reader stopped. A `Timeout` here would
+    /// also be a lie: nothing waited ten seconds to fail.
+    ///
+    /// The flag is set before `fail_all` so a request registered between the reader's
+    /// last frame and its `fail_all` sees a stopped reader rather than racing it.
+    stopped: Arc<AtomicBool>,
     /// The child's `{"type":"log"}` lines. Split out of [`ChildIo`] because the reader
     /// task is the only thing that sees stdout now, and it must not take the write mutex
     /// to append a diagnostic — doing so would reintroduce exactly the coupling ADR-019
@@ -196,11 +213,13 @@ impl ExtHost {
         // because the task holds a clone of the pending map the host also holds.
         let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(PendingMap::default()));
         let logs: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let stopped = Arc::new(AtomicBool::new(false));
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(read_frames(
             reader,
             pending.clone(),
             logs.clone(),
+            stopped.clone(),
             shutdown_rx,
         ));
 
@@ -215,6 +234,7 @@ impl ExtHost {
             crashes: AtomicU32::new(0),
             events: manifest.events.clone(),
             pending,
+            stopped,
             logs,
             _reader: ReaderTask {
                 shutdown: Some(shutdown_tx),
@@ -400,6 +420,23 @@ impl ExtHost {
         req: serde_json::Value,
         budget: Duration,
     ) -> Result<serde_json::Value, ExtError> {
+        // Refuse a request the reader can no longer answer, before writing to a pipe
+        // nobody reads. Without this, a caller that arrives after the child died waits
+        // out the whole budget for a reply that was never going to come: the frame is
+        // written, the `oneshot` is registered, and the only thing that can complete it
+        // is a task that has already exited. The caller sees a `Timeout` — which is
+        // also a lie, because nothing was slow — after ten seconds of silence.
+        //
+        // This is the "nothing happened" state this project refuses to let the user see,
+        // one layer below the UI: a dead extension looks exactly like a frozen harness.
+        // Charged as a crash, because the child is what stopped answering, and the crash
+        // budget is what eventually disables a host that keeps dying.
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(ExtError::Crashed(
+                "extension reader stopped before this request".into(),
+            ));
+        }
+
         let (tx, rx) = oneshot::channel();
         {
             let mut io = self.io.lock().await;
@@ -505,17 +542,25 @@ async fn read_frames(
     mut reader: BufReader<ChildStdout>,
     pending: Arc<Mutex<PendingMap>>,
     logs: Arc<Mutex<Vec<String>>>,
+    stopped: Arc<AtomicBool>,
     mut shutdown: tokio::sync::oneshot::Receiver<()>,
 ) {
     let mut total_bytes: u64 = 0;
     // Why the loop stopped, if it did. `None` means the host shut us down, which is not a
     // failure and must not be reported as one.
     let mut abort: Option<String> = None;
+    // Whether the `select!` below ended on the shutdown signal rather than on the stream.
+    // The distinction decides two things: whether a crash is charged to whatever was in
+    // flight, and whether the host is told its reader is gone. Shutdown is neither.
+    let mut stopped_on_shutdown = false;
 
     loop {
         let line = tokio::select! {
             biased;
-            _ = &mut shutdown => break,
+            _ = &mut shutdown => {
+                stopped_on_shutdown = true;
+                break;
+            },
             read = read_line_bytes(&mut reader) => match read {
                 Ok(Frame::Line(l)) => l,
                 Ok(Frame::Eof) | Err(_) => {
@@ -608,9 +653,15 @@ async fn read_frames(
         }
     }
 
+    // Announce the stop BEFORE waking anyone, so a request registered in the gap between
+    // this line and `fail_all` sees a stopped reader rather than racing the wake-up.
+    if !stopped_on_shutdown {
+        stopped.store(true, Ordering::SeqCst);
+    }
+
     if let Some(why) = abort {
         fail_all(&pending, ExtError::Protocol(why)).await;
-    } else {
+    } else if !stopped_on_shutdown {
         // The stream ended without a verdict. Whoever was waiting learns the child is gone,
         // which the caller charges to the crash budget.
         fail_all(

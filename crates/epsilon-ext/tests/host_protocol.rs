@@ -610,6 +610,68 @@ async fn crashes_accumulate_on_one_host_until_it_is_disabled() {
     );
 }
 
+/// A request made *after* the reader has stopped must be refused at once, even when
+/// the child is still alive and its pipe still accepts writes.
+///
+/// **The fixture choice is the whole test, and the obvious one is wrong.** The
+/// first version of this used `--die`, and its negative control PASSED — the test
+/// proved nothing. With a dead child the *write* fails immediately, so the call
+/// returns fast and looks correct whether or not the host knows the reader is gone.
+/// The bug was still live in the tree. (A control that passes is a control you have
+/// not yet proven works; this repo has now paid for that four times.)
+///
+/// `--flood` is the deterministic fixture. The child stays alive and keeps its stdin
+/// open, so the write succeeds and the pipe fills with bytes nobody will read. The
+/// reader aborts on the byte budget and exits. Every later request is then in the
+/// exact state the defect describes: written successfully, answerable by nothing.
+/// With the fast-refusal removed this call waits the full 10 s invoke budget and
+/// returns `Timeout`; with it, it returns `Crashed` in microseconds.
+///
+/// So the assertions are: it is a crash, it is NOT a timeout, and it took well under
+/// the budget. Any one of the three alone would pass against the broken build for a
+/// different reason — which is why all three are here.
+#[tokio::test]
+async fn a_request_after_the_reader_stops_is_refused_even_though_the_child_is_alive() {
+    let dir = tempfile::tempdir().unwrap();
+    // Spends the per-invoke byte budget, so the reader aborts — and, unlike `--die`,
+    // leaves a live child holding an open stdin. See the fixture note above.
+    let host = spawn_ok(dir.path(), "--flood 200000 100").await;
+
+    // The flood call is what kills the reader. It is expected to fail; only the fact
+    // that it returns at all matters here.
+    let _ = awake(
+        host.invoke("ext_echo", "flood", serde_json::json!({})),
+        Duration::from_secs(20),
+        "the invoke that exhausts the reader's byte budget",
+    )
+    .await;
+
+    // The reader is gone. The child is alive and the write below will succeed.
+    let started = std::time::Instant::now();
+    let err = awake(
+        host.invoke("ext_echo", "after_reader_stopped", serde_json::json!({})),
+        Duration::from_secs(2),
+        "a request issued after the reader stopped",
+    )
+    .await
+    .expect_err("no reader remains to answer it");
+    let elapsed = started.elapsed();
+
+    assert!(
+        matches!(err, ExtError::Crashed(_)),
+        "a reader that has stopped is a crash, got {err:?} after {elapsed:?}"
+    );
+    assert!(
+        !matches!(err, ExtError::Timeout),
+        "a timeout means the request was written into a pipe nobody was reading, \
+         which is the bug this test exists to catch (waited {elapsed:?})"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "the refusal must be immediate, not the invoke budget: {elapsed:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Event filtering at the host (the manifest-level test covers only the predicate).
 // ---------------------------------------------------------------------------
