@@ -1124,6 +1124,11 @@ pub fn open_browser(url: &str) -> bool {
     let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![url]);
     std::process::Command::new(program)
         .args(args)
+        // Closed stdin, like every other child this harness spawns. `cmd /C start`
+        // is not interactive, and leaving stdin unset means it INHERITS the TUI's
+        // console handle — the same defect M197 fixed on the tool paths, in a spot
+        // nobody had looked at because nothing appears to "run a command" here.
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()

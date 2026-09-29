@@ -2871,4 +2871,138 @@ mod protocol_doc_tests {
             "docs/history.md has no row for milestones {missing:?} (newest is M{newest})"
         );
     }
+
+    /// No production spawn may leave `stdin` unset.
+    ///
+    /// **This exists because fixing the bug once was not enough.** The Windows
+    /// stdin-inheritance defect (M197) was found, fixed on the unconfined shell
+    /// path, given a test, and shipped. An independent review then found the
+    /// *same* omission on the two confined paths — which are the default — plus
+    /// the MCP stdio server. Four sites, one fix applied, three missed, and a
+    /// green battery after each step: nothing in the suite could see a site that
+    /// was simply not looked at.
+    ///
+    /// So the property is now mechanical. Every `Command::new` under
+    /// `crates/*/src` is found, and each is required to configure `stdin`
+    /// explicitly within a small window after the spawn. `Stdio::null()` for a
+    /// command, `Stdio::piped()` for a protocol peer — either is fine, because
+    /// **the point is that the choice is written down**. Silence means INHERIT,
+    /// and in the TUI the inherited handle is the console the user is typing
+    /// into.
+    ///
+    /// Evidence: `audit/evidence/m197-windows-stdin-inheritance.md`.
+    #[test]
+    fn no_production_spawn_leaves_stdin_unset() {
+        let Some(root) = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf)
+        else {
+            return;
+        };
+        let crates = root.join("crates");
+
+        // Collect `.rs` files by walking, rather than trusting a hand-kept list
+        // that would itself rot the way a hand-kept pathspec did.
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    // `src/bin` holds fixture binaries, not production paths.
+                    if !p.components().any(|c| c.as_os_str() == "tests") {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(&crates, &mut files);
+        assert!(
+            !files.is_empty(),
+            "found no sources to check under {crates:?}"
+        );
+
+        let mut offenders: Vec<String> = Vec::new();
+        for f in &files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            // Test code starts at the first *module-level* test marker. A
+            // `#[cfg(test)]` on a single helper `fn` is not one — `jobobject.rs`
+            // has two, at lines 53 and 163, long before its `mod tests`, and
+            // treating either as the boundary would count the whole test module
+            // as production. Only markers that introduce a module count.
+            let test_start = text
+                .lines()
+                .enumerate()
+                .filter(|(_, l)| {
+                    let t = l.trim();
+                    t.starts_with("mod tests")
+                        || t.starts_with("#[cfg(test)]") && t.contains("mod ")
+                })
+                .map(|(n, _)| n)
+                .min()
+                .unwrap_or(usize::MAX);
+            for (i, line) in text.lines().enumerate() {
+                // The guard must not match itself. Three ways its own source can
+                // contain the token: the comparison, a doc comment naming it, and
+                // the pattern string. A comment line cannot be a call.
+                if !line.contains("Command::new(") || line.contains("contains(") {
+                    continue;
+                }
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                    continue;
+                }
+                if i >= test_start {
+                    continue;
+                }
+                // Look a few lines ahead: the configuration follows the spawn.
+                // The window is generous because the configuration is not
+                // necessarily adjacent — `editor.rs` sets all three streams twelve
+                // lines below the `Command::new`, and a 6-line window called that
+                // a violation.
+                let window: String = text.lines().skip(i).take(16).collect::<Vec<_>>().join("\n");
+                // An explicit `Stdio::inherit()` is a *decision*, not an omission.
+                // The external editor is the one legitimate case: it is the user's
+                // terminal, and it must see the real console. What the rule forbids
+                // is the silence that means "nobody thought about it".
+                //
+                // `.output()` is the other exemption: it configures all three
+                // streams to pipes internally, so a `gh gist` call written that
+                // way never inherits anything, and flagging it would be noise
+                // that trains a reader to skip the message.
+                if window.contains("stdin(")
+                    || window.contains("Stdio::inherit()")
+                    || window.contains(".output()")
+                    // Delegation is a legitimate way to configure: `shell.rs`
+                    // calls `ChildStdio::configure(&mut cmd)`, which is where
+                    // the decision now lives. Forbidding that would push the
+                    // three lines back inline and undo the refactor.
+                    || window.contains("configure(")
+                {
+                    continue;
+                }
+                offenders.push(format!(
+                    "{}:{}: {}",
+                    f.strip_prefix(&root).unwrap_or(f).display(),
+                    i + 1,
+                    line.trim()
+                ));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these spawns never set stdin, so the child INHERITS the harness's — \
+             which in the TUI is the console the user is typing into. Add \
+             `.stdin(Stdio::null())` for a command or `.stdin(Stdio::piped())` \
+             for a protocol peer:\n{}",
+            offenders.join("\n")
+        );
+    }
 }

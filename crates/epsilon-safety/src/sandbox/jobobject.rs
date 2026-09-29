@@ -255,9 +255,19 @@ impl Sandbox for JobObjectSandbox {
 
         let mut command = Command::new(&cmd.program);
         command.args(&cmd.args).current_dir(&cmd.cwd);
+        // stdin closed, and hidden window on Windows — the same two properties
+        // `epsilon_tools::shell::ChildStdio` sets on the unconfined path, for the
+        // same reason. This path is the *default* one, so leaving it inheriting
+        // meant the fix upstream did not reach the runs that matter most: a
+        // confined child reading the TUI's console stdin takes the user's
+        // keystrokes, and a console subsystem child can raise its own window over
+        // the TUI. See `audit/evidence/m197-windows-stdin-inheritance.md`.
+        command.stdin(std::process::Stdio::null());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
         command.kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         // DSH subprocess rule: a confined child still inherits our environment,
         // so a credential-shaped variable would be visible to `env` inside the
         // sandbox. Confinement limits where a process may go, not what it can

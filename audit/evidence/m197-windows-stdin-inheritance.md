@@ -64,62 +64,68 @@ decided:
 immediately, so a command that reads stdin gets empty input instead of blocking forever — the same
 reason `shell_argv` keeps `-NonInteractive`.
 
-## The test, and the two controls that were needed to trust it
+## **Fixing one site was not fixing the defect**
 
-**Control 1 — a behavioural test, and it could not detect the defect.** The first version ran
-`read`/`Read-Host` in a real child and asserted it saw EOF. With stdin inherited the test was still
-**green**, because `cargo test` runs the harness with a *redirected* stdin: from inside the test,
-"inherited" and "closed" are indistinguishable. Only the TUI has a console on stdin, and that is
-exactly the situation a unit test cannot stand up.
+**Four production spawn sites had the identical omission, and the first fix reached one of them.**
 
-So the property is now asserted **where it is decided** — on the value `ChildStdio::configure`
-returns — because `std::process::Command` exposes no getter for a stream it was given. The
-behavioural half is kept as a second, smaller test
-(`a_command_that_reads_stdin_gets_end_of_input_instead_of_blocking`): a child reading stdin gets EOF
-promptly rather than hanging, which *is* observable and worth keeping.
+| Site | What it spawns | Fixed |
+|---|---|---|
+| `epsilon-tools/src/shell.rs` | the `bash` tool, unconfined | `8846654` |
+| `epsilon-safety/src/sandbox/jobobject.rs:256` | the Windows confined path — **the default** | this commit |
+| `epsilon-safety/src/sandbox.rs:442` | the bwrap confined path | this commit |
+| `epsilon-mcp/src/stdio.rs:29` | every MCP server | this commit |
+| `epsilon-llm/src/oauth_login.rs:1125` | `open_browser` → `cmd /C start` | this commit |
 
-**Control 2 — a stale backup nearly made the whole exercise meaningless.** The "fixed" copy taken
-before the control had *already* had its `cmd.stdin(...)` line stripped by an earlier control run, so
-restoring it reintroduced a `stdin_closed: true` that was **not true of the code beside it**, and the
-test passed against a lie. Caught by reading the restored file rather than the test result — the rule
-already in `AGENTS.md`: *after restoring a file, confirm what is in it.* A backup is only a backup
-if it was taken from a known-good tree.
+The last one was found by the guard below, not by reading: nothing about "open a browser" looks
+like it runs a command, so it is exactly the site a human sweep misses. `open_browser` is not
+interactive and was inheriting the TUI's console handle all the same.
 
-The final control asserts its own anchor before writing, and flips the reported flag as well as
-removing the line, so the control is a lie-free control.
+**The lesson is about the shape of the fix, not its size.** A per-site test passes forever while
+the next site is unwritten, and a green battery after the first fix said nothing about the other
+four. The property that needed asserting was "no spawn anywhere leaves this unset" — a claim about
+the *tree*, not about a function.
 
-### Fixed build
+## The guard, and what it took to make it correct
+
+`no_production_spawn_leaves_stdin_unset` (in `epsilon-cli/src/runtime.rs`, beside the existing
+repo-hygiene guards) walks every `.rs` under `crates/`, finds each `Command::new`, and requires
+`stdin` to be configured nearby. `Stdio::null()`, `Stdio::piped()`, an explicit
+`Stdio::inherit()` (the external editor, which legitimately owns the terminal), a `.output()`
+call (which pipes internally), and delegation to `ChildStdio::configure` all satisfy it.
+
+**It took four attempts, and each failure was the guard lying rather than the code.** Worth
+recording, because a guard that cries wolf gets deleted, and this one nearly was:
+
+1. It matched **its own source** — the string `Command::new(` inside its comparison.
+2. Its `#[cfg(test)]` filter used the byte offset of the marker and compared it against a **line
+   index**, so it exempted the wrong half of `runtime.rs` and flagged every production spawn in
+   any file whose test module came later.
+3. A 6-line lookahead window missed `editor.rs`, which configures twelve lines down.
+4. `#[cfg(test)]` on a *function* is not a test *module*; treating it as one counted
+   `jobobject.rs`'s entire test module as production.
+
+**Rule this earns:** when a guard's first run fails, decide deliberately whether it found something
+real or whether the guard is wrong — and when it finds something real *twice in the same file*,
+the second one is more likely a bug in the guard. Also: assert the guard's own blind spot, or it
+has none.
+
+### Fixed tree
 
 ```
-test a_tool_child_gets_a_closed_stdin_and_never_the_harness_console ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out
+test runtime::protocol_doc_tests::no_production_spawn_leaves_stdin_unset ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 138 filtered out
 ```
 
-### Control — same test, `cmd.stdin(Stdio::null())` removed and the flag made honest
+### Control — same test, one site's `stdin` line removed
 
 ```
-CONTROL APPLIED OK: stdin line gone, flag says false
-
-thread 'a_tool_child_gets_a_closed_stdin_and_never_the_harness_console' panicked at
-crates\epsilon-tools\tests\builtin_tools.rs:1844:5:
-a tool child must be given a closed stdin. An unset stream INHERITS, and in the TUI the
-inherited stream is the console the user is typing into.
-
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 63 filtered out
+crates\epsilon-safety\src\sandbox\jobobject.rs:256: let mut command = Command::new(&cmd.program);
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 138 filtered out
 ```
 
-Restored afterwards and verified **by content, not by a green test**: the
-`cmd.stdin(Stdio::null())` line present once, `stdin_closed: true` twice (Windows and POSIX arms),
-`stdin_closed: false` zero times.
-
-## The general rule these two controls earn
-
-> A test that exercises a *behaviour* cannot detect a defect in the *configuration* that produces
-> it, when the test harness's own environment happens to mask the difference.
->
-> When that happens, assert on the value the production path decides and returns. It is a smaller
-> claim than "the user sees the right thing" — say so in the test's doc comment rather than letting
-> a reader assume more.
+The control names the reverted site by file and line. The file was then restored and **verified by
+content** (`stdin(Stdio::null())` present once), not by a green test — the rule that caught a lie
+in the previous round of this same work.
 
 ## What this does NOT establish
 

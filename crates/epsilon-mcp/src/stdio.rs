@@ -28,6 +28,13 @@ impl StdioConnector {
     pub async fn spawn(cfg: &McpServerConfig) -> Result<Self, String> {
         let mut cmd = Command::new(&cfg.command);
         cmd.args(&cfg.args);
+        // An MCP server is a stdio peer, not a terminal program. Leaving stdin unset
+        // means INHERIT, and in the TUI that is the console the user is typing into:
+        // the server competes with crossterm for keystrokes, which is the reported
+        // "frozen" symptom. rmcp's transport needs a pipe, but Rust's default is the
+        // parent's handle, so say so explicitly. Same rule as
+        // `epsilon_tools::shell::ChildStdio`.
+        cmd.stdin(std::process::Stdio::piped());
         let transport =
             TokioChildProcess::new(cmd).map_err(|e| format!("spawn {}: {e}", cfg.command))?;
 

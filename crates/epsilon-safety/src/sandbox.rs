@@ -443,6 +443,11 @@ impl Sandbox for BwrapSandbox {
         command.args(&argv[1..]).current_dir(&cmd.cwd);
         // Bwrap does not clear the environment it hands the sandboxed process.
         crate::env::scrub_secret_env(&mut command);
+        // stdin closed, matching `ChildStdio` on the unconfined path. A sandboxed
+        // child that inherits the TUI's console stdin takes the user's keystrokes
+        // — confinement limits where a process may go, not what it may read from
+        // the terminal. See `audit/evidence/m197-windows-stdin-inheritance.md`.
+        command.stdin(std::process::Stdio::null());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
 
