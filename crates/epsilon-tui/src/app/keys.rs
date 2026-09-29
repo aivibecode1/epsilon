@@ -72,8 +72,13 @@ fn refilter(app: &mut App) {
         .timeline_entries
         .get(app.timeline_index)
         .map(|r| r.id.clone());
-    let filtered = super::commands::apply_filter(&app.timeline_all, app.tree_filter, &labels);
-    app.timeline_entries = super::commands::apply_folds(&filtered, &app.folded);
+    app.timeline_entries = super::commands::visible_rows(
+        &app.timeline_all,
+        app.tree_filter,
+        &labels,
+        &app.tree_query,
+        &app.folded,
+    );
     app.timeline_index = keep
         .and_then(|id| app.timeline_entries.iter().position(|r| r.id == id))
         .unwrap_or(0)
@@ -104,6 +109,14 @@ pub(crate) fn begin_auth_key_prompt(app: &mut App, provider: String) {
 pub(crate) fn handle_search_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
+            // M196: Esc cancels an armed jump BEFORE it closes the search. An
+            // armed jump holds no other key, so leaving it armed would mean the
+            // next character the user types moves the cursor instead of being
+            // typed.
+            if app.jump_mode.take().is_some() {
+                app.ui.push_notice("jump cancelled");
+                return false;
+            }
             app.search_close();
             true
         }
@@ -598,6 +611,41 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
 
     if app.timeline_open {
         match key.code {
+            // M196: the search field, drawn inside the panel. While it is open
+            // every printable key is content, so this arm comes first.
+            //
+            // `_ if`, not a bare `if`: this arm is chosen by APP STATE, not by
+            // the key pressed, and a bare `if` is not a match arm at all. The
+            // inner `match key.code` then decides what the key means.
+            _ if app.tree_searching => {
+                match key.code {
+                    KeyCode::Esc => {
+                        // pi: Esc clears the query first and only closes the
+                        // picker on a second press (`tree-selector.ts:1030-1035`).
+                        // Losing a typed query to one stray Esc is the kind of
+                        // thing a reader remembers badly.
+                        if app.tree_query.is_empty() {
+                            app.tree_searching = false;
+                        } else {
+                            app.tree_query.clear();
+                            refilter(app);
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Down | KeyCode::Up => {
+                        app.tree_searching = false;
+                    }
+                    KeyCode::Backspace => {
+                        app.tree_query.pop();
+                        refilter(app);
+                    }
+                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.tree_query.push(c);
+                        refilter(app);
+                    }
+                    _ => {}
+                }
+                return false;
+            }
             KeyCode::Esc => {
                 app.timeline_open = false;
                 app.timeline_index = 0;
@@ -662,6 +710,10 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.timeline_entries.clear();
                     app.timeline_all.clear();
                 }
+            }
+            // `/` opens the field, the conventional "search here" chord.
+            KeyCode::Char('/') => {
+                app.tree_searching = true;
             }
             // M196: cycle the filter. Re-derived from `timeline_all`, never from
             // the already-filtered list, so `f` `f` returns to where it started
@@ -1173,6 +1225,25 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         // M17b: redo (opencode input_redo, ctrl+.) and line-wise ops (pi/opencode).
         _ if app.keybindings.matches("tui.editor.redo", &key) => {
             app.redo();
+            false
+        }
+        // M196: jump-to-character, on pi's chords (`tui/src/keybindings.ts:106-113`
+        // -- `ctrl+]` forward, `ctrl+alt+]` backward). Read from the reference
+        // rather than invented, and both are free here; `ctrl+a` is NOT, it is
+        // line-home in this editor.
+        // **The ALT arm must come first.** Match arms are tried in order, and the
+        // plain `ctrl+]` guard is also satisfied by `ctrl+alt+]` -- so with the
+        // plain arm first, backward would never be reachable and the key would
+        // silently do the other thing.
+        KeyCode::Char(']')
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.toggle_jump(crate::app::JumpDir::Backward);
+            false
+        }
+        KeyCode::Char(']') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.toggle_jump(crate::app::JumpDir::Forward);
             false
         }
         KeyCode::Char('a' | 'A') if key.modifiers.contains(KeyModifiers::CONTROL) => {

@@ -20,10 +20,63 @@
 use super::*;
 
 impl App {
+    /// Insert a character, or — when a jump is armed — MOVE the cursor instead.
+    ///
+    /// M196: this is the composer's single insert path, so arming a jump here
+    /// means every route into "the user typed a printable character" is covered by
+    /// one check, rather than each key route remembering to look.
+    ///
+    /// The mode is consumed either way. Leaving it armed after a printable key
+    /// would mean the NEXT letter the user typed moved the cursor instead of
+    /// being typed — the most confusing failure this feature could have, and the
+    /// one pi avoids by clearing `jumpMode` before dispatching
+    /// (`editor.ts:697-700`).
     pub(super) fn insert_char(&mut self, c: char) {
+        if let Some(dir) = self.jump_mode.take() {
+            match crate::app::jump_to_char(&self.input, self.cursor_chars, c, dir) {
+                Some(at) => {
+                    self.cursor_chars = at;
+                }
+                None => {
+                    // Not found: say so, and leave the cursor alone. Inserting
+                    // the character instead would be a surprising way to learn
+                    // there was no match.
+                    self.ui.push_notice(format!(
+                        "no '{c}' {}",
+                        match dir {
+                            crate::app::JumpDir::Forward => "after",
+                            crate::app::JumpDir::Backward => "before",
+                        }
+                    ));
+                }
+            }
+            return;
+        }
         let byte_at = self.byte_cursor();
         self.input.insert(byte_at, c);
         self.cursor_chars += 1;
+    }
+
+    /// Arm a jump-to-character, or disarm it if one is already armed.
+    ///
+    /// The toggle is what makes the feature usable without a visible mode line:
+    /// pressing the chord twice means "never mind" without having to remember
+    /// which key cancels.
+    pub(super) fn toggle_jump(&mut self, dir: crate::app::JumpDir) {
+        self.jump_mode = match self.jump_mode {
+            Some(d) if d == dir => None,
+            Some(_) => Some(dir),
+            None => Some(dir),
+        };
+        if let Some(d) = self.jump_mode {
+            let what = match d {
+                crate::app::JumpDir::Forward => "forward",
+                crate::app::JumpDir::Backward => "backward",
+            };
+            self.ui.push_notice(format!(
+                "jump {what}: type a character, Esc or the same chord cancels"
+            ));
+        }
     }
 
     pub(super) fn backspace(&mut self) {

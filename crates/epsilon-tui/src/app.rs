@@ -292,8 +292,27 @@ pub(crate) struct App {
     /// prompt never coexist: opening the editor leaves the picker closed, so the
     /// two cannot fight over which one owns the keyboard. The entry being
     /// labelled is carried here because the picker's selection is gone by then.
+    /// Jump-to-character mode: the direction of the NEXT printable key, or `None`
+    /// when the next key is an ordinary character.
+    ///
+    /// M196: pi's editor has this (`editor.ts:342`) and Epsilon had only
+    /// Left/Right/Home/End. A long draft with a repeated word is exactly where
+    /// arrow keys stop being enough, which is why the reference has it.
+    ///
+    /// A `Option<JumpDir>` rather than a bool, because there are two directions
+    /// and a bool makes "backward" mean "not forward" -- which is how a mode ends
+    /// up doing the opposite of what the key said.
+    jump_mode: Option<JumpDir>,
     /// Which entries the picker shows; cycled with `f` (pi's tree filter).
     tree_filter: TreeFilter,
+    /// The picker's search text; `/` opens the field (pi's tree search).
+    tree_query: String,
+    /// Whether the search field has the keyboard, as opposed to the row list.
+    ///
+    /// Two states rather than a mode enum because the field is drawn *inside* the
+    /// picker panel, not over it: a reader needs to see the rows they are
+    /// filtering while they type.
+    tree_searching: bool,
     /// Ids whose subtree the picker is hiding — pi's `foldedNodes`
     /// (`tree-selector.ts:121`).
     ///
@@ -1361,6 +1380,12 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.auth_prompt_open {
         draw_auth_prompt(f, app, f.area());
+    }
+    // M196: its OWN `if`. This was originally written inside the auth-prompt arm
+    // above, so the label editor was drawn only while an API-key prompt was open
+    // -- which never happens, so the feature was on no screen at all. The state
+    // tests all passed; only `the_label_prompt_and_jump_notice_draw` could see it.
+    if app.label_prompt_open {
         draw_label_prompt(f, app, f.area());
     }
     if app.auth_pick_open {
@@ -1533,6 +1558,58 @@ mod panic_tests;
 
 #[cfg(test)]
 mod tests;
+
+/// Move the cursor to the next occurrence of `needle`, forward or backward.
+///
+/// Ported from pi's `jumpToChar` (`tui/src/components/editor.ts:2126-2160`),
+/// including the two details that decide whether it feels right:
+///
+/// - **On the current line the search starts AFTER (or BEFORE) the cursor**;
+///   on other lines it starts at the beginning (or end). Without that, a jump
+///   forward to the character under the cursor lands on the cursor and appears
+///   to do nothing.
+/// - **Forward uses the first match, backward uses the LAST** — `indexOf` vs
+///   `lastIndexOf` (`editor.ts:2145`).
+///
+/// Returns the new cursor position, or `None` when the character does not occur
+/// anywhere ahead of (or behind) the cursor. Returning `None` rather than
+/// clamping matters: the caller reports "not found" instead of silently leaving
+/// the cursor somewhere the reader did not ask for.
+pub(crate) fn jump_to_char(
+    input: &str,
+    cursor_chars: usize,
+    needle: char,
+    dir: JumpDir,
+) -> Option<usize> {
+    let chars: Vec<char> = input.chars().collect();
+    let total = chars.len();
+    if total == 0 {
+        return None;
+    }
+    match dir {
+        JumpDir::Forward => {
+            // Strictly after the cursor: `cursor + 1 ..`, so the character under
+            // the cursor is not a result.
+            ((cursor_chars + 1)..total).find(|&i| chars[i] == needle)
+        }
+        JumpDir::Backward => {
+            // Strictly before it. A forward range cannot express "the last
+            // match going back", so this scans downward from the cursor.
+            (0..cursor_chars.min(total))
+                .rev()
+                .find(|&i| chars[i] == needle)
+        }
+    }
+}
+
+/// Direction for an editor jump-to-character, pi's `"forward" | "backward"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JumpDir {
+    /// To the next occurrence after the cursor.
+    Forward,
+    /// To the previous occurrence before it.
+    Backward,
+}
 
 /// Which entries the `/tree` picker shows — pi's four `FilterMode`s
 /// (`tree-selector.ts:365-385`).
