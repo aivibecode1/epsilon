@@ -9,6 +9,20 @@ but unverified** (a milestone says so; this audit does not believe it), **Fixed*
 
 ---
 
+# Reconciliation, 2026-09-29 (M202)
+
+One defect closed (found by driving the installed binary, not by a test), and two rows added
+that M202's investigation exposed. Milestone:
+[`docs/milestones/M202-older-sessions.md`](../docs/milestones/M202-older-sessions.md).
+
+| # | Row | State |
+|---|---|---|
+| — | **A session written before M194 could not be opened at all.** `Usage::cache_reported` was added without a serde default, and `Usage` is inside every assistant message, so the whole file was refused and `epsilon` would not start in a workspace that had one. | **Fixed** — `#[serde(default)]`, the refusal now quotes the decoder (`missing field \`cache_reported\``) and names the file. Negative control in [`audit/evidence/m202-negative-control.md`](evidence/m202-negative-control.md). |
+| **A16** | **`SessionStore::reset_leaf` has no production caller** — seventh instance of the repository's own "faithful port, no production caller" class. A plain `epsilon` launch opens the existing `tui.jsonl`, appends to it as a child of the previous launch's tail, and starts with an empty in-memory history; `reset_leaf` is documented as *the* way to make the next append a new root and is called only from tests. | **Open — a decision, not a patch.** The question is what `tui.jsonl` *is*: one rolling session per frontend (today's behaviour, and what `-c` implies) or one session per launch (what `reset_leaf` is for). Neither is wrong; the code has both answers and ships the first. |
+| **A17** | **A plain launch never says that a session exists.** `--resume` seeds history and a plain launch does not, so a user who quits and relaunches sees the first-run screen and no hint that `-c` (or `/resume`) would bring the conversation back. The header reports `ctx 4%` beside it — the system-prompt-and-tools baseline, **not** hidden history, verified at `main.rs:1924` — which makes an empty screen look like a contradiction. | **Open — small.** The welcome panel has room for one line, and the fact it needs (a prior session exists, here is the command) is known to the CLI before the TUI starts. |
+
+---
+
 # Reconciliation, 2026-09-29 (M201)
 
 Seven of the thirteen rows open at M199 were closed by M201, plus a defect that no row
