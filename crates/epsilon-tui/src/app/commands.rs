@@ -835,10 +835,19 @@ impl App {
         // No compare-and-set ref: the user is looking at the current goal and acting on it, and
         // asking them to type a revision would be asking them to do the harness's bookkeeping.
         // The model's path (`update_goal`) does carry one, which is where staleness is real.
+        //
+        // Creating or resuming a goal starts the first round immediately when the session is
+        // idle: `/goal fix the gates` that parked an objective and then sat there until the user
+        // typed something else would be a note, not a goal. `pause` is how a user parks one
+        // without starting it, and the round it spends is counted and reported like any other.
+        let starts_work = matches!(op, GoalOp::Create { .. } | GoalOp::Resume);
         match agent.goal_apply(None, op) {
             Ok(Some(view)) => {
                 self.ui.push_notice(goal_lines(&view).join("\n"));
                 self.goal_badge = Some(view.badge());
+                if starts_work {
+                    self.continue_goal(agent);
+                }
             }
             Ok(None) => {
                 self.ui.push_notice("goal cleared");
@@ -863,6 +872,66 @@ impl App {
                 );
             }
         }
+    }
+
+    /// Start the next round of an armed goal, if this is the moment for one.
+    ///
+    /// Called at a turn end. Four conditions have to hold, and each one is a way the harness
+    /// could otherwise do something the person in front of it did not ask for:
+    ///
+    /// * **The goal is continuable** — active, armed in this process, and under its cap. All of
+    ///   that is re-read from the log here rather than remembered, so a tool that completed or
+    ///   paused the goal during the turn is respected immediately.
+    /// * **Nothing is in flight**, and no permission ask is parked. Belt-and-braces at a turn
+    ///   end, and both would be a disaster if they were ever true.
+    /// * **The composer is empty.** A user halfway through typing a follow-up has not asked for
+    ///   another round, and starting one would race their Enter key. The goal stays armed, so
+    ///   their next turn continues it.
+    ///
+    /// The caller is responsible for one more condition, which it can see and this cannot: a run
+    /// that ended *without producing a message* (a provider error) does not continue, or an
+    /// unreachable provider would spend the whole round budget in a hot loop.
+    ///
+    /// Deliberately **not** `submit_text`: that records the text in the Up-arrow recall ring and
+    /// in the global prompt-history file, and a harness-authored continuation is not something a
+    /// person typed. What it shares is the transcript echo and the message constructor, so a
+    /// round is visible and logged exactly like any other turn.
+    ///
+    /// Returns whether a round was started, which is what the tests assert on.
+    pub(super) fn continue_goal(&mut self, agent: &Arc<Agent>) -> bool {
+        if self.ui.running() || self.pending_ask.is_some() {
+            return false;
+        }
+        if !self.input.trim().is_empty() {
+            return false;
+        }
+        let Some(view) = agent.goal() else {
+            return false;
+        };
+        if !view.is_continuable() {
+            // A goal that is armed, active and out of rounds is the one state worth a sentence:
+            // the loop stopped for a reason the user has to change something to fix, and silence
+            // would read as "it forgot".
+            if view.armed && view.goal.status.is_continuable() && view.goal.exhausted() {
+                self.ui.push_notice(format!(
+                    "goal round cap reached ({}/{}): `/goal edit rounds <n>` raises it",
+                    view.goal.rounds_started, view.goal.max_rounds
+                ));
+            }
+            return false;
+        }
+        let Ok(Some(prompt)) = agent.goal_begin_round() else {
+            return false;
+        };
+        self.ui.push_notice(format!(
+            "goal round {}/{} — continuing",
+            view.goal.rounds_started + 1,
+            view.goal.max_rounds
+        ));
+        self.ui.push_local_input(&prompt);
+        let msg = epsilon_core::references::user_message(&self.workspace_root, &prompt);
+        self.spawn_run(Arc::clone(agent), msg);
+        true
     }
 
     fn run_navigate_command(

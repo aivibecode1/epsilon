@@ -111,6 +111,9 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     // Set when an event in the drained batch could have changed the goal, so the badge is
     // re-read once per frame that needs it rather than once per event or once per draw.
     let mut goal_dirty = true;
+    // Set when the drained batch contained a turn end, so the goal round driver runs once for
+    // that turn rather than once per event or once per frame.
+    let mut goal_turn_ended = false;
     loop {
         // M59: the external editor needs the terminal to itself, so the hand-off
         // happens between frames (set by `/editor` or the keybinding) — never
@@ -150,8 +153,15 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
                     // writing it: `create_goal` / `update_goal` run inside a turn, and the
                     // footer's badge is cached rather than read per frame. Checked here rather
                     // than in `apply_with_scroll`, which has no agent to read a goal from.
-                    if matches!(*ev, epsilon_contracts::AgentEvent::AgentEnd { .. }) {
+                    if let epsilon_contracts::AgentEvent::AgentEnd { messages } = &*ev {
                         goal_dirty = true;
+                        // **A run that produced nothing does not continue the goal.** A round
+                        // that failed at the provider boundary — a rejected request, an expired
+                        // credential, a network error — produces no messages, and repeating it
+                        // would spend the whole round budget on a loop that cannot make progress.
+                        // A successful turn always produces at least an assistant message, so
+                        // this is exact rather than a heuristic.
+                        goal_turn_ended = !messages.is_empty();
                     }
                     apply_with_scroll(&mut app, &ev);
                 }
@@ -169,6 +179,18 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         }
         if quit {
             break;
+        }
+
+        // The goal's round driver. Decided here, once per drained batch, so a turn end cannot
+        // start two rounds and a round cannot start before the frame that announced it. It
+        // re-reads the goal rather than trusting the event, so a tool that completed the goal
+        // during the turn stops the loop on the same frame.
+        if goal_turn_ended {
+            goal_turn_ended = false;
+            if app.continue_goal(&agent) {
+                dirty = true;
+                goal_dirty = true;
+            }
         }
 
         // Frame ceiling (~30 fps). Without it a fast provider stream would still

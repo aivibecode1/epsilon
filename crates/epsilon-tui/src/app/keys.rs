@@ -1204,7 +1204,19 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 return false;
             }
             if app.ui.running() {
-                if agent.abort_current_run() {
+                let cancelled = agent.abort_current_run();
+                // **Asking to abort disarms the goal, whether or not the cancel landed.** Esc is
+                // a person saying "stop", and a round driver that restarts the moment this turn
+                // ends is the harness arguing with them. Hanging this on `cancelled` would make
+                // it a function of whether a token happened to be live — and the request is the
+                // intention either way. The durable goal is untouched: `/goal resume` (or the
+                // model's `update_goal`) starts it again, which is exactly DSH's split between
+                // the state and the permission to continue it.
+                if agent.goal_armed() {
+                    agent.set_goal_armed(false);
+                    app.notice("goal disarmed by the abort — `/goal resume` continues it");
+                }
+                if cancelled {
                     // M30: drain queued steering so it doesn't leak into the
                     // next run, and restore the last message to the editor so
                     // the user can re-edit rather than losing it.

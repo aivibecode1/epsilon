@@ -5,6 +5,19 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **An armed goal now continues itself.** At the end of a turn the harness sends the next round
+  on its own, as an ordinary turn you can watch and read: the objective, the round and the cap,
+  and what ends the loop. It stops when the goal is completed or paused (by you or by the model),
+  when the round cap is reached, when you **abort** — Esc withdraws the permission to continue
+  while leaving the goal intact, so `/goal resume` picks it up — and when you are part-way through
+  typing, because a draft means you are mid-sentence and the round can wait. A run that failed at
+  the provider does not continue: repeating a round that produced nothing would spend the whole
+  budget on a loop that cannot make progress (M204).
+
+- **`/goal <objective>` starts working immediately.** A goal that parked an objective and then sat
+  there until you typed something else would be a note, not a goal; `pause` is how you park one
+  without starting it (M204).
+
 - **A session can now hold one long-running goal, and both you and the model can see it.**
   `/goal <what to achieve>` parks an objective; `/goal` reports it, and `edit`, `pause`,
   `resume`, `complete`, `blocked` and `clear` manage it. It lives in the session file — so it
