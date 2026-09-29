@@ -1617,6 +1617,9 @@ mod composer_viewport_tests;
 #[cfg(test)]
 mod goal_tests;
 
+#[cfg(test)]
+mod startup_tests;
+
 /// Lay out draft and caret together, retaining whitespace and whole graphemes.
 /// Unlike transcript wrapping, composer wrapping must not eat typed spaces.
 ///

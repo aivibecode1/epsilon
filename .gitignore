@@ -95,5 +95,8 @@ audit/evidence/*.log
 # M204: the round driver. 1613 tests / 64 binaries, 7 of 7 gates.
 !audit/evidence/gate-m204.log
 
+# M205: the harness says what it knows. 1617 tests / 64 binaries, 7 of 7 gates.
+!audit/evidence/gate-m205.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

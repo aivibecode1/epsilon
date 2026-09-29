@@ -874,6 +874,40 @@ impl App {
         }
     }
 
+    /// Say that this session already holds history, when this launch is not showing it.
+    ///
+    /// Ledger A17. `--resume` seeds the runtime history; a plain launch does not, and it still
+    /// appends to the same file — so a returning user gets a first-run screen while the header
+    /// reports a few percent of the context already used. Both facts are true (that figure is the
+    /// system prompt and the tool schemas, per M194's C2 fix) and together they read as a bug.
+    /// One sentence closes it, and it names the command that brings the history back rather than
+    /// leaving the user to guess that the file still has it.
+    ///
+    /// Silent when the history *is* restored — the condition is "the store has entries and this
+    /// process is not carrying them", which is exactly what makes the screen look wrong.
+    pub(crate) fn note_prior_history(&mut self, agent: &Agent) {
+        if !agent.history().is_empty() {
+            return;
+        }
+        let Some(store) = agent.session_store() else {
+            return;
+        };
+        let Ok(guard) = store.lock() else {
+            return;
+        };
+        let entries = guard.len();
+        if entries == 0 {
+            return;
+        }
+        drop(guard);
+        self.ui.push_notice(format!(
+            "this session already holds {entries} entr{} — this launch starts a fresh \
+             conversation in the same file, and the model does not see them; `epsilon -c` (or \
+             `/resume <file>`) opens with that history",
+            if entries == 1 { "y" } else { "ies" }
+        ));
+    }
+
     /// Start the next round of an armed goal, if this is the moment for one.
     ///
     /// Called at a turn end. Four conditions have to hold, and each one is a way the harness
@@ -928,10 +962,40 @@ impl App {
             view.goal.rounds_started + 1,
             view.goal.max_rounds
         ));
+        self.note_goal_budget(view.goal.rounds_started + 1, view.goal.max_rounds);
         self.ui.push_local_input(&prompt);
         let msg = epsilon_core::references::user_message(&self.workspace_root, &prompt);
         self.spawn_run(Arc::clone(agent), msg);
         true
+    }
+
+    /// Warn as a goal's round budget runs down.
+    ///
+    /// Rounds are the only budget a goal has (DSH's design, and deliberate), which means the cap
+    /// is what stops a loop that a human has stopped watching — and a user who set a goal and
+    /// walked away gets no signal at all until it stops. This is a small ladder rather than a
+    /// threshold: each step fires once as it is crossed, so the warning cannot become the noise
+    /// that gets ignored, and the last two are the ones that matter.
+    ///
+    /// The numbers are fractions of the cap (10%, 4%, 2%, and the final round) rather than fixed
+    /// counts, because `/goal edit rounds <n>` can set any cap at all. `rounds_started` is the
+    /// count *after* the round that is starting, so the two notices a continuing goal prints
+    /// agree about which round it is on.
+    fn note_goal_budget(&mut self, rounds_started: u32, max_rounds: u32) {
+        let remaining = max_rounds.saturating_sub(rounds_started);
+        let ladder = [
+            (max_rounds / 10).max(1),
+            (max_rounds / 25).max(1),
+            (max_rounds / 50).max(1),
+            1,
+        ];
+        if !ladder.contains(&remaining) {
+            return;
+        }
+        self.ui.push_notice(format!(
+            "goal has {remaining} of {max_rounds} rounds left — `/goal edit rounds <n>` raises \
+             the cap, `/goal pause` stops it"
+        ));
     }
 
     fn run_navigate_command(

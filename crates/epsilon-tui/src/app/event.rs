@@ -77,6 +77,11 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         app.ui
             .push_notice("type `trust` to accept the new config, or `trust no` to quit");
     }
+    // A17: a plain launch opens the session file, appends to it, and starts with an *empty*
+    // in-memory history. The first thing a returning user sees is therefore a first-run screen
+    // while the header reports a few percent of the context already used — both true (that
+    // figure is the system prompt and the tool schemas) and together reading as a bug.
+    app.note_prior_history(&agent);
 
     // M22 fix: an initial task (positional arg / --tui "task") must respect the
     // trust gate like any other submit. When review is pending, stash the text

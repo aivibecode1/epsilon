@@ -339,6 +339,62 @@ async fn the_cap_stops_the_loop_and_says_which_command_raises_it() {
 }
 
 #[tokio::test]
+async fn the_round_budget_warns_as_it_runs_down_and_names_what_to_do() {
+    // Rounds are the only budget a goal has, so the cap is what stops a loop nobody is watching —
+    // and a user who set a goal and walked away otherwise gets no signal at all until it stops.
+    // The ladder fires on exact remaining values (10%, 4%, 2%, and the last round), so the
+    // warning cannot become the noise that gets ignored. Driven through `continue_goal` because
+    // that is where the user meets it.
+    let (mut app, agent, _rx, _dir) = test_app_with_store();
+    let max = 100u32;
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::GoalOp::Create {
+                objective: "a long job".into(),
+                max_rounds: Some(max),
+            },
+        )
+        .unwrap();
+
+    // Advance the durable counter without spawning runs, to one round short of the first step.
+    for _ in 0..89 {
+        agent.goal_begin_round().unwrap();
+    }
+    assert_eq!(agent.goal().unwrap().goal.rounds_started, 89);
+
+    // Round 90 leaves 10 of 100 — the first step.
+    assert!(app.continue_goal(&agent));
+    let notice = last_notice(&app);
+    assert!(notice.contains("10 of 100 rounds left"), "{notice}");
+    assert!(notice.contains("/goal edit rounds"), "{notice}");
+
+    // Rounds 91–93 leave 9, 8 and 7: no ladder value, so nothing but the round line. (The ladder
+    // for a cap of 100 is {10, 4, 2, 1}, so 9 through 5 are deliberately quiet.)
+    for _ in 0..3 {
+        assert!(app.continue_goal(&agent));
+    }
+    assert_eq!(agent.goal().unwrap().goal.rounds_started, 93);
+    let notice = last_notice(&app);
+    assert!(
+        !notice.contains("rounds left"),
+        "a quiet stretch must stay quiet: {notice}"
+    );
+
+    // The last round is the other step that always fires: continuing from 98 leaves 1.
+    for _ in 0..5 {
+        agent.goal_begin_round().unwrap();
+    }
+    assert_eq!(agent.goal().unwrap().goal.rounds_started, 98);
+    assert!(app.continue_goal(&agent));
+    assert!(
+        last_notice(&app).contains("1 of 100 rounds left"),
+        "{}",
+        last_notice(&app)
+    );
+}
+
+#[tokio::test]
 async fn aborting_a_run_disarms_the_goal_without_touching_it() {
     // Esc is a person saying stop. The durable goal survives; the permission to keep going
     // unattended does not, which is the difference between `/goal resume` and a fight.

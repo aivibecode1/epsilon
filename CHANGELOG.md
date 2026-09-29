@@ -5,6 +5,16 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Epsilon tells you when a session already has history it is not showing you.** A plain launch
+  opens the session file and appends to it, but starts with an empty conversation — so a returning
+  user gets a first-run screen while the header reports a few percent of the context already in
+  use. Both are true, and together they read as a bug. One line now says how many entries the file
+  holds and how to open with them (psilon -c, or /resume <file>) (M205).
+
+- **A goal's round budget warns before it runs out.** 10% of the cap, then 4%, then 2%, then the
+  last round — each said once, with the two commands that do something about it. Rounds are the
+  only budget a goal has, so the cap is what stops a loop nobody is watching (M205).
+
 - **An armed goal now continues itself.** At the end of a turn the harness sends the next round
   on its own, as an ordinary turn you can watch and read: the objective, the round and the cap,
   and what ends the loop. It stops when the goal is completed or paused (by you or by the model),
