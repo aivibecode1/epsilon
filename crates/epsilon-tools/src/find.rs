@@ -174,6 +174,7 @@ mod tests {
             spill_dir: root.join(".epsilon/spill"),
             token: CancellationToken::new(),
             task_host: None,
+            goal_host: None,
         };
         let out = tool
             .execute(call, ctx, Arc::new(|_| {}))

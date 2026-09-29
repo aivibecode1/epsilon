@@ -229,6 +229,7 @@ mod tests {
             spill_dir: std::env::temp_dir(),
             token: Default::default(),
             task_host: None,
+            goal_host: None,
         };
         tool.execute(
             ToolInvocation {

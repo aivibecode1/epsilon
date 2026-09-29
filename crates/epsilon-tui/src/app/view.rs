@@ -364,7 +364,21 @@ impl App {
         if let Some(branch) = self.cached_branch() {
             hints.branch = Some(branch);
         }
+        // The goal badge rides the same reasoning as the location: it changes when someone
+        // changes the goal, not when a frame is drawn, and reading it here would fold the whole
+        // session log thirty times a second. `refresh_goal` is the one writer of this field.
+        hints.goal = self.goal_badge.clone();
         hints
+    }
+
+    /// Re-read the session goal and cache the one-line badge the footer shows.
+    ///
+    /// Called from the two places a goal can change: a `/goal` command, and the end of a turn
+    /// (where a `create_goal` / `update_goal` call lands). Reading it per frame instead would
+    /// mean folding the session log on every draw for a value that changes a handful of times in
+    /// a session.
+    pub(crate) fn refresh_goal(&mut self, agent: &Agent) {
+        self.goal_badge = agent.goal().map(|view| view.badge());
     }
 
     /// Whether any overlay currently owns the keyboard.

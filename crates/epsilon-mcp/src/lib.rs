@@ -275,6 +275,7 @@ mod tests {
             spill_dir: std::env::temp_dir().join("eps-mcp"),
             token: Default::default(),
             task_host: None,
+            goal_host: None,
         };
         let invocation = || ToolInvocation {
             tool_call_id: "tc_probe".into(),
@@ -338,6 +339,7 @@ mod tests {
             spill_dir: std::env::temp_dir().join("eps-mcp"),
             token: Default::default(),
             task_host: None,
+            goal_host: None,
         };
         let out = tool
             .execute(

@@ -320,6 +320,7 @@ mod tests {
             spill_dir: std::env::temp_dir(),
             token: Default::default(),
             task_host: None,
+            goal_host: None,
         };
         TaskTool::new()
             .execute(
@@ -553,6 +554,7 @@ mod tests {
             spill_dir: std::env::temp_dir(),
             token: Default::default(),
             task_host: Some(host as std::sync::Arc<dyn epsilon_contracts::tool::TaskHost>),
+            goal_host: None,
         };
         TaskTool::new()
             .execute(

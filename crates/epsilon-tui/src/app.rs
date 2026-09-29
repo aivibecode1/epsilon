@@ -250,6 +250,13 @@ pub(crate) struct App {
     /// drawn frame — two environment lookups and a path walk, thirty times a
     /// second — so it is now derived once, where the field is declared.
     location_label: String,
+    /// The session goal as the footer shows it (`● goal 2/256`), or `None` when there is none.
+    ///
+    /// Cached rather than read from the store per frame: a goal changes when a person or the
+    /// model changes it, and folding the session log thirty times a second to notice is the
+    /// per-frame cost this crate has spent three milestones removing. `App::refresh_goal` is the
+    /// only writer, called from a `/goal` command and at the end of a turn.
+    goal_badge: Option<String>,
     /// M16a: picker rows cached per (filter, sources) tuple; rebuilt only when one
     /// of those changes, never on Up/Down.
     picker_rows: Option<Vec<crate::picker::PickerRow>>,
@@ -1606,6 +1613,9 @@ pub(crate) fn draw_frame(f: &mut Frame<'_>, app: &mut App) {
 
 #[cfg(test)]
 mod composer_viewport_tests;
+
+#[cfg(test)]
+mod goal_tests;
 
 /// Lay out draft and caret together, retaining whitespace and whole graphemes.
 /// Unlike transcript wrapping, composer wrapping must not eat typed spaces.

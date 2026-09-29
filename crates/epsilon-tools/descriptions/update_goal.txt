@@ -1,0 +1,22 @@
+Change the session's goal. Call get_goal first: goal_id and revision must be the exact pair it
+returned, and a stale pair is refused rather than applied.
+
+Actions:
+
+- edit — rewrite the objective and/or the round cap. The phase does not change. Use this when the
+  objective was right but the wording or the budget needs to move; use it to raise
+  max_goal_rounds when the cap is reached.
+- pause — stop continuing. The state is kept, and the human can resume it.
+- resume — start continuing again, and clear a former blocker. Use it only when the human asked
+  to continue.
+- complete — the objective is achieved. Say so in your reply as well: this records it, it does
+  not explain it.
+- blocked — a concrete condition has to change before work can continue: a missing credential, a
+  decision only the human can make, a failing service outside the workspace. Give a short
+  lower-kebab-case code and say what the condition is. Blocking is refused before three rounds of
+  work: being stuck on the first obstacle is not a blocker, and difficulty, uncertainty or
+  remaining work are never reasons to block.
+- clear — remove the goal. Its history stays in the session file.
+
+Creating and editing a goal rewrite what the session is for. Do that when the human asked for it,
+and ask before replacing an objective they set.

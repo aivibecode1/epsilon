@@ -54,6 +54,20 @@ pub fn test_app() -> (App, Arc<Agent>, TestReceivers) {
     (App::new("faux-1".into(), ftx, ntx, otx), agent, (frx, nrx))
 }
 
+/// An app whose agent has a **durable session file**, plus the `TempDir` that owns it.
+///
+/// The goal lives in the session log and nowhere else, so a `/goal` test on an agent with no
+/// store would exercise the refusal path — a real case, with its own test — instead of the
+/// behaviour it means to check.
+pub fn test_app_with_store() -> (App, Arc<Agent>, TestReceivers, tempfile::TempDir) {
+    let (app, agent, rx) = test_app();
+    let dir = tempfile::tempdir().expect("a temporary workspace");
+    let store = epsilon_session::SessionStore::open(dir.path().join("session.jsonl"))
+        .expect("a fresh session file opens");
+    agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
+    (app, agent, rx, dir)
+}
+
 /// One screen row as text: every cell's symbol once, stepping by its width.
 pub fn row_text(buffer: &ratatui::buffer::Buffer, y: u16, width: u16) -> String {
     let mut out = String::new();

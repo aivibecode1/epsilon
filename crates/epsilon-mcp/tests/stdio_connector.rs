@@ -42,6 +42,7 @@ async fn stdio_connector_discovers_and_calls_fixture_tools() {
         spill_dir: std::env::temp_dir().join("eps-mcp-stdio"),
         token: Default::default(),
         task_host: None,
+        goal_host: None,
     };
     let out = tool
         .execute(

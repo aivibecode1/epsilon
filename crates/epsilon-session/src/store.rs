@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use epsilon_contracts::agent_event::TurnEndReason;
 use epsilon_contracts::content::{ContentBlock, UserContent};
+use epsilon_contracts::goal::{GoalChange, GoalSnapshot};
 use epsilon_contracts::message::{Message, Usage, UserMessage};
 use epsilon_contracts::session_entry::{
     CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind,
@@ -1138,6 +1139,53 @@ impl SessionStore {
             label: label.map(str::to_string),
         })?;
         Ok(entry.id)
+    }
+
+    /// The session's current goal, folded from its durable changes in file order.
+    ///
+    /// Mirrors [`SessionStore::labels`] in shape and in reason: the log is the only authority,
+    /// so the answer is derived rather than stored, and a goal written by another frontend —
+    /// or by an earlier build — folds the same way.
+    ///
+    /// **The fold is order-driven and lenient about sequence, strict about shape.** Shape is
+    /// serde's job and a body it cannot read is refused at open (M108). Sequence is different:
+    /// a `Set` whose revision does not follow the previous one is *applied* — the revision that
+    /// matters is the one a mutation's compare-and-set is checked against, and refusing to
+    /// derive a state because a number skipped would turn a writer's bug into an unopenable
+    /// session. What the fold will not do is apply a change that contradicts the log's own
+    /// story: a `Cleared` removes the goal only when it names the goal that is current, so a
+    /// late tombstone cannot delete a newer objective.
+    ///
+    /// A goal is *not* scoped to the active branch, deliberately. Branch navigation rewinds the
+    /// conversation; it does not un-set the objective a person typed, and the alternative —
+    /// a goal that disappears because the user looked at another branch — is the kind of
+    /// surprise that makes a feature untrustworthy. `labels` is scoped the same way for the same
+    /// reason.
+    pub fn goal(&self) -> Result<Option<GoalSnapshot>, StoreError> {
+        let mut current: Option<GoalSnapshot> = None;
+        for e in self.read_all()? {
+            let EntryKind::Goal { change } = e.kind else {
+                continue;
+            };
+            match change {
+                GoalChange::Set { goal } => current = Some(goal),
+                GoalChange::Cleared { id, .. } => {
+                    if current.as_ref().is_some_and(|g| g.id == id) {
+                        current = None;
+                    }
+                }
+            }
+        }
+        Ok(current)
+    }
+
+    /// Append a goal change, stamped by the store like every other entry.
+    ///
+    /// A thin wrapper so a caller cannot write the entry with a hand-made kind by mistake: the
+    /// only way to change a goal is to write one of these, and the only reader is
+    /// [`SessionStore::goal`].
+    pub fn append_goal(&mut self, change: GoalChange) -> Result<SessionEntry, StoreError> {
+        self.append(EntryKind::Goal { change })
     }
 
     /// Resolve the label for every entry, in file order, as pi's loader does.

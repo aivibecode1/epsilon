@@ -1,0 +1,11 @@
+Set one long-running objective for this session.
+
+Use it when the human asks for work that will span many turns — "keep going until X", "fix every
+failing gate", "ship the migration". Do not create a goal for a single request: it changes what
+the harness does between turns, and a session that continues by itself when nobody asked is worse
+than one that stops.
+
+At most one goal is current. If one already exists, edit it or ask the human before replacing it.
+
+The objective is recorded verbatim in the session file, so write it in the human's own words and
+keep it to a sentence or two.

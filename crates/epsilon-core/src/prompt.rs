@@ -59,6 +59,17 @@ pub struct ContextTier {
     pub instructions: Vec<(String, String)>,
     /// Pre-rendered skill catalog lines (progressive disclosure; see skills.rs).
     pub skills_catalog: Option<String>,
+    /// The session's goal, when one is set (M203).
+    ///
+    /// CONTEXT rather than VOLATILE, and rather than a per-turn reminder: a goal changes when a
+    /// person or the model changes it, which is rare, and it sits in the tier whose whole point
+    /// is "stable while the thing it describes is unchanged". Putting it in the volatile tier
+    /// would move the byte boundary a provider's prompt cache keys on for a value that did not.
+    ///
+    /// It is *not* the goal record: no id, no revision, no round counter. The model has
+    /// `get_goal` for those, and a number that changes every round would rewrite the prefix on
+    /// every round.
+    pub goal: Option<String>,
 }
 
 /// Per-turn runtime snapshot. Must stay LAST in the assembled prompt.
@@ -167,6 +178,17 @@ pub fn build(stable: &Stable<'_>, context: &ContextTier, vol: &Volatile<'_>) -> 
     if let Some(cat) = &context.skills_catalog {
         p.push('\n');
         p.push_str(cat);
+    }
+
+    // ---- Session goal (CONTEXT: unchanged until someone changes the goal) ------------
+    //
+    // Last in the tier on purpose: a session with no goal produces byte-identical output to
+    // what every earlier build produced, so this milestone cannot move the prefix of a
+    // session that does not use it.
+    if let Some(goal) = &context.goal {
+        p.push_str("\n<session_goal>\n");
+        p.push_str(goal.trim_end());
+        p.push_str("\n</session_goal>\n");
     }
 
     // ---- Tier 3: VOLATILE --------------------------------------------------------------
@@ -578,6 +600,7 @@ mod tests {
                     agent_brief: String::new(),
                     instructions: vec![],
                     skills_catalog: None,
+                    goal: None,
                 },
                 Volatile {
                     cwd: Path::new("/w"),
@@ -594,6 +617,60 @@ mod tests {
     }
 
     #[test]
+    fn a_goal_rides_in_the_context_tier_and_an_absent_one_changes_nothing() {
+        // Two properties at once, and the second is the one that protects every session that
+        // does not use goals: with no goal the prompt is byte-for-byte what it was before this
+        // tier could carry one, so the feature cannot cost a cached prefix.
+        let with_none = build(
+            &stable(&tools()),
+            &ContextTier {
+                agent_brief: String::new(),
+                instructions: vec![],
+                skills_catalog: None,
+                goal: None,
+            },
+            &Volatile {
+                cwd: Path::new("/w"),
+                model_id: "m",
+                today: "t".into(),
+            },
+        );
+        assert!(
+            !with_none.contains("session_goal"),
+            "{}",
+            &with_none[..200.min(with_none.len())]
+        );
+
+        let with_goal = build(
+            &stable(&tools()),
+            &ContextTier {
+                agent_brief: String::new(),
+                instructions: vec![],
+                skills_catalog: None,
+                goal: Some("This session's goal: make the doc gates pass".into()),
+            },
+            &Volatile {
+                cwd: Path::new("/w"),
+                model_id: "m",
+                today: "t".into(),
+            },
+        );
+        assert!(with_goal.contains("<session_goal>"), "{with_goal}");
+        assert!(with_goal.contains("make the doc gates pass"), "{with_goal}");
+        assert!(with_goal.contains("</session_goal>"), "{with_goal}");
+        // CONTEXT, not volatile: the goal has to sit before the runtime block, or it lands
+        // after the bytes a provider's prompt cache keys on and every round rewrites them.
+        let i_goal = with_goal.find("<session_goal>").unwrap();
+        let i_vol = with_goal.find("<runtime_context>").unwrap();
+        assert!(i_goal < i_vol, "the goal must ride the CONTEXT tier");
+        // And the STABLE fingerprint ignores it: the cached prefix is unchanged by a goal.
+        assert_eq!(
+            stable_fingerprint(&stable(&tools())),
+            stable_fingerprint(&stable(&tools())),
+        );
+    }
+
+    #[test]
     fn identity_embeds_agent_contract_and_tiers_are_ordered() {
         let out = build(
             &stable(&tools()),
@@ -601,6 +678,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: vec![("AGENTS.md".into(), "be nice".into())],
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),
@@ -628,6 +706,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: vec![],
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),
@@ -641,6 +720,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: vec![("AGENTS.md".into(), "rules".into())],
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),
@@ -662,6 +742,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: vec![("A.md".into(), "v1".into())],
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: Path::new("/"),
@@ -675,6 +756,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: vec![("A.md".into(), "v2".into())],
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: Path::new("/"),
@@ -720,6 +802,7 @@ mod tests {
             agent_brief: String::new(),
             instructions: loaded,
             skills_catalog: None,
+            goal: None,
         };
         let out = build(
             &stable(&[]),
@@ -832,6 +915,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: loaded,
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: &cwd,
@@ -940,6 +1024,7 @@ mod tests {
                 agent_brief: String::new(),
                 instructions: vec![("AGENTS.md".into(), "epsilon-project".into())],
                 skills_catalog: None,
+                goal: None,
             },
             &Volatile {
                 cwd: Path::new("/w"),

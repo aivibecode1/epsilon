@@ -18,6 +18,7 @@ fn ctx_for(root: &Path) -> ToolContext {
         spill_dir: root.join(".spill"),
         token: CancellationToken::new(),
         task_host: None,
+        goal_host: None,
     }
 }
 

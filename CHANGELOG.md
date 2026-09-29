@@ -5,6 +5,22 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A session can now hold one long-running goal, and both you and the model can see it.**
+  `/goal <what to achieve>` parks an objective; `/goal` reports it, and `edit`, `pause`,
+  `resume`, `complete`, `blocked` and `clear` manage it. It lives in the session file — so it
+  survives a restart, a fork and a resume with no migration — and it rides the prompt's context
+  tier, so the model works toward it without being reminded. The footer shows `● goal 2/256`,
+  where a filled mark means the harness is armed to continue it and a hollow one means it is
+  waiting. **A goal is durable; the permission to keep working on it unattended is not**: a
+  process that has not asked never continues one, because the person who armed it is not
+  necessarily the person who opens the session next (M203).
+
+- **The model has the same controls, as tools.** `create_goal`, `get_goal` and `update_goal`
+  are in the registry. Every update carries the `{id, revision}` that `get_goal` returned and is
+  refused when stale, so a tool call that read the goal ten calls ago cannot overwrite what you
+  changed in between. `blocked` is refused before three rounds of work: being stuck on the first
+  obstacle is not a blocker, and difficulty, uncertainty or remaining work never are (M203).
+
 - **Epsilon opens a session written by an older version again.** `Usage.cache_reported`
   was added without a serde default, and a usage block sits inside every assistant
   message — so every session file written before that change failed to decode, and

@@ -119,6 +119,10 @@ impl App {
                 crate::ui::format::format_path(&workspace_root, home.as_deref(), 28)
             },
             workspace_root,
+            // Nothing has read the session's goal yet, and a fresh process has not armed one:
+            // the badge appears the first time something looks, which is a `/goal` command or
+            // the end of the first turn.
+            goal_badge: None,
             // Populated immediately below; see `discover_prompt_templates`.
             prompt_templates: Vec::new(),
             keybindings: crate::keybindings::KeybindingsManager::create(),

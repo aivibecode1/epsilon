@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::content::ContentBlock;
+use crate::goal::{GoalError, GoalOp, GoalRef, GoalView};
 use crate::ids::ToolCallId;
 use crate::message::Usage;
 
@@ -299,6 +300,37 @@ pub trait TaskHost: Send + Sync {
     }
 }
 
+/// Host that reads and mutates the session's one long-running goal.
+///
+/// Implemented by `epsilon-core::Agent` and injected via [`ToolContext::goal_host`], for the same
+/// reason [`TaskHost`] exists: the tool crate must be able to reach session state without
+/// depending on the crate that owns it, and the dependency inversion belongs in contracts rather
+/// than in a second implementation.
+///
+/// Both methods are **synchronous on purpose.** The store they reach is behind a `std::sync`
+/// mutex and does file I/O, and an `async fn` holding that guard across an await point is how a
+/// tool deadlocks a run. There is nothing to await here: a goal change is one append.
+pub trait GoalHost: Send + Sync {
+    /// The current goal, with this process's activation state. `None` when no goal is current.
+    fn current_goal(&self) -> Option<GoalView>;
+
+    /// Apply one operation.
+    ///
+    /// `expect` is the compare-and-set reference the caller read. `None` means "whatever is
+    /// current" and is for a *frontend* acting on what the user is looking at right now;
+    /// `Some` is for a caller holding a view it read earlier — which is every model tool call,
+    /// and the reason a stale tool call cannot silently overwrite a change the user made in
+    /// between.
+    ///
+    /// `Ok(None)` is the outcome of `clear` and means "there is no goal now" — an outcome rather
+    /// than an error, because the caller asked for exactly that.
+    fn apply_goal(
+        &self,
+        expect: Option<GoalRef>,
+        op: GoalOp,
+    ) -> Result<Option<GoalView>, GoalError>;
+}
+
 /// Environment handed to every execution.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -316,6 +348,10 @@ pub struct ToolContext {
     /// Optional isolated host for `task` delegation (injected by the loop; `None` in
     /// unit tests and non-loop callers keeps the capture fallback).
     pub task_host: Option<Arc<dyn TaskHost>>,
+    /// Optional host for the session goal (injected by the loop; `None` in unit tests and for an
+    /// agent with no durable mirror, where a goal tool can only report that there is nowhere to
+    /// record one).
+    pub goal_host: Option<Arc<dyn GoalHost>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -326,6 +362,7 @@ impl std::fmt::Debug for ToolContext {
             .field("spill_dir", &self.spill_dir)
             .field("cancelled", &self.token.is_cancelled())
             .field("has_task_host", &self.task_host.is_some())
+            .field("has_goal_host", &self.goal_host.is_some())
             .finish()
     }
 }

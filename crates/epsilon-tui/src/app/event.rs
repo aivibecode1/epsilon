@@ -108,6 +108,9 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     // nothing at all.
     let mut dirty = true;
     let mut frame_due = std::time::Instant::now();
+    // Set when an event in the drained batch could have changed the goal, so the badge is
+    // re-read once per frame that needs it rather than once per event or once per draw.
+    let mut goal_dirty = true;
     loop {
         // M59: the external editor needs the terminal to itself, so the hand-off
         // happens between frames (set by `/editor` or the keybinding) — never
@@ -143,6 +146,13 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
             match events_rx.try_recv() {
                 Ok(ev) => {
                     dirty = true;
+                    // A turn boundary is where a goal can have changed without this process
+                    // writing it: `create_goal` / `update_goal` run inside a turn, and the
+                    // footer's badge is cached rather than read per frame. Checked here rather
+                    // than in `apply_with_scroll`, which has no agent to read a goal from.
+                    if matches!(*ev, epsilon_contracts::AgentEvent::AgentEnd { .. }) {
+                        goal_dirty = true;
+                    }
                     apply_with_scroll(&mut app, &ev);
                 }
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
@@ -171,6 +181,10 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
             // rather than when an event arrives is what makes the number describe
             // the same history the frame is about to show.
             app.mirror_context_size(&agent);
+            if goal_dirty {
+                app.refresh_goal(&agent);
+                goal_dirty = false;
+            }
             let _ = terminal.draw(|f| draw(f, &mut app));
             // `/copy` parks an OSC 52 sequence instead of writing it, because a
             // key handler must not touch the terminal and the sequence must not

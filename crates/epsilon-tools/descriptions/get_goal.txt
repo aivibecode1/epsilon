@@ -1,0 +1,9 @@
+Read the session's current goal.
+
+Returns the objective, its phase (active, paused, blocked or complete), how many continuation
+rounds have run against the cap, and whether this process may continue it on its own. Call it
+before `update_goal`: every update has to carry the exact id and revision this returns, and a
+stale pair is refused.
+
+A session with no goal returns that fact rather than an error — having no goal is a normal state,
+not a failure.

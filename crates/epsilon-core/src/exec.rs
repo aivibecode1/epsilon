@@ -793,6 +793,9 @@ async fn run_one(agent: &Arc<Agent>, p: &mut PreparedCall) -> ToolResultMessage 
         token: agent.current_run_token().unwrap_or_default(),
         // G4: the loop itself is the isolated host — tools call back without depending on the loop crate.
         task_host: Some(agent.clone_task_host()),
+        // The goal host rides the same seam for the same reason: the `goal` tool mutates
+        // session state, and session state lives here.
+        goal_host: Some(agent.clone_goal_host()),
     };
     let sink: epsilon_contracts::tool::ToolUpdateSink = {
         // Partial tool output reaches frontends as events (pi streams bash

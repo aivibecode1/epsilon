@@ -438,6 +438,32 @@ pub(crate) fn visible_rows(
     apply_folds(&with_mandatory, folded)
 }
 
+/// The goal as a few lines of transcript.
+///
+/// One line per fact rather than a paragraph: the transcript wraps, and a wrapped sentence whose
+/// continuation starts in the gutter reads as a second notice. The objective gets a line of its
+/// own for the same reason — it is the part a reader came for.
+fn goal_lines(view: &epsilon_contracts::goal::GoalView) -> Vec<String> {
+    let g = &view.goal;
+    let mut lines = vec![format!(
+        "goal {} · rounds {}/{} · {}",
+        g.status.as_str(),
+        g.rounds_started,
+        g.max_rounds,
+        if view.armed {
+            "continuation armed"
+        } else {
+            "continuation disarmed"
+        }
+    )];
+    lines.push(g.objective.clone());
+    if let Some(blocker) = &g.blocker {
+        lines.push(format!("blocked by {}: {}", blocker.code, blocker.reason));
+    }
+    lines.push(format!("id {} revision {}", g.id, g.revision));
+    lines
+}
+
 impl App {
     /// Route a parsed slash command to the executor that owns it.
     ///
@@ -469,7 +495,10 @@ impl App {
             // M196: mutates, so it does NOT belong with the view commands. A
             // `/skill` that only printed would leave a setting nothing could
             // change -- the "advertised but read by nothing" shape.
-            | crate::picker::Command::Skill(_) => self.run_session_command(agent, command),
+            | crate::picker::Command::Skill(_)
+            // M203: mutates the session's goal, and the bare form reads it. It lives here
+            // rather than with the view commands because half its verbs write.
+            | crate::picker::Command::Goal(_) => self.run_session_command(agent, command),
             // Show the user something.
             crate::picker::Command::Help
             | crate::picker::Command::Skills
@@ -682,6 +711,10 @@ impl App {
                 // all-commands sweep caught immediately.
                 false
             }
+            crate::picker::Command::Goal(arg) => {
+                self.run_goal_command(agent, arg.as_deref());
+                false
+            }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
             // every test build and stays silent in release - a user's release binary
@@ -691,6 +724,143 @@ impl App {
             other => {
                 debug_assert!(false, "{other:?} is not a run_session case");
                 false
+            }
+        }
+    }
+
+    /// `/goal` — the session's one long-running objective.
+    ///
+    /// The whole tail arrives here unparsed, because an objective is a sentence: splitting it in
+    /// the command parser is how a goal ends up reading "make the doc". Only a *leading word*
+    /// that names one of the verbs is treated as one, and only when nothing else could be meant
+    /// — `edit` and `clear` are the two where a bare objective would otherwise be ambiguous, so
+    /// `pause`, `resume` and `complete` are recognised the same way for consistency. Everything
+    /// else creates.
+    ///
+    /// Every path answers in the transcript: the M196 rule that a silently swallowed action is
+    /// indistinguishable from a broken program applies to commands at least as much as to keys,
+    /// and a `/goal` that printed nothing after a typo would read as a hang.
+    fn run_goal_command(&mut self, agent: &Arc<Agent>, arg: Option<&str>) {
+        use epsilon_contracts::goal::{GoalBlocker, GoalOp};
+
+        let arg = arg.map(str::trim).unwrap_or("");
+        if arg.is_empty() {
+            self.notice_goal(agent);
+            return;
+        }
+        if arg == "help" || arg == "?" {
+            for line in [
+                "/goal <objective> — start one (it replaces a completed goal)",
+                "/goal — show it · /goal edit <objective> · /goal edit rounds <n>",
+                "/goal pause · /goal resume · /goal complete",
+                "/goal blocked <code> <reason> · /goal clear",
+                "the model has the same controls as create_goal / get_goal / update_goal",
+            ] {
+                self.ui.push_notice(line);
+            }
+            return;
+        }
+
+        let (head, tail) = match arg.split_once(char::is_whitespace) {
+            Some((h, t)) => (h, t.trim()),
+            None => (arg, ""),
+        };
+
+        let op = if head.eq_ignore_ascii_case("pause") && tail.is_empty() {
+            Some(GoalOp::Pause)
+        } else if head.eq_ignore_ascii_case("resume") && tail.is_empty() {
+            Some(GoalOp::Resume)
+        } else if head.eq_ignore_ascii_case("complete") && tail.is_empty() {
+            Some(GoalOp::Complete)
+        } else if head.eq_ignore_ascii_case("clear") && tail.is_empty() {
+            Some(GoalOp::Clear)
+        } else if head.eq_ignore_ascii_case("blocked") && !tail.is_empty() {
+            let (code, reason) = match tail.split_once(char::is_whitespace) {
+                Some((c, r)) => (c.trim(), r.trim()),
+                None => (tail, ""),
+            };
+            if reason.is_empty() {
+                self.ui.push_notice(
+                    "usage: /goal blocked <code> <reason> — the reason is what a reader acts on",
+                );
+                return;
+            }
+            Some(GoalOp::Blocked {
+                blocker: GoalBlocker {
+                    code: code.to_string(),
+                    reason: reason.to_string(),
+                },
+            })
+        } else if head.eq_ignore_ascii_case("edit") {
+            if tail.is_empty() {
+                self.ui
+                    .push_notice("usage: /goal edit <new objective> | /goal edit rounds <n>");
+                return;
+            }
+            // `rounds <n>` is the one sub-form, because a number is not a sentence and a user
+            // who typed "edit rounds 40" meant the cap.
+            let (kind, rest) = match tail.split_once(char::is_whitespace) {
+                Some((k, r)) => (k, r.trim()),
+                None => (tail, ""),
+            };
+            if kind.eq_ignore_ascii_case("rounds") {
+                match rest.parse::<u32>() {
+                    Ok(n) if n > 0 => Some(GoalOp::Edit {
+                        objective: None,
+                        max_rounds: Some(n),
+                    }),
+                    _ => {
+                        self.ui
+                            .push_notice("/goal edit rounds <n> needs a positive number of rounds");
+                        return;
+                    }
+                }
+            } else {
+                Some(GoalOp::Edit {
+                    objective: Some(tail.to_string()),
+                    max_rounds: None,
+                })
+            }
+        } else {
+            Some(GoalOp::Create {
+                objective: arg.to_string(),
+                max_rounds: None,
+            })
+        };
+
+        let Some(op) = op else {
+            self.notice_goal(agent);
+            return;
+        };
+        // No compare-and-set ref: the user is looking at the current goal and acting on it, and
+        // asking them to type a revision would be asking them to do the harness's bookkeeping.
+        // The model's path (`update_goal`) does carry one, which is where staleness is real.
+        match agent.goal_apply(None, op) {
+            Ok(Some(view)) => {
+                self.ui.push_notice(goal_lines(&view).join("\n"));
+                self.goal_badge = Some(view.badge());
+            }
+            Ok(None) => {
+                self.ui.push_notice("goal cleared");
+                self.goal_badge = None;
+            }
+            Err(e) => self.ui.push_notice(format!("/goal refused: {e}")),
+        }
+    }
+
+    /// Print the current goal, or say there is none — and how to start one.
+    fn notice_goal(&mut self, agent: &Arc<Agent>) {
+        match agent.goal() {
+            Some(view) => {
+                self.ui.push_notice(goal_lines(&view).join("\n"));
+                self.goal_badge = Some(view.badge());
+            }
+            None => {
+                self.goal_badge = None;
+                self.ui.push_notice(
+                    "no goal is set — `/goal <what to achieve>` starts one, `/goal help` lists \
+                     the verbs",
+                );
             }
         }
     }
@@ -1334,6 +1504,8 @@ impl App {
                 // text is held to nothing.
                 guide.extend(crate::ui::metrics::LEGEND.iter().copied());
                 guide.extend([
+                    "goal: /goal <objective> parks one long-running objective in this session; the header line shows its phase and rounds",
+                    "      /goal shows it · edit · pause · resume · complete · blocked <code> <reason> · clear · the model has the same controls as tools",
                     "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
                 ]);

@@ -10,6 +10,7 @@
 pub mod agent_event;
 pub mod content;
 pub mod diagnostics;
+pub mod goal;
 pub mod ids;
 pub mod lagged_notice;
 pub mod message;
@@ -23,6 +24,10 @@ pub mod turn;
 
 pub use agent_event::{AgentEvent, PermissionDecision, PermissionRequest, TurnEndReason};
 pub use content::{ContentBlock, ImageRef, UserContent};
+pub use goal::{
+    BLOCKED_MIN_ROUNDS, DEFAULT_MAX_GOAL_ROUNDS, GoalBlocker, GoalChange, GoalError, GoalOp,
+    GoalRef, GoalSnapshot, GoalStatus, GoalView,
+};
 pub use ids::{MessageId, SessionId, ToolCallId, new_id};
 pub use lagged_notice::LaggedNotice;
 pub use message::{

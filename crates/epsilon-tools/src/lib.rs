@@ -10,6 +10,7 @@ pub mod checkpoint;
 mod edit_match;
 mod files;
 mod find;
+pub mod goal;
 pub mod image;
 mod mutation;
 mod read_log;
@@ -28,6 +29,10 @@ use epsilon_safety::Sandbox;
 
 pub use files::{EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool};
 pub use find::{FindArgs, FindTool};
+pub use goal::{
+    CreateGoalArgs, CreateGoalTool, GetGoalArgs, GetGoalTool, GoalAction, UpdateGoalArgs,
+    UpdateGoalTool,
+};
 pub use search::{GlobArgs, GlobTool, GrepArgs, GrepTool, LS_DEFAULT_LIMIT, LsArgs, LsTool};
 pub use shell::CommandVerdict;
 pub use shell::{BashArgs, BashTool, ChildStdio};
@@ -155,6 +160,12 @@ pub fn register_builtins_with(registry: &mut ToolRegistry, confinement: &Confine
     // Plan 010: webfetch joins the read group (Ask-gated, spill-aware).
     registry.register(Arc::new(WebFetchTool::new()));
     registry.register(Arc::new(TodoTool::new()));
+    // The goal tools reach session state through `ToolContext::goal_host`, so registering them
+    // costs nothing when the agent has no durable mirror: they say so rather than failing
+    // obscurely. (A `task` child gets its own host through the same seam.)
+    registry.register(Arc::new(goal::CreateGoalTool::new()));
+    registry.register(Arc::new(goal::GetGoalTool::new()));
+    registry.register(Arc::new(goal::UpdateGoalTool::new()));
     registry.register(Arc::new(TaskTool::new()));
 }
 

@@ -33,6 +33,7 @@ fn tool_ctx(dir: &Path) -> ToolContext {
         spill_dir: dir.join(".spill"),
         token: CancellationToken::new(),
         task_host: None,
+        goal_host: None,
     }
 }
 

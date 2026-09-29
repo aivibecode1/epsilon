@@ -160,6 +160,7 @@ pub const KNOWN_ENTRY_KINDS: &[&str] = &[
     "turn_end",
     "label",
     "session_info",
+    "goal",
 ];
 
 /// Payload kinds. Order of declaration mirrors pi for reviewability.
@@ -268,6 +269,20 @@ pub enum EntryKind {
     SessionInfo {
         /// The session's title, when one has been set.
         name: Option<String>,
+    },
+    /// A change to the session's one long-running goal.
+    ///
+    /// A DSH addition rather than a pi one (`packages/goal/goal/src/types.ts`): pi has no goal
+    /// concept, and this is the whole of its durable storage here. The session log is the only
+    /// authority for goal state — there is no side file and no settings key — so that a goal
+    /// survives a restart, a fork and a resume with no separate migration, and so that "what
+    /// was the objective" has exactly one answer.
+    ///
+    /// The payload is a *complete snapshot* per mutation (or a revisioned tombstone), which is
+    /// what makes the fold a `for` loop rather than a replay of edits.
+    Goal {
+        /// The mutation, accepted and durable.
+        change: crate::goal::GoalChange,
     },
     /// A kind this build does not know, kept so it can be replayed verbatim.
     ///
@@ -484,6 +499,21 @@ mod tests {
             },
             EntryKind::SessionInfo {
                 name: Some("title".into()),
+            },
+            EntryKind::Goal {
+                change: crate::goal::GoalChange::Set {
+                    goal: crate::goal::GoalSnapshot {
+                        id: "goal_1".into(),
+                        revision: 1,
+                        objective: "make the doc gates pass".into(),
+                        status: crate::goal::GoalStatus::Active,
+                        max_rounds: 8,
+                        rounds_started: 0,
+                        blocker: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                },
             },
         ];
         assert_eq!(

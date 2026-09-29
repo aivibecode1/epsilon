@@ -290,6 +290,12 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "subagent tasks: state, turns, ids (Esc stops them with the run)",
     },
     SlashItem {
+        // The description names the bare form first because that is the one a user types to
+        // find out what is going on; the verbs are one `/goal help` away.
+        value: "/goal ",
+        description: "one long-running objective: `/goal <what to achieve>`, bare to show it",
+    },
+    SlashItem {
         value: "/fork",
         description: "copy current session JSONL to a new branch file",
     },
@@ -530,6 +536,14 @@ pub enum Command {
     Tasks,
     /// Navigate session tree (alias for timeline).
     Tree,
+    /// Set, show, or manage the session's one long-running goal.
+    ///
+    /// `/goal <objective>` creates and arms one; `/goal` alone shows it; the verbs are
+    /// `edit`, `pause`, `resume`, `complete`, `blocked`, `clear`. The whole argument text is
+    /// handed to the command rather than parsed here, because an objective is a sentence and
+    /// splitting it in the parser is how a goal ends up reading "make the doc" — the same
+    /// reason `/name` and `/search` take their tails whole.
+    Goal(Option<String>),
     /// Duplicate the current session at current position.
     Clone,
     /// Trust decision for project config.
@@ -578,6 +592,7 @@ pub const COMMAND_HEADS: &[&str] = &[
     "theme",
     "branch",
     "tree",
+    "goal",
     "fork",
     "clone",
     "new",
@@ -735,6 +750,11 @@ pub fn parse_command(input: &str) -> Option<Command> {
         })),
         "timeline" | "branch" => Some(Command::Timeline),
         "tree" => Some(Command::Tree),
+        "goal" => Some(Command::Goal(if tail.is_empty() {
+            None
+        } else {
+            Some(tail.to_string())
+        })),
         "fork" => Some(Command::Fork),
         "clone" => Some(Command::Clone),
         "new" => Some(Command::New),

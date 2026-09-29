@@ -88,6 +88,14 @@ pub struct Hints {
     /// Without it `esc stop` and `esc dismiss` read the same, and the reader has
     /// to work out from the rest of the row which screen they are looking at.
     pub mode: Option<String>,
+    /// The session's goal, when one is set: `● goal 2/256`.
+    ///
+    /// Immediately after the mode and before the key hints, and emitted whole or not at all —
+    /// the M201 rule, and it matters more here than anywhere: a goal badge cut in half reads
+    /// `● goal 2/2`, which is a goal one round from its cap rather than one round into a long
+    /// one. It outranks every hint because it is the only fragment on the row that says what
+    /// the session is *for*.
+    pub goal: Option<String>,
     /// Pairs of `(key, action)`, in the order they should read.
     pub keys: Vec<(String, String)>,
     /// The workspace path, already shortened for display.
@@ -345,6 +353,20 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
     // rather than protecting it after the fact is what makes that structural — the
     // room a dropped badge does not use goes to the hints, which is the order the
     // reader wants anyway.
+    // The goal comes first among the optional segments: it is the only one that says what the
+    // session is for, and `goal 2/256` cut to `goal 2/2` is the worst lie on the row.
+    if let Some(goal) = &hints.goal {
+        let span = Span::styled(goal.clone(), theme.warn());
+        let w = display_width(&span.content);
+        let sep = usize::from(!left.is_empty()) * 3; // " · "
+        if used + sep + w <= budget {
+            if sep > 0 {
+                left.push(Span::styled(" · ", theme.faint()));
+            }
+            used += sep + w;
+            left.push(span);
+        }
+    }
     if let Some(badge) = hints.view.badge(theme) {
         let span = Span::styled(badge, theme.warn());
         let w = display_width(&span.content);
