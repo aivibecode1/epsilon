@@ -1,8 +1,47 @@
 # M197: the baseline, and two real "frozen harness" defects
 
-**Status:** two defects found, fixed, each with a working negative control, both committed.
-- `bc6203e` — a request to a dead extension waited the full 10s invoke budget.
-- `8846654` — every tool command inherited the TUI's console stdin (the Windows freeze/shrink).
+**Status:** five spawn sites fixed (`8846654`, `efe80dd`), one hang fixed (`bc6203e`), docs
+corrected (`0a43b43`). **A full battery has NOT run since `efe80dd`.**
+
+## The stdin defect was FIVE sites, not one
+
+| Site | Spawns | Commit |
+|---|---|---|
+| `epsilon-tools/src/shell.rs` | `bash` tool, unconfined | `8846654` |
+| `epsilon-safety/src/sandbox/jobobject.rs:256` | Windows confined — **the default** | `efe80dd` |
+| `epsilon-safety/src/sandbox.rs:442` | bwrap confined | `efe80dd` |
+| `epsilon-mcp/src/stdio.rs:29` | every MCP server | `efe80dd` |
+| `epsilon-llm/src/oauth_login.rs:1125` | `open_browser` → `cmd /C start` | `efe80dd` |
+
+**The general lesson, and it is the most valuable thing here:** a per-site test passes forever
+while the next site is unwritten, and a green battery after fixing one says nothing about the
+other four. The assertion that mattered was a claim about the **tree** — `no_production_spawn_
+leaves_stdin_unset` walks every `Command::new` under `crates/`. It found the fifth site, which no
+reading had caught, because "open a browser" does not look like running a command.
+
+**A guard is code, and it lies too.** That guard took four attempts and every failure was the
+guard, not the product: it matched its own source, compared a byte offset to a line index, used a
+lookahead window too short for `editor.rs`, and treated `#[cfg(test)]` on a *function* as a test
+*module*. **When a guard reports two real problems in the same file, the second is more likely the
+guard.** Exemptions must each name their reason, or the guard trains people to ignore it.
+
+## What the guard deliberately exempts (do not "fix" these)
+
+- `Stdio::inherit()` — the **external editor** legitimately owns the terminal.
+- `.output()` — pipes all three streams internally.
+- `ChildStdio::configure(` — delegation, where the decision now lives.
+- `mod tests` boundary — only module-level markers count, not `#[cfg(test)]` on a helper fn.
+
+## Doc corrections landed (`0a43b43`)
+
+README was wrong four ways, each checked against code: prompt templates are **shipped** (M184);
+`gate.sh` runs **six** gates not five; `EPSILON_BIN` is **optional** (`terminal.rs:57-72` falls back
+to `CARGO_BIN_EXE_epsilon`); and `--rpc` **is** pi-compatible (`rpc_mode.rs` accepts pi's `type`
+tag, echoes `id`, replies with pi's envelope). `docs/README.md` said the ledger is F00–F19; it is
+D1–D32. AGENTS.md had three dead paths. CHANGELOG had stopped at M185 and now covers to M197.
+
+**`check-links.py` cannot see bare paths in code blocks** — that is why three dead AGENTS.md
+citations survived. Named in the file.
 
 ## The uncommitted tree at session start
 
