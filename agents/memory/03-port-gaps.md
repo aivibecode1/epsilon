@@ -527,3 +527,58 @@ set (113 tests, none missing) before the suite was run again.
 `the_copy_key_reaches_the_clipboard_path`). A delta of 1 from an expected 434
 was the *control's* damage, not a lost test — which is why the named comparison
 runs against the compiled list, not against a remembered number.
+
+## The `!` shell escape, and where it had to run (M196)
+
+pi: `!cmd` runs a shell command, `!!cmd` runs one whose output stays out of the
+model's context (`interactive-mode.ts:3105-3119`, `handleBashCommand` `:6476`).
+Epsilon now has both.
+
+**The decision that mattered: the TUI does not own a shell runner.** The obvious
+implementation -- `epsilon-tui` depends on `epsilon-tools`, builds a `BashTool` --
+is wrong twice. It is a new edge in the dependency graph, and the tool would carry
+a **default** sandbox rather than the session's configured one, so a user could run
+through `!` something the agent is not permitted to run.
+
+What it does instead: `epsilon_core::exec::run_local(&Arc<Agent>, name, args)`,
+public, which mirrors `execute_batch`'s sequence exactly -- registry lookup,
+`basic_validate`, `resource_key`/mode, then `gate.authorize` with the same
+`PermissionRequested`/`PermissionDecided` events. A `!` command can therefore
+raise an approval prompt, which is correct: the user is running it.
+
+`epsilon-tui` keeps its downward edge; `epsilon-tools` is a **dev-dependency** of
+the TUI, for the test's registry only.
+
+**Async, deliberately.** The key handler is synchronous and the tool's cap is 120s.
+Blocking would reproduce the "TUI looks dead" symptom this repo has chased since
+M151.
+
+### Three ways those two tests were wrong before they were right
+
+All the same shape this repository keeps meeting -- a test reporting success while
+the thing you wanted did not happen:
+
+1. **The empty registry.** `test_app()` registers nothing, so `run_local` answers
+   "no tool named bash", and a test asserting on notice text accepts that as a
+   successful run. Fixed with `test_app_with_bash`, which also hands back the
+   `ChannelApprovalUi` **clone** (a second `new()` is a different queue, so answers
+   go nowhere).
+2. **The unanswered gate.** With a real `bash` registered and nobody answering,
+   `run_local` blocks forever and the test sees nothing. That is correct product
+   behaviour; the *test* was wrong. It now answers the ask, as a user would.
+3. **The drain that broke on the first timeout** after 50ms, holding only the
+   `running:` line. Then breaking on the *marker* -- which `running: echo <marker>`
+   contains. Both assertions now require the **labelled output line**:
+   `shell: ...` vs `shell (kept out of context): ...`.
+
+**The control.** With the `!` arm's prefix made unmatchable, both tests fail. The
+first two control attempts **did not compile** (a multi-codepoint char literal),
+which proved nothing -- a control that does not build is not a control.
+
+### And the line-range trap, three times in one session
+
+Restoring a mangled test file by **line range** corrupted it again: once truncating
+`park_ask` mid-body in `tests_support.rs`, once landing a probe block on the *imports*
+at line 10 of `tests.rs`. `git show HEAD:<file>` then re-apply **by test name** is
+the only version of this that worked. `AGENTS.md` states the rule; I watched it fail
+three times before treating it as load-bearing.

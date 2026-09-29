@@ -1,7 +1,13 @@
-# M197: the baseline, and two real "frozen harness" defects
+# M197: the green baseline, and the defects that were hiding in it
 
-**Status:** five spawn sites fixed (`8846654`, `efe80dd`), one hang fixed (`bc6203e`), docs
-corrected (`0a43b43`). **A full battery has NOT run since `efe80dd`.**
+**Status:** the tree is GREEN. Battery `m197-final`: **GATE PASS, 1,548 tests, 0 failed**
+(check-links, fmt, clippy, test, demo, real-check all pass). Seven commits this session:
+`bc6203e` ext-hang · `8846654` stdin (site 1) · `2d2422a` unused import · `efe80dd` stdin
+(sites 2-5) + guard · `0a43b43` docs · `8f0da1d` tree copy key · `c1b1e50` panel guard ·
+`65d4880` the `!` escape, finally committed.
+
+**Nothing is unverified now.** Every fix above ran in a battery that passed, and each has a
+negative control recorded in `audit/evidence/`.
 
 ## The copy key was bound, advertised, and dead inside the tree (`8f0da1d`)
 
