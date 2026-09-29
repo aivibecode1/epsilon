@@ -64,3 +64,5 @@ audit/evidence/*.log
 # the one the D8050 fix is cited from. Named individually like the rest, because
 # the distinction being drawn is WHICH battery, not what shape it has.
 !audit/evidence/gate-m196.log
+# M196: the battery that gated the GFM/label/tree work. 1520 passed, 0 failed.
+!audit/evidence/gate-m196-green3-PASS.log
