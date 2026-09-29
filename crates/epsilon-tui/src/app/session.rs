@@ -48,6 +48,8 @@ impl App {
             model_id,
             picker_open: false,
             picker_index: 0,
+            // One until the first paint teaches it the real window; see the field's doc.
+            picker_capacity: 1,
             session_browser: None,
             external_editor_requested: false,
             theme: crate::ui::theme::Theme::detect(),

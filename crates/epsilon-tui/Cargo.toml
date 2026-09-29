@@ -50,6 +50,15 @@ tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# M196: the `!` shell-escape tests register a real `BashTool`, because the default
+# registry is empty and an empty registry makes `run_local` answer "no tool named
+# bash" -- which a test asserting on the notice would happily accept. The test has
+# to hold a real tool to be worth anything.
+#
+# Dev-only on purpose: the shipped TUI reaches the shell through
+# `epsilon_core::exec::run_local`, never by naming a tool crate. This edge exists so
+# the test can supply the same tool the product would.
+epsilon-tools = { path = "../epsilon-tools" }
 
 [lints]
 workspace = true

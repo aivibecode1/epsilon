@@ -79,17 +79,56 @@ async fn fill(agent: &Arc<Agent>, turns: usize) {
 }
 
 /// Measure one context mirror, the way the event loop calls it.
+///
+/// **Best-of-N, not a single timed run.** This operation takes ~20 microseconds.
+///
+/// **What the failure actually was, because the first diagnosis was wrong.** It
+/// failed at M196 inside a full battery with `12.222ms at 20 messages ->
+/// 28.502ms at 200` -- a "2.3x growth" that read exactly like the whole-transcript
+/// scan this test exists to catch. I assumed the box was loaded, and set out to
+/// reproduce it: the same test under 6, then 14, then 40 competing processes all
+/// passed at 30-35 microseconds, and the OLD code passed under all of them too.
+/// So "the machine was busy" was **not** the cause, and a fix justified by it
+/// would have been cargo-culted.
+///
+/// What is left is arithmetic on a cold path. `at_ten` is timed immediately after
+/// `fill(&agent, 10)` -- the first time this transcript size is ever measured, so
+/// it pays first-touch costs the second measurement does not. A ratio between a
+/// cold number and a warm one is not a property of the code under test; it is a
+/// property of when the timer was started. The doc comment above the test claimed
+/// the check was "scale-free, so it does not depend on how fast this machine is",
+/// and that claim was false.
+///
+/// The minimum over several runs is the right statistic for "how long does this
+/// take": it is the run least polluted by a first-touch or a preemption, and it is
+/// still an upper bound on the work the code does. A mean would be worse -- it is
+/// exactly the quantity both inflate.
 fn measure(agent: &Arc<Agent>, calls: u32) -> Duration {
     // Warm the allocator and any lazy statics first.
     for _ in 0..5 {
         let _ = agent.estimated_context_tokens();
     }
-    let start = Instant::now();
-    for _ in 0..calls {
-        let _ = agent.estimated_context_tokens();
+    let mut best = Duration::MAX;
+    for _ in 0..BEST_OF {
+        let start = Instant::now();
+        for _ in 0..calls {
+            let _ = agent.estimated_context_tokens();
+        }
+        let per_call = start.elapsed() / calls;
+        if per_call < best {
+            best = per_call;
+        }
     }
-    start.elapsed() / calls
+    best
 }
+
+/// Timed runs per measurement, and how many calls each one averages over.
+///
+/// Nine runs, 200 calls each: enough that one preemption does not decide the
+/// result, cheap enough (about 1.8ms of work at the measured cost) that the test
+/// stays fast.
+const BEST_OF: u32 = 9;
+const CALLS_PER_RUN: u32 = 200;
 
 /// The mirror must stay far below the frame budget, at a session size where a
 /// user would plausibly still be working.
@@ -134,11 +173,11 @@ async fn context_mirror_cost_does_not_track_transcript_length() {
     let (agent, _dir) = agent_with(vec![FauxStep::say(BODY); 128]);
 
     fill(&agent, 10).await;
-    let at_ten = measure(&agent, 100);
+    let at_ten = measure(&agent, CALLS_PER_RUN);
     let ten_messages = agent.history().len();
 
     fill(&agent, 90).await;
-    let at_hundred = measure(&agent, 100);
+    let at_hundred = measure(&agent, CALLS_PER_RUN);
     let hundred_messages = agent.history().len();
 
     eprintln!(

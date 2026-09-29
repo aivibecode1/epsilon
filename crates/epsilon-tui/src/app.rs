@@ -185,6 +185,17 @@ pub(crate) struct App {
     model_id: String,
     picker_open: bool,
     picker_index: usize,
+    /// How many rows the picker showed last frame, measured at paint time.
+    ///
+    /// **A Page key is this many rows**, which is what pi does
+    /// (`session-selector.ts:612-617` pages by `maxVisible`) and what a user
+    /// expects: the page is the screenful they can see. A constant would be a
+    /// whole screen on a tall terminal and a fraction of one on a short one.
+    ///
+    /// One when the picker has not been painted yet, so a key arriving before the
+    /// first frame moves by one rather than by zero — a key that did nothing would
+    /// be indistinguishable from a frozen TUI.
+    picker_capacity: usize,
     recents: Vec<String>,
     /// Favorite (starred) model ids, persisted in config `[picker] favorite`
     /// (M23; opencode favorites / pi scoped-models hybrid).
@@ -423,6 +434,13 @@ struct SessionBrowser {
     rows: Vec<crate::picker::SessionRow>,
     /// Highlighted row.
     index: usize,
+    /// Rows the browser showed last frame, measured at paint time.
+    ///
+    /// A Page key is this many rows, which is pi's rule
+    /// (`session-selector.ts:612-617` pages by `maxVisible`) and the only one a
+    /// reader can predict from the screen. One until the first paint, so a key
+    /// before the first frame still moves.
+    capacity: usize,
 }
 
 impl SessionBrowser {
@@ -434,6 +452,7 @@ impl SessionBrowser {
             current,
             rows,
             index: 0,
+            capacity: 1,
         }
     }
 
@@ -709,6 +728,26 @@ impl App {
         if let Some(command) = crate::picker::parse_command(&text) {
             return self.run_command(agent, command);
         }
+        // `!` runs a shell command without a model round-trip, and `!!` runs one
+        // whose output stays out of the model's context.
+        // (`interactive-mode.ts:3105-3119`, `handleBashCommand` at `:6476`.)
+        //
+        // This routes through the real `BashTool`, so the sandbox, the timeout, the
+        // output caps and the exit-code vocabulary are the SAME ones a model-run
+        // command gets. A second runner here would be a second set of rules, and the
+        // user would be able to run something the agent is not allowed to.
+        if let Some(rest) = text.strip_prefix('!') {
+            let excluded = rest.starts_with('!');
+            let cmd = rest[usize::from(excluded)..].trim().to_string();
+            if cmd.is_empty() {
+                self.ui.push_notice(
+                    "shell: type a command after ! (or !! to keep it out of context)".to_string(),
+                );
+                return false;
+            }
+            self.run_shell(agent, cmd, excluded);
+            return false;
+        }
         let msg = self.submit_text(text);
         if self.ui.running() {
             agent.steer(msg);
@@ -947,6 +986,47 @@ impl App {
             }
             Err(e) => Some(format!("live listing failed: {e}")),
         }
+    }
+
+    /// Run a `!` shell command off the key handler and show the result.
+    ///
+    /// **Async on purpose.** The key handler is synchronous and a shell command can
+    /// take the tool's full 120s cap. Blocking here would freeze the TUI for the
+    /// whole run, which is exactly the symptom this repository has been chasing
+    /// since M151 — a program that looks dead.
+    ///
+    /// `excluded` is pi's `!!`: the output is shown to the user and kept out of the
+    /// model's context, which is the whole point of the two-bang form. It is honoured
+    /// by never calling `submit_text` — a shell run becomes a system line, and a
+    /// system line is not history the model will be sent.
+    ///
+    /// The command goes through [`Agent::run_local_tool`], so it is confined,
+    /// validated and gated exactly as a model-issued one is.
+    fn run_shell(&mut self, agent: &Arc<Agent>, command: String, excluded: bool) {
+        self.notice(format!("running: {command}"));
+        let notices = self.notices_tx.clone();
+        let agent = Arc::clone(agent);
+        tokio::spawn(async move {
+            let label = if excluded {
+                "shell (kept out of context): "
+            } else {
+                "shell: "
+            };
+            match epsilon_core::exec::run_local(
+                &agent,
+                "bash",
+                serde_json::json!({ "command": command }),
+            )
+            .await
+            {
+                Ok(text) => {
+                    notices.send(format!("{label}{text}")).ok();
+                }
+                Err(e) => {
+                    notices.send(format!("shell: {e}")).ok();
+                }
+            }
+        });
     }
 
     fn spawn_run(&self, agent: Arc<Agent>, msg: Message) {

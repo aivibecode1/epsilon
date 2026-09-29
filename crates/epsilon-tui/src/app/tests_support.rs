@@ -125,3 +125,50 @@ pub async fn park_ask(
     app.pending_ask = approvals.next_ask().await;
     response
 }
+
+/// An app wired like the product's, **with the `bash` tool registered**, plus the
+/// approval channel a `bash` call is gated behind.
+///
+/// [`test_app`] deliberately hands back an empty registry, which is what most
+/// tests want. It is the wrong fixture for the `!` shell escape, for TWO reasons,
+/// and the second is the one that bites:
+///
+/// 1. With no `bash` registered, `exec::run_local` answers "no tool named bash",
+///    and a test that only asserted on the notice text would accept that as a
+///    command having run.
+/// 2. With a `bash` registered and nobody answering the gate, `run_local` blocks
+///    on an approval prompt forever, and the test sees no output at all. Which is
+///    correct product behaviour — `!` goes through the capability gate, so a user
+///    can run something the agent could not.
+///
+/// So the channel comes back too, for a test to answer on, the way a user does.
+pub fn test_app_with_bash() -> (App, Arc<Agent>, TestReceivers, ChannelApprovalUi) {
+    let (ftx, frx) = tokio::sync::mpsc::unbounded_channel();
+    let (ntx, nrx) = tokio::sync::mpsc::unbounded_channel();
+    let (otx, _orx) = tokio::sync::mpsc::unbounded_channel();
+    let approvals = Arc::new(ChannelApprovalUi::new());
+    let gate = Arc::new(RulesetGate::new(
+        Arc::clone(&approvals) as Arc<dyn epsilon_safety::ApprovalUi>
+    ));
+    let mut registry = epsilon_core::ToolRegistry::new();
+    registry.register(Arc::new(epsilon_tools::BashTool::new()));
+    let agent = Agent::new(
+        epsilon_core::LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(epsilon_llm::FauxProvider::new(
+            vec![],
+        ))),
+        Arc::new(registry),
+        gate,
+        std::env::temp_dir(),
+    );
+    // A CLONE, not a second `new()`: every clone of `ChannelApprovalUi` feeds the
+    // same queue, so the test's answers reach the gate the tool is blocked on. A
+    // fresh instance would be a different queue, and the command would hang there
+    // too — with the test unable to see why.
+    (
+        App::new("faux-1".into(), ftx, ntx, otx),
+        agent,
+        (frx, nrx),
+        (*approvals).clone(),
+    )
+}

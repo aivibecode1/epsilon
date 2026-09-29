@@ -15,7 +15,7 @@ pub mod agents;
 pub mod cache_stats;
 mod compact;
 pub mod config;
-mod exec;
+pub mod exec;
 mod gate;
 mod guards;
 pub mod ignore;

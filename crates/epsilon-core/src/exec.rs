@@ -257,6 +257,103 @@ fn conflicts(a: &CallShape, b: &CallShape) -> bool {
     !(a.mode == ExecutionMode::Parallel && b.mode == ExecutionMode::Parallel)
 }
 
+/// Run one tool by name on the caller's behalf, outside a model turn.
+///
+/// **The TUI's `!` shell escape is the reason this exists.** Preparing a
+/// `PreparedCall` needs the registry lookup, `basic_validate`, the resource and
+/// mode classification, and the capability gate — and every one of those is a
+/// rule that decides *whether a command may run*. Building a call at the call
+/// site would skip them, so a `!` command could do something the same command
+/// issued by the model could not. So the preparation happens here, next to the
+/// code that knows it, and the frontend gets one function instead of a second
+/// execution path.
+///
+/// The sequence below is `execute_batch`'s, in the same order, on purpose.
+pub async fn run_local(
+    agent: &Arc<Agent>,
+    name: &str,
+    args: serde_json::Value,
+) -> Result<String, String> {
+    let Some(tool) = agent.tools.get(name) else {
+        return Err(format!("no tool named {name}"));
+    };
+    let mode = tool.descriptor().execution_mode;
+    let resource = tool.resource_key(&args, &agent.workspace_root);
+    tool.descriptor()
+        .basic_validate(&args)
+        .map_err(|v| format!("invalid arguments for '{name}': {v}"))?;
+
+    // The capability gate, exactly as a model-issued call meets it. `asked` is
+    // honoured too: a `!` command can therefore raise an approval prompt, which
+    // is the point — the user is running it, so the user is asked.
+    let (capability, pattern) = gate_subject(name, &args, &agent.workspace_root);
+    let capabilities =
+        std::iter::once(name.to_string()).chain((capability != name).then_some(capability));
+    // `allow_once` is the neutral starting point: the first `authorize` call
+    // overwrites it, and the loop below always makes at least one.
+    let mut auth = crate::Authorization::allow_once();
+    for capability in capabilities {
+        let req = PermissionRequest {
+            request_id: new_id("perm"),
+            capability,
+            pattern: pattern.clone(),
+            detail: args.clone(),
+        };
+        auth = agent.gate.authorize(req.clone()).await;
+        if auth.asked {
+            agent.emit(AgentEvent::PermissionRequested {
+                request: req.clone(),
+            });
+            agent.emit(AgentEvent::PermissionDecided {
+                request_id: req.request_id.clone(),
+                decision: auth.decision.clone(),
+            });
+        }
+        if !auth.allowed() {
+            break;
+        }
+    }
+    if !auth.allowed() {
+        return Err(auth
+            .decision
+            .guidance()
+            .map(|g| g.to_string())
+            .unwrap_or_else(|| "Permission denied by policy.".to_string()));
+    }
+
+    let mut call = PreparedCall {
+        index: 0,
+        invocation: ToolInvocation {
+            tool_call_id: "local".to_string(),
+            args: args.clone(),
+        },
+        ctx_tool_name: name.to_string(),
+        blocked_result: None,
+        validated_args: args,
+        resource,
+        mode,
+    };
+    let result = run_one(agent, &mut call).await;
+    let text = result
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if result.is_error {
+        Err(if text.is_empty() {
+            format!("{name} failed")
+        } else {
+            text
+        })
+    } else {
+        Ok(text)
+    }
+}
+
 pub(super) async fn execute_batch(
     agent: &Arc<Agent>,
     assistant: &AssistantMessage,

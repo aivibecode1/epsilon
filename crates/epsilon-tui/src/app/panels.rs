@@ -35,6 +35,18 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         .collect::<Vec<_>>();
     let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
+    // **Remember the measured window.** A Page key arrives in the key handler,
+    // which knows nothing about geometry -- and pi's page size is `maxVisible`
+    // (`session-selector.ts:612-617`), the same measured window rather than a
+    // constant. A hardcoded ten would be a whole screen on a tall terminal and a
+    // fifth of one on a short one, and the key would jump by an amount the user
+    // cannot predict from what they can see.
+    //
+    // Set from the PANEL height rather than the inner one, so it holds for
+    // `draw_picker_stage2` too -- that function takes `&App` and cannot write
+    // here, and deriving the same number in both places is how two lists end up
+    // paging by different amounts.
+    app.picker_capacity = height.saturating_sub(3).max(1) as usize;
     let title = format!("models — filter: '{}'", app.input);
     let panel = Panel {
         theme: &app.theme,
@@ -53,6 +65,13 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     // M15 viewport fix: pi's centered scroll window — render only the visible slice
     // so long lists stay navigable (previously rows past the box were unreachable).
     let capacity = inner.height.saturating_sub(2).max(1) as usize; // blank line + hint footer
+    // **Remember the measured capacity.** A Page key arrives in the key handler,
+    // which knows nothing about geometry -- and pi's page size is `maxVisible`
+    // (`session-selector.ts:612-617`), the same measured window, not a constant.
+    // A hardcoded ten would be a whole screen on a tall terminal and a fifth of one
+    // on a short one, and the key would jump by an amount the user cannot predict
+    // from what they see. So the paint is what teaches the handler how far a page
+    // is, and the handler pages by exactly that.
     let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
     let end = (start + capacity).min(rows.len());
 
@@ -91,7 +110,10 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
 pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
-    let Some(browser) = app.session_browser.as_ref() else {
+    // Take the mutable handle FIRST, so the capacity can be recorded before the
+    // immutable borrow below. Doing it after would ask for `&mut app` while
+    // `browser` is still alive, which the borrow checker refuses -- rightly.
+    let Some(browser) = app.session_browser.as_mut() else {
         return;
     };
     let width = Width::PANEL.resolve(outer);
@@ -113,6 +135,10 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
 
     // Same centered scroll window as the pickers: only the visible slice is built.
     let capacity = inner.height.saturating_sub(1).max(1) as usize; // footer
+    // The same measured window as the model picker, for the same reason: a Page
+    // key in the handler knows no geometry, and pi's page size is the visible
+    // count (`session-selector.ts:612-617`).
+    browser.capacity = capacity;
     let start = crate::scroll::scroll_start(browser.rows.len(), browser.index, capacity);
     let end = (start + capacity).min(browser.rows.len());
 
@@ -182,6 +208,13 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     let inner = panel.open(f);
 
     let capacity = inner.height.saturating_sub(2).max(1) as usize; // blank line + hint footer
+    // **Remember the measured capacity.** A Page key arrives in the key handler,
+    // which knows nothing about geometry -- and pi's page size is `maxVisible`
+    // (`session-selector.ts:612-617`), the same measured window, not a constant.
+    // A hardcoded ten would be a whole screen on a tall terminal and a fifth of one
+    // on a short one, and the key would jump by an amount the user cannot predict
+    // from what they see. So the paint is what teaches the handler how far a page
+    // is, and the handler pages by exactly that.
     let start = crate::scroll::scroll_start(rows.len(), app.picker_index, capacity);
     let end = (start + capacity).min(rows.len());
 
