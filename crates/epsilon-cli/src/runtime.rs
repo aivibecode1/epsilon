@@ -2723,6 +2723,115 @@ mod protocol_doc_tests {
     /// until M96 turned up at line 143 under `## Original acceptance criteria`, a second
     /// table by design. The missing list was an artefact of the slice. Checking across both
     /// answers the question that was actually being asked.
+    /// The two history tests above are the model, not an exception: a doc
+    /// convention enforced only by review drifts, and M196 showed the gap sitting
+    /// undetected for two milestones.
+    ///
+    /// **M196, added after a real incident.** Reworking one test in
+    /// `epsilon-tui/src/app/tests.rs` by LINE RANGE -- with `cargo fmt` having
+    /// reformatted the region between the read and the write -- silently deleted
+    /// **five** neighbouring tests, including the tree-picker and label-editor
+    /// ones. The battery returned `GATE PASS` at 1,516 tests: a deleted test is
+    /// not a failing test, and a whole category of behaviour lost its only
+    /// coverage with nothing reporting it.
+    ///
+    /// The count moved from 1,520 to 1,516, and that comparison -- a human reading
+    /// two logs -- was the entire detection mechanism. This makes it mechanical.
+    #[test]
+    fn no_source_file_lost_a_test_since_head() {
+        // Compared against HEAD, so it fires the moment a working-tree edit drops
+        // a test. Once a deletion is COMMITTED there is nothing left to catch it,
+        // which is why this belongs in the loop before `git commit` rather than
+        // in the suite.
+        // **Run git from the REPO ROOT, not the cwd.** Cargo sets a test's cwd
+        // to the crate directory, and from there `git diff -- crates/` matches
+        // nothing: the pathspec is relative, `crates/` is not under
+        // `crates/epsilon-cli/`, and the command exits 0 having printed nothing.
+        // The check then passes vacuously -- which is exactly what happened the
+        // first two times this test was written, and why both controls "passed".
+        // `-C <root>` plus `--relative` is what makes it cwd-independent.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf);
+        let Ok(out) = std::process::Command::new("git")
+            .args(["-C"])
+            .arg(root.as_deref().unwrap_or(std::path::Path::new(".")))
+            .args(["diff", "--unified=0", "HEAD", "--", "crates/"])
+            .output()
+        else {
+            // No git (a source tarball, a vendored copy): the check does not
+            // apply, and failing here would break the build for no reason.
+            return;
+        };
+        if !out.status.success() {
+            return;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+
+        // If the working tree really is clean there is nothing to check and
+        // returning is correct. But a check that silently stops inspecting is
+        // indistinguishable from one that finds nothing wrong, so the pathspec is
+        // verified to actually select files when any exist.
+        if !text.contains("diff --git") {
+            let dirty = std::process::Command::new("git")
+                .args(["-C"])
+                .arg(root.as_deref().unwrap_or(std::path::Path::new(".")))
+                .args(["status", "--porcelain", "--", "crates/"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            assert!(
+                dirty.is_empty(),
+                "the working tree has changes under crates/ but `git diff -- crates/` \
+                 selected none of them -- the pathspec is wrong and this check is not \
+                 running. Output was: {dirty:?}"
+            );
+            return;
+        }
+
+        // **By NAME, not by count.** The first version compared the number of
+        // removed `#[test]` attributes against the number added, and its control
+        // PASSED while a real test was being deleted -- because the same diff also
+        // added two new tests. A net count cannot see one name vanishing among
+        // three arriving. The names are what the coverage is keyed on, so the
+        // names are what this compares.
+        let collect = |sign: &str| -> std::collections::BTreeSet<String> {
+            let mut out = std::collections::BTreeSet::new();
+            for line in text.lines() {
+                let Some(rest) = line.strip_prefix(sign) else {
+                    continue;
+                };
+                let mut rest = rest.trim_start();
+                if let Some(r) = rest.strip_prefix("async ") {
+                    rest = r.trim_start();
+                }
+                let Some(name) = rest.strip_prefix("fn ") else {
+                    continue;
+                };
+                let name = name.split('(').next().unwrap_or(name).trim();
+                if !name.is_empty() {
+                    out.insert(name.to_string());
+                }
+            }
+            out
+        };
+        let removed = collect("-");
+        let added = collect("+");
+
+        let lost: Vec<&String> = removed.difference(&added).collect();
+        assert!(
+            lost.is_empty(),
+            "test(s) deleted from crates/ with nothing replacing them: {lost:?}. A deleted \
+             test is not a failing test, so the suite stays GREEN while the coverage \
+             disappears -- which is how five tests were lost at M196. Revert the file \
+             (`git checkout -- <file>`) and re-apply the change by test NAME, never by \
+             line range: `cargo fmt` rewrites the region between your read and your \
+             write, so a line range silently takes its neighbours with it."
+        );
+    }
+
     #[test]
     fn every_milestone_has_a_row_somewhere_in_the_history() {
         let doc = include_str!("../../../docs/history.md");
