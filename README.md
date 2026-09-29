@@ -69,6 +69,10 @@ does not do are in [Install](docs/user/install.md) and
 In the TUI, Enter sends, Esc cancels, `/help` lists commands, and the header shows
 the model, the remaining context window, the cache hit rate and the running cost.
 
+`/goal <objective>` parks one long-running objective in the session and keeps working on
+it between turns; the footer shows its phase and rounds. See
+[Goals](docs/user/goals.md).
+
 For real providers, after configuring your own credentials:
 
 ```sh
@@ -159,7 +163,7 @@ Test counts, gate results and their limits are recorded per milestone in
 ## Documentation
 
 - [Documentation map](docs/README.md) — everything below, in one index.
-- [User guides](docs/user/README.md) — install, configuration, auth, permissions, sessions.
+- [User guides](docs/user/README.md) — install, configuration, auth, permissions, goals, sessions.
 - [Audit and plan](audit/README.md) — what is verified, what is not, and what is next.
 - [Architecture decisions](docs/design/epsilon-decisions.md) — recorded intent, including
   commitments not yet implemented.

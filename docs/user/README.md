@@ -14,7 +14,8 @@ nothing in the workspace reads it.
 | [`configuration.md`](configuration.md) | configure models, custom providers, client ids, editors, keybindings |
 | [`auth.md`](auth.md) | manage API keys and OAuth subscriptions, fix credential problems |
 | [`permissions.md`](permissions.md) | understand permission rules, sandbox modes, `--plan`, headless behavior |
-| [`sessions.md`](sessions.md) | resume, fork, export, recover damaged transcripts, leases |
+| [sessions.md](sessions.md) | resume, fork, export, recover damaged transcripts, leases |
+| [`goals.md`](goals.md) | park one long-running objective, watch it, stop it, understand what it costs |
 | [`troubleshooting.md`](troubleshooting.md) | diagnose a run that fails, hangs, or refuses |
 
 What lives where:
