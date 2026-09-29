@@ -29,6 +29,7 @@ next.
 | [`build-blockers-resolved.md`](build-blockers-resolved.md) | **Five stacked environment faults that made this repo unbuildable — now fixed** | live |
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 | [`06-m197-baseline-and-ext-hang.md`](06-m197-baseline-and-ext-hang.md) | **M197: the tree was left RED, and a dead extension waited the full invoke budget** | live |
+| [`07-m198-frame-path.md`](07-m198-frame-path.md) | **M198: render a frame and look at it — the transcript printed every marker twice** | live |
 
 ## Superseded notes (kept for history, not for direction)
 

@@ -5,6 +5,39 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Notices, tool calls and results stopped printing their marker twice.** Every system
+  notice rendered as `• • text`, every pending call as `▸ ▸ bash …`, every result as
+  `✓ ✓ …` — the same glyph in the gutter and again in the body, on four of the seven
+  row kinds. It read as a rendering fault rather than a marker. A row now shows a second
+  glyph only when it differs from its gutter, which the user turn earns (`▎ ❯`) and the
+  rest no longer need (M198).
+
+- **The frame does far less work per redraw.** The in-flight answer was wrapped twice
+  per frame — once to count its rows, once to draw them — and wrapping built a `String`
+  for every *word* and, on the hard-split path, for every *character*. That is the path
+  a long file path, a URL or a base64 blob takes, so it is what tool output is made of.
+  All of it now borrows. Also: the per-event restale scan was quadratic in the number of
+  finished cards and ran up to 128 times per frame; the cache swept every cached line
+  every frame to do work once per `/clear`; and the header walked ~380 catalog rows
+  twice a frame (M198).
+
+- **A language server can no longer choose how much memory Epsilon allocates.**
+  `MAX_HEADER_LINE` was checked *after* the header line had been read into a `String`,
+  so a server that never sends a newline could make the harness buffer without bound.
+  The cap now binds during the read, using the same shape `epsilon-ext` already used
+  (M198).
+
+- **An unrouted slash command now says so.** The catch-all dispatcher's module comment
+  claimed the compiler would insist a new command be handled. It would not: the `other`
+  arm that silenced the warning was the reason, and `debug_assert!` fires only in debug
+  builds — so a *release* binary with an unrouted command returned silently and the
+  screen did not change. It now prints a notice (M198).
+
+- **A context size that is unknown after a compaction says why.** The `compacted` flag
+  was set in four places and read in none. The header now prints `· compacted` beside
+  its `?`, so "nothing has run yet" and "a compaction just replaced the count" are not
+  the same row (M198).
+
 - **Tool commands no longer steal your keystrokes on Windows.** Every command the agent
   ran — a `git` call, a build, an MCP server — inherited the TUI's console stdin, so it
   was reading the same keys you were typing and the screen could be left holding

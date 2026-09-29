@@ -121,6 +121,14 @@ pub struct Metrics {
     /// `$0.42+`, so the reader is told which kind of number they are looking at instead of
     /// being given a precise-looking one that is wrong (G18).
     pub cost_is_floor: bool,
+    /// True when the context size is unknown *because a compaction has not yet
+    /// been re-measured*.
+    ///
+    /// Distinct from "unknown because nothing has run yet", which is the state
+    /// every session starts in. Mirrors the window, not the whole file: once a
+    /// fresh count arrives the flag is cleared and the gauge goes back to
+    /// describing an ordinary measurement. See [`Metrics::CONTEXT_UNKNOWN_COMPACTED`].
+    pub compacted: bool,
 }
 
 /// A share as the gauge prints it, keeping the difference between "small" and
@@ -215,6 +223,23 @@ impl Metrics {
     /// later edit had stopped printing.
     pub const CONTEXT_UNKNOWN: &'static str = "ctx ?";
 
+    /// The same unknown, with the reason attached: `ctx ? · compacted`.
+    ///
+    /// Two things can make the context size unreadable — no window has been
+    /// measured yet, or a compaction just replaced the count and no fresh one
+    /// has landed — and they are very different things to a reader. The first is
+    /// the normal state of a session a moment after it starts. The second means
+    /// the number the compaction trigger reads is, right now, an estimate with
+    /// nothing behind it, and the next turn's threshold decision is being made on
+    /// that estimate.
+    ///
+    /// The flag that knows the difference has been carried in `UiState` since the
+    /// compaction row shipped, set on `CompactionFinished` and cleared by the
+    /// first reply that reports a fresh count. It had no reader for a while,
+    /// which is not the same as having no value: it is the only thing in the app
+    /// that knows a compaction has happened but has not yet been re-measured.
+    pub const CONTEXT_UNKNOWN_COMPACTED: &'static str = "ctx ? · compacted";
+
     /// The context gauge as the header prints it: `ctx 42%/200k`, or `ctx ?`.
     ///
     /// The word `ctx` is not decoration. Without it the fragment reads as
@@ -225,7 +250,11 @@ impl Metrics {
     /// number behind it is the session estimate.
     pub fn context_gauge(&self) -> String {
         let Some(window) = self.context_window.filter(|w| *w > 0) else {
-            return Self::CONTEXT_UNKNOWN.to_string();
+            return if self.compacted {
+                Self::CONTEXT_UNKNOWN_COMPACTED.to_string()
+            } else {
+                Self::CONTEXT_UNKNOWN.to_string()
+            };
         };
         let window = format_tokens(window);
         // The provenance mark. A `*` after the percentage, and only then: the figure
@@ -240,14 +269,16 @@ impl Metrics {
             // window is still worth a reader's glance — it says which model is
             // in play — so the unknown mark replaces the number, not the pair.
             //
-            // One arm, not two. There used to be `None if self.compacted` and
-            // then `None`, printing the identical string under a comment that
-            // claimed the compaction flag changed the output. It does not:
-            // `context_used` is `None` in exactly the windows where the previous
-            // count no longer describes anything (before the first reply, and
-            // after a compaction until a fresh count lands), so the flag had
-            // nothing left to say and the second arm never ran.
-            None => format!("?/{window}"),
+            // The compaction mark rides here rather than replacing the `?`. A
+            // window with a number missing and a window with a *fresh* count
+            // behind it are the same two situations, and the second is the one
+            // worth naming: `?/200k*` says the number is estimated, and after a
+            // compaction that estimate is standing in for a count the harness
+            // threw away. The `· compacted` is what tells a reader the gauge is
+            // describing the state *between* a compaction and the reply that
+            // re-measures it.
+            None if self.compacted => format!("?/{window}{mark} · compacted"),
+            None => format!("?/{window}{mark}"),
         }
     }
 
@@ -306,6 +337,8 @@ impl Metrics {
             cost_micro_usd: None,
             cost_is_floor: false,
             offline: false,
+            // Nothing has been compacted, so the `?` has its ordinary meaning.
+            compacted: false,
         }
     }
 
@@ -434,6 +467,73 @@ mod tests {
             cost_micro_usd: Some(12_345),
             ..Metrics::default()
         }
+    }
+
+    /// A context size that is unknown is one of three different facts, and the
+    /// gauge has to be able to tell them apart.
+    ///
+    /// The case added here is the middle one. `UiState` has carried a `compacted`
+    /// flag since the compaction row shipped — set when a compaction replaces the
+    /// count, cleared by the first reply that reports a fresh one — and for a
+    /// while nothing read it. It is the only thing in the app that knows the
+    /// difference between "the context is unknown because this session has not
+    /// run yet" and "the context is unknown because it was just thrown away", and
+    /// the second is the one a reader watching the compaction trigger needs: it
+    /// means the number deciding the next threshold is an estimate with nothing
+    /// behind it.
+    #[test]
+    fn a_compaction_makes_an_unknown_context_say_why() {
+        let window_only = Metrics {
+            context_window: Some(200_000),
+            context_used: None,
+            ..Metrics::default()
+        };
+        assert_eq!(window_only.context_gauge(), "?/200k");
+        assert!(
+            !window_only.context_gauge().contains("compacted"),
+            "an ordinary unknown must not claim a compaction happened"
+        );
+
+        let compacted = Metrics {
+            compacted: true,
+            ..window_only.clone()
+        };
+        assert_eq!(compacted.context_gauge(), "?/200k · compacted");
+
+        // And a fresh count retires the mark, because the flag is cleared by the
+        // same event that restores the number.
+        let measured = Metrics {
+            context_used: Some(50_000),
+            compacted: true,
+            ..window_only
+        };
+        // A measured count speaks for itself, so the compaction note is not
+        // added — it explains an *unknown*, and this is a known number. The `*`
+        // is the provenance mark, and it rides on the percentage, not on the
+        // compaction note.
+        let measured_estimate = Metrics {
+            context_estimated: true,
+            ..measured.clone()
+        };
+        assert_eq!(measured_estimate.context_gauge(), "ctx 25%*/200k");
+    }
+
+    /// The other two cases, for the same reason: a window with no measurement and
+    /// a session with no window at all must not read alike.
+    #[test]
+    fn the_three_kinds_of_unknown_context_stay_distinguishable() {
+        let no_window = Metrics::default();
+        assert_eq!(no_window.context_gauge(), "ctx ?");
+        let no_window_compacted = Metrics {
+            compacted: true,
+            ..Metrics::default()
+        };
+        assert_eq!(no_window_compacted.context_gauge(), "ctx ? · compacted");
+        assert_ne!(
+            no_window.context_gauge(),
+            no_window_compacted.context_gauge(),
+            "a compaction must be visible even when there is no window to print"
+        );
     }
 
     #[test]

@@ -71,6 +71,7 @@ Recent verified work, each with a gate log in `audit/evidence/`:
 |---|---|---|
 | **M194** | `set_model` refused pi's own documented frame (D32); `cycle_model` answered with a different key than `set_model` (D31); `app.clear` was advertised and read by nothing (G1); `/fork` was `fs::copy` while the correct primitive sat wired only to RPC (G2); cache rate printed "measured 0%" for a provider that cannot report it (K1); the context estimate ignored 1,633 tokens of system prompt (C2) | `m194` PASS, 1,491 tests |
 | **M195** | `@`-completion re-walked the workspace on every keystroke | `m195` PASS, 1,492 tests |
+| **M198** | The transcript printed every marker **twice** (`• • text`, `▸ ▸ bash`, `✓ ✓ …`) — found by rendering a frame and looking at it, not by reading the module. Plus: the in-flight answer was wrapped twice per frame with a `String` per word and per character; `reconcile` swept every cached line every frame; the restale scan was `O(cards²)` per event and ran 128×/frame; the LSP header cap was checked *after* the line was already buffered; the catch-all dispatcher returned silently for an unrouted command in release builds | `m198-final` — see `audit/evidence/gate-m198-final.md` |
 
 **The reported TUI freeze is still not reproduced.** Four theories have been measured and
 disproved as *the* cause — a permission dialog that eats keys, the per-frame transcript
@@ -83,6 +84,11 @@ been reached yet. See [`audit/04-tui.md`](audit/04-tui.md).
 ```sh
 cargo fmt --all -- --check              # formatting gate — no diffs tolerated
 python scripts/check-links.py            # documentation links — no dead citations
+python scripts/check-lint-tables.py      # every crate's [lints] table must match the workspace's.
+                                         # Cargo REPLACES rather than merges, and rejects
+                                         # `workspace = true` on a table with overrides, so
+                                         # epsilon-safety (every `unsafe` block) hand-copies
+                                         # it and silently misses anything added at the root.
 cargo clippy --workspace --all-targets -- -D warnings  # enforce zero warnings
 cargo test --workspace                  # report actual outcomes; the executed record of record is
                                          # audit/evidence/gate-<label>.log, cited by the milestone that
@@ -96,7 +102,7 @@ cargo check -p epsilon-cli --features real   # real-provider path must compile (
 # Linux-confinement suite on ubuntu-latest, and an MSRV 1.88 check.
 ```
 
-All five in one shot, with a disposable build log at `target/gate-<label>.log`
+All seven in one shot, with a disposable build log at `target/gate-<label>.log`
 (copy relevant evidence outside `target/` before cleanup):
 
 ```sh
@@ -232,6 +238,16 @@ contention, and single-job builds with an external target have passed every roun
   which is worse than a missing one because a wrong number is not noticed). Where a reader of the code
   and a measurement of the screen disagree, **the measurement wins** — and a commit message that
   repeats the unmeasured version puts a false claim in the permanent record.
+- **So: render a frame and LOOK at it before changing anything a user sees.** Every rule
+  above was learned by asserting on state, and the defect it had not found was
+  **typography**: the transcript drew every marker twice -- `• • text`, `▸ ▸ bash`,
+  `✓ ✓ …`, `✗ ✗ …` -- because the gutter and the body marker were the same glyph. It is
+  the first thing a screenshot shows and the last thing reading the module finds,
+  across ~450 lines of documentation that all read as though the gutter system
+  worked. A scratch test that drives the real `draw` through a `TestBackend` and
+  prints the screen is ~20 lines; it found this in a minute, and nothing in
+  `audit/01`–`07` had. **Do it first, revert it after**, and read the screen at the
+  sizes a person actually uses -- 80x24 and 100x30, not 200x60.
 
 ## Disk hygiene (this machine has a small, chronically-full C: drive)
 
@@ -579,7 +595,7 @@ docs/
   handoff/         task handoffs
   user/            maintained product guides
 scripts/gate.sh    the full verification battery in one command (POSIX and CI)
-scripts/gate.ps1   the same five gates, native Windows (the one that works here)
+scripts/gate.ps1   the same seven gates, native Windows (the one that works here)
 scripts/console-probe.py  drives the built TUI in a real conhost window and measures it
 crates/            the 12 workspace crates
 references/        the four reference harnesses (not committed)

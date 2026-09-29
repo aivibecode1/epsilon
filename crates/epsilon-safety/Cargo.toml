@@ -25,10 +25,27 @@ epsilon-tools = { path = "../epsilon-tools" }
 [target.'cfg(windows)'.dependencies]
 winapi = { workspace = true }
 
-# AGENTS.md exception: the job-object FFI in sandbox::jobobject is this crate's ONLY
-# unsafe user; `unsafe_code` cannot stay "forbid" here because forbid is un-overridable.
-# Contained discipline: every unsafe block carries a SAFETY comment (lint below), and no
-# new unsafe may appear outside that module.
+# AGENTS.md exception: the job-object FFI in `sandbox::jobobject` is this crate's ONLY
+# unsafe user, and `unsafe_code` cannot stay "forbid" here because `forbid` is
+# un-overridable — nothing below it can ever re-narrow it.
+#
+# This table is a **hand-written copy** of `[workspace.lints]`, and it has to stay one.
+# Cargo does not merge them: a package `[lints]` table replaces the workspace table
+# unless it says `workspace = true`, and `workspace = true` is rejected outright when
+# the same table carries overrides:
+#
+#     error: cannot override `workspace.lints` in `lints`, either remove the overrides
+#            or remove `lints.workspace = true` and manually specify the lints
+#
+# (Verified with cargo, not read off a document — the Cargo book's wording invites the
+# opposite conclusion.) So there is no way to inherit here and override there, and the
+# copy below is the price of the exception. That makes this file the one place a lint
+# added to the root can reach eleven crates and silently miss the twelfth — which is
+# the crate holding every `unsafe` block in the workspace. `check-lint-tables.py`
+# compares the two tables and fails when they diverge.
+#
+# Contained discipline: every unsafe block carries a SAFETY comment
+# (`undocumented_unsafe_blocks`, below), and no new unsafe may appear outside that module.
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "allow"

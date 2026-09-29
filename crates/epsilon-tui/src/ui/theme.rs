@@ -684,7 +684,6 @@ impl Theme {
     /// "what does emphasis mean when there is no color" is decided, and the only
     /// place that reads a palette — which is what makes the light variant one
     /// decision instead of a hunt through every draw function.
-    #[allow(missing_docs)]
     fn role(&self, role: Role, emphasis: Emphasis) -> Style {
         let slot = self.colors().get(role);
         let style = match self.mode {

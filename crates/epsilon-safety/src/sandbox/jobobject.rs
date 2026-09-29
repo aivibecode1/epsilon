@@ -183,8 +183,13 @@ mod ffi {
         Ok(info)
     }
 
-    /// Test/diagnostic hook to terminate without dropping the guard.
-    #[allow(dead_code)]
+    /// Terminate a job without dropping the guard that owns it.
+    ///
+    /// Not a test hook: the **production** timeout path calls this to kill a
+    /// process tree that overran, and the guard's own `Drop` then finds nothing
+    /// left to do. The comment here used to call it a "test/diagnostic hook",
+    /// which was false of the tree and would have led the next reader to delete
+    /// the one call site that matters.
     pub(super) fn terminate(job: HANDLE) {
         // SAFETY: valid owned handle.
         unsafe { TerminateJobObject(job, 1) };

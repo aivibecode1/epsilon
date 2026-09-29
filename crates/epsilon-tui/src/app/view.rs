@@ -92,7 +92,7 @@ impl App {
             None => self.card_open.push((id, open)),
         }
         if !self.card_restale.contains(&id) {
-            self.card_restale.push(id);
+            self.card_restale.insert(id);
         }
     }
 
@@ -112,14 +112,21 @@ impl App {
     /// across its own status change — that is what lets the reader's open/closed
     /// choice survive the result landing — so the cache cannot notice the change
     /// from the id alone and has to be told. Listing every finished card is
-    /// deliberate: the list is small, the rebuild happens once per card, and
-    /// "which card changed" is not a question the reducer is asked to answer.
+    /// deliberate: the rebuild happens once per card, and "which card changed" is
+    /// not a question the reducer is asked to answer.
+    ///
+    /// The walk is linear in the transcript and the membership test is a hash
+    /// lookup, so one call is O(lines). It used to be O(lines × cards) — the set
+    /// was a `Vec` scanned with `contains` — and the event loop can drain up to
+    /// [`MAX_EVENT_DRAIN`] events before drawing a single frame, which made a
+    /// busy stream pay that walk 128 times per frame for a list that almost
+    /// always had nothing to add.
     pub(crate) fn restale_finished_cards(&mut self) {
         for line in self.ui.lines() {
             if line.card.as_ref().is_some_and(|c| c.ended_at_ms.is_some())
                 && !self.card_restale.contains(&line.id)
             {
-                self.card_restale.push(line.id);
+                self.card_restale.insert(line.id);
             }
         }
     }
@@ -245,6 +252,7 @@ impl App {
             cache_reported: self.ui.cache_reported(),
             cost_micro_usd,
             cost_is_floor,
+            compacted: self.ui.is_compacted(),
         }
     }
 
@@ -346,16 +354,13 @@ impl App {
         } else {
             Hints::idle_at(&self.keybindings, view)
         };
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(std::path::PathBuf::from);
-        // A quarter of the row is the most the location may take before the hints
-        // stop being readable; past that the tail of the path is what matters.
-        hints.location = Some(crate::ui::format::format_path(
-            &self.workspace_root,
-            home.as_deref(),
-            28,
-        ));
+        // Both of these used to be recomputed on every drawn frame: two
+        // `env::var_os` lookups and a path re-shorten, thirty times a second, for
+        // a value that is fixed for the life of the process. `format_path` reads
+        // the environment only to collapse the home prefix, and the workspace root
+        // is captured in `App::new` and never reassigned — so the result cannot
+        // change and is computed once.
+        hints.location = Some(self.location_label.clone());
         if let Some(branch) = self.cached_branch() {
             hints.branch = Some(branch);
         }
@@ -555,6 +560,12 @@ impl App {
     /// never a wrap of the transcript. [`draw_transcript`] builds the same rows
     /// through the same [`crate::wrap::wrap_line`] call, so the count the footer
     /// reports is the count the body draws.
+    ///
+    /// This used to hand `wrap_line` an owned copy of every line, which made the
+    /// counting pass as expensive as the drawing one — and the drawing pass runs
+    /// over the whole in-flight answer, up to thirty times a second. Borrowing the
+    /// slices removes the copies; the count is now bounded by the answer's length
+    /// in *characters scanned* rather than in heap allocations.
     fn streaming_tail_rows(&self, body_width: usize) -> usize {
         [
             (self.ui.streaming_thinking(), self.theme.thinking()),
@@ -564,7 +575,7 @@ impl App {
         .filter(|(text, _)| !text.is_empty())
         .map(|(text, style)| {
             text.split('\n')
-                .map(|line| crate::wrap::wrap_line(&[(line.to_string(), style)], body_width).len())
+                .map(|line| crate::wrap::wrap_line(&[(line, style)], body_width).len())
                 .sum::<usize>()
         })
         .sum()

@@ -782,6 +782,7 @@ dependencies = [
  "epsilon-llm",
  "epsilon-safety",
  "epsilon-session",
+ "epsilon-tools",
  "futures-util",
  "pulldown-cmark",
  "ratatui",

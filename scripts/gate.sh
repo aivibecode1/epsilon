@@ -52,6 +52,14 @@ overall=0
 # because a dead citation looks exactly like a live one until a reader follows
 # it.  It costs a second and it is the only check that can see this class.
 run "check-links"    python scripts/check-links.py --quiet        || overall=1
+# Cargo does not merge a package `[lints]` table with `[workspace.lints]`: a package
+# table REPLACES it unless it says `workspace = true`, and cargo rejects
+# `workspace = true` when the same table carries overrides.  So a crate that must
+# override one lint — `epsilon-safety`, for the FFI — hand-copies the whole table, and
+# a lint added at the root afterwards reaches every other crate and stops there.
+# `epsilon-lsp` had exactly that bug (D1/D21), found by a human reading twelve
+# manifests; this is the check that means nobody has to.
+run "check-lint-tables" python scripts/check-lint-tables.py       || overall=1
 run "fmt --check"   "$CARGO" fmt --all -- --check            || overall=1
 run "clippy"        "$CARGO" clippy --workspace --all-targets -- -D warnings || overall=1
 # `-D warnings`: the workspace denies its configured lints, but clippy's own `-W clippy::all`

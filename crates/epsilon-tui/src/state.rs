@@ -518,14 +518,12 @@ pub struct UiState {
     /// `true` once the session has been compacted and no fresh count has arrived,
     /// cleared by the first reply that reports one.
     ///
-    /// The context gauge prints `?` in exactly that window, but it derives that
-    /// from [`UiState::latest_prompt_tokens`] being zero rather than from this
-    /// flag — which is why the accessor that used to read it is gone. That
-    /// accessor had one caller, the header's `compacted` field, and both were
-    /// dead: the two match arms that consulted the field printed the same string.
-    /// The flag stays as the record of *why* the count is zero, which is what a
-    /// `… compacted` row would read if the transcript ever wants one.
-    #[allow(dead_code, reason = "the `?` window is derived from the token count")]
+    /// The context gauge reads this through [`UiState::is_compacted`] and prints
+    /// `· compacted` beside its `?`, because a context size that is unknown
+    /// *because a compaction just replaced it* is a different fact from one that
+    /// is unknown because nothing has run yet. It was write-only for a while —
+    /// set in four places, read in none — and the fix was to give it the reader
+    /// it was written for rather than to delete it.
     compacted: bool,
 }
 
@@ -561,6 +559,17 @@ impl UiState {
     /// True while a run is active (typed input becomes steering).
     pub fn running(&self) -> bool {
         self.running
+    }
+
+    /// Whether the context size is unknown because a compaction has not been
+    /// re-measured yet.
+    ///
+    /// The single reader of [`UiState::compacted`]. The context gauge prints
+    /// `· compacted` beside its `?` when this is true, so a reader can tell
+    /// "nothing has run yet" from "a compaction replaced the count and no reply
+    /// has put a fresh one back".
+    pub fn is_compacted(&self) -> bool {
+        self.compacted
     }
 
     /// Accumulated provider usage across the session: (input, output) billed tokens.

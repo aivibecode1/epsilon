@@ -11,7 +11,7 @@
 //! with a binary search and clones ONLY those rows. Cost per frame is O(visible),
 //! independent of transcript length.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -100,7 +100,18 @@ impl RenderedLine {
             if crate::ui::card::row_width(&logical) <= width {
                 rows.push(logical);
             } else {
-                rows.extend(wrap::wrap_line(&logical, width));
+                // Borrowed: the logical lines are already owned here, so this
+                // reuses them rather than copying every span into a second
+                // allocation before wrapping. It runs once per line id, on the
+                // one frame a new row appears — but the paths it takes (a diff,
+                // a long tool line) are exactly the wide ones.
+                rows.extend(wrap::wrap_line(
+                    &logical
+                        .iter()
+                        .map(|(text, style)| (text.as_str(), *style))
+                        .collect::<Vec<_>>(),
+                    width,
+                ));
             }
         }
         if rows.is_empty() {
@@ -179,19 +190,44 @@ fn logical_lines(
 /// two markers, four columns, and a `>` sitting where the `▎` gutter belongs.
 fn row_marker(kind: LineKind, theme: &Theme) -> String {
     let glyphs = &theme.glyphs;
-    match kind {
-        LineKind::User => format!("{} ", glyphs.prompt),
+    let marker = match kind {
+        LineKind::User => glyphs.prompt,
         // A pending call needs its own marker, not the result's tick: the reader
         // has to tell "about to run" from "ran" without reading the text, and on
         // a terminal with no surfaces the glyph is all there is.
-        LineKind::ToolCall => format!("{} ", glyphs.tool_call),
-        LineKind::ToolResultOk => format!("{} ", glyphs.tick),
-        LineKind::ToolResultErr => format!("{} ", glyphs.cross),
+        LineKind::ToolCall => glyphs.tool_call,
+        LineKind::ToolResultOk => glyphs.tick,
+        LineKind::ToolResultErr => glyphs.cross,
         // A notice is not the same event as a tool call and must not share its
         // marker: with `NO_COLOR` or 16 colours the two would be the same pixels.
-        LineKind::System => format!("{} ", glyphs.bullet),
-        LineKind::Assistant | LineKind::Thinking => String::new(),
+        LineKind::System => glyphs.bullet,
+        LineKind::Assistant | LineKind::Thinking => return String::new(),
+    };
+    // **Only when it differs from the gutter.**
+    //
+    // Every role except the user has the same glyph in two places: the gutter
+    // `row_style` paints at column 0, and the marker that used to be painted
+    // again in the body. So a notice rendered `• • text`, a pending call `▸ ▸
+    // bash …`, a successful result `✓ ✓ …` and a failure `✗ ✗ …` — the same
+    // character twice, in the same row, three columns wide.
+    //
+    // That was not a designed double marker; it read as a rendering fault, and
+    // it is on four of the seven row kinds, so it is on nearly every row that
+    // carries a marker at all. The role information it was repeating is not
+    // lost: the *gutter* is what distinguishes a notice from a pending call, and
+    // that comparison is what `a_tool_call_and_a_notice_are_distinguishable…`
+    // asserts — on the cell at column 0, not on the text.
+    //
+    // The user turn is the one row that genuinely needs a second glyph, and it
+    // is why the rule is "differs" rather than "never": its gutter is the cursor
+    // bar `▎` and its marker is the prompt `❯`, which is a different character
+    // carrying a different fact — the bar says whose turn it is, the caret says
+    // where input goes. `▎ ❯ hello` reads; `▎ ▎ hello` would not.
+    let gutter = crate::ui::transcript::row_style(theme, kind).0;
+    if marker == gutter {
+        return String::new();
     }
+    format!("{marker} ")
 }
 
 /// The body style for a transcript row.
@@ -309,19 +345,33 @@ impl RenderCache {
     /// Renders any unseen lines (the only markdown/card/wrap work in the system) and
     /// maintains the offset table incrementally: the common id-prefix with the last
     /// reconcile is reused untouched (transcripts are append-only except `/clear`
-    /// and except a card changing status in place), so an idle session's
-    /// steady-state reconcile cost is O(1), independent of transcript length.
+    /// and except a card changing status in place), so the *rendering* work in an
+    /// idle session's steady state is O(1) in transcript length.
+    ///
+    /// What remains is one linear scan of the id prefix. It is a comparison per
+    /// line rather than a render, so it costs a fraction of what the wrapping it
+    /// guards costs, and it is what lets the function below tell a genuinely new
+    /// row from a row already drawn. The claim this comment used to make — "O(1),
+    /// independent of transcript length" — described the rendering and was not
+    /// true of the bookkeeping around it.
     ///
     /// `restale` names the line ids whose content changed under a stable id — the
     /// card whose result just landed, in practice. Only those entries are dropped,
     /// so a busy run does not rebuild the conversation every time a tool finishes.
+    ///
+    /// A set rather than a slice because the producer's membership test is the
+    /// hot part, not the iteration: the caller adds every finished card it finds
+    /// on each event, and a `Vec` made that `contains` a linear scan, which turned
+    /// one call per event into `O(cards^2)`. Order is irrelevant to the work done
+    /// here — each id is removed independently — so nothing was lost by dropping
+    /// the guarantee.
     pub fn reconcile(
         &mut self,
         lines: &[TranscriptLine],
         width: usize,
         state: &RenderState<'_>,
         theme: &Theme,
-        restale: &[u64],
+        restale: &HashSet<u64>,
     ) {
         let key = CacheKey::of(state, theme);
         let invalidate_all = width != self.width || self.state.as_ref() != Some(&key);
@@ -347,6 +397,7 @@ impl RenderCache {
         // result landed would keep its old rows for ever (or, worse, vanish: the
         // `retain` below drops entries with no rows, and nothing would rebuild them
         // because the reuse count had already skipped past them).
+        let prior_reconciled = self.reconciled_ids.len();
         let reuse = self
             .reconciled_ids
             .iter()
@@ -370,8 +421,27 @@ impl RenderCache {
         }
 
         // Drop entries for lines removed by `/clear`.
-        let live: std::collections::HashSet<u64> = self.reconciled_ids.iter().copied().collect();
-        self.rendered.retain(|id, _| live.contains(id));
+        //
+        // **Gated on the id prefix having been broken, not on the transcript
+        // having shrunk.** A first attempt gated it on `lines.len() <
+        // prev_lines_len`, which is unsound in exactly the case that matters:
+        // `/clear` followed by a re-append of the *same number* of lines keeps
+        // the length equal, so the gate does not fire and the stale entries
+        // survive. `clear_then_reappend_drops_stale_entries` caught it.
+        //
+        // `reuse < prior_reconciled` is the true condition. If the whole
+        // previously-reconciled prefix is still the prefix of `lines`, then every
+        // id `rendered` holds is either in that prefix (hence live) or was added
+        // during this call from `lines[reuse..]` (hence live), and the sweep has
+        // nothing to find. If the prefix broke, some previously-live id is gone
+        // and the sweep has work.
+        //
+        // The alternative was an unconditional `HashSet` build plus a `retain`
+        // over every cached line, on every frame, to do work once per `/clear`.
+        if reuse < prior_reconciled {
+            let live: HashSet<u64> = self.reconciled_ids.iter().copied().collect();
+            self.rendered.retain(|id, _| live.contains(id));
+        }
         self.total_rows = total;
     }
 
@@ -509,7 +579,7 @@ pub fn snapshot_rows_with_kinds(
         expanded: &[],
         more_key: None,
     };
-    cache.reconcile(lines, width, &state, theme, &[]);
+    cache.reconcile(lines, width, &state, theme, &HashSet::new());
     cache.visible_rows_with_kinds(skip, visible)
 }
 
@@ -524,7 +594,7 @@ pub fn snapshot_rows_in(
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let mut cache = RenderCache::new();
-    cache.reconcile(lines, width, state, theme, &[]);
+    cache.reconcile(lines, width, state, theme, &HashSet::new());
     cache.visible_rows(skip, visible)
 }
 
@@ -596,10 +666,10 @@ mod tests {
     fn assistant_markdown_renders_once_and_stays_cached() {
         let lines = vec![TranscriptLine::assistant_md("# Title\n\nbody text")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         assert_eq!(cache.len(), 1);
         // Same state again: no new renders (len unchanged), offsets stable.
-        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.total_rows(), 2, "heading + paragraph");
     }
@@ -611,11 +681,14 @@ mod tests {
             lines.push(plain(LineKind::System, format!("system line {i}")));
         }
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         let mid = cache.visible_rows(20, 5);
         assert_eq!(mid.len(), 5);
-        assert_eq!(text_of(&mid[0]), "• system line 20");
-        assert_eq!(text_of(&mid[4]), "• system line 24");
+        // Bare text: the `•` belongs to the gutter, which `decorate` paints at
+        // draw time. It used to be here too — `• system line 20` — which is
+        // exactly the doubling M198 removed.
+        assert_eq!(text_of(&mid[0]), "system line 20");
+        assert_eq!(text_of(&mid[4]), "system line 24");
     }
 
     #[test]
@@ -627,20 +700,33 @@ mod tests {
             plain(LineKind::System, "after"),
         ];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 30, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 30, &state(false), &theme(), &HashSet::new());
         assert!(cache.total_rows() > 3, "tool line must wrap");
-        // Window starting AT the tool line: its first wrapped row carries the ✓
-        // mark (prefix and body are one logical line), later rows are continuations.
+        // Window starting AT the tool line. The first wrapped row used to carry a
+        // `✓ ` mark and the continuation did not, because the mark was a prefix on
+        // the first logical row; since M198 the status glyph lives in the gutter,
+        // which is painted once per row by `decorate` and is not part of the
+        // cached body at all. So the property worth pinning here is the one that
+        // is still true of the cache: **the window stitches the same wrapped
+        // text the full render produced**, with no row dropped or duplicated
+        // across the window boundary.
         let rows = cache.visible_rows(1, 2);
         assert_eq!(rows.len(), 2);
-        let first = text_of(&rows[0]);
-        assert!(
-            first.starts_with("✓ "),
-            "mark rides on the first wrapped row: {first:?}"
+        let all = cache.visible_rows(0, cache.total_rows());
+        assert_eq!(
+            text_of(&rows[0]),
+            text_of(&all[1]),
+            "the window must return the same first row as the full render"
+        );
+        assert_eq!(
+            text_of(&rows[1]),
+            text_of(&all[2]),
+            "and the same second row"
         );
         assert!(
-            text_of(&rows[1]).starts_with("word"),
-            "continuation row has no mark"
+            text_of(&rows[0]).starts_with("word"),
+            "{:?}",
+            text_of(&rows[0])
         );
     }
 
@@ -648,9 +734,9 @@ mod tests {
     fn clear_then_reappend_drops_stale_entries() {
         let mut lines = vec![plain(LineKind::System, "one")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         lines = vec![plain(LineKind::System, "fresh")];
-        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         assert_eq!(cache.len(), 1, "stale id evicted");
         assert_eq!(cache.total_rows(), 1);
     }
@@ -659,9 +745,9 @@ mod tests {
     fn width_change_invalidates_everything() {
         let lines = vec![plain(LineKind::System, "some text")];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 80, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 80, &state(false), &theme(), &HashSet::new());
         let before = cache.len();
-        cache.reconcile(&lines, 40, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 40, &state(false), &theme(), &HashSet::new());
         assert_eq!(before, 1);
         assert_eq!(cache.len(), 1, "rebuilt once at the new width");
     }
@@ -675,9 +761,9 @@ mod tests {
             format!("bash → {long}"),
         )];
         let mut cache = RenderCache::new();
-        cache.reconcile(&lines, 60, &state(false), &theme(), &[]);
+        cache.reconcile(&lines, 60, &state(false), &theme(), &HashSet::new());
         let collapsed_rows = cache.total_rows();
-        cache.reconcile(&lines, 60, &state(true), &theme(), &[]);
+        cache.reconcile(&lines, 60, &state(true), &theme(), &HashSet::new());
         assert!(
             cache.total_rows() > collapsed_rows,
             "expanded payload must produce more rows"
@@ -703,7 +789,7 @@ mod tests {
             60,
             &state(false),
             &theme(),
-            &[],
+            &HashSet::new(),
         );
         let collapsed = cache.total_rows();
         cache.reconcile(
@@ -715,7 +801,7 @@ mod tests {
                 more_key: Some("ctrl+x"),
             },
             &theme(),
-            &[],
+            &HashSet::new(),
         );
         let opened = cache.total_rows();
         assert_eq!(
@@ -740,7 +826,7 @@ mod tests {
             40,
             &state(false),
             &theme(),
-            &[],
+            &HashSet::new(),
         );
         let rows = |cache: &RenderCache| {
             cache
@@ -764,7 +850,7 @@ mod tests {
             40,
             &state(false),
             &theme(),
-            &[],
+            &HashSet::new(),
         );
         assert_eq!(rows(&cache), cached, "an un-named card must not be rebuilt");
 
@@ -775,7 +861,7 @@ mod tests {
             40,
             &state(false),
             &theme(),
-            &[line.id],
+            &HashSet::from([line.id]),
         );
         assert_eq!(rows(&cache), cached, "rebuilt from the same card");
         assert_eq!(cache.len(), before, "nothing else was touched");
@@ -810,10 +896,21 @@ mod tests {
             TranscriptLine::plain(LineKind::System, "run finished"),
         ];
         let rows = snapshot_rows(&lines, 80, false, 0, 10, &theme());
+        // The cache holds the **body**, before `ui::transcript::decorate` paints
+        // the gutter — and since M198 the body carries a marker only when it
+        // differs from the gutter's. So exactly one of these four has one.
+        //
+        // The user turn is that one: gutter `▎` (whose turn), marker `❯` (where
+        // input goes). Two different characters carrying two different facts, and
+        // `❯ hello` reads the way a prompt should.
         assert_eq!(text_of(&rows[0]), "❯ hello");
-        assert_eq!(text_of(&rows[1]), "✗ bash → boom");
-        assert_eq!(text_of(&rows[2]), "▸ tool-call bash {ls}");
-        assert_eq!(text_of(&rows[3]), "• run finished");
+        // The other three lost theirs, because it was the gutter's own character
+        // printed again: `▸ ▸ tool-call`, `• • run finished`, `✗ ✗ bash`. The role
+        // is still unambiguous — it is the gutter that says which — and
+        // `no_transcript_row_repeats_its_gutter_glyph` is what holds that.
+        assert_eq!(text_of(&rows[1]), "bash → boom");
+        assert_eq!(text_of(&rows[2]), "tool-call bash {ls}");
+        assert_eq!(text_of(&rows[3]), "run finished");
     }
 
     #[test]
@@ -834,8 +931,12 @@ mod tests {
         assert_eq!(rows[1].0, LineKind::System);
         let call = text_of(&rows[0].1);
         let notice = text_of(&rows[1].1);
-        assert_eq!(call, "\\ tool-call bash {cargo test}");
-        assert_eq!(notice, "* run finished");
+        // Both bodies are bare: since M198 the marker belongs to the gutter, and
+        // the gutter is where the distinction below is actually drawn. Two rows
+        // that differ only by a glyph the *body* repeats are two rows that would
+        // be identical on a terminal that dropped the glyph.
+        assert_eq!(call, "tool-call bash {cargo test}");
+        assert_eq!(notice, "run finished");
         assert_ne!(
             crate::ui::transcript::row_style(&theme, LineKind::ToolCall).0,
             crate::ui::transcript::row_style(&theme, LineKind::System).0,

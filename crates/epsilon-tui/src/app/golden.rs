@@ -59,6 +59,59 @@ fn busy_app() -> App {
     app
 }
 
+/// The gutter glyph appears **once** per row, on every row kind.
+///
+/// This is the M198 defect, stated as a property rather than as three corrected
+/// string literals, because the three literal assertions that used to pin it
+/// (`▸ ▸ bash`, `• • run finished`, `✓ ✓ …`) each had to be edited by hand and
+/// none of them noticed the fourth and fifth rows. Four of the seven row kinds
+/// drew the same character twice — once in the gutter, once as a body marker or
+/// a card title — and it read as a rendering fault, not as a marker.
+///
+/// The check is precise rather than a string comparison: take the glyph the
+/// gutter actually painted (from the **buffer cell at column 0**, not from a
+/// literal), and assert the body does not open with that same glyph. Reading the
+/// cell is the point — it is what makes the test about the drawn frame rather
+/// than about a set of characters a future theme change would invalidate.
+#[test]
+fn no_transcript_row_repeats_its_gutter_glyph() {
+    let mut app = bench_app(UiState::new());
+    app.ui.push_local_input("a user turn");
+    app.ui.push_notice("a lifecycle notice");
+    app.ui
+        .apply(&crate::state::agent_event_tool_result("bash", "boom", true));
+
+    let (buffer, rows) = render_buffer(&mut app, 80, 24);
+    // Only the transcript region. The composer's rule is a row of `─`, so a
+    // whole-frame sweep reads its own divider as a gutter glyph repeated in its
+    // body — the rule is not a transcript row and has no gutter.
+    let transcript = App::transcript_window(ratatui::layout::Rect::new(0, 0, 80, 24), 1);
+    let mut checked = 0usize;
+    for index in transcript.y..transcript.bottom() {
+        let row = &rows[index as usize];
+        let glyph = cell(&buffer, 0, index).symbol().to_string();
+        if glyph.trim().is_empty() {
+            continue; // a row with no marker cannot repeat one
+        }
+        checked += 1;
+        // The gutter is two columns: the glyph and its pad. The body starts at
+        // column 2, and "repeats it" means the body opens with the same glyph.
+        let body: String = row.chars().skip(crate::ui::transcript::GUTTER).collect();
+        assert!(
+            !body.starts_with(&glyph),
+            "row {index} draws its gutter glyph {glyph:?} twice — once in the \
+             gutter and again in the body: {row:?}"
+        );
+    }
+    // The frame has to have exercised the property, or this test proves nothing
+    // about a frame that happened to be empty.
+    assert!(
+        checked >= 3,
+        "only {checked} marker-bearing rows were checked; the fixture is not \
+         building the transcript this test is about"
+    );
+}
+
 #[test]
 fn a_full_frame_is_exactly_the_terminal_size_at_every_supported_width() {
     // The property this module exists for. A row wider than the terminal wraps,
@@ -412,15 +465,20 @@ fn a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour()
         .position(|r| r.contains("run finished"))
         .unwrap_or_else(|| panic!("the notice never reached the screen: {rows:#?}"));
 
-    // The gutter glyph and the card's own status glyph, in that order.
+    // The gutter glyph, then the card's own title. **One** glyph, not two: the
+    // marker used to repeat the gutter's character in the body, so every one of
+    // these rows read `▸ ▸ bash` and `• • run finished` — the same character
+    // twice, which looks like a rendering fault rather than a marker. The role is
+    // still unambiguous, because it is the *gutter* that differs between a pending
+    // call and a notice, and that is the cell the next two assertions compare.
     assert!(
-        rows[call_row].starts_with("▸ ▸ bash $ cargo test -p epsilon-tui · pending"),
+        rows[call_row].starts_with("▸ bash $ cargo test -p epsilon-tui · pending"),
         "tool-card row {call_row} must carry the call gutter and the card title: {:?}",
         rows[call_row]
     );
     assert!(
-        rows[notice_row].starts_with("• • "),
-        "notice row {notice_row} must carry the notice gutter and marker: {:?}",
+        rows[notice_row].starts_with("• run finished"),
+        "notice row {notice_row} must carry the notice gutter and its text: {:?}",
         rows[notice_row]
     );
     assert_ne!(
@@ -589,8 +647,8 @@ fn a_pending_tool_call_gets_the_pending_band_where_the_terminal_has_one() {
         .position(|r| r.contains("edit src/lib.rs · pending"))
         .unwrap_or_else(|| panic!("the tool card never reached the screen: {rows:#?}"));
     assert!(
-        rows[call_row].starts_with("▸ ▸ edit src/lib.rs · pending"),
-        "the card must carry its gutter marker and its own status glyph: {:?}",
+        rows[call_row].starts_with("▸ edit src/lib.rs · pending"),
+        "the card must carry its gutter marker and its title: {:?}",
         rows[call_row]
     );
     // Both rows of the card carry its band: the title and the body are one object,
@@ -1469,9 +1527,10 @@ fn a_tool_result_is_a_card_whose_title_carries_name_status_and_duration() {
     let rows = render_rows(&mut app, 80, 24);
     let title_row = row_of(&rows, "bash all tests pass · ok");
     let title = &rows[title_row];
-    // Gutter glyph, then the card's own status glyph, then the title.
+    // Gutter glyph, then the title, which carries the status and duration. One
+    // tick, not two: the body marker used to repeat the gutter's own character.
     assert!(
-        title.starts_with("✓ ✓ bash all tests pass · ok · "),
+        title.starts_with("✓ bash all tests pass · ok · "),
         "the title line must carry name, status and duration: {title:?}"
     );
     // The duration is a real number with a unit, not a placeholder. A card that
@@ -1479,7 +1538,7 @@ fn a_tool_result_is_a_card_whose_title_carries_name_status_and_duration() {
     // milliseconds at this scale.
     let tail = title
         .trim_end()
-        .trim_start_matches("✓ ✓ bash all tests pass · ok · ");
+        .trim_start_matches("✓ bash all tests pass · ok · ");
     assert!(
         tail.ends_with("ms"),
         "the duration must be milliseconds for a fast call: {tail:?}"
@@ -1509,7 +1568,7 @@ fn a_failed_tool_result_says_failed_on_its_title() {
     let rows = render_rows(&mut app, 80, 24);
     let title = &rows[row_of(&rows, "bash boom · failed")];
     assert!(
-        title.starts_with("✗ ✗ bash boom · failed"),
+        title.starts_with("✗ bash boom · failed"),
         "a failed call must say so in words and glyphs: {title:?}"
     );
 }

@@ -131,13 +131,12 @@ impl McpBridgeTool {
         Ok(())
     }
 
-    /// Test seam: force the next `ensure_healthy` to re-probe.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    fn invalidate_health(&self) {
-        self.last_probe_ms
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-    }
+    // A `#[cfg(test)] #[allow(dead_code)] invalidate_health` used to sit here,
+    // commented "force the next `ensure_healthy` to re-probe". Nothing called
+    // it, tests included: the `allow` was there because the two attributes
+    // together are enough to make a function nobody calls survive. The probe
+    // clock is a `store` on a field the tests already set, so a seam that no
+    // test reached was scaffolding rather than a facility.
 }
 
 #[async_trait]

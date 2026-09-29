@@ -80,13 +80,26 @@ pub const MIN_NUMBER_WIDTH: usize = 8;
 /// built for.
 pub type CardRow = Vec<(String, Style)>;
 
-/// The title line: `▸ edit · pending`, `✓ edit · ok · 12ms`.
+/// The title line: `edit · pending`, `bash · ok · 12ms`.
 ///
-/// The glyph comes from the theme's existing vocabulary (`tool_call`, `tick`,
-/// `cross`) rather than from a second one invented here, and the status **word**
-/// is beside it so a reader who cannot see the colour still reads the state.
+/// **The status word, not the status glyph.** The glyph is already in the gutter:
+/// `ui::transcript::row_style` paints it at column 0, and it is the *same*
+/// character `status_word` would have put here — a pending call is `▸` in both
+/// places, a result `✓` in both, a failure `✗` in both. Printing it twice put the
+/// same character in the same row three columns apart, which reads as a
+/// rendering fault rather than as a marker.
+///
+/// What is lost by dropping the glyph is nothing the reader had: the gutter still
+/// carries the glance-level signal, and the **word** beside it is the part that
+/// survives `NO_COLOR`, a 16-colour terminal, and a font that cannot draw the
+/// glyph. `partial` and `denied` are the cases that prove the word is doing the
+/// work — neither has a distinct gutter glyph, and both are unambiguous here.
+///
+/// (`status_word` still returns the glyph: the row renderer uses it for the
+/// padding/cut width arithmetic, and dropping it there would change the layout
+/// rather than the text.)
 pub fn title(card: &Card, theme: &Theme) -> String {
-    let (glyph, word) = status_word(card.status, &theme.glyphs);
+    let (_glyph, word) = status_word(card.status, &theme.glyphs);
     // M153: the headline comes from the renderer, so a `read` card names the file and the
     // line range instead of repeating 400 characters of it. It is optional: a tool the
     // renderer knows nothing about still gets a readable card, just a less specific one.
@@ -104,8 +117,8 @@ pub fn title(card: &Card, theme: &Theme) -> String {
         format!("{} {head}", card.name)
     };
     match card.elapsed_ms() {
-        Some(ms) => format!("{glyph} {name} · {word} · {}", ms_text(ms)),
-        None => format!("{glyph} {name} · {word}"),
+        Some(ms) => format!("{name} · {word} · {}", ms_text(ms)),
+        None => format!("{name} · {word}"),
     }
 }
 
@@ -199,7 +212,15 @@ pub fn rows(
             if row_width(&row) <= width {
                 vec![row]
             } else {
-                crate::wrap::wrap_line(&row, width)
+                // Borrowed, so the spans are wrapped in place rather than copied
+                // into a second owned vector first. This is the one path that
+                // wraps *tool output* — the widest text the UI ever handles.
+                crate::wrap::wrap_line(
+                    &row.iter()
+                        .map(|(text, style)| (text.as_str(), *style))
+                        .collect::<Vec<_>>(),
+                    width,
+                )
             }
         })
         .collect();

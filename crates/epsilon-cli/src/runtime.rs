@@ -2797,9 +2797,24 @@ mod protocol_doc_tests {
         // added two new tests. A net count cannot see one name vanishing among
         // three arriving. The names are what the coverage is keyed on, so the
         // names are what this compares.
+        //
+        // **And only test functions, M198.** This collected every `fn` in the
+        // diff, so deleting a dead helper read exactly like deleting a test. M198
+        // removed four pieces of dead code -- `catalog::CustomProvider` and its
+        // three methods, `llm::http::status_error`,
+        // `tools::files::_path_witness`, `mcp::invalidate_health` -- and the
+        // guard failed on all of them: the "a guard that cries wolf is a guard
+        // that gets disabled" outcome its own comment warns about, arriving on
+        // schedule.
+        //
+        // A test function is one carried by `#[test]`, `#[tokio::test]` or
+        // `#[bench]`. That attribute sits in the hunk *above* the signature, so
+        // the scan looks back over the contiguous attribute block; `-U0` keeps
+        // hunks tight enough that the block is not padded with unrelated lines.
         let collect = |sign: &str| -> std::collections::BTreeSet<String> {
             let mut out = std::collections::BTreeSet::new();
-            for line in text.lines() {
+            let lines: Vec<&str> = text.lines().collect();
+            for (index, line) in lines.iter().enumerate() {
                 let Some(rest) = line.strip_prefix(sign) else {
                     continue;
                 };
@@ -2831,7 +2846,28 @@ mod protocol_doc_tests {
                     continue;
                 };
                 let name = tail.split('(').next().unwrap_or(tail).trim();
-                if !name.is_empty() {
+                if name.is_empty() {
+                    continue;
+                }
+                // Look back over the attribute block. The diff sign is stripped
+                // first, because in a diff an attribute and the item it decorates
+                // BOTH carry the `+`/`-` prefix: `trim` alone leaves `-#[test]`,
+                // which does not start with `#`, and the classifier then sees a
+                // test as a plain function. (The control below is what caught
+                // that -- the guard itself would have quietly stopped reporting
+                // deleted tests, which is the exact failure it exists to prevent.)
+                let is_test = lines[..index]
+                    .iter()
+                    .rev()
+                    .map(|l| l.trim().trim_start_matches(['+', '-', ' ']))
+                    .take_while(|t| t.starts_with('#') || t.starts_with("//") || t.is_empty())
+                    .any(|t| {
+                        t.starts_with("#[test")
+                            || t.starts_with("#[tokio::test")
+                            || t.starts_with("#[rstest")
+                            || t.starts_with("#[bench")
+                    });
+                if is_test {
                     out.insert(name.to_string());
                 }
             }
@@ -2850,6 +2886,118 @@ mod protocol_doc_tests {
              line range: `cargo fmt` rewrites the region between your read and your \
              write, so a line range silently takes its neighbours with it."
         );
+    }
+
+    /// The M198 narrowing above is a change to a guard, so it gets a control —
+    /// the repository's rule is that a guard which cannot be shown to fail has
+    /// not been shown to work.
+    ///
+    /// The narrow risk is specific: a check that only looks at `#[test]`-carried
+    /// lines could stop seeing a deleted test whose attribute the diff moved or
+    /// dropped. So the control asserts the *classifier*, not the guard — the
+    /// classifier is the part that changed, and it can be exercised directly on
+    /// the diff text the guard would be handed, with no repository mutation at
+    /// all.
+    ///
+    /// Two shapes, because they differ in exactly the way that matters: the
+    /// attribute inside the same hunk, and the attribute separated from the
+    /// signature by intervening lines (which is what `cargo fmt` produces when it
+    /// reflows a signature across several lines).
+    #[test]
+    fn the_test_classifier_reads_an_attribute_from_the_hunk_above() {
+        /// The same predicate the guard uses, extracted so it can be checked
+        /// without touching the working tree.
+        fn names_in(diff: &str, sign: &str) -> std::collections::BTreeSet<String> {
+            let mut out = std::collections::BTreeSet::new();
+            let lines: Vec<&str> = diff.lines().collect();
+            for (index, line) in lines.iter().enumerate() {
+                let Some(rest) = line.strip_prefix(sign) else {
+                    continue;
+                };
+                let mut rest = rest.trim_start();
+                if let Some(r) = rest.strip_prefix("async ") {
+                    rest = r.trim_start();
+                }
+                let mut tail = None;
+                for vis in ["pub(crate) fn ", "pub fn ", "fn "] {
+                    if let Some(r) = rest.strip_prefix(vis) {
+                        tail = Some(r);
+                        break;
+                    }
+                }
+                let Some(tail) = tail else { continue };
+                let name = tail.split('(').next().unwrap_or(tail).trim();
+                if name.is_empty() {
+                    continue;
+                }
+                // Look back over the attribute block. The same diff sign is
+                // stripped first, because in a diff an attribute and the item
+                // it decorates both carry the `+`/`-` prefix -- `trim` alone
+                // leaves `-#[test]`, which does not start with `#`.
+                let is_test = lines[..index]
+                    .iter()
+                    .rev()
+                    .map(|l| l.trim().trim_start_matches(['+', '-', ' ']))
+                    .take_while(|t| t.starts_with('#') || t.starts_with("//") || t.is_empty())
+                    .any(|t| {
+                        t.starts_with("#[test")
+                            || t.starts_with("#[tokio::test")
+                            || t.starts_with("#[rstest")
+                            || t.starts_with("#[bench")
+                    });
+                if is_test {
+                    out.insert(name.to_string());
+                }
+            }
+            out
+        }
+
+        let diff = "\
+@@ -1,3 +1,0 @@
+-#[test]
+-fn a_real_test() {
+@@ -9,2 +6,0 @@
+-#[tokio::test]
+-async fn an_async_test() {
+@@ -20,2 +17,0 @@
+-fn a_dead_helper() {
+@@ -30,2 +27,0 @@
+-/// Doc comment.
+-pub fn a_dead_public_helper() {
+@@ -40,2 +37,2 @@
+-#[test]
+-fn renamed_test() {
++#[test]
++fn renamed_test_v2() {
+";
+        let removed = names_in(diff, "-");
+        let added = names_in(diff, "+");
+
+        assert!(removed.contains("a_real_test"), "{removed:?}");
+        assert!(removed.contains("an_async_test"), "{removed:?}");
+        // The whole point of the narrowing: these are NOT tests and must not be
+        // reported as lost coverage.
+        assert!(!removed.contains("a_dead_helper"), "{removed:?}");
+        assert!(!removed.contains("a_dead_public_helper"), "{removed:?}");
+
+        // A **rename** is the interesting case, and the assertion is the
+        // opposite of the one this test started with.
+        //
+        // Renaming a test is a removal of one name and the addition of another,
+        // so `removed.difference(&added)` DOES contain the old name -- and the
+        // guard reports it. That is **correct and worth keeping**: a renamed test
+        // has a new name, and anything referring to the old one (a milestone doc
+        // citing it, a `cargo test <name>` in someone's muscle memory) is now
+        // wrong. The guard cannot know the rename was deliberate.
+        //
+        // So the first version of this assertion -- "a rename's net effect must be
+        // nil" -- was asserting that the guard is blind to renames. It failed, and
+        // it should have: the property it named is a defect, not a requirement.
+        assert!(
+            removed.difference(&added).any(|n| n == "renamed_test"),
+            "a renamed test must still be reported: its old name is gone"
+        );
+        assert!(added.contains("renamed_test_v2"), "{added:?}");
     }
 
     #[test]

@@ -241,7 +241,15 @@ pub(crate) struct App {
     /// duration moved under a stable id (its result landed). Rebuilt on the next
     /// reconcile and then cleared, so a busy run re-renders the one card that
     /// changed rather than the conversation.
-    card_restale: Vec<u64>,
+    card_restale: std::collections::HashSet<u64>,
+    /// The workspace path, already shortened for the footer.
+    ///
+    /// Fixed for the life of the process: `workspace_root` is read once in
+    /// `App::new` and never reassigned, and the shortening depends only on that
+    /// root and the user's home directory. It used to be recomputed on every
+    /// drawn frame — two environment lookups and a path walk, thirty times a
+    /// second — so it is now derived once, where the field is declared.
+    location_label: String,
     /// M16a: picker rows cached per (filter, sources) tuple; rebuilt only when one
     /// of those changes, never on Up/Down.
     picker_rows: Option<Vec<crate::picker::PickerRow>>,
@@ -1259,7 +1267,16 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
     // finished, so neither the row count nor its id changes and the cache would
     // happily keep serving "pending" for a call that has returned. Naming the
     // finished cards is how the cache learns they moved.
-    app.restale_finished_cards();
+    //
+    // Only events that can change a card are worth the walk. `MessageUpdate` is
+    // a streaming text delta — the event that dominates a run by two orders of
+    // magnitude — and it cannot end a card. The event loop drains up to
+    // `MAX_EVENT_DRAIN` of them before drawing a single frame, so asking every
+    // one to re-scan the transcript was `O(events x lines)` per frame for a
+    // question whose answer was already known.
+    if event_can_end_a_card(ev) {
+        app.restale_finished_cards();
+    }
     match ev {
         AgentEvent::AgentStart => app.run_started_at = Some(std::time::Instant::now()),
         AgentEvent::AgentEnd { .. } => app.run_started_at = None,
@@ -1270,6 +1287,21 @@ fn apply_with_scroll(app: &mut App, ev: &AgentEvent) {
         // Frozen read: keep the same absolute window as the transcript grows.
         app.scroll_from_bottom += appended;
     }
+}
+
+/// Whether applying `ev` could move a tool card from running to finished.
+///
+/// The rule is deliberately conservative: `true` may be returned for an event
+/// that turns out not to end a card, because that costs one linear walk, while
+/// `false` for an event that does end one would leave the transcript showing a
+/// card as pending after it returned — the "reports success while the thing did
+/// not happen" failure this repository treats as the worst one available.
+///
+/// So this names the arms that can carry a `ToolResult` or touch a card at all,
+/// and [`AgentEvent::MessageUpdate`] is the one that is out: it is a delta of
+/// assistant prose.
+fn event_can_end_a_card(ev: &AgentEvent) -> bool {
+    !matches!(ev, AgentEvent::MessageUpdate { .. })
 }
 
 /// Write any parked OSC 52 clipboard sequence and return what it was.

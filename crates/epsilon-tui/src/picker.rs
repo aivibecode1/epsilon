@@ -626,7 +626,6 @@ pub const COMMAND_HEADS: &[&str] = &[
 /// command it aliases - `/timeline` is swept by `/branch`, which reaches the same arm.
 /// `?` is not listed: it is the only head with a non-word character, and the reverse check
 /// filters those out rather than reporting them.
-#[allow(dead_code)]
 pub const ALIAS_HEADS: &[&str] = &[
     "models",   // model
     "timeline", // branch

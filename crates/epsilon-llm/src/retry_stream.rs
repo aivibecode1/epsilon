@@ -230,7 +230,6 @@ pub(crate) struct VecStream {
 }
 
 impl VecStream {
-    #[allow(dead_code)]
     pub(crate) fn single(ev: StreamEvent) -> BoxEventStream {
         Self::from_events(vec![ev])
     }

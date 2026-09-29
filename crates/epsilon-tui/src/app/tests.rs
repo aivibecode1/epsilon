@@ -1111,6 +1111,50 @@ async fn every_palette_entry_names_a_command_that_parses() {
     }
 }
 
+/// An unrouted `Command` must be *visible*, not merely detected.
+///
+/// `run_workspace_command` is the dispatcher's catch-all, so a new `Command`
+/// variant that nobody gave an arm lands in its `other` arm. That arm is
+/// unavoidable — the executor receives every variant, including the 29 its six
+/// siblings own by name, so removing it would mean re-enumerating all of them
+/// here. What must not be avoidable is the arm's *silence*.
+///
+/// It used to be silent in exactly the build that matters: `#[allow]` silenced
+/// the warning, and `debug_assert!` fires only in a debug build, so a release
+/// binary with an unrouted variant returned `false` and printed nothing. The
+/// user typed `/thing` and the screen did not change — indistinguishable from a
+/// hang, which `AGENTS.md`'s TUI invariant calls the one thing the UI must never
+/// be.
+///
+/// Asserted on the source, because the branch is statically unreachable in a
+/// correct build and a runtime test could not reach it to observe anything.
+#[test]
+fn the_catch_alls_other_arm_tells_the_user_instead_of_failing_silently() {
+    let source = include_str!("commands.rs");
+    let body = source
+        .split_once("fn run_workspace_command(")
+        .expect("run_workspace_command is in this file")
+        .1;
+    let body = body.split_once("\n    fn ").map_or(body, |(head, _)| head);
+    let arm = body
+        .split_once("other => {")
+        .map_or("", |(_, tail)| tail)
+        .split_once("}\n")
+        .map_or("", |(head, _)| head);
+    assert!(
+        !arm.is_empty(),
+        "run_workspace_command has no `other` arm. That is expected only if it \
+         became exhaustive over the whole enum — check that it was not made \
+         exhaustive by re-listing the variants the sibling executors own."
+    );
+    assert!(
+        arm.contains("push_notice"),
+        "the catch-all's `other` arm fails silently again. A Command variant \
+         with no arm of its own must say so in the transcript, or a user who \
+         typed it sees an unchanged screen. Found: {arm:?}"
+    );
+}
+
 /// The advertised key hint must be the chord that is actually bound.
 ///
 /// The same entry advertised a bare `x`, which is the binding the editor

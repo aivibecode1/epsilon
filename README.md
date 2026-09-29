@@ -137,7 +137,8 @@ cargo run -q -p epsilon-cli -- --demo
 cargo check -p epsilon-cli --features real
 ```
 
-`bash scripts/gate.sh <label>` runs all six and writes `target/gate-<label>.log`.
+`bash scripts/gate.sh <label>` (or `pwsh -File scripts/gate.ps1 <label>` on
+Windows) runs all seven gates and writes `target/gate-<label>.log`.
 Keep any evidence you want to cite outside `target/`, which is disposable.
 
 Two habits that save time here:

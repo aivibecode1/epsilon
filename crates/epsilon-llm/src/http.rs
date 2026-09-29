@@ -92,13 +92,14 @@ pub(crate) fn http_client() -> &'static reqwest::Client {
     })
 }
 
-/// Render a failed HTTP response as an in-band error string (status + trimmed body),
-/// pi's error-path convention: never panic, describe honestly.
-#[allow(dead_code)] // wired into the retry-classified error path; kept for parity
-pub(crate) fn status_error(status: u16, body: &str) -> String {
-    let head: String = body.chars().take(400).collect();
-    format!("HTTP {status}: {head}")
-}
+// A `status_error` used to live here, `#[allow(dead_code)]` and commented
+// "wired into the retry-classified error path; kept for parity". Neither half
+// was true: nothing in the tree called it. A suppression plus a comment
+// describing a wiring that does not exist is worse than no function, because the
+// next reader believes the comment. The live equivalent is
+// `epsilon_tools::webfetch::status_error`, which caps its snippet at 2000
+// characters rather than this one's 400 — and which actually formats the errors
+// a user sees.
 
 #[cfg(test)]
 mod tests {

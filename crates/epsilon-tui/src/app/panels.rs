@@ -309,7 +309,7 @@ pub(super) fn draw_transcript(
     ] {
         if !text.is_empty() {
             for line in text.split('\n') {
-                for wrapped in crate::wrap::wrap_line(&[(line.to_string(), style)], body_width) {
+                for wrapped in crate::wrap::wrap_line(&[(line, style)], body_width) {
                     tail_rows.push((
                         kind,
                         Line::from(

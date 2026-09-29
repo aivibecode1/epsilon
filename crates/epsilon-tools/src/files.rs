@@ -1,7 +1,6 @@
 //! File-manipulation tools: read, write, edit.
 
 use std::io::Read as _;
-use std::path::Path;
 
 use async_trait::async_trait;
 use epsilon_contracts::tool::{
@@ -708,7 +707,3 @@ impl Tool for EditTool {
         .await
     }
 }
-
-/// Silence unused-import lint until Path gains a direct use in later milestones.
-#[allow(dead_code)]
-fn _path_witness(_: &Path) {}

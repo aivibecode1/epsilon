@@ -21,7 +21,6 @@
 use super::*;
 
 impl App {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         model_id: String,
         fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
@@ -71,7 +70,7 @@ impl App {
             spinner_phase: 0,
             render_cache: crate::render_cache::RenderCache::new(),
             card_open: Vec::new(),
-            card_restale: Vec::new(),
+            card_restale: std::collections::HashSet::new(),
             picker_rows: None,
             kill_ring: crate::kill_ring::KillRing::new(),
             last_kill_was_contiguous: false,
@@ -110,6 +109,15 @@ impl App {
             // `None` means "never loaded": the first `@` pays for the search once, and
             // every keystroke after it reads the cached rules.
             at_ignore: None,
+            // A quarter of the row is the most the location may take before the
+            // hints stop being readable; past that the tail of the path is what
+            // matters. Derived once — see the field's doc.
+            location_label: {
+                let home = std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .map(std::path::PathBuf::from);
+                crate::ui::format::format_path(&workspace_root, home.as_deref(), 28)
+            },
             workspace_root,
             // Populated immediately below; see `discover_prompt_templates`.
             prompt_templates: Vec::new(),

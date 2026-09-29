@@ -164,6 +164,15 @@ $gates = @(
     # see this class. `audit/history/` is excluded on purpose: it is superseded
     # and deliberately unrepaired (AGENTS.md).
     @{ Name = "check-links"; Exe = "python"; Args = @("scripts/check-links.py", "--quiet") },
+    # Cargo does not merge a package `[lints]` table with `[workspace.lints]`: a
+    # package table REPLACES it unless it says `workspace = true`, and cargo
+    # rejects `workspace = true` outright when the same table carries overrides.
+    # So a crate that must override one lint — `epsilon-safety`, for the FFI —
+    # has to hand-copy the whole table, and a lint added at the root afterwards
+    # reaches the other eleven crates and stops there. `epsilon-lsp` had exactly
+    # that bug (D1/D21) and it was found by a human reading twelve manifests.
+    # This is the check that means nobody has to.
+    @{ Name = "check-lint-tables"; Exe = "python"; Args = @("scripts/check-lint-tables.py") },
     @{ Name = "fmt --check"; Exe = $cargo; Args = @("fmt", "--all", "--", "--check") },
     # `-D warnings`: the workspace denies its configured lints, but clippy's own
     # `-W clippy::all` findings exit 0 by default - which is how a warning got past

@@ -159,9 +159,34 @@ pub fn curated() -> &'static [ModelInfo] {
     MODELS
 }
 
+/// Index the catalog by exact id, built once.
+///
+/// The scan this replaces ran on the TUI's draw path — the header prices a cost
+/// from the catalog, and the footer's label comes from the same table, so a
+/// frame did two or three linear walks of several hundred rows. The rows are a
+/// `&'static` slice that never changes after this is built, so a `OnceLock` is
+/// the whole cache: one allocation at first use, none afterwards.
+///
+/// `or_insert` rather than `collect`, deliberately. The rows are generated data
+/// and a duplicate id is a generation bug, but the two implementations must
+/// still agree about which row a duplicate resolves to while it is there: the
+/// scan returned the **first**, and `HashMap::from_iter` returns the **last**.
+/// `by_id_agrees_with_a_linear_scan` pins that.
+fn by_id() -> &'static std::collections::HashMap<&'static str, &'static ModelInfo> {
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, &'static ModelInfo>> =
+        std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = std::collections::HashMap::with_capacity(MODELS.len());
+        for row in MODELS {
+            index.entry(row.id).or_insert(row);
+        }
+        index
+    })
+}
+
 /// Look up a model by exact catalog id.
 pub fn lookup_model(id: &str) -> Option<&'static ModelInfo> {
-    MODELS.iter().find(|m| m.id == id)
+    by_id().get(id).copied()
 }
 
 /// How `resolve_model` found its answer (for diagnostics and picker display).
@@ -310,57 +335,13 @@ fn has_date_suffix(id: &str) -> bool {
         && id[id.len() - 8..].bytes().all(|b| b.is_ascii_digit())
 }
 
-// ---- custom OpenAI-compatible providers (M28; opencode `provider.options.baseURL`,
-//      Hermes `base_url_override`) ----------------------------------------------
-
-/// One user-declared OpenAI-compatible endpoint (`[provider_custom.<name>]`
-/// in the global config: `base_url` required, `env_key` optional). The model
-/// id `<name>/<model>` streams to `<base_url>/chat/completions` with the key
-/// resolved for provider `<name>` (stored auth.json entry wins, then
-/// `env_key`). Lives in this crate because wire routing consumes it; the TOML
-/// parsing stays with config in epsilon-core.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CustomProvider {
-    /// Provider prefix before `/` in a model id (`lmstudio` of
-    /// `lmstudio/qwen2.5-7b-instruct`). Lowercase.
-    pub name: String,
-    /// Endpoint root without trailing slash (`http://localhost:1234/v1`).
-    pub base_url: String,
-    /// Env var holding the API key. Empty = no key sent (local servers).
-    pub env_key: String,
-}
-
-impl CustomProvider {
-    /// Build from raw config strings; `None` when there is no usable endpoint.
-    /// Normalizes name to lowercase and strips one trailing slash so endpoint
-    /// joins never double it.
-    pub fn from_config(name: &str, base_url: &str, env_key: &str) -> Option<Self> {
-        let base_url = base_url.trim().trim_end_matches('/');
-        if base_url.is_empty() {
-            return None;
-        }
-        Some(Self {
-            name: name.trim().to_ascii_lowercase(),
-            base_url: base_url.to_string(),
-            env_key: env_key.trim().to_string(),
-        })
-    }
-
-    /// The provider segment a model id must carry to route here.
-    pub fn matches_id(&self, model_id: &str) -> bool {
-        model_id
-            .split_once('/')
-            .is_some_and(|(prefix, _)| prefix.eq_ignore_ascii_case(&self.name))
-    }
-}
-
-/// Look up a custom provider by the `<name>/...` prefix of a model id.
-pub fn lookup_custom<'a>(
-    customs: &'a [CustomProvider],
-    model_id: &str,
-) -> Option<&'a CustomProvider> {
-    customs.iter().find(|c| c.matches_id(model_id))
-}
+// Custom OpenAI-compatible providers (M28; opencode `provider.options.baseURL`,
+// Hermes `base_url_override`) live in `crate::custom`. A byte-identical copy of
+// `CustomProvider`, `from_config`, `matches_id` and `lookup_custom` used to sit
+// here, reachable as `catalog::CustomProvider`, and nothing called it: every
+// production caller went through `custom::`. Two spellings of one type is not
+// neutral — the one nobody uses is the one that stops being updated, and a
+// reader who found it would reasonably be reading a dead branch.
 
 /// Display label for an arbitrary id: catalog label when known, else the id itself
 /// (custom entries always render as typed).
@@ -711,6 +692,56 @@ pub async fn live_models(provider: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The index has to answer exactly what the scan it replaced answered.
+    ///
+    /// An index and a scan disagree in one case: when the same id appears twice,
+    /// a scan returns the first row and a map built with `collect` returns the
+    /// last. The rows are generated, so a duplicate is a `regen_catalog.py` bug
+    /// — but "first" is the answer the product has been giving, and changing it
+    /// silently would be the kind of change that only shows up as a wrong price.
+    /// `or_insert` is what keeps that true; this is what says so.
+    ///
+    /// **Compared by value, not by address.** The first version of this test
+    /// compared `&ModelInfo` pointers and failed on every row: `CATALOG_ROWS` is
+    /// a `const`, and a `const` is materialised separately at each use site, so
+    /// the `MODELS` in this test and the `MODELS` inside `by_id` are two equal
+    /// copies at two addresses. The assertion was measuring where the compiler
+    /// put a constant, which is not a property of the catalog — and it produced a
+    /// convincing, entirely false "duplicate id" report.
+    ///
+    /// The two fields compared are the ones every consumer reads: the label the
+    /// picker shows and the window the header divides by. A divergence in either
+    /// is the whole failure this test exists to prevent.
+    #[test]
+    fn by_id_agrees_with_a_linear_scan() {
+        for row in MODELS {
+            let scanned = MODELS.iter().find(|m| m.id == row.id);
+            let indexed = lookup_model(row.id);
+            assert_eq!(
+                scanned.map(|m| (m.label, m.context_window)),
+                indexed.map(|m| (m.label, m.context_window)),
+                "id {:?} resolved to a different row than a scan would find",
+                row.id
+            );
+        }
+        // And a miss is a miss, rather than a panic or a default row.
+        assert!(lookup_model("definitely-not-a-model-id").is_none());
+    }
+
+    /// The rows themselves must be unique for the index to be the whole story.
+    /// If this fails, `by_id_agrees_with_a_linear_scan` above is what is being
+    /// protected, and this is the line that says the catalog needs regenerating.
+    #[test]
+    fn catalog_ids_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        let dupes: Vec<&str> = MODELS
+            .iter()
+            .filter(|m| !seen.insert(m.id))
+            .map(|m| m.id)
+            .collect();
+        assert!(dupes.is_empty(), "duplicate catalog ids: {dupes:?}");
+    }
 
     #[test]
     fn resolve_api_key_stored_wins_then_env_fallback() {

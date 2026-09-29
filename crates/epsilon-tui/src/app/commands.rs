@@ -1179,14 +1179,30 @@ impl App {
             crate::picker::Command::Editor => {
                 self.request_external_editor();
             }
-            // `run_command` owns the routing, so reaching a variant here means the
-            // dispatcher sent it to the wrong executor. `debug_assert` catches that in
-            // every test build and stays silent in release - a user's release binary
-            // must not panic over an internal routing mistake, and a test must not be
-            // able to pass by quietly doing nothing.
+            // A variant that reached the catch-all without an arm of its own.
+            //
+            // `run_command` sends everything it does not route by name to *this*
+            // executor, so adding a `Command` variant puts it here — and this arm
+            // is what it lands in. That makes the module's claim ("the compiler
+            // will insist its arm exist") false as written: `#[allow]` silences
+            // the warning, `debug_assert` fires only in a debug build, and a
+            // **release** binary compiled with an unrouted variant returned
+            // `false` in silence. A slash command that did nothing, with no
+            // notice, in the build users actually run.
+            //
+            // So the arm stays — it has to, or this executor would have to
+            // re-enumerate the 29 variants its six siblings own — and it is made
+            // honest instead. A notice naming the command is the difference
+            // between a keypress that visibly does nothing and one that looks
+            // like a hang, and it is the TUI invariant in `AGENTS.md` applied to
+            // the case the invariant did not name: not only must an unbound key
+            // say so, an unrouted *command* must.
             #[allow(unreachable_patterns)]
             other => {
                 debug_assert!(false, "{other:?} is not a run_workspace_command case");
+                self.ui.push_notice(format!(
+                    "/{other:?} is not implemented yet — /help lists the commands that are"
+                ));
                 return false;
             }
         }
