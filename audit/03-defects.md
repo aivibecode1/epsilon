@@ -9,6 +9,76 @@ but unverified** (a milestone says so; this audit does not believe it), **Fixed*
 
 ---
 
+# Reconciliation, 2026-09-29 (M199)
+
+Every row below was **re-derived from the code at `c975d51`**, not inherited. The
+method, because the method is the part that has gone wrong before:
+
+* A row is marked **Fixed** only on a check that would fail if it were open. Where a
+  measurement was possible it is quoted.
+* **`unsafe` outside `epsilon-safety` is 3 hits and all three are a comment or a test
+  string.** The repository's one safety law is genuinely true. (`grep` counted
+  hyphenated crate names in source, where Rust uses underscores, and briefly showed
+  every `epsilon-server` dependency as unused — D2 is a retraction, and the
+  identifier was the error, not the code.)
+* Two greps that would have produced false rows are recorded here as **method notes**,
+  not as findings: a grep that returns nothing proves nothing if the identifier is
+  wrong, and a count that includes `#[cfg(test)]` proves nothing either.
+
+## Verified open, ranked by what it costs the user
+
+| # | Defect | Cost | Evidence that would close it |
+|---|---|---|---|
+| **A1** | **The draw path drops a character at the wrap boundary.** A 60-column frame renders "…in the workspace and **the**" and drops the `n` of "then". | The transcript is the conversation: a user re-reads their own message, and the model reads the same rows. Silent text corruption, no error. | Measured: `wrap_line` is **content-intact at widths 56–61** (a scratch probe over the exact string), so the wrapper is innocent and the *draw* path wraps one column wider than it draws. `app/view.rs:432` and `app/panels.rs:290` both compute `width - GUTTER`; the drawn row 1 is the 59-wide wrap clipped to 58. Fix by making the two agree, and pin it with a frame test at 60 columns. |
+| **A2** | **The header loses its `↑` at 60 columns**, printing `idle 0 ↓0 · R0 W0 CH n/a …`. | A bare `0` where a labelled pair was. A *partial* badge is worse than a missing one, because a wrong number is not noticed the way an absent one is. | `idle 0 ↓0` vs `idle … ↑0 ↓0` at 100 — in `audit/evidence/frames/m199-baseline/*.60x20.txt`. The model picker must drop whole segments, never the marker that gives a number its meaning. |
+| **A3** | **The working directory is appended to the key hints with no gap.** `… pageup scroll back · pageup …\Epsilon\crates\epsilon-tui`. | The reader cannot tell where the key list ends and the path begins, so a truncated hint run reads as one more hint. | `ui/footer.rs:326-331`: `side_by_side(left, right, …, Priority::Right, whole_span)` reserves no minimum gap, so the truncation ellipsis abuts the right side. Reserve ≥1 column and pin it at 60. |
+| **A4** | **The empty state states what the header already states.** `model Faux (offline scripted)` and `?/1.0M` appear in the header **and** in the body, two rows apart, on a screen with 20 blank rows under them. | The first thing a new user sees spends its whole budget repeating itself. | `audit/evidence/frames/m199-baseline/brand-new.100x30.txt`. Decide which surface owns the model and context, and delete the other. |
+| **A5** | **The empty state's alignment has three left edges and no hierarchy.** `E P S I L O N` at col 1, `a coding agent…` at col 1, `model`/`context` at col 3, `ready — …` at col 3 in the *same style as the data above it*. | An instruction rendered as a datum; nothing on the screen says which line is the call to action. | Same frame. An instruction wants its own style, and the block wants one left edge. |
+| **A6** | **The composer's placeholder is drawn as a notice.** `• ask anything` carries the same `•` gutter glyph as a system notice. | The one glyph that means "the system said this" marks a placeholder. This is the M198 family — a glyph carrying the wrong meaning — and it is on screen at every width, in every state. | `brand-new.100x30.txt` vs the real notices in `streaming.100x30.txt`. |
+| **A7** | **D20 — a killed TUI blocks the workspace for 30 s.** | A relaunch straight after End Task refuses to start. | `session/src/lease.rs:88` `STALE_AFTER = 30s`, still live. The CLI shows a countdown; **the TUI shows nothing** (the alternate screen erases the notice). |
+| **A8** | **D3 — `epsilon-tools` depends on `epsilon-lsp` directly.** | A documented decoupling that buys nothing, which is worse than not documenting it. | `crates/epsilon-tools/Cargo.toml:13`. The trait exists so the dependency is not needed. |
+| **A9** | **D5 — no `.gitattributes`; the tree is genuinely mixed CRLF/LF.** | Permanent diff noise, host-dependent formatting. Every `git add` in this session printed an LF→CRLF warning. | `ls .gitattributes` → absent. |
+| **A10** | **D9 — eight identical `#[allow(unreachable_patterns)]` in one file.** | Unknown, and that is the problem. | `app/commands.rs`, 8 occurrences. |
+| **A11** | **D17 / F22 — delegated-subagent and compaction usage has a reader and no writer.** `usage_accounts()` and `add_usage_accounts` exist and are read by `app/session.rs:227`; nothing constructs the entry. | A summarization is a real provider call whose cost nothing counts. It is about money, it is silent, and it is unbounded. | `core/tests/compaction_scenarios.rs:837` *asserts the writer does not exist* — the suite pins the absence. Shipping the writer is a design decision (which model is a summarization billed to?), not a patch. |
+| **A12** | **D14 — configuration is read in three crates** (`core/config.rs`, `llm/custom.rs`, `llm/oauth_login.rs` + three in the CLI). | Two config surfaces with no single owner, rising as config grows. | Name the owner. |
+| **A13** | **The header has no legend for `?`, `CH n/a`, or the trailing segment.** | The owner asked for visibility into the harness's own operation, and the three least meaningful tokens on screen are the three nobody can read. | Carried from `next-hardening.md` and still open. Two lines in `/help` close it. |
+
+## Security and privacy — verified, and two of them are judgements rather than defects
+
+Neither is a bug. Both are recorded because **an undocumented judgement is an
+undocumented judgement**, and this repository's own history is a list of features
+that were correct-by-accident and nobody wrote down.
+
+| # | Finding | What was checked | The judgement to record |
+|---|---|---|---|
+| **A14** | **No pattern-based secret scrubbing anywhere.** The only `redact` in the tree is extension-driven (`runtime.rs:1983` — an extension rewriting content it chose to); the only masking is `mask_key`, which hides a key on screen during `/login` (`main.rs:2753`). Nothing scrubs tool output before it is appended to the session JSONL. | `grep -rl redact crates/*/src` → 2 files, neither the TUI nor diagnostics. `grep` for key/secret/token patterns joined to a scrub function → nothing. | **Is that right?** Transparency is defensible — the user asked for the file, and scrubbing hides evidence — but a `cat .env` lands in a durable on-disk transcript in cleartext. Whichever way it goes, the policy belongs in `docs/user/permissions.md`, and the answer is probably "scrub the durable store, not the live view". **A decision, not a patch.** |
+| **A15** | **`ReadTool` applies no sensitive-name check, and that is not written down.** `is_sensitive` has exactly one caller: the `@`-reference expander. So `@.env` is refused while `read .env` is not. | `grep -rn is_sensitive` → `references.rs` only (4 sites). | The asymmetry looks deliberate — `@` attaches content *silently* into a prompt, `read` returns visibly in the transcript — but that reasoning appears in no document. It also means A14's answer depends on it. **Record it in `docs/user/permissions.md`.** |
+| — | **Command spawns are covered by a mechanical guard, and it is a good one.** | `no_production_spawn_leaves_stdin_unset` walks every `Command::new` under `crates/`. It caught a **new** omission the first time it ran against M199's `mklink` helper. | Working as designed. Worth noting it now covers a `#[doc(hidden)] pub mod` in a library crate, which is the case a per-site test would have missed. |
+
+## Verified fixed at `c975d51`
+
+| # | Claim | How it was verified, not assumed |
+|---|---|---|
+| D1 / D21 | `epsilon-lsp` did not inherit the lint law | `crates/epsilon-lsp/Cargo.toml` has `[lints] workspace = true`. `scripts/check-lint-tables.py` reports 11 crates inheriting, 1 hand-copied and matching. |
+| D6 / D19 | A panic leaves the terminal unusable | `app.rs:1173` `impl Drop for TerminalGuard` and `app.rs:1206` `std::panic::set_hook`, with the restore factored out so it is testable without `set_hook`. **D6 and D19 are the same defect listed twice** with different severities — see the note under method. |
+| D7 / D18 | The TUI deep-clones the transcript every frame | **The repo's own tripwire, run:** `11.978 µs at 20 messages -> 11.899 µs at 200 messages` — 1.0x cost for 10x the transcript. It was 12.9x. `context_mirror_cost_does_not_track_transcript_length` passes for the right reason, and `context_mirror_stays_inside_the_frame_budget` passes beside it. |
+| D13 | `docs/README.md` renders as body text | The file opens with `# Documentation` and a `| File | What lives there | Read it when |` header. |
+| D15 | The TUI test never types while a turn is in flight | `crates/epsilon-cli/tests/terminal.rs:429` `typing_still_works_while_a_turn_is_streaming`. |
+| D16 | Four root scratch files | None present. |
+| — | `unsafe_code = "forbid"` is true workspace-wide | 3 hits outside `epsilon-safety`, all a doc comment (`contracts/message.rs:99`, `core/lib.rs:1822`) or a test string. |
+
+## Method notes — the ledger's own defects
+
+* **D6 and D19 are one defect.** D7 and D18 are another. Four rows, two findings,
+  two different severities for each. A ledger that ranks duplicates cannot be read
+  as a ranking.
+* **D2 is retracted, correctly, in place.** It claimed `epsilon-server` linked two
+  crates it never calls; the only uses are inside its `mod tests`. It is *not* — the
+  retraction is in the row. That is the ledger working as intended and is the reason
+  the reconciliation above re-derives rather than trusts.
+
+---
+
 ## D1 — `epsilon-lsp` does not inherit `unsafe_code = "forbid"`
 
 **Severity: high. Cost of leaving it: a silent hole in the repository's one
