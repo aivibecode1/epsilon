@@ -190,11 +190,12 @@ impl ChildStdio {
         // pi's `windowsHide: true` (`nodejs.ts:534`). Without it a console
         // application launched from this one can allocate or attach a visible
         // console window, which competes with the TUI for the same screen.
-        // `CREATE_NO_WINDOW`; Rust spells it only through `CommandExt`, and only
-        // on Windows, so the import is scoped to the block that uses it.
+        // `CREATE_NO_WINDOW`. `tokio::process::Command` forwards it to the std
+        // command, so no `CommandExt` import is needed here — and an unused one
+        // is a `-D warnings` failure, which is how this line was first written
+        // wrong.
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000);
             Self {
                 stdin_closed: true,

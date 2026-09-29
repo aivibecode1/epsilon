@@ -1847,7 +1847,8 @@ fn a_tool_child_gets_a_closed_stdin_and_never_the_harness_console() {
          the TUI the inherited stream is the console the user is typing into."
     );
     assert_eq!(
-        stdio.window_hidden, cfg!(windows),
+        stdio.window_hidden,
+        cfg!(windows),
         "a console window is suppressed only on Windows, where one can be allocated; \
          pi sets windowsHide for the same reason (nodejs.ts:534)"
     );
