@@ -7,19 +7,21 @@ not a parallel file — a second ledger is a ledger that drifts. Frames:
 
 ## What is left, in the order it should go
 
-M201 closed A1, A2, A3, A4, A5, A6 and A13, plus a defect no row named. The rows still open,
-re-ranked by what each one costs:
+M201 closed A1, A2, A3, A4, A5, A6 and A13; **M202 closed a defect no row named** (a session
+written before M194 could not be opened at all); **M205 closed A17** (a plain launch never said a
+prior session existed). The rows still open, re-ranked by what each one costs:
 
 | Row | What | Why here |
 |---|---|---|
-| **A12** | configuration is read in four places (`core/config.rs`, `llm/custom.rs`, `llm/oauth_login.rs`, three in the CLI) | Growing surface with no owner; every new setting makes the drift worse. Cheap to name an owner, expensive to keep deferring. |
-| **A11** | delegated-subagent and compaction usage has a reader and no writer | About money, silent, unbounded — but it is a **design decision** (which model is a summarization billed to?), so it needs an answer before code. |
-| **A7** | a killed TUI blocks the workspace for 30 s | The TUI shows nothing because the alternate screen erases the CLI's countdown. A startup-path fix, not a frame fix. |
-| A8/A9/A10 | `epsilon-tools` → `epsilon-lsp` dep, no `.gitattributes`, 8 identical `#[allow]`s | Mechanical. A9 needs its own commit: `* text=auto` marks every file for renormalization and the next `git add` would rewrite line endings across the tree. |
-| A14/A15 | secret scrubbing in the durable store, and the `read`/`@` asymmetry | **Decisions, not patches.** Both are answered by one paragraph in `docs/user/permissions.md`; neither needs code to be honest. |
+| **A7** | a killed TUI blocks the workspace for 30 s, and the TUI shows nothing while it waits | Every user who kills the TUI meets it. The CLI prints a countdown into a screen the alternate buffer then erases, so the fix is a startup notice at minimum — and a liveness probe at most, which needs `unsafe` and a design decision. |
+| **A12** | configuration is read in four places (`core/config.rs`, `llm/custom.rs`, `llm/oauth_login.rs`, three in the CLI) | A growing surface with no owner; every new setting makes the drift worse. |
+| **A11** | delegated-subagent and compaction usage has a reader and no writer | About money, silent, unbounded — but it is a **design decision** (which model is a summarization billed to?). |
+| **A16** | `SessionStore::reset_leaf` has no production caller, and `tui.jsonl` is either one rolling session per frontend or one per launch | Seventh instance of the repo's signature class, and the two answers the code ships are inconsistent. |
+| A8/A9/A10 | `epsilon-tools` → `epsilon-lsp` dep, no `.gitattributes`, 8 identical `#[allow]`s | Mechanical. A9 needs its own commit: `* text=auto` marks every file for renormalization. |
+| A14/A15 | secret scrubbing in the durable store, and the `read`/`@` asymmetry | **Decisions, not patches.** One paragraph in `docs/user/permissions.md` answers both. |
 
-Beyond the ledger, the next capability slice is `/goal` — a persisted, auto-continuing session
-objective, which the DSH reference documents in full. Notes: [`08-goal-command.md`](08-goal-command.md).
+`/goal` is complete as a capability (state at M203, driver at M204); its four follow-ups are in
+[`08-goal-command.md`](08-goal-command.md).
 
 ## M202 was not a row, and it was the most valuable find of the two rounds
 
