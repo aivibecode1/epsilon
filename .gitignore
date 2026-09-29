@@ -69,3 +69,17 @@ audit/evidence/*.log
 # M196 final: GFM markdown, one session forest, labels, the tree view
 # (search/filter/fold), the skills toggle, jump-to-character. 1535 passed.
 !audit/evidence/gate-m196-final2-PASS.log
+
+# M199: symlink containment, the sensitive-path bypass, and the frame harness.
+#   m199  FAILED - the M197 stdin guard caught the new mklink spawn (exit 101)
+#   m199b FAILED - a verbatim-prefix (`\\?\`) canonicalization artifact in a new
+#                assertion (exit 101)
+#   m199c PASS    - 1568 tests / 63 binaries, 7 of 7 gates (pre-doc tree)
+#   m199d PASS    - the shipping battery: same 1568, run after the doc edits
+!audit/evidence/gate-m199.log
+!audit/evidence/gate-m199b.log
+!audit/evidence/gate-m199c.log
+!audit/evidence/gate-m199d.log
+
+# Agent goal state written by the pi harness. Working state, not source.
+.pi/

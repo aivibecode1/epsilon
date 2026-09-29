@@ -95,6 +95,20 @@ pub fn fail_all_truncated(assistant: &AssistantMessage) -> BatchOutcome {
 /// is re-relativized, so `.env`, `./.env`, and `src/../.env` all produce the SAME
 /// subject. Rule matching and session-memory keys become consistent (one approval
 /// covers all spellings of one file) instead of tripling prompts on path spelling.
+///
+/// **Containment is decided by `paths::resolve_for_access`, not here.** This function
+/// used to carry its own copy of the normalizer and its own `starts_with` check, and
+/// both were lexical, so a path that spelled its way inside the workspace through a
+/// symlink asked nobody: the gate said `write`, `write` is `Allow` by default, and the
+/// tool followed the link out. Two copies of one rule is how that happened — the tool
+/// copy and this copy could not have disagreed visibly, because neither of them
+/// consulted the filesystem.
+///
+/// The **subject** stays lexical, and deliberately so: the approval prompt has to name
+/// the file the model asked about, not the real path behind a link, or the user is
+/// asked about something they never typed. The one exception is a path that escaped —
+/// there the real target is the whole point, so `escaped_to()` becomes the subject and
+/// the prompt says where the call was actually going.
 fn gate_subject(
     name: &str,
     args: &serde_json::Value,
@@ -104,36 +118,25 @@ fn gate_subject(
         .iter()
         .find_map(|k| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()));
     if let Some(raw) = path_key {
-        let candidate = std::path::Path::new(&raw);
-        let joined = if candidate.is_absolute() {
-            candidate.to_path_buf()
-        } else {
-            workspace.join(candidate)
-        };
-        let mut normalized = std::path::PathBuf::new();
-        for comp in joined.components() {
-            match comp {
-                std::path::Component::ParentDir => {
-                    normalized.pop();
-                }
-                std::path::Component::CurDir => {}
-                other => normalized.push(other.as_os_str()),
-            }
-        }
-        let inside = normalized.starts_with(workspace);
+        let resolution = crate::paths::resolve_for_access(workspace, &raw);
         // Re-relativize inside-workspace paths so rules match on stable relative
         // subjects regardless of how the model spelled the path.
-        let subject = if inside {
-            normalized
+        let subject = if let Some(target) = resolution.escaped_to() {
+            crate::paths::display_canonical(target)
+                .trim_end_matches('/')
+                .to_string()
+        } else if resolution.inside {
+            resolution
+                .path
                 .strip_prefix(workspace)
-                .unwrap_or(&normalized)
+                .unwrap_or(&resolution.path)
                 .to_string_lossy()
                 .trim_end_matches('/')
                 .to_string()
         } else {
             raw.trim_end_matches('/').to_string()
         };
-        return if inside {
+        return if resolution.inside {
             (name.to_string(), subject)
         } else {
             ("external_dir".to_string(), subject)

@@ -1663,6 +1663,9 @@ fn composer_rows(input: &str, cursor_chars: usize, width: usize) -> (Vec<String>
 mod tests_support;
 
 #[cfg(test)]
+mod frame_dump;
+
+#[cfg(test)]
 mod golden;
 
 #[cfg(test)]

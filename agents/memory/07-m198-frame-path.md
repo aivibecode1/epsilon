@@ -1,7 +1,9 @@
 # M198: the frame path, measured
 
-**Status:** battery `m198-final` **PENDING** until the run reports. Do not record a
-verdict here that has not been read out of the log.
+**Status: CLOSED.** Battery `m199c` — GATE PASS, 1,568 tests across 63 binaries — was
+run against the tree carrying this milestone's changes, so the M198 work is verified.
+The two failed attempts `m199` and `m199b` belong to the M199 slice, not to this one;
+their findings are in `m199-containment.md`.
 
 ## The lesson to carry forward: render a frame and look at it
 

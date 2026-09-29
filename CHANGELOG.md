@@ -5,6 +5,21 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A link in your repository can no longer take the harness outside it.** Workspace
+  containment was decided by normalizing the path and comparing it to the root — no
+  filesystem, so no symlink. A checked-in `creds -> ~/.aws` therefore *spelled* its way
+  inside, never raised the external-directory question, and — because writing a file is
+  allowed by default — a write went to the real thing with nothing asked. Refusals now
+  resolve links first, say where a path actually pointed, and never leave a brand-new
+  file unjudgeable. Reading, writing, editing, finding, grepping, globbing, listing and
+  the `@file` expander all use the one rule (M199).
+
+- **A link can no longer carry an innocent name past the sensitive-file check.** With
+  containment asking the filesystem and the secret-file check still reading the
+  spelling, `@vcs/` pointing at `.git` — or a file link named `env` pointing at `.env`
+  — passed one and should have failed the other. Both are judged on the resolved path
+  now (M199).
+
 - **Notices, tool calls and results stopped printing their marker twice.** Every system
   notice rendered as `• • text`, every pending call as `▸ ▸ bash …`, every result as
   `✓ ✓ …` — the same glyph in the gutter and again in the body, on four of the seven

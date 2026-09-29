@@ -110,6 +110,25 @@ pwsh -File scripts/gate.ps1 <label>   # Windows — the one that works on this m
 bash scripts/gate.sh <label>          # POSIX and CI
 ```
 
+> **Give the battery a timeout above 600 s.** The `test` gate alone measured **651 s**
+> on a warm target (M199), so a 600 s tool timeout kills the battery mid-leg and the
+> log records no verdict. Use 2400.
+>
+> **To retry it, use the wrapper rather than a loop:** `gate.ps1` truncates
+> `target/gate-<label>.log` on start, so a reused label destroys the failed attempt's
+> evidence — and a deterministic failure fails identically three times, so a blind
+> retry costs half an hour and teaches nothing.
+>
+> ```sh
+> pwsh -File scripts/gate-until-pass.ps1 -Label m200   # Windows; -MaxAttempts defaults to 3
+> ```
+>
+> It gives every attempt its **own label** (`<label>-r2`), and it fingerprints each
+> failure — the failing test names plus any machine-fault marker (`LNK1104`,
+> `os error 2`/`5`, `0xc0000142`, `c1.dll`) — and **stops on the second identical
+> fingerprint**, which is what "not transient" means for a test suite. It never edits
+> `gate.ps1`: that script is the evidence of record.
+
 > **Run the PowerShell one here.** `bash` on this box is WSL: a different `$HOME`,
 > a different PATH, and no Windows `cargo`. `bash scripts/gate.sh` therefore exits
 > 127 in zero seconds and writes a log ending in `GATE FAIL`, which reads like five
@@ -596,6 +615,8 @@ docs/
   user/            maintained product guides
 scripts/gate.sh    the full verification battery in one command (POSIX and CI)
 scripts/gate.ps1   the same seven gates, native Windows (the one that works here)
+scripts/gate-until-pass.ps1  wraps either: own label per attempt, stops on a repeated
+                             failure fingerprint instead of burning three batteries
 scripts/console-probe.py  drives the built TUI in a real conhost window and measures it
 crates/            the 12 workspace crates
 references/        the four reference harnesses (not committed)

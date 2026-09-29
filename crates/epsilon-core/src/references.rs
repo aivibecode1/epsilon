@@ -40,7 +40,7 @@ use epsilon_contracts::content::UserContent;
 use epsilon_contracts::ids::new_id;
 use epsilon_contracts::message::{Message, UserMessage};
 
-use crate::paths::resolve_in_workspace;
+use crate::paths::resolve_for_access;
 
 /// Caps for what one message may attach, so a stray `@` cannot price the prompt out of use.
 #[derive(Debug, Clone, Copy)]
@@ -169,23 +169,30 @@ fn resolve_one(workspace: &Path, token: &str, limits: &ReferenceLimits) -> Attac
     if raw_path.is_empty() {
         return refused(token, "empty reference");
     }
-    let (path, inside) = resolve_in_workspace(workspace, raw_path);
-    if !inside {
+    let resolution = resolve_for_access(workspace, raw_path);
+    if !resolution.inside {
         return refused(
             token,
             "outside the workspace — the harness only attaches files the session may read",
         );
     }
-    if is_sensitive(&path) {
+    // Both spellings, and the real one is not optional. Containment is decided on
+    // the resolved path, so judging sensitivity on the lexical one alone would let
+    // a link choose its own verdict: `notes/env -> .env` and `notes -> .git` are
+    // both *inside* the workspace by the check above, and both are refused by
+    // name alone only if the name being judged is the real one. Checking before
+    // the `is_dir` split is what catches the second shape — the entry names
+    // inside a linked directory are innocent, the directory they came from is not.
+    if is_sensitive(&resolution.path) || resolution.real.as_deref().is_some_and(is_sensitive) {
         return refused(
             token,
             "a sensitive path (credentials, keys, or VCS internals) — not attached",
         );
     }
 
-    let is_dir = raw_path.ends_with('/') || path.is_dir();
+    let is_dir = raw_path.ends_with('/') || resolution.path.is_dir();
     if is_dir {
-        return match std::fs::read_dir(&path) {
+        return match std::fs::read_dir(&resolution.path) {
             Ok(entries) => {
                 let mut names: Vec<String> = entries
                     .filter_map(|e| e.ok())
@@ -222,7 +229,7 @@ fn resolve_one(workspace: &Path, token: &str, limits: &ReferenceLimits) -> Attac
         };
     }
 
-    let Ok(bytes) = std::fs::read(&path) else {
+    let Ok(bytes) = std::fs::read(&resolution.path) else {
         return refused(token, "no such file");
     };
     if bytes.iter().take(1024).any(|b| *b == 0) {
@@ -377,8 +384,8 @@ pub fn user_message_with(workspace: &Path, text: &str, limits: &ReferenceLimits)
 /// Where a token's path would land, for frontends that want to show it before submitting.
 pub fn preview_target(workspace: &Path, token: &str) -> Option<PathBuf> {
     let (raw, _) = split_range(token);
-    let (path, inside) = resolve_in_workspace(workspace, raw);
-    inside.then_some(path)
+    let r = resolve_for_access(workspace, raw);
+    r.inside.then_some(r.path)
 }
 
 #[cfg(test)]
@@ -489,6 +496,56 @@ mod tests {
                 !e.render().unwrap().contains("BEGIN"),
                 "no content may leak with the refusal"
             );
+        }
+    }
+
+    #[test]
+    fn a_link_cannot_carry_an_innocent_name_into_a_sensitive_file() {
+        // The shape this closes: containment is decided on the *resolved* path, so
+        // `vcs/` and `notes/env` are both inside the workspace and pass that gate.
+        // A sensitivity check run on the spelling alone would then read the innocent
+        // name and attach `.git/config` or `.env` to the prompt. The test asserts the
+        // opposite, and asserts it on the FRAME the user sees — the attachment body —
+        // because the content leaking into the render is the actual harm.
+        let dir = ws(&[(".git/config", "[core]\n"), (".env", "API_KEY=1")]);
+        let root = dir.path();
+
+        // Shape 1 — a directory link to a VCS metadata directory. Portable: a
+        // junction needs no privilege, so this runs on Windows and POSIX alike.
+        if crate::test_support::dir_link(&root.join(".git"), &root.join("vcs")) {
+            for token in ["@vcs/", "@vcs/config"] {
+                let e = expand_default(root, token);
+                assert_eq!(e.attachments.len(), 1, "{token}");
+                assert!(
+                    e.attachments[0].refused,
+                    "{token} reached .git through a link: {:?}",
+                    e.attachments[0].body
+                );
+                assert!(
+                    !e.render().unwrap().contains("[core]"),
+                    "no VCS internals may leak with the refusal: {token}"
+                );
+            }
+        } else {
+            eprintln!("skipped: this platform would not create a directory link");
+        }
+
+        // Shape 2 — a file link to `.env`, where the *file name* is what betrays it.
+        // Windows refuses an unprivileged file symlink, so this one may say so.
+        if crate::test_support::file_link(&root.join(".env"), &root.join("env")) {
+            let e = expand_default(root, "@env");
+            assert_eq!(e.attachments.len(), 1);
+            assert!(
+                e.attachments[0].refused,
+                "@env reached .env through a link: {:?}",
+                e.attachments[0].body
+            );
+            assert!(
+                !e.render().unwrap().contains("API_KEY"),
+                "a secret must not reach the prompt behind a link"
+            );
+        } else {
+            eprintln!("skipped: this platform would not create a file link");
         }
     }
 

@@ -13,7 +13,7 @@ use regex::RegexBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::util::{self, escaped_workspace};
+use crate::util;
 
 /// Arguments for `find`.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -83,13 +83,7 @@ impl Tool for FindTool {
             return Err(ToolFailure::msg("pattern must not be empty"));
         }
         let root = match &args.path {
-            Some(p) => {
-                let (r, inside) = util::resolve_in_workspace(&ctx.cwd, p);
-                if !inside {
-                    return Err(escaped_workspace(p));
-                }
-                r
-            }
+            Some(p) => util::resolve_or_refuse(&ctx.cwd, p)?,
             None => ctx.cwd.clone(),
         };
         let effective = if args.pattern.contains('/') || args.pattern.contains('\\') {

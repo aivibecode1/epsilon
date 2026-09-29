@@ -1,0 +1,24 @@
+
+=== idle-with-content @ 60x20 ===
++------------------------------------------------------------+
+|idle 0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) · offline|
+|▎ ❯ explain the layout module                               |
+|• The layout module owns the spatial model.                 |
+|• It splits the frame into a header, a transcript, a compose|
+|• and a footer.                                             |
+|• and it decides what happens when the terminal is too small|
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|• and the composer?                                         |
+|────────────────────────────────────────────────────────────|
+|insert · enter send · pageup sc …\Epsilon\crates\epsilon-tui|
++------------------------------------------------------------+

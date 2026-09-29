@@ -130,12 +130,46 @@ mod diff_tests {
 }
 
 /// Re-exported from `epsilon-core` (M74): the rule moved, the call sites did not.
-pub use epsilon_core::paths::resolve_in_workspace;
+///
+/// Two of them, with the difference documented at the source. `resolve_for_access` is
+/// the one an **enforcement** site wants; `lexically_normalize` is the one a planner
+/// key wants, because a scheduling identity must not change when a symlink moves.
+pub use epsilon_core::paths::{display_canonical, lexically_normalize, resolve_for_access};
+
+/// Resolve `raw` inside `cwd` or refuse, with a message that says why it was refused.
+///
+/// The one call every path-taking tool makes, so that the six copies of
+/// "resolve, check the flag, build the error" cannot drift — and so that a symlink
+/// escape is reported as one, by name, rather than as a path that merely looks
+/// innocent.
+pub fn resolve_or_refuse(
+    cwd: &std::path::Path,
+    raw: &str,
+) -> Result<std::path::PathBuf, ToolFailure> {
+    let r = resolve_for_access(cwd, raw);
+    if r.inside {
+        Ok(r.path)
+    } else {
+        Err(escaped_workspace(raw, r.escaped_to()))
+    }
+}
 
 /// The failure every tool returns when a path leaves the declared workspace.
-pub fn escaped_workspace(raw: &str) -> ToolFailure {
+///
+/// `escaped_to` is where a path that *spelled* its way inside actually pointed. It is
+/// the difference between a refusal the user can act on and one they cannot: `notes/creds`
+/// resolving to `~/.aws/credentials` is a fact they need, and a bare "outside the
+/// workspace" on a path that is visibly in their own tree is a fact they will not believe.
+pub fn escaped_workspace(raw: &str, escaped_to: Option<&std::path::Path>) -> ToolFailure {
+    let via = match escaped_to {
+        Some(target) => format!(
+            " It looks inside the workspace, but it is a link to {}.",
+            display_canonical(target)
+        ),
+        None => String::new(),
+    };
     ToolFailure::msg(format!(
-        "Refused: '{raw}' resolves outside the workspace. \
+        "Refused: '{raw}' resolves outside the workspace.{via} \
          Operate on paths inside the working directory."
     ))
 }
@@ -922,11 +956,11 @@ mod tests {
         // Use a platform-absolute fixture root so absolute-vs-root comparisons behave
         // identically on POSIX and Windows.
         let root = std::env::temp_dir().join("epsilon-util-fixture");
-        let (p, inside) = resolve_in_workspace(&root, "a/../b.txt");
+        let (p, inside) = lexically_normalize(&root, "a/../b.txt");
         assert!(inside);
         assert_eq!(p, root.join("b.txt"));
 
-        let (_, inside) = resolve_in_workspace(&root, "../outside.txt");
+        let (_, inside) = lexically_normalize(&root, "../outside.txt");
         assert!(!inside);
 
         let elsewhere = if cfg!(windows) {
@@ -934,9 +968,30 @@ mod tests {
         } else {
             "/elsewhere/x"
         };
-        let (resolved, inside) = resolve_in_workspace(&root, elsewhere);
+        let (resolved, inside) = lexically_normalize(&root, elsewhere);
         assert!(!inside, "absolute path outside the root must be flagged");
         assert_eq!(resolved, Path::new(elsewhere));
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_workspace_is_refused_and_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("id_rsa"), "PRIVATE KEY").unwrap();
+        if !epsilon_core::test_support::dir_link(&outside, &root.join("creds")) {
+            eprintln!("skipped: this platform would not create a directory link");
+            return;
+        }
+        let err = resolve_or_refuse(&root, "creds/id_rsa").expect_err("a link out must be refused");
+        let text = err.message.clone();
+        assert!(text.contains("creds/id_rsa"), "{text}");
+        assert!(
+            text.contains("link to"),
+            "the refusal must explain the symlink, not just repeat the path: {text}"
+        );
     }
 
     #[test]

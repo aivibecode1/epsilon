@@ -11,7 +11,7 @@ use regex::RegexBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::util::{self, escaped_workspace};
+use crate::util;
 
 // ---- grep -----------------------------------------------------------------------
 
@@ -124,13 +124,7 @@ impl Tool for GrepTool {
         let args: GrepArgs = serde_json::from_value(call.args)
             .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'grep': {e}")))?;
         let root = match &args.path {
-            Some(p) => {
-                let (r, inside) = util::resolve_in_workspace(&ctx.cwd, p);
-                if !inside {
-                    return Err(escaped_workspace(p));
-                }
-                r
-            }
+            Some(p) => util::resolve_or_refuse(&ctx.cwd, p)?,
             None => ctx.cwd.clone(),
         };
 
@@ -417,7 +411,9 @@ pub(crate) fn search_key(
     base: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
     match arguments.get("path").and_then(|v| v.as_str()) {
-        Some(raw) => Some(util::resolve_in_workspace(base, raw).0),
+        // Lexical: a planner key is an identity, and it must not change when a
+        // symlink is retargeted. Containment is decided at execution, by `resolve_or_refuse`.
+        Some(raw) => Some(util::lexically_normalize(base, raw).0),
         None => Some(base.to_path_buf()),
     }
 }
@@ -445,13 +441,7 @@ impl Tool for GlobTool {
         let args: GlobArgs = serde_json::from_value(call.args)
             .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'glob': {e}")))?;
         let root = match &args.path {
-            Some(p) => {
-                let (r, inside) = util::resolve_in_workspace(&ctx.cwd, p);
-                if !inside {
-                    return Err(escaped_workspace(p));
-                }
-                r
-            }
+            Some(p) => util::resolve_or_refuse(&ctx.cwd, p)?,
             None => ctx.cwd.clone(),
         };
 
@@ -592,13 +582,7 @@ impl Tool for LsTool {
         let args: LsArgs = serde_json::from_value(call.args)
             .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'ls': {e}")))?;
         let root = match &args.path {
-            Some(p) => {
-                let (r, inside) = util::resolve_in_workspace(&ctx.cwd, p);
-                if !inside {
-                    return Err(escaped_workspace(p));
-                }
-                r
-            }
+            Some(p) => util::resolve_or_refuse(&ctx.cwd, p)?,
             None => ctx.cwd.clone(),
         };
 

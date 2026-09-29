@@ -1,0 +1,34 @@
+
+=== brand-new @ 100x30 ===
++----------------------------------------------------------------------------------------------------+
+|idle                               ?/1.0M · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) · offline|
+|                                                                                                    |
+|E P S I L O N                                                                                       |
+|a coding agent in your terminal                                                                     |
+|                                                                                                    |
+|  model    Faux (offline scripted)                                                                  |
+|  context  ?/1.0M                                                                                   |
+|                                                                                                    |
+|  ready — describe a task and press enter                                                           |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|• ask anything                                                                                      |
+|────────────────────────────────────────────────────────────────────────────────────────────────────|
+|insert · enter send · pageup scroll back · pagedown scroll forward · ct …\Epsilon\crates\epsilon-tui|
++----------------------------------------------------------------------------------------------------+

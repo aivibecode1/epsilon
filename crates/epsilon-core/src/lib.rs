@@ -24,6 +24,8 @@ pub mod prompt;
 pub mod references;
 mod registry;
 pub mod skills;
+#[doc(hidden)]
+pub mod test_support;
 mod untrusted;
 mod verify;
 

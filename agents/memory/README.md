@@ -30,6 +30,8 @@ next.
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 | [`06-m197-baseline-and-ext-hang.md`](06-m197-baseline-and-ext-hang.md) | **M197: the tree was left RED, and a dead extension waited the full invoke budget** | live |
 | [`07-m198-frame-path.md`](07-m198-frame-path.md) | **M198: render a frame and look at it — the transcript printed every marker twice** | live |
+| [`frame-reading-pass.md`](frame-reading-pass.md) | **TUI findings from reading rendered frames at 3 widths — a word is mutilated at 60 columns** | live — heads the TUI work |
+| [`m199-containment.md`](m199-containment.md) | **M199 landed: symlink containment, the bypass it nearly shipped, and the open items it left** | live |
 
 ## Superseded notes (kept for history, not for direction)
 

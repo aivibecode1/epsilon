@@ -10,7 +10,8 @@ use epsilon_contracts::tool::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::util::{self, escaped_workspace};
+use crate::util;
+
 use epsilon_contracts::diagnostics::DiagnosticsProvider;
 use std::sync::Arc;
 
@@ -104,10 +105,7 @@ impl Tool for ReadTool {
     ) -> Result<ToolOutput, ToolFailure> {
         let args: ReadArgs = serde_json::from_value(call.args)
             .map_err(|e| ToolFailure::msg(format!("invalid arguments for 'read': {e}")))?;
-        let (path, inside) = util::resolve_in_workspace(&ctx.cwd, &args.path);
-        if !inside {
-            return Err(escaped_workspace(&args.path));
-        }
+        let path = util::resolve_or_refuse(&ctx.cwd, &args.path)?;
         // Images ride as attachments (pi `createReadTool` image branch): magic bytes first,
         // so a `.png` that is really text still reads as text and a text file with image
         // bytes never parses as text. Only the head is probed (M95): reading the file whole
@@ -297,11 +295,7 @@ impl Default for WriteTool {
 }
 
 fn ensure_inside(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf, ToolFailure> {
-    let (path, inside) = util::resolve_in_workspace(&ctx.cwd, raw);
-    if !inside {
-        return Err(escaped_workspace(raw));
-    }
-    Ok(path)
+    util::resolve_or_refuse(&ctx.cwd, raw)
 }
 
 /// Turn the `path` argument into a planner key (M72).
@@ -309,9 +303,13 @@ fn ensure_inside(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf, Too
 /// Lexical normalisation against the same base the tool will execute with, so two calls that
 /// spell one file two ways are seen as one file. A missing or non-string `path` yields `None`:
 /// the call keeps the conservative scheduling rather than being assumed independent.
+///
+/// Lexical, not resolved: a planner key is an identity, and an identity that changed
+/// when a symlink was retargeted would let two calls onto the same real file be
+/// scheduled as if they were independent.
 fn path_key(arguments: &serde_json::Value, base: &std::path::Path) -> Option<std::path::PathBuf> {
     let raw = arguments.get("path")?.as_str()?;
-    Some(util::resolve_in_workspace(base, raw).0)
+    Some(util::lexically_normalize(base, raw).0)
 }
 
 #[async_trait]
