@@ -3,8 +3,23 @@
 **Status:** five spawn sites fixed (`8846654`, `efe80dd`), one hang fixed (`bc6203e`), docs
 corrected (`0a43b43`). **A full battery has NOT run since `efe80dd`.**
 
-## The stdin defect was FIVE sites, not one
+## The copy key was bound, advertised, and dead inside the tree (`8f0da1d`)
 
+`app.message.copy` has a binding (F4) and a working global arm at `keys.rs:1484`. But the
+`if app.timeline_open` block spans **612-861** and `return false`s for **every** key, so inside
+the tree the chord hit `_ => {}` and did nothing — no notice at all. Reachable in two keystrokes:
+open `/tree`, press F4.
+
+**The other tree chords worked only because they match `KeyCode::Char` directly.** That is the
+general shape: a catch-all block in front of a global arm silently eats every chord that is not
+matched by the inner `match` on `KeyCode`. Worth grepping for other `if <panel>_open` blocks that
+return early.
+
+**A guard for this class is available in spirit but not written yet:** "every binding id
+reachable from the palette is honoured in every panel that is open". `no_chord_is_bound_to_two_ids`
+and `every_palette_entry_names_a_command_that_parses` already exist; neither checks panel scope.
+
+## The stdin defect was FIVE sites, not one
 | Site | Spawns | Commit |
 |---|---|---|
 | `epsilon-tools/src/shell.rs` | `bash` tool, unconfined | `8846654` |

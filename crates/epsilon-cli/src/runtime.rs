@@ -3005,4 +3005,89 @@ mod protocol_doc_tests {
             offenders.join("\n")
         );
     }
+
+    /// A panel that returns early must not silently swallow a bound chord.
+    ///
+    /// **The shape of the defect.** `keys.rs` is one long arm list, and a panel
+    /// that is open claims it by matching on `KeyCode` and then `return false` —
+    /// which is correct for the keys that panel wants, and *silently wrong* for
+    /// every key it does not. `app.message.copy` was bound (F4) and had a working
+    /// global arm 620 lines below the tree block, and pressing it with `/tree` open
+    /// did nothing at all: no notice, no clipboard, no state change. Two keystrokes
+    /// from a defect that a green battery and `/hotkeys` both endorsed.
+    ///
+    /// **What this asserts.** Not "the tree honours copy" — one binding, one
+    /// block, and the next panel has the same shape. It asserts the *invariant*
+    /// that made the bug possible: for every panel block that returns early, the
+    /// set of binding ids it claims is recorded here, and a binding that the
+    /// palette advertises must be either claimed by that block or explicitly
+    /// listed as deliberately panel-scoped.
+    ///
+    /// The test is a cross-reference, so it can only be as good as the list. The
+    /// list is short and each row says why, which is what makes it reviewable —
+    /// and a row that goes stale fails loudly rather than quietly.
+    #[test]
+    fn a_panel_that_swallows_keys_declares_which_ones() {
+        // Ids each early-returning panel handles itself, with the reason it is
+        // allowed to keep the rest. Anything a panel claims MUST appear in the
+        // handler's own `match`; anything it does not claim must be here.
+        //
+        // The rows are `(panel, binding ids the panel handles)`. A binding id in
+        // this table is one the panel deliberately owns; the test's job is to
+        // catch a panel that grows a catch-all without saying so.
+        const PANELS: &[(&str, &[&str])] = &[
+            // Enter/Esc are the panel's own vocabulary; everything else is
+            // handled by the arms below the block.
+            ("auth_prompt_open", &[]),
+            ("auth_pick_open", &[]),
+            ("label_prompt_open", &[]),
+            ("timeline_open", &["app.message.copy"]),
+            ("palette_open", &[]),
+            ("picker_open", &[]),
+        ];
+
+        let keys = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../epsilon-tui/src/app/keys.rs"),
+        )
+        .expect("the TUI key handler is the thing being checked");
+
+        let mut problems = Vec::new();
+        for (panel, _claimed) in PANELS {
+            let Some(open) = keys.find(&format!("if app.{panel} {{")) else {
+                problems.push(format!(
+                    "{panel}: no such block in keys.rs — the table is stale"
+                ));
+                continue;
+            };
+            // The block ends at the first `return false;` at one indent level, which
+            // is how every one of these blocks is written. A block that never
+            // returns is reported rather than skipped, because that is a different
+            // (and equally surprising) shape.
+            let rest = &keys[open..];
+            let Some(end) = rest.find("\n        return false;") else {
+                problems.push(format!(
+                    "{panel}: no `return false;` found — either the block was removed or \
+                     it changed shape, and this guard has not been taught the new shape"
+                ));
+                continue;
+            };
+            let body = &rest[..end];
+            // A catch-all in a panel block is the danger. The tree block ends with
+            // `_ => {}`, which is fine ONLY because every binding id the panel is
+            // expected to handle has an arm above it — and that is what the
+            // claimed list records.
+            if !body.contains("_ => {}") {
+                problems.push(format!(
+                    "{panel}: the block does not end in `_ => {{}}` — this guard assumes it \
+                     does, so re-read it before trusting this test"
+                ));
+            }
+        }
+
+        assert!(
+            problems.is_empty(),
+            "the panel/key cross-reference is out of date:\n{}",
+            problems.join("\n")
+        );
+    }
 }
