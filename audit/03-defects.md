@@ -9,6 +9,28 @@ but unverified** (a milestone says so; this audit does not believe it), **Fixed*
 
 ---
 
+# Reconciliation, 2026-09-29 (M206)
+
+**A7 was already fixed when the ledger was written, and the ledger said it was open.** Re-derived
+here from the code, which is what the reconciliation passages below exist to do:
+
+| Claim in the row | What the code does |
+|---|---|
+| "`session/src/lease.rs:88` `STALE_AFTER = 30s`, still live" | True of the *constant*, false of the behaviour. `SessionLease::acquire` has two paths since the fix: a lock whose mtime has not moved across a full `HEARTBEAT` belongs to a process that is not running, and it is stolen after one heartbeat rather than after the window. `a_waiting_acquirer_takes_the_lock_the_moment_it_goes_stale` pins it (200× time-compressed), and its companion `a_waiting_acquirer_still_refuses_a_heartbeating_holder` is what makes the pair worth anything — shrinking the bound without it would be stealing from the living. |
+| "the TUI shows nothing (the alternate screen erases the notice)" | The wait **is** rendered: `write_lease_wait` draws `waiting for this session to be released — 4s elapsed, ~26s left` with `\r` and `\x1b[K`, and the lease module's doc carries the frame measured in a real conhost at 100×30. |
+
+Both user-visible consequences the row named are therefore gone: a dead holder no longer costs 30
+seconds, and the wait is visible while it happens. The 30-second window survives only for a
+**live** holder, where it is the correct behaviour (a second window owns the session).
+
+**The remnant, which is real and is not fixed — A18, added here:** the notice goes to the console
+and the alternate screen then erases it, so a launch that waited 25 s and found the lock released
+starts with no record of why it paused. Closing it needs the wait's duration to reach
+`TuiConfig::startup_notices`, which is built before the store is opened — plumbing rather than a
+sentence.
+
+---
+
 # Reconciliation, 2026-09-29 (M202)
 
 One defect closed (found by driving the installed binary, not by a test), and two rows added
