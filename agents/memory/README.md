@@ -33,7 +33,7 @@ next.
 | [`frame-reading-pass.md`](frame-reading-pass.md) | **CLOSED by M201 — the findings, and the method that found them** | closed — the recipe still applies |
 | [`m199-containment.md`](m199-containment.md) | **M199 landed: symlink containment, the bypass it nearly shipped, and the open items it left** | live |
 | [`ranked-sweep-2026-09-29.md`](ranked-sweep-2026-09-29.md) | **The t2 ranked sweep, what M201 closed, and the order the rest goes in** | live — heads the implementation queue |
-| [`08-goal-command.md`](08-goal-command.md) | **`/goal`: the reference's contract, the decisions to make, and the first RED** | live — the next capability slice |
+| [`08-goal-command.md`](08-goal-command.md) | **`/goal` landed at M203 — what is left is the round driver, and the four things the slice got wrong first** | live — heads the capability queue |
 
 ## Superseded notes (kept for history, not for direction)
 

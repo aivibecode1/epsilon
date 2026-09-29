@@ -1,68 +1,47 @@
-# Working note — `/goal`: the next capability slice
+# Working note — `/goal` (M203, landed)
 
-**Status:** designed, not started. This note exists so the design work survives the context
-window; the reference reading is done and the decisions below are the ones that cost time.
+**Status: LANDED.** Commit `7ab5c71`; battery `m203` (GATE PASS, 1,607 tests / 64 binaries).
+Milestone: [`docs/milestones/M203-goal.md`](../../docs/milestones/M203-goal.md).
 
-## What the reference actually specifies
+What exists now: the durable goal (`EntryKind::Goal` + `SessionStore::goal()`), the service
+(`Agent::goal` / `goal_apply` / `goal_begin_round`), the model's three tools, `/goal` with seven
+verbs, the footer badge, and the objective in the CONTEXT prompt tier.
 
-DSH ships goals as a *domain* (`packages/goal/goal`), with the tools, the `/goal` command and the
-round driver as separate consumers of one state. Read
-`references/deepseek-harness-dsh-v0.2.0-rc.1/packages/goal/goal/README.md` and
-`.../docs/subsystems/goal.md` before writing code; the summary that matters:
+## What is left, in the order it should go
 
-- **One current goal per session.** No parallel objectives; a finished goal may be replaced.
-- **Event-sourced, and the session log is the only durable store.** Every mutation appends a
-  durable `goal/change` carrying the complete post-mutation snapshot; `clear` writes a
-  revisioned tombstone. Nothing about a goal lives outside the log.
-- **Four durable phases** — `active`, `paused`, `blocked`, `complete` — plus a **process-local**
-  `armed`/`disarmed` flag that is never persisted. Every session-start edge (resume, fork,
-  restart) disarms, so an armed goal cannot continue by itself after a restart until someone
-  resumes it.
-- **Compare-and-set.** `get_goal` returns a detached view with `{id, revision}`; every mutation
-  carries that exact pair and a stale one is refused. This is the whole staleness guard.
-- **Rounds.** `maxGoalRounds` (default 256) bounds automatic continuation; a round advances only
-  on an admitted goal-sourced `user/message`. Blocking requires the same condition to persist
-  for ≥3 admitted rounds *by default* — "difficulty, uncertainty, or useful remaining work is not
-  blocked".
-- **Tools**: `create_goal`, `get_goal`, `update_goal` (verbs `edit`/`pause`/`resume`/`complete`/
-  `blocked`/`clear`). **Command**: `/goal [<objective>|clear|edit <objective>|pause|resume]`.
-- **Deliberately absent**: token/currency/wall-time budgets, an independent evaluator, a goal
-  database, and any scheduling policy (that is the round driver's job).
+1. **The round driver (M204).** `Agent::goal_begin_round()` is written, tested and **called by
+   nothing**. It returns the prompt a continuation would send; the TUI's turn-end path should
+   send it while `is_continuable()` holds. That is the whole of the feature's *doing* half and it
+   is one call site plus a loop guard — the reason M203 stopped short of it is that an
+   unattended loop needs the tools (which now exist) and a stop condition that a *test* can pin
+   without a provider.
+   Watch for: the driver must not fire while a permission ask is pending, must not fire twice for
+   one turn end, and must respect the cap through `goal_begin_round` rather than by counting
+   locally.
+2. **A goal-change event.** The badge is refreshed at two points (a `/goal` command, a turn
+   end) because reading the goal folds the session log. A `GoalChanged` `AgentEvent` would make
+   it event-driven and would also let the transcript announce a model-initiated change. Not
+   worth a wire variant until something else needs it — but it is the honest fix.
+3. **`/goal` in the RPC and HTTP surfaces.** `SessionState` carries model/thinking/session
+   fields; a goal is the next thing a client would want, and `session_state()` is the one
+   builder both transports already share (D29's lesson).
 
-## What Epsilon already has that this must use
+## The four things this slice got wrong first, recorded so they are not repeated
 
-- `epsilon-session`'s append-only JSONL tree with `EntryKind` variants, a strict decoder, and
-  `KNOWN_ENTRY_KINDS` — a new `goal` entry kind is the natural durable home, and the M202
-  amendment governs any field it gains later.
-- `epsilon-contracts` for the types (`GoalId`, `GoalSnapshot`, `GoalStatus`, `GoalView`) — no
-  new crate, which ADR-014 requires anyway.
-- The tool registry (`epsilon-tools`) for the three tools, and `app/commands.rs` +
-  `picker::SLASH_ITEMS` for `/goal`, which is where "every palette entry must name a command
-  `parse_command` can read" is enforced.
-- The TUI's header/footer for the one-line goal state, and the composer's context stack as the
-  place a goal strip would go if it needs more than a line.
+- **`GoalError::NoGoal` was carrying two facts.** "No goal is set" (a session fact the user can
+  act on) and "this session cannot hold a goal" (a frontend fact) produced the same sentence
+  until a test asserted the right one and got the wrong one. `NoStore` is the split.
+- **Two agents may not open one session file.** The lease refuses the second open — the product
+  is right and two of my tests were wrong. Write through `agent.session_store()` instead.
+- **A `SessionLine`-shaped error names nothing** (M202's lesson, and the reason `diagnose_line`
+  re-decodes through the tagged parser).
+- **`edit` with neither an objective nor a cap is a mistake, not a no-op**, and the refusal says
+  so. Same for a create with an empty objective.
 
-## The decisions this slice has to make, listed so they are not rediscovered
+## The checklist for anything else ported from DSH's goal domain
 
-1. **Does `epsilon` grow an auto-continuation loop, or only the state and the command?** DSH
-   splits them (domain vs `goal-round-driver`). Starting with state + command + tools, and
-   *reporting* rounds rather than driving them, keeps the loop untouched — which the repository
-   requires (ADR-002: port the loop shape verbatim, improve only at named seams).
-2. **Where activation lives.** It is process-local by design in DSH. In Epsilon the equivalent is
-   an `Arc<AtomicBool>`-shaped flag on the agent, set false on every startup path, so a resumed
-   session never continues on its own.
-3. **What the model sees.** DSH adds no tokens on a mutation: the tools return state and the
-   driver renders the objective when it schedules work. If Epsilon injects the objective into the
-   prompt, the injection must be reconstructable from the log (DSH's "model-visible ⟺ logged"),
-   which means an entry, not a side channel.
-4. **The TUI surface.** One line in the header is enough to start (`● goal 3/256 · fix the doc
-   gates`), and it must appear in `/help` and in the ADR-011 "anything the UI advertises must
-   work" table. A strip above the composer is the upgrade path if one line is not enough.
-
-## The first RED this slice can have
-
-Unlike M202, this one has a clean pre-fix RED for every piece: a `goal` entry the current build
-calls *unknown* (so a session written by the new build refuses to open in the old one — expected
-and correct), `/goal` today falls through to `unknown command`, and `create_goal` does not exist
-in the tool registry. Start with the durable kind and a round-trip test, then the command, then
-the tools.
+Read `references/deepseek-harness-dsh-v0.2.0-rc.1/packages/goal/goal/README.md` first; the
+contract is small and every clause of it is load-bearing. Then decide, explicitly, which of
+these you are *not* doing — they are all deliberate absences there, not gaps: a token or currency
+budget, an independent evaluator of completion, a goal database, parallel goals, and any
+scheduling policy at all.
