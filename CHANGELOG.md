@@ -21,6 +21,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   last round — each said once, with the two commands that do something about it. Rounds are the
   only budget a goal has, so the cap is what stops a loop nobody is watching (M205).
 
+- **A goal's guide is at [docs/user/goals.md](docs/user/goals.md)** — the command, the round driver's rules, what survives a restart and what does not, and what it costs (M-gap).
+
 - **An armed goal now continues itself.** At the end of a turn the harness sends the next round
   on its own, as an ordinary turn you can watch and read: the objective, the round and the cap,
   and what ends the loop. It stops when the goal is completed or paused (by you or by the model),
