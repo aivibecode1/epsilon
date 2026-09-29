@@ -1,13 +1,14 @@
-# M197: the baseline, and a real "frozen harness" defect in the extension host
+# M197: the baseline, and two real "frozen harness" defects
 
-**Status:** open. One defect found, fixed, and under verification. Baseline evidence at
-`target/gate-m197-baseline.log` (that file is wiped by the next round — copy it if kept).
+**Status:** two defects found, fixed, each with a working negative control, both committed.
+- `bc6203e` — a request to a dead extension waited the full 10s invoke budget.
+- `8846654` — every tool command inherited the TUI's console stdin (the Windows freeze/shrink).
 
 ## The uncommitted tree at session start
 
 M196's second half was never committed: the `!` shell escape (`epsilon_core::exec::run_local`,
 `App::run_shell`), the page-key test, and the test-support additions. Verified working, not
-verified *shipped*.
+verified *shipped*. Still uncommitted — do not mistake it for lost work.
 
 ## Baseline battery (`m197-baseline`): GATE FAIL, two real defects
 
@@ -17,8 +18,8 @@ Measured, not read off a document:
 |---|---|
 | check-links | PASS (380 links, 0 broken) |
 | fmt --check | PASS |
-| clippy | **FAIL** — `len_zero` at `epsilon-tui/src/app/tests.rs` |
-| test | **FAIL** — 1 of 543+ in `epsilon-ext` (`crashes_accumulate_…`, a HANG) |
+| clippy | **FAIL** — `len_zero` at `epsilon-tui/src/app/tests.rs` (fixed, uncommitted) |
+| test | **FAIL** — 1 hang in `epsilon-ext` (fixed, `bc6203e`) |
 | demo | PASS |
 | real-check | PASS |
 
@@ -28,39 +29,50 @@ The repo was left red. A "green M196" in `docs/history.md` did not describe this
 
 `short_text.len() > 0` → `!short_text.is_empty()`. Mechanical.
 
-## Defect 2 (real): a request to a dead extension waits the full invoke budget
+## Defect 2: a request to a dead extension waited the full invoke budget
 
-**The shape of it.** `ExtHost::request` registers a `oneshot`, writes the frame, and waits for
-the reader task to complete it. The reader calls `fail_all` when it stops, which wakes everyone
-*already registered*. A request registered **after** the reader exited has nobody to wake it: the
-frame goes into a pipe nobody reads, and it waits out `INVOKE_TIMEOUT_SECS` (10 s) and returns
-`Timeout` — a lie, because nothing was slow.
+`ExtHost::request` registers a oneshot and waits for the reader task. The reader's `fail_all`
+wakes everyone **already registered**; a request arriving after the reader exited has nobody to
+wake it, so it waits out `INVOKE_TIMEOUT_SECS` and returns `Timeout` — a lie, since nothing was
+slow. And because it is booked as a timeout it never spends the crash budget, so the host is never
+disabled. Ten seconds of silence per call, indefinitely.
 
-**Why it matters beyond the test.** This is the reported "frozen TUI" symptom one layer down. A
-harness with a dead extension looks exactly like a harness that has stopped responding, and the
-crash budget never engages because the failure is charged as a timeout, not a crash.
+Fixed with an `Arc<AtomicBool>` `stopped`, set by the reader on the way out **only when it did not
+stop on our own shutdown signal** (a clean teardown is not a broken host), checked at the top of
+`request`. Error is `Crashed`, so the existing accounting disables a host that keeps dying.
 
-**The fix** (`crates/epsilon-ext/src/host.rs`): an `Arc<AtomicBool>` `stopped`, set by the reader
-on the way out (and *only* when it did not stop on our own shutdown signal), checked at the top of
-`request` before anything is written. The shutdown case must not set it: a host being dropped is
-not a broken host, and marking it would make a clean teardown look like a crash.
+Evidence: `audit/evidence/m197-ext-reader-hang.md`. Control (fix removed) fails naming the hang.
 
-## The control passed first — and that is the finding worth keeping
+## Defect 3: tool children inherited the TUI's console stdin — the Windows freeze/shrink
 
-The first version of the new test used the `--die` fixture. It passed. **So did the control** —
-the fix reverted, the test still green. The test was structurally incapable of seeing the defect,
-and the defect was live in the tree.
+`shell.rs` piped stdout/stderr and left `stdin` unset. **Unset means `Stdio::inherit()`.** In the
+TUI that is the console in raw mode carrying the user's keystrokes, so every command the agent ran
+was reading the keys the user was typing. Both reported symptoms follow: keys appear to do nothing
+(freeze), and the child draws into the same console (shrink).
 
-**Why.** With a dead child the *write* to its stdin fails immediately, so the call returns fast
-whether or not the host knows the reader is gone. The bug only shows when the child is **alive**,
-its pipe **accepts writes**, and only the reader is missing.
+pi does neither thing Epsilon did — `nodejs.ts:533` passes `"ignore"` for stdin, `:534` sets
+`windowsHide: true`. Epsilon did neither.
 
-**The fixture that works** is `--flood 200000 100`: the child stays alive, the reader aborts on
-the byte budget and exits, and every later request is in exactly the defective state.
+Fixed via `ChildStdio::configure`, which owns the three streams and returns what it decided:
+`stdin` → `Stdio::null()`, plus `CREATE_NO_WINDOW` on Windows.
 
-This is the repo's own documented rule ("a control that passes is a control you have not yet
-proven works") arriving a fifth time. The general form: **when the negative control passes, the
-fixture is wrong, not the code** — ask what the broken build would print and confirm it differs.
+Evidence: `audit/evidence/m197-windows-stdin-inheritance.md`.
+
+## Three controls, three different ways a test lies — the session's real lesson
+
+1. **Wrong fixture.** The ext test used a dead child; the *write* failed fast, so the call returned
+   promptly whether or not the host knew the reader was gone. The control passed with the defect
+   live. The flooding fixture (child alive, pipe open, reader gone) is the one that isolates it.
+2. **Wrong level.** A behavioural test for the stdin fix was green with stdin inherited, because
+   `cargo test` gives the harness a *redirected* stdin — inherited and closed are indistinguishable
+   from inside the suite. The property had to be asserted on the value the production path returns.
+3. **Stale backup.** The "fixed" copy was taken after an earlier control had already stripped the
+   line, so restoring it made the test pass against a flag that was false of the code beside it.
+   Caught by reading the file, not the result.
+
+The general form: **when a control passes, suspect the fixture, the level, or the backup — not the
+code.** And a control should assert its own anchor applied before writing, and flip any flag it
+depends on, so it cannot pass on a lie.
 
 ## The three things context/cache/cost already get right
 
@@ -77,11 +89,18 @@ Read, not assumed — all three are real and all three carry documented reasonin
 
 **Do not rebuild these.** The remaining question is parity with pi, not correctness here.
 
+## The TUI event loop is sound — do not "fix" it
+
+`app/event.rs` already drains input before drawing, caps at ~30 fps, draws only when dirty, and
+uses a `biased` select serving input first. The M59 fix for the reported input latency is real and
+measured (99 chars took ~3 s before). The stdin defect above was the actual remaining cause.
+
 ## Machine notes
 
 - `bash scripts/gate.sh` is still wrong here; `pwsh -File scripts/gate.ps1 <label>` works.
 - `patch`/`write_file` report a flood of `E0670: async fn is not permitted in Rust 2015` on every
   edit. That is the **syntax checker running without `--edition 2024`** — pre-existing noise, not
   a real error. The repo builds clean with cargo; ignore it and read the diff.
-- One build owner at a time. `CARGO_BUILD_JOBS=1`, target on `C:` in `%TEMP%\epsilon-target`.
-- C: was at 95% (26 G free) at session start; the 13 G build dir is the thing to watch.
+- One build owner at a time. `CARGO_BUILD_JOBS=1`, target on `C:` in `%TEMP%\epsilon-target`
+  (16 GB at last check; C: at 94%, 32 G free).
+- A `cargo test` run of one `-p <crate> --test <name>` costs 3-5 min to compile. Budget it.
