@@ -14,6 +14,11 @@ is confirmed from the code.
 
 ---
 
+> **Re-measured 2026-09-29 (M196).** The verdict column below is the study's
+> ORIGINAL reading, kept as the record. Seven rows have since been closed and are
+> listed in the addendum at the end of this file — six by M196, one (`app.clear`)
+> by M194. The count at the top of this study no longer describes the tree.
+>
 ## 0. Counts
 
 | | count |
@@ -471,3 +476,54 @@ separates C1 from C2/C3. Nothing in this study can substitute for that measureme
   no `Component` layer (rows 33-40, 52-56), no settings/theme/scoped-models surfaces
   (21-22, 29-30), no tree surface (26), no alt-screen renderer (14-15), fork implemented
   as a copy (27-28), and branch summarization unwired (65).
+
+---
+
+## Addendum, 2026-09-29 (M196): seven rows re-measured
+
+Each checked against the **code**, not against this table — an inherited audit is
+a claim, and this file is the most recent demonstration of that
+(`audit/evidence/` holds three batteries whose failures were my own mid-run edits).
+
+| # | Capability | Study said | Now | Evidence |
+|---|---|---|---|---|
+| 11 | Jump-to-character | MISSING | **DONE** | `app.rs::jump_to_char` — pi's `indexOf`/`lastIndexOf` rule, chords from `tui/src/keybindings.ts:106-113` |
+| 26 | Session tree UI | MISSING | **DONE** (labels, filters, folding, search) | `apply_folds` / `apply_filter` / `apply_search` / `visible_rows`; `Shift+L`, `f`, `Ctrl+←/→`, `/` |
+| 52 | Markdown: tables | MISSING | **DONE** | `ENABLE_TABLES` + layout ported from pi's `markdown.ts:842` |
+| 54 | Markdown: strikethrough | MISSING | **DONE** | was **enabled with no match arm** — a setting claiming to work |
+| 55 | Markdown: task lists | MISSING | **DONE** | `ENABLE_TASKLISTS` + a checkbox instead of a bullet |
+| 29 | Settings selector overlay | MISSING | **still MISSING, deliberately** | `/settings` is a notice dump, with a comment naming the deferral. pi's `config-selector.ts` is a *resource* browser, not a toggles panel; M196 built the bounded skill toggle instead |
+| 71 | `app.clear` | MISSING | **DONE in M194** | `keys.rs:518`, matched *before* `app.exit` — the study predates the fix |
+| 16 | Visible response for an unbound key | MISSING | **DONE in M194** | `keys.rs:1504` — the TUI invariant, with a test |
+| 76 | `/hotkeys` lists the live binding table | PARTIAL | **DONE** | `commands.rs:1427` prints `keybindings.effective()`, sorted, from the user's config |
+
+**Corrected reading of the table: 29 MISSING becomes 21, and one PARTIAL closes;
+38 DONE becomes 46.**
+
+Ten of the study's rows are now closed that it reported open — six by M196, three
+by M194, and one PARTIAL that was already effectively DONE. **A study written
+against a tree that is still moving will be wrong in both directions**, and the
+ones it reported MISSING that were already done (G5, G6 in the working notes) are
+as much a finding as the ones it got right.
+
+### What the remaining 22 are, honestly
+
+They are not 22 projects. They group into:
+
+- **Components Epsilon has no equivalent of** — a first-run wizard, a live
+  bash component with a 1 Hz clock, a countdown, mermaid, image pickers, three
+  third-party widgets, terminal graphics (kitty/iTerm2), an extension UI, and a
+  package/resource lifecycle. These are *features pi ships and Epsilon does not*,
+  and several are things a user of a Rust TUI may not want at all.
+- **Small editor/transcript keys** — half-page, top/bottom, jump-to-previous-prompt.
+  Each is an afternoon, and the unbound-key response in this group is already done.
+- **Session-tree adjacents** — fork from a specific user message, clone at current
+  position, branch summary shown on navigate. The tree itself is done; these are
+  its neighbours.
+- **Reference plumbing** — legacy keybinding-name migration, binding-conflict
+  detection.
+
+**The honest summary is that the port is feature-complete on the surfaces a Rust
+TUI shares with pi, and the remainder is pi-specific product surface rather than
+missing harness behaviour.** That is a judgement, not a measurement, and the way
+to falsify it is to name a row of the remaining 22 that a user would call a bug.
