@@ -86,8 +86,9 @@ python scripts/check-links.py            # documentation links — no dead citat
 cargo clippy --workspace --all-targets -- -D warnings  # enforce zero warnings
 cargo test --workspace                  # report actual outcomes; the executed record of record is
                                          # audit/evidence/gate-<label>.log, cited by the milestone that
-                                         # ran it and by docs/history.md. audit/05-verification-log.md
-                                         # is the *2026-09-16 baseline* and stays history — its tail is
+                                         # ran it and by docs/history.md.
+                                         # audit/history/05-verification-log.md is the
+                                         # *2026-09-16 baseline* and stays history — its tail is
                                          # M86–M88, so do not read it as current.
 cargo run -q -p epsilon-cli -- --demo  # demo must complete when loop/session/llm touched
 cargo check -p epsilon-cli --features real   # real-provider path must compile (M13 lesson)
@@ -282,7 +283,7 @@ on CLI. New edges require review rather than relying on an illustrative layer di
 
 - `epsilon-contracts` is intended for types and traits, with zero internal dependencies.
   Existing validation and stateful stream folding violate the literal types-only rule
-  (`audit/07-inconsistencies.md`). Do not add behavior there or silently endorse that
+  (`audit/history/07-inconsistencies.md`). Do not add behavior there or silently endorse that
   drift. Extraction or a narrowly defined policy amendment needs its own reviewed
   change; do not mix it into a documentation-only restructure. The one recorded exception:
   stateless, dependency-free *defaults on seam traits* (`ToolHooks`, `TurnHooks`) under
@@ -516,7 +517,7 @@ Hard-won, and mostly learned the hard way — the details are in `docs/milestone
   the missing binary instead of failing anonymously.
 - Avira Security on this machine has flagged freshly linked test executables with
   `HEUR/APC.Misc` and blocked the write (LNK1104), binding the block to the exact
-  output path (hit 2026-09-17, see audit/05-verification-log.md). Diagnose with
+  output path (hit 2026-09-17, see audit/history/05-verification-log.md). Diagnose with
   name probes in the same directory and `CARGO_TARGET_DIR` outside the repo;
   clearing the detection or adding an exclusion is an owner decision requiring
   administrator rights — never change security configuration from an agent session.

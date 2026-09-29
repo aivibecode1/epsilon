@@ -23,7 +23,7 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
 | [`qa/`](qa) | design conversations turned into notes: why Rust, the brick methodology, the harness primer, TUI keymaps, OAuth client ids, provider extension points, the repository layout | you need the convention behind a choice |
 | [`plans/README.md`](plans/README.md) | historical plans and their recorded statuses, not fresh authorization | you want to trace earlier scope |
-| [`../audit/`](../audit) | the dated assessment: usability review, defect ledger F00–F19, port plan, verification log, reference comparison, roadmap | you want to know what is broken or what to do next |
+| [`../audit/`](../audit) | the dated assessment: usability review, defect ledger D1–D32, port plan, verification log, reference comparison, roadmap | you want to know what is broken or what to do next |
 
 ## Historical record
 

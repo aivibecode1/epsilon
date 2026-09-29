@@ -5,6 +5,62 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Tool commands no longer steal your keystrokes on Windows.** Every command the agent
+  ran — a `git` call, a build, an MCP server — inherited the TUI's console stdin, so it
+  was reading the same keys you were typing and the screen could be left holding
+  whatever the child drew. This was the reported "frozen / shrinking TUI": typed keys
+  vanishing while a command ran, and a child competing for the console. Children now
+  get a closed stdin and, on Windows, a hidden window. This was the *default* path too,
+  not just the unconfined one, and a test now walks every spawn site so a new one
+  cannot repeat it (M197).
+
+- **A dead extension no longer freezes the harness for ten seconds per call.** A
+  request made after an extension's reader had already stopped could not be answered
+  by anything, so it waited out the full invoke timeout and reported a *timeout* — a
+  false account, since nothing was slow — and never spent the crash budget, so the
+  extension was never disabled either. It now fails immediately, as a crash, which is
+  what actually happened (M197).
+
+- **`/tree` is a real tree.** It shows abandoned branches, not just the lane you are
+  standing in; folds and unfolds; filters by kind; searches; and takes labels that are
+  written through to the session file. Selecting a branch now navigates somewhere real
+  instead of looking the entry up in the same lane and silently doing nothing. `k`
+  forks at the selected user message (M196).
+
+- **Markdown tables, task lists and strikethrough render properly.** `~~strikethrough~~`
+  was printing with its tildes visible: the parser had the feature enabled with no
+  match arm behind it. A table too wide for the terminal now degrades to readable
+  `a | b` rows instead of one-character columns (M196).
+
+- **A compaction says what it cost.** It used to print a bare "compaction finished"
+  while quietly folding the usage into the header's totals, so a long session's cost
+  rose with nothing on screen explaining why. The row now names input, output and the
+  re-read count, through the same formatter the header uses (M196).
+
+- **`app.message.copy` has a key.** The clipboard path, the OSC-52 fallback and the
+  multiplexer notice all existed behind `/copy` with nothing bound to them (M196).
+
+- **A prompt jump key, and a page key that follows the window.** `ctrl+up`/`ctrl+down`
+  move to the previous/next prompt rather than by ten rows, and `PageUp`/`PageDown`
+  move by the height the list actually drew (M196).
+
+- **The header's cache and cost numbers stopped lying.** The cache rate read
+  "measured 0%" for a provider that cannot report cache traffic at all — a confident
+  number about nothing. It now distinguishes *unknowable* from *none yet*, prices cost
+  per model rather than at the active model's rates, and marks an unpriceable model
+  as a lower bound instead of printing a precise-looking wrong figure. The context
+  estimate counted neither the system prompt nor the tool schemas, so the compaction
+  trigger read a number about 1,600 tokens too small and fired late; a heuristic
+  estimate is now marked with `*` so a guess is not dressed as a measurement (M194).
+
+- **`/fork` forks instead of copying the file.** It used to copy the whole session
+  file under the same id, while the correct primitive sat wired only to the RPC
+  frontend and unused by the TUI (M194).
+
+- **`@`-completion no longer re-walks the workspace on every keystroke.** The ignore
+  rules were cached but the traversal was not, so typing one word walked the whole
+  tree once per character (M195).
+
 - **Prompt templates.** Type `/review src/parser.rs` and the model receives the body of
   your `review.md` with the argument substituted. Templates live in
   `~/.config/epsilon/prompts/` and `<workspace>/{.agents,.epsilon}/prompts/`; project

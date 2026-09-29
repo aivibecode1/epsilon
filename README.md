@@ -63,7 +63,7 @@ does not do are in [Install](docs/user/install.md) and
 | `epsilon doctor` | Report configuration and available capabilities without running a model |
 | `epsilon -c` / `epsilon --resume <file>` | Continue a session |
 | `epsilon --serve --port 8787` | HTTP/SSE frontend |
-| `epsilon --rpc` | Epsilon's own NDJSON protocol, not pi RPC compatibility |
+| `epsilon --rpc` | NDJSON over stdio; accepts pi's `type` frames and replies with pi's envelope |
 | `epsilon --plan` | Deny native write/edit/bash/shell, keeping project rules |
 
 In the TUI, Enter sends, Esc cancels, `/help` lists commands, and the header shows
@@ -94,8 +94,8 @@ pseudo-console.
 
 What is not: resolved filesystem containment for the native file tools is still
 open; checkpoint restore has known gaps, so it is not yet a safe user-facing undo;
-some pi features are unported, prompt templates among them; and nothing here has
-been certified on Linux or macOS beyond CI compiling it.
+some pi features are unported; and nothing here has been certified on Linux or
+macOS beyond CI compiling it.
 
 Use backed-up or disposable workspaces until that list is shorter.
 
@@ -137,7 +137,7 @@ cargo run -q -p epsilon-cli -- --demo
 cargo check -p epsilon-cli --features real
 ```
 
-`bash scripts/gate.sh <label>` runs all five and writes `target/gate-<label>.log`.
+`bash scripts/gate.sh <label>` runs all six and writes `target/gate-<label>.log`.
 Keep any evidence you want to cite outside `target/`, which is disposable.
 
 Two habits that save time here:
@@ -149,7 +149,7 @@ Two habits that save time here:
   looks like; `crates/epsilon-cli/tests/terminal.rs` spawns the real binary in a
   pseudo-console and checks that it gets there at all. Run the second with
   `EPSILON_BIN=target/debug/epsilon cargo test -p epsilon-cli --test terminal` —
-  it skips without that variable, and it is the only test that can fail because
+  the variable is optional, and it is the only test that can fail because
   the program never reached a terminal.
 
 Test counts, gate results and their limits are recorded per milestone in
