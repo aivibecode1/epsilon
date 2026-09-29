@@ -6,10 +6,11 @@
 //! the architecture law.
 //!
 //! Field set: pi's `RpcSessionState` fields where this harness has a live accessor
-//! (`pi/packages/coding-agent/src/modes/rpc/rpc-types.ts:95-108`), plus one field pi's
-//! payload has no counterpart for at all — `estimatedContextTokens` is this harness's own
-//! estimate of the next request. The shape is therefore not a subset of pi's: some pi
-//! fields are absent, and one of ours is additive. Fields this harness cannot answer from
+//! (`pi/packages/coding-agent/src/modes/rpc/rpc-types.ts:95-108`), plus two fields pi's
+//! payload has no counterpart for at all — `estimatedContextTokens` (this harness's own
+//! estimate of the next request) and `goal` (one long-running objective per session, taken
+//! from DSH). The shape is therefore not a subset of pi's: some pi fields are absent, and two
+//! of ours are additive. A pi client ignores both. Fields this harness cannot answer from
 //! live state — the auto-compaction toggle and `isCompacting` — are absent rather than
 //! reported as fiction, because there is no auto-compaction to report on yet.
 //!
@@ -90,4 +91,48 @@ pub struct SessionState {
     /// (`Agent::estimated_context_tokens`) — the number the compaction trigger
     /// decides on, so a state client shows what the loop actually uses.
     pub estimated_context_tokens: usize,
+    /// The session's goal, or `null` when none is set (M203 state, exposed on the wire at M206).
+    ///
+    /// **A nested object rather than flat fields.** `null` has to be distinguishable from "a goal
+    /// whose objective happens to be empty" and from "a client that forgot to ask", and a client
+    /// rendering a goal strip needs to know which it is looking at.
+    ///
+    /// pi has no counterpart — goals are this harness's addition, taken from DSH — so like
+    /// `estimatedContextTokens` this field is **additive** to pi's `RpcSessionState` rather than
+    /// part of it. A pi client ignores it; a client that knows about goals can render the
+    /// objective, the phase, and whether the harness is armed to continue it by itself.
+    pub goal: Option<SessionGoal>,
+}
+
+/// One session goal as a client sees it.
+///
+/// A flat projection of `epsilon_contracts::goal::GoalView` rather than that type itself. The
+/// snapshot carries fields a client has no use for (creation and update timestamps), and the view
+/// carries a `bool` whose *meaning* — "this process may continue the goal on its own" — is
+/// process-local, which is exactly what a wire client has to be told rather than left to infer.
+/// Keeping the two types apart means a change to the durable snapshot cannot silently change the
+/// wire.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionGoal {
+    /// Stable identity within the session.
+    pub id: String,
+    /// Compare-and-set generation; a client that intends to mutate the goal sends this back.
+    pub revision: u64,
+    /// What the user is trying to achieve.
+    pub objective: String,
+    /// `active`, `paused`, `blocked` or `complete`.
+    pub status: crate::goal::GoalStatus,
+    /// Rounds attempted so far.
+    pub rounds_started: u32,
+    /// The round cap.
+    pub max_rounds: u32,
+    /// Whether **this process** may continue the goal on its own.
+    ///
+    /// Not durable and not inferable: a fresh process reading an `active` goal is disarmed, so a
+    /// client that took `status == active` to mean "it will keep going" would show a goal that has
+    /// stopped. This is the field that makes the difference visible.
+    pub armed: bool,
+    /// Why the goal is blocked, when it is.
+    pub blocker: Option<crate::goal::GoalBlocker>,
 }

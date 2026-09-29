@@ -821,9 +821,18 @@ mod tests {
         assert_eq!(v["sessionFile"], serde_json::Value::Null);
         assert_eq!(v["sessionId"], serde_json::Value::Null);
         assert_eq!(v["sessionName"], serde_json::Value::Null);
+        // `estimatedContextTokens` is this harness's own estimate of the next request, and `goal`
+        // is its own concept entirely — both additive to pi's payload, which is why they are
+        // asserted here rather than assumed absent.
         assert_eq!(
             v["estimatedContextTokens"].as_u64().unwrap() as usize,
             st.agent.estimated_context_tokens()
+        );
+        assert_eq!(
+            v["goal"],
+            serde_json::Value::Null,
+            "an agent with no store has no goal, and `null` is how a client tells that from an \
+             empty one"
         );
         // The two queue modes are pi's fields and this harness now answers them, so a
         // client can see the defaults rather than inferring them.
@@ -839,6 +848,7 @@ mod tests {
             [
                 "estimatedContextTokens",
                 "followUpMode",
+                "goal",
                 "isStreaming",
                 "messageCount",
                 "model",

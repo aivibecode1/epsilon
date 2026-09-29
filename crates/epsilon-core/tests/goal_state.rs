@@ -270,6 +270,39 @@ fn clearing_leaves_the_history_and_a_late_tombstone_cannot_remove_a_newer_goal()
 }
 
 #[test]
+fn the_wire_payload_carries_the_goal_and_its_activation() {
+    // M206. A client cannot see the session's screen, so the goal reaches it through the one
+    // payload both transports already share. Two facts have to survive the trip, and the second is
+    // the one a client would otherwise get wrong: an `active` goal in a process that has not asked
+    // to continue it is **disarmed**, so `status` alone would show a goal that has stopped.
+    let (agent, _dir) = agent_with_store();
+    assert!(
+        agent.session_state().goal.is_none(),
+        "no goal, and `null` is how a client tells that from an empty one"
+    );
+
+    let view = create(&agent, "make the wire carry this");
+    let goal = agent.session_state().goal.expect("the goal is on the wire");
+    assert_eq!(goal.objective, "make the wire carry this");
+    assert_eq!(goal.id, view.goal.id);
+    assert_eq!(goal.revision, view.goal.revision);
+    assert_eq!(goal.rounds_started, view.goal.rounds_started);
+    assert_eq!(goal.max_rounds, view.goal.max_rounds);
+    assert_eq!(goal.status, view.goal.status);
+    assert!(goal.armed, "this process created it, so it is armed");
+    assert_eq!(goal.armed, view.armed, "the payload and the view agree");
+
+    // A fresh process over the same file: the phase is the same, the activation is not.
+    agent.set_goal_armed(false);
+    let disarmed = agent.session_state().goal.expect("still on the wire");
+    assert_eq!(disarmed.status, epsilon_contracts::GoalStatus::Active);
+    assert!(
+        !disarmed.armed,
+        "the difference between `active` and `will continue`, which is this field's whole job"
+    );
+}
+
+#[test]
 fn a_blocked_goal_carries_its_reason_and_resume_clears_it() {
     let (agent, _dir) = agent_with_store();
     create(&agent, "wait for the credential");

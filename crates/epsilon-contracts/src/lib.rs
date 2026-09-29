@@ -38,7 +38,7 @@ pub use session_entry::{
     CURRENT_SESSION_VERSION, EntryKind, SessionEntry, SessionHeader, SessionHeaderKind,
     SessionLine, SessionTreeNode,
 };
-pub use session_state::SessionState;
+pub use session_state::{SessionGoal, SessionState};
 pub use stream::StreamEvent;
 pub use tool::{
     AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, BeforeToolCallResult,

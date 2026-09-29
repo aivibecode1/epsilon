@@ -1458,6 +1458,21 @@ impl Agent {
             session_id: self.session_id(),
             session_name: self.session_name(),
             estimated_context_tokens: self.estimated_context_tokens(),
+            // Additive to pi's payload (M206): a goal is this harness's own concept, and a client
+            // that renders one needs the phase *and* the activation, because an `active` goal in a
+            // fresh process is disarmed and will not continue by itself.
+            goal: self
+                .goal()
+                .map(|view| epsilon_contracts::session_state::SessionGoal {
+                    id: view.goal.id,
+                    revision: view.goal.revision,
+                    objective: view.goal.objective,
+                    status: view.goal.status,
+                    rounds_started: view.goal.rounds_started,
+                    max_rounds: view.goal.max_rounds,
+                    armed: view.armed,
+                    blocker: view.goal.blocker,
+                }),
         }
     }
 

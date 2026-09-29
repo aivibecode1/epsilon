@@ -5,6 +5,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A client can see the session's goal.** get_state and GET /state serve one shared payload,
+  and it now carries the goal — objective, phase, rounds against the cap, any blocker, and whether
+  the harness is armed to continue it by itself. That last field is the one that matters: a goal
+  survives a restart and the permission to keep working on it does not, so ctive alone would
+  describe a goal that has stopped (M206).
+
 - **Epsilon tells you when a session already has history it is not showing you.** A plain launch
   opens the session file and appends to it, but starts with an empty conversation — so a returning
   user gets a first-run screen while the header reports a few percent of the context already in
