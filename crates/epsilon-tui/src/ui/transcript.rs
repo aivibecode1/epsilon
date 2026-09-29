@@ -15,7 +15,6 @@
 //! never carries it alone — a reader on a 16-colour terminal, or with `NO_COLOR`
 //! set, must still be able to follow the conversation.
 
-use crate::ui::metrics::{Metrics, Pressure};
 use crate::ui::theme::Theme;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -174,8 +173,8 @@ pub fn decorate(
 ///
 /// A blank transcript on launch is the single worst first impression a TUI can
 /// make: the user cannot tell whether the program is working, waiting, or broken.
-/// This says what the harness is, what to type, and which keys matter — and it
-/// disappears the moment there is a real conversation to show.
+/// This says what the harness is and what to type — and it disappears the moment
+/// there is a real conversation to show.
 ///
 /// **What it deliberately does not do is list the keybindings.** It used to, and that was
 /// the design failure worth recording: the footer already renders the *live* key set for the
@@ -183,20 +182,23 @@ pub fn decorate(
 /// information. Two copies of a help listing, one of them wrong within seconds of the first
 /// keystroke, reads as noise and pushes the composer off the screen.
 ///
-/// The space goes to what a user cannot read anywhere else: what this session actually is
-/// right now — the model, its context window, where the session lives, and how much room is
-/// left. That is the part of "is it working?" that a blank transcript leaves open.
-pub fn welcome(
-    theme: &Theme,
-    width: usize,
-    metrics: &Metrics,
-    session_label: &str,
-) -> Vec<Line<'static>> {
+/// **It does not restate the header either, and that is the second version of the
+/// same mistake.** It carried a `model`/`context` panel — real values, correctly
+/// derived — two rows below a header that already prints both, on a screen with
+/// twenty blank rows underneath them. Two surfaces stating one fact do not
+/// reinforce each other; they make the reader decide which to believe, and they
+/// degrade on different rules (the header drops whole gauges as the row narrows,
+/// the panel never did). The header is the owner because it states them in *every*
+/// state, including after the first message lands and this panel is gone.
+///
+/// So the space goes to what no other row says: what to do, and the three prefixes
+/// the composer reads. One left edge, and a body weight for the instruction rather
+/// than the same faint style as the decoration around it.
+pub fn welcome(theme: &Theme, session_label: &str) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let title = "EPSILON";
     // A plain, wide-tracked wordmark. Not ASCII art: art breaks on a narrow
     // terminal and reads as noise on a re-read.
-    let tracked = title
+    let tracked = "EPSILON"
         .chars()
         .map(|c| c.to_string())
         .collect::<Vec<_>>()
@@ -208,34 +210,34 @@ pub fn welcome(
         theme.dim(),
     )));
     lines.push(Line::from(""));
-
-    // The session panel: real values, in the order a person asks for them.
-    // The role is chosen up front rather than inside the closure, because a `fn` pointer
-    // cannot carry the `match` and a closure cannot be coerced to one.
-    let context_style = match metrics.pressure() {
-        Pressure::Danger => theme.danger(),
-        Pressure::Warn => theme.warn(),
-        _ => theme.dim(),
-    };
-    let field = |key: &str, value: String, style: Style| {
-        Line::from(vec![
-            Span::styled(format!("  {:<9}", key), theme.faint()),
-            Span::styled(value, style),
-        ])
-    };
-    lines.push(field("model", metrics.model_label.clone(), theme.user()));
-    // The same pressure colouring the header uses, so the number does not change
-    // meaning when the first message lands and the header takes over.
-    lines.push(field("context", metrics.context_gauge(), context_style));
+    // The one instruction on the screen, and the only sentence drawn in a body
+    // weight. An instruction rendered in the same style as the data above it is
+    // not a call to action, it is another datum.
+    lines.push(Line::from(vec![
+        Span::styled("Describe a task", theme.dim_strong()),
+        Span::styled(", then press ", theme.dim()),
+        Span::styled("enter", theme.dim_strong()),
+        Span::styled(".", theme.dim()),
+    ]));
+    // The three prefixes the composer reads (`app.rs` dispatches all three), which
+    // no other row on screen states.
+    lines.push(Line::from(vec![
+        Span::styled("@", theme.dim_strong()),
+        Span::styled(" files · ", theme.faint()),
+        Span::styled("!", theme.dim_strong()),
+        Span::styled(" shell · ", theme.faint()),
+        Span::styled("/", theme.dim_strong()),
+        Span::styled(" commands", theme.faint()),
+    ]));
+    // The one fact here that the header cannot state. An empty label means
+    // "unnamed", and the row is dropped rather than printed blank.
     if !session_label.is_empty() {
-        lines.push(field("session", session_label.to_string(), theme.dim()));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("session  ", theme.faint()),
+            Span::styled(session_label.to_string(), theme.dim()),
+        ]));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  ready — describe a task and press enter",
-        theme.faint(),
-    )));
-    let _ = width;
     lines
 }
 
@@ -402,16 +404,38 @@ mod tests {
     #[test]
     fn the_welcome_screen_is_not_a_blank_void() {
         let theme = Theme::new(ColorMode::Ansi16, ASCII);
-        let text = screen(
-            welcome(&theme, 80, &crate::ui::metrics::Metrics::idle(), ""),
-            80,
-            20,
-        );
+        let text = screen(welcome(&theme, ""), 80, 20);
         assert!(text.contains("E P S I L O N"), "{text}");
-        assert!(text.contains("describe a task"), "{text}");
-        // The session panel, not a second copy of the footer.
-        assert!(text.contains("model"), "{text}");
-        assert!(text.contains("context"), "{text}");
+        assert!(text.contains("Describe a task"), "{text}");
+        assert!(text.contains("press enter"), "{text}");
+        // The three prefixes the composer reads, which no other row states.
+        for prefix in ["@ files", "! shell", "/ commands"] {
+            assert!(text.contains(prefix), "missing {prefix:?}: {text}");
+        }
+    }
+
+    /// **The welcome panel does not restate the header.**
+    ///
+    /// It used to: `model Faux (offline scripted)` and `?/1.0M` appeared in the
+    /// header *and* in the body two rows below, on a screen with twenty blank rows
+    /// under them. The first thing a new user saw spent its whole budget repeating
+    /// itself, and the two copies degrade on different rules — the header drops
+    /// whole gauges as the row narrows and the panel never did.
+    ///
+    /// The header owns the model and the context because it states them in every
+    /// state; this asserts the panel stays out of it, by rendering with a metrics
+    /// value whose *label* the panel could not have invented and checking the panel
+    /// never prints it.
+    #[test]
+    fn the_welcome_screen_does_not_restate_the_header() {
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let text = screen(welcome(&theme, ""), 80, 20);
+        for restated in ["model", "context", "Faux"] {
+            assert!(
+                !text.contains(restated),
+                "the panel repeats the header's {restated:?}: {text}"
+            );
+        }
     }
 
     /// The footer already renders the live key set for the current state. A welcome screen
@@ -421,11 +445,7 @@ mod tests {
     #[test]
     fn the_welcome_screen_does_not_repeat_the_footers_keybindings() {
         let theme = Theme::new(ColorMode::Ansi16, ASCII);
-        let text = screen(
-            welcome(&theme, 80, &crate::ui::metrics::Metrics::idle(), ""),
-            80,
-            20,
-        );
+        let text = screen(welcome(&theme, ""), 80, 20);
         for key in ["ctrl-p", "pageup scroll", "command palette"] {
             assert!(
                 !text.contains(key),
@@ -439,10 +459,41 @@ mod tests {
     #[test]
     fn a_session_label_appears_only_when_there_is_one() {
         let theme = Theme::new(ColorMode::Ansi16, ASCII);
-        let metrics = crate::ui::metrics::Metrics::idle();
-        let named = screen(welcome(&theme, 80, &metrics, "refactor-rates"), 80, 20);
+        let named = screen(welcome(&theme, "refactor-rates"), 80, 20);
         assert!(named.contains("refactor-rates"), "{named}");
-        let anon = screen(welcome(&theme, 80, &metrics, ""), 80, 20);
+        let anon = screen(welcome(&theme, ""), 80, 20);
         assert!(!anon.contains("session"), "{anon}");
+    }
+
+    /// Every row of the panel shares one left edge.
+    ///
+    /// It used to have three: the wordmark and the tagline at column 1, then
+    /// `model`/`context` at column 3, then the instruction at column 3 in the same
+    /// style as the data above it. Three edges and no hierarchy is a wall of text
+    /// that happens to be aligned; the panel now reads top-down as identity,
+    /// instruction, affordances, session.
+    #[test]
+    fn every_welcome_row_shares_one_left_edge() {
+        let theme = Theme::new(ColorMode::Ansi16, ASCII);
+        let flat = screen(welcome(&theme, "cli"), 80, 20);
+        // `screen` returns the cells in row-major order with no separators, which
+        // is what every other test in this file wants; this one is about rows, so
+        // it slices them back out.
+        let rows: Vec<String> = flat
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(80)
+            .map(|c| c.iter().collect::<String>())
+            .collect();
+        let mut checked = 0;
+        for row in rows.iter().filter(|r| !r.trim().is_empty()) {
+            checked += 1;
+            assert_eq!(
+                row.len(),
+                row.trim_start().len(),
+                "a welcome row is indented away from the others: {row:?}"
+            );
+        }
+        assert!(checked >= 4, "the panel lost rows: {rows:#?}");
     }
 }

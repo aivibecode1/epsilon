@@ -1315,21 +1315,29 @@ impl App {
                         item.description
                     ));
                 }
-                for line in [
+                let mut guide: Vec<&str> = vec![
                     "auth: /login anthropic sk-...  (paste inside TUI, masked) · /logout anthropic · keys saved to ~/.config/epsilon/auth.json",
                     "subscription login: /login anthropic oauth · /login xai oauth (device code) · /login openrouter oauth — browser round-trip, same store",
                     "also: /connect /auth are aliases for /login — same masked prompt, paste works inside it",
                     "thinking: Ctrl+T cycles · current level in the status bar",
-                    // The header is the harness's own report on itself, and a report with
-                    // no legend is only transparent to the person who wrote it. These two
-                    // lines decode it, including the two placeholders that mean "unknown"
-                    // rather than "zero".
-                    "header: 42%/200k = context used/window (warns at 70%, red at 90%) · ↑12k ↓3.4k = tokens in/out this session",
-                    "header: cache 87% = share of the LAST prompt served from cache (— = none yet) · $0.42 = estimated cost at list prices",
-                    "header: a trailing + on the cost means the session moved tokens the model registry does not price, so the figure is a lower bound",
+                ];
+                // The header is the harness's own report on itself, and a report with
+                // no legend is only transparent to the person who wrote it.
+                //
+                // The legend lives in `ui::metrics` rather than here, and that is the
+                // fix for this row: the three lines that used to sit here described
+                // `42%/200k` and `cache 87%`, neither of which the header has printed
+                // since the `ctx` label and the cache volume landed. The three tokens a
+                // reader actually cannot decode — `ctx ?`, `CH n/a`, and the trailing
+                // `offline` — appeared in none of them. A legend kept beside the
+                // formatters is held to them by a test; a legend kept beside the help
+                // text is held to nothing.
+                guide.extend(crate::ui::metrics::LEGEND.iter().copied());
+                guide.extend([
                     "keys: Enter submit · Esc aborts a run (quits when idle) · Ctrl+X expands tool output",
                     "      PgUp/PgDn scroll transcript · Ctrl+M model picker · Ctrl+P command palette",
-                ] {
+                ]);
+                for line in guide {
                     self.ui.push_notice(line);
                 }
             }

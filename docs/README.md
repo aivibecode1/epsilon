@@ -72,6 +72,53 @@ no log was written the pointer below goes to the timeline row, which is then the
 M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
 first, newest at the top, and it is kept current from M83 forward.
 
+> **The pointer list had stopped at M160 for forty milestones**, while the sentence above
+> claimed it was current — the drift this repository is built to catch, in the file that is
+> the map. M161–M201 are listed now, and the log-less ones say so on their own line rather
+> than being silently absent. The list is generated from the `H1` of each log, so an entry
+> cannot describe a milestone the log does not.
+
+- [M201 — every part of a status row is whole, and the first screen says what to do](milestones/M201-frame-truth.md)
+- M200 — no log was written; the [timeline row](history.md) is the record.
+- [M199 — a link is not a name: workspace containment follows symlinks](milestones/M199-symlink-containment.md)
+- [M198 — the frame path, measured](milestones/M198-the-frame-path-measured.md)
+- M197 — no log was written; the [timeline row](history.md) is the record.
+- [M196 — GFM markdown, one session forest, branch labels, and a `/tree` that sees branches](milestones/M196-gfm-labels-and-the-session-tree.md)
+- [M195 — the `@`-walk, and the fourth control that passed for the wrong reason](milestones/M195-at-walk-cache.md)
+- [M194 — eleven defects, and the two questions nobody had asked](milestones/M194-accuracy-and-honest-keys.md)
+- [M193 — D29: the same defect, one function over](milestones/M193-d29-entry-shape.md)
+- [M192 — fork, clone, new_session, switch_session](milestones/M192-rpc-session-swap.md)
+- M191 — no log was written; the [timeline row](history.md) is the record.
+- [M190 — D27: the reference's type is not its behaviour](milestones/M190-d27-tree-shape.md)
+- [M189 — Three store-backed RPC commands, and two controls that taught the same lesson](milestones/M189-rpc-store-commands.md)
+- [M188 — Four more RPC commands, and a probe that found a wire name pi documents and epsilon refused](milestones/M188-rpc-session-commands.md)
+- M187 — no log was written; the [timeline row](history.md) is the record.
+- [M186 — Six pi RPC commands, and a control that found I had tested no success path](milestones/M186-rpc-commands.md)
+- M185 — no log was written; the [timeline row](history.md) is the record.
+- [M184 — Prompt templates](milestones/M184-prompt-templates.md)
+- M183 — no log was written; the [timeline row](history.md) is the record.
+- M182 — no log was written; the [timeline row](history.md) is the record.
+- [M181 — Extensions intercept tool calls (ADR-019, phases 4.3 and 4.5a/4.5b)](milestones/M181-extension-interception.md)
+- M180 — no log was written; the [timeline row](history.md) is the record.
+- M179 — no log was written; the [timeline row](history.md) is the record.
+- [M178 — putting the shell in the suite, and a stale test that had been failing for 27 milestones](milestones/M178-the-shell-in-the-suite.md)
+- [M177 — the shell the owner named, measured for the first time](milestones/M177-powershell-measured-for-the-first-time.md)
+- [M176 — driving a picker in a real console, and the key the probe could not send](milestones/M176-driving-a-picker-in-a-real-console.md)
+- [M175 — a crate whose test count depended on which crates were in the command](milestones/M175-a-test-count-that-depended-on-the-command.md)
+- [M174 — every source-shaped test, and whether each one bites](milestones/M174-every-source-shaped-test.md)
+- [M173 — the "acceptable trade" that was not one](milestones/M173-the-trade-that-was-not-one.md)
+- [M172 — the list the parser owns, and the seven commands it found](milestones/M172-the-list-the-parser-owns.md)
+- [M171 — turning "sixteen uncovered commands" into a test that runs forever](milestones/M171-every-command-executed-at-least-once.md)
+- [M170 — the real-console check, and a tool gap it exposed](milestones/M170-the-real-console-check.md)
+- [M169 — the correction M168 needed, and a hazard I could not test](milestones/M169-the-correction-m168-needed.md)
+- [M168 — `/tree` was a copy of `/timeline`, and closing the gap found a crash](milestones/M168-the-duplicate-timeline-and-the-crash-it-hid.md)
+- [M167 — paying down a debt I created in M162, and the 18 commands no test runs](milestones/M167-paying-down-a-debt-i-created.md)
+- [M166 — the 929-line `impl App`, in three](milestones/M166-the-929-line-impl-in-three.md)
+- [M165 — two self-contained seams, and a coverage hole a control found](milestones/M165-two-seams-and-a-coverage-hole.md)
+- [M164 — the read side of `app.rs`, and a test that named a file](milestones/M164-the-read-side-and-a-test-that-named-a-file.md)
+- [M163 — the catch-all stops being a monolith](milestones/M163-the-catch-all-stops-being-a-monolith.md)
+- [M162 — slash commands by subject](milestones/M162-slash-commands-by-subject.md)
+- [M161 — the first seam out of `app.rs`](milestones/M161-the-first-seam-out-of-app-rs.md)
 - [M145 — a bill lives on the entry that incurred it](milestones/M145-a-bill-lives-on-the-entry-that-incurred-it.md)
   — **closes F23 and the compaction half of F22**. M144's write side was reverted because a *separate* accounting
   row becomes the file's last entry, and `pop_last_message` pops the last entry to discard a failed turn — so a

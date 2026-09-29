@@ -1,10 +1,14 @@
-# Working note — the frame-reading pass (started during M199)
+# Working note — the frame-reading pass (opened during M199, closed by M201)
 
-**Status:** open findings from reading rendered frames at three widths. These belong
-to the t2 ledger, not to the M199 commit. Kept here so the next pass does not
-re-derive them, and because the evidence is on disk and cheap to re-read.
+**Status: CLOSED.** All three findings below were fixed by M201
+([`docs/milestones/M201-frame-truth.md`](../../docs/milestones/M201-frame-truth.md)), and the
+frames that carried them are kept as before/after evidence:
+`audit/evidence/frames/m199-baseline/` → `audit/evidence/frames/m201/`.
 
-## How to look
+The note stays because the **method** is the durable part, and because M201 found a fourth
+defect with it that no finding here named.
+
+## How to look (unchanged, and this is the thing to keep)
 
 ```sh
 export CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR="C:/Users/Hp/AppData/Local/Temp/epsilon-target"
@@ -12,66 +16,34 @@ EPSILON_FRAME_DIR="C:/Users/Hp/Desktop/My Agent Space/Epsilon/audit/evidence/fra
   cargo test -p epsilon-tui --lib frame_dump:: -- --ignored --nocapture --test-threads=1
 ```
 
-`EPSILON_FRAME_DIR` must be **absolute**. A relative value resolves against the
-package root (`crates/epsilon-tui/`), because that is a `cargo test` process's
-working directory — the harness now refuses a relative one and prints every path it
-writes. Baseline frames: `audit/evidence/frames/m199-baseline/`.
+`EPSILON_FRAME_DIR` must be **absolute**. A relative value resolves against the package root
+(`crates/epsilon-tui/`), because that is a `cargo test` process's working directory — the
+harness refuses a relative one and prints every path it writes.
 
-## F1 — a word is mutilated at 60 columns (measured)
+**Read the frame at 60 and 80 columns, not only at 100.** Every defect below was invisible at
+100 and obvious at 60, and M201's own regression (the header pin) only appeared at 60 too.
 
-The same assistant message renders three ways from one fixture:
+## The findings, and what closed them
 
-| width | row 1 | last row |
+| | Finding | Closed by |
 |---|---|---|
-| 100x30 | `…in the workspace and then read the layout module to understand` | `…changes to it.` |
-| 80x24 | `…in the workspace and then read the layout` | `…changes to it` — **the final `.` is gone** |
-| 60x20 | `…in the workspace and the` | `composed before making any changes to it.` |
+| F1 | A word was mutilated at 60 columns: "and **then**" → "and **the**", and the final `.` lost at 80. | `wrap_line` decided a word fit *before* counting the space in front of it, so a row could be emitted one column over budget and the draw path clipped its last cell. |
+| F2 | The header lost its `↑` at 60 columns and printed `idle 0 ↓0`. | `metric_spans` budgets with `layout::room_beside` and drops whole gauges; the model and its `offline` qualifier are pinned by a field on `MetricPart`. |
+| F3 | `?`, `CH n/a` and the trailing segment had no legend. | `ui::metrics::LEGEND` + `the_legend_decodes_every_token_the_header_can_print`. |
 
-At 60 the word **"then" is cut to "the"** and the next row starts at "read". At 80
-the sentence loses its full stop. This is text the user reads as their own
-conversation, and at 60 the model also reads it — the transcript is the same rows.
+F2's fix was wrong twice before it was right, and both wrong versions rendered a plausible
+row: the first dropped leading fragments and kept a cache gauge that says nothing when the
+provider cannot report one, and the second found the model's pin by `MetricRole::Model` —
+which is `Warn` in an offline session, so the pin stopped matching in exactly the row long
+enough to need it. **Neither was visible in any assertion in `header.rs`.** Render the frame.
 
-**Not in `wrap_line`.** `wrap.rs:25` hard-splits a token only when
-`token.width() > width` — a word longer than the whole line — and otherwise moves the
-whole word down. `"then"` is four columns, so the wrapper cannot have produced
-`"and the"`.
+## What was *not* wrong, measured (still true after M201)
 
-**So the two widths disagree.** Arithmetic points at the gutter: at a 60-wide frame
-the row is `• ` + 58 content columns. If the wrap ran at 58, `"…and"` (56) plus
-`"then"` would be 61 and the word would have moved down whole. It did not, so the
-wrap ran at a width **larger** than the drawn row and something downstream clipped it
-to 58 — cutting mid-word.
+- Markers are single: no `• •` anywhere in either frame set.
+- The cache rate reads `CH n/a`, not `CH 0%`.
+- The permission dialog renders and states its keys.
 
-**The probe that settles it** (do this before fixing; do not fix by reading): wrap
-the exact fixture string at 56/57/58/59/60/61/62 and compare against the drawn row.
-That names the component, and the two candidates want opposite fixes — a width that
-does not account for the gutter (one subtraction at the call site) versus a clip
-that should re-wrap rather than truncate (a renderer change).
+## The rule this pass earned, in one line
 
-## F2 — the header loses a glyph at 60 columns, silently
-
-```
-100: idle                               ?/1.0M · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) · offline
- 60: idle 0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) · offline
-```
-
-At 60 the `↑` is gone and the row reads `idle 0 ↓0` — a **bare `0` where a labelled
-pair used to be**. This is the M196 class exactly ("a partial badge is worse than a
-missing one, because a wrong number is not noticed"): `0` reads as a value, not as
-the loss of a label. The model picker must degrade by dropping whole segments
-(`R0 W0 CH n/a`), never by dropping the marker that gives a number its meaning.
-
-## F3 — `?/1.0M` and the trailing `· offline` are unlabelled
-
-Carried from `agents/memory/next-hardening.md`, still open, still visible in every
-frame above: nothing on screen explains `?`, `CH n/a`, or what the rightmost segment
-is. Two lines in `/help` close it. The right edge also truncates hard against the
-border (`…\Epsilon\crates\epsilon-tui`), so the last segment is cut mid-path.
-
-## What is *not* wrong, measured
-
-- **Markers are single.** `▎ ❯ run the tests` and `• …` — the M198 double-glyph
-  defect is genuinely fixed; no `• •` anywhere in the baseline frames.
-- **Cache rate reads `CH n/a`,** not `CH 0%` — M194's fix holds on screen.
-- **The permission dialog renders and states its keys** — `y allow once · a always …`
-  is present in the footer.
+**A fragment is worse than an absence**, because a wrong value is not noticed the way a missing
+one is — and it applies to a key and to a label, not only to a number.

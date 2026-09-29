@@ -82,7 +82,14 @@ pub fn draw(
         .take(area.height as usize)
     {
         let is_first = index == 0;
-        let prompt = if is_first { glyphs.bullet } else { " " };
+        // The *prompt* glyph, not the bullet. The bullet is the transcript's
+        // notice marker, and a placeholder drawn with it says "the system said
+        // this" about a line the user is about to type — the M196 defect class
+        // (a glyph carrying the wrong meaning), and it was on screen at every
+        // width, in every state, from the first frame. The prompt glyph is the
+        // same one a submitted turn keeps in the transcript, so the row a user
+        // types into is the row their message becomes.
+        let prompt = if is_first { glyphs.prompt } else { " " };
         let prompt_style = if focused {
             theme.accent()
         } else {
@@ -114,14 +121,17 @@ pub fn draw(
 }
 
 /// Columns reserved before the text: the prompt glyph plus one space.
+///
+/// Read from the same field [`draw`] draws, so the caret's column and the text's
+/// column cannot be computed from different glyphs.
 pub fn gutter_width(glyphs: &Glyphs) -> usize {
-    glyphs.bullet.chars().count() + 1
+    glyphs.prompt.chars().count() + 1
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::theme::{ASCII, ColorMode};
+    use crate::ui::theme::{ASCII, ColorMode, UNICODE};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -145,6 +155,48 @@ mod tests {
     fn an_empty_composer_invites_input() {
         let screen = render_rows(40, &[String::new()], (0, 0));
         assert!(screen.contains(PLACEHOLDER), "{screen}");
+    }
+
+    /// The composer is drawn with the **prompt** glyph, not the notice bullet.
+    ///
+    /// The defect: `• ask anything` carried the same marker as a system notice, so
+    /// the one glyph that means "the system said this" marked a line the user was
+    /// about to type. It is the M196 family — a glyph carrying the wrong meaning —
+    /// and it was on every frame of every session.
+    ///
+    /// Asserted on the rendered row rather than on `draw`'s arguments, and against
+    /// *both* repertoires, because the glyph set is a runtime choice: a test that
+    /// pinned `❯` would pass on a terminal the UI cannot draw it on.
+    #[test]
+    fn the_composer_prompt_is_not_the_notice_bullet() {
+        for glyphs in [UNICODE, ASCII] {
+            assert_ne!(
+                glyphs.bullet, glyphs.prompt,
+                "the notice marker and the prompt marker must be distinguishable, \
+                 or this test cannot fail"
+            );
+            let theme = Theme::new(ColorMode::Ansi16, glyphs);
+            let mut terminal = Terminal::new(TestBackend::new(40, 1)).expect("test terminal");
+            terminal
+                .draw(|f| draw(f, f.area(), &theme, &[String::new()], 0, 0, true))
+                .expect("draw");
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol().chars().next().unwrap_or(' '))
+                .collect();
+            assert!(
+                screen.starts_with(&format!("{} {PLACEHOLDER}", glyphs.prompt)),
+                "{:?}: {screen}",
+                glyphs.prompt
+            );
+            assert!(
+                !screen.starts_with(glyphs.bullet),
+                "the composer is marked with the notice bullet: {screen}"
+            );
+        }
     }
 
     #[test]

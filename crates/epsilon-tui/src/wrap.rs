@@ -53,7 +53,21 @@ pub fn wrap_line(
             }
             let w = token.width();
             if w > width {
-                flush_pending(&mut current, &mut pending_ws, &mut col);
+                // A word wider than the whole row cannot share a row with
+                // anything. It used to be appended to whatever the row already
+                // held — the pending space, and whatever word preceded it — so
+                // each chunk was measured against the full budget while being
+                // *drawn* into the leftover, and the row came out as wide as the
+                // text before it plus `width`. At width 1 a row read `I w`.
+                //
+                // Starting the row here rather than flushing into it is also
+                // what makes the trailing space disappear: a wrap point eats the
+                // gap, exactly as the word path below does.
+                if col > 0 {
+                    rows.push(std::mem::take(&mut current));
+                    col = 0;
+                }
+                pending_ws = None;
                 let mut rest = token;
                 while rest.width() > width {
                     let cut = split_at_width(rest, width);
@@ -69,7 +83,22 @@ pub fn wrap_line(
                 }
                 continue;
             }
-            if col + w > width {
+            // The fit test has to include the separator that is about to be
+            // flushed, and that is the whole of a defect that silently ate a
+            // character at 60 columns: `col + w` fits, the space is emitted
+            // anyway, and the row lands one column over the budget. The
+            // transcript then clips it — and a one-column clip mid-word turns
+            // "then" into "the", on the user's own message, with no error.
+            //
+            // Measured: at body width 58 this produced a 59-column row, which
+            // `decorate`'s two-column gutter pushed to 61 in a 60-column frame.
+            // The old `a_lines_row_count_depends_only_on_its_text_and_width`
+            // property test passed throughout, because it asserted that no
+            // *content* was lost and none was — the loss is a width, downstream.
+            let sep = pending_ws
+                .as_ref()
+                .map_or(0, |(ws, _)| UnicodeWidthStr::width(ws.as_str()));
+            if col + sep + w > width {
                 rows.push(std::mem::take(&mut current));
                 col = 0;
                 pending_ws = None; // the wrap eats the gap
@@ -328,6 +357,65 @@ mod tests {
                 squeeze(text),
                 "content lost at width {width}"
             );
+        }
+    }
+
+    /// **No row may be wider than the width it was asked for.** The other property
+    /// test in this file asserts that wrapping loses no *content*, and it passed
+    /// for years while the wrapper emitted rows one column over budget. Both are
+    /// true at once: nothing is dropped, and something is pushed off the edge.
+    ///
+    /// That is the shape the defect took. The transcript wraps to `width`, prefixes
+    /// a two-column gutter, and the renderer clips at the edge — so an over-wide row
+    /// loses its *last character* and nothing complains. A user's own message came
+    /// back as `…in the workspace and the` / `read the layout module…`, which is a
+    /// different sentence from the one they typed. The row-count property test could
+    /// not see it, because the row count was always right.
+    ///
+    /// The sweep is deliberate about where it asserts: the hard-split path already
+    /// had a width assertion, and this one is about the *word* path, so a fixture of
+    /// ordinary prose at every width from 1 to its own length is enough to fail on
+    /// the separator alone.
+    #[test]
+    fn no_row_is_wider_than_the_width_it_was_given() {
+        let text = "I will start by listing the files in the workspace and then read the \
+                    layout module to understand how the frame is composed before making \
+                    any changes to it.";
+        for width in 1..=text.len() {
+            let rows = wrap_line(&plain(text), width);
+            for (i, row) in rows.iter().enumerate() {
+                let w: usize = row
+                    .iter()
+                    .map(|(t, _)| crate::ui::layout::display_width(t))
+                    .sum();
+                assert!(w <= width, "row {i} is {w} wide, budget {width}: {row:?}");
+            }
+        }
+    }
+
+    /// The same invariant across **styled** spans, where the separator is a span
+    /// of its own and `flush_pending` can decline to merge it.
+    ///
+    /// The first version of the width sweep above passed with a single span, so it
+    /// could not have caught a bug that only appears when the space arrives from a
+    /// different style than the word after it — which is what a rendered markdown
+    /// row is.
+    #[test]
+    fn no_row_is_wider_than_the_width_across_styled_spans() {
+        let bold = Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+        let spans = vec![
+            ("plain words that go on ", Style::default()),
+            ("and on", bold),
+            (" until the row is full of them", Style::default()),
+        ];
+        for width in 1..=60 {
+            for row in wrap_line(&spans, width) {
+                let w: usize = row
+                    .iter()
+                    .map(|(t, _)| crate::ui::layout::display_width(t))
+                    .sum();
+                assert!(w <= width, "row of {w} columns at width {width}: {row:?}");
+            }
         }
     }
 }

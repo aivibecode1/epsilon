@@ -316,9 +316,14 @@ impl Metrics {
 
     /// The row a session shows before anything has happened: no usage, no cache, no cost.
     ///
-    /// Used by the welcome panel and by tests that need a well-formed `Metrics` without
-    /// inventing usage numbers. Constructing the struct literally in every test meant a dozen
-    /// call sites that all had to change when a field was added.
+    /// The header's empty state, and the fixture tests use when they need a
+    /// well-formed `Metrics` without inventing usage numbers. Constructing the
+    /// struct literally in every test meant a dozen call sites that all had to
+    /// change when a field was added.
+    ///
+    /// The welcome panel used to take this too, to print a second copy of the model
+    /// and the context gauge two rows under the header that was already printing
+    /// them. It no longer does — see `ui::transcript::welcome`.
     pub fn idle() -> Self {
         Self {
             model_label: "no model".to_string(),
@@ -374,6 +379,17 @@ pub struct MetricPart {
     pub text: String,
     /// Which semantic role to draw it with.
     pub role: MetricRole,
+    /// Whether this part is pinned: dropped only when nothing else is left.
+    ///
+    /// The model name and the `offline` qualifier behind it, and nothing else. A
+    /// *role* cannot carry this, and keying the header's pin on
+    /// [`MetricRole::Model`] was wrong in a way only a rendered frame showed: the
+    /// model is drawn with `Warn` while the session is offline, so the pin stopped
+    /// matching in exactly the sessions whose row is longest. Measured at 60
+    /// columns, that dropped `… · offline` and then the model name, and kept
+    /// `R0 W0 CH n/a` — a gauge that says nothing when there is no provider to
+    /// report a cache rate.
+    pub pinned: bool,
 }
 
 /// The roles a header fragment can take.
@@ -394,10 +410,11 @@ pub enum MetricRole {
 impl Metrics {
     /// The right-hand side of the header, richest last.
     ///
-    /// Order is the order of questions: what am I talking to, how much room is
-    /// left, is the cache working, how much have I spent. Leading fragments are
-    /// dropped first when the terminal narrows, so the model name — the thing
-    /// that changes what every other number means — is the last to go.
+    /// Order is the order of questions: how much room is left, what has been spent
+    /// on tokens, whether the cache is working, what it cost, what am I talking to.
+    /// A narrow row drops the *tail* of that list — see
+    /// [`MetricPart::pinned`] — because the order is the order of importance, not
+    /// the order the fragments happen to read in.
     pub fn parts(&self) -> Vec<MetricPart> {
         let mut parts = Vec::new();
         let pressure_role = match self.pressure() {
@@ -409,10 +426,12 @@ impl Metrics {
         parts.push(MetricPart {
             text: self.context_gauge(),
             role: pressure_role,
+            pinned: false,
         });
         parts.push(MetricPart {
             text: self.token_gauge(),
             role: MetricRole::Value,
+            pinned: false,
         });
         parts.push(MetricPart {
             text: self.cache_gauge(),
@@ -421,13 +440,19 @@ impl Metrics {
             } else {
                 MetricRole::Label
             },
+            pinned: false,
         });
         if let Some(cost) = self.cost_gauge() {
             parts.push(MetricPart {
                 text: cost,
                 role: MetricRole::Value,
+                pinned: false,
             });
         }
+        // Pinned from here on: the model, and the `offline` that qualifies it. The
+        // role is `Warn` rather than `Model` while offline — the model name is
+        // something to notice when no provider is configured — which is exactly why
+        // the pin is a field and not a role.
         parts.push(MetricPart {
             text: self.model_label.clone(),
             role: if self.offline {
@@ -435,16 +460,42 @@ impl Metrics {
             } else {
                 MetricRole::Model
             },
+            pinned: true,
         });
         if self.offline {
             parts.push(MetricPart {
                 text: "offline".to_string(),
                 role: MetricRole::Label,
+                pinned: true,
             });
         }
         parts
     }
 }
+
+/// The decoder for the header row, as `/help` prints it.
+///
+/// **It lives beside the formatters because a legend written anywhere else drifts
+/// from the strings it claims to explain.** The one this replaces described
+/// `42%/200k` and `cache 87%`, and this module has never produced either: the real
+/// row reads `ctx 42%/200k · ↑12k ↓3.4k · R18k W2.0k CH 75%`, and the three tokens
+/// a reader actually cannot decode — `ctx ?` (nothing measured yet), `CH n/a` (the
+/// provider cannot report it) and the trailing `offline` — were in no line at all.
+/// A legend that explains a format the code stopped printing two milestones ago is
+/// worse than no legend, because a reader who follows it mis-reads the row.
+///
+/// The examples are the output of one fixture, and
+/// `the_legend_decodes_every_token_the_header_can_print` builds that same fixture
+/// and asserts each string appears here. Change a format above without changing
+/// this list and that test fails.
+pub const LEGEND: &[&str] = &[
+    "header: ctx 42%/200k = the context the next prompt will carry, over the window (70% warns, 90% is critical); a * on the percentage — ctx 42%*/200k — means that figure is an estimate, not a provider count",
+    "header: ctx ? = nothing measured yet; after a compression it reads ctx ? · compacted until a reply re-measures the count",
+    "header: ↑12k ↓3.4k = tokens in and out this session · R18k W2.0k = cache tokens read and written this session",
+    "header: CH 75% = the share of the LAST prompt that came from cache · CH n/a = the provider does not report cache traffic, so the rate is unknowable rather than zero · CH — = it does report it and nothing is cached yet",
+    "header: $1.42 = estimated cost at list prices; $1.42+ is a lower bound, because the session moved tokens the model registry does not price",
+    "header: the last segment is the model; a final offline means no provider credentials are configured and the scripted provider is answering",
+];
 
 #[cfg(test)]
 mod tests {
@@ -467,6 +518,117 @@ mod tests {
             cost_micro_usd: Some(12_345),
             ..Metrics::default()
         }
+    }
+
+    /// **The legend decodes the strings the header actually prints.**
+    ///
+    /// A13 in the defect ledger, and the reason the legend lives in this module
+    /// rather than beside the `/help` text it is printed from: the one it replaces
+    /// described `42%/200k` and `cache 87%`, and this module has never produced
+    /// either. A legend that explains a format the code stopped printing two
+    /// milestones ago is worse than no legend, because a reader who follows it
+    /// mis-reads the row.
+    ///
+    /// Every sample below is *generated by the formatter it documents* and then
+    /// asserted to appear in the legend, so a format change that is not reflected
+    /// in the legend fails here instead of on a user's screen. The fixture is
+    /// chosen so the legend can quote it exactly: 84k of a 200k window is
+    /// `ctx 42%/200k`, 12k/3.4k tokens is `↑12k ↓3.4k`, 18k read against a 24k
+    /// prompt is `CH 75%`, and 1,420,000 micro-dollars is `$1.42`.
+    ///
+    /// The first run of this test failed, which is the point of it: the legend said
+    /// `ctx 42%/200k*` and the header prints `ctx 42%*/200k`. The mark deliberately
+    /// rides on the *percentage* — the window is a catalog capacity and is a
+    /// measurement whenever it is known at all — and a legend written from memory
+    /// had moved it to the end of the fragment.
+    #[test]
+    fn the_legend_decodes_every_token_the_header_can_print() {
+        let legend = LEGEND.join("\n");
+        let fixture = Metrics {
+            model_label: "claude-sonnet-4".into(),
+            context_used: Some(84_000),
+            context_window: Some(200_000),
+            tokens_in: 12_000,
+            tokens_out: 3_400,
+            cache_read_session: 18_000,
+            cache_write_session: 2_000,
+            cache_read_last: 18_000,
+            prompt_tokens_last: Some(24_000),
+            cache_reported: true,
+            cost_micro_usd: Some(1_420_000),
+            ..Metrics::default()
+        };
+        // The healthy row, sample by sample. `cache_gauge` is split because the
+        // legend explains its two halves in two places: the volume belongs with
+        // the token totals, the rate with the two ways it can be missing.
+        let quoted: Vec<String> = {
+            let cache = fixture.cache_gauge();
+            let (volume, rate) = cache.split_once(" CH ").expect("`R… W… CH …`");
+            vec![
+                fixture.context_gauge(),
+                fixture.token_gauge(),
+                volume.to_string(),
+                format!("CH {rate}"),
+                fixture.cost_gauge().expect("a priced session has a cost"),
+            ]
+        };
+        for sample in &quoted {
+            assert!(
+                legend.contains(sample.as_str()),
+                "no line decodes {sample:?}"
+            );
+        }
+
+        // And every form that means "not known", which is what a reader cannot
+        // guess: an estimate, a count thrown away by a compaction, a provider that
+        // cannot report cache traffic, and a cache with nothing to rate yet.
+        let silent = Metrics {
+            cache_reported: false,
+            ..fixture.clone()
+        };
+        let unrated = Metrics {
+            prompt_tokens_last: None,
+            ..fixture.clone()
+        };
+        let floor = Metrics {
+            cost_is_floor: true,
+            ..fixture.clone()
+        };
+        let unknown: Vec<String> = vec![
+            Metrics {
+                context_estimated: true,
+                ..fixture.clone()
+            }
+            .context_gauge(),
+            // `idle()` has no window, which is the form that carries the `ctx`
+            // label: `ctx ? · compacted`.
+            Metrics {
+                compacted: true,
+                ..Metrics::idle()
+            }
+            .context_gauge(),
+            silent
+                .cache_gauge()
+                .split_once(" CH ")
+                .expect("CH n/a")
+                .1
+                .to_string(),
+            unrated
+                .cache_gauge()
+                .split_once(" CH ")
+                .expect("CH —")
+                .1
+                .to_string(),
+            floor.cost_gauge().expect("a priced session has a cost"),
+        ];
+        for sample in &unknown {
+            assert!(
+                legend.contains(sample.as_str()),
+                "no line decodes {sample:?}"
+            );
+        }
+        // The trailing segment, which the previous legend never mentioned at all.
+        assert!(legend.contains("offline"), "the offline tail has no line");
     }
 
     /// A context size that is unknown is one of three different facts, and the

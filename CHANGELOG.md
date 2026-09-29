@@ -5,6 +5,39 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A message no longer loses a character when the terminal wraps it.** The wrapper
+  decided a word fit before counting the space in front of it, so a row could be
+  emitted one column wider than the width it was asked for and the renderer clipped
+  the last cell. At 60 columns "…in the workspace and **then** read…" came back as
+  "…and **the**", and at 80 the answer lost its final full stop. It is the user's own
+  message, re-read as their own conversation, and the model reads the same rows
+  (M201).
+
+- **A status row is made of whole parts now, never fragments of them.** At 60
+  columns the header printed `idle 0 ↓0` — a bare `0` where `↑0 ↓0` had been, which
+  reads as a value rather than as the loss of a label — and the footer printed
+  `pagedown scroll forward · ct`, with `ctrl+enter` cut into a key that does not
+  exist and running into the working directory. Both rows now decide what fits
+  before they build anything and drop a whole measurement or a whole hint instead;
+  the position badge is emitted only when it fits whole. What a narrow row keeps is
+  ordered by importance, so the header loses its cache gauge before its context
+  gauge, and never loses the model (M201).
+
+- **The first screen no longer repeats the header, and the composer no longer wears
+  a notice's marker.** The welcome panel printed the model and the context two rows
+  below a header already printing both, at three different left edges, with the
+  instruction styled exactly like the data above it. It now says what to type and
+  names the three prefixes the composer reads (`@`, `!`, `/`), on one left edge. The
+  composer's placeholder is marked with the prompt glyph rather than the bullet that
+  means "the system said this" (M201).
+
+- **`/help` decodes the header it actually has.** The legend described `42%/200k`
+  and `cache 87%`; the header has printed neither since the `ctx` label and the cache
+  counters landed, and the three tokens a reader cannot decode — `ctx ?`, `CH n/a`
+  and the trailing `offline` — were in no line at all. The legend now lives beside
+  the formatters it documents, and a test generates each placeholder and fails if the
+  legend stops quoting it (M201).
+
 - **A link in your repository can no longer take the harness outside it.** Workspace
   containment was decided by normalizing the path and comparing it to the root — no
   filesystem, so no symlink. A checked-in `creds -> ~/.aws` therefore *spelled* its way

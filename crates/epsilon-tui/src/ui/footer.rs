@@ -29,7 +29,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Span;
 
 use crate::keybindings::KeybindingsManager;
-use crate::ui::layout::{Priority, clamp_line, side_by_side};
+use crate::ui::layout::{Priority, clamp_line, display_width, room_beside, side_by_side};
 use crate::ui::theme::Theme;
 
 /// Where the transcript view sits relative to the live tail.
@@ -180,21 +180,20 @@ impl Hints {
     /// not the second hint.** A narrow row is decided in three steps, in this
     /// order: the location and branch take what they need ([`Priority::Right`],
     /// so the hints are the half that yields); the mode word is pushed first and
-    /// therefore cut last, which is why the row still says which keyboard it
+    /// budgets nothing away, which is why the row still says which keyboard it
     /// belongs to; and the badge is emitted whole or not at all, because a
-    /// truncated `^ 12/40` is a wrong total rather than a shorter badge
-    /// ([`side_by_side`]'s `whole_span`).
+    /// truncated `^ 12/40` is a wrong total rather than a shorter badge.
     ///
     /// The exit is pushed before "further back" because it is the one key on this
     /// row the reader cannot infer from the screen: a frozen view looks exactly
     /// like a slow model. The measured consequence is worth stating, because the
     /// obvious reading of "the first one survives" is not what happens at every
     /// width: with a realistic location — `~/Desktop/My Agent Space/Epsilon · main`
-    /// is 39 columns — a 60-column row prints `insert ^ 12/40 · g j`, so the exit
-    /// hint is *cut*, and `further back` is what the reader loses outright. The
-    /// badge is the part of the row that is never half-shown. The test below pins
-    /// this at 60 columns rather than at 80, where everything fits and the rule
-    /// cannot be observed at all.
+    /// is 39 columns — a 60-column row prints `insert ^ 12/40 · g`, so the exit's
+    /// key is what the reader keeps and its words are what they lose, while
+    /// `further back` never appears at all. The badge is the part of the row that
+    /// is never half-shown. The test below pins this at 60 columns rather than at
+    /// 80, where everything fits and the rule cannot be observed at all.
     ///
     /// PageDown (toward live) is deliberately not listed while frozen: it is the
     /// same journey as the exit taken incrementally, and it is the first thing a
@@ -278,41 +277,30 @@ impl Hints {
 /// The location is a safety signal — it answers "which project am I about to let
 /// this edit" — so it wins the space argument, and the key hints shorten first.
 /// [`side_by_side`] guarantees the row stays inside its width.
+///
+/// **The hints are budgeted here, before the layout runs, because a hint is a
+/// unit and the layout cannot know that.** `side_by_side` cuts at a character, so
+/// a row one column too long for its hints renders the last one as `pageup sc` —
+/// which is not a shorter hint, it is a *key that does not exist*, and it was
+/// measured on a 60-column frame (`audit/evidence/frames/m199-baseline/`). The
+/// same argument the header makes for `R0 W0 CH n/a` one row up, one row down: at
+/// 60 columns `pageup` on its own is honest, `pageup sc` is not, and the action
+/// can go without the key.
+///
+/// The budget is `room_beside` — the same subtraction and the same one-column gap
+/// the layout reserves — so the row a caller budgets and the row the layout emits
+/// cannot disagree. What survives is whatever fits in priority order, and a hint
+/// that does not fit is skipped rather than ending the run, so the short
+/// `ctrl+p palette` still appears on a row where the long `pageup scroll back`
+/// did not.
 pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let mut left: Vec<Span<'static>> = Vec::new();
-    // The mode leads the row: the same chord means different things per mode
-    // (`enter send` / `enter queue`), and the word is what tells them apart.
-    if let Some(mode) = &hints.mode {
-        left.push(Span::styled(mode.clone(), theme.accent()));
-    }
-    // The badge's own span index, so the two places that know about it cannot
-    // drift: it is the span `left` held at this point, and it is protected whole.
-    let mut whole_span = None;
-    // Where the view is, immediately after the mode and before the keys: it
-    // qualifies both. `warn` rather than `accent` because a view that stopped
-    // following the run is a state to notice, not a brand colour — and on a
-    // no-colour terminal it is still the word's glyph and digits that carry it.
-    if let Some(badge) = hints.view.badge(theme) {
-        if !left.is_empty() {
-            left.push(Span::raw(" "));
-        }
-        whole_span = Some(left.len());
-        left.push(Span::styled(badge, theme.warn()));
-    }
-    for (key, action) in hints.keys.iter() {
-        if !left.is_empty() {
-            left.push(Span::styled(" · ", theme.faint()));
-        }
-        // The key is the affordance and gets the brighter treatment; the action
-        // is the explanation and stays quiet. Reading down the keys alone should
-        // still tell an experienced user what is available.
-        left.push(Span::styled(key.clone(), theme.dim_strong()));
-        left.push(Span::styled(format!(" {action}"), theme.faint()));
-    }
+    let width = area.width as usize;
 
+    // The right half is built and measured first because it is the half that
+    // cannot yield.
     let mut right: Vec<Span<'static>> = Vec::new();
     if let Some(location) = &hints.location {
         right.push(Span::styled(location.clone(), theme.faint()));
@@ -321,17 +309,81 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, theme: &Theme, hints: &Hints) {
         right.push(Span::styled(" · ", theme.faint()));
         right.push(Span::styled(branch.clone(), theme.faint()));
     }
+    let budget = if right.is_empty() {
+        // No location: nothing to be separated from, and the whole row is the
+        // hints'. Reserving the gap here would leave one column permanently blank
+        // on a row that has no second half to put in it.
+        width
+    } else {
+        room_beside(&right, width)
+    };
+    let mut used = 0usize;
 
-    // `whole_span` protects the badge (see above); the hints after it cut as they
-    // always did, which is what makes the *order* in `Hints::frozen` matter.
-    let line = side_by_side(
-        left,
-        right,
-        area.width as usize,
-        Priority::Right,
-        whole_span,
-    );
-    let line = clamp_line(line, area.width as usize);
+    let mut left: Vec<Span<'static>> = Vec::new();
+    // The mode leads the row: the same chord means different things per mode
+    // (`enter send` / `enter queue`), and the word is what tells them apart. It is
+    // the highest-priority part of the left half and the last to go — but it goes
+    // *whole*, like everything else here: `insert` cut to `in` is not a shorter
+    // mode, it is a word the UI does not use. (Below 44 columns the layout's
+    // clamp is still the backstop, and below 44 nothing is drawn at all — the
+    // frame reports itself too small.)
+    if let Some(mode) = &hints.mode {
+        let span = Span::styled(mode.clone(), theme.accent());
+        let w = display_width(&span.content);
+        if w <= budget {
+            used += w;
+            left.push(span);
+        }
+    }
+    // Where the view is, immediately after the mode and before the keys: it
+    // qualifies both. `warn` rather than `accent` because a view that stopped
+    // following the run is a state to notice, not a brand colour — and on a
+    // no-colour terminal it is still the word's glyph and digits that carry it.
+    //
+    // It is emitted whole or not at all: `^ 12/40` is a position and `^ 12` is a
+    // lie about one, while no badge at all is merely less information. Budgeting it
+    // rather than protecting it after the fact is what makes that structural — the
+    // room a dropped badge does not use goes to the hints, which is the order the
+    // reader wants anyway.
+    if let Some(badge) = hints.view.badge(theme) {
+        let span = Span::styled(badge, theme.warn());
+        let w = display_width(&span.content);
+        let sep = usize::from(!left.is_empty());
+        if used + sep + w <= budget {
+            if sep == 1 {
+                left.push(Span::raw(" "));
+            }
+            used += sep + w;
+            left.push(span);
+        }
+    }
+    for (key, action) in hints.keys.iter() {
+        let sep = if left.is_empty() { 0 } else { 3 }; // " · "
+        let key_w = display_width(key);
+        let full_w = sep + key_w + 1 + display_width(action);
+        if used + full_w <= budget {
+            if sep > 0 {
+                left.push(Span::styled(" · ", theme.faint()));
+            }
+            // The key is the affordance and gets the brighter treatment; the
+            // action is the explanation and stays quiet. Reading down the keys
+            // alone should still tell an experienced user what is available.
+            left.push(Span::styled(key.clone(), theme.dim_strong()));
+            left.push(Span::styled(format!(" {action}"), theme.faint()));
+            used += full_w;
+        } else if used + sep + key_w <= budget {
+            // The key without its action: a real key, honestly named, one word
+            // short of an explanation. Never a fragment of either.
+            if sep > 0 {
+                left.push(Span::styled(" · ", theme.faint()));
+            }
+            left.push(Span::styled(key.clone(), theme.dim_strong()));
+            used += sep + key_w;
+        }
+    }
+
+    let line = side_by_side(left, right, width, Priority::Right);
+    let line = clamp_line(line, width);
     f.render_widget(line, area);
 }
 #[cfg(test)]
@@ -534,6 +586,8 @@ mod tests {
         let badge = ascii_badge(&frozen_view());
         let (marker, count) = badge.split_once(' ').expect("badge is `marker count`");
         let mut half_written = Vec::new();
+        let mut saw_badge = 0usize;
+        let mut saw_it_dropped = 0usize;
         for width in 26u16..=60 {
             let line = render(width, &hints);
             assert!(
@@ -541,16 +595,83 @@ mod tests {
                 "width {width} overflowed: {line:?}"
             );
             if let Some(at) = line.find(marker) {
+                saw_badge += 1;
                 let tail = &line[at + marker.len()..];
                 if !tail.trim_start().starts_with(count) {
                     half_written.push(format!("{width}: {line:?}"));
                 }
+            } else {
+                saw_it_dropped += 1;
             }
         }
         assert!(
             half_written.is_empty(),
             "the badge states a position, so part of it is a wrong one: {half_written:#?}"
         );
+        // Both arms of the sweep have to actually run, or a `draw` that never
+        // emitted a badge at all would pass it — the failure mode this whole
+        // section exists for (a control that passes proves nothing).
+        assert!(saw_badge > 0, "the sweep never saw a badge");
+        assert!(
+            saw_it_dropped > 0,
+            "the sweep never exercised the drop: the badge fits at every width"
+        );
+    }
+
+    /// **No footer row ever prints half a hint.** The measured defect was
+    /// `… pagedown scroll forward · ct …\Epsilon\crates\epsilon-tui` at 60
+    /// columns: the layout cut `ctrl+enter` mid-word, so the row advertised a key
+    /// that does not exist, and it abutted the location so the two read as one
+    /// run. Both halves are asserted here, at every width from 20 to the point
+    /// where the row is nothing but the location.
+    ///
+    /// The assertion is on the *frame*, not on `Hints`, because every part of this
+    /// row was correct as data: `Hints::idle` named real bindings, `keys_text`
+    /// joined them properly, and the loss happened in the cut.
+    #[test]
+    fn no_footer_row_ever_prints_half_a_hint_or_touches_the_location() {
+        let hints = Hints {
+            location: Some("~/work/api".into()),
+            branch: Some("main".into()),
+            ..Hints::idle(&defaults())
+        };
+        // Every legal rendering of a hint, longest first so a prefix of a full
+        // hint cannot match the short form and pass.
+        let mut legal: Vec<String> = Vec::new();
+        for (key, action) in &hints.keys {
+            legal.push(format!("{key} {action}"));
+            legal.push(key.clone());
+        }
+        for width in 20u16..=120 {
+            let line = render(width, &hints);
+            assert!(
+                crate::ui::layout::display_width(&line) <= width as usize,
+                "width {width} overflowed: {line:?}"
+            );
+            // Each `key [action]` the row carries must be one of the legal forms.
+            let head = line.split(" ~/work/api").next().unwrap_or(&line);
+            for part in head.split(" · ").skip(1) {
+                let part = part.trim_end();
+                if part.is_empty() {
+                    continue;
+                }
+                assert!(
+                    legal.iter().any(|l| l == part),
+                    "width {width}: `{part}` is half a hint: {line:?}"
+                );
+            }
+            // And the location never touches the run before it. Skips the widths
+            // where the location itself is trimmed, which is a different question.
+            if let Some(at) = line.find("~/work/api")
+                && at > 0
+            {
+                assert_eq!(
+                    &line[at - 1..at],
+                    " ",
+                    "width {width}: the hints abut the location: {line:?}"
+                );
+            }
+        }
     }
 
     #[test]

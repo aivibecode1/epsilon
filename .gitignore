@@ -81,5 +81,10 @@ audit/evidence/*.log
 !audit/evidence/gate-m199c.log
 !audit/evidence/gate-m199d.log
 
+# M201: every part of a status row is whole, and the first screen says what to do.
+# The shipping battery, run against the commit's contents with the docs already
+# final: 1577 tests / 63 binaries, 7 of 7 gates.
+!audit/evidence/gate-m201.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

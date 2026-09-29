@@ -384,14 +384,37 @@ pub fn md_to_lines_in(text: &str, theme: &Theme, terminal_width: usize) -> Vec<L
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::{ColorMode, UNICODE};
 
     fn plain(line: &Line<'_>) -> String {
         line.spans.iter().map(|s| s.content.to_string()).collect()
     }
 
+    /// A theme with every role filled in, chosen by the test rather than by the
+    /// room it is run in.
+    ///
+    /// `Theme::detect()` reads `NO_COLOR`, `COLORTERM` and `EPSILON_ASCII` from
+    /// whatever environment the runner happens to have. That is right for the
+    /// product and wrong for a test, and the cost was not hypothetical: every
+    /// test in this module used `detect()`, and `a_table_becomes_columns` asserts
+    /// that the header row is *visibly distinct* from the body. With `NO_COLOR`
+    /// set — which this repository's own machine sets — every role collapses to
+    /// `Style::new()`, the two styles are equal, and the test fails for a reason
+    /// that has nothing to do with the code under test. A test whose verdict
+    /// depends on an environment variable is a test that lies on half the
+    /// machines that run it.
+    ///
+    /// `app/golden.rs` reached the same conclusion independently and says why in
+    /// its own header; this is that decision applied to the module that needed it
+    /// more, because it is the one that compares *two* styles for difference
+    /// rather than comparing one against the theme that produced it.
+    fn theme() -> Theme {
+        Theme::new(ColorMode::Truecolor, UNICODE)
+    }
+
     #[test]
     fn paragraphs_become_single_plain_rows() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines("hello world", &theme);
         assert_eq!(lines.len(), 1);
         assert_eq!(plain(&lines[0]), "hello world");
@@ -399,7 +422,7 @@ mod tests {
 
     #[test]
     fn strong_emphasis_code_get_distinct_styles() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines("**bold** and `code` end", &theme);
         assert_eq!(lines.len(), 1);
         let l = &lines[0];
@@ -412,7 +435,7 @@ mod tests {
 
     #[test]
     fn headings_use_accent_bold() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines("# Title\n\nbody", &theme);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].spans[0].style, theme.title());
@@ -422,7 +445,7 @@ mod tests {
 
     #[test]
     fn fenced_blocks_render_as_gutter_rows() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines("```rust\nlet x = 1;\n```", &theme);
         assert!(lines[0].spans[0].content.contains("rust"));
         assert_eq!(lines[1].spans[0].content.to_string(), "│ let x = 1;");
@@ -436,7 +459,7 @@ mod tests {
 
     #[test]
     fn lists_get_bullets_and_nested_indent() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines("- one\n- two\n  - nested", &theme);
         let bullets: Vec<String> = lines.iter().map(|l| plain(l)).collect();
         assert!(bullets[0].starts_with("  • "), "{bullets:?}");
@@ -453,7 +476,7 @@ mod tests {
     /// paragraph and the pipes were the only clue it had been a table.
     #[test]
     fn a_table_becomes_columns() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines_in(
             "| name | role |\n|------|------|\n| ada | author |\n| alan | pioneer |",
             &theme,
@@ -477,7 +500,7 @@ mod tests {
     /// Every rendered row is the same width, so the columns line up.
     #[test]
     fn table_rows_are_the_same_width() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines_in(
             "| short | a much longer header |\n|---|---|\n| x | y |\n| longer value | z |",
             &theme,
@@ -503,7 +526,7 @@ mod tests {
     /// than one-character columns. This is pi's fallback (`markdown.ts:855-865`).
     #[test]
     fn a_table_too_narrow_falls_back_to_readable_rows() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines_in(
             "| a | b | c | d | e |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |",
             &theme,
@@ -523,7 +546,7 @@ mod tests {
     /// A task list renders a checkbox, not a literal `[ ]` after a bullet.
     #[test]
     fn a_task_list_renders_a_checkbox() {
-        let theme = Theme::detect();
+        let theme = theme();
         let text = all(&md_to_lines_in("- [x] done\n- [ ] todo", &theme, 80));
         assert!(text.contains("[x]") && text.contains("[ ]"), "{text}");
         assert!(
@@ -537,7 +560,7 @@ mod tests {
     /// source, which is what this test names.
     #[test]
     fn strikethrough_actually_strikes() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines("~~gone~~", &theme);
         let struck = lines
             .iter()
@@ -554,7 +577,7 @@ mod tests {
     /// every earlier test passed.
     #[test]
     fn list_items_are_separate_lines() {
-        let theme = Theme::detect();
+        let theme = theme();
         let text = all(&md_to_lines("- alpha\n- beta\n- gamma", &theme));
         assert_eq!(text.lines().count(), 3, "one line per item: {text}");
         for item in ["alpha", "beta", "gamma"] {
@@ -567,7 +590,7 @@ mod tests {
 
     #[test]
     fn latex_math_renders_to_unicode_and_strips_delimiters() {
-        let theme = Theme::detect();
+        let theme = theme();
         let lines = md_to_lines(r"Let $\alpha$ and $$\beta = \gamma$$ end", &theme);
         let joined = lines
             .iter()

@@ -9,6 +9,39 @@ but unverified** (a milestone says so; this audit does not believe it), **Fixed*
 
 ---
 
+# Reconciliation, 2026-09-29 (M201)
+
+Seven of the thirteen rows open at M199 were closed by M201, plus a defect that no row
+named. Every one is the same class — **a screen that is wrong in a way no state-level test
+can see** — and every one was verified by rendering a frame and reading it, not by reading
+the module. Frames: `audit/evidence/frames/m199-baseline/` (before) against
+`audit/evidence/frames/m201/` (after). The milestone doc is
+[`docs/milestones/M201-frame-truth.md`](../docs/milestones/M201-frame-truth.md).
+
+| # | Closed by | Verified by |
+|---|---|---|
+| A1 | `wrap::wrap_line` counted the separator it was about to flush after deciding the word fit, so a row could be one column over budget and the draw path clipped its last cell. | `no_row_is_wider_than_the_width_it_was_given` (widths 1..=len) and `no_row_is_wider_than_the_width_across_styled_spans`; the 60- and 80-column frames regained "then" and the full stop. |
+| A2 | `header::metric_spans` budgets with `layout::room_beside` and drops whole gauges; the model and its `offline` qualifier are pinned by a field on `MetricPart`, not by role. | `a_narrow_terminal_drops_whole_gauges_rather_than_cutting_one`, `a_narrow_terminal_keeps_the_model_and_the_context_gauge` and `an_offline_session_keeps_the_model_and_its_qualifier_when_the_row_narrows`. The frame at 60 reads `idle      ?/1.0M · ↑0 ↓0 · Faux (offline scripted) · offline`. |
+| A3 | `footer::draw` budgets the hints and emits `key action`, `key`, or nothing; the gap is the one `side_by_side` reserves. | `no_footer_row_ever_prints_half_a_hint_or_touches_the_location`, swept at every width 20–120 against the legal renderings. |
+| A4 | The welcome panel stopped printing the model and the context; the header owns them. | `the_welcome_screen_does_not_restate_the_header`, and the frame. |
+| A5 | One left edge, one instruction in a body weight, affordances nothing else states. | `every_welcome_row_shares_one_left_edge`, and the frame. |
+| A6 | The composer draws `glyphs.prompt`, not `glyphs.bullet`. | `the_composer_prompt_is_not_the_notice_bullet`, run against both repertoires. |
+| A13 | The legend moved to `ui::metrics::LEGEND`, beside the formatters; `/help` prints it. | `the_legend_decodes_every_token_the_header_can_print` generates each placeholder from one fixture and asserts the legend quotes it. Its first run failed: the legend said `ctx 42%/200k*` and the header prints `ctx 42%*/200k`. |
+
+**Not a row, found while fixing A2.** The first correction dropped leading fragments and
+kept `R0 W0 CH n/a` while losing `ctx ?/1.0M`; the second pinned the model by
+`MetricRole::Model`, which is `Warn` in an offline session, so the pin stopped matching in
+exactly the row long enough to need it. Both were invisible to every assertion in
+`header.rs` and visible in one rendered frame. That is the M198 rule again, and the reason
+the frames are committed as evidence rather than described.
+
+**Still open, unchanged:** A7 (a killed TUI blocks the workspace for 30 s), A8 (`epsilon-tools`
+depends on `epsilon-lsp`), A9 (no `.gitattributes`), A10 (eight identical `#[allow]`s), A11
+(delegated usage has a reader and no writer), A12 (configuration is read in three crates),
+A14 (no secret scrubbing in the durable store), A15 (the `read`/`@` asymmetry is undeclared).
+
+---
+
 # Reconciliation, 2026-09-29 (M199)
 
 Every row below was **re-derived from the code at `c975d51`**, not inherited. The

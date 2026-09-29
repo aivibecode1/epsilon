@@ -86,12 +86,7 @@ where
     header::draw(f, regions.header, theme, &shell.run, &shell.metrics);
 
     if shell.transcript_empty {
-        let lines = crate::ui::transcript::welcome(
-            theme,
-            regions.transcript.width as usize,
-            &shell.metrics,
-            shell.session_label,
-        );
+        let lines = crate::ui::transcript::welcome(theme, shell.session_label);
         f.render_widget(ratatui::widgets::Paragraph::new(lines), regions.transcript);
     } else {
         draw_transcript(f, regions.transcript);
