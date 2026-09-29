@@ -3486,3 +3486,485 @@ fn folding_hides_the_whole_subtree_not_just_one_level() {
     let branch = rows.iter().find(|r| r.id == "a").expect("a");
     assert!(has_children(branch, &rows), "a branch does");
 }
+
+#[test]
+fn search_requires_every_token_not_either_one() {
+    use super::commands::apply_search;
+    use crate::app::TimelineRow;
+
+    let row = |id: &str, kind: &str, snippet: &str, label: Option<&str>| TimelineRow {
+        seq: 0,
+        id: id.into(),
+        kind: kind.into(),
+        snippet: snippet.into(),
+        depth: 0,
+        on_active: false,
+        parent: None,
+        label: label.map(str::to_string),
+    };
+    let rows = vec![
+        row("a", "user", "refactor the auth module", None),
+        row("b", "user", "refactor the parser", None),
+        row("c", "user", "auth only", None),
+        row("d", "user", "nothing relevant", Some("the good bit")),
+    ];
+
+    let ids = |v: Vec<TimelineRow>| -> Vec<String> { v.into_iter().map(|r| r.id).collect() };
+
+    // ONE token: a plain substring match, so "auth" finds a and c.
+    assert_eq!(
+        ids(apply_search(&rows, "auth")),
+        vec!["a", "c"],
+        "a single token is a plain substring match"
+    );
+    // TWO tokens: BOTH must match. pi uses `searchTokens.every(...)`
+    // (`tree-selector.ts:393`); an OR would return all three of a, b and c and
+    // bury the answer among near-misses.
+    assert_eq!(
+        ids(apply_search(&rows, "refactor auth")),
+        vec!["a"],
+        "two tokens are ANDed, so only the row containing both survives"
+    );
+    // The label is searchable, not just the text.
+    assert_eq!(
+        ids(apply_search(&rows, "good")),
+        vec!["d"],
+        "a label is part of the searchable text"
+    );
+    // Case-insensitive; an empty or blank query is not a filter.
+    assert_eq!(ids(apply_search(&rows, "AUTH")), vec!["a", "c"]);
+    assert_eq!(apply_search(&rows, "   ").len(), rows.len());
+    assert_eq!(apply_search(&rows, "").len(), rows.len());
+}
+
+/// The current leaf is shown however narrowly the view is filtered.
+///
+/// pi keeps the current leaf visible unconditionally
+/// (`tree-selector.ts:342-343`): a view that can hide where you are cannot
+/// answer "where am I?", which is the first question a session picker is asked.
+///
+/// The property under test is the RESCUE. A test that only checked "the matching
+/// row is present" would pass against an implementation with no rescue at all,
+/// because the leaf matches its own text — so each case below uses a query that
+/// does NOT match the leaf.
+#[test]
+fn the_current_leaf_is_shown_however_narrowly_the_view_is() {
+    use super::commands::visible_rows;
+    use crate::app::{TimelineRow, TreeFilter};
+
+    let rows = vec![
+        TimelineRow {
+            seq: 0,
+            id: "leaf".into(),
+            kind: "user".into(),
+            snippet: "the current position".into(),
+            depth: 0,
+            on_active: true,
+            parent: None,
+            label: None,
+        },
+        TimelineRow {
+            seq: 1,
+            id: "other".into(),
+            kind: "user".into(),
+            snippet: "something else".into(),
+            depth: 0,
+            on_active: false,
+            parent: None,
+            label: None,
+        },
+    ];
+
+    let show = |q: &str| -> Vec<String> {
+        visible_rows(
+            &rows,
+            TreeFilter::All,
+            &Default::default(),
+            q,
+            &Default::default(),
+        )
+        .into_iter()
+        .map(|r| r.id)
+        .collect()
+    };
+
+    // A query matching NOTHING still shows the leaf -- and ONLY the leaf, so the
+    // rescue is not a disguised "show everything".
+    assert_eq!(
+        show("zzz-no-such-text"),
+        vec!["leaf"],
+        "the leaf is rescued; the other row stays hidden"
+    );
+    // "else" is in the OTHER row, and the leaf rides along because it is
+    // mandatory -- in the tree's order, not appended at the end, which is what a
+    // naive rescue does.
+    assert_eq!(
+        show("else"),
+        vec!["leaf", "other"],
+        "the leaf rides along with any search, in tree order"
+    );
+}
+
+/// `/skills` shows what each skill IS, not only its name.
+///
+/// M196: this printed `names.join(", ")` — a comma-joined list of names, while the
+/// `Skill` struct already carried a `description` that was simply discarded. The
+/// repository had solved this exact problem for `/templates` one command away
+/// (`/name — description`), which makes the omission obvious in hindsight.
+///
+/// The property is INFORMATION REACHING THE SCREEN. A test that only counted the
+/// rows would pass against the old code, which emitted ONE line for the whole set.
+#[test]
+fn the_skills_listing_carries_a_description_per_skill() {
+    use super::commands::skill_lines;
+    use epsilon_core::skills::Skill;
+
+    let mk = |name: &str, description: &str, manual: bool| Skill {
+        name: name.into(),
+        description: description.into(),
+        dir: std::path::PathBuf::from("/tmp").join(name),
+        disable_model_invocation: manual,
+    };
+    let skills = vec![
+        mk("commit", "write a conventional commit message", false),
+        mk("review", "review a diff for defects", true),
+    ];
+
+    // An empty disable-list first: the point of this half is the DESCRIPTION.
+    let lines = skill_lines(&skills, &[]);
+    assert_eq!(
+        lines.len(),
+        2,
+        "one line per skill, not one line for the whole set: {lines:?}"
+    );
+    assert!(
+        lines[0].contains("commit") && lines[0].contains("conventional commit"),
+        "a name WITHOUT its description is the old behaviour: {lines:?}"
+    );
+    assert!(
+        lines[1].contains("manual only"),
+        "the manual-only flag is stated, as pi's resource panel does: {lines:?}"
+    );
+
+    // And a skill that has been switched OFF says so. A listing that merely
+    // omitted it would be indistinguishable from one that was never installed,
+    // and the user would go looking for a directory that is right there.
+    let off = skill_lines(&skills, &["commit".to_string()]);
+    assert!(
+        off[0].contains("[off]"),
+        "a disabled skill is marked, not hidden: {off:?}"
+    );
+    assert!(
+        !off[1].contains("[off]"),
+        "and only the disabled one is: {off:?}"
+    );
+}
+
+/// A jump lands where pi's would.
+///
+/// Three properties, each of which a naive implementation gets wrong:
+///
+/// 1. **Strictly after (or before) the cursor.** A forward jump to the character
+///    under the cursor must move, or it "finds" the cursor and appears broken.
+/// 2. **Forward is the FIRST match, backward is the LAST.** Searching backward
+///    with a forward scan lands on the nearest one going the wrong way.
+/// 3. **`None` when there is no match**, rather than a clamped position — the
+///    caller reports "not found" instead of silently moving the cursor somewhere
+///    the reader did not ask for.
+#[test]
+fn jump_to_char_lands_where_pi_lands() {
+    use crate::app::{JumpDir, jump_to_char};
+
+    let text = "alpha.beta.gamma";
+    let f = |c, n| jump_to_char(text, c, n, JumpDir::Forward);
+    let b = |c, n| jump_to_char(text, c, n, JumpDir::Backward);
+
+    // The string is 0:a 1:l 2:p 3:h 4:a 5:. 6:b 7:e 8:t 9:a 10:. 11:g 12:a 13:m 14:m 15:a
+    // -- written out because the FIRST version of this test asserted 13 for the
+    // nearest 'a' going back from 15, which is wrong: 12 is nearer. The
+    // implementation was right; the hand-counted expected value was not.
+    assert_eq!(f(0, '.'), Some(5), "the first '.' after the start");
+    assert_eq!(
+        f(5, '.'),
+        Some(10),
+        "and the next one, NOT the one under the cursor"
+    );
+    assert_eq!(
+        f(0, 'a'),
+        Some(4),
+        "the first 'a' strictly after position 0"
+    );
+    assert_eq!(
+        b(15, '.'),
+        Some(10),
+        "backward finds the LAST '.' before the cursor"
+    );
+    assert_eq!(
+        b(15, 'a'),
+        Some(12),
+        // The string is 0:a 1:l 2:p 3:h 4:a 5:. 6:b 7:e 8:t 9:a 10:. 11:g 12:a
+        // 13:m 14:m 15:a -- written out because this assertion was first written
+        // as Some(13) by hand, and 12 is the NEAREST. The implementation was
+        // right; the counted expected value was not. `len()` is 16, not 15.
+        "the NEAREST 'a' going back, not the first in the string"
+    );
+
+    // No match ahead or behind.
+    assert_eq!(f(13, 'z'), None, "nothing after the cursor");
+    assert_eq!(b(0, 'z'), None, "nothing before it");
+    assert_eq!(
+        jump_to_char("", 0, 'a', JumpDir::Forward),
+        None,
+        "empty input"
+    );
+
+    // A cursor past the end must not panic -- the count is a cursor in CHARS.
+    assert_eq!(
+        f(999, 'a'),
+        None,
+        "an out-of-range cursor is a miss, not a panic"
+    );
+}
+
+/// An armed jump consumes EXACTLY ONE character, and then stops being armed.
+///
+/// This is the failure mode that would make the feature unusable: if the mode
+/// survived, the SECOND character the user typed would move the cursor instead of
+/// being typed, and the message would come out mangled with no explanation.
+#[test]
+fn an_armed_jump_consumes_one_character_and_then_ends() {
+    use crate::app::JumpDir;
+
+    let (mut app, _agent, _rx) = test_app();
+    app.input = "alpha.beta.gamma".into();
+    app.cursor_chars = 0;
+
+    app.toggle_jump(JumpDir::Forward);
+    assert_eq!(app.jump_mode, Some(JumpDir::Forward), "armed");
+
+    // The next printable character is a JUMP, not an insert.
+    app.insert_char('.');
+    assert_eq!(app.cursor_chars, 5, "moved to the next '.'");
+    assert_eq!(
+        app.input, "alpha.beta.gamma",
+        "and the text is untouched: {}",
+        app.input
+    );
+    assert_eq!(app.jump_mode, None, "the mode is consumed");
+
+    // The character after that is an ordinary INSERT again.
+    app.insert_char('!');
+    assert_eq!(app.input, "alpha!.beta.gamma", "inserted normally");
+    assert_eq!(app.cursor_chars, 6);
+}
+
+/// A jump that finds nothing says so, and changes neither the text nor the cursor.
+///
+/// The alternative -- inserting the character, or clamping the cursor -- is how
+/// "there was no match" turns into "why did my cursor move".
+#[test]
+fn a_jump_with_no_match_reports_it_and_inserts_nothing() {
+    use crate::app::JumpDir;
+
+    let (mut app, _agent, _rx) = test_app();
+    app.input = "alpha".into();
+    app.cursor_chars = 5;
+
+    app.toggle_jump(JumpDir::Forward);
+    app.insert_char('z');
+    assert_eq!(app.input, "alpha", "no character was inserted");
+    assert_eq!(app.cursor_chars, 5, "and the cursor did not move");
+    assert_eq!(app.jump_mode, None, "the mode is still consumed");
+    assert!(
+        app.ui.lines().iter().any(|l| l.text.contains("no 'z'")),
+        "and the reason is on screen"
+    );
+}
+
+/// The backward chord arms BACKWARD, which depends on the arms being in order.
+///
+/// M196: written the other way round, `Ctrl+]` was matched first, and its guard is
+/// also satisfied by `Ctrl+Alt+]` — so backward was **unreachable** and the key
+/// silently did the other thing. A comment about ordering is a promise; this is a
+/// check, and it fails the moment the arms are swapped.
+///
+/// Driven through `handle_key` rather than by reading the file, because the
+/// property is about which arm the runtime reaches.
+#[test]
+fn the_backward_jump_chord_arms_backward_not_forward() {
+    let (mut app, agent, _rx) = test_app();
+
+    // Ctrl+Alt+] -- the backward chord.
+    let mut k = key(KeyCode::Char(']'));
+    k.modifiers = KeyModifiers::CONTROL | KeyModifiers::ALT;
+    handle_key(&mut app, &agent, k);
+    assert_eq!(
+        app.jump_mode,
+        Some(crate::app::JumpDir::Backward),
+        "ctrl+alt+] arms BACKWARD"
+    );
+
+    // Ctrl+] -- the forward chord, which must not be shadowed by the above.
+    app.jump_mode = None;
+    let mut k = key(KeyCode::Char(']'));
+    k.modifiers = KeyModifiers::CONTROL;
+    handle_key(&mut app, &agent, k);
+    assert_eq!(
+        app.jump_mode,
+        Some(crate::app::JumpDir::Forward),
+        "ctrl+] still arms FORWARD"
+    );
+}
+
+/// The `/tree` panel DRAWS what the state says: the filter, the search field, and
+/// the two different fold glyphs.
+///
+/// **This exists because every other test in this file asserts on state, and
+/// "what nothing exercises" is a section of the milestone log rather than a
+/// feeling.** A panel that renders the wrong rows, omits the search field, or
+/// draws the same glyph for collapsed and expanded would pass every other test
+/// here. Rendering is the only way to see those.
+#[test]
+fn the_tree_panel_draws_its_filter_search_field_and_fold_glyphs() {
+    use crate::app::{TimelineRow, TreeFilter};
+
+    let (mut app, _agent, _rx) = test_app();
+    app.tree_filter = TreeFilter::UserOnly;
+    app.timeline_open = true;
+    app.tree_query = "refactor".into();
+    app.tree_searching = true;
+    let parent = TimelineRow {
+        seq: 0,
+        id: "a".into(),
+        kind: "user".into(),
+        snippet: "the parent".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: Some("the good bit".into()),
+    };
+    // A SECOND branch, not folded, so the frame shows one of each glyph. With
+    // only the folded pair, the expanded glyph is legitimately absent -- the
+    // assertion below is that BOTH appear, so the fixture has to produce both.
+    let child = TimelineRow {
+        seq: 1,
+        id: "b".into(),
+        kind: "user".into(),
+        snippet: "the child".into(),
+        depth: 1,
+        on_active: false,
+        parent: Some("a".into()),
+        label: None,
+    };
+    let open_branch = TimelineRow {
+        seq: 2,
+        id: "c".into(),
+        kind: "user".into(),
+        snippet: "an open branch".into(),
+        depth: 0,
+        on_active: false,
+        parent: None,
+        label: None,
+    };
+    let open_leaf = TimelineRow {
+        seq: 3,
+        id: "d".into(),
+        kind: "user".into(),
+        snippet: "under the open branch".into(),
+        depth: 1,
+        on_active: false,
+        parent: Some("c".into()),
+        label: None,
+    };
+    app.folded.insert("a".into());
+    // `a` is folded, so its child is NOT in the visible list; `c` is not folded,
+    // so its child is. That is the two-state contrast, drawn.
+    app.timeline_all = vec![parent.clone(), child, open_branch.clone(), open_leaf];
+    app.timeline_entries = vec![parent, open_branch];
+    app.timeline_index = 0;
+
+    let rows = render_rows(&mut app, 100, 30);
+    let screen: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        screen.contains("user only"),
+        "the ACTIVE FILTER is named, so a picker that hides rows says why: {screen}"
+    );
+    assert!(
+        screen.contains("/refactor"),
+        "the search text is on screen while it is being typed: {screen}"
+    );
+    assert!(
+        screen.contains("the good bit"),
+        "a label is drawn on its row: {screen}"
+    );
+    assert!(
+        screen.contains('\u{25be}'),
+        "a collapsed row carries the collapsed glyph: {screen}"
+    );
+    assert!(
+        screen.contains('\u{25b8}'),
+        "and an expanded one carries the OTHER glyph -- the same glyph for both \
+         states would make them indistinguishable: {screen}"
+    );
+}
+
+/// The label prompt and the jump-mode notice actually DRAW.
+///
+/// Same reason as the tree-panel test, and the same payoff: the previous gap in
+/// this file was a field rendering in the wrong panel, which no state assertion
+/// could see. Two more surfaces asserted only on state, with the same risk.
+#[test]
+fn the_label_prompt_and_jump_notice_draw() {
+    use crate::app::JumpDir;
+
+    // 1. The label editor: target, caret, and the save/clear hint.
+    let (mut app, _agent, _rx) = test_app();
+    app.label_prompt_open = true;
+    app.label_prompt_target = Some("ent_abc123".into());
+    app.label_prompt_text = "the good bit".into();
+    app.label_prompt_cursor = 12;
+
+    let rows = render_rows(&mut app, 100, 30);
+    let screen: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        screen.contains("ent_abc123"),
+        "the entry being labelled is named, so the user knows what they are naming: {screen}"
+    );
+    assert!(
+        screen.contains("the good bit"),
+        "and the text typed so far is on screen: {screen}"
+    );
+    assert!(
+        screen.contains('\u{2588}'),
+        "with a caret, so the cursor position is visible: {screen}"
+    );
+    assert!(
+        screen.contains("Enter saves"),
+        "and the key that commits it: {screen}"
+    );
+
+    // 2. The jump notice names the DIRECTION, because forward and backward are
+    //    different keys and the difference is the whole feature.
+    let (mut app2, _a2, _r2) = test_app();
+    app2.input = "alpha.beta".into();
+    app2.toggle_jump(JumpDir::Backward);
+    let rows = render_rows(&mut app2, 100, 30);
+    let screen2: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        screen2.contains("jump backward"),
+        "an armed jump says WHICH WAY, and what to do next: {screen2}"
+    );
+}
