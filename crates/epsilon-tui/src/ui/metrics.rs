@@ -23,7 +23,7 @@
 //!   priced from the catalog for the active model. Unknown models report
 //!   [`Metrics::cost`] as `None` rather than a confident `$0`.
 
-use crate::ui::format::{format_cost, format_percent, format_tokens};
+use crate::ui::format::{format_cache_percent, format_cost, format_percent, format_tokens};
 
 /// Context use at which the reader should start planning a compaction.
 pub const CONTEXT_WARN: f64 = 0.70;
@@ -263,7 +263,7 @@ impl Metrics {
             format_tokens(self.cache_write_session)
         );
         match self.cache_hit_rate() {
-            Some(rate) => format!("{volume} CH {}", format_percent(rate * 100.0)),
+            Some(rate) => format!("{volume} CH {}", format_cache_percent(rate)),
             // Two different reasons for no rate, and they must not look alike.
             //
             // A provider that never reports cache traffic gets `n/a`: the number is

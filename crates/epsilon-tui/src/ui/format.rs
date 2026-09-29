@@ -71,6 +71,93 @@ pub fn format_percent(value: f64) -> String {
     format!("{}%", value.round().clamp(0.0, 100.0) as u64)
 }
 
+/// A **cache** hit rate, which must never round a partial hit up to `100%`.
+///
+/// `100%` is a claim about the cache: "every prompt token came from cache".
+/// `format_percent` rounds, so a real 99.6% — a warm long session, sitting
+/// there routinely — printed as `CH 100%`, which says something materially
+/// different and is not true. That is the failure this repository calls "a
+/// status bar starts lying", and it is worse here than an imprecise number
+/// because the imprecision runs in the flattering direction.
+///
+/// The rule, which is the whole of the fix: **a rate that is not exactly 1.0
+/// must not print as 100**. DSH solves the same problem with a precision ladder
+/// that adds decimals until the value is distinguishable
+/// (`token-format.ts:67-97`); the ladder is unnecessary here because the
+/// underlying tokens are already in hand, so the honest rendering is direct.
+///
+/// 0.0 still prints `0%` — that claim is true, and unlike the top of the range
+/// it is not the flattering direction.
+pub fn format_cache_percent(rate: f64) -> String {
+    if rate >= 1.0 {
+        return "100%".to_string();
+    }
+    // One decimal is enough to separate 99.5 from 100, which is the only
+    // boundary that matters. Below 99.5 the whole-percent form is exact enough
+    // and cheaper to read, so the header does not gain noise for nothing.
+    if rate >= 0.995 {
+        format!("{:.1}%", rate * 100.0)
+    } else {
+        format_percent(rate * 100.0)
+    }
+}
+
+#[cfg(test)]
+mod cache_percent_tests {
+    use super::format_cache_percent;
+
+    /// The property, stated once: a rate that is not exactly 1.0 must not
+    /// render as `100%`.
+    ///
+    /// Written against `format_cache_percent` rather than against a literal,
+    /// so the test says what must be true instead of what the output is today.
+    #[test]
+    fn a_partial_hit_never_prints_as_a_full_one() {
+        for (rate, label) in [
+            (0.996, "a warm long session"),
+            (0.999, "nearly everything cached"),
+            (0.999_9, "one miss in a million"),
+            (0.995, "exactly the rounding boundary"),
+        ] {
+            let out = format_cache_percent(rate);
+            assert_ne!(
+                out, "100%",
+                "{label}: a {rate} rate printed as a full cache"
+            );
+        }
+    }
+
+    /// And the converse, which is what makes the first test a claim about
+    /// honesty rather than about timidity: a genuine full hit still says 100%.
+    #[test]
+    fn a_real_full_hit_still_says_one_hundred() {
+        assert_eq!(format_cache_percent(1.0), "100%");
+    }
+
+    /// Zero is a true claim and must not be softened.
+    #[test]
+    fn a_zero_hit_says_zero() {
+        assert_eq!(format_cache_percent(0.0), "0%");
+    }
+
+    /// Ordinary values keep the cheap whole-percent form, so the header does
+    /// not gain a decimal everywhere for one boundary.
+    #[test]
+    fn ordinary_rates_are_unchanged() {
+        assert_eq!(format_cache_percent(0.87), "87%");
+        assert_eq!(format_cache_percent(0.5), "50%");
+        assert_eq!(format_cache_percent(0.124), "12%");
+    }
+
+    /// The boundary is real and in the right place: 99.4 rounds to 99, and
+    /// 99.6 must not round to 100.
+    #[test]
+    fn the_boundary_is_where_the_rounding_is() {
+        assert_eq!(format_cache_percent(0.994), "99%");
+        assert_eq!(format_cache_percent(0.996), "99.6%");
+    }
+}
+
 /// A duration as the shortest honest form.
 pub fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
