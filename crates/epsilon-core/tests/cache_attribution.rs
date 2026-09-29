@@ -25,6 +25,15 @@ struct Wire {
     script: Script,
     /// Model ids seen, in call order — proves the loop hands over the *current* model.
     seen: Arc<Mutex<Vec<String>>>,
+    /// Whether this provider reports cache fields at all.
+    ///
+    /// **A field, not a global.** M196 first tried a `static` flag and the test
+    /// that sets it poisoned the one that reads it, because the tests in this
+    /// binary run concurrently on separate tasks in one process — a static is
+    /// shared state between tests that are supposed to be independent. A field
+    /// on the provider makes the property per-test by construction, which also
+    /// means a test cannot be made to pass or fail by running alone.
+    reports_cache: bool,
 }
 
 struct One(Option<StreamEvent>);
@@ -56,8 +65,12 @@ impl StreamFn for Wire {
             cache_write: write,
             total_tokens: input + 5 + read + write,
             // This file exists to exercise cache attribution, so its provider is
-            // one that reports cache traffic (K1).
-            cache_reported: true,
+            // one that reports cache traffic (K1) -- unless a test is
+            // specifically about a provider that does NOT. M196: this was
+            // hardcoded `true`, so `a_provider_that_never_mentions_caching...`
+            // was never actually testing a silent provider; it was testing a
+            // reporting one with no hits, and passed for the wrong reason.
+            cache_reported: self.reports_cache,
         };
         let message = AssistantMessage {
             id: epsilon_contracts::new_id("msg"),
@@ -83,8 +96,28 @@ fn user(text: &str) -> Message {
     })
 }
 
+/// Set while a test is exercising a provider that reports no cache fields.
+///
+/// A static rather than a parameter on `Wire` because `agent_with` is called by
+/// every test in the file and threading a flag through all of them would make
+/// the common case harder to read for one test's sake. It is read only at
+/// response-construction time, and the tests that use it are `#[tokio::test]`s
+/// running on their own task, so the window is not shared.
 fn agent_with(script: Script, seen: Arc<Mutex<Vec<String>>>) -> Arc<epsilon_core::Agent> {
-    let stream = Arc::new(Wire { script, seen }) as Arc<dyn StreamFn>;
+    agent_with_cache_reporting(script, seen, true)
+}
+
+/// As [`agent_with`], with the provider's cache-reporting behaviour chosen.
+fn agent_with_cache_reporting(
+    script: Script,
+    seen: Arc<Mutex<Vec<String>>>,
+    reports_cache: bool,
+) -> Arc<epsilon_core::Agent> {
+    let stream = Arc::new(Wire {
+        script,
+        seen,
+        reports_cache,
+    }) as Arc<dyn StreamFn>;
     epsilon_core::Agent::new(
         LoopLimits::default(),
         stream,
@@ -183,14 +216,52 @@ async fn a_provider_that_never_mentions_caching_is_not_reported_as_wasteful() {
         (1_000, 0, 0),
         (1_000, 0, 0),
     ]));
+    // M196: this is what makes the test name true. Without it the `Wire`
+    // provider reports cache fields and the test is asserting about a
+    // *reporting* provider with no hits -- a different thing entirely.
+    let agent = agent_with_cache_reporting(script, Arc::new(Mutex::new(Vec::new())), false);
+    for i in 0..3 {
+        agent.run(user(&format!("turn {i}"))).await.expect("run");
+    }
+    let report = agent.cache_report().join("\n");
+    // M196: the wording changed because "reports no cache traffic" claimed the
+    // PROVIDER had said nothing, which is a different claim from "nothing has
+    // hit yet" -- and this test could not tell the two apart. The intent is
+    // unchanged: a provider that says nothing about caching must not be told it
+    // is missing.
+    assert!(
+        report.contains("does not report cache fields"),
+        "silence is not a miss: {report}"
+    );
+    assert!(!report.contains("re-billed"), "{report}");
+}
+
+/// A provider that DOES report caching, and has simply not hit it, must not be
+/// accused of being silent.
+///
+/// This is the case the `moved_cache_traffic` / `provider_reports_cache` split
+/// exists for, and it is the common one: a healthy cache on a session too short
+/// to have hit it. The sibling test above covers the genuinely silent provider;
+/// without this one, the fix could pass by never accusing anyone of anything.
+#[tokio::test]
+async fn a_reporting_provider_with_no_hits_yet_is_not_called_silent() {
+    let script: Script = Arc::new(Mutex::new(vec![
+        (1_000, 0, 0),
+        (1_000, 0, 0),
+        (1_000, 0, 0),
+    ]));
+    // The flag stays FALSE: this provider answers, it just has not been hit.
     let agent = agent_with(script, Arc::new(Mutex::new(Vec::new())));
     for i in 0..3 {
         agent.run(user(&format!("turn {i}"))).await.expect("run");
     }
     let report = agent.cache_report().join("\n");
     assert!(
-        report.contains("reports no cache traffic"),
-        "silence is not a miss: {report}"
+        !report.contains("does not report cache fields"),
+        "a reporting provider is not silent: {report}"
     );
-    assert!(!report.contains("re-billed"), "{report}");
+    assert!(
+        report.contains("no call has hit the cache yet"),
+        "and the report names the true reason: {report}"
+    );
 }

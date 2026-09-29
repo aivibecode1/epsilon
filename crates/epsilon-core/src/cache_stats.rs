@@ -177,12 +177,38 @@ impl CacheStats {
             .count()
     }
 
-    /// Whether any call at all reported cache traffic. When this is false the provider simply does
-    /// not speak about caching, and a hit rate would be a work of fiction.
-    pub fn reports_cache_traffic(&self) -> bool {
+    /// Whether any call at all moved cache traffic.
+    ///
+    /// **This is not the same question as "does the provider report caching?"**,
+    /// and the narrowness of the name is the point. A provider that speaks about
+    /// caching and legitimately hit 0% on every call answers `false` here, and
+    /// treating that as silence about caching is how a working cache gets
+    /// reported as absent. `Usage::cache_reported` carries the authoritative
+    /// answer; this carries the volume.
+    ///
+    /// It was previously named and used as if the two were the same question:
+    /// `report()` printed "this provider reports no cache traffic" whenever this
+    /// was false, which is a false statement about the provider on the most
+    /// common path -- a healthy cache on a session too short to have hit.
+    pub fn moved_cache_traffic(&self) -> bool {
         self.calls
             .iter()
             .any(|c| c.usage.cache_read > 0 || c.usage.cache_write > 0)
+    }
+
+    /// Whether the provider **reports** cache fields at all (K1).
+    ///
+    /// The authoritative answer, set by the decoder that saw the keys and OR-ed
+    /// across calls. `None` while no call has been recorded, because a session
+    /// with no calls has not been told anything yet.
+    pub fn provider_reports_cache(&self) -> Option<bool> {
+        let mut seen = false;
+        let mut reported = false;
+        for c in &self.calls {
+            seen = true;
+            reported |= c.usage.cache_reported;
+        }
+        seen.then_some(reported)
     }
 
     /// Tokens the provider billed at full input rate on calls that were not served from cache.
@@ -243,12 +269,21 @@ impl CacheStats {
             return vec!["cache: no provider call yet".to_string()];
         }
         let mut lines = Vec::new();
-        if !self.reports_cache_traffic() {
-            lines.push(format!(
-                "cache: {} call(s) · this provider reports no cache traffic, so nothing can be \
-                 attributed",
-                self.calls.len()
-            ));
+        if !self.moved_cache_traffic() {
+            // Say WHICH of the two facts is true. "no traffic" and "the provider
+            // does not report caching" are different facts with different
+            // consequences, and collapsing them is what made a healthy short
+            // session look like a provider without caching.
+            let why = match self.provider_reports_cache() {
+                Some(false) => {
+                    "the provider does not report cache fields, so nothing can be attributed"
+                }
+                // Traffic is zero but the provider answers: the cache is there and
+                // has not been hit yet, which is a fact about the session, not a
+                // defect in the harness or the provider.
+                _ => "no call has hit the cache yet, so nothing can be attributed",
+            };
+            lines.push(format!("cache: {} call(s) · {why}", self.calls.len()));
             return lines;
         }
         let served = self.served();
@@ -426,23 +461,104 @@ mod tests {
         );
     }
 
+    /// A provider that DOES report caching, and has simply not hit it yet, must
+    /// not be told it does not report caching.
+    ///
+    /// This is the case the old code got wrong, and the reason the function was
+    /// renamed. `moved_cache_traffic()` is false here -- no call has moved a
+    /// cached token -- and the old `report()` read that as "this provider
+    /// reports no cache traffic", which is a different claim, about a different
+    /// thing, and false. It is the most common path there is: a healthy cache on
+    /// a session too short to have hit it.
+    #[test]
+    fn a_reporting_provider_that_has_not_hit_yet_is_not_called_silent() {
+        let mut stats = CacheStats::new(DEFAULT_CACHE_TTL_MS);
+        for i in 0..3 {
+            stats.observe(CacheRequest {
+                model: "m".into(),
+                prefix_hash: 1,
+                // `cache_reported: true`, zero reads and writes: the provider is
+                // speaking about caching and the answer so far is "no hits".
+                usage: usage(1_000, 0, 0),
+                at_ms: i * 1_000,
+            });
+        }
+        assert!(
+            !stats.moved_cache_traffic(),
+            "precondition: nothing has hit the cache"
+        );
+        assert_eq!(
+            stats.provider_reports_cache(),
+            Some(true),
+            "the provider IS reporting cache fields; that is a different fact from              whether anything has hit"
+        );
+        let report = stats.report().join("\n");
+        assert!(
+            !report.contains("does not report cache fields"),
+            "a reporting provider must not be described as silent:\n{report}"
+        );
+        assert!(
+            report.contains("no call has hit the cache yet"),
+            "the report should name the true reason:\n{report}"
+        );
+    }
+
+    /// And the genuinely silent provider is still described as silent. Without
+    /// this, the fix above could pass by never accusing anyone of anything.
+    #[test]
+    fn a_silent_provider_is_still_called_silent() {
+        let mut stats = CacheStats::new(DEFAULT_CACHE_TTL_MS);
+        for i in 0..3 {
+            let mut u = usage(1_000, 0, 0);
+            // What an unannotated decoder leaves behind.
+            u.cache_reported = false;
+            stats.observe(CacheRequest {
+                model: "m".into(),
+                prefix_hash: 1,
+                usage: u,
+                at_ms: i * 1_000,
+            });
+        }
+        assert!(!stats.moved_cache_traffic());
+        assert_eq!(stats.provider_reports_cache(), Some(false));
+        let report = stats.report().join("\n");
+        assert!(
+            report.contains("does not report cache fields"),
+            "a provider that says nothing about caching must be named as such:\n{report}"
+        );
+    }
+
     #[test]
     fn a_provider_that_says_nothing_about_caching_is_not_accused_of_misses() {
         let mut stats = CacheStats::new(DEFAULT_CACHE_TTL_MS);
         for i in 0..5 {
             // A wire that reports neither reads nor writes: `cache_write` has to be zero too,
             // which the `req` helper does not do (it models a cold call that *did* write).
+            //
+            // M196: the `usage` helper sets `cache_reported: true`, so this test
+            // was NOT exercising a silent provider -- it was exercising a
+            // reporting one with no hits, which is the case the next test now
+            // owns. It passed for the wrong reason. `cache_reported` is set
+            // explicitly so the name of the test is true of the thing it builds.
+            let mut u = usage(1_000, 0, 0);
+            u.cache_reported = false;
             stats.observe(CacheRequest {
                 model: "m".into(),
                 prefix_hash: 1,
-                usage: usage(1_000, 0, 0),
+                usage: u,
                 at_ms: i * 1_000,
             });
         }
-        assert!(!stats.reports_cache_traffic());
+        assert!(!stats.moved_cache_traffic());
         let report = stats.report().join("\n");
         assert!(
-            report.contains("reports no cache traffic"),
+            // M196: the wording changed from "reports no cache traffic" to "does
+            // not report cache fields" because the old phrasing claimed the
+            // provider had said nothing, which is a different claim from
+            // "nothing has hit yet" -- and the test could not tell the two
+            // apart, which is the defect. The intent is unchanged: a provider
+            // that says nothing must be described as saying nothing.
+            report.contains("does not report cache fields"),
             "silence is described as silence: {report}"
         );
         assert!(
