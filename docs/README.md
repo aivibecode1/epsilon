@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M202 — an older session is old, not damaged](milestones/M202-older-sessions.md)
 - [M201 — every part of a status row is whole, and the first screen says what to do](milestones/M201-frame-truth.md)
 - M200 — no log was written; the [timeline row](history.md) is the record.
 - [M199 — a link is not a name: workspace containment follows symlinks](milestones/M199-symlink-containment.md)

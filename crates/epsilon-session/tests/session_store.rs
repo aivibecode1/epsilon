@@ -2057,10 +2057,99 @@ fn the_preserved_unknown_notice_names_the_count_and_the_kinds_in_file_order() {
     );
 }
 
+/// **An older session is old, not damaged.**
+///
+/// `Usage::cache_reported` was added in M194 without a serde default, and `Usage` sits inside
+/// **every** assistant message — so every session file written before that milestone stopped
+/// decoding, and because the store refuses a known entry kind whose body it cannot read,
+/// `epsilon` would not start at all in a workspace that had one. That is not hypothetical: the
+/// *installed* binary refused to start in this repository's own working directory, with
+/// `session line #3: entry type \`message\` is one this build knows, but its body cannot be read`.
+///
+/// The entry below is that line, copied verbatim out of `.epsilon/sessions/tui.jsonl` — a real
+/// artifact written by an earlier build, not a fixture built to match the reader. That is the
+/// point of the test: **every in-tree fixture was built with the current shape, so every test
+/// in this file agreed with the bug.** It was found by driving the shipped binary through
+/// `scripts/console-probe.py`, which is the only check here that runs what a user runs.
+///
+/// The fix is `#[serde(default)]` on the added field, and the rule it establishes is on that
+/// field's doc comment: a field added to a durable session type must be readable when absent.
+#[test]
+fn a_session_written_before_a_field_existed_still_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("older.jsonl");
+    // The header is the real one too, so the file is a session rather than a bare entry.
+    const OLDER: &str = concat!(
+        r#"{"type":"session","version":3,"id":"ses_older","timestamp":"1789981626674","cwd":"C:\\work"}"#,
+        "\n",
+        r#"{"id":"ent_1a0c33811345","seq":1,"parent_id":"ent_1a0c33811322","timestamp_ms":1789981626676,"kind":{"type":"message","message":{"role":"assistant","id":"msg_1a0c33811344","timestamp_ms":1789981626676,"provider":"faux","model_id":"deepseek-flash","content":[{"type":"tool_call","id":"tc_1","name":"bash","arguments":{"command":"echo epsilon-ready"}}],"stop_reason":"tool_use","error_message":null,"usage":{"input":100,"output":50,"cache_read":0,"cache_write":0,"total_tokens":150}},"api_request_sha256":null}}"#,
+        "\n",
+    );
+    std::fs::write(&path, OLDER).unwrap();
+
+    let store = SessionStore::open(&path)
+        .expect("a session written before `cache_reported` existed must still open");
+    let entries = store.read_all().expect("read");
+    assert_eq!(entries.len(), 1, "the entry was read, not skipped");
+
+    // And the missing field takes the value its own semantics give an unannotated
+    // decoder: `false` means "this writer did not report cache traffic", which is the
+    // honest reading and the one the header renders as `CH n/a` rather than as `0%` (K1).
+    let EntryKind::Message { message, .. } = &entries[0].kind else {
+        panic!("expected a message entry");
+    };
+    let epsilon_contracts::message::Message::Assistant(assistant) = message else {
+        panic!("expected an assistant message");
+    };
+    assert!(
+        !assistant.usage.cache_reported,
+        "an absent flag must read as 'not reported', never as a measured zero"
+    );
+    assert_eq!(
+        assistant.usage.total_tokens, 150,
+        "the fields it did carry are kept"
+    );
+}
+
+/// A *pre-existing* field that is missing is still refused, and the refusal names the field.
+///
+/// The other half of the rule above, and the reason `#[serde(default)]` is applied per field
+/// rather than to the whole durable format: evolution adds fields, damage removes them, and the
+/// decoder's own sentence is what tells the two apart. Before M202 the sentence stopped at "its
+/// body cannot be read", which cost real time to diagnose by hand.
+#[test]
+fn a_missing_field_this_build_always_had_is_refused_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("damaged.jsonl");
+    // `output` has been in `Usage` since the first release; its absence is damage.
+    const DAMAGED: &str = concat!(
+        r#"{"type":"session","version":3,"id":"ses_d","timestamp":"1789981626674","cwd":"C:\\work"}"#,
+        "\n",
+        r#"{"id":"ent_d","seq":1,"parent_id":null,"timestamp_ms":0,"kind":{"type":"message","message":{"role":"assistant","id":"msg_d","timestamp_ms":0,"provider":"faux","model_id":"deepseek-flash","content":[],"stop_reason":"end_turn","error_message":null,"usage":{"input":100,"cache_read":0,"cache_write":0,"total_tokens":150}},"api_request_sha256":null}}"#,
+        "\n",
+    );
+    std::fs::write(&path, DAMAGED).unwrap();
+
+    match SessionStore::open(&path) {
+        Err(StoreError::Corrupt { line, diagnosis }) => {
+            assert_eq!(line, 2);
+            let text = diagnosis.explain();
+            assert!(
+                text.contains("output"),
+                "the refusal must name the field the decoder wanted: {text}"
+            );
+            assert!(text.contains("older Epsilon"), "{text}");
+        }
+        Ok(_) => panic!("a missing pre-existing field must not open silently"),
+        Err(e) => panic!("expected a typed refusal, got {e:?}"),
+    }
+}
+
 /// The other half of the rule, and the reason the codec is strict about a known tag: an entry
 /// of a kind this build understands, carrying a body it cannot read, would leave a *silent gap*
 /// in the transcript if it were preserved. That is the failure M108 was written to end, so it
-/// is still refused — with a diagnosis that says "damaged", not "from a newer build".
+/// is still refused — with a diagnosis that names the kind and the cause rather than only the
+/// line.
 #[test]
 fn a_known_kind_with_an_unreadable_body_is_refused_as_damage_not_as_foreign() {
     let dir = tempfile::tempdir().unwrap();
@@ -2077,12 +2166,19 @@ fn a_known_kind_with_an_unreadable_body_is_refused_as_damage_not_as_foreign() {
             assert_eq!(
                 diagnosis,
                 LineDiagnosis::MalformedEntry {
-                    entry_type: "message".to_string()
+                    entry_type: "message".to_string(),
+                    // M202: the decoder's own sentence rides along, because "cannot be
+                    // read" is not something a reader can act on and `missing field
+                    // \`message\`` is.
+                    detail: Some("missing field `message`".to_string()),
                 },
                 "the type is known and the body is not — the actionable difference"
             );
             let text = diagnosis.explain();
-            assert!(text.contains("damaged rather than foreign"), "{text}");
+            assert!(
+                text.contains("missing field `message`"),
+                "the decoder's own sentence is quoted, not summarized: {text}"
+            );
             assert!(text.contains("message"), "{text}");
         }
         Ok(_) => panic!("a known kind with an unreadable body must not open silently"),

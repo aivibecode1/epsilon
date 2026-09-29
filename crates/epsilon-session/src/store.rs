@@ -94,9 +94,17 @@ pub enum LineDiagnosis {
     /// preserved would open the session with a silent gap where a turn should be — the
     /// failure M108 was written to end, and the reason the `kind` codec insists on a readable
     /// body for a known tag.
+    ///
+    /// `detail` is the decoder's own sentence. The first version of this variant carried only
+    /// the tag, which cost real time: the message read "its body cannot be read" and stopped
+    /// there, while the decoder could have said ``missing field `cache_reported` `` — the
+    /// field, the shape, and the fix in four words. A refusal that names a line but not a
+    /// cause is a refusal the reader has to reproduce by hand.
     MalformedEntry {
         /// The `kind.type` string, which this build recognizes.
         entry_type: String,
+        /// The decoder's own message naming the field or the type that did not match.
+        detail: Option<String>,
     },
     /// A second header line, mid-file.
     SecondHeader,
@@ -121,12 +129,26 @@ impl LineDiagnosis {
                  written by a newer Epsilon. Refusing rather than dropping the line, because \
                  skipping it would change the transcript silently"
             ),
-            LineDiagnosis::MalformedEntry { entry_type } => format!(
-                "entry type `{entry_type}` is one this build knows, but its body cannot be read \
-                 — the entry is damaged rather than foreign. Refusing rather than preserving it, \
-                 because an entry nothing can interpret would leave a silent gap in the \
-                 transcript"
-            ),
+            LineDiagnosis::MalformedEntry { entry_type, detail } => {
+                // Two things produce this, and the reader has to be able to tell them
+                // apart, because the actions differ: an **older writer** omitted a field
+                // this build later added (upgrade the reader, or the writer), while a
+                // **damaged** entry has a field of the wrong type or no body at all
+                // (restore from a backup). The decoder's own sentence distinguishes them
+                // — `missing field \`x\`` against `invalid type: …` — so it is quoted
+                // rather than summarized.
+                let cause = match detail {
+                    Some(d) => format!(": {d}"),
+                    None => String::new(),
+                };
+                format!(
+                    "entry type `{entry_type}` is one this build knows, but its body cannot \
+                     be read{cause} — either an older Epsilon wrote it without a field this \
+                     build expects, or the entry is damaged. Refusing rather than preserving \
+                     it, because an entry nothing can interpret would leave a silent gap in \
+                     the transcript"
+                )
+            }
             LineDiagnosis::SecondHeader => "a second header line, mid-file".to_string(),
             LineDiagnosis::UnknownLineShape => {
                 "valid JSON that is not an entry, a header or a legacy entry — a shape this build \
@@ -911,6 +933,11 @@ impl SessionStore {
                     // when the file predates current) or genuine garbage.
                     // Legacy lines are well-formed JSON, so a torn tail is
                     // still detectable: only the LAST line may be legacy.
+                    //
+                    // The error itself is not carried out of here: `SessionLine` is an
+                    // *untagged* enum, so it reads `data did not match any variant`, which
+                    // names nothing. `diagnose_line` re-decodes the same value through the
+                    // typed entry parser to recover the field-level sentence.
                     match parse_entry_lenient(fragment) {
                         Some(Ok(entry)) => {
                             good_end = off + fragment.len() as u64;
@@ -931,7 +958,8 @@ impl SessionStore {
                                 torn_tail = true;
                             } else if first_bad.is_none() {
                                 // The line is unusable — say *why*, so an unknown entry type is
-                                // not reported as damage to a file that is perfectly intact.
+                                // not reported as damage to a file that is perfectly intact, and
+                                // so a body that failed to decode names the field it wanted.
                                 first_bad = Some((*no, diagnose_line(fragment)));
                             }
                         }
@@ -2022,24 +2050,38 @@ struct LegacyLine {
 /// Why this line is unusable, in the terms a reader needs (M75).
 ///
 /// Runs only after every parse path has already failed, so it can afford to look at the shape
-/// rather than be fast.
+/// rather than be fast — and to *re-decode* the line through the typed entry parser, which is
+/// where the useful sentence comes from. The first version passed the caller's error in and got
+/// ``data did not match any variant of untagged enum SessionLine``: `SessionLine` is untagged, so
+/// serde reports the outermost failure and throws away the field-level one. Decoding
+/// [`SessionEntry`] directly from the same value recovers it.
 fn diagnose_line(fragment: &str) -> LineDiagnosis {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(fragment.trim_end()) else {
         return LineDiagnosis::NotJson;
     };
     // An entry's kind is `{"type": "…"}`; anything else is either a header or a legacy shape.
-    if let Some(kind_type) = value
+    // The tag is copied out rather than borrowed, because the decode below consumes the value.
+    let kind_type = value
         .get("kind")
         .and_then(|k| k.get("type"))
         .and_then(|t| t.as_str())
-    {
+        .map(str::to_string);
+    if let Some(kind_type) = kind_type {
         // The list of kinds this build knows decides which of the two sentences the reader
         // gets. Without it, an entry of a kind we understand but could not read was reported
         // as "probably written by a newer Epsilon" — the wrong conclusion, and the one
         // M108's Limits recorded as owed.
-        return if epsilon_contracts::session_entry::KNOWN_ENTRY_KINDS.contains(&kind_type) {
+        return if epsilon_contracts::session_entry::KNOWN_ENTRY_KINDS.contains(&kind_type.as_str())
+        {
+            // The field-level cause, from the one decode that reports it. `None` when the
+            // typed decode unexpectedly succeeds, which would mean the line was refused for
+            // some other reason and the sentence should not pretend to know which.
+            let detail = serde_json::from_value::<SessionEntry>(value)
+                .err()
+                .map(|e| e.to_string());
             LineDiagnosis::MalformedEntry {
-                entry_type: kind_type.to_string(),
+                entry_type: kind_type,
+                detail,
             }
         } else {
             LineDiagnosis::UnknownEntryType {

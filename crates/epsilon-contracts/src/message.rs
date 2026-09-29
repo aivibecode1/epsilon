@@ -146,6 +146,25 @@ pub struct Usage {
     /// This is deliberately a flag on the *call* and not a static per-provider
     /// property. A gateway can route the same model id to two backends that
     /// report differently, and only the response knows which one answered.
+    ///
+    /// # Why this field carries `#[serde(default)]`
+    ///
+    /// It was added in M194, and a session file written before it does not have
+    /// it. `Usage` sits inside **every** assistant message, so without a default
+    /// every session older than M194 failed to decode — and because the store
+    /// refuses a known entry kind whose body it cannot read, `epsilon` would not
+    /// start at all in a workspace that had one. That is not a hypothetical: it
+    /// happened, in this repository's own working directory, and was found by
+    /// driving the installed binary through `scripts/console-probe.py` rather than
+    /// by any test — because every test built its fixtures with the current shape
+    /// and so agreed with the bug.
+    ///
+    /// **The rule this is the first instance of: a field added to a durable
+    /// session type must be readable when it is absent**, and `false` is the value
+    /// that means "this writer did not report it" — which is also the value the
+    /// field's own semantics give an unannotated decoder. A *missing pre-existing*
+    /// field is still a hard error, because that is damage rather than evolution.
+    #[serde(default)]
     pub cache_reported: bool,
 }
 

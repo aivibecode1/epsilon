@@ -1809,12 +1809,18 @@ async fn build_runtime(
     // separately from the tool hooks because the two have different risk profiles, and a
     // caller may want one without the other.
     epsilon_cli::runtime::install_extension_turn_hooks(&agent, ext_hosts.clone());
+    let session_path = workspace.join(session_file);
     let mut store = epsilon_session::SessionStore::open_in_with_progress(
-        workspace.join(session_file),
+        session_path.clone(),
         workspace,
         lease_wait_notice,
     )
-    .map_err(|e| format!("open session store: {e}"))?;
+    // The path is in the message because the refusal is not actionable without it:
+    // `session line #3: …` names a line inside a file the reader has not been told the
+    // name of, and the file that fails is usually the *default* one — chosen by the
+    // harness, not typed by the user. (M202: the installed binary refused to start in
+    // this repository for exactly this reason, and the message did not say which file.)
+    .map_err(|e| format!("open session store {}: {e}", session_path.display()))?;
     if store.migrated() {
         match store.persist_migration() {
             // Name the backup. Converting an older session rewrites it in place, and the one

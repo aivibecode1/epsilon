@@ -5,6 +5,20 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Epsilon opens a session written by an older version again.** `Usage.cache_reported`
+  was added without a serde default, and a usage block sits inside every assistant
+  message — so every session file written before that change failed to decode, and
+  because the store refuses a known entry kind whose body it cannot read, the harness
+  would not start at all in a workspace that had one. The field now defaults to the
+  value its own semantics give an unannotated decoder: "this writer did not report
+  cache traffic", which the header renders as `CH n/a` rather than as `0%` (M202).
+
+- **A refused session says which file, and which field.** The message used to name a
+  line number inside a file the reader was never told the name of, and to say only that
+  the body "cannot be read". It now names the path, and quotes the decoder — so the
+  cause arrives as `missing field \`cache_reported\`` rather than as a sentence about
+  an untagged enum (M202).
+
 - **A message no longer loses a character when the terminal wraps it.** The wrapper
   decided a word fit before counting the space in front of it, so a row could be
   emitted one column wider than the width it was asked for and the renderer clipped

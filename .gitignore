@@ -86,5 +86,8 @@ audit/evidence/*.log
 # final: 1577 tests / 63 binaries, 7 of 7 gates.
 !audit/evidence/gate-m201.log
 
+# M202: an older session is old, not damaged. 1579 tests / 63 binaries, 7 of 7 gates.
+!audit/evidence/gate-m202.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

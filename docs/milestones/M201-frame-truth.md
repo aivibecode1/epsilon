@@ -132,8 +132,8 @@ documentation already final. Seven gates, exit 0 each: `check-links` 0 s (428 re
 the log, not read off a previous run's figure. M199 measured 1,568 across the same 63
 binaries, so this slice adds 9.
 
-Evidence: [`audit/evidence/gate-m201.log`](../audit/evidence/gate-m201.log) (the full battery)
-and [`gate-m201.md`](../audit/evidence/gate-m201.md) (the summary and what it does not cover);
+Evidence: [`audit/evidence/gate-m201.log`](../../audit/evidence/gate-m201.log) (the full battery)
+and [`gate-m201.md`](../../audit/evidence/gate-m201.md) (the summary and what it does not cover);
 frames before and after under `audit/evidence/frames/m199-baseline/` and
 `audit/evidence/frames/m201/`.
 

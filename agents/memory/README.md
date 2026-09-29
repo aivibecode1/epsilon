@@ -30,9 +30,10 @@ next.
 | [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
 | [`06-m197-baseline-and-ext-hang.md`](06-m197-baseline-and-ext-hang.md) | **M197: the tree was left RED, and a dead extension waited the full invoke budget** | live |
 | [`07-m198-frame-path.md`](07-m198-frame-path.md) | **M198: render a frame and look at it — the transcript printed every marker twice** | live |
-| [`frame-reading-pass.md`](frame-reading-pass.md) | **TUI findings from reading rendered frames at 3 widths — a word is mutilated at 60 columns** | live — heads the TUI work |
+| [`frame-reading-pass.md`](frame-reading-pass.md) | **CLOSED by M201 — the findings, and the method that found them** | closed — the recipe still applies |
 | [`m199-containment.md`](m199-containment.md) | **M199 landed: symlink containment, the bypass it nearly shipped, and the open items it left** | live |
-| [`ranked-sweep-2026-09-29.md`](ranked-sweep-2026-09-29.md) | **The t2 ranked sweep: which of the 23 ledger rows are really open, and the new order** | live — heads the implementation queue |
+| [`ranked-sweep-2026-09-29.md`](ranked-sweep-2026-09-29.md) | **The t2 ranked sweep, what M201 closed, and the order the rest goes in** | live — heads the implementation queue |
+| [`08-goal-command.md`](08-goal-command.md) | **`/goal`: the reference's contract, the decisions to make, and the first RED** | live — the next capability slice |
 
 ## Superseded notes (kept for history, not for direction)
 
