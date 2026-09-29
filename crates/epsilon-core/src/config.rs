@@ -220,6 +220,116 @@ pub fn toggle_favorite_model_in(config_dir: &Path, model_id: &str) -> Result<boo
     Ok(existed)
 }
 
+/// Skills the user has switched off, from `config.toml`.
+///
+/// **A disable-list, not an enable-list.** An enable-list would mean a skill
+/// silently stops working the day a config file gains a `[skills]` section it
+/// did not have before, and a user who has never opened a settings screen would
+/// come back to a missing tool. A disable-list is inert until someone writes to
+/// it, which is the same reasoning behind "off by default" everywhere else in
+/// this repository.
+pub fn load_disabled_skills_in(config_dir: &Path) -> Vec<String> {
+    let path = config_dir.join("config.toml");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+        return Vec::new();
+    };
+    table
+        .get("skills")
+        .and_then(|s| s.get("disabled"))
+        .and_then(|d| d.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// [`load_disabled_skills_in`] against the resolved global directory.
+pub fn load_disabled_skills() -> Vec<String> {
+    global_dir()
+        .map(|d| load_disabled_skills_in(&d))
+        .unwrap_or_default()
+}
+
+/// Whether a skill is switched off.
+pub fn skill_is_disabled(name: &str) -> bool {
+    load_disabled_skills().iter().any(|n| n == name)
+}
+
+/// Switch a skill on or off, and report the NEW state.
+///
+/// Mirrors [`toggle_favorite_model_in`] exactly -- read the file into a table,
+/// change ONE key, write it back -- because that function is the established
+/// idiom here and a second way of editing `config.toml` is a second way of losing
+/// a setting.
+///
+/// Only this key is touched. Everything else in the file, including keys this
+/// build does not understand, round-trips unchanged, which is what makes it safe
+/// to write from a TUI at all.
+///
+/// The skill must already exist: disabling a name that nothing provides would
+/// write a setting that silently does nothing, and would then read back as a
+/// disabled skill the user cannot find to re-enable.
+pub fn set_skill_disabled_in(
+    config_dir: &Path,
+    name: &str,
+    disabled: bool,
+) -> Result<bool, String> {
+    if name.trim().is_empty() {
+        return Err("refusing to toggle a skill with an empty name".into());
+    }
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    let mut disabled_list = load_disabled_skills_in(config_dir);
+    // Remove first so the list cannot accumulate duplicates, then push if wanted.
+    disabled_list.retain(|n| n != name);
+    if disabled {
+        disabled_list.push(name.to_string());
+    }
+
+    table
+        .entry("skills")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[skills] exists but is not a table".to_string())?
+        .insert(
+            "disabled".into(),
+            toml::Value::Array(
+                disabled_list
+                    .into_iter()
+                    .map(toml::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(disabled)
+}
+
+/// [`set_skill_disabled_in`] against the resolved global directory.
+/// Returns the NEW state: `true` = now disabled.
+pub fn set_skill_disabled(name: &str, disabled: bool) -> Result<bool, String> {
+    // `global_dir` is an `Option`, and this is the same shape
+    // `toggle_favorite_model` uses -- guessing that it was a `Result` and
+    // calling `map_err` on it was one wasted compile.
+    let Some(dir) = global_dir() else {
+        return Err("no global config directory resolved".into());
+    };
+    set_skill_disabled_in(&dir, name, disabled)
+}
+
 /// [`load_favorite_models_in`] against the resolved global directory.
 pub fn load_favorite_models() -> Vec<String> {
     global_dir()
@@ -749,4 +859,126 @@ mod tests {
         let loaded = load_prompt_history_in(dir);
         assert!(loaded.contains(&"has \"quotes\" and\nnewlines".to_string()));
     }
+}
+
+/// Disabling a skill persists, and re-enabling removes it.
+///
+/// The load-bearing half is the ROUND TRIP through the file: an in-memory
+/// list that survives the call but not the write would report success and do
+/// nothing, which is the "reports success while the thing you wanted did not
+/// happen" shape this repo treats as the worst kind of bug.
+#[test]
+fn a_disabled_skill_survives_a_reload_and_can_be_re_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Nothing written yet: nothing is disabled. An enable-list would fail
+    // here by reporting every skill as off.
+    assert!(
+        load_disabled_skills_in(dir.path()).is_empty(),
+        "a config with no [skills] section disables nothing"
+    );
+
+    assert!(set_skill_disabled_in(dir.path(), "commit", true).is_ok());
+    assert_eq!(
+        load_disabled_skills_in(dir.path()),
+        vec!["commit".to_string()],
+        "the disable is in the FILE, not in a map that outlives the call"
+    );
+
+    // Re-enabled: the entry is GONE, not present-and-false. A retained
+    // "commit = false" would read as disabled to the next reader that only
+    // looks for membership.
+    set_skill_disabled_in(dir.path(), "commit", false).unwrap();
+    assert!(
+        load_disabled_skills_in(dir.path()).is_empty(),
+        "re-enabling removes the entry rather than negating it"
+    );
+}
+
+/// Writing one setting must not disturb the others.
+///
+/// A TUI writing `config.toml` is only safe if it round-trips keys it does
+/// not understand — including keys a NEWER build wrote. This is the property
+/// that makes it acceptable to persist from the UI at all, and it is the
+/// thing a hand-rolled writer gets wrong by rebuilding the file from a
+/// struct instead of editing the parsed table.
+#[test]
+fn writing_a_skill_setting_leaves_every_other_key_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "model = \"some-model\"\n\n[picker]\nfavorite = [\"a\", \"b\"]\n\n\
+             [a-key-this-build-knows-nothing-about]\nnested = 42\n",
+    )
+    .unwrap();
+
+    set_skill_disabled_in(dir.path(), "review", true).unwrap();
+
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        after.contains("some-model"),
+        "the model key survived: {after}"
+    );
+    assert!(
+        after.contains("\"a\"") && after.contains("\"b\""),
+        "favorites survived: {after}"
+    );
+    assert!(
+        after.contains("a-key-this-build-knows-nothing-about"),
+        "an UNKNOWN table survived, which is what a future build needs: {after}"
+    );
+    assert!(
+        after.contains("nested = 42"),
+        "nested values survived: {after}"
+    );
+    assert!(
+        after.contains("review"),
+        "and the new key was written: {after}"
+    );
+}
+
+/// Toggling the same skill twice does not leave duplicates behind.
+///
+/// `retain` then `push` exists for exactly this: an append-only list would
+/// grow a duplicate on every press, and the list is shown to a user.
+#[test]
+fn toggling_twice_does_not_duplicate_the_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    set_skill_disabled_in(dir.path(), "commit", true).unwrap();
+    set_skill_disabled_in(dir.path(), "commit", true).unwrap();
+    set_skill_disabled_in(dir.path(), "review", true).unwrap();
+    set_skill_disabled_in(dir.path(), "commit", true).unwrap();
+    // ORDER IS NOT ASSERTED, deliberately: the implementation is `retain`
+    // then `push`, so re-disabling moves a skill to the end. Nothing reads
+    // the order, and an earlier version of this test asserted insertion
+    // order -- which would have "fixed" correct code to satisfy a property
+    // no caller depends on. What matters is that each name appears EXACTLY
+    // ONCE, which is the bug `retain` exists to prevent.
+    let list = load_disabled_skills_in(dir.path());
+    assert_eq!(
+        list.iter().filter(|n| *n == "commit").count(),
+        1,
+        "commit appears once, not once per press: {list:?}"
+    );
+    assert_eq!(
+        list.iter().filter(|n| *n == "review").count(),
+        1,
+        "review appears once: {list:?}"
+    );
+    assert_eq!(list.len(), 2, "and nothing else is in the list: {list:?}");
+}
+
+/// An empty name is refused rather than written.
+///
+/// A blank entry would disable nothing and read back as a disabled skill the
+/// user cannot name to re-enable.
+#[test]
+fn an_empty_skill_name_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(set_skill_disabled_in(dir.path(), "   ", true).is_err());
+    assert!(
+        load_disabled_skills_in(dir.path()).is_empty(),
+        "and nothing was written"
+    );
 }

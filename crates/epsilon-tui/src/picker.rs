@@ -298,6 +298,13 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         description: "list discovered skills",
     },
     SlashItem {
+        // M196: the toggle, and the description says the exact shape because
+        // "toggle a skill" alone does not tell a user whether it takes
+        // `/skill commit off` or `/skill off commit`.
+        value: "/skill ",
+        description: "switch a skill on or off — `/skill <name> on|off`",
+    },
+    SlashItem {
         value: "/search ",
         description: "search this session's history",
     },
@@ -489,6 +496,13 @@ pub enum Command {
     Expand,
     /// List discovered skills.
     Skills,
+    /// `/skill <name> off` / `/skill <name> on` — switch one skill off or on.
+    ///
+    /// A slash command rather than a chord, for the reason `/settings` and
+    /// `/templates` are commands: it needs a NAME, and a name does not fit on a
+    /// key. The name is checked against what is actually discovered, so a typo
+    /// says so rather than writing a setting for a skill that does not exist.
+    Skill(String),
     /// List installed prompt templates with their descriptions and argument hints.
     Templates,
     /// Search the session log (`/search <query>`); empty tail opens with guidance.
@@ -590,6 +604,10 @@ pub const COMMAND_HEADS: &[&str] = &[
     // reverse-drift check compares against the parser.
     "expand",
     "skills",
+    // M196: the toggle half. Listed because the reverse-drift check compares
+    // SLASH_ITEMS against the parser, and a command the palette does not offer
+    // is a command a user has to guess the name of.
+    "skill",
     "templates",
     "search",
     "logout",
@@ -753,6 +771,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         "clear" => Some(Command::Clear),
         "expand" => Some(Command::Expand),
         "skills" => Some(Command::Skills),
+        "skill" => Some(Command::Skill(tail.to_string())),
         "templates" => Some(Command::Templates),
         "search" => Some(Command::Search(tail.to_string())),
         "login" | "auth" | "connect" => {
@@ -1629,4 +1648,39 @@ mod tests {
         assert!(suggest_slash("").is_none());
         assert!(suggest_slash("zzzzz-nope-zzz").is_none());
     }
+}
+
+/// `/skill <name> on|off` parses, and a bare `/skill` does not guess.
+///
+/// M196: a setting with no writer is the repo's own documented defect class
+/// (`EntryKind::Label` had one for most of a milestone). The parse test is
+/// here rather than at the handler because the failure mode being avoided is
+/// SILENT: a `/skill commit` that parsed as "disable" would switch a skill
+/// off because the user forgot a word.
+#[test]
+fn a_skill_toggle_takes_a_name_and_an_explicit_on_or_off() {
+    assert_eq!(
+        parse_command("/skill commit off"),
+        Some(Command::Skill("commit off".to_string())),
+        "the whole tail is carried, so the handler can split it"
+    );
+    assert_eq!(
+        parse_command("/skill commit on"),
+        Some(Command::Skill("commit on".to_string()))
+    );
+    // A bare `/skill` is NOT a toggle. It carries an empty tail, and the
+    // handler prints usage -- it does not default to "off".
+    match parse_command("/skill") {
+        Some(Command::Skill(tail)) => assert!(
+            tail.trim().is_empty(),
+            "a bare /skill carries nothing, so nothing can be assumed: {tail:?}"
+        ),
+        other => panic!("expected a Skill command, got {other:?}"),
+    }
+    // `/skills` (plural, the listing) is a DIFFERENT command and stays one.
+    assert_eq!(
+        parse_command("/skills"),
+        Some(Command::Skills),
+        "the listing is not the toggle"
+    );
 }
