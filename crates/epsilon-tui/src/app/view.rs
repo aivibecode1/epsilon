@@ -367,6 +367,7 @@ impl App {
         self.picker_open
             || self.palette_open
             || self.auth_prompt_open
+            || self.label_prompt_open
             || self.auth_pick_open
             || self.timeline_open
             || self.session_browser.is_some()

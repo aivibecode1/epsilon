@@ -108,6 +108,202 @@ pub(super) fn timeline_kind_tag(e: &epsilon_contracts::SessionEntry) -> &'static
     }
 }
 
+/// Flatten a session forest into picker rows, depth-first.
+///
+/// The order is the forest's own order, which `build_forest_from_entries` already
+/// sorted by timestamp at every level — so a parent always precedes its children
+/// and a branch reads in the order it happened. Re-sorting here would be a
+/// second answer to a question the store has already answered.
+pub(crate) fn flatten_tree(
+    nodes: &[epsilon_contracts::session_entry::SessionTreeNode],
+    depth: usize,
+    active: &std::collections::HashSet<String>,
+    labels: &std::collections::HashMap<String, String>,
+    out: &mut Vec<crate::app::TimelineRow>,
+) {
+    for n in nodes {
+        out.push(crate::app::TimelineRow {
+            seq: n.entry.seq,
+            id: n.entry.id.clone(),
+            kind: timeline_kind_tag(&n.entry).to_string(),
+            snippet: timeline_snip(&n.entry),
+            depth,
+            on_active: active.contains(&n.entry.id),
+            parent: n.entry.parent_id.clone(),
+            label: labels.get(&n.entry.id).cloned(),
+        });
+        flatten_tree(&n.children, depth + 1, active, labels, out);
+    }
+}
+
+/// Apply a filter to the flattened rows, **promoting orphans to depth 0**.
+///
+/// **The subtlety, and the reason this is not a `filter().collect()`.** pi
+/// filters a flat list and then calls `recalculateVisualStructure()` on what
+/// survived (`tree-selector.ts:408`). So when a filter hides a node but keeps
+/// its child, the child's parent is gone: the surviving row is re-parented onto
+/// its nearest visible ancestor and its depth recomputed. A plain filter would
+/// either drop the child (losing an entry the user asked to see) or leave it
+/// indented under a row that is not on screen — a dangling indent that reads as
+/// a rendering bug.
+///
+/// The selection is returned too, so the caller can keep the highlighted entry
+/// selected when it survives and fall back sensibly when it does not.
+pub(crate) fn apply_filter(
+    rows: &[crate::app::TimelineRow],
+    f: crate::app::TreeFilter,
+    labels: &std::collections::HashMap<String, String>,
+) -> Vec<crate::app::TimelineRow> {
+    let visible: std::collections::HashSet<&str> = rows
+        .iter()
+        .filter(|r| match f {
+            crate::app::TreeFilter::LabeledOnly => labels.contains_key(&r.id),
+            _ => passes_filter_entry(r, f),
+        })
+        .map(|r| r.id.as_str())
+        .collect();
+    if visible.is_empty() {
+        return Vec::new();
+    }
+    let by_id: std::collections::HashMap<&str, &crate::app::TimelineRow> =
+        rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    rows.iter()
+        .filter(|r| visible.contains(r.id.as_str()))
+        .map(|r| {
+            let mut row = r.clone();
+            row.depth = visible_depth(r, &visible, &by_id);
+            row
+        })
+        .collect()
+}
+
+/// A surviving row's depth in the **visible** tree.
+///
+/// Walks up the parent chain and counts only the ancestors that are still on
+/// screen. A row whose parent was filtered out therefore becomes shallower --
+/// which is what "recalculate the indent based on the visible tree" means in
+/// pi (`tree-selector.ts:408`), and what stops a row from being indented under
+/// something the reader cannot see.
+///
+/// The walk is bounded by the row count, which is enough even if a hand-edited
+/// file has a parent cycle: a cycle would otherwise loop forever, and the bound
+/// makes the answer "as deep as the chain is" rather than a hang.
+fn visible_depth(
+    row: &crate::app::TimelineRow,
+    visible: &std::collections::HashSet<&str>,
+    by_id: &std::collections::HashMap<&str, &crate::app::TimelineRow>,
+) -> usize {
+    let mut depth = 0usize;
+    let mut cursor = row.parent.as_deref();
+    for _ in 0..by_id.len() {
+        let Some(id) = cursor else { break };
+        if !visible.contains(id) {
+            // The parent is hidden: stop counting, this row is promoted. The
+            // chain is NOT followed past a hidden node, because everything under
+            // a hidden node is itself not on screen -- except this row, which is
+            // here precisely because it passed on its own merits.
+            break;
+        }
+        depth += 1;
+        cursor = by_id.get(id).and_then(|r| r.parent.as_deref());
+    }
+    depth
+}
+
+/// Drop every row whose ancestor is folded shut.
+///
+/// pi does this as a second pass after filtering (`tree-selector.ts:400-407`):
+/// it walks the flat list and marks any row whose `parentId` is folded **or is
+/// itself marked**, which is what makes a fold hide a whole subtree rather than
+/// one level. Reproducing that two-pass shape matters — doing it only one level
+/// deep is the bug this function exists to avoid.
+pub(crate) fn apply_folds(
+    rows: &[crate::app::TimelineRow],
+    folded: &std::collections::HashSet<String>,
+) -> Vec<crate::app::TimelineRow> {
+    if folded.is_empty() {
+        return rows.to_vec();
+    }
+    let mut hidden: std::collections::HashSet<String> = Default::default();
+    for r in rows {
+        // A row is hidden when its parent is folded, or when its parent is
+        // already hidden -- the second clause is what makes this transitive.
+        if let Some(p) = r.parent.as_deref()
+            && (folded.contains(p) || hidden.contains(p))
+        {
+            hidden.insert(r.id.clone());
+        }
+    }
+    rows.iter()
+        .filter(|r| !hidden.contains(&r.id))
+        .cloned()
+        .collect()
+}
+
+/// Does this row have children in the UNFILTERED tree?
+///
+/// pi's `isFoldable` (`tree-selector.ts:1004`) refuses to fold a leaf, because
+/// "fold" on a leaf is a key press that appears to do nothing — the silent no-op
+/// this repo treats as worse than a missing feature.
+pub(crate) fn has_children(row: &crate::app::TimelineRow, all: &[crate::app::TimelineRow]) -> bool {
+    all.iter()
+        .any(|r| r.parent.as_deref() == Some(row.id.as_str()))
+}
+
+/// Does a row's underlying entry pass a filter (everything except LabeledOnly)?
+fn passes_filter_entry(r: &crate::app::TimelineRow, f: crate::app::TreeFilter) -> bool {
+    // The row already resolved kind to a tag; the tag is the same question the
+    // entry answered, and keeping one representation is what stops the two from
+    // disagreeing about what "user" means.
+    match f {
+        crate::app::TreeFilter::UserOnly => r.kind == "user",
+        crate::app::TreeFilter::NoTools => !matches!(
+            r.kind.as_str(),
+            "label" | "model" | "thinking" | "info" | "tool"
+        ),
+        crate::app::TreeFilter::All => true,
+        crate::app::TreeFilter::Default => {
+            !matches!(r.kind.as_str(), "label" | "model" | "thinking" | "info")
+        }
+        crate::app::TreeFilter::LabeledOnly => false,
+    }
+}
+
+/// Read the session's resolved labels, taking the store lock once.
+fn store_labels(agent: &Arc<Agent>) -> Result<std::collections::HashMap<String, String>, String> {
+    let Some(guard) = agent.session_store() else {
+        return Err("no session store attached".to_string());
+    };
+    let st = guard.lock().map_err(|_| "store unavailable".to_string())?;
+    Ok(resolved_labels(&st.read_all().map_err(|e| e.to_string())?))
+}
+
+/// Resolve every entry's label, in file order, last write wins.
+///
+/// Same rule as the wire projection in `rpc_mode.rs` and pi's loader: scan
+/// entries, apply each `Label`, and an empty label deletes. Three readers of the
+/// same rule is one too many, so the derivation is one function each side
+/// calls rather than a third answer to compute.
+fn resolved_labels(
+    entries: &[epsilon_contracts::session_entry::SessionEntry],
+) -> std::collections::HashMap<String, String> {
+    let mut out: std::collections::HashMap<String, String> = Default::default();
+    for e in entries {
+        if let epsilon_contracts::session_entry::EntryKind::Label { target_id, label } = &e.kind {
+            match label {
+                Some(text) => {
+                    out.insert(target_id.clone(), text.clone());
+                }
+                None => {
+                    out.remove(target_id);
+                }
+            }
+        }
+    }
+    out
+}
+
 impl App {
     /// Route a parsed slash command to the executor that owns it.
     ///
@@ -835,6 +1031,8 @@ impl App {
                 self.ui.push_notice(format!("{label}: store unavailable"));
                 return false;
             };
+            // The ACTIVE LANE, read only to mark which rows the session is
+            // currently on. The rows themselves come from `tree()` below.
             match st.branch_entries() {
                 Ok(v) => v,
                 Err(e) => {
@@ -843,15 +1041,62 @@ impl App {
                 }
             }
         };
-        if entries.is_empty() {
+        let active: std::collections::HashSet<String> =
+            entries.iter().map(|e| e.id.clone()).collect();
+        // M196: the whole forest, not just the lane. `branch_entries()` walks
+        // parent links from the current leaf, so a branch the user rewound away
+        // from was never in this list -- which is why `/tree` could not show a
+        // branch at all. `tree()` is the same structure pi's `getTree()` returns
+        // and the RPC path projects, so all three agree.
+        let forest = {
+            let Some(guard) = agent.session_store() else {
+                self.ui
+                    .push_notice(format!("{label}: no session store attached"));
+                return false;
+            };
+            let Ok(st) = guard.lock() else {
+                self.ui.push_notice(format!("{label}: store unavailable"));
+                return false;
+            };
+            match st.tree() {
+                Ok(v) => v,
+                Err(e) => {
+                    self.ui.push_notice(format!("{label} failed: {e}"));
+                    return false;
+                }
+            }
+        };
+        if forest.is_empty() {
             self.ui.push_notice(format!("{label}: session is empty"));
             return false;
         }
-        self.timeline_entries = entries
+        let labels = match store_labels(agent) {
+            Ok(l) => l,
+            Err(e) => {
+                self.ui.push_notice(format!("{label} failed: {e}"));
+                return false;
+            }
+        };
+        let mut all: Vec<crate::app::TimelineRow> = Vec::new();
+        flatten_tree(&forest, 0, &active, &labels, &mut all);
+        // M196: the filter is applied here, once, on the flattened rows -- so the
+        // picker, the key handler and the renderer all see the same filtered
+        // list rather than each applying the rule and hoping they agree.
+        let filtered = apply_filter(&all, self.tree_filter, &labels);
+        let rows = apply_folds(&filtered, &self.folded);
+        if rows.is_empty() {
+            self.ui.push_notice(format!("{label}: session is empty"));
+            return false;
+        }
+        self.timeline_all = all;
+        self.timeline_entries = rows;
+        // Land on the leaf, which is where the conversation is -- not on the last
+        // row of the forest, which after a rewind is a branch the user left.
+        self.timeline_index = self
+            .timeline_entries
             .iter()
-            .map(|e| (e.seq, timeline_kind_tag(e).to_string(), timeline_snip(e)))
-            .collect();
-        self.timeline_index = self.timeline_entries.len().saturating_sub(1);
+            .rposition(|r| r.on_active)
+            .unwrap_or(self.timeline_entries.len() - 1);
         self.timeline_open = true;
         false
     }

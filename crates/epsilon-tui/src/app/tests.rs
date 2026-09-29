@@ -299,7 +299,16 @@ async fn the_approval_refusal_names_the_layouts_real_floor() {
 async fn a_pending_approval_is_drawn_over_the_timeline() {
     let (mut app, agent, _receivers) = test_app();
     app.timeline_open = true;
-    app.timeline_entries = vec![(7, "user".into(), "TIMELINE-ROW-MARKER".into())];
+    app.timeline_entries = vec![crate::app::TimelineRow {
+        seq: 7,
+        id: "e7".into(),
+        kind: "user".into(),
+        snippet: "TIMELINE-ROW-MARKER".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    }];
     let approvals = ChannelApprovalUi::new();
     let response = park_ask(&mut app, &approvals, "over-timeline").await;
 
@@ -2654,13 +2663,13 @@ async fn tree_and_timeline_open_one_picker_and_say_which_one_ran() {
         let kinds: Vec<&str> = app
             .timeline_entries
             .iter()
-            .map(|(_, k, _)| k.as_str())
+            .map(|r| r.kind.as_str())
             .collect();
         assert_eq!(kinds, vec!["user", "user"], "{cmd}: {kinds:?}");
         let snippets: Vec<&str> = app
             .timeline_entries
             .iter()
-            .map(|(_, _, s)| s.as_str())
+            .map(|r| r.snippet.as_str())
             .collect();
         assert_eq!(snippets, vec!["first thing", "second thing"], "{cmd}");
     }
@@ -3148,4 +3157,332 @@ fn the_prompt_template_guide_states_what_does_not_work() {
     ] {
         assert!(doc.contains(claim), "the guide no longer states: {claim}");
     }
+}
+
+/// `/tree` shows a branch the user rewound away from.
+///
+/// M196: the picker read `branch_entries()`, which walks parent links **from
+/// the current leaf**. A branch abandoned by a rewind was therefore not in the
+/// list at all — the row could not be selected because it was never built.
+/// That is the specific capability a tree exists for, and it was missing.
+///
+/// The assertion is that the abandoned row is *present and marked*, not merely
+/// that the list is longer: a test that only counted rows would also pass if
+/// the picker dumped the whole file in file order with no structure.
+#[test]
+fn the_tree_picker_shows_an_abandoned_branch() {
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::SessionStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let (first, abandoned) = {
+        // A plain fn, not a closure: a `FnMut` capturing `&mut store` would hold
+        // that borrow across the `navigate_to` below, which needs the store too.
+        fn push(store: &mut SessionStore, text: &str) -> String {
+            store
+                .append(EntryKind::Message {
+                    message: Message::User(UserMessage {
+                        id: epsilon_contracts::new_id("msg"),
+                        timestamp_ms: 0,
+                        content: vec![UserContent::Text { text: text.into() }],
+                    }),
+                    api_request_sha256: None,
+                })
+                .unwrap()
+                .id
+        }
+        let mut store = SessionStore::open(&path).unwrap();
+        let first = push(&mut store, "first");
+        // A branch the user is about to leave: two messages off the root.
+        let b1 = push(&mut store, "abandoned one");
+        let b2 = push(&mut store, "abandoned two");
+        // Rewind to the root, then go a different way.
+        store.navigate_to(&first).unwrap();
+        push(&mut store, "kept one");
+        (first, vec![b1, b2])
+    };
+
+    let store = SessionStore::open(&path).unwrap();
+    let forest = store.tree().unwrap();
+    let active: std::collections::HashSet<String> = store
+        .branch_entries()
+        .unwrap()
+        .iter()
+        .map(|e| e.id.clone())
+        .collect();
+
+    let mut rows: Vec<crate::app::TimelineRow> = Vec::new();
+    super::commands::flatten_tree(&forest, 0, &active, &Default::default(), &mut rows);
+
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    for b in &abandoned {
+        assert!(
+            ids.contains(&b.as_str()),
+            "a message on the abandoned branch is in the picker: {ids:?}"
+        );
+        // Marked as off-lane, which is how a reader tells it from the
+        // conversation they are actually in.
+        let row = rows.iter().find(|r| &r.id == b).expect("row exists");
+        assert!(
+            !row.on_active,
+            "an abandoned row is not marked as the current lane: {row:?}"
+        );
+    }
+    // The live root sits at depth 0 and the abandoned branch hangs below it, so
+    // nesting is visible. A flat dump in file order would put every row at
+    // depth 0 -- which is exactly what the old `branch_entries()` picker did.
+    let root = rows
+        .iter()
+        .find(|r| r.id == first)
+        .expect("the root is a row");
+    assert_eq!(root.depth, 0, "the root is at depth 0: {root:?}");
+    assert!(
+        abandoned
+            .iter()
+            .all(|b| rows.iter().find(|r| &r.id == b).expect("row").depth > 0),
+        "the abandoned branch is nested under the root: {rows:?}"
+    );
+}
+
+#[test]
+fn the_label_editor_writes_through_the_store_and_clears_on_empty() {
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::SessionStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let backing = std::sync::Arc::new(std::sync::Mutex::new(
+        SessionStore::open(dir.path().join("s.jsonl")).unwrap(),
+    ));
+    let (mut app, agent, _receivers) = test_app();
+    agent.attach_session_store(std::sync::Arc::clone(&backing));
+    let target = {
+        let mut store = backing.lock().unwrap();
+        store
+            .append(EntryKind::Message {
+                message: Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    content: vec![UserContent::Text {
+                        text: "bookmark me".into(),
+                    }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap()
+            .id
+    };
+
+    // Open the editor the way the `l` key does.
+    app.timeline_open = true;
+    app.timeline_entries = vec![crate::app::TimelineRow {
+        seq: 1,
+        id: target.clone(),
+        kind: "user".into(),
+        snippet: "bookmark me".into(),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    }];
+    app.timeline_index = 0;
+    handle_key(
+        &mut app,
+        &agent,
+        key_mod(KeyModifiers::SHIFT, KeyCode::Char('L')),
+    );
+
+    assert!(
+        app.label_prompt_open,
+        "Shift+L opens the label editor on the selected row (pi's chord)"
+    );
+    assert_eq!(
+        app.label_prompt_target.as_deref(),
+        Some(target.as_str()),
+        "and it targets the row that was selected"
+    );
+
+    // Type, then Enter.
+    for c in "the-good-part".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(!app.label_prompt_open, "Enter closes the editor");
+
+    {
+        let st = backing.lock().unwrap();
+        let labels = st.labels().unwrap();
+        assert_eq!(
+            labels.get(&target).map(|(s, _)| s.as_str()),
+            Some("the-good-part"),
+            "the label reached the file: {labels:?}"
+        );
+    }
+
+    // Empty box clears, so no separate "delete" gesture is needed.
+    app.label_prompt_open = true;
+    app.label_prompt_target = Some(target.clone());
+    app.label_prompt_text.clear();
+    app.label_prompt_cursor = 0;
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    {
+        let st = backing.lock().unwrap();
+        assert!(
+            st.labels().unwrap().is_empty(),
+            "an empty box clears the label rather than writing a blank one"
+        );
+    }
+}
+
+#[test]
+fn a_filter_hides_entries_and_promotes_the_ones_left() {
+    use super::commands::apply_filter;
+    use crate::app::{TimelineRow, TreeFilter};
+
+    let row = |id: &str, parent: Option<&str>, depth: usize, kind: &str| TimelineRow {
+        seq: 0,
+        id: id.into(),
+        kind: kind.into(),
+        snippet: String::new(),
+        depth,
+        on_active: true,
+        parent: parent.map(str::to_string),
+        label: None,
+    };
+    // root -> [user, tool] -> [user]   with a label entry hanging off the root
+    let rows = vec![
+        row("root", None, 0, "user"),
+        row("tool", Some("root"), 1, "tool"),
+        row("child", Some("tool"), 2, "user"),
+        row("lbl", Some("root"), 1, "label"),
+    ];
+
+    // "user only" drops the tool result and the label, and the child that hung
+    // off the dropped tool row is PROMOTED rather than dropped or left dangling.
+    let only_user = apply_filter(&rows, TreeFilter::UserOnly, &Default::default());
+    let ids: Vec<&str> = only_user.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec!["root", "child"], "only user messages: {ids:?}");
+    let child = only_user
+        .iter()
+        .find(|r| r.id == "child")
+        .expect("child survives");
+    // Depth 0, not 1: its parent ("tool") is gone from the view, so the row is
+    // PROMOTED to be a root. Leaving it at depth 1 would indent it under a row
+    // the reader cannot see, which looks like a rendering bug.
+    assert_eq!(
+        child.depth, 0,
+        "a row whose parent was filtered out is promoted to a root: {child:?}"
+    );
+
+    // "no tools" keeps the tool's CHILD but not the tool result itself.
+    let no_tools = apply_filter(&rows, TreeFilter::NoTools, &Default::default());
+    let ids: Vec<&str> = no_tools.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(&"child"),
+        "the child is not a tool result: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"tool"),
+        "the tool result itself is gone: {ids:?}"
+    );
+
+    // "labelled only" needs the labels map, and finds nothing when there are none.
+    assert!(apply_filter(&rows, TreeFilter::LabeledOnly, &Default::default()).is_empty());
+    let mut labels = std::collections::HashMap::new();
+    labels.insert("child".to_string(), "the good bit".to_string());
+    let labelled = apply_filter(&rows, TreeFilter::LabeledOnly, &labels);
+    assert_eq!(labelled.len(), 1);
+    assert_eq!(labelled[0].id, "child");
+
+    // "all" is everything -- and unlike the default, it keeps the bookkeeping.
+    let all = apply_filter(&rows, TreeFilter::All, &Default::default());
+    assert_eq!(all.len(), rows.len(), "all shows everything: {all:?}");
+    let default = apply_filter(&rows, TreeFilter::Default, &Default::default());
+    assert!(
+        !default.iter().any(|r| r.id == "lbl"),
+        "the DEFAULT filter hides bookkeeping entries -- that is the surprising rule: {default:?}"
+    );
+}
+
+#[test]
+fn cycling_the_filter_is_a_round_trip() {
+    use crate::app::TreeFilter;
+    // Five presses return to where it started, in pi's order. A filter that
+    // cycled into a state it could not leave would strand the reader in a view
+    // they cannot widen.
+    let mut f = TreeFilter::default();
+    for _ in 0..5 {
+        f = f.next();
+    }
+    assert_eq!(f, TreeFilter::default());
+    assert_eq!(TreeFilter::default().next(), TreeFilter::UserOnly);
+    assert_eq!(TreeFilter::All.next(), TreeFilter::default());
+    // Every mode names itself, so the title bar is never blank.
+    for m in [
+        TreeFilter::Default,
+        TreeFilter::UserOnly,
+        TreeFilter::NoTools,
+        TreeFilter::LabeledOnly,
+        TreeFilter::All,
+    ] {
+        assert!(!m.label().is_empty(), "{m:?} is named in the title");
+    }
+}
+
+#[test]
+fn folding_hides_the_whole_subtree_not_just_one_level() {
+    use super::commands::{apply_folds, has_children};
+    use crate::app::TimelineRow;
+
+    let row = |id: &str, parent: Option<&str>| TimelineRow {
+        seq: 0,
+        id: id.into(),
+        kind: "user".into(),
+        snippet: String::new(),
+        depth: 0,
+        on_active: true,
+        parent: parent.map(str::to_string),
+        label: None,
+    };
+    // root -> a -> b -> c,  and a sibling of `a` under root.
+    let rows = vec![
+        row("root", None),
+        row("a", Some("root")),
+        row("b", Some("a")),
+        row("c", Some("b")),
+        row("sib", Some("root")),
+    ];
+
+    let mut folded = std::collections::HashSet::new();
+    folded.insert("a".to_string());
+    // Bind the Vec: collecting `&str` straight out of the returned temporary
+    // would borrow a value that is dropped at the end of the statement.
+    let kept = apply_folds(&rows, &folded);
+    let shown: Vec<&str> = kept.iter().map(|r| r.id.as_str()).collect();
+
+    assert_eq!(
+        shown,
+        vec!["root", "a", "sib"],
+        "folding `a` hides b AND c, and leaves the sibling alone: {shown:?}"
+    );
+    // The property a one-level implementation fails: `c` is two levels down.
+    assert!(
+        !shown.contains(&"c"),
+        "the fold is transitive -- c is a grandchild, not a child: {shown:?}"
+    );
+
+    // An empty fold set is a no-op, not an empty view. Getting this wrong would
+    // make a picker that has never been folded show nothing at all.
+    let none: std::collections::HashSet<String> = Default::default();
+    assert_eq!(apply_folds(&rows, &none).len(), rows.len());
+
+    // A leaf is not foldable -- pi refuses, so the key is never a silent no-op.
+    let leaf = rows.iter().find(|r| r.id == "c").expect("c");
+    assert!(!has_children(leaf, &rows), "a leaf has nothing to fold");
+    let branch = rows.iter().find(|r| r.id == "a").expect("a");
+    assert!(has_children(branch, &rows), "a branch does");
 }

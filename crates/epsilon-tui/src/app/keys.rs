@@ -55,6 +55,31 @@ pub(crate) fn handle_auth_paste(app: &mut App, text: String) {
 /// M32: masked API-key prompt key handler — owns every key while open so the
 /// transcript editor does not see them. Esc cancels, Enter saves to
 /// `~/.config/epsilon/auth.json` via `epsilon_llm::auth`.
+/// Re-derive the visible rows from `timeline_all`, keeping the selection on the
+/// same entry when it survives.
+///
+/// **One implementation, because the filter and the two fold chords all change
+/// what is on screen.** Written three times, the three copies would drift in
+/// their selection handling -- and a fold that quietly moves the highlight onto
+/// a different row is the kind of bug that makes a view feel haunted.
+fn refilter(app: &mut App) {
+    let labels: std::collections::HashMap<String, String> = app
+        .timeline_all
+        .iter()
+        .filter_map(|r| r.label.clone().map(|l| (r.id.clone(), l)))
+        .collect();
+    let keep = app
+        .timeline_entries
+        .get(app.timeline_index)
+        .map(|r| r.id.clone());
+    let filtered = super::commands::apply_filter(&app.timeline_all, app.tree_filter, &labels);
+    app.timeline_entries = super::commands::apply_folds(&filtered, &app.folded);
+    app.timeline_index = keep
+        .and_then(|id| app.timeline_entries.iter().position(|r| r.id == id))
+        .unwrap_or(0)
+        .min(app.timeline_entries.len().saturating_sub(1));
+}
+
 pub(crate) fn begin_auth_key_prompt(app: &mut App, provider: String) {
     app.auth_prompt_open = true;
     app.auth_provider = provider.clone();
@@ -486,6 +511,91 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     }
 
     // Plan 009: timeline picker — Enter navigates, Esc dismisses, arrows move.
+    // The label editor owns the keyboard before the picker does: it is a text
+    // field, so every printable key is content rather than a command.
+    if app.label_prompt_open {
+        match key.code {
+            KeyCode::Esc => {
+                app.label_prompt_open = false;
+                app.label_prompt_target = None;
+                app.label_prompt_text.clear();
+            }
+            KeyCode::Enter => {
+                let target = app.label_prompt_target.take();
+                let text = std::mem::take(&mut app.label_prompt_text);
+                app.label_prompt_open = false;
+                let Some(id) = target else { return false };
+                let Some(store) = agent.session_store() else {
+                    return false;
+                };
+                // An empty box CLEARS rather than writing a blank label, which is
+                // pi's rule (`if (entry.label) ... else delete`) and is also what
+                // `set_label` normalises. So the editor can clear a label without
+                // needing a separate "delete" gesture.
+                let label = if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(text.as_str())
+                };
+                // **The store lock is scoped to the write and released before the
+                // re-projection.** M196 held it across `reproject_current_branch`,
+                // which locks the same store again -- a self-deadlock that hung
+                // the test for 60s rather than failing, which is worse. If the
+                // write and the read of the result ever need to be one critical
+                // section, the answer is a store method that does both, not a
+                // longer-held lock.
+                let written = {
+                    let Ok(mut st) = store.lock() else {
+                        return false;
+                    };
+                    st.set_label(&id, label)
+                };
+                match written {
+                    Ok(_) => {
+                        let what = label.unwrap_or("label cleared");
+                        // M196: the `Label` entry is appended to the current lane,
+                        // so the leaf has just moved (pi does the same --
+                        // `session-manager.ts:1061`). Without this re-projection
+                        // the transcript on screen would describe a session the
+                        // store no longer holds: the "the view no longer matches
+                        // the session" state the timeline handler already names.
+                        app.ui.clear_lines();
+                        match agent.reproject_current_branch() {
+                            Ok(n) => {
+                                let messages = agent.history();
+                                app.ui.hydrate_from_history(&messages);
+                                app.ui
+                                    .push_notice(format!("{what} · {n} messages on this branch"));
+                            }
+                            Err(why) => app.ui.push_notice(format!(
+                                "{what}, but the transcript could not be re-read ({why})"
+                            )),
+                        }
+                    }
+                    Err(e) => app.ui.push_notice(format!("could not set label: {e}")),
+                }
+            }
+            KeyCode::Backspace => {
+                if app.label_prompt_cursor > 0 {
+                    let at = app.label_prompt_cursor - 1;
+                    app.label_prompt_text.remove(at);
+                    app.label_prompt_cursor = at;
+                }
+            }
+            KeyCode::Left => app.label_prompt_cursor = app.label_prompt_cursor.saturating_sub(1),
+            KeyCode::Right => {
+                app.label_prompt_cursor =
+                    (app.label_prompt_cursor + 1).min(app.label_prompt_text.chars().count());
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.label_prompt_text.insert(app.label_prompt_cursor, c);
+                app.label_prompt_cursor += 1;
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     if app.timeline_open {
         match key.code {
             KeyCode::Esc => {
@@ -494,19 +604,18 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 app.timeline_entries.clear();
             }
             KeyCode::Enter => {
-                if let Some((seq, _, _)) = app.timeline_entries.get(app.timeline_index).cloned() {
+                if let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() {
                     let Some(store) = agent.session_store() else {
                         return false;
                     };
+                    // Navigate by the row's own id. M196: this used to look the
+                    // seq up inside `branch_entries()` and navigate to whatever it
+                    // found there -- which is the *active lane*, so selecting a row
+                    // on an abandoned branch found nothing and silently did
+                    // nothing. The row already carries the id the tree gave it, so
+                    // the lookup was both redundant and the bug.
                     let jumped = if let Ok(mut st) = store.lock() {
-                        let id = st.branch_entries().ok().and_then(|entries| {
-                            entries.into_iter().find(|e| e.seq == seq).map(|e| e.id)
-                        });
-                        if let Some(id) = id {
-                            st.navigate_to(&id).is_ok()
-                        } else {
-                            false
-                        }
+                        st.navigate_to(&row.id).is_ok()
                     } else {
                         false
                     };
@@ -520,15 +629,17 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                                 let messages = agent.history();
                                 app.ui.hydrate_from_history(&messages);
                                 app.ui.push_notice(format!(
-                                    "jumped to #{seq} · {n} messages on this branch"
+                                    "jumped to #{} · {n} messages on this branch",
+                                    row.seq
                                 ));
                             }
                             // The leaf already moved, so a failed re-projection leaves
                             // the store and the screen disagreeing. Say exactly that,
                             // rather than showing a transcript that is not the session.
                             Err(why) => app.ui.push_notice(format!(
-                                "jumped to #{seq}, but the transcript could not be re-read \
-                                 ({why}) — the view below no longer matches the session"
+                                "jumped to #{}, but the transcript could not be re-read \
+                                 ({why}) — the view below no longer matches the session",
+                                row.seq
                             )),
                         }
                         // The branch is NOT listed here any more.
@@ -549,6 +660,35 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     app.timeline_open = false;
                     app.timeline_index = 0;
                     app.timeline_entries.clear();
+                    app.timeline_all.clear();
+                }
+            }
+            // M196: cycle the filter. Re-derived from `timeline_all`, never from
+            // the already-filtered list, so `f` `f` returns to where it started
+            // instead of narrowing twice.
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                app.tree_filter = app.tree_filter.next();
+                refilter(app);
+            }
+            // M196: label the selected row. pi binds this in its tree selector
+            // (`updateNodeLabel`); the store half (`SessionStore::set_label`)
+            // existed and was tested, with no TUI half at all -- the same
+            // "faithful port, no production caller" shape.
+            // pi binds this to `shift+l` (`keybindings.ts:159`), NOT to a bare
+            // `l` -- a bare letter would be a plausible "navigate left" chord the
+            // day someone adds one. Matching the reference keeps the muscle
+            // memory and leaves `l` free.
+            KeyCode::Char('L') => {
+                if let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() {
+                    // Start from the label already on the row, so re-labelling is
+                    // an edit rather than a retype. pi seeds the editor the same
+                    // way (`tree-selector.ts:1287`, `currentLabel`).
+                    let existing: String = row.label.clone().unwrap_or_default();
+                    app.label_prompt_cursor = existing.chars().count();
+                    app.label_prompt_text = existing;
+                    app.label_prompt_target = Some(row.id);
+                    app.label_prompt_open = true;
+                    app.timeline_open = false;
                 }
             }
             KeyCode::Up => {
@@ -562,6 +702,48 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 let total = app.timeline_entries.len();
                 if total > 0 {
                     app.timeline_index = (app.timeline_index + 1).min(total - 1);
+                }
+            }
+            // M196: fold/unfold, on pi's chords (`keybindings.ts:150-157`:
+            // Ctrl+Left folds-or-up, Ctrl+Right unfolds-or-down).
+            //
+            // The "or" is the whole behaviour: on a foldable row the chord
+            // folds, and on a leaf it moves the cursor instead. That is why a
+            // fold on a leaf is not a silent no-op -- the key still does the
+            // other thing pi says it does.
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let foldable = app
+                    .timeline_entries
+                    .get(app.timeline_index)
+                    .cloned()
+                    .filter(|r| super::commands::has_children(r, &app.timeline_all));
+                match foldable {
+                    Some(r) => {
+                        app.folded.insert(r.id);
+                        refilter(app);
+                    }
+                    None => {
+                        app.timeline_index = app.timeline_index.saturating_sub(1);
+                    }
+                }
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let folded_row = app
+                    .timeline_entries
+                    .get(app.timeline_index)
+                    .cloned()
+                    .filter(|r| app.folded.contains(&r.id));
+                match folded_row {
+                    Some(r) => {
+                        app.folded.remove(&r.id);
+                        refilter(app);
+                    }
+                    None => {
+                        let total = app.timeline_entries.len();
+                        if total > 0 {
+                            app.timeline_index = (app.timeline_index + 1).min(total - 1);
+                        }
+                    }
                 }
             }
             _ => {}

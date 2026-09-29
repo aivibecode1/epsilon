@@ -263,7 +263,19 @@ pub(crate) struct App {
     /// Plan 009: timeline picker overlay (pi timeline parity — not a notice dump).
     timeline_open: bool,
     timeline_index: usize,
-    timeline_entries: Vec<(u64, String, String)>,
+    /// Rows in the `/tree` + `/timeline` picker, in display order.
+    ///
+    /// M196: this was `(seq, kind, snippet)` built from `branch_entries()` — the
+    /// **active lane only** — so an abandoned branch was invisible no matter what
+    /// the user typed. It is now flattened from `SessionStore::tree()`, so a
+    /// branch the user rewound away from is still on screen, which is the whole
+    /// reason pi has a tree rather than a list.
+    ///
+    /// The extra two fields are what turns a list into a tree:
+    /// - `depth` drives the indent, so nesting is visible.
+    /// - `on_active` marks a row on the lane the session is currently on, so the
+    ///   flat rows are readable as "the path I am on" versus "a branch I left".
+    timeline_entries: Vec<TimelineRow>,
     /// Plan 009: compact spinner — manual compaction in-flight.
     compact_running: bool,
     /// M16c: draft stashed when a dialog opened; restored when it closes.
@@ -274,6 +286,33 @@ pub(crate) struct App {
     /// Masked like opencode's DialogPrompt — rendering shows • per char while
     /// the real key stays in `auth_pending.provider/auth_key`.
     auth_prompt_open: bool,
+    /// M196: inline label editor opened from the `/tree` picker with `l`.
+    ///
+    /// A separate flag rather than a mode enum, because the picker and this
+    /// prompt never coexist: opening the editor leaves the picker closed, so the
+    /// two cannot fight over which one owns the keyboard. The entry being
+    /// labelled is carried here because the picker's selection is gone by then.
+    /// Which entries the picker shows; cycled with `f` (pi's tree filter).
+    tree_filter: TreeFilter,
+    /// Ids whose subtree the picker is hiding — pi's `foldedNodes`
+    /// (`tree-selector.ts:121`).
+    ///
+    /// A set of ids rather than a boolean "hide children": a fold is *per node*,
+    /// so collapsing one deep branch leaves its siblings expanded. That is the
+    /// whole point of folding rather than a "collapse all" toggle.
+    folded: std::collections::HashSet<String>,
+    /// Every row, unfiltered, so changing the filter does not re-read the file.
+    ///
+    /// Filtering the *filtered* list is a bug that looks correct: pressing `f`
+    /// twice narrows twice, and a row the first press removed can never come
+    /// back. Keeping the full set means each press is a fresh decision from the
+    /// same starting point, which is what pi does.
+    timeline_all: Vec<TimelineRow>,
+    label_prompt_open: bool,
+    label_prompt_target: Option<String>,
+    /// The text being typed. `None` while no prompt is open.
+    label_prompt_text: String,
+    label_prompt_cursor: usize,
     auth_provider: String,
     auth_key: String,
     auth_key_cursor: usize,
@@ -1175,8 +1214,8 @@ mod panels;
 // The panel surface, named rather than glob-imported: `draw()` is the only caller, and a list
 // keeps the set of things drawn over the transcript readable in one place.
 use panels::{
-    draw_at_file, draw_auth_picker, draw_auth_prompt, draw_dialog, draw_palette, draw_picker,
-    draw_session_browser, draw_slash_autocomplete, draw_timeline, draw_transcript,
+    draw_at_file, draw_auth_picker, draw_auth_prompt, draw_dialog, draw_label_prompt, draw_palette,
+    draw_picker, draw_session_browser, draw_slash_autocomplete, draw_timeline, draw_transcript,
 };
 
 mod keys;
@@ -1322,6 +1361,7 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
     }
     if app.auth_prompt_open {
         draw_auth_prompt(f, app, f.area());
+        draw_label_prompt(f, app, f.area());
     }
     if app.auth_pick_open {
         draw_auth_picker(f, app, f.area());
@@ -1493,3 +1533,82 @@ mod panic_tests;
 
 #[cfg(test)]
 mod tests;
+
+/// Which entries the `/tree` picker shows — pi's four `FilterMode`s
+/// (`tree-selector.ts:365-385`).
+///
+/// **`Default` is not "everything".** It hides bookkeeping entries (a label, a
+/// model change, a settings record), because a reader looking for "where was
+/// that?" does not want the configuration change that happened in between. That
+/// is the single most surprising rule in pi's filter, and it is the reason the
+/// enum exists rather than a bare `Option<Kind>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum TreeFilter {
+    /// Bookkeeping entries hidden; messages, tools, and compactions shown.
+    #[default]
+    Default,
+    /// Only what the user said.
+    UserOnly,
+    /// The default, minus tool results.
+    NoTools,
+    /// Only entries carrying a label.
+    LabeledOnly,
+    /// Everything, bookkeeping included.
+    All,
+}
+
+impl TreeFilter {
+    /// The label shown in the picker's title bar.
+    pub fn label(self) -> &'static str {
+        match self {
+            TreeFilter::Default => "default",
+            TreeFilter::UserOnly => "user only",
+            TreeFilter::NoTools => "no tools",
+            TreeFilter::LabeledOnly => "labelled only",
+            TreeFilter::All => "all",
+        }
+    }
+
+    /// The next mode, in pi's cycle order (`tree-selector.ts:1067`).
+    pub fn next(self) -> Self {
+        match self {
+            TreeFilter::Default => TreeFilter::UserOnly,
+            TreeFilter::UserOnly => TreeFilter::NoTools,
+            TreeFilter::NoTools => TreeFilter::LabeledOnly,
+            TreeFilter::LabeledOnly => TreeFilter::All,
+            TreeFilter::All => TreeFilter::Default,
+        }
+    }
+}
+
+/// One row of the `/tree` + `/timeline` picker.
+///
+/// A named type rather than a tuple because the tuple grew four fields, and
+/// `(a, b, c, d)` in a `for` loop is how `tags` and `snippets` get swapped
+/// without a compiler noticing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TimelineRow {
+    /// Entry sequence number, as written in the session file.
+    pub seq: u64,
+    /// Entry id, so a selection can navigate rather than merely display.
+    pub id: String,
+    /// Short kind tag (`user`, `assistant`, `label`, ...).
+    pub kind: String,
+    /// First line of the entry's text, already truncated for display.
+    pub snippet: String,
+    /// Nesting depth in the session forest; 0 is a root.
+    pub depth: usize,
+    /// Whether this row is on the lane the session is currently on.
+    pub on_active: bool,
+    /// This entry's parent, or `None` for a root.
+    ///
+    /// M196: needed by the filter, which re-parents a row whose parent the
+    /// filter hid. Depth alone cannot answer "is my parent on screen?" — it can
+    /// only say how deep I was in the full tree.
+    pub parent: Option<String>,
+    /// The label on this entry, if it has one.
+    ///
+    /// M196: without this the picker could not show a label, so a label the
+    /// store held was invisible in the one view that exists to navigate them.
+    pub label: Option<String>,
+}

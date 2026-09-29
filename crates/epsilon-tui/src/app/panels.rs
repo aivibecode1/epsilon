@@ -462,10 +462,14 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     // the height still follows the visible row count.
     let width = Width::PANEL.resolve(outer);
     let height = (capacity as u16 + 4).min(outer.height.saturating_sub(2));
+    // The active filter is named in the title, because a picker that silently
+    // hides entries is the "silent no-op" this repo treats as worse than a
+    // missing feature. `f` cycles it.
+    let title = format!("timeline \u{00b7} {}", app.tree_filter.label());
     let panel = Panel {
         theme: &app.theme,
         area: overlay::centered(outer, width, height),
-        title: "timeline",
+        title: &title,
         focused: true,
         border: None,
     };
@@ -475,14 +479,52 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     // and its gutter take two columns of the inner width.
     let budget = (inner.width as usize).saturating_sub(2);
     let mut lines: Vec<Line<'static>> = Vec::new();
-    for (i, (seq, tag, snippet)) in app
+    for (i, row) in app
         .timeline_entries
         .iter()
         .enumerate()
         .skip(start)
         .take(end - start)
     {
-        let raw = format!("#{seq} [{tag}] {snippet}");
+        // M196: depth and the off-lane marker. Without them a branch the user
+        // rewound away from looked exactly like the conversation they are in,
+        // which is the specific confusion this view exists to remove.
+        // M196: a label is drawn on its row. A label the store holds but the
+        // picker does not show is a label the user cannot find, which makes the
+        // feature worse than useless -- they would re-create it.
+        let labelled = match row.label.as_deref() {
+            Some(l) => format!(" \u{1f4c1} {l}"),
+            None => String::new(),
+        };
+        // A folded row says so. Without a marker the subtree simply vanishes
+        // and the reader cannot tell "collapsed" from "never had children" --
+        // which is the same silent-loss problem the off-lane marker addresses.
+        // Two DIFFERENT glyphs, because the two states are different facts:
+        // `\u{25be}` (collapsed) means "children are hidden, press Ctrl+Right",
+        // `\u{25b8}` (expanded) means "children are shown, press Ctrl+Left".
+        // The same glyph for both would make a collapsed branch
+        // indistinguishable from an expanded one -- the reader would have to
+        // press the key to find out, which is the guessing this repo avoids.
+        let fold_mark = if app.folded.contains(&row.id) {
+            " \u{25be}"
+        } else if super::commands::has_children(row, &app.timeline_all) {
+            " \u{25b8}"
+        } else {
+            ""
+        };
+        let raw = format!(
+            "{}{}#{seq} [{tag}]{fold_mark}{labelled} {snippet}",
+            "  ".repeat(row.depth),
+            // A `·` for "not the lane you are on". The alternative -- leaving it
+            // blank -- makes an abandoned branch indistinguishable from the live
+            // one, which is the thing a reader cannot afford to get wrong.
+            if row.on_active { " " } else { "\u{00b7} " },
+            seq = row.seq,
+            tag = row.kind,
+            fold_mark = fold_mark,
+            labelled = labelled,
+            snippet = row.snippet,
+        );
         let display = if raw.len() > budget {
             let w = budget.saturating_sub(3);
             format!("{}...", &raw[..w.min(raw.len())])
@@ -659,6 +701,66 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
 /// lives in `app.auth_key` but rendering shows one dot per character so the
 /// secret never appears in the transcript, in a screenshot, or in a scrollback
 /// buffer.
+pub(super) fn draw_label_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
+    use crate::ui::overlay::{self, Panel, Width};
+
+    if !app.label_prompt_open {
+        return;
+    }
+    let width = Width::PROMPT.resolve(outer);
+    let height = 7u16.min(outer.height.saturating_sub(2)).max(5);
+    let panel = Panel {
+        theme: &app.theme,
+        area: overlay::centered(outer, width, height),
+        title: "label this entry",
+        focused: true,
+        border: None,
+    };
+    let inner = panel.open(f);
+    let theme = &app.theme;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let target = app.label_prompt_target.as_deref().unwrap_or("?");
+    let shown: String = app.label_prompt_text.chars().take(60).collect();
+    lines.push(Line::from(Span::styled(
+        format!("entry {target}"),
+        theme.system(),
+    )));
+    // The caret sits where the next character will land, so a reader can see
+    // where they are without the field having to be a real widget.
+    let caret = "█";
+    let (before, after) = if app.label_prompt_cursor >= app.label_prompt_text.chars().count() {
+        (shown.clone(), String::new())
+    } else {
+        let at = app
+            .label_prompt_text
+            .chars()
+            .take(app.label_prompt_cursor)
+            .collect::<String>();
+        let rest = app
+            .label_prompt_text
+            .chars()
+            .skip(app.label_prompt_cursor)
+            .collect::<String>();
+        (at, rest)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("> ", theme.accent()),
+        Span::styled(before, theme.assistant()),
+        Span::styled(caret, theme.accent()),
+        Span::styled(after, theme.assistant()),
+    ]));
+    lines.push(Line::from(Span::styled(
+        if app.label_prompt_text.trim().is_empty() {
+            "Enter clears the label \u{00b7} Esc cancels"
+        } else {
+            "Enter saves \u{00b7} Esc cancels"
+        },
+        theme.system(),
+    )));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 pub(super) fn draw_auth_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
