@@ -855,6 +855,24 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     }
                 }
             }
+            // pi binds `app.message.copy` inside the tree
+            // (`tree-selector.ts:1029-1030` -> `copySelected` at `:627`), and the
+            // key was already bound here at `keybindings.rs:140` — but the arm
+            // that honoured it sat 620 lines BELOW this block, which returns for
+            // every key. So inside the tree the copy key did nothing at all, with
+            // no notice: a chord advertised by `/hotkeys` and printed in the panel,
+            // swallowed by a `_ => {}`. The `k`/`⇧L`/`f`/`/` arms worked only
+            // because they match `KeyCode::Char` directly.
+            //
+            // Routed through the same command the global arm uses, so the OSC-52
+            // parking, the multiplexer choice, and the notice naming which path
+            // landed stay in one place.
+            // A statement, not the global arm's tail expression: the tree's
+            // match arms all end in `;` because the block's value is discarded
+            // and `run_command` returns `bool`.
+            _ if app.keybindings.matches("app.message.copy", &key) => {
+                app.run_command(agent, crate::picker::Command::Copy);
+            }
             _ => {}
         }
         return false;
@@ -938,15 +956,29 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     }
                 }
             }
-            KeyCode::Up => {
+            // Page keys move by the screenful the browser actually showed
+            // (`b.capacity`, measured at paint time) -- pi pages by `maxVisible`
+            // (`session-selector.ts:612-617`). `max(1)` so a key before the first
+            // paint still moves rather than silently doing nothing.
+            KeyCode::Up | KeyCode::PageUp => {
                 if let Some(b) = app.session_browser.as_mut() {
-                    b.index = b.index.saturating_sub(1);
+                    let step = if key.code == KeyCode::PageUp {
+                        b.capacity.max(1)
+                    } else {
+                        1
+                    };
+                    b.index = b.index.saturating_sub(step);
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::PageDown => {
                 if let Some(b) = app.session_browser.as_mut() {
                     let last = b.rows.len().saturating_sub(1);
-                    b.index = (b.index + 1).min(last);
+                    let step = if key.code == KeyCode::PageDown {
+                        b.capacity.max(1)
+                    } else {
+                        1
+                    };
+                    b.index = (b.index + step).min(last);
                 }
             }
             KeyCode::Backspace => {
@@ -1031,40 +1063,48 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             return false;
         }
         // Remaining keys: Up/Down move, Backspace filters (stage 2 only), chars filter.
+        // One helper for the row count, because three arms need it and the model
+        // list is built twice in the original (`build_models_for_provider` for
+        // stage 2, `build_provider_rows` otherwise). Duplicating that choice a
+        // third time is how a page key ends up paging a different list than the
+        // arrows do.
+        let total = || -> usize {
+            if let Some(provider) = &stage2 {
+                crate::picker::build_models_for_provider(
+                    provider,
+                    &app.input,
+                    &app.model_id,
+                    &app.live_cache,
+                    &app.customs,
+                )
+                .len()
+            } else {
+                crate::picker::build_provider_rows(&app.model_id, &app.customs).len()
+            }
+        };
+        // pi pages by `maxVisible` (`session-selector.ts:612-617`) -- the screenful
+        // the user can actually see, which `picker_capacity` holds from the last
+        // paint. `max(1)` so an unpainted picker still moves.
+        let page = app.picker_capacity.max(1);
         match key.code {
             KeyCode::Up => {
-                let total = if let Some(provider) = &stage2 {
-                    crate::picker::build_models_for_provider(
-                        provider,
-                        &app.input,
-                        &app.model_id,
-                        &app.live_cache,
-                        &app.customs,
-                    )
-                    .len()
-                } else {
-                    crate::picker::build_provider_rows(&app.model_id, &app.customs).len()
-                };
-                app.picker_index = app
-                    .picker_index
-                    .saturating_sub(1)
-                    .min(total.saturating_sub(1));
+                let last = total().saturating_sub(1);
+                app.picker_index = app.picker_index.saturating_sub(1).min(last);
+            }
+            KeyCode::PageUp => {
+                let last = total().saturating_sub(1);
+                app.picker_index = app.picker_index.saturating_sub(page).min(last);
+            }
+            KeyCode::PageDown => {
+                let n = total();
+                if n > 0 {
+                    app.picker_index = (app.picker_index + page).min(n - 1);
+                }
             }
             KeyCode::Down => {
-                let total = if let Some(provider) = &stage2 {
-                    crate::picker::build_models_for_provider(
-                        provider,
-                        &app.input,
-                        &app.model_id,
-                        &app.live_cache,
-                        &app.customs,
-                    )
-                    .len()
-                } else {
-                    crate::picker::build_provider_rows(&app.model_id, &app.customs).len()
-                };
-                if total > 0 {
-                    app.picker_index = (app.picker_index + 1).min(total - 1);
+                let n = total();
+                if n > 0 {
+                    app.picker_index = (app.picker_index + 1).min(n - 1);
                 }
             }
             KeyCode::Backspace => {

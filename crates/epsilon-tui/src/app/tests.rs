@@ -11,9 +11,9 @@ use crate::app::commands::{timeline_kind_tag, timeline_snip};
 // so the tests that drive them name the module rather than a re-export.
 use super::keys::{begin_auth_key_prompt, handle_key};
 // Frame helpers and the wired app are shared with `golden.rs`.
-use super::tests_support::{render_rows, test_app};
+use super::tests_support::{render_rows, test_app, test_app_with_bash};
 use crossterm::event::KeyEventState;
-use epsilon_contracts::agent_event::PermissionRequest;
+use epsilon_contracts::agent_event::{PermissionDecision, PermissionRequest};
 use epsilon_contracts::message::UserMessage;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi};
 
@@ -4124,6 +4124,71 @@ fn the_copy_key_reaches_the_clipboard_path() {
     );
 }
 
+/// The copy key must work while the tree is open, not just in the transcript.
+///
+/// The key was bound (`keybindings.rs:140`, F4) and the global arm that honours it
+/// exists — but the `if app.timeline_open` block returns for *every* key 620 lines
+/// above it, so inside the tree the chord hit `_ => {}` and did nothing, silently.
+/// `/hotkeys` advertised it and the panel printed it, so this is the "a silent
+/// no-op is worse than a missing feature" case rather than an absent feature.
+///
+/// The negative is the test: `handle_key` returning without a notice is exactly
+/// the old behaviour, and asserting on the *absence* of a notice would pass
+/// vacuously against a build where the command never ran. So the assertion is on
+/// the notice `/copy` produces, reached through the open tree.
+#[tokio::test]
+async fn the_copy_key_still_works_while_the_tree_is_open() {
+    let (mut app, agent, _rx) = test_app();
+    // The tree needs a store with entries in it — `test_app()` alone leaves the
+    // picker closed, and the precondition assertion below caught exactly that on
+    // the first run. An assertion that a fixture is not empty is worth having
+    // even when it fires on the test rather than the code.
+    let tmp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+    {
+        let mut st = store.lock().unwrap();
+        use epsilon_contracts::content::UserContent;
+        use epsilon_contracts::message::UserMessage;
+        use epsilon_contracts::session_entry::EntryKind;
+        st.append(EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(UserMessage {
+                id: epsilon_contracts::new_id("msg"),
+                timestamp_ms: 0,
+                content: vec![UserContent::Text {
+                    text: "a question worth answering".into(),
+                }],
+            }),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    }
+    // Open the tree the way a user does, through the command, so the test is on
+    // the production path rather than on a state flag poked by hand.
+    app.run_command(&agent, crate::picker::Command::Timeline);
+    assert!(
+        app.timeline_open,
+        "precondition: the tree is open, or this test proves nothing"
+    );
+
+    let before = app.ui.lines().len();
+    handle_key(&mut app, &agent, key(KeyCode::F(4)));
+
+    assert!(
+        app.ui.lines().len() > before,
+        "the copy key was swallowed by the tree's catch-all arm: the block returns \
+         for every key before the global copy arm is ever reached"
+    );
+    assert_eq!(
+        last_line_text(&app),
+        "copy: no assistant message to copy",
+        "and it is the SAME notice `/copy` gives, so the tree routes through the \
+         command rather than owning a second copy of the clipboard logic"
+    );
+}
+
 /// A compaction says what it cost, in the row, with the same numbers it records.
 ///
 /// **The property is agreement, not presence.** A line that said "context
@@ -4224,5 +4289,221 @@ fn the_label_prompt_and_jump_notice_draw() {
     assert!(
         screen2.contains("jump backward"),
         "an armed jump says WHICH WAY, and what to do next: {screen2}"
+    );
+}
+
+/// `!` runs a shell command without a model round-trip, and prints what it printed.
+///
+/// The property that matters is that the command **actually ran**. A test asserting
+/// only that the draft was cleared, or that some notice appeared, would pass
+/// against an implementation that echoed the text back — so the fixture is a real
+/// command with a real output and the assertion is on the output.
+///
+/// The key path is driven one character at a time rather than by setting `app.input`
+/// and calling `submit_editor`, because *that* path is the thing under test: it is
+/// what decides whether a leading `!` is read as a shell escape or typed into a
+/// prompt.
+#[tokio::test]
+async fn a_bang_runs_a_shell_command_and_shows_its_output() {
+    let (mut app, agent, receivers, approvals) = test_app_with_bash();
+    let (_frames, mut notices) = receivers;
+    type_and_enter(&mut app, &agent, "!echo epsilon-bang-marker");
+    // The command is gated, so a `!` run parks an approval ask first. A user
+    // answers it, and this test does the same rather than bypassing the gate —
+    // bypassing it would test a path no user takes.
+    let _approver = tokio::spawn({
+        let channel = approvals.clone();
+        async move {
+            channel
+                .next_ask()
+                .await
+                .expect("a gated bash call asks")
+                .reply(PermissionDecision::AllowOnce)
+        }
+    });
+
+    // Drain until the output arrives, with a wall-clock bound so a hang fails the
+    // test rather than the suite.
+    //
+    // **`Err` continues; it does not break.** A spawn is asynchronous: the first
+    // notice ("running: ...") arrives at once, and the output follows only after
+    // the gate is answered and the process exits. Breaking on the first timeout
+    // ends the wait after 50ms holding the "running:" line and nothing else —
+    // which is exactly what this test did on its first run, and exactly the shape
+    // of the "TUI looks dead" symptom this repository has chased since M151. A
+    // poll that finds nothing *yet* is not a closed channel.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut seen = String::new();
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), notices.recv()).await {
+            Ok(Some(n)) => {
+                seen.push_str(&n);
+                seen.push('\n');
+                // Break on the OUTPUT, not on the marker. The `running:`
+                // notice names the command and therefore the marker, so
+                // stopping on the marker alone would accept a "running" line
+                // as proof the command printed anything.
+                if seen.contains("shell") && seen.contains("epsilon-bang-marker") {
+                    break;
+                }
+            }
+            // Nothing yet: keep waiting, bounded by `deadline`.
+            Err(_) => continue,
+            // The sender is gone, so nothing more can arrive. That IS an ending.
+            Ok(None) => break,
+        }
+    }
+
+    eprintln!("PROBE seen = {seen:?}");
+    // Asserted on the OUTPUT line, not on the marker alone: the `running:` notice
+    // names the command and therefore the marker, so a `contains` on the marker
+    // would pass against a program that printed the command back and never ran it.
+    assert!(
+        seen.lines()
+            .any(|l| l.starts_with("shell: ") && l.contains("epsilon-bang-marker")),
+        "the command ran and its OUTPUT reached the user: {seen}"
+    );
+    assert!(
+        !app.ui.running(),
+        "and it did not start a model run -- a `!` command is not a prompt"
+    );
+}
+
+/// `!!` says on screen that the output was kept out of the context.
+///
+/// pi's two-bang form (`interactive-mode.ts:3107-3108`) is only worth having
+/// because the output is excluded. So the test asserts the **label** says so, not
+/// merely that some text appeared: an implementation that dropped the distinction
+/// would still run the command and still print the output, and would pass a test
+/// that only looked for the output.
+#[tokio::test]
+async fn a_double_bang_says_the_output_stays_out_of_the_context() {
+    let (mut app, agent, receivers, approvals) = test_app_with_bash();
+    let (_frames, mut notices) = receivers;
+    type_and_enter(&mut app, &agent, "!!echo epsilon-excluded-marker");
+    // The command is gated, so a `!` run parks an approval ask first. A user
+    // answers it, and this test does the same rather than bypassing the gate —
+    // bypassing it would test a path no user takes.
+    let _approver = tokio::spawn({
+        let channel = approvals.clone();
+        async move {
+            channel
+                .next_ask()
+                .await
+                .expect("a gated bash call asks")
+                .reply(PermissionDecision::AllowOnce)
+        }
+    });
+
+    // Drain until the output arrives, with a wall-clock bound so a hang fails the
+    // test rather than the suite.
+    //
+    // **`Err` continues; it does not break.** A spawn is asynchronous: the first
+    // notice ("running: ...") arrives at once, and the output follows only after
+    // the gate is answered and the process exits. Breaking on the first timeout
+    // ends the wait after 50ms holding the "running:" line and nothing else —
+    // which is exactly what this test did on its first run, and exactly the shape
+    // of the "TUI looks dead" symptom this repository has chased since M151. A
+    // poll that finds nothing *yet* is not a closed channel.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut seen = String::new();
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), notices.recv()).await {
+            Ok(Some(n)) => {
+                seen.push_str(&n);
+                seen.push('\n');
+                // Break on the OUTPUT, not on the marker. The `running:`
+                // notice names the command and therefore the marker, so
+                // stopping on the marker alone would accept a "running" line
+                // as proof the command printed anything.
+                if seen.contains("shell") && seen.contains("epsilon-excluded-marker") {
+                    break;
+                }
+            }
+            // Nothing yet: keep waiting, bounded by `deadline`.
+            Err(_) => continue,
+            // The sender is gone, so nothing more can arrive. That IS an ending.
+            Ok(None) => break,
+        }
+    }
+
+    assert!(
+        seen.lines()
+            .any(|l| l.starts_with("shell (kept out of context): ")
+                && l.contains("epsilon-excluded-marker")),
+        "the command still ran, under the excluded label: {seen}"
+    );
+}
+
+/// A page key moves by the screenful that was actually drawn.
+///
+/// pi pages by `maxVisible` (`session-selector.ts:612-617`), so the property is
+/// not "PageDown moves N rows" for some N — it is "PageDown moves as many rows as
+/// the list showed". A test with a hardcoded expectation would pass against a
+/// constant page size, which is a whole screen on a tall terminal and a fifth of
+/// one on a short one.
+///
+/// The size is read back from a **real frame**: the paint is what measures it, so
+/// a test that set the field by hand would be asserting against its own fixture.
+#[test]
+fn a_page_key_moves_by_the_window_the_list_actually_drew() {
+    let (mut app, agent, _receivers) = test_app();
+    // Open BEFORE the first frame: `draw_picker` is what measures the window, and
+    // a closed picker draws nothing, so painting first leaves the capacity at its
+    // initial 1 and the test would measure its own fixture.
+    app.picker_open = true;
+    app.picker_index = 0;
+
+    // A tall frame and a short one, so the two capacities must differ. If they
+    // did not, "pages by the window" would be indistinguishable from "pages by a
+    // constant" and this test could not tell the difference.
+    let tall = render_rows(&mut app, 100, 44);
+    let tall_cap = app.picker_capacity;
+    let tall_text: String = tall
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    app.picker_index = 0;
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    let after_tall = app.picker_index;
+
+    assert!(
+        tall_cap > 1,
+        "a 44-row frame shows more than one row, so a page is worth having: {tall_cap}"
+    );
+    assert_eq!(
+        after_tall, tall_cap,
+        "PageDown moved exactly the drawn window, not a hardcoded number"
+    );
+
+    // Now the short frame. The page must shrink with it.
+    let short = render_rows(&mut app, 100, 14);
+    let short_cap = app.picker_capacity;
+    let short_text: String = short
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    app.picker_index = 0;
+    handle_key(&mut app, &agent, key(KeyCode::PageDown));
+    let after_short = app.picker_index;
+
+    assert!(
+        short_cap < tall_cap,
+        "a 14-row frame shows fewer rows than a 44-row one ({short_cap} < {tall_cap}), \
+         so the page size must follow the frame"
+    );
+    assert_eq!(
+        after_short, short_cap,
+        "and the key moved the SHORT window, not the tall one"
+    );
+    assert!(
+        tall_text.len() > short_text.len() && !short_text.is_empty(),
+        "the frames really were different sizes ({}, {} bytes)",
+        tall_text.len(),
+        short_text.len()
     );
 }
