@@ -461,7 +461,10 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     // The timeline is a list panel like the others, so it takes the panel width;
     // the height still follows the visible row count.
     let width = Width::PANEL.resolve(outer);
-    let height = (capacity as u16 + 4).min(outer.height.saturating_sub(2));
+    // +6 rather than +4: the border takes two rows, and the search field plus
+    // its match count take two more when a search is active. Sizing for the
+    // worst case keeps the panel from resizing under the reader's fingers.
+    let height = (capacity as u16 + 6).min(outer.height.saturating_sub(2));
     // The active filter is named in the title, because a picker that silently
     // hides entries is the "silent no-op" this repo treats as worse than a
     // missing feature. `f` cycles it.
@@ -538,6 +541,33 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
             None,
             inner.width as usize,
         ));
+    }
+    // M196: the search field, drawn INSIDE the panel above the rows. A search
+    // that is not on screen while it is being typed cannot be confirmed: the
+    // reader has no way to tell filtering from keys going somewhere.
+    //
+    // It was first added to the MODEL picker's renderer, where it never had any
+    // business being -- and no test noticed for a full round, because every test
+    // in this file asserted on state and none rendered this panel. The test that
+    // now exists is `the_tree_panel_draws_its_filter_search_field_and_fold_glyphs`.
+    if app.tree_searching || !app.tree_query.is_empty() {
+        let budget = (inner.width as usize).saturating_sub(6);
+        let shown: String = app.tree_query.chars().take(budget).collect();
+        lines.push(Line::from(vec![
+            Span::styled("/", app.theme.accent()),
+            Span::styled(shown, app.theme.assistant()),
+            Span::styled("\u{2588}", app.theme.accent()),
+        ]));
+    }
+    if !app.tree_query.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{} of {} match",
+                app.timeline_entries.len(),
+                app.timeline_all.len()
+            ),
+            app.theme.system(),
+        )));
     }
     lines.push(Line::from(""));
     // The position counter and the key hints share the footer line: a `hint_row`

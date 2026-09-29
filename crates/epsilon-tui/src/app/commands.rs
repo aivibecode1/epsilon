@@ -304,6 +304,140 @@ fn resolved_labels(
     out
 }
 
+/// One display line per skill: name, description, and whether the model may
+/// invoke it on its own.
+///
+/// **A function, not inline formatting,** for the same reason `/templates` has
+/// one: the property worth testing is that a description REACHES THE SCREEN, and
+/// that is awkward to observe through a notice that must be rendered and scraped.
+/// pi's resource panel states enablement per row (`config-selector.ts`), so a
+/// name-only list hides half of what a reader needs.
+pub(crate) fn skill_lines(
+    skills: &[epsilon_core::skills::Skill],
+    disabled: &[String],
+) -> Vec<String> {
+    skills
+        .iter()
+        .map(|s| {
+            let mut line = format!("{} — {}", s.name, s.description);
+            if s.disable_model_invocation {
+                line.push_str(" (manual only)");
+            }
+            // **Off is stated, not implied by absence.** A skill that has been
+            // switched off still gets discovered, so a listing that simply omitted
+            // it would look identical to "it was never installed" -- and the
+            // user would go looking for a directory that is right there.
+            if disabled.iter().any(|d| d == &s.name) {
+                line.push_str(" [off]");
+            }
+            line
+        })
+        .collect()
+}
+
+/// Rows that no filter and no search may hide.
+///
+/// Two rules, both from pi's own filter (`tree-selector.ts:339-355`):
+///
+/// 1. **The current leaf is always shown.** A view that can hide where you are
+///    cannot answer "where am I?" -- the first question a session picker is asked.
+/// 2. **An assistant turn with no text is hidden**, because a run of tool-call-only
+///    turns makes the list unreadable. The exception that matters is an ERROR: an
+///    error is text the reader is looking for, so those stay.
+///
+/// Applied here once, rather than in each filter: three filters each re-deciding
+/// "is this row mandatory" is three chances to disagree.
+fn apply_mandatory(
+    rows: &[crate::app::TimelineRow],
+    mut out: Vec<crate::app::TimelineRow>,
+) -> Vec<crate::app::TimelineRow> {
+    for r in rows {
+        if out.iter().any(|o| o.id == r.id) {
+            continue;
+        }
+        let is_leaf = r.on_active;
+        let is_textless_assistant = r.kind == "assistant" && r.snippet.trim().is_empty();
+        if is_leaf || is_textless_assistant {
+            out.push(r.clone());
+        }
+    }
+    // The rescued row keeps the TREE's position, not the end of the list. A
+    // rescue that appends is a rescue that reorders, which is its own confusion.
+    let order: std::collections::HashMap<&str, usize> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.id.as_str(), i))
+        .collect();
+    out.sort_by_key(|r| order.get(r.id.as_str()).copied().unwrap_or(usize::MAX));
+    out.dedup_by(|a, b| a.id == b.id);
+    out
+}
+
+/// The text a row is searched against: its label, its kind, and its snippet.
+///
+/// pi builds the same three in `getSearchableText` (`tree-selector.ts:560-600`).
+/// The message *role* pi also pushes is the `kind` tag here, so searching "user"
+/// finds user messages in both.
+fn searchable_text(r: &crate::app::TimelineRow) -> String {
+    let mut s = String::new();
+    if let Some(l) = r.label.as_deref() {
+        s.push_str(l);
+        s.push(' ');
+    }
+    s.push_str(&r.kind);
+    s.push(' ');
+    s.push_str(&r.snippet);
+    s.to_lowercase()
+}
+
+/// Keep the rows matching **every** whitespace-separated token of `query`.
+///
+/// **AND, not OR** (`tree-selector.ts:393`: `searchTokens.every(...)`). Typing
+/// "refactor auth" finds entries containing *both*, which is what a reader means
+/// by two words; an OR shows everything matching either and buries the answer.
+///
+/// An empty query keeps everything, so the caller applies this unconditionally
+/// rather than branching on whether a search is active.
+pub(crate) fn apply_search(
+    rows: &[crate::app::TimelineRow],
+    query: &str,
+) -> Vec<crate::app::TimelineRow> {
+    let tokens: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    if tokens.is_empty() {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|r| {
+            let hay = searchable_text(r);
+            tokens.iter().all(|t| hay.contains(t.as_str()))
+        })
+        .cloned()
+        .collect()
+}
+
+/// The whole visibility pipeline: filter -> search -> mandatory -> folds.
+///
+/// **One function, because there are two callers** (opening the picker, and
+/// `refilter` when a chord changes something). Two copies would drift in a way
+/// nothing catches: the picker opens showing rows the chord handler believes are
+/// hidden, or the highlight lands on a row that is not drawn.
+pub(crate) fn visible_rows(
+    all: &[crate::app::TimelineRow],
+    filter: crate::app::TreeFilter,
+    labels: &std::collections::HashMap<String, String>,
+    query: &str,
+    folded: &std::collections::HashSet<String>,
+) -> Vec<crate::app::TimelineRow> {
+    let filtered = apply_filter(all, filter, labels);
+    let searched = apply_search(&filtered, query);
+    let with_mandatory = apply_mandatory(all, searched);
+    apply_folds(&with_mandatory, folded)
+}
+
 impl App {
     /// Route a parsed slash command to the executor that owns it.
     ///
@@ -331,7 +465,11 @@ impl App {
             | crate::picker::Command::Tree
             | crate::picker::Command::Clone
             | crate::picker::Command::Reload
-            | crate::picker::Command::Name(_) => self.run_session_command(agent, command),
+            | crate::picker::Command::Name(_)
+            // M196: mutates, so it does NOT belong with the view commands. A
+            // `/skill` that only printed would leave a setting nothing could
+            // change -- the "advertised but read by nothing" shape.
+            | crate::picker::Command::Skill(_) => self.run_session_command(agent, command),
             // Show the user something.
             crate::picker::Command::Help
             | crate::picker::Command::Skills
@@ -503,6 +641,47 @@ impl App {
             crate::picker::Command::New
             | crate::picker::Command::Resume(_)
             | crate::picker::Command::Reload => self.run_restore_command(agent, command),
+            crate::picker::Command::Skill(arg) => {
+                let arg = arg.trim();
+                let (name, want_off) = match arg.rsplit_once(char::is_whitespace) {
+                    Some((n, "off")) | Some((n, "disable")) => (n.trim(), true),
+                    Some((n, "on")) | Some((n, "enable")) => (n.trim(), false),
+                    _ => {
+                        self.ui.push_notice(
+                            "usage: /skill <name> on|off — `/skills` lists what is available",
+                        );
+                        return false;
+                    }
+                };
+                if name.is_empty() {
+                    self.ui.push_notice("usage: /skill <name> on|off");
+                    return true;
+                }
+                // **The name must be one that EXISTS.** Writing a disable for a
+                // skill nothing provides would produce a setting that does
+                // nothing, and that reads back as a disabled skill the user
+                // cannot find to re-enable -- the worst of both. This is the
+                // check that makes the config layer's contract true.
+                let known = agent.skills().iter().any(|s| s.name == name);
+                if !known {
+                    self.ui.push_notice(format!(
+                        "no skill named '{name}' — `/skills` lists what is available"
+                    ));
+                    return true;
+                }
+                match epsilon_core::config::set_skill_disabled(name, want_off) {
+                    Ok(_) => self.ui.push_notice(format!(
+                        "{name} {} — takes effect on the next turn",
+                        if want_off { "off" } else { "on" }
+                    )),
+                    Err(e) => self.ui.push_notice(format!("could not change {name}: {e}")),
+                }
+                // `run_session_command` returns `bool` = "quit". `/skill` changes
+                // a setting and leaves the composer alone, so it must answer
+                // `false` -- a `true` here ended the session, which the
+                // all-commands sweep caught immediately.
+                false
+            }
             // `run_command` owns the routing, so reaching a variant here means the
             // dispatcher sent it to the wrong executor. `debug_assert` catches that in
             // every test build and stays silent in release - a user's release binary
@@ -1082,8 +1261,15 @@ impl App {
         // M196: the filter is applied here, once, on the flattened rows -- so the
         // picker, the key handler and the renderer all see the same filtered
         // list rather than each applying the rule and hoping they agree.
-        let filtered = apply_filter(&all, self.tree_filter, &labels);
-        let rows = apply_folds(&filtered, &self.folded);
+        // The same pipeline `refilter` uses, so the picker and the chords cannot
+        // disagree about what is visible.
+        let rows = visible_rows(
+            &all,
+            self.tree_filter,
+            &labels,
+            &self.tree_query,
+            &self.folded,
+        );
         if rows.is_empty() {
             self.ui.push_notice(format!("{label}: session is empty"));
             return false;
@@ -1132,13 +1318,26 @@ impl App {
                 }
             }
             crate::picker::Command::Skills => {
-                let names = agent.skill_names();
-                if names.is_empty() {
+                // M196: this printed `names.join(", ")`, discarding a description
+                // the `Skill` struct already carries. The repo had solved this
+                // exact problem for `/templates` one command away (`/name —
+                // description`), so a user could read what a template does and
+                // not what a skill does.
+                let skills = agent.skills();
+                if skills.is_empty() {
                     self.ui.push_notice(
                         "no skills discovered — drop SKILL.md dirs into .epsilon/skills/",
                     );
                 } else {
-                    self.ui.push_notice(format!("skills: {}", names.join(", ")));
+                    let disabled = epsilon_core::config::load_disabled_skills();
+                    for line in skill_lines(&skills, &disabled) {
+                        self.ui.push_notice(line);
+                    }
+                    let on = skills.len() - disabled.len();
+                    self.ui.push_notice(format!(
+                        "{on} of {} enabled · toggle one with `/skill <name> off|on`",
+                        skills.len()
+                    ));
                 }
             }
             crate::picker::Command::Templates => {
