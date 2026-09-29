@@ -103,9 +103,37 @@ skimmed. Fixed by scoping the lock to the write.
 
 ## Verification
 
-PENDING — the battery label and the measured test totals are filled in from
-`target/gate-m196-green3.log` when the run completes. Per-binary deltas are reconciled
-against the M195 baseline in `docs/history.md`.
+**`m196-green3` — GATE PASS, 1,520 tests passed, 0 failed** (63 test binaries).
+Evidence: [`audit/evidence/gate-m196-green3-PASS.log`](../../audit/evidence/gate-m196-green3-PASS.log),
+committed with the milestone that it gates.
+
+Per-binary counts for the crates this milestone touched:
+
+| Crate | Passed |
+|---|---|
+| `epsilon-tui` (lib) | 419 |
+| `epsilon-session` (lib + `session_store`) | 69 |
+| `epsilon-core` (`cache_attribution`) | 5 |
+
+Baseline for comparison: 1,495 at the start of the session, so **+25 tests**, all of
+them asserting behaviour that did not exist before. The suite total moved from 1,495 to
+1,520 with no test removed or weakened — two pre-existing cache tests had their
+*assertions corrected* (they were pinned to wording the fix made more precise), and both
+corrections are described in the commit messages.
+
+Every one of the following was observed rather than assumed, and each negative control
+was run and recorded:
+
+| Claim | How it was checked |
+|---|---|
+| a partial cache hit is not a full one | control: old rounding fails the 0.996 case naming it |
+| a reporting provider is not a silent one | two tests, one per direction |
+| tables/task lists/strikethrough render | probe printed the actual rendered rows |
+| list items are separate lines | control: removing `End(TagEnd::Item)` prints `• alpha • beta • gamma` on one line |
+| a filter promotes an orphaned row | control: removing the promotion fails the test that names it |
+| an abandoned branch is visible | asserted present AND marked off-lane, so a flat dump cannot pass |
+| the label reaches the file | close/reopen, so a map cannot pass |
+| a label lands on its TARGET | asserted against the leaf, so "some label exists" cannot pass |
 
 ## Limits
 
