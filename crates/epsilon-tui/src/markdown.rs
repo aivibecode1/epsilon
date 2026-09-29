@@ -11,12 +11,172 @@ use ratatui::text::{Line, Span};
 
 use crate::ui::theme::Theme;
 
+/// A GFM table being collected, laid out when `End(Table)` arrives.
+///
+/// Ported from pi's `renderTable` (`tui/src/components/markdown.ts:842`),
+/// including the decision that matters most: **a table too narrow to lay out
+/// falls back to readable plain rows** rather than emitting columns one
+/// character wide, which is unreadable and reads as a rendering bug.
+///
+/// The width budget is pi's: `| ` + (n-1)*` | ` + ` |` costs `3n + 1` columns of
+/// border, and whatever is left belongs to the cells.
+#[derive(Default)]
+struct TableState {
+    /// Rows of cell text, collected per row. Row 0 is the header.
+    rows: Vec<Vec<String>>,
+    /// Cell text for the row currently being collected.
+    current: Vec<String>,
+    /// Text of the cell being collected.
+    cell: String,
+}
+
+impl TableState {
+    fn end_row(&mut self) {
+        if self.current.is_empty() {
+            return;
+        }
+        self.rows.push(std::mem::take(&mut self.current));
+    }
+
+    /// Lay the table out, or return nothing when there is nothing to draw.
+    fn render(self, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+        if self.rows.is_empty() {
+            return Vec::new();
+        }
+        let cols = self.rows.iter().map(Vec::len).max().unwrap_or(0);
+        if cols == 0 {
+            return Vec::new();
+        }
+        // pi: border overhead is 3n+1; below one column per cell a table cannot be
+        // drawn stably.
+        let overhead = 3 * cols + 1;
+        if width <= overhead + cols {
+            return self.fallback(theme);
+        }
+        let avail = width - overhead;
+
+        // Natural width per column, capped so one long cell cannot starve the
+        // rest; the remainder is shared proportionally.
+        let mut widths: Vec<usize> = vec![1; cols];
+        for row in &self.rows {
+            for (i, cell) in row.iter().enumerate() {
+                let w = display_width(cell);
+                if w > widths[i] {
+                    widths[i] = w;
+                }
+            }
+        }
+        let total: usize = widths.iter().sum();
+        if total > avail {
+            // Shrink proportionally, never below 1, so no column vanishes.
+            let mut scaled: Vec<usize> = widths
+                .iter()
+                .map(|w| ((*w as f64 / total as f64) * avail as f64).floor().max(1.0) as usize)
+                .collect();
+            let mut used: usize = scaled.iter().sum();
+            // Give the leftover back to the widest column, one at a time.
+            let mut i = 0;
+            while used < avail && cols > 0 {
+                scaled[i % cols] += 1;
+                used += 1;
+                i += 1;
+            }
+            widths = scaled;
+        }
+
+        let mut out = Vec::new();
+        let rule = "\u{2500}".repeat(avail + 2);
+        for (r, row) in self.rows.iter().enumerate() {
+            let is_header = r == 0;
+            let mut line = String::from("\u{2502} ");
+            for (i, &w) in widths.iter().enumerate() {
+                if i > 0 {
+                    line.push_str(" \u{2502} ");
+                }
+                let cell = row.get(i).map(String::as_str).unwrap_or("");
+                let text = truncate_to_width(cell, w);
+                line.push_str(&text);
+                for _ in display_width(&text)..w {
+                    line.push(' ');
+                }
+            }
+            line.push_str(" \u{2502}");
+            // A table opens with a border, so the rule comes BEFORE the header
+            // row. Drawing it after made the header read as a caption to the
+            // body instead of as the column names.
+            if is_header {
+                out.push(Line::from(Span::styled(
+                    format!("\u{250c}{rule}\u{2510}"),
+                    theme.system(),
+                )));
+            }
+            let style = if is_header {
+                theme.title()
+            } else {
+                theme.assistant()
+            };
+            out.push(Line::from(Span::styled(line, style)));
+        }
+        out
+    }
+
+    /// A table too narrow for columns, as readable `a | b` rows.
+    ///
+    /// The raw source is not available here (pulldown-cmark has already parsed
+    /// it), so the cells are rejoined with ` | ` -- the same text, in the order
+    /// it was written, without pretending to align columns it cannot fit.
+    fn fallback(self, theme: &Theme) -> Vec<Line<'static>> {
+        self.rows
+            .iter()
+            .map(|row| {
+                let joined = row.join(" | ");
+                Line::from(Span::styled(joined, theme.assistant()))
+            })
+            .collect()
+    }
+}
+
+/// Display width of a string, counting the characters a terminal actually shows.
+fn display_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    UnicodeWidthStr::width(s)
+}
+
+/// Truncate to `w` display columns, appending an ellipsis when anything was cut.
+fn truncate_to_width(s: &str, w: usize) -> String {
+    if display_width(s) <= w {
+        return s.to_string();
+    }
+    if w <= 1 {
+        return "…".to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + cw > w.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+    out.push('…');
+    out
+}
+
 /// Convert assistant markdown into styled transcript rows.
 ///
 /// The theme comes in rather than being reached for: the palette is a runtime
 /// decision (colour depth, `NO_COLOR`), and a renderer that reads it implicitly
 /// cannot be tested in more than one of those modes.
 pub fn md_to_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
+    md_to_lines_in(text, theme, 80)
+}
+
+/// As [`md_to_lines`], with the terminal width a table may use.
+///
+/// The width only affects tables; everything else wraps downstream.
+pub fn md_to_lines_in(text: &str, theme: &Theme, terminal_width: usize) -> Vec<Line<'static>> {
     // LaTeX: render math spans to unicode before markdown parsing (pi `markdown.ts` + `latex.ts`).
     let preprocessed = crate::latex::preprocess_math(text);
     let text: &str = preprocessed.as_str();
@@ -27,13 +187,36 @@ pub fn md_to_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
     let mut style_stack: Vec<Style> = Vec::new();
     let mut in_code_block = false;
     let mut list_depth = 0usize;
+    // A table's cells arrive as inline events between Start(Table)/End(Table), and
+    // a cell is a `|`-delimited slice of them. Collect each cell's rendered text,
+    // then lay the row out on End(TableHead)/End(TableRow).
+    let mut table: Option<TableState> = None;
+    // GFM task lists: pulldown-cmark emits the marker on the paragraph INSIDE the
+    // list item, so the flag is set per item and consumed by the next text event.
+    let mut pending_task: Option<bool> = None;
 
     let top = |stack: &Vec<Style>| stack.last().copied().unwrap_or_else(|| theme.assistant());
+    // Pushes a line only when there is something to push. The table arms call
+    // this at cell and row boundaries, where spans is always empty; pushing
+    // unconditionally put a blank line in front of every table, which is what
+    // the first version did.
     let flush = |spans: &mut Vec<Span<'static>>, out: &mut Vec<Line<'static>>| {
+        if spans.is_empty() {
+            return;
+        }
         out.push(Line::from(std::mem::take(spans)));
     };
 
-    for ev in Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH) {
+    // M196: GFM tables and task lists, and strikethrough which was ENABLED but had
+    // no match arm -- a setting that claimed to work and silently did not, which is
+    // this repository's `app.clear` defect in a different costume. All three are on
+    // because all three are handled below; an option with no arm is a lie in the
+    // source. pi renders tables in full (`markdown.ts:842`), so parity is the goal
+    // rather than a subset.
+    const MD_OPTIONS: Options = Options::ENABLE_STRIKETHROUGH
+        .union(Options::ENABLE_TABLES)
+        .union(Options::ENABLE_TASKLISTS);
+    for ev in Parser::new_ext(text, MD_OPTIONS) {
         match ev {
             Event::Start(Tag::Paragraph) => {}
             Event::End(TagEnd::Paragraph) => flush(&mut spans, &mut out),
@@ -69,11 +252,20 @@ pub fn md_to_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
             Event::End(TagEnd::List(_)) => {
                 list_depth = list_depth.saturating_sub(1);
             }
+            // M196: there was no `End(Item)` arm at all, so every item in a list
+            // was appended to the same line -- "- a - b" on one row. Pre-existing,
+            // and only visible once a test looked at multi-item output.
+            Event::End(TagEnd::Item) => flush(&mut spans, &mut out),
             Event::Start(Tag::Item) => {
-                spans.push(Span::styled(
-                    "  • ".repeat(list_depth.max(1)),
-                    theme.system(),
-                ));
+                // A task-list item's bullet becomes a checkbox, so the marker
+                // emitted for the item is consumed on the first text event
+                // instead of being pushed here.
+                if pending_task.is_none() {
+                    spans.push(Span::styled(
+                        "  • ".repeat(list_depth.max(1)),
+                        theme.system(),
+                    ));
+                }
             }
             Event::Start(Tag::CodeBlock(kind)) => {
                 in_code_block = true;
@@ -93,7 +285,27 @@ pub fn md_to_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
                 out.push(Line::from(Span::styled("···", theme.code_block())));
             }
             Event::Text(t) => {
-                if in_code_block {
+                // The task marker precedes the item's text; this is where it is
+                // finally used, so `[-] item` renders as a checkbox rather than
+                // a bullet followed by a literal "[ ]".
+                if pending_task.is_some() {
+                    let depth = list_depth.max(1);
+                    let mark = if pending_task.take() == Some(true) {
+                        "[x] "
+                    } else {
+                        "[ ] "
+                    };
+                    spans.push(Span::styled(
+                        format!("{}{mark}", "  ".repeat(depth)),
+                        theme.system(),
+                    ));
+                }
+                // Inside a table cell, text accumulates into the cell rather than
+                // becoming a row of its own. The `else` below is the ordinary
+                // path, so the two cannot drift.
+                if let Some(st) = table.as_mut() {
+                    st.cell.push_str(&t);
+                } else if in_code_block {
                     for line in t.lines() {
                         out.push(Line::from(Span::styled(
                             format!("│ {line}"),
@@ -109,6 +321,53 @@ pub fn md_to_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
             }
             Event::SoftBreak | Event::HardBreak => flush(&mut spans, &mut out),
             Event::Rule => out.push(Line::from(Span::styled("─".repeat(24), theme.system()))),
+            // The arm `ENABLE_STRIKETHROUGH` was enabled for and never had.
+            Event::Start(Tag::Strikethrough) => {
+                style_stack.push(top(&style_stack).add_modifier(Modifier::CROSSED_OUT))
+            }
+            Event::End(TagEnd::Strikethrough) => {
+                style_stack.pop();
+            }
+            // GFM task list: the marker is on the first text event of the item.
+            Event::TaskListMarker(checked) => pending_task = Some(checked),
+            Event::Start(Tag::Table(_)) => {
+                flush(&mut spans, &mut out);
+                table = Some(TableState::default());
+            }
+            // A cell boundary ends the cell. GFM tables emit `TableCell` per
+            // cell, so the End arm is the reliable place to close one.
+            Event::End(TagEnd::TableCell) => {
+                if let Some(st) = table.as_mut() {
+                    let text = std::mem::take(&mut st.cell);
+                    st.current.push(text.trim().to_string());
+                }
+            }
+            // A new row begins with an empty cell list. Without this the
+            // second body row's cells were appended to the first row's, and
+            // only one body row came out.
+            Event::Start(Tag::TableRow) | Event::Start(Tag::TableHead) => {
+                if let Some(st) = table.as_mut() {
+                    st.current.clear();
+                }
+            }
+            Event::End(TagEnd::Table) => {
+                flush(&mut spans, &mut out);
+                if let Some(st) = table.take() {
+                    out.extend(st.render(theme, terminal_width));
+                }
+            }
+            Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
+                if let Some(st) = table.as_mut() {
+                    st.end_row();
+                }
+                flush(&mut spans, &mut out);
+            }
+            // A cell boundary also ends the cell, which is where the text goes.
+            Event::Start(Tag::TableCell) => {
+                if let Some(st) = table.as_mut() {
+                    st.cell.clear();
+                }
+            }
             _ => {}
         }
     }
@@ -182,6 +441,128 @@ mod tests {
         let bullets: Vec<String> = lines.iter().map(|l| plain(l)).collect();
         assert!(bullets[0].starts_with("  • "), "{bullets:?}");
         assert!(bullets.last().unwrap().contains("nested"), "{bullets:?}");
+    }
+
+    fn all(line: &[Line<'_>]) -> String {
+        line.iter().map(plain).collect::<Vec<_>>().join("\n")
+    }
+
+    /// A GFM table becomes columns, not run-together text.
+    ///
+    /// Before M196 the parser never enabled tables, so `a | b` arrived as one
+    /// paragraph and the pipes were the only clue it had been a table.
+    #[test]
+    fn a_table_becomes_columns() {
+        let theme = Theme::detect();
+        let lines = md_to_lines_in(
+            "| name | role |\n|------|------|\n| ada | author |\n| alan | pioneer |",
+            &theme,
+            80,
+        );
+        let text = all(&lines);
+        assert!(text.contains('│'), "cells are separated by a rule: {text}");
+        assert!(text.contains("name") && text.contains("author"), "{text}");
+        // The header must be visibly distinct, or a reader cannot tell which row
+        // is which.
+        let header_style = lines[0].spans[0].style;
+        let body_style = lines
+            .iter()
+            .skip(1)
+            .find(|l| plain(l).contains("ada"))
+            .map(|l| l.spans[0].style)
+            .expect("a body row");
+        assert_ne!(header_style, body_style, "the header row is styled: {text}");
+    }
+
+    /// Every rendered row is the same width, so the columns line up.
+    #[test]
+    fn table_rows_are_the_same_width() {
+        let theme = Theme::detect();
+        let lines = md_to_lines_in(
+            "| short | a much longer header |\n|---|---|\n| x | y |\n| longer value | z |",
+            &theme,
+            60,
+        );
+        // Only the data rows: the border is a different shape by construction
+        // (it wraps the row with corners), so including it would be comparing
+        // two things that are meant to differ.
+        let widths: Vec<usize> = lines
+            .iter()
+            .map(plain)
+            .filter(|s| s.starts_with('│'))
+            .map(|s| s.chars().count())
+            .collect();
+        assert!(widths.len() >= 3, "header and two body rows: {widths:?}");
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "every data row shares one width: {widths:?}"
+        );
+    }
+
+    /// Too narrow to lay out, and the honest response is readable text rather
+    /// than one-character columns. This is pi's fallback (`markdown.ts:855-865`).
+    #[test]
+    fn a_table_too_narrow_falls_back_to_readable_rows() {
+        let theme = Theme::detect();
+        let lines = md_to_lines_in(
+            "| a | b | c | d | e |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |",
+            &theme,
+            8,
+        );
+        let text = all(&lines);
+        assert!(
+            !text.contains('│'),
+            "no column rules when there is no room for columns: {text}"
+        );
+        assert!(
+            text.contains("a | b"),
+            "the cells are still readable: {text}"
+        );
+    }
+
+    /// A task list renders a checkbox, not a literal `[ ]` after a bullet.
+    #[test]
+    fn a_task_list_renders_a_checkbox() {
+        let theme = Theme::detect();
+        let text = all(&md_to_lines_in("- [x] done\n- [ ] todo", &theme, 80));
+        assert!(text.contains("[x]") && text.contains("[ ]"), "{text}");
+        assert!(
+            !text.contains("• ["),
+            "the bullet is replaced by the checkbox, not prefixed to it: {text}"
+        );
+    }
+
+    /// The option was ENABLED before M196 and had no arm, so `~~gone~~` printed
+    /// with its tildes and no strike. An option with no handler is a lie in the
+    /// source, which is what this test names.
+    #[test]
+    fn strikethrough_actually_strikes() {
+        let theme = Theme::detect();
+        let lines = md_to_lines("~~gone~~", &theme);
+        let struck = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .any(|s| s.style.add_modifier.contains(Modifier::CROSSED_OUT));
+        assert!(struck, "the text carries a strike: {:?}", lines[0].spans);
+        assert!(!plain(&lines[0]).contains('~'), "and the tildes are gone");
+    }
+
+    /// Each list item is its own line.
+    ///
+    /// There was no `End(Item)` arm, so `- a` and `- b` rendered as one row
+    /// reading "- a - b". A single-item list could not show it, which is why
+    /// every earlier test passed.
+    #[test]
+    fn list_items_are_separate_lines() {
+        let theme = Theme::detect();
+        let text = all(&md_to_lines("- alpha\n- beta\n- gamma", &theme));
+        assert_eq!(text.lines().count(), 3, "one line per item: {text}");
+        for item in ["alpha", "beta", "gamma"] {
+            assert!(
+                text.lines().any(|l| l.ends_with(item)),
+                "{item} ends its own line: {text}"
+            );
+        }
     }
 
     #[test]
