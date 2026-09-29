@@ -1,47 +1,48 @@
-# Working note — `/goal` (M203, landed)
+# Working note — `/goal` (M203 state, M204 driver; both landed)
 
-**Status: LANDED.** Commit `7ab5c71`; battery `m203` (GATE PASS, 1,607 tests / 64 binaries).
-Milestone: [`docs/milestones/M203-goal.md`](../../docs/milestones/M203-goal.md).
+**Status: LANDED.** Commits `7ab5c18` and `a7fd0fc`; batteries `m203` and `m204` (GATE PASS,
+1,607 then 1,613 tests across 64 binaries). Milestones:
+[`M203`](../../docs/milestones/M203-goal.md) (state, command, tools, prompt) and
+[`M204`](../../docs/milestones/M204-round-driver.md) (the round driver).
 
 What exists now: the durable goal (`EntryKind::Goal` + `SessionStore::goal()`), the service
 (`Agent::goal` / `goal_apply` / `goal_begin_round`), the model's three tools, `/goal` with seven
-verbs, the footer badge, and the objective in the CONTEXT prompt tier.
+verbs, the footer badge, the objective in the CONTEXT prompt tier, and a driver that continues an
+armed goal at each turn end.
 
 ## What is left, in the order it should go
 
-1. **The round driver (M204).** `Agent::goal_begin_round()` is written, tested and **called by
-   nothing**. It returns the prompt a continuation would send; the TUI's turn-end path should
-   send it while `is_continuable()` holds. That is the whole of the feature's *doing* half and it
-   is one call site plus a loop guard — the reason M203 stopped short of it is that an
-   unattended loop needs the tools (which now exist) and a stop condition that a *test* can pin
-   without a provider.
-   Watch for: the driver must not fire while a permission ask is pending, must not fire twice for
-   one turn end, and must respect the cap through `goal_begin_round` rather than by counting
-   locally.
-2. **A goal-change event.** The badge is refreshed at two points (a `/goal` command, a turn
-   end) because reading the goal folds the session log. A `GoalChanged` `AgentEvent` would make
-   it event-driven and would also let the transcript announce a model-initiated change. Not
-   worth a wire variant until something else needs it — but it is the honest fix.
-3. **`/goal` in the RPC and HTTP surfaces.** `SessionState` carries model/thinking/session
-   fields; a goal is the next thing a client would want, and `session_state()` is the one
-   builder both transports already share (D29's lesson).
+1. **An end-to-end round test.** Two real rounds through the event loop, with a scripted provider
+   and a pseudo-console. Everything either side of the join is tested; the three lines that join
+   them are read, not run. `crates/epsilon-cli/tests/terminal.rs` is the harness that could do it.
+2. **A goal-change event.** The badge is refreshed at two points (a `/goal` command, a turn end)
+   because reading the goal folds the session log. A `GoalChanged` `AgentEvent` would make it
+   event-driven and let the transcript announce a model-initiated change. Still not worth a wire
+   variant on its own — but the driver makes it likelier, because a tool now changes the goal
+   *during* a turn whose end triggers the next round.
+3. **`/goal` in the RPC and HTTP surfaces.** `session_state()` is the one builder both transports
+   share (D29's lesson); a goal is the next field a client wants.
+4. **A spend warning.** The cap is 256 rounds and nothing warns at round 200. At a real provider's
+   prices that is a money question, not a tidiness one.
 
-## The four things this slice got wrong first, recorded so they are not repeated
+## The traps this slice met, recorded so they are not met again
 
-- **`GoalError::NoGoal` was carrying two facts.** "No goal is set" (a session fact the user can
-  act on) and "this session cannot hold a goal" (a frontend fact) produced the same sentence
-  until a test asserted the right one and got the wrong one. `NoStore` is the split.
-- **Two agents may not open one session file.** The lease refuses the second open — the product
-  is right and two of my tests were wrong. Write through `agent.session_store()` instead.
-- **A `SessionLine`-shaped error names nothing** (M202's lesson, and the reason `diagnose_line`
-  re-decodes through the tagged parser).
-- **`edit` with neither an objective nor a cap is a mistake, not a no-op**, and the refusal says
-  so. Same for a create with an empty objective.
+- **`GoalError::NoGoal` was carrying two facts** (a session fact and a frontend fact) until a test
+  expected the right sentence and got the wrong one. `NoStore` is the split.
+- **Two agents may not open one session file** — the lease refuses the second open. Write through
+  `agent.session_store()` in tests instead of reopening.
+- **An async spawn needs a runtime**: every goal test that creates one is now `#[tokio::test]`,
+  because creating a goal starts a round, and a round spawns a run.
+- **A key handler posts through the notice channel**, so a test asserts on what the loop would
+  drain, not on `ui.lines()`.
+- **The disarm had to stop depending on the cancel landing.** Hanging it on `abort_current_run()`
+  returning true made the rule a function of whether a token was live — and untestable. Hang a
+  policy on the *request*, not on the mechanism's success.
 
 ## The checklist for anything else ported from DSH's goal domain
 
 Read `references/deepseek-harness-dsh-v0.2.0-rc.1/packages/goal/goal/README.md` first; the
-contract is small and every clause of it is load-bearing. Then decide, explicitly, which of
-these you are *not* doing — they are all deliberate absences there, not gaps: a token or currency
+contract is small and every clause of it is load-bearing. Then decide, explicitly, which of these
+you are *not* doing — they are all deliberate absences there, not gaps: a token or currency
 budget, an independent evaluator of completion, a goal database, parallel goals, and any
-scheduling policy at all.
+scheduling policy beyond the round cap.
