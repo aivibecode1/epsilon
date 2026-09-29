@@ -142,6 +142,77 @@ impl Default for BashTool {
     }
 }
 
+/// How a tool child is wired to the harness's three standard streams.
+///
+/// **This is a named type because the decision is load-bearing and was, until
+/// M197, invisible.** `std::process::Command` leaves an unset stream at
+/// `Stdio::inherit()`, so omitting the `stdin` line did not give the child "no
+/// stdin" — it gave it **the harness's**. In the TUI that is the console, in raw
+/// mode, carrying the user's keystrokes. Every command the agent ran was reading
+/// the same keys the user was typing, on the same console, while the TUI believed
+/// it owned input. That is the reported "frozen" symptom, and the same shared
+/// console is the reported "shrinks" one.
+///
+/// pi closes stdin for exactly this reason:
+/// `references/pi-0.85.1/packages/agent/src/harness/env/nodejs.ts:533` passes
+/// `stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"]` and `:534`
+/// adds `windowsHide: true`.
+///
+/// Extracting the three lines into a function with a return value is what makes
+/// this testable. `std::process::Command` exposes no getter for a stream it was
+/// given, so a behavioural test cannot see the configuration — and a test that
+/// cannot see it passes with or without the fix, which is exactly what happened
+/// the first time (see `audit/evidence/m197-windows-stdin-inheritance.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildStdio {
+    /// Whether the child's stdin was closed rather than inherited.
+    pub stdin_closed: bool,
+    /// Whether a console window is suppressed for the child (Windows only).
+    pub window_hidden: bool,
+}
+
+impl ChildStdio {
+    /// Wire `cmd`'s streams and report what was decided.
+    ///
+    /// stdout and stderr are piped and drained incrementally rather than
+    /// collected with `output()`: a ten-minute build should show its progress,
+    /// and a child that fills a pipe buffer must never block a parent waiting for
+    /// exit.
+    ///
+    /// stdin is `Stdio::null()` — an empty handle that is EOF immediately — and
+    /// not `piped()`, because nothing writes to the child. A command that reads
+    /// stdin therefore sees end-of-input instead of blocking forever, which is the
+    /// same reason `shell_argv` keeps `-NonInteractive`.
+    pub fn configure(cmd: &mut tokio::process::Command) -> Self {
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        // pi's `windowsHide: true` (`nodejs.ts:534`). Without it a console
+        // application launched from this one can allocate or attach a visible
+        // console window, which competes with the TUI for the same screen.
+        // `CREATE_NO_WINDOW`; Rust spells it only through `CommandExt`, and only
+        // on Windows, so the import is scoped to the block that uses it.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+            Self {
+                stdin_closed: true,
+                window_hidden: true,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            // There is no window to hide on POSIX. Reported honestly rather than
+            // as a constant `true`, so the field means what it says per platform.
+            Self {
+                stdin_closed: true,
+                window_hidden: false,
+            }
+        }
+    }
+}
+
 /// How to run a shell command on this platform.
 ///
 /// # Windows: `-NoProfile` is not an optimisation, it is the difference between
@@ -457,9 +528,8 @@ impl Tool for BashTool {
         // Piped + drained incrementally rather than `output()`: a build that runs
         // for ten minutes should show its progress, and a child that fills a pipe
         // buffer must never block on a parent that is waiting for exit.
-        cmd.stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
+        let _child_stdio = ChildStdio::configure(&mut cmd);
+        cmd.kill_on_drop(true);
         let mut child = cmd
             .spawn()
             .map_err(|e| ToolFailure::msg(format!("spawn failed: {e}")))?;

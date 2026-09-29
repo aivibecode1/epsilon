@@ -1811,6 +1811,75 @@ async fn bash_common() {
     assert!(failing.contains("exit code: 3"));
 }
 
+/// A command the agent runs must not be able to read the harness's stdin.
+///
+/// **This is the Windows half of the reported "frozen / shrinking TUI".** With
+/// `stdin` left unset, `Command` inherits the parent's — and in the TUI the parent's
+/// stdin is the console's, in raw mode, carrying the user's keystrokes. So `git
+/// status`, `npm test`, or any build script runs *reading the same keys the user is
+/// typing*, on the same console, while the TUI believes it owns input. Two visible
+/// consequences, both reported by the owner: keystrokes appear to do nothing while a
+/// command runs, and the screen is left holding whatever the child drew.
+///
+/// pi closes stdin for the same reason — `nodejs.ts:533` passes `"ignore"` unless
+/// the command is itself transported over stdin, and `:534` adds `windowsHide: true`.
+///
+/// **Why this asserts on the configuration and not on a child process.** The first
+/// version ran `read`/`Read-Host` in a real child and asserted it saw EOF. Its
+/// negative control PASSED — with stdin inherited the test was still green, because
+/// `cargo test` runs the harness with a *redirected* stdin, so "inherited" and
+/// "closed" are indistinguishable from inside the test. Only the TUI has a console
+/// on stdin, and that is exactly the case a unit test cannot stand up.
+///
+/// So the property is asserted where it is decided, on the value
+/// [`ChildStdio::configure`] returns. That is a direct read of what the production
+/// path did to the command, it cannot be masked by the test runner's own stdio, and
+/// the control removes the very lines it names.
+#[test]
+fn a_tool_child_gets_a_closed_stdin_and_never_the_harness_console() {
+    use epsilon_tools::ChildStdio;
+    let mut cmd = tokio::process::Command::new("does-not-need-to-exist");
+    let stdio = ChildStdio::configure(&mut cmd);
+
+    assert!(
+        stdio.stdin_closed,
+        "a tool child must be given a closed stdin. An unset stream INHERITS, and in \
+         the TUI the inherited stream is the console the user is typing into."
+    );
+    assert_eq!(
+        stdio.window_hidden, cfg!(windows),
+        "a console window is suppressed only on Windows, where one can be allocated; \
+         pi sets windowsHide for the same reason (nodejs.ts:534)"
+    );
+}
+
+/// And the behavioural half that *is* observable: a command that reads stdin gets
+/// end-of-input immediately rather than hanging. With `Stdio::null()` the read
+/// returns at once; this is what keeps a misbehaving command from wedging a turn.
+#[tokio::test]
+async fn a_command_that_reads_stdin_gets_end_of_input_instead_of_blocking() {
+    let (_d, ctx) = seeded_workspace();
+    let bash = BashTool::new();
+
+    // POSIX `read` returns non-zero at EOF; Windows `Read-Host` yields $null.
+    #[cfg(not(windows))]
+    let command = "read -t 2 -r _ || echo STDIN_CLOSED";
+    #[cfg(windows)]
+    let command = "$v = Read-Host; if ($null -eq $v) { 'STDIN_CLOSED' }";
+
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        run(&bash, &ctx, serde_json::json!({"command": command})),
+    )
+    .await
+    .expect("a closed stdin must not let a child block on a read")
+    .unwrap();
+    assert!(
+        out.contains("STDIN_CLOSED"),
+        "the child should observe end-of-input on stdin, not hang: {out}"
+    );
+}
+
 #[tokio::test]
 async fn bash_timeout_kills_long_commands() {
     let (_d, ctx) = seeded_workspace();

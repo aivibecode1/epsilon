@@ -30,7 +30,7 @@ pub use files::{EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool};
 pub use find::{FindArgs, FindTool};
 pub use search::{GlobArgs, GlobTool, GrepArgs, GrepTool, LS_DEFAULT_LIMIT, LsArgs, LsTool};
 pub use shell::CommandVerdict;
-pub use shell::{BashArgs, BashTool};
+pub use shell::{BashArgs, BashTool, ChildStdio};
 pub use task::{TaskArgs, TaskTool};
 pub use todo::{TodoArgs, TodoItemArgs, TodoStatus, TodoTool};
 pub use util::TOOL_OUTPUT_MAX_BYTES;
