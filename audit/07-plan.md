@@ -1,5 +1,18 @@
 # 07 — Plan
 
+> **This document's phase order is not the live queue.** It was written while most of the
+> phases below were still open, and the reconciliation at the top of
+> [`03-defects.md`](03-defects.md) now shows that the first four of them are **done** —
+> D1/D21, D6/D19, D7/D18, D13, D15 and D16 were each fixed with a measurement, and phases 0–3
+> have no open rows left in them. The order work actually goes in today is
+> [**the ranked sweep**](../agents/memory/ranked-sweep-2026-09-29.md): user-visible impact ×
+> confidence, with the defect rows it names living in `03-defects.md`.
+>
+> The phases below are kept because the *reasoning* is still worth reading. The ordering rule —
+> "build the ability to verify before making the change you want verified" — is why the TUI
+> harness came before any TUI work, and that does not expire. Read it for the method; read the
+> sweep for the queue.
+
 Ordered work, with what each step proves and what it depends on. The ordering rule is
 simple: **build the ability to verify before making the change you want verified.**
 
