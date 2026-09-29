@@ -156,6 +156,17 @@ pub enum StoreError {
         /// What was wrong with it.
         diagnosis: LineDiagnosis,
     },
+    /// A named entry does not exist in this file.
+    ///
+    /// Not a `Corrupt`: nothing here is malformed, and the line-number field
+    /// would have to be a lie. pi throws `Entry ${targetId} not found`
+    /// (`session-manager.ts:1247`) for exactly this case, so it is a real
+    /// refusal in the reference too — M196 added it rather than overloading an
+    /// unrelated variant.
+    NoSuchEntry {
+        /// The id that was asked for.
+        id: String,
+    },
     /// Another process holds this session's write lease (M61). Carries the
     /// holder's recorded identity (`pid=…`) when the lock file was readable.
     Leased {
@@ -183,6 +194,11 @@ impl std::fmt::Display for StoreError {
                     "session line #{line}: {} (file left intact)",
                     diagnosis.explain()
                 )
+            }
+            StoreError::NoSuchEntry { id } => {
+                // pi's own wording (`session-manager.ts:1247`), so a message a
+                // user sees here is the message pi would have shown them.
+                write!(f, "entry {id} not found")
             }
             StoreError::Leased { holder, waited } => {
                 let who = if holder.trim().is_empty() {
@@ -1034,6 +1050,95 @@ impl SessionStore {
         )?))
     }
 
+    /// Whether an entry with this id exists in the file.
+    ///
+    /// Scans the whole file, which is what makes it honest: a label can point at
+    /// an entry anywhere in the session, including on a branch the reader is not
+    /// currently on, so a lookup against the active lane would refuse a valid
+    /// target.
+    pub fn has_entry(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self.read_all()?.iter().any(|e| e.id == id))
+    }
+
+    /// Set or clear a **label** on an entry — pi's `appendLabelChange`
+    /// (`session-manager.ts:1245-1267`).
+    ///
+    /// **M196: `EntryKind::Label` existed and was serialized, and nothing ever
+    /// wrote or read one.** That is this repository's "faithful port, no
+    /// production caller" class for the sixth time, and it is the reason the wire
+    /// tree reported `label: null` for every node: the field was not missing
+    /// data, it was a hardcoded constant standing in for a feature that had no
+    /// writer. Reading pi's rule is what made the shape obvious — the label is
+    /// carried **on the entry itself** (`target_id` + `label`), so it survives a
+    /// reload, which a sidecar map would not.
+    ///
+    /// Two behaviours from pi that are easy to lose:
+    ///
+    /// - **An empty label clears** (`label: None`), it does not write an empty
+    ///   string. pi's loader branches on `if (entry.label) ... else delete`, so a
+    ///   written-but-empty label would clear the label *and* leave the entry in
+    ///   the file saying so. Passing `None` writes that entry deliberately,
+    ///   which is what pi does and what makes the clear auditable.
+    /// - **The label is recorded ON the target; the `Label` entry itself lands on
+    ///   the current lane and becomes the new leaf.** M196: I first documented
+    ///   and tested the opposite — that labelling does not move the leaf — and
+    ///   the test caught it. pi does exactly the same thing: `_appendEntry`
+    ///   sets `leafId = entry.id` unconditionally
+    ///   (`session-manager.ts:1058-1063`), so `appendLabelChange` moves the leaf
+    ///   in pi too. Matching the reference beats my intuition about what *should*
+    ///   happen, and the consequence is that the TUI re-projects after labelling
+    ///   (it does), rather than pretending nothing moved.
+    ///
+    /// Returns the id of the entry that records the change, and refuses an
+    /// unknown `target_id` the way pi does (`throw new Error(\`Entry ... not
+    /// found\`)`) rather than writing a label pointing at nothing.
+    pub fn set_label(
+        &mut self,
+        target_id: &str,
+        label: Option<&str>,
+    ) -> Result<String, StoreError> {
+        if !self.has_entry(target_id)? {
+            return Err(StoreError::NoSuchEntry {
+                id: target_id.to_string(),
+            });
+        }
+        // Normalise "" to a clear, so a caller cannot write a label that pi's own
+        // loader would read as a clear while Epsilon's reader read it as a label.
+        let label = label.filter(|s| !s.trim().is_empty());
+        let entry = self.append(EntryKind::Label {
+            target_id: target_id.to_string(),
+            label: label.map(str::to_string),
+        })?;
+        Ok(entry.id)
+    }
+
+    /// Resolve the label for every entry, in file order, as pi's loader does.
+    ///
+    /// pi keeps `labelsById` as a map rebuilt on load (`session-manager.ts:975-990`)
+    /// and reads it in `getTree`. This returns the resolved map rather than
+    /// exposing pi's mutable field, so a caller cannot put the map and the file
+    /// out of step — which is the whole failure this design avoids.
+    ///
+    /// **Last write wins**, including a clear: scanning in order and applying each
+    /// `Label` entry reproduces pi exactly, so a session written by pi and one
+    /// written by Epsilon resolve identically.
+    pub fn labels(&self) -> Result<BTreeMap<String, (String, u64)>, StoreError> {
+        let mut out: BTreeMap<String, (String, u64)> = BTreeMap::new();
+        for e in self.read_all()? {
+            if let EntryKind::Label { target_id, label } = e.kind {
+                match label {
+                    Some(text) => {
+                        out.insert(target_id, (text, e.timestamp_ms));
+                    }
+                    None => {
+                        out.remove(&target_id);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Append a new entry on the current lane; assigns seq/parent/timestamp/id and flushes.
     ///
     /// M41: the first append to a headerless preexisting file stamps the header
@@ -1289,7 +1394,7 @@ impl SessionStore {
     /// sees is chronological rather than file-order by accident of branching.
     pub fn tree(&self) -> Result<Vec<SessionTreeNode>, StoreError> {
         let all = self.read_all()?;
-        Ok(build_forest(&all))
+        Ok(build_forest_from_entries(&all))
     }
 
     /// Every billed summarization call in the file, grouped by the model that was charged.
@@ -2576,7 +2681,22 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 /// Children sort by `timestamp_ms` ascending, which is pi's rule
 /// (`session-manager.ts:1355-1360`): the order a reader sees is chronological,
 /// not an artefact of which branch happened to be written first.
-fn build_forest(entries: &[SessionEntry]) -> Vec<SessionTreeNode> {
+/// Build the parentage forest from a flat entry list.
+///
+/// **Public because there are two consumers and one of them lives in another
+/// crate**: [`SessionStore::tree`] reads the file and calls this, and the RPC
+/// layer calls it directly to project the same structure onto pi's wire shape
+/// without going back to disk. M196 deleted a second, hand-written tree builder
+/// in `rpc_mode.rs` that had drifted toward a different answer to "what does
+/// this session look like".
+///
+/// The three root cases are pi's (`core/session-manager.ts`, `getTree()`): no
+/// parent, a self-parent, or a parent absent from the file. Children are sorted
+/// by timestamp at every level. Both are load-bearing: a root case is what keeps
+/// a truncated or hand-edited file rendering everything instead of silently
+/// dropping its tail, and the sort is what makes a branch read in the order it
+/// happened.
+pub fn build_forest_from_entries(entries: &[SessionEntry]) -> Vec<SessionTreeNode> {
     let index: std::collections::HashMap<&str, usize> = entries
         .iter()
         .enumerate()
@@ -2634,6 +2754,21 @@ fn build_forest(entries: &[SessionEntry]) -> Vec<SessionTreeNode> {
 
 /// Does `from` appear anywhere in `target`'s parent chain? True means making
 /// `target` a child of `from` would close a cycle.
+///
+/// Linking an entry under a parent that is one of its own ancestors is unsafe: a
+/// hand-edited file can contain `a -> b -> a`, and without this check both
+/// entries are unreachable from any root, the emitter builds them as nodes that
+/// are never attached, and **the session silently loses them**. The caller
+/// promotes such an entry to a root instead, so it is still rendered, exactly
+/// once.
+///
+/// The walk is bounded by the entry count. A longer walk means a cycle, which by
+/// definition means the goal *is* reachable, so the bound cannot produce a wrong
+/// answer -- it only stops a walk that would otherwise not terminate.
+///
+/// M196: this doc was written on the `rpc_mode.rs` copy, which was deleted when
+/// that file's second tree builder was replaced by a call to this one. The
+/// reasoning moved here rather than being deleted with the code.
 fn reaches(
     entries: &[SessionEntry],
     index: &std::collections::HashMap<&str, usize>,

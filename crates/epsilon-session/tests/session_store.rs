@@ -3705,3 +3705,161 @@ fn flatten_ids(nodes: &[epsilon_contracts::session_entry::SessionTreeNode]) -> V
     }
     out
 }
+
+/// A label survives a reopen, and clears when pi says it clears.
+///
+/// **The property that distinguishes a real label from the hardcoded `null` the
+/// wire used to report.** Before M196 the tree returned `label: null` for every
+/// node — a constant, not data. A test written against a store map rather than
+/// the file would have passed while the feature did nothing, so this one closes
+/// the store and reopens it: the label is on the entry (`target_id` + `label`),
+/// so it is in the bytes.
+#[test]
+fn a_label_survives_a_reopen_and_an_empty_label_clears_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let target;
+    {
+        let mut store = SessionStore::open(&path).unwrap();
+        let e = store
+            .append(EntryKind::Message {
+                message: user_msg("label me"),
+                api_request_sha256: None,
+            })
+            .unwrap();
+        target = e.id.clone();
+        store.set_label(&target, Some("the good bit")).unwrap();
+    }
+    // Reopened from disk, not the same handle.
+    {
+        let store = SessionStore::open(&path).unwrap();
+        let labels = store.labels().unwrap();
+        assert_eq!(
+            labels.get(&target).map(|(s, _)| s.as_str()),
+            Some("the good bit"),
+            "the label is in the file, not in a map: {labels:?}"
+        );
+    }
+    // pi: `appendLabelChange(targetId, undefined)` deletes the label.
+    {
+        let mut store = SessionStore::open(&path).unwrap();
+        store.set_label(&target, None).unwrap();
+    }
+    {
+        let store = SessionStore::open(&path).unwrap();
+        assert!(
+            store.labels().unwrap().is_empty(),
+            "an explicit clear removes the label, as pi's loader does"
+        );
+    }
+}
+
+/// An empty string clears, it does not write a label that reads as a label.
+///
+/// pi's loader branches on `if (entry.label)`, so `""` and `undefined` are the
+/// same instruction. Normalising here means a caller that passes `""` cannot
+/// produce a file pi and Epsilon disagree about.
+#[test]
+fn an_empty_label_is_a_clear_rather_than_a_blank_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    let e = store
+        .append(EntryKind::Message {
+            message: user_msg("x"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    store.set_label(&e.id, Some("named")).unwrap();
+    store.set_label(&e.id, Some("   ")).unwrap();
+    assert!(
+        store.labels().unwrap().is_empty(),
+        "whitespace is not a label: it is a clear"
+    );
+}
+
+/// The label is recorded ON the target, and an unknown target is refused.
+///
+/// **M196 corrected the expectation here.** The test used to assert that
+/// labelling does NOT move the leaf. It does — and so does pi: `_appendEntry`
+/// sets `leafId = entry.id` unconditionally
+/// (`references/pi-0.85.1/.../core/session-manager.ts:1058-1063`), so
+/// `appendLabelChange` advances the leaf in the reference too. The code was
+/// right and the assertion was wrong.
+///
+/// The property worth keeping is the one that could have gone either way: the
+/// label attaches to the **target**, not to the `Label` entry that recorded it.
+/// A test that only checked "some label exists" would pass if it landed on the
+/// wrong entry, which is the shape of bug a session tree hides.
+#[test]
+fn a_label_lands_on_its_target_and_an_unknown_target_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    let first = store
+        .append(EntryKind::Message {
+            message: user_msg("one"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    let second = store
+        .append(EntryKind::Message {
+            message: user_msg("two"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+
+    store.set_label(&first.id, Some("start here")).unwrap();
+
+    let labels = store.labels().unwrap();
+    assert_eq!(
+        labels.get(&first.id).map(|(s, _)| s.as_str()),
+        Some("start here"),
+        "the label is on the entry that was labelled"
+    );
+    assert!(
+        !labels.contains_key(&second.id),
+        "and not on the leaf, which is where the user was: {labels:?}"
+    );
+
+    // pi's own behaviour, asserted rather than assumed.
+    let leaf_now = store.leaf_id();
+    assert_ne!(
+        leaf_now.as_deref(),
+        Some(second.id.as_str()),
+        "the Label entry is itself appended to the lane, so the leaf advances -- \
+         as it does in pi (session-manager.ts:1061)"
+    );
+
+    let err = store.set_label("no-such-entry", Some("x")).unwrap_err();
+    assert!(
+        matches!(err, epsilon_session::StoreError::NoSuchEntry { .. }),
+        "an unknown target is refused, not written: {err:?}"
+    );
+}
+
+/// Last write wins, and a later clear beats an earlier label.
+///
+/// The order property a test written against a single set/get pair cannot see:
+/// it would pass with "first write wins" or "last write wins" alike.
+#[test]
+fn the_last_label_change_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::open(dir.path().join("s.jsonl")).unwrap();
+    let e = store
+        .append(EntryKind::Message {
+            message: user_msg("x"),
+            api_request_sha256: None,
+        })
+        .unwrap();
+    store.set_label(&e.id, Some("first")).unwrap();
+    store.set_label(&e.id, Some("second")).unwrap();
+    assert_eq!(
+        store.labels().unwrap().get(&e.id).map(|(s, _)| s.as_str()),
+        Some("second")
+    );
+    store.set_label(&e.id, Some("third")).unwrap();
+    store.set_label(&e.id, None).unwrap();
+    assert!(
+        store.labels().unwrap().is_empty(),
+        "the clear is last, so there is no label"
+    );
+}

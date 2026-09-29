@@ -430,39 +430,6 @@ fn epoch_millis_to_iso8601(ms: u64) -> String {
     )
 }
 
-/// True when following `parent_id` from `start` upward reaches `goal`.
-///
-/// Linking `start` under `goal` is safe only if `goal` is not one of `start`'s own
-/// ancestors. A file edited by hand can contain `a → b → a`; without this check those two
-/// entries are unreachable from any root, the emitter would build them as nodes that are
-/// never attached, and the session would silently lose them.
-///
-/// The walk is bounded by the entry count. A longer walk means a cycle, which by definition
-/// means `goal` IS reachable, so the bound cannot produce a wrong answer -- it only stops a
-/// walk that would otherwise not terminate.
-fn reaches(
-    entries: &[epsilon_contracts::session_entry::SessionEntry],
-    index: &std::collections::HashMap<&str, usize>,
-    start: usize,
-    goal: usize,
-) -> bool {
-    let mut cursor = start;
-    for _ in 0..entries.len() {
-        if cursor == goal {
-            return true;
-        }
-        let next = match entries[cursor].parent_id.as_deref() {
-            None => return false,
-            Some(p) => match index.get(p) {
-                Some(&n) => n,
-                None => return false, // orphan: the chain ends here
-            },
-        };
-        cursor = next;
-    }
-    true // the bounded walk hit a cycle, so goal is reachable
-}
-
 /// Point the agent at a different session file, and re-derive its conversation from it.
 ///
 /// This is the RPC equivalent of pi's `rebindSession()`, which every one of `fork`,
@@ -502,72 +469,84 @@ fn rebind_to(
 
 /// Build pi's nested `SessionTreeNode[]` from a flat entry list.
 ///
-/// pi's `getTree()` (`core/session-manager.ts`), reproduced rather than approximated:
+/// **This is now a projection of [`SessionStore::tree`](epsilon_session::SessionStore::tree),
+/// not a second implementation of it.** M196 deleted a hand-written copy that had
+/// been here since the RPC path was written: same index, same three root cases,
+/// same timestamp sort, same recursive emit. Two copies of a tree builder is
+/// exactly the failure this repository keeps paying for -- one of them drifts,
+/// and the drift is invisible because each has passing tests.
 ///
-/// - every entry becomes a node `{ entry, children, label, labelTimestamp }`;
-/// - a node is a **root** when its `parentId` is `None`, equals its own id (pi explicitly
-///   tolerates a self-parent), or names a parent that is **not in this file** -- orphans
-///   become roots, so a truncated or hand-edited JSONL renders everything rather than
-///   dropping the tail silently;
-/// - children are sorted by timestamp ascending **at every level**.
-///
-/// The emitter recurses, which is safe because the link pass above has already broken every
-/// cycle: no node is its own ancestor, so depth is bounded by the entry count. That buys
-/// the same guarantee as pi's iterative stack, by a cheaper route -- pi cannot mutate its
-/// input, so it has nowhere to record the decision.
+/// The remaining job is purely the wire shape: pi's `SessionTreeNode` is
+/// `{ entry, children, label?, labelTimestamp? }` (`rpc-types.ts`), and the
+/// entries are serialized in pi's form rather than epsilon's. The *structure* --
+/// who is a root, what nests under what -- is decided once, in the store, where
+/// the file it reads lives. `the_wire_tree_and_the_store_tree_agree` is the test
+/// that holds the two together; a client and the TUI cannot now be given
+/// different answers to "what does this session look like".
 fn build_tree(
     entries: &[epsilon_contracts::session_entry::SessionEntry],
 ) -> Vec<serde_json::Value> {
-    let index: std::collections::HashMap<&str, usize> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, e)| (e.id.as_str(), i))
-        .collect();
+    use epsilon_contracts::session_entry::SessionTreeNode;
+    use epsilon_session::build_forest_from_entries;
 
-    let mut children: Vec<Vec<usize>> = vec![Vec::new(); entries.len()];
-    let mut is_root = vec![false; entries.len()];
-    for (i, e) in entries.iter().enumerate() {
-        // pi's three root cases, in one place: no parent, a self-parent, or a parent that
-        // is not in the file. Anything else is linked, unless the link would close a loop.
-        let parent = e.parent_id.as_deref().filter(|p| *p != e.id.as_str());
-        match parent {
-            None => is_root[i] = true,
-            Some(p) => match index.get(p) {
-                // A parent that is an ancestor of this entry would close a loop; make the
-                // entry a root so it is still rendered, exactly once.
-                Some(&pi) if reaches(entries, &index, pi, i) => is_root[i] = true,
-                Some(&pi) => children[pi].push(i),
-                None => is_root[i] = true, // orphan
-            },
+    /// The resolved labels, in pi's order: scan every entry, last write wins, and
+    /// a `Label` with no text **deletes**.
+    ///
+    /// M196: this replaces a hardcoded `null`, so the field stops being a
+    /// constant standing in for a missing feature. pi keeps two mutable maps
+    /// rebuilt on load (`labelsById`, `labelTimestampsById`,
+    /// `session-manager.ts:975-990`); deriving them from the entry list here is
+    /// the same rule with no way for a map and the file to disagree.
+    fn resolved_labels(
+        entries: &[epsilon_contracts::session_entry::SessionEntry],
+    ) -> std::collections::HashMap<String, (String, String)> {
+        let mut out: std::collections::HashMap<String, (String, String)> = Default::default();
+        for e in entries {
+            if let epsilon_contracts::session_entry::EntryKind::Label { target_id, label } = &e.kind
+            {
+                match label {
+                    Some(text) => {
+                        // pi's `labelTimestamp` is the ISO string from the Label
+                        // entry, not a number. `epoch_millis_to_iso8601` is the
+                        // same converter the entry projection uses, so a label and
+                        // the entry it points at cannot be formatted differently.
+                        out.insert(
+                            target_id.clone(),
+                            (text.clone(), epoch_millis_to_iso8601(e.timestamp_ms)),
+                        );
+                    }
+                    None => {
+                        out.remove(target_id);
+                    }
+                }
+            }
         }
+        out
     }
 
-    fn emit(
-        entries: &[epsilon_contracts::session_entry::SessionEntry],
-        i: usize,
-        children: &[Vec<usize>],
+    fn node_as_pi(
+        n: &SessionTreeNode,
+        labels: &std::collections::HashMap<String, (String, String)>,
     ) -> serde_json::Value {
-        let mut kids = children[i].clone();
-        kids.sort_by_key(|&c| entries[c].timestamp_ms);
+        let (label, label_timestamp) = match labels.get(&n.entry.id) {
+            Some((text, ts)) => (
+                serde_json::Value::String(text.clone()),
+                serde_json::Value::String(ts.clone()),
+            ),
+            None => (serde_json::Value::Null, serde_json::Value::Null),
+        };
         serde_json::json!({
-            "entry": entry_as_pi(&entries[i]),
-            "children": kids
-                .iter()
-                .map(|&c| emit(entries, c, children))
-                .collect::<Vec<_>>(),
-            // pi fills these from its label maps; epsilon has no per-entry labels, so
-            // they are present-and-null rather than absent, so a client reading
-            // `node.label` sees null instead of undefined.
-            "label": serde_json::Value::Null,
-            "labelTimestamp": serde_json::Value::Null,
+            "entry": entry_as_pi(&n.entry),
+            "children": n.children.iter().map(|c| node_as_pi(c, labels)).collect::<Vec<_>>(),
+            "label": label,
+            "labelTimestamp": label_timestamp,
         })
     }
 
-    let mut roots: Vec<usize> = (0..entries.len()).filter(|&i| is_root[i]).collect();
-    roots.sort_by_key(|&i| entries[i].timestamp_ms);
-    roots
-        .into_iter()
-        .map(|i| emit(entries, i, &children))
+    let labels = resolved_labels(entries);
+    build_forest_from_entries(entries)
+        .iter()
+        .map(|n| node_as_pi(n, &labels))
         .collect()
 }
 
@@ -1476,6 +1455,185 @@ mod tests {
                 Err(_) => panic!("the run did not reach its terminal event within 10s"),
             }
         }
+    }
+
+    /// A user message, built the way the session tests build one.
+    fn msg(text: &str) -> epsilon_contracts::message::Message {
+        use epsilon_contracts::content::UserContent;
+        use epsilon_contracts::message::{Message, UserMessage};
+        Message::User(UserMessage {
+            id: format!("msg_{text}"),
+            timestamp_ms: 0,
+            content: vec![UserContent::Text {
+                text: text.to_string(),
+            }],
+        })
+    }
+
+    /// A labelled node reports its label, and a cleared one reports null.
+    ///
+    /// M196: `build_tree` returned a hardcoded `label: null`, so this test's
+    /// *negative* half passed against a feature that did not exist -- the field
+    /// was a constant. The load-bearing half is the positive one: a real string
+    /// comes back for an entry that was labelled, which the old code could not
+    /// do. `EntryKind::Label` was defined and serialized and had **no writer at
+    /// all** -- this repo's "faithful port, no production caller" class for the
+    /// sixth time.
+    #[test]
+    fn a_label_reaches_the_wire_and_a_clear_reaches_it_too() {
+        use epsilon_contracts::session_entry::{EntryKind, SessionEntry};
+
+        let mk = |id: &str, parent: Option<&str>, ts: u64, kind: EntryKind| SessionEntry {
+            id: id.to_string(),
+            seq: 0,
+            parent_id: parent.map(str::to_string),
+            timestamp_ms: ts,
+            kind,
+        };
+        let mut entries = vec![mk(
+            "e1",
+            None,
+            1_700_000_000_000,
+            EntryKind::Message {
+                message: msg("one"),
+                api_request_sha256: None,
+            },
+        )];
+        entries.push(mk(
+            "lbl",
+            Some("e1"),
+            1_700_000_001_000,
+            EntryKind::Label {
+                target_id: "e1".into(),
+                label: Some("the good bit".into()),
+            },
+        ));
+
+        let tree = build_tree(&entries);
+        // Search the whole tree rather than indexing `tree[0]`: `e1` is a ROOT
+        // here (its parent is `None`), so it is `tree[0]` itself and has no
+        // child by that name. A test that hardcodes the position is a test of
+        // the fixture's shape, not of the label.
+        fn find_e1(nodes: &[serde_json::Value]) -> Option<serde_json::Value> {
+            for n in nodes {
+                if n["entry"]["id"] == "e1" {
+                    return Some(n.clone());
+                }
+                if let Some(kids) = n["children"].as_array()
+                    && let Some(f) = find_e1(kids)
+                {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        let e1 = find_e1(&tree).expect("e1 is somewhere in the tree");
+        assert_eq!(
+            e1["label"], "the good bit",
+            "a labelled node reports its label, not null"
+        );
+        assert!(
+            e1["labelTimestamp"].is_string(),
+            "and an ISO string, as pi sends: {}",
+            e1["labelTimestamp"]
+        );
+
+        // A clear removes it again. After the fix, this null is a real answer
+        // rather than the constant it used to be.
+        entries.push(mk(
+            "lbl2",
+            Some("e1"),
+            1_700_000_002_000,
+            EntryKind::Label {
+                target_id: "e1".into(),
+                label: None,
+            },
+        ));
+        let after = find_e1(&build_tree(&entries)).expect("e1 survives the clear");
+        assert!(
+            after["label"].is_null(),
+            "after a clear the label is null again: {}",
+            after["label"]
+        );
+    }
+
+    /// The wire tree and the store's tree are the same tree.
+    ///
+    /// This is the test that matters for deleting the second tree builder. Both
+    /// sides would pass their own tests while answering "what does this session
+    /// look like?" differently -- one for a pi client on the socket, one for the
+    /// TUI reading the same file. Comparing the two **to each other** is the only
+    /// form of this assertion whose expected value does not come from the code
+    /// under test: a client and the TUI now cannot disagree.
+    #[test]
+    fn the_wire_tree_and_the_store_tree_agree() {
+        use epsilon_contracts::session_entry::{EntryKind, SessionEntry};
+        use epsilon_session::build_forest_from_entries;
+
+        let mk = |id: &str, parent: Option<&str>, ts: u64| SessionEntry {
+            id: id.to_string(),
+            seq: 0,
+            parent_id: parent.map(str::to_string),
+            timestamp_ms: ts,
+            kind: EntryKind::Message {
+                message: msg(&format!("body of {id}")),
+                api_request_sha256: None,
+            },
+        };
+        // A straight line with a branch off the middle -- the shape a real
+        // rewind-and-retry produces, and the case a per-path implementation
+        // gets wrong -- plus an orphan, which pi promotes to a root.
+        let entries = vec![
+            mk("e1", None, 100),
+            mk("e2", Some("e1"), 200),
+            mk("e3", Some("e1"), 300),
+            mk("e4", Some("e2"), 400),
+            mk("e5", Some("missing"), 500),
+        ];
+
+        let shape_of = |nodes: &[(String, Vec<String>)]| nodes.to_vec();
+        let wire: Vec<(String, Vec<String>)> = build_tree(&entries)
+            .iter()
+            .map(|n| {
+                (
+                    n["entry"]["id"].as_str().unwrap_or_default().to_string(),
+                    n["children"]
+                        .as_array()
+                        .unwrap_or(&Vec::new())
+                        .iter()
+                        .map(|c| c["entry"]["id"].as_str().unwrap_or_default().to_string())
+                        .collect(),
+                )
+            })
+            .collect();
+        let store: Vec<(String, Vec<String>)> = {
+            fn walk(
+                nodes: &[epsilon_contracts::session_entry::SessionTreeNode],
+            ) -> Vec<(String, Vec<String>)> {
+                nodes
+                    .iter()
+                    .map(|n| {
+                        (
+                            n.entry.id.clone(),
+                            walk(&n.children).into_iter().map(|(a, _)| a).collect(),
+                        )
+                    })
+                    .collect()
+            }
+            walk(&build_forest_from_entries(&entries))
+        };
+
+        assert_eq!(
+            shape_of(&wire),
+            store,
+            "the socket and the TUI must not be able to disagree about the tree"
+        );
+        // Not vacuous on a flat list, where any two implementations agree.
+        let roots: Vec<&String> = wire.iter().map(|(id, _)| id).collect();
+        assert!(
+            roots.contains(&&"e1".to_string()) && roots.contains(&&"e5".to_string()),
+            "the real root and the promoted orphan are both roots: {roots:?}"
+        );
     }
 
     #[test]

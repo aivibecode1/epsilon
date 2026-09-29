@@ -166,7 +166,7 @@ impl Usage {
         }
     }
 
-    /// A usage that reports no cache traffic, whatever the token counts are.
+    /// A usage whose provider reported no cache fields, whatever the token counts are.
     ///
     /// The honest constructor for a decoder that looked and found no cache keys.
     /// Spelling it as a method rather than a struct literal means the flag and
