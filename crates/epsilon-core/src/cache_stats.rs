@@ -324,7 +324,12 @@ fn micro_cost(tokens: u64, micro_per_mtok: u64) -> u64 {
 }
 
 /// `1234` → `1,234`; large counts in `k`/`M` so a footer line stays a line.
-fn fmt_tokens(n: u64) -> String {
+///
+/// **Public since M196** because the compaction row in the transcript formats
+/// token counts too, and two formatters for the same number is how a header
+/// starts reading `12k` beside a transcript row reading `12000` -- a reader has
+/// to guess whether those are the same figure.
+pub fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 10_000 {

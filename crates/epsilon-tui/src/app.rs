@@ -1602,6 +1602,45 @@ pub(crate) fn jump_to_char(
     }
 }
 
+/// The number of rows from the bottom to the nearest user turn in `direction`.
+///
+/// pi's `scrollToPrompt` (`tui-alt-screen.ts:485-495`) walks rows from the
+/// current position looking for an OSC-133 prompt marker. Epsilon emits no such
+/// markers, so the same idea is expressed against the transcript's own structure:
+/// a **user turn** is a prompt, and `LineKind::User` already says so.
+///
+/// The two details that make it feel right, both from pi's loop:
+///
+/// - **Start one row away from the current position** (`scrollTop + direction`),
+///   not at it. A prompt the reader is already looking at is not a jump.
+/// - **Give up at the ends and say so**, rather than clamping to the first or
+///   last prompt. Clamping is how "you are at the top" becomes a key that
+///   appears broken.
+///
+/// `None` means there is no prompt that way, and the caller names which way.
+pub(crate) fn jump_to_prompt(
+    lines: &[crate::state::TranscriptLine],
+    scroll_from_bottom: usize,
+    direction: i32,
+) -> Option<usize> {
+    let total = lines.len();
+    if total == 0 {
+        return None;
+    }
+    // The current position, measured from the bottom, as a row index.
+    let here = total.saturating_sub(scroll_from_bottom + 1);
+    let step = if direction < 0 { -1isize } else { 1isize };
+    let mut row = here as isize + step;
+    while row >= 0 && (row as usize) < total {
+        if lines[row as usize].kind == crate::state::LineKind::User {
+            // Convert back to "rows from the bottom", which is what the view reads.
+            return Some(total.saturating_sub(row as usize + 1));
+        }
+        row += step;
+    }
+    None
+}
+
 /// Direction for an editor jump-to-character, pi's `"forward" | "backward"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JumpDir {

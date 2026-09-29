@@ -2807,10 +2807,30 @@ mod protocol_doc_tests {
                 if let Some(r) = rest.strip_prefix("async ") {
                     rest = r.trim_start();
                 }
-                let Some(name) = rest.strip_prefix("fn ") else {
+                // `pub fn` counts too. Making a function public rewrites its line
+                // from `-fn name(` to `+pub fn name(`, which a `fn`-only match
+                // reads as a DELETION with no replacement -- a false positive, and
+                // a guard that cries wolf is a guard that gets disabled.
+                //
+                // **One strip, not two.** `"pub fn "` already contains `"fn "`,
+                // so stripping the visibility leaves `name(` with no `fn` left
+                // to strip -- which is why the first attempt at this fix still
+                // reported `fmt_tokens` as lost. Strip the VISIBILITY only, and
+                // then remove a leading `fn ` if one is still there:
+                //   `fn name(`        -> no visibility, `fn ` removed
+                //   `pub fn name(`    -> visibility removed, no `fn ` left
+                //   `pub(crate) fn name(` -> same
+                let mut tail = None;
+                for vis in ["pub(crate) fn ", "pub fn ", "fn "] {
+                    if let Some(r) = rest.strip_prefix(vis) {
+                        tail = Some(r);
+                        break;
+                    }
+                }
+                let Some(tail) = tail else {
                     continue;
                 };
-                let name = name.split('(').next().unwrap_or(name).trim();
+                let name = tail.split('(').next().unwrap_or(tail).trim();
                 if !name.is_empty() {
                     out.insert(name.to_string());
                 }

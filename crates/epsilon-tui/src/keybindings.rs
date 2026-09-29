@@ -49,6 +49,17 @@ const DEFAULTS: &[(&str, &[&str])] = &[
     // now, so the key in the footer is the key that scrolls.
     ("app.transcript.pageUp", &["pageup"]),
     ("app.transcript.pageDown", &["pagedown"]),
+    // Jump to the previous/next PROMPT rather than the previous/next ten rows.
+    // pi's chords, read from `tui/src/keybindings.ts:184-192`:
+    // `ctrl+up` / `ctrl+shift+up` and `ctrl+down` / `ctrl+shift+down`. The
+    // one-modifier form is listed first because a terminal often cannot
+    // distinguish the two, and a binding that only fires when a terminal
+    // supports shift is a binding most users never discover.
+    ("app.transcript.prevPrompt", &["ctrl+up", "ctrl+shift+up"]),
+    (
+        "app.transcript.nextPrompt",
+        &["ctrl+down", "ctrl+shift+down"],
+    ),
     // Jump to live: the other end of the same journey. `G` is vim's
     // end-of-buffer, but the reader pressing it here means "the newest rows",
     // and that is what "live" names — the view following the run again. Two
@@ -60,6 +71,73 @@ const DEFAULTS: &[(&str, &[&str])] = &[
     // its own character would take `g` out of every draft, which is the M13
     // lesson (a bare `x` for expand made the letter untypable).
     ("app.transcript.live", &["G", "g"]),
+    // Half-page and the two ends.
+    //
+    // pi gives half-page NO default (`tui/src/keybindings.ts:168-170` is
+    // `defaultKeys: []`) and binds top/bottom to `home`/`end`.
+    //
+    // **Ctrl-modified, and on chords that are actually free.** Two attempts:
+    //
+    // 1. bare `u`/`d`/`H`/`L` -- correct about the keys, completely wrong about
+    //    the editor. A bare letter is TEXT, and the composer is where a user is
+    //    typing most of the time. Four unrelated tests failed.
+    // 2. `ctrl+u`/`ctrl+d`, which read like readline's page keys -- and are
+    //    **already bound to kill-to-start and delete-forward in the composer**
+    //    (`keys.rs:1509`, `:1354`). A test caught that too, by asserting the
+    //    scroll saturated at zero and finding it unmoved.
+    //
+    // 3. `ctrl+k`/`ctrl+j` -- free in the binding TABLE, and `ctrl+j` is
+    //    **newline in the composer** (`tests.rs:1395`), so the table and the
+    //    handler disagreed and the test caught it.
+    //
+    // **So the half page gets NO default key, which is exactly what pi does**:
+    // `tui.altScreen.halfPageUp` is `defaultKeys: []`
+    // (`tui/src/keybindings.ts:168-170`). Three chords were tried and each is
+    // already the composer's: bare letters are text, `ctrl+u`/`ctrl+d` are
+    // kill-line, `ctrl+j` is newline. A user who wants one sets it in
+    // `keybindings.json`; a default that steals a key is worse than a default
+    // that does not exist, and the whole point of the ids is that the footer can
+    // name whatever the user chose.
+    //
+    // `top`/`bottom` do get defaults. `home`/`end` were rejected because they
+    // already drive the composer cursor -- the same key meaning two things
+    // depending on focus is worse than not having the binding -- so they take
+    // `ctrl+home`/`ctrl+end`, which are free.
+    //
+    // A half page is the MEASURED viewport halved, not a fixed ten rows, which is
+    // what makes it a half PAGE. The pageUp/pageDown bindings above stay a fixed
+    // ten because they are also the footer hint.
+    // **No half-page defaults, and that is the invariant rather than an
+    // oversight.** Every id in DEFAULTS must have a printable chord, because the
+    // footer prints chords and a binding it cannot name is a binding a user
+    // cannot find (`a_hint_label_parses_back_to_the_chord_it_names`). An empty
+    // default fails that test -- correctly.
+    //
+    // Three chords were tried and each is the composer's: bare letters are TEXT,
+    // `ctrl+u`/`ctrl+d` are kill-to-start and delete-forward, `ctrl+j` is newline.
+    // pi leaves the same key unbound for the same reason
+    // (`tui/src/keybindings.ts:168-170` is `defaultKeys: []`). The HANDLER still
+    // exists, so a user who sets `app.transcript.halfUp` in `keybindings.json`
+    // gets a half page; what is missing is only a default, which is the one thing
+    // that cannot be had here.
+    ("app.transcript.top", &["ctrl+home", "ctrl+shift+home"]),
+    ("app.transcript.bottom", &["ctrl+end", "ctrl+shift+end"]),
+    // Copy the last assistant message. pi binds this to `ctrl+x`
+    // (`core/keybindings.ts:130-133`) -- but `ctrl+x` is `app.tools.expand` here,
+    // and the two are not the same gesture: one shows more of a tool result, the
+    // other takes text to the clipboard.
+    //
+    // **The chord was chosen by reading the composer's claims, not by taste.**
+    // Every one of these is already bound in the key handler: ctrl+a home,
+    // ctrl+b back-char, ctrl+d delete-forward, ctrl+e line-end, ctrl+f
+    // move-forward, ctrl+k kill-to-line-end, ctrl+o (oauth), ctrl+u kill-to-start,
+    // ctrl+v paste, ctrl+w kill-word, ctrl+y yank. ctrl+y was the obvious pick
+    // and it is taken.
+    //
+    // What is left is the F-keys, and `grep -c 'KeyCode::F('` over the handler is
+    // **0** -- nothing in the TUI claims one. `ctrl+y` was also tried first and
+    // caught, the same way `ctrl+u`/`ctrl+j`/`ctrl+k` were for the half page.
+    ("app.message.copy", &["f4"]),
     ("app.live.refresh", &["ctrl+g"]),
     ("tui.editor.undo", &["ctrl+z"]),
     ("tui.editor.redo", &["ctrl+."]),

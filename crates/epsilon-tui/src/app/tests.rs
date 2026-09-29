@@ -3918,6 +3918,264 @@ fn the_tree_panel_draws_its_filter_search_field_and_fold_glyphs() {
 /// Same reason as the tree-panel test, and the same payoff: the previous gap in
 /// this file was a field rendering in the wrong panel, which no state assertion
 /// could see. Two more surfaces asserted only on state, with the same risk.
+///
+/// `k` in the `/tree` picker forks the session at the SELECTED row.
+///
+/// The property that matters: the fork contains **only the ancestry of the
+/// selected entry**, not the whole file. A copy would carry every abandoned
+/// branch into the new session under one identity, which is the M194 defect this
+/// primitive was written to fix -- so a test that only checked "a new file
+/// appeared" would pass against the wrong implementation.
+#[test]
+fn forking_from_the_tree_writes_only_the_chosen_ancestry() {
+    use epsilon_contracts::content::UserContent;
+    use epsilon_contracts::message::{Message, UserMessage};
+    use epsilon_contracts::session_entry::EntryKind;
+    use epsilon_session::SessionStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let backing = std::sync::Arc::new(std::sync::Mutex::new(
+        SessionStore::open(dir.path().join("s.jsonl")).unwrap(),
+    ));
+    fn push(store: &mut SessionStore, text: &str) -> String {
+        store
+            .append(EntryKind::Message {
+                message: Message::User(UserMessage {
+                    id: epsilon_contracts::new_id("msg"),
+                    timestamp_ms: 0,
+                    content: vec![UserContent::Text { text: text.into() }],
+                }),
+                api_request_sha256: None,
+            })
+            .unwrap()
+            .id
+    }
+    let first = {
+        let mut st = backing.lock().unwrap();
+        let a = push(&mut st, "first");
+        let b = push(&mut st, "second");
+        let c = push(&mut st, "third");
+        (a, b, c)
+    };
+
+    let (mut app, agent, _rx) = test_app();
+    agent.attach_session_store(std::sync::Arc::clone(&backing));
+    app.timeline_open = true;
+    app.timeline_entries = vec![crate::app::TimelineRow {
+        seq: 1,
+        id: first.1.clone(),
+        kind: "user".into(),
+        snippet: "second".into(),
+        depth: 0,
+        on_active: false,
+        parent: Some(first.0.clone()),
+        label: None,
+    }];
+    app.timeline_index = 0;
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('k')));
+
+    let st = backing.lock().unwrap();
+    let dir_now = st.path().parent().unwrap();
+    // `.jsonl` only: the directory also holds the session's own write lease, and
+    // counting that as a fork is the kind of off-by-one that makes a correct
+    // implementation look broken.
+    let forks: Vec<_> = std::fs::read_dir(dir_now)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl") && p != st.path())
+        .collect();
+    assert_eq!(forks.len(), 1, "exactly one fork was written: {forks:?}");
+
+    // The fork stops at the selected entry: "third" is NOT in it.
+    let body = std::fs::read_to_string(&forks[0]).unwrap();
+    assert!(body.contains("first"), "the ancestry is there: {body}");
+    assert!(
+        body.contains("second"),
+        "including the fork point itself: {body}"
+    );
+    assert!(
+        !body.contains("third"),
+        "and NOTHING after it -- a copy would carry it: {body}"
+    );
+}
+
+/// A prompt jump lands on a USER TURN, skips the one you are on, and says when
+/// there is none.
+///
+/// Three properties, each of which a naive version gets wrong:
+///
+/// 1. **Starts one row away.** pi walks from `scrollTop + direction`
+///    (`tui-alt-screen.ts:488`), so a prompt the reader is already looking at is
+///    not a jump. Without it, the key appears to do nothing.
+/// 2. **Skips non-user rows.** A session is mostly tool results; landing on one
+///    is exactly what the feature exists to avoid.
+/// 3. **`None` at the ends**, rather than clamping. Clamping is how "you are
+///    already at the top" becomes a key that looks broken.
+#[test]
+fn a_prompt_jump_lands_on_a_user_turn_and_reports_the_ends() {
+    use crate::app::jump_to_prompt;
+    use crate::state::TranscriptLine;
+
+    // Built with every field set explicitly: `TranscriptLine` carries six, and a
+    // fixture that sets three will not compile the moment a seventh is added --
+    // which is a good thing, but only if the test says what the shape is.
+    let line = |kind: crate::state::LineKind| TranscriptLine {
+        id: 0,
+        kind,
+        text: String::new(),
+        full: None,
+        code: false,
+        md: None,
+        card: None,
+    };
+    // 0 user, 1 assistant, 2 tool, 3 tool, 4 user, 5 assistant, 6 user
+    let lines = vec![
+        line(crate::state::LineKind::User),
+        line(crate::state::LineKind::Assistant),
+        line(crate::state::LineKind::ToolResultOk),
+        line(crate::state::LineKind::ToolResultOk),
+        line(crate::state::LineKind::User),
+        line(crate::state::LineKind::Assistant),
+        line(crate::state::LineKind::User),
+    ];
+
+    // Sitting at the bottom (row 6, a user turn). Backward skips row 6 itself and
+    // lands on row 4, not on the assistant at 5.
+    assert_eq!(
+        jump_to_prompt(&lines, 0, -1),
+        Some(2),
+        "row 4 is 2 from the bottom"
+    );
+    // Forward from row 6 has nothing after it.
+    assert_eq!(
+        jump_to_prompt(&lines, 0, 1),
+        None,
+        "nothing after the last turn"
+    );
+
+    // From row 4 (2 from the bottom), forward reaches row 6.
+    assert_eq!(jump_to_prompt(&lines, 2, 1), Some(0));
+    // Backward from row 4 passes the tool results and lands on row 0.
+    assert_eq!(
+        jump_to_prompt(&lines, 2, -1),
+        Some(6),
+        "row 0 is 6 from the bottom"
+    );
+
+    // The ends report rather than clamp.
+    assert_eq!(
+        jump_to_prompt(&lines, 6, -1),
+        None,
+        "nothing before the first turn"
+    );
+    assert_eq!(
+        jump_to_prompt(&[], 0, -1),
+        None,
+        "an empty transcript has no prompts"
+    );
+
+    // A transcript with no user turns at all is not a crash.
+    let tool_only = vec![line(crate::state::LineKind::ToolResultOk); 3];
+    assert_eq!(jump_to_prompt(&tool_only, 0, -1), None);
+}
+
+/// A half page is HALF THE MEASURED VIEWPORT, and top/bottom reach the ends.
+///
+/// The property worth pinning: the step tracks `geometry.visible`. A fixed ten
+/// rows is not a half page -- it is a page, or a fifth of one, depending on the
+/// terminal, and a user with a 50-row window would find the key does almost
+/// nothing. The geometry is measured at paint time, so a frame that has never
+/// been painted is the one case where no sensible half exists; that is clamped
+/// to one row rather than guessed at.
+///
+/// The copy key reaches the same clipboard path `/copy` does.
+///
+/// The property is that the key is wired to the **command**, not to a private
+/// copy of the clipboard logic. A test that only checked "the key is bound"
+/// would pass against an arm that called `clipboard::copy` directly and
+/// therefore did not park the OSC-52 sequence or print the multiplexer notice —
+/// which is the part that works over SSH.
+#[test]
+fn the_copy_key_reaches_the_clipboard_path() {
+    let (mut app, agent, _receivers) = test_app();
+    // A real assistant row from a real (faux) turn, the same way the existing
+    // `/copy` tests build one -- pushing a line into the transcript behind
+    // `/copy`'s back would test a fixture rather than the path.
+    // `/copy` with nothing to copy is the negative control, and it is the one
+    // that proves the key is wired: with no assistant row, the key must produce
+    // exactly the notice `/copy` produces, and nothing else.
+    let before = app.ui.lines().len();
+    handle_key(&mut app, &agent, key(KeyCode::F(4)));
+    assert!(
+        app.ui.lines().len() > before,
+        "the key reached the copy command at all"
+    );
+    assert_eq!(
+        last_line_text(&app),
+        "copy: no assistant message to copy",
+        "the SAME notice `/copy` gives -- so the key routes through the command \\
+         rather than a private copy of the clipboard logic"
+    );
+    assert_eq!(
+        app.osc_pending, None,
+        "and parks nothing, because there was nothing to park"
+    );
+}
+
+/// A compaction says what it cost, in the row, with the same numbers it records.
+///
+/// **The property is agreement, not presence.** A line that said "context
+/// compacted" would pass a test that only looked for the word. The figure the
+/// user reads and the figure folded into the header's totals come from the same
+/// `Usage`, so a reader who adds up the transcript gets the header's number.
+#[test]
+fn a_compaction_row_reports_the_same_tokens_it_records() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let (mut app, _agent, _rx) = test_app();
+    let usage = epsilon_contracts::message::Usage {
+        input: 12_400,
+        output: 310,
+        cache_read: 8_900,
+        cache_write: 0,
+        total_tokens: 21_610,
+        cache_reported: true,
+    };
+
+    // The file's own driver for an event, so the totals move through exactly the
+    // path a real compaction takes.
+    apply_with_scroll(
+        &mut app,
+        &AgentEvent::CompactionFinished {
+            // `Usage` is `Copy`, so no clone -- and clippy says so, which is a
+            // free correctness check on the fixture.
+            usage: Some(usage),
+            model_id: Some("test-model".into()),
+        },
+    );
+
+    // The property is AGREEMENT between the row and the header, asserted through
+    // the SAME formatter both use. Asserting on a literal would pass against a
+    // second formatter that had quietly drifted, which is the failure this
+    // catches: a header reading `12k` beside a row reading `12000`, with the
+    // reader left to guess whether those are the same figure.
+    let f = epsilon_core::cache_stats::fmt_tokens;
+    let row = last_line_text(&app);
+    assert!(
+        row.contains(&f(usage.input)) && row.contains(&f(usage.output)),
+        "the row names the input and output of this call: {row}"
+    );
+    assert!(
+        row.contains(&f(usage.input + usage.cache_read)),
+        "and the re-read that makes the figure large: {row}"
+    );
+    // "re-read" is the word that explains the size. Without it a user reads the
+    // input figure as an ordinary turn rather than a whole history sent again.
+    assert!(row.contains("re-read"), "and names WHY it is large: {row}");
+}
+
 #[test]
 fn the_label_prompt_and_jump_notice_draw() {
     use crate::app::JumpDir;

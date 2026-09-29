@@ -1250,7 +1250,30 @@ impl UiState {
             }
             AgentEvent::CompactionFinished { usage, model_id } => {
                 self.status = "context compacted".into();
-                self.push_system("── compaction finished ──");
+                // **Say what it cost, in the row itself.** M196: this printed
+                // "── compaction finished ──" and nothing else, while the same
+                // handler recorded the usage into the header's totals two lines
+                // below. So the header rose and the transcript said nothing -- a
+                // user who compacts a long session sees a cost appear with no
+                // event on screen explaining it, which is precisely the moment
+                // they want to know whether it was worth it.
+                //
+                // The summariser RESENDS the whole history, so this is the most
+                // expensive call in the session and it is the one most likely to
+                // be surprising. A legacy session with no usage (pi v1 files carry
+                // none) still prints the line, saying "?" rather than a number
+                // that was never reported.
+                let f = epsilon_core::cache_stats::fmt_tokens;
+                let cost = match usage {
+                    Some(u) => format!(
+                        "── context compacted · ↑{} ↓{} · {} re-read ──",
+                        f(u.input),
+                        f(u.output),
+                        f(u.input.saturating_add(u.cache_read))
+                    ),
+                    None => "── context compacted · no usage reported ──".to_string(),
+                };
+                self.push_system(cost);
                 // The summariser resends the whole history, so it is billed like any
                 // other provider call. Folding it in HERE rather than only on
                 // `/resume` is what stops the cost from appearing to rise when a user

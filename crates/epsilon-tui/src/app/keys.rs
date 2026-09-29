@@ -722,6 +722,63 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 app.tree_filter = app.tree_filter.next();
                 refilter(app);
             }
+            // M196: fork the session at the SELECTED row, which is the whole
+            // point of the tree. `/fork` forks at the leaf, so before the tree
+            // existed there was no way to say "keep everything up to here and
+            // try something else" from the TUI at all -- the primitive existed
+            // (and had an RPC caller from M192) with no TUI path to reach it.
+            //
+            // A user message is the only sensible fork point: a fork of an
+            // assistant turn or a tool result leaves a session that ends
+            // mid-answer, which is a file pi can produce and a user cannot use.
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                let Some(row) = app.timeline_entries.get(app.timeline_index).cloned() else {
+                    return false;
+                };
+                if row.kind != "user" {
+                    app.ui.push_notice(format!(
+                        "fork at a USER message — #{} [{}] is {}",
+                        row.seq, row.kind, row.kind
+                    ));
+                    return false;
+                }
+                let Some(store) = agent.session_store() else {
+                    return false;
+                };
+                // **The session file's own parent directory**, which is what
+                // `/fork` uses -- so both fork paths write their session where the
+                // user's existing ones already live, rather than into a directory
+                // only the session browser knows to look in. Guessing a
+                // `sessions_dir()` here would have put the fork somewhere the
+                // browser would not list it.
+                let forked = {
+                    let Ok(st) = store.lock() else {
+                        return false;
+                    };
+                    let dest = st.path().parent().map(|d| d.to_path_buf());
+                    let Some(dest) = dest else {
+                        app.ui
+                            .push_notice("fork: the session file has no parent directory");
+                        return false;
+                    };
+                    st.fork_branch_at(&row.id, dest)
+                };
+                match forked {
+                    Ok(path) => {
+                        app.ui.push_notice(format!(
+                            "forked at #{} — the new session is {}",
+                            row.seq,
+                            path.display()
+                        ));
+                        app.timeline_open = false;
+                        app.timeline_entries.clear();
+                        app.timeline_all.clear();
+                    }
+                    Err(e) => app
+                        .ui
+                        .push_notice(format!("fork at #{} failed: {e}", row.seq)),
+                }
+            }
             // M196: label the selected row. pi binds this in its tree selector
             // (`updateNodeLabel`); the store half (`SessionStore::set_label`)
             // existed and was tested, with no TUI half at all -- the same
@@ -1372,6 +1429,70 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
         }
         _ if app.keybindings.matches("app.transcript.pageDown", &key) => {
             app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(10);
+            false
+        }
+        // M196: jump to the previous/next SEMANTIC prompt — a user turn, not a
+        // line. pi matches OSC-133 prompt markers in the rendered rows
+        // (`tui-alt-screen.ts:489`); Epsilon emits none, so the equivalent is
+        // `LineKind::User`, which is the same idea expressed in the data the
+        // transcript already has.
+        //
+        // **Why this is worth a key.** A long session is mostly tool results;
+        // paging by ten rows stops on things nobody was reading, and the reader
+        // re-pages four times to reach the turn they want. Jumping prompt to
+        // prompt is the difference between one press and four.
+        _ if app.keybindings.matches("app.transcript.prevPrompt", &key) => {
+            match crate::app::jump_to_prompt(app.ui.lines(), app.scroll_from_bottom, -1) {
+                Some(rows) => app.scroll_from_bottom = rows,
+                None => app.ui.push_notice("no earlier prompt"),
+            }
+            false
+        }
+        // M196: half-page and the two ends.
+        //
+        // **The half page is the MEASURED viewport**, not a fixed ten rows --
+        // that is what makes it a half page rather than "pageUp again". Zero
+        // means the frame has not been painted yet, and guessing a number then
+        // would scroll by an amount unrelated to any screen the user has seen.
+        // M196: the copy key, bound to the command that already does the work.
+        // Routing through `Command::Copy` rather than re-implementing the clipboard
+        // call here is the point: the OSC-52 parking, the multiplexer choice, and
+        // the notice that names which path landed are all in that one arm, and a
+        // second copy of them is how a notice starts disagreeing with the copy.
+        _ if app.keybindings.matches("app.message.copy", &key) => {
+            // Routed through the command that already does the work, rather than
+            // re-implementing the clipboard call: the OSC-52 parking, the
+            // multiplexer choice, and the notice naming which path landed are all
+            // in that one arm, and a second copy of them is how a notice starts
+            // disagreeing with the copy.
+            app.run_command(agent, crate::picker::Command::Copy)
+        }
+        _ if app.keybindings.matches("app.transcript.halfUp", &key) => {
+            let half = (app.geometry.visible / 2).max(1);
+            app.scroll_from_bottom = app.scroll_from_bottom.saturating_add(half);
+            false
+        }
+        _ if app.keybindings.matches("app.transcript.halfDown", &key) => {
+            let half = (app.geometry.visible / 2).max(1);
+            app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(half);
+            false
+        }
+        // Top and bottom. `total` is the whole transcript, so the top is one
+        // screen past the last row -- `saturating_sub` keeps it pinned there
+        // rather than running the offset away into rows that do not exist.
+        _ if app.keybindings.matches("app.transcript.top", &key) => {
+            app.scroll_from_bottom = app.geometry.total.max(1);
+            false
+        }
+        _ if app.keybindings.matches("app.transcript.bottom", &key) => {
+            app.scroll_from_bottom = 0;
+            false
+        }
+        _ if app.keybindings.matches("app.transcript.nextPrompt", &key) => {
+            match crate::app::jump_to_prompt(app.ui.lines(), app.scroll_from_bottom, 1) {
+                Some(rows) => app.scroll_from_bottom = rows,
+                None => app.ui.push_notice("no later prompt"),
+            }
             false
         }
         KeyCode::Tab => {

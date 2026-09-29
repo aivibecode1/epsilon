@@ -24,7 +24,32 @@ So "24 missing capabilities" is misleading if read as 24 separate projects. It i
 three surfaces plus their supporting commands. Evidence and the full table:
 [`audit/evidence/port-fidelity-study-2026-09-28.md`](../../audit/evidence/port-fidelity-study-2026-09-28.md).
 
-## First target: give `branch_with_summary` a production caller
+## STILL OPEN, and it is a size decision not a task: branch summaries on navigate
+
+Re-measured at the end of M196. `SessionStore::branch_with_summary` is correct,
+tested, and still has **no production caller** — the original
+"faithful port, no production caller". `/tree`'s Enter navigates and does not
+write a summary.
+
+**Why it is still open, honestly: pi's version is a PROVIDER CALL.** The recipe
+at `agent-session.ts:3114-3268` is
+`collectEntriesForBranchSummary` -> `generateBranchSummary(...)` ->
+`branchWithSummary(newLeafId, text, ...)`. The text is *model-generated*. Epsilon's
+key handler is synchronous, so producing it means an async round-trip wired into
+the key path, plus a decision about what happens when the provider call fails
+mid-navigation — pi has that at `:3271-3273` and it is not a small branch.
+
+Writing `branch_with_summary(target, "left this branch", None, None)` would close
+the wiring in an afternoon and would be **worse than nothing**: a fixed string
+pretending to be a summary of a conversation it never read. This is the case
+where leaving a capability visibly absent beats shipping a fake one.
+
+**Also still open, and worth naming:** the summary is attached at the
+navigation TARGET, not the abandoned branch (`agent-session.ts:3254`), and
+navigating to a *user* message puts that message's text back in the editor so it
+can be edited and resent (`:3243`). Epsilon has neither behaviour.
+
+## (superseded heading kept for the recipe) First target: give `branch_with_summary` a production caller
 
 **Why this one first:** it is the repo's own documented defect class — *a faithful port with
 no production caller*. Named in `AGENTS.md`, and named by the code itself at
@@ -420,3 +445,85 @@ I asserted the disable-list kept insertion order. It does not: `retain`-then-
 "fixing" correct code to satisfy a property no caller depends on is the wrong
 trade. The test now asserts each name appears **exactly once** — the bug `retain`
 actually exists to prevent.
+
+
+## M196 closed the tree's remaining adjacents
+
+**Fork at a selected user message** (`k` in the `/tree` picker). `/fork` forks at
+the LEAF, so before the tree existed there was no way to say "keep everything up
+to here and try something else" — and `fork_branch_at`, correct since M192 with an
+RPC caller, had **no TUI path at all**. Seventh occurrence of the repo's own defect
+class.
+
+Two deliberate choices:
+- **only user messages.** A fork of an assistant turn or a tool result leaves a
+  session ending mid-answer: a file pi can produce, a user cannot use. The refusal
+  says which kind was selected.
+- **the session file's own parent directory**, matching `/fork`. I first guessed a
+  `sessions_dir()` that does not exist; had that compiled, forks would have landed
+  somewhere the session browser does not list.
+
+**Jump to previous/next semantic prompt** (`ctrl+up` / `ctrl+down`, pi's chords at
+`tui/src/keybindings.ts:184-192`). pi finds prompts by matching OSC-133 markers in
+rendered rows (`tui-alt-screen.ts:489`); Epsilon emits none, so the same idea is
+`LineKind::User` — which is what a prompt already IS in the transcript's data.
+
+The reason it earns a key: a long session is mostly tool results, so paging by ten
+rows stops on things nobody was reading.
+
+Three properties the test pins, each a way a naive version fails:
+1. starts **one row away** (`scrollTop + direction`, `tui-alt-screen.ts:488`) — a
+   prompt the reader is already looking at is not a jump;
+2. **skips non-user rows**;
+3. returns `None` at the ends rather than **clamping** — clamping is how "you are
+   already at the top" becomes a key that looks broken.
+
+## The port study, re-measured rather than trusted (M196)
+
+All 84 rows checked against the code. **Ten rows it reported open are closed** —
+six by M196, three by M194, one PARTIAL already effectively DONE. **29 MISSING
+becomes 21.** `/settings` stays open deliberately, with a comment naming the
+deferral, and the addendum in the study says so.
+
+The finding cuts BOTH ways, and that is the part worth keeping: the study also
+reported G5 and G6 as MISSING when they were implemented. **A study written
+against a tree that is still moving is wrong in both directions**, and the rows it
+gets wrong in your favour are the expensive ones — building them produces a
+duplicate implementation and a reviewer who believes the table.
+
+## The deletion guard has a false positive, and a fix that was itself wrong twice
+
+`no_source_file_lost_a_test_since_head` fired on `fmt_tokens` after I made it
+`pub` for the compaction row. The diff is `-fn fmt_tokens(` / `+pub fn fmt_tokens(`,
+and a `fn`-only match reads the first as a deletion with no replacement.
+
+**The first fix did not work**, and this is the part worth keeping. It stripped
+`"pub fn "` and *then* tried `strip_prefix("fn ")` — but `"pub fn "` already
+contains `"fn "`, so nothing was left to match and the name never formed. It
+shipped as "fixed" because the code compiled. The second fix stripped both and
+went one step further wrong by shadowing `rest` into itself.
+
+The working shape is **one strip loop over `["pub(crate) fn ", "pub fn ", "fn "]`,
+breaking on the first match, with the `else` doing the skip** — the visibility
+test has to happen *before* anything is consumed.
+
+**A guard needs a control that is real.** My first control was a test name I
+had invented (`a_half_page_is_half_the_measured_viewport`), which did not exist
+at HEAD — so deleting it changed nothing and the guard correctly passed. A
+control that never exercised the guard proved nothing. The real control deleted
+`the_label_prompt_and_jump_notice_draw` (a test that *is* at HEAD): the guard
+named it, which is the whole property.
+
+**And restoring from a backup taken after the damage is not restoring.** The
+`shutil.copy2` that "restored" the file copied the already-damaged version, and
+`AGENTS.md`'s mtime rule applied to it too. The block was recovered from
+`git show HEAD:<file>` by name, and the file then compared equal to HEAD's test
+set (113 tests, none missing) before the suite was run again.
+
+**Count reconciliation:** 429 declared at HEAD, 433 compiled now, 4 added
+(`a_compaction_row_reports_the_same_tokens_it_records`,
+`a_prompt_jump_lands_on_a_user_turn_and_reports_the_ends`,
+`forking_from_the_tree_writes_only_the_chosen_ancestry`,
+`the_copy_key_reaches_the_clipboard_path`). A delta of 1 from an expected 434
+was the *control's* damage, not a lost test — which is why the named comparison
+runs against the compiled list, not against a remembered number.

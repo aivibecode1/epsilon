@@ -8,7 +8,11 @@
 //! channel; frontends are reducers over that stream.
 
 pub mod agents;
-mod cache_stats;
+// M196: public because the TUI formats token counts in the compaction row too,
+// and a private module would mean a SECOND formatter. One number, one
+// rendering -- or a header reading `12k` beside a row reading `12000`, and a
+// reader left to guess whether those are the same figure.
+pub mod cache_stats;
 mod compact;
 pub mod config;
 mod exec;

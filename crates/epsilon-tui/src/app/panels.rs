@@ -580,7 +580,19 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     footer.extend(
         overlay::hint_row(
             &app.theme,
-            &[("↑↓", "move"), ("enter", "jump"), ("esc", "close")],
+            // M196: the tree's own keys, all of which exist. A hint row that
+            // lists fewer keys than the panel binds is the same defect as an
+            // unbound key with no response -- the capability is there and
+            // undiscoverable.
+            &[
+                ("↑↓", "move"),
+                ("enter", "jump"),
+                ("f", "filter"),
+                ("/", "search"),
+                ("⇧L", "label"),
+                ("k", "fork"),
+                ("esc", "close"),
+            ],
         )
         .spans,
     );
