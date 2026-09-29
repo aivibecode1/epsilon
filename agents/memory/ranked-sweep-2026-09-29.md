@@ -21,6 +21,26 @@ re-ranked by what each one costs:
 Beyond the ledger, the next capability slice is `/goal` — a persisted, auto-continuing session
 objective, which the DSH reference documents in full. Notes: [`08-goal-command.md`](08-goal-command.md).
 
+## M202 was not a row, and it was the most valuable find of the two rounds
+
+Driving the **installed binary** through `scripts/console-probe.py` — the only check in this
+repository that runs what a user runs — found that `epsilon` would not start in this
+repository's own directory: `Usage::cache_reported` was added without a serde default, and
+`Usage` is inside every assistant message, so every session file older than M194 was
+unreadable. No test could see it, because every fixture is built with the current shape.
+
+**The tool to reach for next time is the probe, not another test.** It answers a question no
+in-tree test can: *what does the shipped artifact do in a real console, in a real workspace?*
+It costs one command and about ten seconds:
+
+```sh
+python scripts/console-probe.py --late --size 80x24 "C:\Users\Hp\.cargo\bin\epsilon.exe" ""
+```
+
+Two shapes of finding it can produce that nothing else can: a refusal at startup (this one), and
+a frame that differs from what `frame_dump` renders (the rows come back as JSON). Run it after
+every reinstall.
+
 ## The method fact worth keeping
 
 A scratch probe (`wrap_line` over the exact fixture string, widths 56–61) proved
