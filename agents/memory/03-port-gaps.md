@@ -237,3 +237,186 @@ Three things worth keeping:
 - **This is what the "what nothing exercises" discipline buys.** The label editor was
   new code with a new test; the test exercised the real key path, and the deadlock was
   in code that compiled cleanly and passed clippy.
+
+
+## The settings gap is really a SKILLS gap (M196, measured)
+
+The port study calls it "a settings selector". Reading pi's `config-selector.ts`
+(942 lines) says otherwise: it is not a toggles panel at all, it is a **resource
+enable/disable browser** over `extensions | skills | prompts | themes`, scoped
+`user | project`, writing `+pattern` / `-pattern` into the settings arrays
+(`config-selector.ts:16755+`).
+
+Epsilon's equivalent today:
+
+- `/settings` is a **notice dump** -- paths, current model, thinking level, recents.
+  Deliberate, with a comment naming the deferral.
+- `/skills` prints `names.join(", ")` -- a comma-joined list of NAMES, read-only.
+
+So the honest gap is: **there is no way to enable or disable a skill from the
+TUI, and no way to see what a skill does without leaving it.** That is one
+bounded feature, not a 30-toggle settings panel, and it is worth more than
+building a selector for settings Epsilon does not have.
+
+`/templates` already prints descriptions -- that is the pattern to follow for
+`/skills`, and the model for a row that carries a summary rather than a name.
+
+**Do not** build a generic settings panel to close this row of a table. Build the
+skill toggle, and read the shape off the real screen.
+
+
+## A test that paid for itself immediately (M196)
+
+`crates/epsilon-cli/src/runtime.rs:2726` —
+`every_milestone_has_a_row_somewhere_in_the_history` parses `docs/history.md`, takes
+every `| M<digits>` row, and asserts the set is **contiguous up to its newest entry**.
+
+Adding the M196 row made 196 the newest and the test immediately reported:
+
+```
+docs/history.md has no row for milestones [194, 195] (newest is M196)
+```
+
+So **M194 and M195 were committed without history rows** — the exact drift the test
+exists to prevent, sitting undetected in the tree until something newer forced the
+check. It was written and it worked; it just had no trigger until now.
+
+Worth remembering as a shape: a test can be green for a long time and still be the
+right test. This one was not wrong, it was un-exercised by a gap that had already
+accumulated. Filling the rows is the fix; there is no code change.
+
+
+## A GREEN BATTERY HIDED FIVE DELETED TESTS (M196) — the most important note here
+
+While reworking one test in `crates/epsilon-tui/src/app/tests.rs` I replaced a
+**line range** rather than matched text. The range was stale — `cargo fmt` had
+reformatted it between my read and my write — so the slice took **five neighbouring
+tests with it**, including `the_tree_picker_shows_an_abandoned_branch`,
+`the_label_editor_writes_through_the_store_and_clears_on_empty`,
+`a_filter_hides_entries_and_promotes_the_ones_left`, `cycling_the_filter_is_a_round_trip`
+and `folding_hides_the_whole_subtree_not_just_one_level`.
+
+**The battery came back `GATE PASS`.** 1,516 tests, 0 failed — green, and shipping five
+tests that no longer existed. Nothing in the suite can catch this: a deleted test is not
+a failing test, and a whole *category* of behaviour lost its only coverage silently.
+
+It was caught only because the number moved: **1,520 on the previous green run, 1,516
+now.** Four fewer. That is the entire detection mechanism, and it is a human comparing
+two runs.
+
+### The rules that follow
+
+1. **Never edit a test file by line range.** Match on the test's own name and re-read
+   the current text immediately before writing. The format-on-write step means the text
+   you matched against may no longer exist.
+2. **After any change to a test file, diff the test NAMES against HEAD before running
+   anything:**
+   ```
+   git show HEAD:<file> | grep -B1 '^fn ' | grep -o 'fn [a-z_]*' | sort > /tmp/before
+   grep -B1 '^fn ' <file>              | grep -o 'fn [a-z_]*' | sort > /tmp/after
+   diff /tmp/before /tmp/after
+   ```
+   Lost names are deleted coverage, and the suite will not complain.
+3. **A test count that goes DOWN between two green runs is a finding, not noise.**
+   Write the number down every run. I only noticed because the totals were in the log.
+4. Recovery, when it happens: `git checkout -- <test file>`, then re-apply the intended
+   change by NAME. That is what I did, and it is faster than trying to reconstruct five
+   tests.
+
+
+### The guard test needed THREE attempts, and that is the real lesson
+
+`no_source_file_lost_a_test_since_head` exists to make the deletion above
+impossible to repeat silently. It took three tries before it actually worked, and
+each failure is the same shape: **the test passed while doing nothing.**
+
+1. **Version 1** counted removed `#[test]` attributes against added ones. The
+   control PASSED — because the same diff that deleted one test also *added* two
+   new ones, so 1 <= 2. A net count cannot see one name vanishing among three
+   arriving. **Compare NAMES, not counts.**
+2. **Version 2** compared names, and still passed vacuously: cargo sets a test's
+   cwd to the **crate directory**, where `git diff -- crates/` matches nothing
+   (`crates/` is not under `crates/epsilon-cli/`), exits 0, and prints zero
+   bytes. **Run `git -C <repo root>`**, and assert that a dirty tree actually
+   produces diff output, so "inspected nothing" can never read as "found nothing".
+3. **Version 3** fires, and names the deleted test exactly.
+
+The general rule, and it is the one this repo keeps relearning: **a control that
+passes is a control you have not yet proven works.** Both earlier versions passed
+*while the defect was live in the tree*. Neither was broken by a typo -- each was
+structurally incapable of seeing the thing it was written to see.
+
+
+## `git checkout -- <file>` DESTROYED uncommitted work (M196, again)
+
+A brace-balance edit to `crates/epsilon-tui/src/app/commands.rs` left the file
+unparseable. The reflex was `git checkout -- <file>` to get back to a known
+state — which is safe on committed work and **catastrophic on everything
+else**. It threw away the entire tree-search implementation and the `/skills`
+change, both uncommitted, in the same file as the edit.
+
+It was recoverable because the design was known, but it cost four rounds.
+
+**The rule: commit or stash BEFORE a surgical edit, never after.** By the time a
+brace is unbalanced the interesting work is already uncommitted, and the tool
+that is supposed to help is the one that removes it.
+
+Two habits that would have prevented the whole afternoon:
+
+1. `git stash push -- <file>` before hand-editing a large file by hand, and
+   `git stash pop` when it compiles. Cheap, and the stash *is* the backup.
+2. Check brace depth programmatically after a hand edit rather than by eye:
+   ```python
+   d = sum(l.count("{") - l.count("}") for l in text.split("\n"))
+   assert d == 0, d
+   ```
+   Two of the three "unexpected closing delimiter" rounds were this check run
+   too late — after the file was already written.
+
+
+## Search and the skills toggle are DONE (M196, second half)
+
+**`/tree` search** — pi's exact rule (`tree-selector.ts:337-397`):
+
+- lowercase the query, split on whitespace, **every** token must be a substring
+  (`searchTokens.every`, so AND not OR);
+- searched text is **label + kind + snippet**, which is what
+  `getSearchableText` (`:560-600`) builds — the message *role* pi also pushes is
+  the `kind` tag here;
+- **the current leaf is never hidden** (`:342-343`) and a textless assistant
+  turn is hidden unless it errored (`:345-355`).
+
+The whole visibility pipeline is one function, `visible_rows`: filter -> search
+-> mandatory -> folds. **Two callers** open the picker and `refilter`, and two
+copies would drift invisibly.
+
+**Skills on/off** — the re-scoped gap, now closed end to end:
+
+- `[skills] disabled` in config, written with the `toggle_favorite_model_in`
+  idiom (parse to a table, change ONE key, write back). A **disable-list, not
+  an enable-list**: an enable-list would silently drop every skill the day the
+  config gains a section it did not have.
+- `/skill <name> on|off`, routed as a MUTATING command, not a view one.
+- The handler **checks the name against what is discovered first**. Writing a
+  disable for a skill nothing provides gives a setting that does nothing AND
+  reads back as a disabled skill the user cannot find to re-enable.
+- `/skills` now prints descriptions and marks `[off]`, and says how to change
+  one.
+
+### Three tests that already existed, and caught my own work
+
+- `the_parser_does_not_know_a_command_the_list_does_not` — a **reverse-drift**
+  check. It failed naming exactly what I had missed: `skill` parsed but was not
+  in `SLASH_ITEMS`, so the palette would not offer it. A command the palette
+  omits is one a user must guess the name of.
+- The config round-trip tests — the load-bearing one is that writing a skill
+  setting **leaves every other key alone**, including a table this build knows
+  nothing about. That is what makes writing from a TUI safe at all.
+
+### A test I changed instead of the code
+
+I asserted the disable-list kept insertion order. It does not: `retain`-then-
+`push` moves a re-disabled skill to the end. **Nothing reads that order**, so
+"fixing" correct code to satisfy a property no caller depends on is the wrong
+trade. The test now asserts each name appears **exactly once** — the bug `retain`
+actually exists to prevent.

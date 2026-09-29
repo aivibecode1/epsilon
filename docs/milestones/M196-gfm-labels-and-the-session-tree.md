@@ -14,6 +14,9 @@ than missing outright. Each one had a definition, a serialization, or a test som
 | 4 | One session-forest builder, not two | `epsilon-session/src/store.rs`, `epsilon-cli/src/rpc_mode.rs` |
 | 5 | `EntryKind::Label` has a writer and a reader | `epsilon-session/src/store.rs`, `epsilon-tui/src/app/keys.rs` |
 | 6 | `/tree` shows abandoned branches, and can label, filter and fold | `epsilon-tui/src/app/{,commands,keys,panels,session,view,tests}.rs` |
+| 7 | `/tree` search, with pi's AND semantics and the mandatory-row rule | `epsilon-tui/src/app/commands.rs` |
+| 8 | a skill can be switched off from the TUI and shows its description | `epsilon-core/src/config.rs`, `epsilon-tui/src/{picker,app/{,commands}}.rs` |
+| 9 | editor jump-to-character, on pi's chords | `epsilon-tui/src/app{.rs,/editing.rs,/keys.rs}` |
 
 ## Key decisions
 
@@ -38,6 +41,26 @@ short session gets reported as a provider without caching. `moved_cache_traffic`
 **Chords come from the reference, not from taste.** `shift+l` for the label, `ctrl+←` /
 `ctrl+→` for fold-or-move — `keybindings.ts:150-159`. A bare `l` was tried and rejected:
 it would collide with a future "navigate left" and does not match pi's muscle memory.
+
+**A tree's visible rows are ONE pipeline.** `visible_rows` = filter -> search ->
+mandatory -> folds, with two callers (opening the picker, and `refilter` after a
+chord). Two copies would drift invisibly: the picker opens showing rows the chord
+handler believes are hidden.
+
+**Search ANDs its tokens, and never hides the leaf.** pi lowercases, splits on
+whitespace, and requires **every** token (`tree-selector.ts:393`); the searched text
+is label + kind + snippet. The current leaf is visible unconditionally
+(`:342-343`) and a textless assistant turn is hidden unless it errored
+(`:345-355`) — an error IS text the reader is looking for.
+
+**A setting is a disable-list, not an enable-list.** An enable-list would silently
+drop every skill the day a config file gained a `[skills]` section it did not have
+before. A disable-list is inert until someone writes to it.
+
+**Match arms are ordered, and a looser guard first shadows a stricter one.** The
+`Ctrl+Alt+]` arm has to precede `Ctrl+]`, because the plain guard is also satisfied
+by the ALT chord — written the other way round, backward was unreachable and the key
+silently did the other thing.
 
 **Matching the reference beats intuition.** I documented and tested that labelling does
 *not* move the leaf. It does, and so does pi: `_appendEntry` sets `leafId = entry.id`
@@ -88,18 +111,29 @@ skimmed. Fixed by scoping the lock to the write.
 
 ## What nothing exercises
 
-- **`copySelected` and the search box are not implemented.** pi has both
-  (`tree-selector.ts:627`, and `searchTokens` at `:392`); `/tree` has neither. Search
-  matches on label + role + content with **all** tokens required (AND, not OR).
-- **The fold and filter state is per-picker-open.** Reopening `/tree` rebuilds from the
-  file, so a fold or filter set in a previous session of the picker is not restored.
-  Nothing asserts either way, because nothing observes it.
-- **No test draws the tree picker or the label prompt.** Both are exercised through
-  `handle_key` and asserted on state, so a panel that fails to *render* — wrong area,
-  title not painted, glyph outside the frame — would not be caught. The golden tests
-  cover the shell, not these two overlays.
-- **The `l`/`f`/Ctrl-arrow chords are checked by unit test, never through a terminal.**
-  The terminal integration suite drives the real binary but does not open `/tree`.
+- **The search field, the fold/filter glyphs and the jump-mode notice are asserted
+  on STATE, never drawn.** `apply_search`, `visible_rows` and `jump_to_char` are
+  pure and tested; that the caret renders, that `▸`/`▾` differ on screen, and that
+  the `/` field appears in the panel are not. A panel that fails to *render* — wrong
+  area, title unpainted, glyph outside the frame — passes every test here.
+- ~~**`Ctrl+]` and `Ctrl+Alt+]` are exercised by the mode and the algorithm, never
+  through `handle_key`.**~~ **Closed.** `the_backward_jump_chord_arms_backward_not_forward`
+  drives both chords and asserts the direction each arms. The arm ORDER is the
+  property that made backward unreachable — the plain guard is also satisfied by the
+  ALT chord — and a test fails the moment the arms are swapped, where a comment was
+  only a promise.
+- **The terminal integration suite never opens `/tree`, never arms a jump, and never
+  runs `/skill`.** It drives the real binary, but not these paths.
+- **A skill toggle takes effect "on the next turn" — nothing tests that.** The write
+  and the read-back are tested; the claim that the model stops seeing the skill is
+  asserted by nothing, because it depends on re-running discovery.
+- **Fold and filter state is per-picker-open.** Reopening `/tree` rebuilds from the
+  file, so a fold or filter from a previous picker session is not restored. Nothing
+  asserts either way, because nothing observes it.
+- **`/settings` is still a notice dump**, deliberately, with a comment naming the
+  deferral. Reading pi's `config-selector.ts` showed the reference is a resource
+  enable/disable browser rather than a toggles panel, which is why the bounded
+  skill toggle was built instead.
 
 ## Verification
 

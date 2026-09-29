@@ -216,6 +216,15 @@ contention, and single-job builds with an external target have passed every roun
   top of each other). Both would have been visible from a single line saying "no test exercises X" or
   "nothing asserts Y", written by the author who already knew. `Limits` records what a slice does not
   *do*; this section records what it does not *prove*, and the two are different lists.
+- **"Asserted on state" is not "verified", and writing the limitation down is not fixing it.**
+  At M196 the "what nothing exercises" line was hiding **two features that were on no screen at
+  all**: the `/tree` search field was drawn inside the *model picker's* renderer, and the label
+  editor was drawn inside the `if app.auth_prompt_open` arm — so `Shift+L` worked, had passing
+  state-level tests, and had never been rendered. Every test in that file asserted on state; not
+  one drew a panel. **A feature can be correct at every level you test and still not exist on
+  screen.** For anything a user sees, drive `render_rows` and assert on the FRAME --
+  `the_tree_panel_draws_its_filter_search_field_and_fold_glyphs` and
+  `the_label_prompt_and_jump_notice_draw` each failed on their first run and found one of them.
 - **A claim about what a user sees is verified by measuring, not by reading.** The same review said a
   footer badge vanished at 60 columns; the author probed the real frame and found the badge whole with
   the protection disarmed, and the actual defect one band lower (a *partial* badge at widths 26–31,

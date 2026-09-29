@@ -66,3 +66,6 @@ audit/evidence/*.log
 !audit/evidence/gate-m196.log
 # M196: the battery that gated the GFM/label/tree work. 1520 passed, 0 failed.
 !audit/evidence/gate-m196-green3-PASS.log
+# M196 final: GFM markdown, one session forest, labels, the tree view
+# (search/filter/fold), the skills toggle, jump-to-character. 1535 passed.
+!audit/evidence/gate-m196-final2-PASS.log
