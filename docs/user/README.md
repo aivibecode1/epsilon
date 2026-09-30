@@ -2,7 +2,11 @@
 
 Product guides. The installed binary is its own reference: `epsilon --help` prints every
 mode, flag, environment variable and file path, and is kept in one place in the source
-(`crates/epsilon-cli/src/main.rs`, the `HELP` constant). When these guides and the binary
+(`crates/epsilon-cli/src/main.rs`, the `HELP` constant). **Its scope is modes, flags,
+environment and file paths — not slash commands**, which would be a second list to keep in step
+with the palette; the commands live in the TUI's own `/help` and its completion palette, both
+driven by `SLASH_ITEMS` (`crates/epsilon-tui/src/picker.rs`). So a command appearing in one and
+not the other is by design rather than a gap. When these guides and the binary
 disagree, inspect the implementation and the known audit findings — the help text is not a
 specification. The two drifts this paragraph used to warn about are fixed: the `--plan` line
 now says `bash`/`shell` are denied outright, and `RUST_LOG` is no longer advertised, because
