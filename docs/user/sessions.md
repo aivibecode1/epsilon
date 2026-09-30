@@ -23,9 +23,17 @@ epsilon --resume <file>       # resume a specific session file
 
 ## One writer per session
 
-A cross-process **lease** (heartbeat-enforced) is intended to admit a single writer. A second
-`epsilon` attaching to the same session is refused and names the current holder; a genuinely
-stale lock (crashed process) is stealable.
+A cross-process **lease** (heartbeat-enforced) admits a single writer. What a second `epsilon`
+sees depends on whether the first is alive, and the difference is worth knowing because the
+second case looks like a hang for about four seconds:
+
+| The holder is | What happens |
+|---|---|
+| **alive** | the second `epsilon` **waits**, drawing `waiting for this session to be released — Ns elapsed, ~Ms left` on the console, and is refused at the end of the window **naming the holder**. It is not refused immediately: waiting is cheaper than a false refusal when the first window is about to exit. |
+| **gone** (crashed, or the terminal was closed) | its lock stops being re-touched, and after about **four seconds** of that the second `epsilon` takes it and starts. Four seconds is deliberate — a heartbeat is two — because the margin is what stops a *live* process that stalls for a moment from being mistaken for a dead one, and the steal is the only path by which two writers could share one session file. |
+
+Locks left by a process that is gone are also **reaped at launch** (a lock untouched for thirty
+seconds is deleted), so a workspace does not accumulate stale `.lock` files beside its sessions.
 
 ## Compaction, and what it guarantees
 
