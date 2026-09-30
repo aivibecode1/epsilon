@@ -65,3 +65,35 @@ environments and unrecognized variable names need separate controls.
 Displayed shell output is capped, but the current parent collector buffers complete
 output first (F12). Spill-file availability does not establish bounded live memory.
 Timeout/cancellation and inherited-pipe cleanup gaps are tracked in F11.
+
+## Secret files: what is refused, and what is not
+
+Two ways to get a file's contents in front of the model behave differently, and the
+difference is worth knowing before you paste something you would rather not keep.
+
+| | `@.env` (a reference) | `read .env` (the tool) |
+|---|---|---|
+| refused? | **yes** — by name, before anything is read | no, unless a permission rule denies it |
+| what you see | the file is folded into the prompt; its contents do **not** appear in the transcript | the contents appear as a tool result, in front of you |
+
+The refusal is by **name**, over a fixed list (`is_sensitive`): `.env`, `auth.json`,
+`credentials`, `id_rsa`, `id_ed25519`, `.netrc`, `.npmrc`, `.pgpass`, `secrets.json` and a
+few more. It is checked against both the path as spelled and the path it resolves to, so a
+symlink or junction pointing at one of those names is refused too — that check was added
+after a link was found to walk an innocent name past it.
+
+The asymmetry is the point rather than an oversight: an `@`-reference attaches a file
+*silently*, so a credential that goes that way reaches every export, summary and log
+downstream without ever having been on screen. `read` shows you what the model got. Neither
+is a guarantee — if you ask the model to read a secret, it will, and the contents land in
+the session file.
+
+**The session file is not scrubbed.** Nothing filters credential-shaped strings out of a
+tool result before it is appended to the session JSONL, so a `cat .env` through `bash`
+stays in that file in cleartext, along with anything exported from it. Shell execution does
+filter credential-shaped *environment variables* (above), which is a different control over
+a different surface. Whether the durable store should scrub, and how, is an open product
+decision rather than a missing feature — the trade is that scrubbing keeps a secret out of
+an on-disk transcript and also hides evidence from you, and a pattern that is wrong either
+misses a secret or mangles a file's contents. Until that is decided, treat the session file
+as you would treat your shell history.

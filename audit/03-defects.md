@@ -23,6 +23,17 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+**A14/A15 are documented; the decision is still the owner's.** Both rows end in the same place —
+one paragraph in `docs/user/permissions.md` — and it now exists: the two ways to get a file in
+front of the model are tabulated (``@`` refuses by name, `read` does not), the refusal list is
+stated and verified against `references.rs` (ten names, checked on the spelled *and* the resolved
+path), the silence-versus-visibility distinction that makes the asymmetry purposeful is written
+down, and the one thing a reader most needs to know is stated plainly: **the session file is not
+scrubbed**, so a `cat .env` through `bash` stays in it in cleartext. What remains is not
+documentation but a choice — whether the durable store should scrub, with the trade named (a
+scrubber hides evidence and a wrong pattern either misses a secret or mangles content) — and that
+choice is the owner's, not an agent's. Until it is made, the guide says to treat the session file
+as you would treat your shell history.
 **A12's decision is made, execution planned.** [`docs/plans/019-one-config-reader.md`](../docs/plans/019-one-config-reader.md)
 records the measured finding — `global_dir()` written byte-for-byte twice (`core/config.rs:37`,
 `llm/auth.rs`) and one global `config.toml` parsed by three readers — and the decision the
