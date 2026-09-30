@@ -1,7 +1,7 @@
 # M207 — a wait you can still read after the screen is replaced
 
-**Status:** landed. GATE PASS `m207` — see [Verification](#verification). Reinstall: **required**
-(it changes what a launch says).
+**Status:** landed. GATE PASS `m207` — see [Verification](#verification). Reinstall:
+**outstanding** — see the note at the end of the Verification section.
 
 ## What
 
@@ -75,4 +75,10 @@ log. M206 measured 1,618 across the same 64, so this slice adds the two tests ab
 
 Evidence: [`audit/evidence/gate-m207.log`](../../audit/evidence/gate-m207.log).
 
-**Reinstall:** required — it changes what a launch says — and done.
+**Reinstall: outstanding, and deliberately so.** It is required — this changes what a launch
+says — and it did not happen: the owner asked for the disk to be cleared, and the build tree
+(33.5 GB) was deleted immediately after this battery, so a release rebuild would have been a cold
+30–45 minutes spent refilling the space that was just freed. The installed binary is therefore the
+**M206** build, and the notice above appears only after cargo install --path crates/epsilon-cli
+--features real --force is run once. Recorded here rather than left as a silent gap: the gates
+below are green for these bytes, and the shipped artifact does not yet contain them.
