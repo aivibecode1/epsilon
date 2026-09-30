@@ -77,11 +77,32 @@ from this implementation.
 
 ### Step 2 — a launch creates a file
 
-`build_runtime` stops passing the fixed `tui.jsonl` and asks for a new session path. `--resume`
-and `-c` keep their meanings (`-c` = newest for this cwd, which starts working correctly once step 1
-lands). **Evidence:** two launches in a temp workspace produce two files whose headers carry two
-different ids; `-c` after the second restores the second conversation only, asserted on
-`history()` (one user message, not three).
+**Split in two, because the second half is a migration and the first is not.** Doing them separately
+means the user-visible win lands without waiting for a directory move.
+
+**2a — a new file name in the existing directory (no migration).** `build_runtime` stops passing the
+fixed `tui.jsonl` (and `cli.jsonl`/`serve.jsonl`/`rpc.jsonl`) and passes
+`session_file_name(now_ms, id)` instead, still inside `.epsilon/sessions/`. Read the blast radius
+before starting: `RunParams.session_file` is `&'a str` today, so it becomes owned (5 literal call
+sites at `main.rs:1508/2114/2254/2304/2579`), and everything that *reads* the directory already
+works unchanged — `latest_session_file_in` picks the newest `*.jsonl`, `list_sessions` scans the
+same dir, and `doctor`'s seeded `tui.jsonl` stays a readable old file rather than a special case.
+**The chicken-and-egg is already solved — checked, not assumed.** The name needs the session id, and
+the id is minted by the store when the header is first written, so 2a needs the *caller* to mint it.
+That generator exists and is shared: `epsilon_contracts::new_id(prefix)` (`ids.rs:14`), monotonic and
+sortable (`{prefix}_{unix_millis:x}_{counter:x}`), dependency-free, and already used across crate
+boundaries for message and tool-call ids. So 2a is `let id = new_id("session")` at the call site,
+passed to both the name and the store — **no new id rule, no new edge, and nothing to write**.
+
+**2b — the per-cwd directory.** Point the same call at `session_file_for(root, cwd, …)` (M209's
+rule) so `.epsilon/sessions/--C--Users-Hp-Epsilon--/` holds this workspace's sessions and `-c`
+becomes correct *across* workspaces. This is the half that migrates every existing path, and old
+files stay where they are: readable, never created again.
+
+**Evidence for both:** two launches in a temp workspace produce two files whose headers carry two
+different ids; `-c` after the second restores the second conversation only, asserted on `history()`
+(one user message, not three) — and for 2b, that the second launch's file lands in the per-cwd
+directory while the old `tui.jsonl` is still openable by name.
 
 ### Step 3 — `reset_leaf`'s disposition
 
