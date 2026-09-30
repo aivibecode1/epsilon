@@ -99,6 +99,37 @@ rule) so `.epsilon/sessions/--C--Users-Hp-Epsilon--/` holds this workspace's ses
 becomes correct *across* workspaces. This is the half that migrates every existing path, and old
 files stay where they are: readable, never created again.
 
+> **2b's hidden half, checked 2026-09-30 — the readers do not follow the writers.** `list_sessions`
+> is a **single** `std::fs::read_dir` (`discover.rs:223`), not a walk, and every reader is given the
+> sessions *root*:
+>
+> | Reader | Site |
+> |---|---|
+> | `-c` / `--resume` resolution | `main.rs:1823` — `latest_session_file(&workspace.join(".epsilon").join("sessions"))` |
+> | RPC session discovery | `rpc_mode.rs:3113` — `list_sessions(&dir)` |
+> | `doctor` | `doctor.rs:404` — the same root |
+> | the TUI `/sessions` picker | `picker.rs:1154` — `epsilon_session::list_sessions(dir)` |
+>
+> So moving the *writer* into a subdirectory would leave every one of them scanning a directory that
+> now contains only subdirectories: `-c` would find nothing, `/sessions` would list nothing, and
+> `doctor` would report an empty workspace — with no error anywhere, which is the shape this
+> repository keeps finding. **2b is therefore one change in two halves, and the read half is the
+> larger one.**
+>
+> It also has a design consequence worth taking rather than working around: with one directory per
+> working copy, the **`cwd` header filter becomes redundant**. `latest_session_file_in(dir, Some(cwd))`
+> exists to answer "which of these files belongs to this workspace" by reading headers; if the
+> directory already answers it, readers should resolve the *same* directory the writer uses. Which
+> means one function — `session_dir_for(root, cwd)` — called by both sides, rather than the writer
+> computing a directory and four readers each remembering to descend. That is A12's rule (one rule,
+> one place) applied before the defect rather than after it.
+>
+> **The migration answer, stated here so it is not discovered late:** readers must also look in the
+> *flat* directory, or every existing session becomes invisible on upgrade. Cheapest honest form:
+> resolve the per-cwd directory first, then fall back to the flat root for `*.jsonl` files whose
+> header `cwd` matches — which is exactly what `latest_session_file_in`'s filter already does today,
+> so the fallback is the current behaviour kept as a compatibility path rather than new logic.
+
 **Evidence for both:** two launches in a temp workspace produce two files whose headers carry two
 different ids; `-c` after the second restores the second conversation only, asserted on `history()`
 (one user message, not three) — and for 2b, that the second launch's file lands in the per-cwd
