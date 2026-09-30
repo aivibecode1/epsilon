@@ -30,7 +30,7 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 | Folder / file | What lives there | Read it when |
 |---|---|---|
 | [`history.md`](history.md) | the milestone timeline and acceptance notes | you want the project's story in one table |
-| [`milestones/`](milestones) | one dev log per milestone: what was built, decisions, bugs found, verification output | you are touching an area and want its history |
+| [`milestones/`](milestones) | one dev log per milestone: what was built, decisions, bugs found, verification output. **The annotated list below covers recent work; older milestones are covered by this directory row and by [`history.md`](history.md)**, so a file that is not named individually is not an orphan — a consistency check that flags M1–M160 is testing the wrong convention | you are touching an area and want its history |
 | [`research/`](research) | source-level studies of the reference harnesses and the gap analyses (dated evidence, not current status) | you are deciding what to build next |
 | [`handoff/`](handoff) | archived handoff prompts from earlier milestones (historical, not active tasks) | you are tracing how a slice of work was delegated |
 | [`glossary.md`](glossary.md) | the vocabulary — harness, turn, tool call, compaction, lease, … | you hit an unfamiliar term |
