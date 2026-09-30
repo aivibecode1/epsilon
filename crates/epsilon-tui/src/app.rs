@@ -441,8 +441,12 @@ pub(crate) struct App {
 
 /// M57: state of the `/sessions` browser overlay.
 struct SessionBrowser {
-    /// Directory scanned for session files (`.epsilon/sessions`).
+    /// Directory scanned for session files (`.epsilon/sessions`, the root of both layouts).
     dir: std::path::PathBuf,
+    /// The workspace those sessions belong to (M217) — the per-cwd subdirectory, plus the flat
+    /// root's files whose header names this workspace. Carried rather than re-read so a filter
+    /// keystroke cannot change which sessions the browser is looking at.
+    cwd: std::path::PathBuf,
     /// The session this app is attached to (marked `●` in the list).
     current: Option<std::path::PathBuf>,
     /// Filtered rows, newest first.
@@ -460,10 +464,16 @@ struct SessionBrowser {
 
 impl SessionBrowser {
     /// Scan + filter once; callers rebuild after each filter keystroke.
-    fn build(dir: std::path::PathBuf, current: Option<std::path::PathBuf>, filter: &str) -> Self {
-        let rows = crate::picker::session_rows(&dir, filter, current.as_deref(), now_ms());
+    fn build(
+        dir: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+        current: Option<std::path::PathBuf>,
+        filter: &str,
+    ) -> Self {
+        let rows = crate::picker::session_rows(&dir, &cwd, filter, current.as_deref(), now_ms());
         Self {
             dir,
+            cwd,
             current,
             rows,
             index: 0,
@@ -473,8 +483,13 @@ impl SessionBrowser {
 
     /// Re-run the scan/filter with the current input as the query.
     fn rebuild(&mut self, filter: &str) {
-        self.rows =
-            crate::picker::session_rows(&self.dir, filter, self.current.as_deref(), now_ms());
+        self.rows = crate::picker::session_rows(
+            &self.dir,
+            &self.cwd,
+            filter,
+            self.current.as_deref(),
+            now_ms(),
+        );
         if self.index >= self.rows.len() {
             self.index = self.rows.len().saturating_sub(1);
         }

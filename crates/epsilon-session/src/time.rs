@@ -109,14 +109,25 @@ pub fn session_file_name(created_at_ms: u64, id: &str) -> String {
     format!("{stamp}_{}.jsonl", encode_uri_component(id))
 }
 
+/// The directory one working copy's sessions live in: `root/<pi's cwd directory>`.
+///
+/// **This is the single answer, and both sides of the write/read boundary call it.** Since M217 a
+/// launch writes into it and a reader resolves it, so "where this workspace's sessions are" cannot
+/// be a rule one of them remembers: that was the shape of A12 (`global_dir` written twice, in two
+/// crates that cannot see each other), and the earlier draft of this change had exactly four
+/// readers each descending by hand.
+#[must_use]
+pub fn session_dir_for(root: &Path, cwd: &Path) -> PathBuf {
+    root.join(session_dir_name(cwd))
+}
+
 /// Where a session file lives: `root/<pi's cwd directory>/<pi's file name>`.
 ///
 /// One call, so that a caller cannot compose half the rule — which is how two crates end up
 /// disagreeing about where a file is (A12's finding, in the config directory).
 #[must_use]
 pub fn session_file_for(root: &Path, cwd: &Path, created_at_ms: u64, id: &str) -> PathBuf {
-    root.join(session_dir_name(cwd))
-        .join(session_file_name(created_at_ms, id))
+    session_dir_for(root, cwd).join(session_file_name(created_at_ms, id))
 }
 
 /// JavaScript's `encodeURIComponent`, for the id component of a file name.

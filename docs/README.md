@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M217 — a workspace's sessions get their own directory](milestones/M217-session-per-workspace-directory.md)
 - [M216 — a line-ending policy, and the tree that was drifting from it](milestones/M216-line-endings.md)
 - [M215 — the tool registry stops building a language server](milestones/M215-tools-lsp-inversion.md)
 - [M214 — the notice M210 obsoleted, asked the question that survived](milestones/M214-earlier-sessions.md)

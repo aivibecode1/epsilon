@@ -5,9 +5,17 @@ or restore; transcripts may contain sensitive source and tool output.
 
 ## Where sessions live
 
-One JSONL file per session under `<workspace>/.epsilon/sessions/`. Entries form a tree
-(each carries ids and parents), so a session can be forked, browsed by timeline and resumed
-rather than merely replayed.
+One JSONL file per session, under `<workspace>/.epsilon/sessions/<workspace-name>/`. The
+inner directory is named after the working copy (`--C--Users-you-proj--`, with path
+separators turned into dashes), so every session in a workspace sits together and a
+workspace never sees another's sessions. Entries form a tree (each carries ids and
+parents), so a session can be forked, browsed by timeline and resumed rather than
+merely replayed.
+
+Sessions written before that directory existed are still directly in
+`.epsilon/sessions/`, and they keep working: `--continue`, `/sessions` and `doctor`
+read both layouts, so nothing has to be moved and no history is rewritten. New files
+never go into the flat directory again.
 
 TUI: `/new` `/resume` `/sessions` `/session` `/tree` `/timeline` `/fork` `/clone` for
 lifecycle; `/export` (html/json) writes to `.epsilon/exports/`; `/import` `/share` `/copy`

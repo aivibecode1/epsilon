@@ -1139,8 +1139,15 @@ pub fn age_label(now_ms: u64, then_ms: u64) -> String {
 /// Rows for `/sessions`: newest first, fuzzy-filtered over title, file name and
 /// the session's own cwd. `current` marks the attached session; `now_ms` is
 /// injected for deterministic ages.
+///
+/// **`dir` is the sessions ROOT and `cwd` is the workspace.** Since M217 a launch writes into
+/// `dir/--<cwd>--/` and sessions written before that are still in `dir` itself, so the list is
+/// `list_sessions_for_cwd` — the same union `--continue` resolves through. Passing only `dir` would
+/// show a user an empty browser in a workspace where every session is in the new subdirectory, and
+/// passing only the subdirectory would hide every session they already had.
 pub fn session_rows(
     dir: &std::path::Path,
+    cwd: &std::path::Path,
     filter: &str,
     current: Option<&std::path::Path>,
     now_ms: u64,
@@ -1151,7 +1158,7 @@ pub fn session_rows(
         .filter(|t| !t.is_empty())
         .collect();
     let mut scored: Vec<(i64, SessionRow)> = Vec::new();
-    for session in epsilon_session::list_sessions(dir) {
+    for session in epsilon_session::list_sessions_for_cwd(dir, cwd) {
         let title = session.title();
         let file = session
             .path
@@ -1277,23 +1284,23 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), "x").unwrap();
 
         let now = 10_000_000_000u64;
-        let rows = session_rows(dir, "", None, now);
+        let rows = session_rows(dir, dir, "", None, now);
         assert_eq!(rows.len(), 2, "only session files: {rows:?}");
         assert_eq!(rows[0].title, "second task", "newest first");
         assert!(rows[0].meta.contains("new.jsonl"));
         assert!(!rows[0].is_current);
 
         // The current file is marked, and the filter matches title, file, or cwd.
-        let rows = session_rows(dir, "", Some(&dir.join("new.jsonl")), now);
+        let rows = session_rows(dir, dir, "", Some(&dir.join("new.jsonl")), now);
         assert!(rows[0].is_current, "the attached session is marked");
         assert!(!rows[1].is_current);
-        assert_eq!(session_rows(dir, "old", None, now).len(), 1);
+        assert_eq!(session_rows(dir, dir, "old", None, now).len(), 1);
         assert_eq!(
-            session_rows(dir, "second", None, now).len(),
+            session_rows(dir, dir, "second", None, now).len(),
             1,
             "title matches"
         );
-        assert!(session_rows(dir, "zzz-nothing", None, now).is_empty());
+        assert!(session_rows(dir, dir, "zzz-nothing", None, now).is_empty());
     }
 
     #[test]
@@ -1306,7 +1313,7 @@ mod tests {
         let _ = epsilon_session::SessionStore::open_in(&parent, dir).unwrap();
         let _ = epsilon_session::SessionStore::open_child_in(&child, dir, "ses_parent").unwrap();
 
-        let rows = session_rows(dir, "", None, 1_000_000);
+        let rows = session_rows(dir, dir, "", None, 1_000_000);
         assert_eq!(rows.len(), 2);
         let child_row = rows.iter().find(|r| r.path == child).expect("child listed");
         let parent_row = rows
@@ -1327,7 +1334,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let path = dir.path().join("ses_busy.jsonl");
         let _store = epsilon_session::SessionStore::open_in(&path, dir.path()).expect("writer");
-        let rows = session_rows(dir.path(), "", None, 0);
+        let rows = session_rows(dir.path(), dir.path(), "", None, 0);
         let row = rows.first().expect("the session is listed");
         assert!(row.meta.contains("in use"), "{}", row.meta);
     }

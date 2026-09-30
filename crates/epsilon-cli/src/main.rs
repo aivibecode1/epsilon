@@ -130,7 +130,7 @@ FILES
   ~/.config/epsilon/auth.json     stored credentials (chmod 600 where supported)
   ~/.config/epsilon/MEMORY.md     global memory injected into the prompt
   ~/.config/epsilon/history       prompt history
-  .epsilon/sessions/*.jsonl       session transcripts for this workspace
+  .epsilon/sessions/<workspace>/  session transcripts, one file per launch
   .epsilon/config.toml            project config (trust-gated)
   AGENTS.override.md, AGENTS.md, CLAUDE.md, MEMORY.md
                                   project instructions and memory, injected into the
@@ -1825,7 +1825,13 @@ async fn build_runtime(
         Resume::No => None,
         Resume::Path(p) => Some(p.clone()),
         Resume::Latest => {
-            epsilon_cli::runtime::latest_session_file(&workspace.join(".epsilon").join("sessions"))
+            // M217: the per-cwd directory a launch writes into, plus the flat root where every
+            // session written before that move still is — one union, so a launch can continue a
+            // session whether or not it predates the directory.
+            epsilon_session::latest_session_for_cwd(
+                &epsilon_cli::runtime::sessions_root(workspace),
+                workspace,
+            )
         }
     };
     let (session_path, resuming) =
@@ -2344,6 +2350,7 @@ async fn tui_mode(
         session_file: epsilon_cli::runtime::fresh_session_file(
             epsilon_cli::runtime::now_millis(),
             &epsilon_contracts::new_id("ses"),
+            &shared.workspace,
         ),
         confinement: &shared.confinement,
         lsp: shared.lsp,

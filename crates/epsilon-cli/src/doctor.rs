@@ -401,8 +401,10 @@ pub fn gather(inputs: &Inputs<'_>) -> Facts {
         .collect();
 
     // ---- session -----------------------------------------------------------------------------
-    let dir = inputs.workspace.join(".epsilon").join("sessions");
-    if let Some(path) = epsilon_session::discover::latest_session(&dir, Some(inputs.workspace)) {
+    // M217: the same union `--continue` resolves through, so this report cannot describe a
+    // different session than the one a launch would continue.
+    let dir = crate::runtime::sessions_root(inputs.workspace);
+    if let Some(path) = epsilon_session::discover::latest_session_for_cwd(&dir, inputs.workspace) {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())

@@ -661,9 +661,13 @@ async fn ctrl_o_in_the_key_prompt_switches_to_the_oauth_ceremony() {
 }
 
 /// Write a real session file (header + one user message) for browser tests.
-fn write_session_fixture(path: &std::path::Path, text: &str) {
-    let mut store =
-        epsilon_session::SessionStore::open_in(path, &std::env::temp_dir()).expect("session store");
+///
+/// `cwd` is the workspace the session belongs to, and it goes into the header: since M217 the
+/// browser lists a workspace's sessions by resolving its directory **and** filtering the flat root
+/// by this field, so a fixture whose header names somewhere else is correctly invisible — which
+/// would make a browser test pass for the wrong reason.
+fn write_session_fixture(path: &std::path::Path, cwd: &std::path::Path, text: &str) {
+    let mut store = epsilon_session::SessionStore::open_in(path, cwd).expect("session store");
     let user = epsilon_contracts::message::UserMessage {
         id: "m1".to_string(),
         timestamp_ms: 0,
@@ -772,12 +776,22 @@ async fn sessions_command_browses_and_enter_switches_the_session() {
     // the input box, and Enter runs the same switch `/resume <path>` does.
     let (mut app, agent, (_f, _n)) = test_app();
     let tmp = tempfile::tempdir().unwrap();
-    let sessions = tmp.path().join(".epsilon").join("sessions");
+    let workspace = tmp.path();
+    let sessions = workspace.join(".epsilon").join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
-    let target = sessions.join("other.jsonl");
-    write_session_fixture(&target, "the other session's first request");
-    write_session_fixture(&sessions.join("zzz-unrelated.jsonl"), "unrelated work");
-    app.workspace_root = tmp.path().to_path_buf();
+    // M217: one session in the per-cwd directory a launch writes into, and one still in the flat
+    // root from before that move. The browser must show both — a reader that only looked in the
+    // new directory would list one, and one that only looked in the old would list one.
+    let per_cwd = epsilon_session::time::session_dir_for(&sessions, workspace);
+    std::fs::create_dir_all(&per_cwd).unwrap();
+    let target = per_cwd.join("2026-09-30T10-00-00-000Z_ses_a.jsonl");
+    write_session_fixture(&target, workspace, "the other session's first request");
+    write_session_fixture(
+        &sessions.join("zzz-unrelated.jsonl"),
+        workspace,
+        "unrelated work",
+    );
+    app.workspace_root = workspace.to_path_buf();
 
     // Typing must land in the editor until Enter runs the command.
     for c in "/sessions".chars() {

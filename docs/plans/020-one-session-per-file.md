@@ -1,6 +1,6 @@
 # 020 — one session file per session (A16)
 
-**Ledger row:** A16. **Status:** decided; execution not started. **Decision:** the fixed
+**Ledger row:** A16. **Status: steps 1, 2a, 2b and 4 executed** (M209, M210, M217 — battery `m217-r2` PASS, 1,638 tests). **Step 3 is outstanding and its decision is recorded, not executed:** `reset_leaf` still has no production caller, and with one file per session `/new` should start a new file rather than reset the leaf; deleting a public API and changing what `/new` does to the user's file is its own slice. **What execution changed in this plan:** step 2b's "one function — `session_dir_for` — called by both sides" was right and is what landed; the flat-root fallback is the header filter `latest_session` already had, not new logic; and `--continue` had **no cwd filter at all** before (it passed `None`), so the directory was the only thing keeping a second workspace's session out — see [`docs/milestones/M217-session-per-workspace-directory.md`](../milestones/M217-session-per-workspace-directory.md).
 `tui.jsonl` is a divergence from the reference and is wrong; a launch gets its own file.
 
 ## The question, and why it is not a detail

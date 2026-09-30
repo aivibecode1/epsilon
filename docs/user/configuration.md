@@ -63,6 +63,6 @@ command = "code --wait"   # used by Ctrl+O / Alt+E and /editor
 | `~/.config/epsilon/keybindings.json` | remapped keys |
 | `~/.config/epsilon/skills/` | global skills (`SKILL.md` folders) |
 | `<workspace>/.epsilon/config.toml` | project config (trust-gated) |
-| `<workspace>/.epsilon/sessions/*.jsonl` | session transcripts |
+| `<workspace>/.epsilon/sessions/<workspace>/*.jsonl` | session transcripts, one file per launch (older sessions may sit directly in `.epsilon/sessions/`) |
 | `<workspace>/.epsilon/skills/`, `<workspace>/.agents/skills/` | project skills |
 | `<workspace>/AGENTS.md`, `CLAUDE.md`, `MEMORY.md` | project instructions and memory, injected into the prompt's CONTEXT tier |

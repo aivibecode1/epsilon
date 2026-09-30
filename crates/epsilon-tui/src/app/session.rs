@@ -170,7 +170,7 @@ impl App {
             ));
             return;
         }
-        let browser = SessionBrowser::build(dir, current, "");
+        let browser = SessionBrowser::build(dir, self.workspace_root.clone(), current, "");
         if browser.rows.is_empty() {
             self.ui.push_notice(
                 "sessions: nothing to resume here — the directory holds no session files",

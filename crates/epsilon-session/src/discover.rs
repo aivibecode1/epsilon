@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use epsilon_contracts::session_entry::{EntryKind, SessionHeader, SessionLine};
 
+use crate::time;
+
 /// Lines scanned from the head for the first user message.
 pub const SCAN_LINES: usize = 64;
 
@@ -260,6 +262,45 @@ pub fn latest_session(dir: &Path, cwd: Option<&Path>) -> Option<PathBuf> {
     best.map(|s| s.path)
 }
 
+/// Every session belonging to `cwd`, newest first: the per-cwd directory a launch writes into
+/// (M217), **plus** the flat `root`, which is where every session written before M217 still is.
+///
+/// The fallback is what makes the move safe. A workspace that upgrades keeps its history where it
+/// was, and nothing migrates it (rewriting a user's history is a worse failure than an untidy
+/// directory), so a reader that looked only in the new directory would make every existing session
+/// invisible — the failure mode of "quietly correct writer, unaware reader".
+///
+/// Files in the flat root are filtered by their header's `cwd`, which is the same rule
+/// [`latest_session`] has always applied and is the only thing that distinguishes one workspace's
+/// sessions from another's inside a shared directory. A headerless file stays eligible, for the
+/// reason M41 gives: it has no cwd to compare, and dropping it would silently lose a session the
+/// user can still open by name.
+pub fn list_sessions_for_cwd(root: &Path, cwd: &Path) -> Vec<SessionSummary> {
+    let want = cwd.to_string_lossy().into_owned();
+    let mut out: Vec<SessionSummary> = list_sessions(&time::session_dir_for(root, cwd));
+    out.extend(
+        list_sessions(root)
+            .into_iter()
+            .filter(|s| s.cwd.is_empty() || s.cwd == want),
+    );
+    out.sort_by(|a, b| {
+        b.modified_ms
+            .cmp(&a.modified_ms)
+            .then_with(|| b.path.cmp(&a.path))
+    });
+    out
+}
+
+/// The newest session belonging to `cwd` — `--continue`'s answer, across both layouts.
+///
+/// The same union [`list_sessions_for_cwd`] builds, reduced to one path.
+pub fn latest_session_for_cwd(root: &Path, cwd: &Path) -> Option<PathBuf> {
+    list_sessions_for_cwd(root, cwd)
+        .into_iter()
+        .next()
+        .map(|s| s.path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +447,89 @@ mod tests {
         assert_eq!(rows[0].first_message.as_deref(), Some("filler 0"));
         assert_eq!(rows[0].title(), "late name");
         assert!(rows[0].bytes > 0);
+    }
+
+    /// M217: a workspace's sessions live in `sessions/--w--/`, and the sessions written before
+    /// that move live in `sessions/` itself. Both must be visible, and only the ones whose header
+    /// names this workspace.
+    ///
+    /// **The flat file is the half that matters.** Nothing migrates it (rewriting a user's history
+    /// is a worse failure than an untidy directory), so a reader that looked only in the new
+    /// directory would make every session the user already had disappear from `--continue`,
+    /// `/sessions` and `doctor` — silently, with no error anywhere. The other-cwd file is the
+    /// other half: the flat directory is shared, and without the header filter another workspace's
+    /// session would be offered as this one's.
+    #[test]
+    fn a_workspace_sees_its_own_new_and_old_sessions_and_nobody_elses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let cwd = Path::new("/w");
+        let per_cwd = time::session_dir_for(root, cwd);
+        std::fs::create_dir_all(&per_cwd).unwrap();
+
+        // Written before the move: still in the flat root, and still this workspace's.
+        write_session(root, "tui.jsonl", "ses_legacy", "/w", &[]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        // Written after it: in the per-cwd directory, and the newer of the two.
+        write_session(&per_cwd, "2026-09-30.jsonl", "ses_new", "/w", &[]);
+        // Someone else's session, in the same flat root.
+        write_session(root, "other.jsonl", "ses_other", "/elsewhere", &[]);
+
+        let rows = list_sessions_for_cwd(root, cwd);
+        let ids: Vec<&str> = rows.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["ses_new", "ses_legacy"],
+            "both layouts, newest first, and no stowaway: {rows:?}"
+        );
+
+        // `--continue` reduces the same union to one path, and picks the newer of the two.
+        assert_eq!(
+            latest_session_for_cwd(root, cwd),
+            Some(per_cwd.join("2026-09-30.jsonl")),
+            "the newest session for this workspace, across both layouts"
+        );
+
+        // And a workspace with nothing of its own is empty rather than borrowed.
+        let empty = list_sessions_for_cwd(root, Path::new("/elsewhere"));
+        assert_eq!(
+            empty.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["ses_other"],
+            "another workspace's file is reachable through its own cwd, not through a scan"
+        );
+    }
+
+    /// The reader is not optional on either layout: a workspace that has only old files, and one
+    /// that has only new ones, must both answer.
+    #[test]
+    fn either_layout_alone_is_enough_to_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let cwd = Path::new("/w");
+
+        write_session(root, "legacy.jsonl", "ses_legacy", "/w", &[]);
+        assert_eq!(
+            latest_session_for_cwd(root, cwd).map(|p| p
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()),
+            Some("legacy.jsonl".to_string()),
+            "an un-migrated workspace still continues"
+        );
+
+        let per_cwd = time::session_dir_for(root, cwd);
+        std::fs::create_dir_all(&per_cwd).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write_session(&per_cwd, "fresh.jsonl", "ses_new", "/w", &[]);
+        assert_eq!(
+            latest_session_for_cwd(root, cwd).map(|p| p
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()),
+            Some("fresh.jsonl".to_string()),
+            "and the newest wins once both exist"
+        );
     }
 }
