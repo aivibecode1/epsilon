@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)
 - [M228 — two rows that were wrong about the code, and one of them wrong about the reference](milestones/M228-two-stale-rows.md)
 - [M227 — two load-sensitive tests: one dependency removed, one mystery intact](milestones/M227-two-load-sensitive-tests.md)
 - [M226 — the last uncalled duplicate, and a plan step retired with its reason](milestones/M226-the-last-uncalled-duplicate.md)
