@@ -70,25 +70,31 @@ this milestone stated in advance, now visible in real artifacts rather than argu
 token is minted by the caller and the header's id by the store, so the two differ. Nothing reads
 the name's token, and both headers carry the same `cwd`, which is what `--continue` filters on.
 
-**Still not observed: `-c` itself — three attempts, and the third rules something out.** The
-probe cannot yet capture past the lease wait:
+**Still not observed: `-c` itself — and the blocker is now measured, not guessed.** Four attempts,
+and the last three all captured the same thing for a reason that is in the probe's own source:
 
-1. The first attempt died on shell quoting (`'"…\epsilon.exe -c""' is not recognized`) before the
-   TUI started; a one-line `.cmd` wrapper fixed that.
-2. The second ran the wrapper with `--settle 22` and captured a screen whose **last** rows were
-   still `waiting for this session to be released — 4s elapsed, ~26s left`. Two readings fit: the
-   capture landed at ~4 s regardless of `--settle`, or the wait **stalled at four seconds** instead
-   of stealing.
-3. The third removed the variable: two launches, then **both lock files deleted** before `-c`, so
-   no holder existed on disk at all. The capture still ended in the same four-second countdown.
+1. The first died on shell quoting (`'"…\epsilon.exe -c""' is not recognized`); a one-line `.cmd`
+   wrapper fixed that.
+2. The next two ran the wrapper and captured a screen whose **last** rows were still
+   `waiting for this session to be released — 4s elapsed, ~26s left`.
+3. The fourth deleted **both lock files** before `-c`, so no holder existed on disk, and the
+   capture was unchanged — which rules out "a stale lock from the previous run".
 
-That rules out "a stale lock from the previous run explains it" and leaves the two readings above,
-with the capture-timing one likelier — but *likelier is not measured*, and this milestone will not
-claim the join works until a capture shows the transcript. The discriminator is cheap and written
-down so nobody repeats these three: drive the resume with a frontend that prints to stdout instead
-of taking the screen (`--resume <newest> -p …`, where a refusal names its holder), or establish
-whether `--settle` is honoured after `--submit` at all — the probe's own help calls it the wait
-*after attaching before typing*, which is before the typing and not before the capture.
+**The cause is a capture that lands on the boundary.** `--late` waits `wait_s = 7.0` seconds before
+the snapshot (read from the probe's own JSON, not from its help), and the shell needs roughly three
+of those seconds before `epsilon` starts and begins waiting — so the capture arrives at the moment
+the four-second settle is expiring. The countdown frames stopping at 4 s is consistent with the
+steal happening just after the photograph.
+
+**And `--settle` does not help on this path.** It is passed, accepted and *unused*: the code that
+honours it (`time.sleep(settle_s)` before `turn_screen`) sits in the `--during`/`--enter` turn
+branch, and a `--submit` run's JSON has no `turn_screen` key at all — which is how the
+mis-reading was caught rather than argued. So the probe needs a wait longer than `--late` gives on
+the submit path, and until one exists the join stays **read**, not measured.
+
+Two cheap ways to finish it, written down so nobody repeats these four: run `-c` in a terminal by
+hand and look, or give the probe a post-submit wait (a real change to a script whose whole reason
+for existing is that measurements of a live console are not reproducible any other way).
 Evidence: [`audit/evidence/gate-m210.log`](../../audit/evidence/gate-m210.log).
 
 **Reinstall: done** (2026-09-30, `cargo install --path crates/epsilon-cli --features real --force`, 29m44s cold). It was deliberately deferred It is required — this changes which file a
