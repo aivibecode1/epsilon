@@ -118,6 +118,11 @@ the handle, which is exactly what the inversion leaves in place, and they pass u
 - **Nothing user-visible changed, so `CHANGELOG.md` has no entry for this milestone.** The claim being
   made is precisely that a user cannot tell M214 and M215 apart except by reading `cargo tree`. A
   changelog line would be the kind of "notable change" that is not one.
+- **The global `epsilon.exe` was not reinstalled**, and the reason is the same claim plus its
+  evidence: the shipped behaviour is unchanged (identical suite totals, +1 test, and `--lsp auto|off`
+  reaching the same diagnostics handle at the same call site), so a reinstall would rebuild a binary
+  that differs from the installed one only in which crate constructs the service. The next
+  CLI-visible change carries the reinstall.
 
 ## Found on the way, and not fixed here
 
