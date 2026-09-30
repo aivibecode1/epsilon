@@ -1,6 +1,12 @@
 # 019 — one configuration reader, and the value crosses the seam
 
-**Ledger row:** A12. **Status:** **step 1 LANDED at M223** — a delegation rather than the inversion this plan proposed, because step 1's premise was wrong (below) — and **step 2 LANDED at M224**: both OAuth parses are now one read in `core::config::oauth_config_in`, and the value crosses as `OAuthConfig` from the two callers that had them anyway. **Steps 3—5 remain**: `custom.rs` still parses `config.toml` inside llm, so `toml` cannot leave that crate yet, and the manifest edit in step 4 must wait for step 3 — which is exactly the ordering this plan's own step 0 corrected. **Estimated execution:** steps 3—5, one milestone, warm target.
+**Ledger row:** A12. **Status: CLOSED — steps 1–4 landed, step 5 retired with its reason**
+(M223–M226). `config.toml` is read in exactly one crate (`epsilon-core::config`); `toml` is no longer a
+dependency of `epsilon-llm`; the duplicated path rule is one function that the higher crate delegates
+to; and the last uncalled duplicate of the project-config hash is gone. **Two of this plan's five
+steps were mis-shaped when written** — step 1 (the duplication was not symmetric) and step 5 (the
+drift it feared cannot happen) — and both corrections are recorded below, because the plan's own
+letter was the first thing wrong in each case.
 
 > **Step 1 was mis-shaped, and the correction is the useful part (M223).** This plan and the ledger
 > row both described the duplicated `global_dir` as *two copies of one rule in crates that cannot
@@ -140,12 +146,30 @@ client id.
    config file with two custom providers still produces two rows, driven through the CLI's
    composition rather than through llm's own reader (which no longer exists).
 
-### Step 4 — the project config's parse gets an owner
+### Step 4 — RETIRED at M226, and the reason is a measurement
 
-`runtime.rs:138` parses `.epsilon/config.toml` into `toml::Value` for the trust hash. That parse is
-*two* facts: the file's bytes (for the hash) and its contents (for the settings). Move the parse
-next to the hash in `core::config` so "what the hash covers" and "what the settings are" cannot
-drift; keep `trust.json` in the CLI, where the trust *decision* lives.
+This step said: *"`runtime.rs:138` parses `.epsilon/config.toml` into `toml::Value` for the trust
+hash. That parse is **two** facts: the file's bytes (for the hash) and its contents (for the
+settings). Move the parse next to the hash in `core::config` so 'what the hash covers' and 'what the
+settings are' cannot drift; keep `trust.json` in the CLI, where the trust *decision* lives."*
+
+**The two facts cannot drift, and never could.** `load_project_config` reads the file **once**
+(`raw`, line 132) and uses that one string for the hash (line 141) *and* the parse (line 175). They
+are the same bytes by construction, not by convention — and not by anything a move would improve.
+
+The move would also have been awkward in the useful direction: `ProjectConfig` holds
+`Vec<epsilon_mcp::McpServerConfig>`, and `epsilon-core` does not depend on `epsilon-mcp` (mcp depends
+on core). Core could only return its own row types for the CLI to convert — a new type boundary in
+exchange for nothing.
+
+**What was actually there**, found by looking rather than by following the plan, is a **seventh
+instance of the "no production caller" class**: `runtime::current_project_config_hash`, a copy of
+`epsilon_core::config::current_project_config_hash_in` that **nothing called** — the TUI already used
+core's. The two were compared on a real file, agreed, and the uncalled one was deleted. The *fact* the
+pair was answering is now pinned by `the_recorded_hash_covers_the_parsed_bytes`: the recorded digest
+is over exactly the bytes the settings were parsed from, and one byte later is a different digest.
+That is the part of this step's worry which survives its retirement, and it is now a test rather than
+a coincidence of statement order.
 
 ## What this plan deliberately does not do
 

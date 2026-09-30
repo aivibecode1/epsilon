@@ -245,6 +245,74 @@ pub fn load_project_config(workspace: &Path) -> (ProjectConfig, TrustDecision, V
     (cfg, decision, notices)
 }
 
+#[cfg(test)]
+mod project_hash_tests {
+    use super::*;
+
+    /// M226: the project-config hash had **two implementations** -- this crate's
+    /// current_project_config_hash, which **nothing called**, and
+    /// psilon_core::config::current_project_config_hash_in, which the TUI uses. They were
+    /// compared on a real file and agreed, and then the uncalled one was deleted: a duplicate that
+    /// differed would not have been a duplicate but a second answer, and deleting the wrong one
+    /// would change which hash a trust prompt records.
+    ///
+    /// What remains pinned is the *fact* the pair answered: the digest a trust prompt records must
+    /// be over the same bytes the settings were parsed from. Plan 019 step 5 wanted to protect
+    /// exactly that by moving the parse into psilon-core; the measurement said it does not need
+    /// moving, because load_project_config reads the file **once** and uses that one string for
+    /// the hash and the parse. This test makes the property explicit rather than a coincidence of
+    /// statement order -- which is the part of the plan's worry that survives its retirement.
+    #[test]
+    fn the_recorded_hash_covers_the_parsed_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join(".epsilon")).unwrap();
+        let body = "[model]\nid = \"faux-9\"\n\n[[rules]]\ncapability = \"bash\"\npattern = \"ls\"\naction = \"allow\"\n";
+        std::fs::write(ws.join(".epsilon").join("config.toml"), body).unwrap();
+
+        let (cfg, _decision, notices) = load_project_config(ws);
+        assert!(
+            !notices
+                .iter()
+                .any(|n| n.contains("invalid") || n.contains("ignoring")),
+            "a valid config produces no complaints: {notices:?}"
+        );
+        assert_eq!(
+            cfg.model_id.as_deref(),
+            Some("faux-9"),
+            "the settings came through"
+        );
+        assert_eq!(
+            epsilon_core::config::current_project_config_hash_in(ws).as_deref(),
+            Some(sha256_hex(body.as_bytes()).as_str()),
+            "and the hash the TUI will record is over exactly those bytes"
+        );
+
+        // One byte later is a different digest -- which is the whole point of hashing the file.
+        std::fs::write(
+            ws.join(".epsilon").join("config.toml"),
+            format!("{body}# changed"),
+        )
+        .unwrap();
+        assert_ne!(
+            epsilon_core::config::current_project_config_hash_in(ws).as_deref(),
+            Some(sha256_hex(body.as_bytes()).as_str()),
+            "so a trust prompt notices an edit made while it was open"
+        );
+    }
+
+    /// A workspace with no project config has no hash, which is how a caller tells "never
+    /// written" from "written and accepted".
+    #[test]
+    fn a_workspace_without_a_project_config_has_no_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            epsilon_core::config::current_project_config_hash_in(tmp.path()),
+            None
+        );
+    }
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
@@ -261,13 +329,6 @@ pub fn accept_project_config_hash(workspace: &Path, hash: &str) -> Result<(), St
         serde_json::json!({ "config_sha256": hash }).to_string(),
     )
     .map_err(|e| format!("could not write {}: {e}", path.display()))
-}
-
-/// Current SHA-256 of the project config file, if present (used by the TUI
-/// re-prompt to persist an acceptance).
-pub fn current_project_config_hash(workspace: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(workspace.join(PROJECT_CONFIG_REL)).ok()?;
-    Some(sha256_hex(raw.as_bytes()))
 }
 
 /// path → trusted map (pi `TrustFile`: `true`/`false`; `null` removes the key).
