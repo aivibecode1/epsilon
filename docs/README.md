@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M208 — one timestamp formatter, moved before it was duplicated](milestones/M208-one-timestamp-formatter.md)
 - [M207 — a wait you can still read after the screen is replaced](milestones/M207-the-wait-you-can-read.md)
 - [M206 — the goal on the wire](milestones/M206-goal-on-the-wire.md)
 - [M205 — the harness says what it knows](milestones/M205-what-it-knows.md)

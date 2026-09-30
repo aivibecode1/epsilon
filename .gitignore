@@ -104,5 +104,8 @@ audit/evidence/*.log
 # M207: the lease wait survives the alternate screen. 1620 tests / 64 binaries, 7 of 7 gates.
 !audit/evidence/gate-m207.log
 
+# M208: one timestamp formatter. 1622 tests / 64 binaries, 7 of 7 gates, 4.19 GB tree.
+!audit/evidence/gate-m208.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

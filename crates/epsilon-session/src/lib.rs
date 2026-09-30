@@ -14,6 +14,9 @@ mod lease;
 pub mod repair;
 pub mod search;
 mod store;
+/// One timestamp formatter, used by the RPC surface and by session file naming alike — see the
+/// module docs for why it is not written twice.
+pub mod time;
 
 pub use discover::{SessionSummary, latest_session, list_sessions, summarize};
 pub use import::{

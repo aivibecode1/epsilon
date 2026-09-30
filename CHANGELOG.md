@@ -5,6 +5,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **One less place for a timestamp rule to drift.** The ISO-8601 formatter the RPC surface uses moved into the session crate, where session file naming will need the same string — so the two cannot disagree later (M208).
+
 - **A launch that waited for the session file now says so afterwards.** Waiting for another
   window to release the session prints a countdown, and the terminal UI's screen then replaces it,
   so the wait left no trace. A wait of a second or more is now also a line in the transcript,
