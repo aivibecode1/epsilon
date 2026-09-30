@@ -771,40 +771,48 @@ pub fn parse_device_code(body: &str) -> Result<DeviceCodeInfo, String> {
 // Client-id resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve a flow's OAuth client id: environment first, then
-/// `[oauth.<provider>] client_id` in the global `config.toml`.
+/// `[oauth.<provider>]` from the global `config.toml`, resolved by the caller.
+///
+/// **M224: the value arrives; this crate no longer reads the file.** Two functions here each parsed
+/// `config.toml` for one key — `client_id_from_config` and `enterprise_domain_from_config` — which
+/// is two reads of one file per login, two places that could disagree about the same table, and the
+/// reason `epsilon-llm` carries a `toml` dependency. The parse now lives in `epsilon-core::config`,
+/// which is the one reader of that file, and this type lives *here* because `epsilon-core` depends
+/// on `epsilon-llm` and not the other way round (M223's asymmetry, which decides where a value type
+/// can live and who fills it).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OAuthConfig {
+    /// `[oauth.<provider>] client_id`. Never a built-in default: pi embeds its own registration per
+    /// provider and Epsilon will not ship someone else's credential.
+    pub client_id: Option<String>,
+    /// `[oauth.<provider>] enterprise_domain` — GitHub Copilot Business/Enterprise accounts run the
+    /// ceremony on the customer's host and mint on `api.<host>`.
+    pub enterprise_domain: Option<String>,
+}
+
+/// Resolve a flow's OAuth client id: environment first, then the caller's configured value.
 ///
 /// Never a built-in default: pi embeds its own registration per provider and
 /// Epsilon will not ship someone else's credential. The error names both
 /// ways to set it, plus the exact TOML snippet.
-pub fn resolve_client_id(flow: &LoginFlow) -> Result<String, String> {
+pub fn resolve_client_id(flow: &LoginFlow, config: &OAuthConfig) -> Result<String, String> {
     if let Ok(value) = std::env::var(flow.client_id_env)
         && !value.trim().is_empty()
     {
         return Ok(value.trim().to_string());
     }
-    if let Some(dir) = crate::auth::global_dir()
-        && let Some(id) = client_id_from_config(&dir, flow.provider)
+    if let Some(id) = config
+        .client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
     {
-        return Ok(id);
+        return Ok(id.to_string());
     }
     Err(format!(
         "no OAuth client id for '{}' — either export {} or add\n    [oauth.{}]\n    client_id = \"…\"\nto ~/.config/epsilon/config.toml (pi embeds its own id; Epsilon never ships another project's credential)",
         flow.provider, flow.client_id_env, flow.provider
     ))
-}
-
-/// Read `[oauth.<provider>] client_id` from `config_dir/config.toml`.
-pub fn client_id_from_config(config_dir: &std::path::Path, provider: &str) -> Option<String> {
-    let raw = std::fs::read_to_string(config_dir.join("config.toml")).ok()?;
-    let table: toml::Value = toml::from_str(&raw).ok()?;
-    table
-        .get("oauth")?
-        .get(provider)?
-        .get("client_id")?
-        .as_str()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
 }
 
 // ---------------------------------------------------------------------------
@@ -1144,9 +1152,13 @@ pub fn open_browser(url: &str) -> bool {
 /// `allow_callback` lets a frontend that cannot host a loopback listener
 /// (or where the browser lives on another machine) go straight to paste.
 /// Every failure path returns a telling error and stores nothing.
+///
+/// `config` is the caller's reading of `[oauth.<provider>]` (M224); this function no longer opens
+/// `config.toml` itself.
 #[cfg(feature = "real")]
 pub fn login(
     provider: &str,
+    config: &OAuthConfig,
     ui: &mut dyn LoginUi,
     allow_callback: bool,
 ) -> Result<LoginSaved, String> {
@@ -1156,40 +1168,88 @@ pub fn login(
             oauth_providers().join(", ")
         )
     })?;
-    let client_id = resolve_client_id(&flow)?;
+    let client_id = resolve_client_id(&flow, config)?;
     // GitHub Copilot's Business/Enterprise accounts run the whole ceremony on
     // the customer's host and mint on `api.<host>` (pi asks for it
     // interactively; a config value keeps the frontends identical).
-    let enterprise = crate::auth::global_dir()
-        .and_then(|dir| enterprise_domain_from_config(&dir, flow.provider));
+    let enterprise = config.enterprise_domain.as_deref();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("cannot start the login runtime: {e}"))?;
     let outcome = match flow.kind {
         LoginKind::Pkce => runtime.block_on(run_pkce(&flow, &client_id, ui, allow_callback))?,
-        LoginKind::Device => {
-            runtime.block_on(run_device(&flow, &client_id, enterprise.as_deref(), ui))?
-        }
+        LoginKind::Device => runtime.block_on(run_device(&flow, &client_id, enterprise, ui))?,
     };
-    persist(&flow, outcome, enterprise.as_deref())
+    persist(&flow, outcome, enterprise)
 }
 
-/// `[oauth.<provider>] enterprise_domain = "ghe.example.com"` from the global
-/// config (M55). `None` for individual accounts and every other provider.
-pub fn enterprise_domain_from_config(
-    config_dir: &std::path::Path,
-    provider: &str,
-) -> Option<String> {
-    let text = std::fs::read_to_string(config_dir.join("config.toml")).ok()?;
-    let table: toml::Value = toml::from_str(&text).ok()?;
-    table
-        .get("oauth")?
-        .get(provider)?
-        .get("enterprise_domain")?
-        .as_str()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+#[cfg(test)]
+mod oauth_config_resolution_tests {
+    use super::*;
+
+    /// M224: resolution is **environment first, then the caller's value, then a telling error**.
+    ///
+    /// This ordering had no test while it was reachable through a file: the two tests that covered
+    /// the *read* could not express "the environment wins", because the read always happened and the
+    /// environment check sat above it. With the value handed in the whole rule is a pure function,
+    /// so it is pinned here.
+    ///
+    /// **The environment is the runner's, and that is the honest shape of this test**: it asserts
+    /// the *rule* against whatever `client_id_env` happens to hold, and skips only the
+    /// unreachable branch when a value is genuinely present. A test that cleared the variable would
+    /// need `set_var`, which is unsafe in edition 2024, and the harness runs tests in threads where
+    /// an environment write would leak into every other test in the process.
+    #[test]
+    fn the_environment_wins_then_the_configured_value_then_a_telling_error() {
+        let flow = login_flow("anthropic").expect("anthropic has a flow");
+        let env = flow.client_id_env;
+        let inherited = std::env::var(env).ok().filter(|v| !v.trim().is_empty());
+
+        let configured = OAuthConfig {
+            client_id: Some("cid-from-config".into()),
+            enterprise_domain: None,
+        };
+        assert_eq!(
+            resolve_client_id(&flow, &configured).unwrap(),
+            inherited
+                .clone()
+                .unwrap_or_else(|| "cid-from-config".into()),
+            "the environment wins when it is set; otherwise the caller's value is used"
+        );
+
+        // A blank configured value is absent, not a blank credential.
+        let blank = OAuthConfig {
+            client_id: Some("   ".into()),
+            enterprise_domain: None,
+        };
+        match &inherited {
+            Some(_) => {} // an inherited value makes the "nothing to resolve from" case unreachable
+            None => {
+                let err = resolve_client_id(&flow, &OAuthConfig::default())
+                    .expect_err("nothing to resolve from");
+                assert!(err.contains(env), "the error names the variable: {err}");
+                assert!(err.contains("[oauth.anthropic]"), "and the table: {err}");
+                assert!(
+                    err.contains("client_id"),
+                    "and the key, because the user has to write it: {err}"
+                );
+                assert!(
+                    resolve_client_id(&flow, &blank).is_err(),
+                    "a blank value is absent, so the error is still the right answer"
+                );
+            }
+        }
+    }
+
+    /// `OAuthConfig::default()` is the "no configuration" answer every caller falls back to without
+    /// a wrapper, and it must not invent values.
+    #[test]
+    fn the_default_config_claims_nothing() {
+        let cfg = OAuthConfig::default();
+        assert_eq!(cfg.client_id, None);
+        assert_eq!(cfg.enterprise_domain, None);
+    }
 }
 
 /// PKCE half: listener (when allowed) + browser + paste fallback, then the

@@ -10,11 +10,10 @@ use std::time::Duration;
 
 use epsilon_llm::oauth_login::{
     CallbackListener, DevicePoll, ExchangeOutcome, LOGIN_FLOWS, LoginKind, MintKind, authorize_url,
-    base64url, client_id_from_config, device_code_request_body, device_poll_body,
-    enterprise_domain_from_config, generate_pkce, login_flow, oauth_providers,
-    parse_authorization_input, parse_callback_request_line, parse_device_code, parse_device_poll,
-    parse_device_poll_for, parse_exchange_response, parse_github_device_token, poll_device_code,
-    s256_challenge,
+    base64url, device_code_request_body, device_poll_body, generate_pkce, login_flow,
+    oauth_providers, parse_authorization_input, parse_callback_request_line, parse_device_code,
+    parse_device_poll, parse_device_poll_for, parse_exchange_response, parse_github_device_token,
+    poll_device_code, s256_challenge,
 };
 
 #[test]
@@ -444,27 +443,6 @@ fn exchange_response_reads_pairs_and_openrouter_keys() {
 }
 
 #[test]
-fn client_id_resolution_reads_the_oauth_config_table() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("config.toml"),
-        "[oauth.anthropic]\nclient_id = \"cid-from-config\"\n",
-    )
-    .unwrap();
-    assert_eq!(
-        client_id_from_config(dir.path(), "anthropic").as_deref(),
-        Some("cid-from-config")
-    );
-    assert_eq!(client_id_from_config(dir.path(), "xai"), None);
-
-    // A malformed or missing config never panics — it falls through.
-    std::fs::write(dir.path().join("config.toml"), "not = [valid").unwrap();
-    assert_eq!(client_id_from_config(dir.path(), "anthropic"), None);
-    let empty = tempfile::tempdir().unwrap();
-    assert_eq!(client_id_from_config(empty.path(), "anthropic"), None);
-}
-
-#[test]
 fn login_flows_only_advertise_wires_that_exist() {
     // M55: github-copilot joined once its wire + catalog rows landed;
     // openai-codex stays absent until its model data exists (see module docs).
@@ -583,25 +561,4 @@ fn the_device_poll_parser_is_chosen_by_the_flows_mint() {
         DevicePoll::Complete(ExchangeOutcome::Device(token)) => assert_eq!(token, "at"),
         other => panic!("expected the GitHub shape, got {other:?}"),
     }
-}
-
-#[test]
-fn enterprise_domain_comes_from_the_config_table() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("config.toml"),
-        "[oauth.github-copilot]\nenterprise_domain = \"ghe.example.com\"\n",
-    )
-    .unwrap();
-    assert_eq!(
-        enterprise_domain_from_config(dir.path(), "github-copilot"),
-        Some("ghe.example.com".to_string())
-    );
-    // Other providers have no enterprise domain; missing config never panics.
-    assert_eq!(enterprise_domain_from_config(dir.path(), "xai"), None);
-    let empty = tempfile::tempdir().unwrap();
-    assert_eq!(
-        enterprise_domain_from_config(empty.path(), "github-copilot"),
-        None
-    );
 }

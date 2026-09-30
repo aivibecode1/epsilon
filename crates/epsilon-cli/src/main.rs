@@ -806,7 +806,12 @@ fn login_oauth(provider: &str, paste_only: bool) -> i32 {
         announce_paste: true,
         paste_only,
     };
-    match login(provider, &mut ui, !paste_only) {
+    match login(
+        provider,
+        &epsilon_core::config::oauth_config(provider),
+        &mut ui,
+        !paste_only,
+    ) {
         Ok(LoginSaved::Oauth {
             provider,
             path,

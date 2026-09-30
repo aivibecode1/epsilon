@@ -860,7 +860,12 @@ impl App {
             };
             // Listener + paste race: the browser callback usually wins on
             // the same machine, and a remote browser still has the overlay.
-            let text = match login(&flow_provider, &mut ui, true) {
+            let text = match login(
+                &flow_provider,
+                &epsilon_core::config::oauth_config(&flow_provider),
+                &mut ui,
+                true,
+            ) {
                 Ok(LoginSaved::Oauth {
                     provider,
                     path,

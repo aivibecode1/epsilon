@@ -1,8 +1,6 @@
 # 019 — one configuration reader, and the value crosses the seam
 
-**Ledger row:** A12. **Status:** **step 1 LANDED at M223**, and it landed as a *delegation* rather than
-the inversion this plan proposed, because step 1's premise was wrong (below). Steps 2–5 remain, and
-their order is unchanged. **Estimated execution:** steps 2–5, one milestone, warm target.
+**Ledger row:** A12. **Status:** **step 1 LANDED at M223** — a delegation rather than the inversion this plan proposed, because step 1's premise was wrong (below) — and **step 2 LANDED at M224**: both OAuth parses are now one read in `core::config::oauth_config_in`, and the value crosses as `OAuthConfig` from the two callers that had them anyway. **Steps 3—5 remain**: `custom.rs` still parses `config.toml` inside llm, so `toml` cannot leave that crate yet, and the manifest edit in step 4 must wait for step 3 — which is exactly the ordering this plan's own step 0 corrected. **Estimated execution:** steps 3—5, one milestone, warm target.
 
 > **Step 1 was mis-shaped, and the correction is the useful part (M223).** This plan and the ledger
 > row both described the duplicated `global_dir` as *two copies of one rule in crates that cannot

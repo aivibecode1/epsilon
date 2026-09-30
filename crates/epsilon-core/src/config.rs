@@ -33,6 +33,56 @@ pub fn load_config_string(table: &str, key: &str) -> Option<String> {
     load_config_string_in(&global_dir()?, table, key)
 }
 
+/// `[oauth.<provider>]` from `config_dir/config.toml`, **one parse for both keys** (M224).
+///
+/// The two keys used to be read by two functions in `epsilon-llm`, each parsing the file for one
+/// field: two reads per login, two places that could disagree about the same table, and the reason
+/// that crate carried a `toml` dependency. This is the one reader, and the value type lives in
+/// `epsilon-llm` because `epsilon-core` depends on it (M223's asymmetry decides which crate may name
+/// the type and which may fill it).
+///
+/// A missing file, a missing table, a missing key, or a blank value is `None` — never an error.
+/// The same rule `load_config_string_in` has: a typo in user configuration must not break a login.
+#[must_use]
+pub fn oauth_config_in(config_dir: &Path, provider: &str) -> epsilon_llm::oauth_login::OAuthConfig {
+    use epsilon_llm::oauth_login::OAuthConfig;
+    let Some(raw) = std::fs::read_to_string(config_dir.join("config.toml")).ok() else {
+        return OAuthConfig::default();
+    };
+    let Ok(table) = raw.parse::<toml::Table>() else {
+        return OAuthConfig::default();
+    };
+    let Some(entry) = table
+        .get("oauth")
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get(provider))
+        .and_then(toml::Value::as_table)
+    else {
+        return OAuthConfig::default();
+    };
+    let text = |key: &str| {
+        entry
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    OAuthConfig {
+        client_id: text("client_id"),
+        enterprise_domain: text("enterprise_domain"),
+    }
+}
+
+/// [`oauth_config_in`] against the resolved global directory.
+#[must_use]
+pub fn oauth_config(provider: &str) -> epsilon_llm::oauth_login::OAuthConfig {
+    match global_dir() {
+        Some(dir) => oauth_config_in(&dir, provider),
+        None => epsilon_llm::oauth_login::OAuthConfig::default(),
+    }
+}
+
 /// `~/.config/epsilon` — resolved from `$HOME`, falling back to `$USERPROFILE`.
 ///
 /// **M223: one implementation, in the crate that cannot delegate.** This body used to be a second,
@@ -1040,6 +1090,102 @@ fn the_global_directory_is_computed_in_exactly_one_place() {
         "`~/.config/epsilon` must be *computed* in one place; computed at {computed:?} \
          ({delegating} delegating definition(s) are fine)"
     );
+}
+
+/// M224: `[oauth.<provider>].client_id` comes from the config table — read here, once, for both keys.
+///
+/// The two functions this replaces (`client_id_from_config`, `enterprise_domain_from_config`) each
+/// parsed the file for one field, so their tests could only ever cover one key at a time — and the
+/// case below, **a provider with both**, was not expressible. A reader that cannot be asked "what
+/// does this provider's OAuth table say?" is a reader with a seam in it.
+///
+/// The name is the one this test had in `epsilon-llm`: the read moved, the assertion did not, and the
+/// repository's guard against silently-lost coverage (M196's five tests) keys on names for exactly
+/// this reason.
+#[test]
+fn client_id_resolution_reads_the_oauth_config_table() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[oauth.anthropic]\nclient_id = \"cid-anthropic\"\n\
+         [oauth.github-copilot]\nclient_id = \"cid-copilot\"\nenterprise_domain = \"ghe.example.com\"\n",
+    )
+    .unwrap();
+
+    let copilot = oauth_config_in(dir.path(), "github-copilot");
+    assert_eq!(
+        copilot.client_id.as_deref(),
+        Some("cid-copilot"),
+        "and the same reading brought the enterprise domain along"
+    );
+    assert_eq!(
+        copilot.enterprise_domain.as_deref(),
+        Some("ghe.example.com")
+    );
+
+    // A provider with only a client id, and one with neither, stay distinguishable.
+    let anthropic = oauth_config_in(dir.path(), "anthropic");
+    assert_eq!(anthropic.client_id.as_deref(), Some("cid-anthropic"));
+    assert_eq!(anthropic.enterprise_domain, None);
+    assert_eq!(oauth_config_in(dir.path(), "xai").client_id, None);
+
+    // Malformed config, a missing file, and a blank value all fall through rather than panic: a
+    // typo in user configuration must not break a login.
+    std::fs::write(dir.path().join("config.toml"), "not = [valid").unwrap();
+    assert_eq!(oauth_config_in(dir.path(), "anthropic").client_id, None);
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[oauth.anthropic]\nclient_id = \"  \"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        oauth_config_in(dir.path(), "anthropic").client_id,
+        None,
+        "a blank value is absent, not a blank credential"
+    );
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(oauth_config_in(empty.path(), "anthropic").client_id, None);
+}
+
+/// `[oauth.<provider>] enterprise_domain` (M55) — GitHub Copilot Business/Enterprise accounts run
+/// the ceremony on the customer's host. `None` for individual accounts and every other provider, and
+/// a missing config never panics.
+///
+/// Also the name this test had in `epsilon-llm`; only the reader moved (M224).
+#[test]
+fn enterprise_domain_comes_from_the_config_table() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[oauth.github-copilot]\nenterprise_domain = \"ghe.example.com\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        oauth_config_in(dir.path(), "github-copilot").enterprise_domain,
+        Some("ghe.example.com".to_string())
+    );
+    // Other providers have no enterprise domain; missing config never panics.
+    assert_eq!(oauth_config_in(dir.path(), "xai").enterprise_domain, None);
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(
+        oauth_config_in(empty.path(), "github-copilot").enterprise_domain,
+        None
+    );
+}
+
+/// Values are trimmed on the way in, because a pasted YAML-ish `"  cid  "` is a typo the user should
+/// not have to debug at the token endpoint.
+#[test]
+fn an_oauth_value_is_trimmed() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[oauth.anthropic]\nclient_id = \"  cid  \"\nenterprise_domain = \" ghe.example.com \"\n",
+    )
+    .unwrap();
+    let cfg = oauth_config_in(dir.path(), "anthropic");
+    assert_eq!(cfg.client_id.as_deref(), Some("cid"));
+    assert_eq!(cfg.enterprise_domain.as_deref(), Some("ghe.example.com"));
 }
 
 /// Every `.rs` under `dir`, skipping build output.
