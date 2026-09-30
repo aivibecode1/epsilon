@@ -1,7 +1,7 @@
 # M212 — a resumed launch opens its session once (A19)
 
-**Status:** landed. GATE PASS `m212-r2` — see [Verification](#verification). Reinstall: **required**
-and **outstanding** (the installed binary is still the M211 build).
+**Status:** landed. GATE PASS `m212-r2` — see [Verification](#verification). Reinstall: **done**
+(2026-09-30) — verified against the installed binary, see below.
 
 ## What
 
@@ -51,6 +51,12 @@ Seven gates, exit 0. **1,631 tests across 65 binaries, 0 failed** — M211 measu
 which is the expected result for a slice that changes an ordering rather than adding behaviour.
 
 Evidence: [`audit/evidence/gate-m212.log`](../../audit/evidence/gate-m212.log).
+
+**Confirmed against the installed binary (2026-09-30).** After `cargo install`, the same fixture in
+a scratch workspace: two session files before `-c` and **two after** — no third file — with **zero**
+lease-countdown lines on screen and the TUI reaching its composer about five seconds into the run
+(probe wall 17 s, of which 12 s was the probe's own `--at` wait). So the fix holds in the artifact
+the owner runs, not only in the debug build the battery produced.
 
 ## Limits — what this does not prove
 

@@ -23,7 +23,18 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
-# A19 — `--continue` waits thirty seconds on a lease it holds itself (2026-09-30, OPEN)
+# A19 — `--continue` waited thirty seconds on a lease it held itself (CLOSED at M212)
+
+**Closed 2026-09-30.** The fix is the reorder plan 021 specified — resolve the resume target before
+opening anything, open once, and let the resumed file be the primary — plus the resume block
+borrowing the already-attached store instead of opening a second one. Verified with the **installed**
+binary in a scratch workspace: two session files before `-c` and **two after** (no third file), and
+**zero** lease-countdown lines on screen, with the TUI reaching its composer in about five seconds
+of real work. Full record: [`docs/milestones/M212-resume-opens-once.md`](../docs/milestones/M212-resume-opens-once.md).
+
+What stays open from this row, and is now the *only* thing left of it: **no automated regression
+test** — nothing drives `build_runtime`, so a future reorder could reintroduce this with every gate
+green. That is recorded in M212's Limits as the weakest part of the slice.
 
 **Severity: high, and user-visible on every resume.** Found while trying to verify M210's `-c`
 claim through the conhost probe, and it is the reason four attempts to capture that claim failed.
