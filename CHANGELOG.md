@@ -5,6 +5,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **--continue works again.** A resumed launch used to open its session twice — the file it would write to, then the file it was resuming — and once each launch got its own file name, the second open landed on the empty file the launch had just created: -c waited thirty seconds and came back with nothing. It now resolves first and opens once (M212).
+
 - **Dead lock files are cleaned up at launch.** A terminal killed mid-session used to leave its lock behind forever, so a busy workspace collected two files per session and half of them stale (M211).
 
 - **Each launch now writes its own session file.** Before this, every terminal UI launch appended to one 	ui.jsonl, so --continue reopened *every* conversation this workspace had ever had as a single context — with no boundary between them. -c now reopens the conversation you were last in (M210).

@@ -1809,7 +1809,24 @@ async fn build_runtime(
     // separately from the tool hooks because the two have different risk profiles, and a
     // caller may want one without the other.
     epsilon_cli::runtime::install_extension_turn_hooks(&agent, ext_hosts.clone());
-    let session_path = workspace.join(session_file);
+    // A19: resolve the resume target BEFORE opening anything, and make it the file this launch
+    // opens. The order used to be `open primary → attach → resolve resume → open resume`, which was
+    // harmless only while the primary had a fixed name: `latest_session_file` then returned the same
+    // file. Since M210 the primary is named for this launch, so it *is* the newest — and `-c`
+    // resolved to the empty file this process had created microseconds earlier, opened it a second
+    // time (waiting on its own lease for a full STALE_AFTER window) and restored nothing from it.
+    // Measured: a third 147-byte file per `-c` launch and 21/22/24s of countdown. See plan 021.
+    let resume_path = match resume {
+        Resume::No => None,
+        Resume::Path(p) => Some(p.clone()),
+        Resume::Latest => {
+            epsilon_cli::runtime::latest_session_file(&workspace.join(".epsilon").join("sessions"))
+        }
+    };
+    let (session_path, resuming) = match resume_path.clone() {
+        Some(rp) => (rp, true),
+        None => (workspace.join(session_file), false),
+    };
     // Reap locks whose holder is provably gone before opening anything (M211). One session per file
     // (M210) means one lock per session, and a process that was killed — a closed terminal window, a
     // `taskkill` — never removes its own, so a daily workspace accumulates two entries per launch
@@ -1830,7 +1847,17 @@ async fn build_runtime(
     // name of, and the file that fails is usually the *default* one — chosen by the
     // harness, not typed by the user. (M202: the installed binary refused to start in
     // this repository for exactly this reason, and the message did not say which file.)
-    .map_err(|e| format!("open session store {}: {e}", session_path.display()))?;
+    // A19: when the file being opened IS the one being resumed, the refusal is phrased for the
+    // file that is actually there (`resume_open_error`) — that message is what a user resuming a
+    // foreign or damaged session needs, and it used to be produced by the second open this fix
+    // removed. A plain launch keeps the shorter one.
+    .map_err(|e| {
+        if resuming {
+            resume_open_error(&session_path, e)
+        } else {
+            format!("open session store {}: {e}", session_path.display())
+        }
+    })?;
     if store.migrated() {
         match store.persist_migration() {
             // Name the backup. Converting an older session rewrites it in place, and the one
@@ -1879,19 +1906,16 @@ async fn build_runtime(
 
     // Resume (M12): seed runtime history from a prior transcript. The restored view is
     // the store's SHADOWED model view, so resumed sessions continue post-compaction.
-    let resume_path = match resume {
-        Resume::No => None,
-        Resume::Path(p) => Some(p.clone()),
-        Resume::Latest => {
-            epsilon_cli::runtime::latest_session_file(&workspace.join(".epsilon").join("sessions"))
-        }
-    };
+    //
+    // A19: the store is already open and attached — `session_path` above *is* the resumed path when
+    // there is one, so this block no longer opens a second store. It used to, and that second open
+    // was the defect: same path, second lease, thirty-second wait, empty restored conversation.
     if let Some(rp) = resume_path {
-        let mut restored =
-            match epsilon_session::SessionStore::open_with_progress(&rp, lease_wait_notice) {
-                Ok(store) => store,
-                Err(e) => return Err(resume_open_error(&rp, e)),
-            };
+        let attached = agent
+            .session_store()
+            .ok_or("no session store attached for a resume")?;
+        let mut restored_guard = attached.lock().map_err(|_| "session store lock poisoned")?;
+        let restored: &mut epsilon_session::SessionStore = &mut restored_guard;
         // M41: a resumed file may predate headers — migrate before repair reads
         // it, so the repair pass sees healed entries, never legacy shapes.
         if restored.migrated() {
@@ -1909,7 +1933,7 @@ async fn build_runtime(
         // ponytail-audit follow-up: repair is now WIRED, not test-only — a crashed
         // prior run leaves dangling tool calls on the active branch; synthesize
         // tombstones before the model view so the resumed context stays provider-valid.
-        match epsilon_session::repair::repair_on_open(&mut restored) {
+        match epsilon_session::repair::repair_on_open(&mut *restored) {
             Ok(report) => {
                 for line in report.summary() {
                     eprintln!("repaired {}: {line}", rp.display());
@@ -1943,7 +1967,7 @@ async fn build_runtime(
         // remembered default. So flag > session > project/config, which is exactly the
         // order `candidate_raw` already builds above — the session slots in only when the
         // user expressed no preference of their own.
-        if let Some(resumed) = resumed_model_to_use(model_explicit, &restored, model_id) {
+        if let Some(resumed) = resumed_model_to_use(model_explicit, &*restored, model_id) {
             let (provider, session_model) = resumed;
             if session_model != model_id {
                 eprintln!(
