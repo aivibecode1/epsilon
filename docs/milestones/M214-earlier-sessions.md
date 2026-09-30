@@ -1,7 +1,7 @@
 # M214 — the notice M210 obsoleted, asked the question that survived
 
-**Status:** landed. GATE PASS `m214-r2` — see [Verification](#verification). Reinstall: **required
-and outstanding** (the sentence is user-visible; one release build carries it).
+**Status:** landed. GATE PASS `m214-r2` — see [Verification](#verification). Reinstall: **done**
+(2026-09-30).
 
 ## What
 
@@ -58,15 +58,25 @@ attempt's evidence.
 
 Evidence: [`audit/evidence/gate-m214.log`](../../audit/evidence/gate-m214.log).
 
-**Reinstall: required** — the sentence is user-visible — and **outstanding** (2026-09-30): the
-installed binary carries M212, and this notice reaches it with the next release build.
+**Reinstall: done** (2026-09-30) — and the notice above is quoted from the installed binary, not
+from the test suite.
 
 ## Limits — what this does not prove
 
-- **No console check.** This is a startup notice, and the evidence is the notice channel plus the
-  frame tests that already cover notices; nothing launched the TUI in a workspace with earlier
-  sessions and read the line off a real screen. M205's own slice said the same, and the honest
-  position is unchanged: the notice path is exercised, the sentence is not photographed.
+- **The console check was made (2026-09-30), after the install.** A scratch workspace with one
+  earlier session, then a launch of the **installed** binary through the conhost probe, read off a
+  real screen:
+
+  ```text
+    idle                        ctx 4%*/164k · ↑0 ↓0 · R0 W0 CH n/a · DeepSeek V3.1
+  • this workspace holds 1 earlier session — `epsilon -c` opens the most recent, `/resume
+    <file>` picks another
+  ```
+
+  Two things that sentence proves, and the second is the decision rather than the wording: the
+  notice fires on a **plain launch over a workspace with history**, which M205's version could no
+  longer do; and it says **"1 earlier session"** while the directory holds **two** files — this
+  launch's own is excluded, exactly as intended. A `read_dir` count would have printed "2".
 - **The count is a count of files, not of conversations.** A directory holding three empty sessions
   and one real one reports four; `list_sessions` filters foreign files, not empty ones. The sentence
   says "sessions" and that is what they are, but a reader might expect "conversations".
