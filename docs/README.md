@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M220 — every drawn character a CP437 console can actually draw](milestones/M220-every-drawn-character.md)
 - [M219 — the character repertoire, and the default that got it wrong](milestones/M219-the-character-repertoire.md)
 - [M218 — a list row that reads as one word](milestones/M218-a-list-row-that-reads-as-one-word.md)
 - [M217 — a workspace's sessions get their own directory](milestones/M217-session-per-workspace-directory.md)

@@ -252,10 +252,15 @@ pub fn list_row(
         // command name that does.
         let used = display_width(bar) + GUTTER_AFTER_BAR + display_width(label);
         let available = width.saturating_sub(used + MIN_META_GAP);
-        // `truncate_public` appends an ellipsis *after* the `max` characters, so
-        // the budget is one column short — and the guard below is the real
-        // safety net for wide characters, where a char is not a column.
-        let meta = crate::state::truncate_public(meta, available.saturating_sub(1).max(1));
+        // The mark's **own width** is part of the budget, not an afterthought. `truncate_public`
+        // appends the mark after the characters it keeps, so reserving a single column for it works
+        // only while the mark is a single column — and the ASCII repertoire's is `...`, three. Left
+        // uncounted, the budget goes negative, the hint is dropped rather than shortened, and a
+        // 54-column popup loses every description. The same arithmetic bit `format_path` (M220).
+        let mark = theme.glyphs.ellipsis;
+        let mark_width = display_width(mark);
+        let meta =
+            crate::state::truncate_public(meta, available.saturating_sub(mark_width).max(1), mark);
         let meta_width = display_width(&meta);
         if meta_width > 0 && used + MIN_META_GAP + meta_width <= width {
             let pad = width - used - meta_width;
@@ -276,6 +281,14 @@ const MIN_META_GAP: usize = 2;
 /// Columns between the selection bar and the label.
 const GUTTER_AFTER_BAR: usize = 1;
 
+/// The paired arrow a hint row offers for moving a selection: `↑↓`, or `^v` in the ASCII set.
+///
+/// One helper rather than six literals, so the pair cannot be half-repertoire — which is the shape of
+/// defect M219 removed one level down (a `●` here and a `*` there).
+#[must_use]
+pub fn up_down(up: &str, down: &str) -> String {
+    format!("{up}{down}")
+}
 /// A line of key hints at the bottom of a panel, drawn inside the frame.
 pub fn hint_row(theme: &Theme, hints: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::new();
@@ -454,7 +467,8 @@ mod tests {
             "and the row must still fit: {full:?}"
         );
         assert!(
-            full.trim_end().ends_with('…') || full.trim_end().ends_with("workspace"),
+            full.trim_end().ends_with(theme.glyphs.ellipsis)
+                || full.trim_end().ends_with("workspace"),
             "the hint is clipped, not the command: {full:?}"
         );
 
@@ -471,6 +485,9 @@ mod tests {
             "the row must not overflow: {cramped:?}"
         );
         assert!(!cramped.contains("/timelinebrowse"), "{cramped:?}");
-        assert!(!cramped.contains('…'), "no stub hint: {cramped:?}");
+        assert!(
+            !cramped.contains(theme.glyphs.ellipsis),
+            "no stub hint: {cramped:?}"
+        );
     }
 }

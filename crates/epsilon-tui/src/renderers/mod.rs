@@ -34,9 +34,9 @@ use serde_json::Value;
 /// wrong in a way that mattered: for `grep` it returned the *pattern* with no indication of
 /// where it matched, and for any tool whose arguments did not use one of those eight spellings
 /// it fell through to a raw JSON dump. A per-tool match says what the call actually was.
-pub fn call_head(name: &str, args: &Value) -> String {
+pub fn call_head(name: &str, args: &Value, ellipsis: &str) -> String {
     match name {
-        "shell" | "bash" | "run" => with_command(args),
+        "shell" | "bash" | "run" => with_command(args, ellipsis),
         "grep" => match (str_arg(args, "pattern"), str_arg(args, "path")) {
             (Some(p), Some(path)) => format!("/{p}/ in {path}"),
             (Some(p), None) => format!("/{p}/"),
@@ -64,8 +64,14 @@ pub fn call_head(name: &str, args: &Value) -> String {
 ///
 /// A `read` that returned lines 10–50 of a 300-line file should say so, because "read" alone
 /// does not distinguish a two-line config from a page of source.
-pub fn result_head(name: &str, args: &Value, details: &Value, body: &str) -> String {
-    let call = call_head(name, args);
+pub fn result_head(
+    name: &str,
+    args: &Value,
+    details: &Value,
+    body: &str,
+    ellipsis: &str,
+) -> String {
+    let call = call_head(name, args, ellipsis);
     let extra = match name {
         "read" => details
             .get("read")
@@ -104,7 +110,7 @@ pub fn result_head(name: &str, args: &Value, details: &Value, body: &str) -> Str
         // the tool's name, because this string is also the *collapsed transcript line*, where
         // dropping the name would leave a row of output with nothing saying which tool
         // produced it. Never a fourth of a kilobyte of it, which is what this replaced.
-        let first = first_line(body);
+        let first = first_line(body, ellipsis);
         if first.is_empty() {
             name.to_string()
         } else {
@@ -116,18 +122,23 @@ pub fn result_head(name: &str, args: &Value, details: &Value, body: &str) -> Str
 }
 
 /// First non-blank line of a body, trimmed to something a header can hold.
-fn first_line(body: &str) -> String {
+///
+/// The truncation mark is passed in rather than written here, for the reason every other glyph is a
+/// field: `…` is **not in CP437**, so a legacy console draws it as a box (M219/A22).
+fn first_line(body: &str, ellipsis: &str) -> String {
     body.lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
-        .map(|l| crate::state::truncate_public(l, 80))
+        .map(|l| crate::state::truncate_public(l, 80, ellipsis))
         .unwrap_or_default()
 }
 
 /// `shell`'s headline is a command line, and reads as one: `$ cargo test`.
-fn with_command(args: &Value) -> String {
+fn with_command(args: &Value, ellipsis: &str) -> String {
     match str_arg(args, "command").or_else(|| str_arg(args, "cmd")) {
-        Some(cmd) if !cmd.trim().is_empty() => format!("$ {}", collapse(&cmd, 100)),
+        Some(cmd) if !cmd.trim().is_empty() => {
+            format!("$ {}", collapse(&cmd, 100, ellipsis))
+        }
         _ => String::new(),
     }
 }
@@ -144,9 +155,9 @@ fn str_arg(args: &Value, key: &str) -> Option<String> {
 
 /// Collapse a multi-line command to its first line: a header is one line, and a
 /// `bash -c` script's second line is usually an unrelated part of the same idea.
-fn collapse(s: &str, max: usize) -> String {
+fn collapse(s: &str, max: usize, ellipsis: &str) -> String {
     let first = s.lines().next().unwrap_or(s).trim();
-    crate::state::truncate_public(first, max)
+    crate::state::truncate_public(first, max, ellipsis)
 }
 
 #[cfg(test)]

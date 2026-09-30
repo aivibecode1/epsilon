@@ -335,15 +335,20 @@ impl App {
             Hints::approval()
         } else if self.overlay_open() {
             // Overlays own the keyboard; the footer points at their own keys
-            // rather than advertising send/stop, which would not work. These are
-            // literal because an overlay is a list, not a bound action: there is
-            // no binding id for "move the highlight", so there is nothing for
-            // the table to resolve and nothing for it to get wrong.
+            // rather than advertising send/stop, which would not work. The
+            // arrow pair is a glyph rather than a literal because it is
+            // repertoire — and this builder has no `App` to ask, so it asks
+            // `Glyphs::detect()` once, which is the same process decision the
+            // app made at startup (M219).
+            let arrows = crate::ui::overlay::up_down(
+                crate::ui::theme::Glyphs::detect().up,
+                crate::ui::theme::Glyphs::detect().down,
+            );
             Hints {
                 mode: Some("list".into()),
                 keys: vec![
                     ("type".into(), "filter".into()),
-                    ("↑↓".into(), "move".into()),
+                    (arrows, "move".into()),
                     ("enter".into(), "choose".into()),
                     ("esc".into(), "close".into()),
                 ],

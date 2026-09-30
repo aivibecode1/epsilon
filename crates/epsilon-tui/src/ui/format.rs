@@ -175,7 +175,16 @@ pub fn format_duration(d: std::time::Duration) -> String {
 /// A status bar has room for one path. Showing its tail rather than its head is
 /// the useful choice — the last two components identify a project, while
 /// `/Users/someone/Documents/...` identifies nothing.
-pub fn format_path(path: &std::path::Path, home: Option<&std::path::Path>, width: usize) -> String {
+///
+/// `ellipsis` comes from the caller rather than being written here because `…` is **not in CP437**
+/// (it is at 0x85 in Windows-1252, where DOS put `à`): a legacy console renders it as a box, which is
+/// the owner's report this argument exists for. The ASCII repertoire passes `...` (M219/A22).
+pub fn format_path(
+    path: &std::path::Path,
+    home: Option<&std::path::Path>,
+    width: usize,
+    ellipsis: &str,
+) -> String {
     let mut shown = path.display().to_string();
     if let Some(home) = home
         && let Ok(rest) = path.strip_prefix(home)
@@ -188,7 +197,13 @@ pub fn format_path(path: &std::path::Path, home: Option<&std::path::Path>, width
     if shown.chars().count() <= width {
         return shown;
     }
-    // Keep the final components, which is what names the location.
+    // Keep the final components, which is what names the location. The budget
+    // subtracts the truncation mark **and** the separator, which is where a repertoire
+    // change turns into a layout change: the ASCII mark is `...` — three cells against
+    // `…`'s one — so a mark that is not counted here comes back two columns wider than the
+    // row allows, and the footer answers by dropping a hint. Measured at M220: the
+    // footer's `g jump to live` disappeared because of exactly this.
+    let mark_width = ellipsis.chars().count();
     let parts: Vec<&str> = shown.split(std::path::MAIN_SEPARATOR).collect();
     let mut tail = String::new();
     for part in parts.iter().rev() {
@@ -197,7 +212,7 @@ pub fn format_path(path: &std::path::Path, home: Option<&std::path::Path>, width
         } else {
             format!("{part}{}{tail}", std::path::MAIN_SEPARATOR)
         };
-        if candidate.chars().count() + 2 > width {
+        if candidate.chars().count() + mark_width + 1 > width {
             break;
         }
         tail = candidate;
@@ -205,15 +220,15 @@ pub fn format_path(path: &std::path::Path, home: Option<&std::path::Path>, width
     if tail.is_empty() {
         // Nothing fits whole: hard-truncate, keeping the tail characters.
         let chars: Vec<char> = shown.chars().collect();
-        let keep = width.saturating_sub(1);
+        let keep = width.saturating_sub(mark_width);
         return format!(
-            "…{}",
+            "{ellipsis}{}",
             chars[chars.len().saturating_sub(keep)..]
                 .iter()
                 .collect::<String>()
         );
     }
-    format!("…{}{tail}", std::path::MAIN_SEPARATOR)
+    format!("{ellipsis}{}{tail}", std::path::MAIN_SEPARATOR)
 }
 
 #[cfg(test)]
@@ -274,18 +289,18 @@ mod tests {
         // Wide enough for everything: the home prefix is abbreviated, and the
         // abbreviation uses the platform separator rather than mixing two.
         assert_eq!(
-            format_path(&deep, Some(&home), 80),
+            format_path(&deep, Some(&home), 80, "…"),
             format!("~{sep}work{sep}clients{sep}acme{sep}api")
         );
         // Narrower: drop whole leading components, never a partial one.
-        let narrow = format_path(&deep, Some(&home), 12);
+        let narrow = format_path(&deep, Some(&home), 12, "…");
         assert!(narrow.ends_with("api"), "{narrow}");
         assert!(narrow.starts_with('…'), "{narrow}");
         assert!(narrow.chars().count() <= 12, "{narrow}");
         // A path outside home keeps its absolute form.
         let other = std::path::PathBuf::from(format!("{sep}opt{sep}tools"));
         assert_eq!(
-            format_path(&other, Some(&home), 40),
+            format_path(&other, Some(&home), 40, "…"),
             format!("{sep}opt{sep}tools")
         );
     }

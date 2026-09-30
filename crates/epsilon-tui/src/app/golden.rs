@@ -73,6 +73,87 @@ fn busy_app() -> App {
 /// literal), and assert the body does not open with that same glyph. Reading the
 /// cell is the point — it is what makes the test about the drawn frame rather
 /// than about a set of characters a future theme change would invalidate.
+/// Code page 437's **low** range, from `0x01` to `0x1F` — the control slots DOS
+/// reused for symbols, which is why `↑` (0x18) and `↓` (0x19) are drawable even
+/// though neither is ASCII.
+const CP437_MARKS: &str = "☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼";
+
+/// Code page 437's upper half, from `0x80` to `0xFF`.
+const CP437_HIGH: &str = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u{A0}";
+
+/// Whether a console on code page 437 can draw this character.
+///
+/// **`…` is not drawable**, which is the surprise worth writing down: it is at 0x85 in
+/// Windows-1252, where every modern terminal learned it, and DOS put `à` there instead. A
+/// console that falls back to a font substitution will show it; a console that does not —
+/// which is the case this test exists for — shows a box. `·` (0xFA) and `—` (0x97) *are*
+/// in CP437, so prose may keep them.
+fn cp437_can_draw(c: char) -> bool {
+    c.is_ascii() || CP437_MARKS.contains(c) || CP437_HIGH.contains(c)
+}
+
+#[test]
+fn an_ascii_frame_draws_no_character_a_legacy_console_cannot() {
+    // M219/A22: the owner's report was "boxes with `?`" in `cmd.exe` and PowerShell. The cause was
+    // a *drawn* character the repertoire could not substitute, and the reason nothing caught it is
+    // structural: a `TestBackend` holds the characters, and `console-probe.py` reads the console
+    // **buffer** — so every frame artifact in this repository would have looked perfect on a CP437
+    // console. This test is the closest thing a test can see: paint the frame with the ASCII table
+    // and read back what was actually drawn.
+    //
+    // **The assertion is over the drawn rows, not over the glyph table**, so a character typed as a
+    // literal in the chrome fails here while `ascii_glyphs_are_seven_bit_only` stays green — that
+    // check only knows the table's own fields.
+    //
+    // The frames hold **no user or model prose**, because that text is not the harness's to change:
+    // a message in Greek is a message in Greek. Every character below therefore belongs to the UI.
+    let mut offenders: Vec<String> = Vec::new();
+    let mut frames = 0usize;
+    for (w, h) in [(80u16, 24u16), (100, 30), (120, 40)] {
+        for panel in 0..4 {
+            let mut app = bench_app(UiState::with_glyphs(crate::ui::theme::ASCII));
+            app.theme = Theme::new(ThemeColorMode::Truecolor, crate::ui::theme::ASCII);
+            match panel {
+                // 0: the plain frame. 1: the model picker. 2: the command palette. 3: the slash
+                // popup — the three overlays are where every separator, arrow and marker is drawn.
+                1 => app.picker_open = true,
+                2 => {
+                    app.palette_open = true;
+                    app.input = "go".into();
+                }
+                3 => {
+                    app.input = "/se".into();
+                    app.slash_open = true;
+                }
+                _ => {}
+            }
+            frames += 1;
+            for row in render_rows(&mut app, w, h) {
+                let bad: Vec<char> = row
+                    .chars()
+                    .filter(|c| !cp437_can_draw(*c))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                if !bad.is_empty() {
+                    offenders.push(format!("{w}x{h} panel {panel}: {bad:?} in {row:?}"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "the ASCII repertoire drew {} row(s) a CP437 console cannot render, across {} frames:\n{}\n\
+         Each of these is a character typed as a literal rather than taken from `Glyphs`. The fix is \
+         the glyph field: `●`, `★`, `⟳` and anything astral-plane are not in CP437 at all, so a \
+         console renders them as a box or a `?` -- the report this test exists for.",
+        offenders.len(),
+        frames,
+        offenders.join("\n")
+    );
+}
+
 #[test]
 fn no_transcript_row_repeats_its_gutter_glyph() {
     let mut app = bench_app(UiState::new());

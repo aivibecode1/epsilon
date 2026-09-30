@@ -218,6 +218,34 @@ pub struct Glyphs {
     pub key: &'static str,
     /// The marker on a system line that records a switch (`⟳`).
     pub cycle: &'static str,
+    /// The marker on the picker's selected row (`●`).
+    ///
+    /// **Not in CP437** — the closest the code page has is `•` at 0x07, which reads as a bullet
+    /// rather than as "the one you are on". A literal `●` therefore rendered as a box on a legacy
+    /// console (M219, A22).
+    pub dot: &'static str,
+    /// The marker on a favourited model (`★`). Like [`Self::dot`], absent from CP437.
+    pub star: &'static str,
+    /// The truncation mark (`…`).
+    ///
+    /// **Also absent from CP437**, which is the one that surprises people: `…` is at 0x85 in
+    /// Windows-1252, where DOS put `à`. Every modern terminal draws it and a legacy console shows a
+    /// box, so this is a glyph and not a literal (M220).
+    pub ellipsis: &'static str,
+    /// The arrows a hint row offers for moving a selection, alone and paired.
+    ///
+    /// CP437 *does* carry `↑` (0x18) and `↓` (0x19), so these are a preference rather than a
+    /// repair: `^`/`v` in the ASCII set, because a seven-bit frame is what a legacy console was
+    /// getting anyway for every other structural character.
+    pub up: &'static str,
+    /// The downward half of the pair; see [`Self::up`].
+    pub down: &'static str,
+    /// The dash a panel title separates its parts with (`—`).
+    ///
+    /// **An em dash is not in CP437** — 0x97 there is `ù`; `—` is 0x97 in Windows-1252, a different
+    /// code page that every modern terminal happens to speak. M219 got this wrong in prose and the
+    /// frame check caught it, which is the second time this table has been the thing that knows.
+    pub dash: &'static str,
     /// Spinner frames, advanced on a timer while work is in flight.
     pub spinner: &'static [&'static str],
 }
@@ -244,6 +272,12 @@ pub const UNICODE: Glyphs = Glyphs {
     back: "↑",
     key: "🔑",
     cycle: "⟳",
+    dot: "●",
+    star: "★",
+    ellipsis: "…",
+    up: "↑",
+    down: "↓",
+    dash: "—",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -269,6 +303,12 @@ pub const ASCII: Glyphs = Glyphs {
     back: "^",
     key: "@",
     cycle: "~",
+    dot: "*",
+    star: "+",
+    ellipsis: "...",
+    up: "^",
+    down: "v",
+    dash: "--",
     spinner: &["|", "/", "-", "\\"],
 };
 
@@ -388,6 +428,12 @@ impl Glyphs {
         "back",
         "key",
         "cycle",
+        "dash",
+        "dot",
+        "star",
+        "ellipsis",
+        "up",
+        "down",
     ];
 
     /// Every single-glyph field of the table, listed independently of [`Self::ALL`] (M219).
@@ -417,6 +463,12 @@ impl Glyphs {
         "back",
         "key",
         "cycle",
+        "dash",
+        "dot",
+        "star",
+        "ellipsis",
+        "up",
+        "down",
     ];
 
     /// This table's glyphs by name, for a caller that has to check all of them.
@@ -443,6 +495,12 @@ impl Glyphs {
                 "back" => self.back,
                 "key" => self.key,
                 "cycle" => self.cycle,
+                "dash" => self.dash,
+                "dot" => self.dot,
+                "star" => self.star,
+                "ellipsis" => self.ellipsis,
+                "up" => self.up,
+                "down" => self.down,
                 other => panic!("`{other}` is in `Glyphs::ALL` with no reader: a name there is a promise that a glyph is checked, and this is the arm that keeps it"),
             };
             (*name, glyph)

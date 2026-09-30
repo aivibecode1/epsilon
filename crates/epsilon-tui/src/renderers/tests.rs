@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::ui::card;
+use crate::ui::theme::UNICODE;
 use crate::ui::theme::{ColorMode, Glyphs, Theme};
 use serde_json::json;
 
@@ -27,6 +28,7 @@ fn a_read_card_names_the_file_and_the_lines_it_returned() {
         &args(json!({"path": "src/main.rs", "offset": 10})),
         &json!({"read": {"first_line": 10, "last_line": 50, "total_lines": 300}}),
         "fn main() {\n",
+        UNICODE.ellipsis,
     );
     assert_eq!(head, "src/main.rs:10–50 of 300");
 }
@@ -40,6 +42,7 @@ fn a_whole_file_read_does_not_announce_a_range_it_covered_everything_in() {
         &args(json!({"path": "Cargo.toml"})),
         &json!({"read": {"first_line": 1, "last_line": 42, "total_lines": 42}}),
         "[package]\n",
+        UNICODE.ellipsis,
     );
     assert_eq!(head, "Cargo.toml");
 }
@@ -48,7 +51,11 @@ fn a_whole_file_read_does_not_announce_a_range_it_covered_everything_in() {
 fn a_grep_card_says_what_it_searched_for_and_where() {
     // The old heuristic returned the bare pattern, so a `grep` card could not distinguish
     // a search that hit from one that hit in the wrong place.
-    let head = call_head("grep", &args(json!({"pattern": "fn main", "path": "src/"})));
+    let head = call_head(
+        "grep",
+        &args(json!({"pattern": "fn main", "path": "src/"})),
+        UNICODE.ellipsis,
+    );
     assert_eq!(head, "/fn main/ in src/");
 }
 
@@ -59,6 +66,7 @@ fn a_grep_card_that_stopped_at_the_match_limit_says_so() {
         &args(json!({"pattern": "todo!", "path": "src/"})),
         &json!({"truncated": true, "match_limit_reached": 100}),
         "src/a.rs:1:todo!()\n",
+        UNICODE.ellipsis,
     );
     assert!(
         head.contains("truncated at 100 matches"),
@@ -69,7 +77,11 @@ fn a_grep_card_that_stopped_at_the_match_limit_says_so() {
 #[test]
 fn a_shell_card_reads_like_a_command_line() {
     assert_eq!(
-        call_head("shell", &args(json!({"command": "cargo test --workspace"}))),
+        call_head(
+            "shell",
+            &args(json!({"command": "cargo test --workspace"})),
+            UNICODE.ellipsis
+        ),
         "$ cargo test --workspace"
     );
 }
@@ -77,7 +89,11 @@ fn a_shell_card_reads_like_a_command_line() {
 #[test]
 fn a_multiline_command_collapses_to_its_first_line() {
     // A header is one line. A `bash -c` script's second line is usually a different idea.
-    let head = call_head("shell", &args(json!({"command": "set -e\nrm -rf /"})));
+    let head = call_head(
+        "shell",
+        &args(json!({"command": "set -e\nrm -rf /"})),
+        UNICODE.ellipsis,
+    );
     assert_eq!(head, "$ set -e");
 }
 
@@ -90,6 +106,7 @@ fn a_shell_card_with_incomplete_output_says_the_output_is_incomplete() {
         &args(json!({"command": "npm test"})),
         &json!({"output_complete": false}),
         "child-exited\n",
+        UNICODE.ellipsis,
     );
     assert!(head.contains("output incomplete"), "{head}");
 }
@@ -101,6 +118,7 @@ fn a_complete_shell_result_is_not_qualified() {
         &args(json!({"command": "npm test"})),
         &json!({"output_complete": true}),
         "ok\n",
+        UNICODE.ellipsis,
     );
     assert!(!head.contains("incomplete"), "{head}");
 }
@@ -109,7 +127,11 @@ fn a_complete_shell_result_is_not_qualified() {
 fn an_unknown_tool_degrades_to_a_phrase_rather_than_a_json_dump() {
     // The old fallback was `truncate(&args.to_string(), 80)`, so any tool whose arguments
     // did not use one of eight hard-coded spellings opened with a JSON object.
-    let head = call_head("mystery", &args(json!({"whatever": "yes"})));
+    let head = call_head(
+        "mystery",
+        &args(json!({"whatever": "yes"})),
+        UNICODE.ellipsis,
+    );
     assert!(!head.starts_with('{'), "{head}");
 }
 
@@ -120,6 +142,7 @@ fn a_tool_with_nothing_sayable_falls_back_to_the_first_output_line() {
         &args(json!({})),
         &json!({}),
         "\n  found nothing\n",
+        UNICODE.ellipsis,
     );
     // The tool name survives, because this string is also the collapsed transcript line:
     // a row of output with nothing saying which tool produced it is not a fallback.
@@ -168,7 +191,13 @@ fn a_card_with_no_headline_still_renders_its_name() {
 
 #[test]
 fn a_tool_with_no_output_at_all_still_names_itself() {
-    let head = result_head("todo", &args(json!({})), &json!({}), "   ");
+    let head = result_head(
+        "todo",
+        &args(json!({})),
+        &json!({}),
+        "   ",
+        UNICODE.ellipsis,
+    );
     assert_eq!(head, "todo");
 }
 

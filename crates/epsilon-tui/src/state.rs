@@ -728,7 +728,7 @@ impl UiState {
                 ended_at_ms: None,
                 body: CardBody::Prompt(detail),
                 args: args.clone(),
-                head: crate::renderers::call_head(name, args),
+                head: crate::renderers::call_head(name, args, self.glyphs.ellipsis),
             }),
             ..TranscriptLine::plain(LineKind::ToolCall, format!("{name} {args}"))
         });
@@ -798,7 +798,13 @@ impl UiState {
         // with 400 characters of the file the user was already looking at, and never named
         // the file or the line range — both of which the tool had already reported. The
         // renderer says what the tool did, using only facts the tool stated.
-        let head = crate::renderers::result_head(&t.tool_name, &args, &t.details, &body);
+        let head = crate::renderers::result_head(
+            &t.tool_name,
+            &args,
+            &t.details,
+            &body,
+            self.glyphs.ellipsis,
+        );
         // M155: the call card was settled above. *Finishing* it is the other half of that,
         // and this used to be skipped: the call's status was updated and a **second** card
         // was pushed beside it carrying the same headline and the same body. Painted, that
@@ -992,7 +998,7 @@ impl UiState {
                     if !thinking.is_empty() {
                         self.push_line(TranscriptLine::plain(
                             LineKind::Thinking,
-                            truncate(&thinking, MAX_RESULT_CHARS),
+                            truncate(&thinking, MAX_RESULT_CHARS, self.glyphs.ellipsis),
                         ));
                     }
                     let text = a.text();
@@ -1091,7 +1097,7 @@ impl UiState {
                     if !thinking.is_empty() {
                         self.push_line(TranscriptLine::plain(
                             LineKind::Thinking,
-                            truncate(&thinking, MAX_RESULT_CHARS),
+                            truncate(&thinking, MAX_RESULT_CHARS, self.glyphs.ellipsis),
                         ));
                     }
                     self.streaming_text.clear();
@@ -1228,7 +1234,8 @@ impl UiState {
                     .unwrap_or("")
                     .trim();
                 if !last.is_empty() {
-                    self.status = format!("{tool_name}: {}", truncate(last, 120));
+                    self.status =
+                        format!("{tool_name}: {}", truncate(last, 120, self.glyphs.ellipsis));
                 }
                 // M152: also show the output *in the card*, not only its last line in the
                 // header. `partial` is a delta, not a cumulative buffer, so the card keeps a
@@ -1579,22 +1586,22 @@ fn summarize_args(args: &serde_json::Value) -> String {
             return value.to_string();
         }
     }
-    truncate(&args.to_string(), 80)
+    truncate(&args.to_string(), 80, crate::ui::theme::UNICODE.ellipsis)
 }
 
 /// [`truncate`] for the renderers module, which formats card headlines and cannot
 /// reach a private helper. One implementation: two different truncation policies would be
 /// one more place for a card to disagree with its own header.
-pub fn truncate_public(s: &str, max: usize) -> String {
-    truncate(s, max)
+pub fn truncate_public(s: &str, max: usize, ellipsis: &str) -> String {
+    truncate(s, max, ellipsis)
 }
 
-fn truncate(s: &str, max: usize) -> String {
+fn truncate(s: &str, max: usize, ellipsis: &str) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
     let head: String = s.chars().take(max).collect();
-    format!("{head}…")
+    format!("{head}{ellipsis}")
 }
 
 /// Whether expandable rows currently render their full payload.
@@ -1982,7 +1989,10 @@ mod tests {
         });
         let line = &st.lines()[0];
         assert!(line.text.chars().count() < MAX_RESULT_CHARS + 10);
-        assert!(line.text.ends_with('…'));
+        // The state's own truncation mark, not the Unicode literal: `UiState::default()` is the
+        // ASCII repertoire (M219), and a test that wrote the character down would be asserting the
+        // repertoire rather than the truncation.
+        assert!(line.text.ends_with(st.glyphs.ellipsis), "{line:?}");
     }
 
     #[test]

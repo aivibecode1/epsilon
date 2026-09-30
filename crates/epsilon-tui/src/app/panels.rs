@@ -24,6 +24,10 @@ use super::*;
 pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
+    // `●` is not in CP437, so the "you are here" mark is a glyph rather than a literal: on a legacy
+    // console the ASCII repertoire draws `*` (M219/A22).
+    let active_marker = app.theme.glyphs.dot;
+
     // M16c two-stage: stage 1 lists providers; stage 2 that provider's models.
     if let Some(provider) = &app.picker_provider.clone() {
         draw_picker_stage2(f, app, outer, provider);
@@ -47,7 +51,7 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     // here, and deriving the same number in both places is how two lists end up
     // paging by different amounts.
     app.picker_capacity = height.saturating_sub(3).max(1) as usize;
-    let title = format!("models — filter: '{}'", app.input);
+    let title = format!("models {} filter: '{}'", app.theme.glyphs.dash, app.input);
     let panel = Panel {
         theme: &app.theme,
         // Top-aligned rather than centred, like the palette: the picker opens
@@ -85,7 +89,7 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         let selected = i == app.picker_index;
         // The active-provider mark and the auth badge are leading columns of the
         // label; `list_row` owns the selection bar and right-aligns the count.
-        let marker = if *is_active { "● " } else { "  " };
+        let marker = if *is_active { active_marker } else { "  " };
         let auth = if *auth_ready {
             app.theme.glyphs.key
         } else {
@@ -101,9 +105,14 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     }
 
     lines.push(Line::from(""));
+    let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
     lines.push(overlay::hint_row(
         &app.theme,
-        &[("↑↓", "move"), ("enter", "browse models"), ("esc", "close")],
+        &[
+            (&arrows, "move"),
+            ("enter", "browse models"),
+            ("esc", "close"),
+        ],
     ));
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -113,6 +122,9 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
 /// `.epsilon/sessions`, newest first; the current one is marked `●`.
 pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
+
+    // The "you are here" mark is a glyph: `●` is not in CP437 (M219/A22).
+    let active_marker = app.theme.glyphs.dot;
 
     // Take the mutable handle FIRST, so the capacity can be recorded before the
     // immutable borrow below. Doing it after would ask for `&mut app` while
@@ -163,7 +175,7 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         let selected = i == browser.index;
         // The current-session mark leads the title column; the age/size meta
         // stays the right-aligned column it was.
-        let marker = if row.is_current { "● " } else { "  " };
+        let marker = if row.is_current { active_marker } else { "  " };
         lines.push(overlay::list_row(
             &app.theme,
             selected,
@@ -187,6 +199,9 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
 fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str) {
     use crate::ui::overlay::{self, Panel, Width};
 
+    // The "you are here" mark, the favourite star and the hint arrows are all glyphs (M219/A22):
+    // `●` and `★` are not in CP437, and a legacy console drew both as boxes.
+    let active_marker = app.theme.glyphs.dot;
     let rows = crate::picker::build_models_for_provider(
         provider,
         &app.input,
@@ -196,7 +211,10 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
     );
     let width = Width::PANEL.resolve(outer);
     let height = 15u16.min(outer.height.saturating_sub(2));
-    let title = format!("models — {provider}: filter '{}'", app.input);
+    let title = format!(
+        "models {} {provider}: filter '{}'",
+        app.theme.glyphs.dash, app.input
+    );
     let panel = Panel {
         theme: &app.theme,
         // Top-aligned like stage 1, so stepping between the two stages does not
@@ -233,14 +251,22 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         let selected = i == app.picker_index;
         // The active-model mark, the auth badge and the favorite star are leading
         // columns of the label; the model id stays the right-aligned meta column.
-        let marker = if row.id == app.model_id { "● " } else { "  " };
+        let marker = if row.id == app.model_id {
+            active_marker
+        } else {
+            "  "
+        };
         let auth = if row.auth_ready {
             app.theme.glyphs.key
         } else {
             "· "
         };
         // M23: ★ marks favorites (opencode's star column); Ctrl+F toggles.
-        let star = if row.is_favorite { "★" } else { " " };
+        let star = if row.is_favorite {
+            app.theme.glyphs.star
+        } else {
+            " "
+        };
         lines.push(overlay::list_row(
             &app.theme,
             selected,
@@ -406,11 +432,12 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
     }
     // The filter itself lives in the title bar, so the body stays a pure list.
     lines.push(Line::from(""));
+    let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
     lines.push(overlay::hint_row(
         &app.theme,
         &[
             ("type", "filter"),
-            ("↑↓", "move"),
+            (&arrows, "move"),
             ("enter", "run"),
             ("esc", "close"),
         ],
@@ -468,6 +495,7 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
                 std::path::Path::new(path),
                 None,
                 inner.width.saturating_sub(6) as usize,
+                theme.glyphs.ellipsis,
             );
             crate::ui::overlay::list_row(
                 theme,
@@ -618,6 +646,7 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
         app.theme.dim(),
     )];
     footer.push(Span::styled(" · ", app.theme.faint()));
+    let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
     footer.extend(
         overlay::hint_row(
             &app.theme,
@@ -626,7 +655,7 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
             // unbound key with no response -- the capability is there and
             // undiscoverable.
             &[
-                ("↑↓", "move"),
+                (&arrows, "move"),
                 ("enter", "jump"),
                 ("f", "filter"),
                 ("/", "search"),
@@ -689,9 +718,11 @@ pub(super) fn draw_slash_autocomplete(f: &mut Frame<'_>, app: &App, transcript_a
             )
         })
         .collect();
+    lines.push(Line::from(""));
+    let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
     lines.push(overlay::hint_row(
         &app.theme,
-        &[("↑↓", "pick"), ("tab", "apply"), ("esc", "dismiss")],
+        &[(&arrows, "pick"), ("tab", "apply"), ("esc", "dismiss")],
     ));
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -974,11 +1005,12 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         ));
     }
     lines.push(Line::from(""));
+    let arrows = crate::ui::overlay::up_down(theme.glyphs.up, theme.glyphs.down);
     lines.push(overlay::hint_row(
         theme,
         &[
             ("type", "filter"),
-            ("↑↓", "move"),
+            (&arrows, "move"),
             ("enter", "paste key"),
             ("esc", "cancel"),
         ],

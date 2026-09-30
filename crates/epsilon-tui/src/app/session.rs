@@ -116,7 +116,12 @@ impl App {
                 let home = std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(std::path::PathBuf::from);
-                crate::ui::format::format_path(&workspace_root, home.as_deref(), 28)
+                crate::ui::format::format_path(
+                    &workspace_root,
+                    home.as_deref(),
+                    28,
+                    crate::ui::theme::Glyphs::detect().ellipsis,
+                )
             },
             workspace_root,
             // Nothing has read the session's goal yet, and a fresh process has not armed one:
