@@ -57,17 +57,26 @@ M209 measured 1,626 across 64; this slice adds the three in
 **Disk knob, disclosed:** `CARGO_PROFILE_DEV_DEBUG=0` / `CARGO_PROFILE_TEST_DEBUG=0`, as M208
 established for this drive.
 
-**What the battery cannot check, and did not:** nothing in this round launched the TUI twice in a
-scratch workspace and listed the files it wrote. The naming call site is tested, the rule is tested,
-and the wiring between them is *read* — so the claim of this slice rests on those two tested halves
-plus the compiler, not on an observed pair of files. It is stated here because the first version of
-this section asserted that observation, and it had not been made. An earlier round in this session
-set exactly that precedent in the other direction (the installed binary's own frame, quoted from a
-real console), and this one does not meet it.
+**Seen, not inferred (2026-09-30).** Two launches of the installed binary in a scratch workspace,
+driven through the conhost probe, wrote two files:
 
+```text
+2026-09-30T11-07-17-517Z_ses_1a0f1ff548d0.jsonl    154 bytes
+2026-09-30T11-07-31-830Z_ses_1a0f1ff8c760.jsonl    154 bytes
+```
+
+and their headers carry ids `ses_1a0f1ff54911` and `ses_1a0f1ff8c781` — which is the divergence
+this milestone stated in advance, now visible in real artifacts rather than argued: the name's
+token is minted by the caller and the header's id by the store, so the two differ. Nothing reads
+the name's token, and both headers carry the same `cwd`, which is what `--continue` filters on.
+
+**Still not observed: `-c` itself.** The probe run that was meant to reopen the newest session
+failed on shell quoting (`'"…\epsilon.exe -c""' is not recognized`) before the TUI started, so
+the end-to-end resume check remains outstanding — the naming is verified, the resume *path* is
+tested elsewhere, and the join between them is read.
 Evidence: [`audit/evidence/gate-m210.log`](../../audit/evidence/gate-m210.log).
 
-**Reinstall: outstanding, and deliberately deferred.** It is required — this changes which file a
+**Reinstall: done** (2026-09-30, `cargo install --path crates/epsilon-cli --features real --force`, 29m44s cold). It was deliberately deferred It is required — this changes which file a
 launch writes — and it has not run, because a release build is ~30–45 minutes cold and the M207
 notice is already queued behind the same install. The installed binary is therefore still the
 **M206** build: two milestones (M207, M210) are in the tree and not yet in the artifact the owner
