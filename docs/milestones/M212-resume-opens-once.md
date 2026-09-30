@@ -68,7 +68,13 @@ the owner runs, not only in the debug build the battery produced.
   nothing else — the probe never submits a turn — so "the conversation comes back" is *not* what was
   observed; what was observed is that no third file is created and no lease wait occurs. A fixture
   with real turns would test the restore, and it needs a provider the probe can talk to offline.
-- **The resume block's migration code is now redundant.** The primary open already handles
-  `store.migrated()`, so the block's copy runs on a file that has been migrated. Left in place
-  deliberately (a second call is a no-op; deleting code on the same day as reordering it is how a
-  regression hides), and recorded so the next reader does not mistake it for live logic.
+- **The resume block's migration code is now dead, and that was verified rather than asserted**
+  (2026-09-30). The primary open calls `store.persist_migration()` itself — `main.rs:1860`, with its
+  own message naming the `.pre-epsilon` backup — so by the time the resume block runs, the file it
+  holds has already been migrated and its branch cannot execute. Left in place deliberately (deleting
+  code on the same day as reordering it is how a regression hides), and recorded so the next reader
+  does not mistake it for live logic. **One thing the check turned up:** those are two different
+  sentences for one event, and with this fix the user now sees the primary one — "migrated session
+  store to current version (previous bytes kept at …)". Both name the backup, so nothing is lost, but
+  a reader comparing the two call sites will wonder which is live, which is exactly why this paragraph
+  exists.
