@@ -120,6 +120,8 @@ the one being written while the second is the one being read, the resume is writ
 conversation beside the old one instead of into it.
 ## The fix shape, in the order worth trying
 
+Execution is specified line by line in [docs/plans/021-a19-resume-opens-once.md](../docs/plans/021-a19-resume-opens-once.md) — the two edits, the three borrow details that would otherwise cost an hour, the verification commands, and the three things not to do.
+
 1. **Resolve the resume path before opening anything**, and when it equals the primary path, open
    **once** — the resumed store *is* the primary. This removes the double open rather than working
    around it, and it is the only version that cannot leave a window where two leases exist.
