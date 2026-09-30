@@ -42,6 +42,42 @@ answers*.
 Concretely: **`epsilon-core::config` is the only reader of `config.toml`. Everything a lower crate
 needs arrives as a value.**
 
+## Step 0 — what the code actually does (checked 2026-09-30, and it corrects steps 2 and 3)
+
+The plan was written from the ledger's description of A12. Reading `epsilon-llm` shows the
+duplication is **worse** than that description and the sequencing below was **wrong**:
+
+```text
+custom.rs:70        read_to_string(config_dir/"config.toml")   ┐ custom providers
+custom.rs:74        toml::from_str(&raw)                        ┘
+oauth_login.rs:799  read_to_string(config_dir/"config.toml")   ┐ OAuth client id
+oauth_login.rs:800  toml::from_str(&raw)                        ┘  (client_id_from_config)
+oauth_login.rs:1184 read_to_string(config_dir/"config.toml")   ┐ a SECOND OAuth read,
+oauth_login.rs:1185 toml::from_str(&text)                       ┘  elsewhere in the same file
+```
+
+**Three readers of one file inside one crate**, plus the two `global_dir()` copies and `core::config`
+above them — five ways to find or parse one file, where the row said four places.
+
+Two corrections that follow:
+
+- **Step 2's "drop `toml` from `epsilon-llm`'s manifest" cannot happen at step 2.** `toml` is used by
+  the OAuth path as well, so removing the custom-provider reader leaves the dependency in place and
+  the manifest edit would fail the build. **The OAuth reads must go first**; `toml` leaves the manifest
+  at the end, and `cargo tree` is still the proof.
+- **Step 3 pointed at a doc comment.** `:775` is documentation of the client-id rule; the real reads
+  are `client_id_from_config` at `:797-800` and the second one at `:1184`. Both take a config
+  directory and parse the file themselves, so both need the same treatment: take the value, not the
+  directory.
+
+**Revised order:** (1) the credential-store directory, as written; (2) **both** OAuth reads take an
+already-resolved client id; (3) custom providers arrive parsed; (4) `toml` leaves the manifest, proven
+by `cargo tree -p epsilon-llm -i toml`; (5) the project-config parse beside the trust hash.
+
+This is the sixth claim this session found written from a neighbour rather than from the code (A7,
+A10, A11, A20, plan 023's step 1, and this). The countermeasure is unchanged and it worked here: one
+read, no code, and a wrong sequencing caught before anyone started it.
+
 ## The execution, in order
 
 Each step is independently committable and independently verifiable; stop after any of them and the
@@ -60,7 +96,15 @@ tree is coherent.
    second copy deleted so it cannot pass by construction; plus
    `grep -rn "fn global_dir" crates/` returning exactly one hit.
 
-### Step 2 — custom providers arrive parsed
+### Step 2 — both OAuth reads take a value (moved ahead of `toml`'s removal)
+
+**This step was "custom providers arrive parsed" in the first draft; the order was wrong** — `toml` is
+used by the OAuth path too, so the manifest cannot shed it until these reads are gone. The real sites
+are `client_id_from_config` (`oauth_login.rs:797-800`) and a second read at `:1184`; both take a
+config directory and parse the file themselves, and both should instead take the already-resolved
+client id.
+
+### Step 3 — custom providers arrive parsed
 
 1. Add to `core::config` the accessor that returns the parsed table, not one key:
    `load_table_in(config_dir, "provider_custom") -> Vec<(String, toml::Value)>` (or a typed
@@ -72,14 +116,6 @@ tree is coherent.
 4. **Evidence:** the dependency is gone from the manifest *and* from `cargo tree`; a test that a
    config file with two custom providers still produces two rows, driven through the CLI's
    composition rather than through llm's own reader (which no longer exists).
-
-### Step 3 — OAuth client ids arrive as values
-
-1. `oauth_login.rs`: replace the config read at `:775` with a parameter on the login entry point.
-2. `epsilon-cli`: read `[oauth.<provider>] client_id` through `core::config` and pass it.
-3. **Evidence:** the existing OAuth tests keep passing with the value injected; a test that a
-   missing client id produces the same guidance sentence it produces today (the sentence is the
-   product surface, and rewording it silently is its own defect).
 
 ### Step 4 — the project config's parse gets an owner
 
