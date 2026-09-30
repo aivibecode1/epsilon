@@ -30,11 +30,21 @@ process leaves its `.lock` behind, so the newest session file was also the locke
 was drawn on screen (M207's premise, confirmed): `waiting for this session to be released — 1s
 elapsed, ~29s left`, then 2s, then 3s.
 
-Two facts follow, and the second is new. First, the wait **is** legible — A18's fix works. Second,
-for a *dead* holder the early steal needs the lock's mtime to sit unmoved across a full `HEARTBEAT`,
-so a workspace where a TUI was just killed waits about a heartbeat before it can start, not
-instantly. That is the A7 design working as written (M207's Limits said so), now observed rather
-than reasoned.
+Two facts follow, and the second is new. First, the wait **is** legible — A18's fix works. Second, the wait for a *dead* holder is bounded by `DEAD_HOLDER_SETTLE` — and the
+constants, read rather than remembered, are `HEARTBEAT = 2s`, `DEAD_HOLDER_SETTLE = 4s`,
+`STALE_AFTER = 30s`, `WAIT_POLL = 100ms` (`lease.rs:88/97/102/129/134`). So a workspace whose TUI
+was just killed starts after about **four seconds**, with the countdown drawn throughout — which is
+what the probe's 1s/2s/3s frames were counting toward.
+
+**Do not "optimize" that four seconds away, and here is why, so nobody has to re-derive it.**
+`DEAD_HOLDER_SETTLE` is deliberately 2× `HEARTBEAT`: a *live* holder is visible as an mtime that
+keeps moving, and the margin exists so that a live process which stalls for one heartbeat — a
+scheduler hiccup, a busy disk, a debugger — is not mistaken for a dead one. The steal is the only
+path by which two writers can share a session file, so shortening the settle toward the heartbeat
+trades a four-second wait for the corruption the lease exists to prevent. The two exact
+alternatives are both already priced: a pid probe needs `unsafe` (forbidden here) and is wrong
+under pid reuse, and OS advisory locks (`fs4`/flock) would be exact but need a dependency and an
+ADR — a trade the lease module's own docs recorded when the mtime-steal was chosen.
 
 **A consequence of M210 that nobody has designed for:** with one file per launch, each killed
 session leaves its own `.lock` beside its own `.jsonl`, so a sessions directory grows two entries
