@@ -1823,10 +1823,8 @@ async fn build_runtime(
             epsilon_cli::runtime::latest_session_file(&workspace.join(".epsilon").join("sessions"))
         }
     };
-    let (session_path, resuming) = match resume_path.clone() {
-        Some(rp) => (rp, true),
-        None => (workspace.join(session_file), false),
-    };
+    let (session_path, resuming) =
+        session_path_for(workspace, &session_file, resume_path.as_deref());
     // Reap locks whose holder is provably gone before opening anything (M211). One session per file
     // (M210) means one lock per session, and a process that was killed — a closed terminal window, a
     // `taskkill` — never removes its own, so a daily workspace accumulates two entries per launch
@@ -1981,6 +1979,59 @@ async fn build_runtime(
     Ok(agent)
 }
 
+/// Which file a launch opens, and whether that makes it a resumed launch.
+///
+/// **A19's invariant, written where it can be tested: the resume target wins.** A launch must write
+/// to the file it resumes. The old shape kept the frontend's default as the session path and opened
+/// the resume target as a *second* store — invisible while the default name was fixed
+/// (`latest_session_file` then returned the same file) and fatal once each launch named its own: the
+/// newest file in the directory was the empty one this process had just created, so `--continue`
+/// resolved to its own file, waited a full lease window on its own lock, and restored nothing.
+///
+/// Extracted for the same reason `resumed_model_to_use` was: the rule is what the product runs, and
+/// a copy of it inside a test would test the copy.
+///
+/// The returned `bool` is not decoration — the caller uses it to phrase the open's error message for
+/// a resumed file (`resume_open_error`) rather than for a launch.
+fn session_path_for(
+    workspace: &std::path::Path,
+    session_file: &str,
+    resume_path: Option<&std::path::Path>,
+) -> (std::path::PathBuf, bool) {
+    match resume_path {
+        Some(rp) => (rp.to_path_buf(), true),
+        None => (workspace.join(session_file), false),
+    }
+}
+
+#[cfg(test)]
+mod session_path_tests {
+    use super::session_path_for;
+    use std::path::{Path, PathBuf};
+
+    /// The property A19 was: **the file written is the file resumed.**
+    #[test]
+    fn a_resume_target_becomes_the_file_this_launch_opens() {
+        let workspace = Path::new("/ws");
+        let resumed = Path::new("/ws/.epsilon/sessions/2026-09-30T00-00-00-000Z_ses_a.jsonl");
+        let (path, resuming) =
+            session_path_for(workspace, ".epsilon/sessions/tui.jsonl", Some(resumed));
+        assert_eq!(path, PathBuf::from(resumed));
+        assert!(
+            resuming,
+            "the caller needs to know, to phrase a refusal for a resumed file"
+        );
+    }
+
+    /// A plain launch is unchanged: the frontend's own name, relative to the workspace.
+    #[test]
+    fn a_launch_without_a_resume_keeps_its_own_file() {
+        let (path, resuming) =
+            session_path_for(Path::new("/ws"), ".epsilon/sessions/tui.jsonl", None);
+        assert_eq!(path, PathBuf::from("/ws/.epsilon/sessions/tui.jsonl"));
+        assert!(!resuming);
+    }
+}
 /// Which model a resumed run should continue on, and why. `None` means "keep the launch
 /// model" — the caller then changes nothing.
 ///
