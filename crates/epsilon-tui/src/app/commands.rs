@@ -1274,11 +1274,52 @@ impl App {
     fn run_restore_command(&mut self, agent: &Arc<Agent>, command: crate::picker::Command) -> bool {
         match command {
             crate::picker::Command::New => {
+                // M221: `/new` starts a new session **file**, not a cleared transcript. Since M210
+                // a launch owns its file, and since M217 that file lives in a directory per working
+                // copy — so "new session" is the same act as "launch": name a file beside the others
+                // and attach it through the ONE switch path (`switch_session_file`, shared with
+                // `/resume` and the browser). The old behaviour cleared the visible rows and kept
+                // appending to the same file, which is the one-file-many-conversations primitive
+                // this model removed — and it is why `reset_leaf` had no caller.
+                if self.ui.running() || agent.is_running() {
+                    self.ui.push_notice(
+                        "new: busy — wait for the current run to finish, then /new again",
+                    );
+                    return true;
+                }
                 let (tin, tout) = self.ui.usage();
-                self.ui.clear_lines();
-                self.ui.push_notice(format!(
-                    "new session — transcript cleared (session file continues; use /fork for a branch file) (tokens {tin}/{tout})"
+                let dir = epsilon_session::time::session_dir_for(
+                    &self.session_dir(),
+                    &self.workspace_root,
+                );
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    self.ui
+                        .push_notice(format!("new session: {}: {e}", dir.display()));
+                    return true;
+                }
+                // pi's file name, from the rule M209 transcribed and M217 put behind a directory.
+                let path = dir.join(epsilon_session::time::session_file_name(
+                    now_ms(),
+                    &epsilon_contracts::new_id("ses"),
                 ));
+                // Create it now, and drop the handle immediately: the store takes a cross-process
+                // write lease, and `switch_session_file` opens the same file again — holding both
+                // handles would have this process wait on its own lease.
+                if let Err(e) = epsilon_session::SessionStore::open_in(&path, &dir).map(|_| ()) {
+                    self.ui
+                        .push_notice(format!("new session: {}: {e}", path.display()));
+                    return true;
+                }
+                match self.switch_session_file(agent, &path, None) {
+                    Ok(_) => self.ui.push_notice(format!(
+                        "new session — {} (the previous one is kept; /sessions lists both, \
+                         tokens {tin}/{tout})",
+                        path.strip_prefix(&self.workspace_root)
+                            .unwrap_or(&path)
+                            .display()
+                    )),
+                    Err(e) => self.ui.push_notice(format!("new session failed: {e}")),
+                }
             }
             crate::picker::Command::Resume(path) => {
                 let p = path.trim();

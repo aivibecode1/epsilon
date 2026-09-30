@@ -829,6 +829,99 @@ async fn sessions_command_browses_and_enter_switches_the_session() {
     assert!(texts.join("\n").contains("resumed 1 messages"), "{texts:?}");
 }
 
+/// M221: `/new` starts a new session **file**, so "new session" and "new conversation" are the
+/// same act — which is what a launch already was since M210, in a directory of its own since M217.
+///
+/// The old behaviour cleared the visible rows and kept appending to the same file, so a second
+/// conversation was a stowaway in the first one's file and the header's id named only the first.
+/// Nothing tested it, which is why it survived: the assertions here are the ones that would have
+/// failed against it.
+#[tokio::test]
+async fn new_command_starts_a_new_session_file_and_keeps_the_old_one() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path();
+    app.workspace_root = workspace.to_path_buf();
+    let sessions = workspace.join(".epsilon").join("sessions");
+    let per_cwd = epsilon_session::time::session_dir_for(&sessions, workspace);
+    std::fs::create_dir_all(&per_cwd).unwrap();
+    let old = per_cwd.join("2026-09-30T10-00-00-000Z_ses_old.jsonl");
+    write_session_fixture(&old, workspace, "the conversation before /new");
+
+    type_and_enter(&mut app, &agent, "/new");
+
+    let attached = agent
+        .store_handle_for_tests()
+        .lock()
+        .unwrap()
+        .path()
+        .to_path_buf();
+    assert_ne!(
+        attached, old,
+        "/new must not keep writing to the file it just left"
+    );
+    assert!(
+        attached.starts_with(&per_cwd),
+        "the new file belongs in this workspace's directory: {attached:?}"
+    );
+    assert!(
+        attached.exists(),
+        "and it exists now, rather than at the first append: {attached:?}"
+    );
+
+    // The old conversation does not come along — because the new file has no
+    // history, not because rows were cleared. (The rows here are this command's
+    // own notices; what must be absent is the previous conversation.)
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        !texts
+            .iter()
+            .any(|t| t.contains("the conversation before /new")),
+        "a new session starts empty; it does not carry the last one: {texts:?}"
+    );
+
+    // Both sessions are browsable, and the old one is intact: a new conversation never costs the
+    // previous one. The **count** is the assertion that cannot pass against the old behaviour by
+    // arithmetic rather than by argument: `/new` used to clear rows and write no file at all, so
+    // this directory would still hold exactly one.
+    let on_disk: Vec<_> = std::fs::read_dir(&per_cwd)
+        .expect("the directory exists")
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .collect();
+    assert_eq!(
+        on_disk.len(),
+        2,
+        "one file per conversation: the planted one and the one /new just started"
+    );
+    let rows = crate::picker::session_rows(&sessions, workspace, "", None, u64::MAX);
+    assert_eq!(rows.len(), 2, "both sessions are listed: {rows:?}");
+    assert!(
+        rows.iter().any(|r| r.path == old),
+        "the previous conversation is still there: {rows:?}"
+    );
+}
+
+#[tokio::test]
+async fn new_command_refuses_while_a_run_is_in_flight() {
+    // Swapping the store out from under a running turn would leave that turn appending to a file
+    // the transcript no longer shows. The refusal is the TUI invariant ("nothing happened must
+    // never be a state the UI can be in") applied to a swap.
+    let (mut app, agent, (_f, _n)) = test_app();
+    let tmp = tempfile::tempdir().unwrap();
+    app.workspace_root = tmp.path().to_path_buf();
+    // `running` is state the run loop owns, so it is entered the way the loop enters it.
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::AgentStart);
+    assert!(app.ui.running(), "the premise: a turn is in flight");
+    type_and_enter(&mut app, &agent, "/new");
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.join("\n").contains("busy"),
+        "a refusal that says why, not a silent no-op: {texts:?}"
+    );
+}
+
 #[tokio::test]
 async fn sessions_command_says_when_there_is_nothing_to_browse() {
     let (mut app, agent, (_f, _n)) = test_app();

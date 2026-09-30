@@ -285,8 +285,7 @@ enum Leaf {
         /// Its file sequence number.
         seq: u64,
     },
-    /// No active leaf: a session with no entries yet, or one whose leaf was reset
-    /// ([`SessionStore::reset_leaf`]). Either way the next append is a new root.
+    /// No active leaf: a session with no entries yet, so the next append is a new root.
     None,
 }
 
@@ -1263,8 +1262,7 @@ impl SessionStore {
     }
 
     /// Current leaf entry id (the tip of the active branch), or `None` when there
-    /// is no leaf — an empty session, or one whose leaf was reset
-    /// ([`SessionStore::reset_leaf`]): the next append starts a new root.
+    /// is no leaf — an empty session. A session with entries always has one.
     pub fn leaf_id(&self) -> Option<String> {
         self.leaf.id().map(str::to_string)
     }
@@ -1451,8 +1449,9 @@ impl SessionStore {
     /// because [`SessionStore::branch_entries`] cannot answer the question `/tree` asks.
     /// `branch_entries` walks from the leaf, so an abandoned branch is **invisible** to
     /// it — which means the TUI could not see a branch to summarise, label, or return to.
-    /// That is the whole reason `branch_with_summary` and `reset_leaf` had no production
-    /// caller: not a missing primitive, a missing *view*.
+    /// That is the whole reason `branch_with_summary` had no production caller: not a
+    /// missing primitive, a missing *view*. (`reset_leaf` was deleted at M221 — `/new`
+    /// starts a new file, so no append ever needs to start a second root in one.)
     ///
     /// Three ways an entry is a root, matching pi exactly:
     ///
@@ -1558,9 +1557,10 @@ impl SessionStore {
     /// Navigate: make `entry` the new leaf (pi's tree navigation). Everything after it stays
     /// in the file (human log intact) but leaves the active branch.
     ///
-    /// Navigating to the position *before the first entry* — re-editing the first
-    /// user message, pi's `resetLeaf` — is not an id and has no entry to name:
-    /// use [`SessionStore::reset_leaf`] for that.
+    /// Navigating to the position *before the first entry* — pi's `resetLeaf` — is not
+    /// an id and has no entry to name. Since M221 it is also not something this harness
+    /// needs: `/new` starts a new file, so no append chains onto a leaf the user
+    /// meant to abandon.
     pub fn navigate_to(&mut self, entry_id: &str) -> Result<(), StoreError> {
         match self.entry_identity(entry_id)? {
             Some((id, seq)) => {
@@ -1572,20 +1572,6 @@ impl SessionStore {
                 format!("no such entry: {entry_id}"),
             ))),
         }
-    }
-
-    /// Reset the leaf to before the first entry (pi `resetLeaf`,
-    /// `session-manager.ts:1372-1374`): the next append starts a new ROOT
-    /// (`parent_id = None`) instead of chaining onto the old tip.
-    ///
-    /// This is the navigation `/tree` needs when the selected entry is the first
-    /// user message: its parent is "the beginning of the session", which is a
-    /// position rather than an id. Only the active branch moves — every existing
-    /// entry stays in the file untouched (ADR-006) — and reopening the file
-    /// restores the leaf from its last line exactly as before (a reset is
-    /// in-memory state, like pi's, until the next append lands).
-    pub fn reset_leaf(&mut self) {
-        self.leaf = Leaf::None;
     }
 
     /// Branch from `branch_from` and attach a summary of the abandoned path

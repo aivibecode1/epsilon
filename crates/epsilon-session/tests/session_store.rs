@@ -2673,7 +2673,16 @@ fn branch_with_summary_maps_pis_target_shapes_exactly() {
 }
 
 #[test]
-fn resetting_the_leaf_makes_the_next_append_a_new_root_and_reopens_faithfully() {
+fn navigating_to_the_first_message_is_a_position_not_an_id() {
+    // M221: this test used to drive `reset_leaf` (pi `resetLeaf`), which made the *next append*
+    // a new root inside the same file. `/new` is now a new file, so the primitive is gone, and what
+    // survives here is the fact underneath it: the first user message's parent is `None`, so
+    // "before the session" is a position rather than an id.
+    //
+    // The coverage that was specifically about the reset is deliberately **not** re-pointed at
+    // another primitive: that behaviour no longer exists anywhere, and a test that keeps its name
+    // while checking something else is how a suite starts lying. What replaced the user-visible
+    // behaviour is tested where it lives now — `/new`, in the TUI suite.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s.jsonl");
     let mut store = SessionStore::open(&path).unwrap();
@@ -2684,94 +2693,39 @@ fn resetting_the_leaf_makes_the_next_append_a_new_root_and_reopens_faithfully() 
             api_request_sha256: None,
         })
         .unwrap();
-    let reply = store
+    store
         .append(EntryKind::Message {
             message: assistant_msg("answered"),
             api_request_sha256: None,
         })
         .unwrap();
 
-    // `/tree` re-edit of the FIRST user message: the target is its parent, which for
-    // a root message is "before the session" — a position, not an id (pi `resetLeaf`).
-    assert_eq!(first.parent_id, None);
+    assert_eq!(
+        first.parent_id, None,
+        "a root message has no parent id, which is why `/tree` needed a position"
+    );
     store.navigate_to(&first.id).unwrap();
-    assert_eq!(store.branch_entries().unwrap().len(), 1);
-    store.reset_leaf();
     assert_eq!(
-        store.leaf_id(),
-        None,
-        "no leaf is a state, not a failed lookup"
-    );
-    assert!(
-        store.branch_entries().unwrap().is_empty(),
-        "no active branch until something is appended"
+        store.branch_entries().unwrap().len(),
+        1,
+        "navigating back truncates the active branch, not the file"
     );
     assert_eq!(
         store.read_all().unwrap().len(),
         2,
-        "the reset itself writes nothing"
+        "and the abandoned lane stays in the human log (ADR-006)"
     );
 
-    // The reset is in-memory state, not a file write — pi does not persist `leafId`
-    // either, and the file is never rewritten (ADR-006). Reopening WITHOUT appending
-    // restores the leaf from the file's last line: the old tip, exactly where a crash
-    // inside this window would reopen.
-    drop(store);
-    let reopened_before_append = SessionStore::open(&path).unwrap();
-    assert_eq!(
-        reopened_before_append.leaf_id().as_deref(),
-        Some(reply.id.as_str()),
-        "the reset never reached the file"
-    );
-    assert_eq!(
-        reopened_before_append.branch_entries().unwrap().len(),
-        2,
-        "so the old branch is the active one again"
-    );
-    drop(reopened_before_append);
-
-    // Continue from the same reset position: the next append starts a new root.
-    let mut store = SessionStore::open(&path).unwrap();
-    store.reset_leaf();
-
-    // The next append is a new root at the next file slot — not a rewrite of history.
-    let retry = store
-        .append(EntryKind::Message {
-            message: user_msg("re-edited first try"),
-            api_request_sha256: None,
-        })
-        .unwrap();
-    assert_eq!(retry.parent_id, None, "the reset leaf starts a new root");
-    assert_eq!(
-        retry.seq, 2,
-        "seq continues: nothing is renumbered or dropped"
-    );
-    assert_eq!(
-        store.read_all().unwrap().len(),
-        3,
-        "the abandoned lane stays in the human log"
-    );
-    let branch = store.branch_entries().unwrap();
-    assert_eq!(
-        branch.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
-        vec![retry.id.clone()]
-    );
-    assert_eq!(
-        view_texts(&store.model_view().unwrap()),
-        vec!["re-edited first try".to_string()]
-    );
-
-    // Reopening is faithful to the FILE: its last line is the new root, so that is
-    // the leaf — the same rule pi's `_buildIndex` applies when it loads a session.
+    // Navigation is in-memory state: reopening is faithful to the FILE, whose last line is the
+    // tip, so a crash inside this window comes back exactly where the user was.
     drop(store);
     let reopened = SessionStore::open(&path).unwrap();
-    assert_eq!(reopened.len(), 3);
-    assert_eq!(reopened.leaf_id().as_deref(), Some(retry.id.as_str()));
+    assert_eq!(reopened.branch_entries().unwrap().len(), 2);
     assert_eq!(
         view_texts(&reopened.model_view().unwrap()),
-        vec!["re-edited first try".to_string()]
+        vec!["first try".to_string(), "answered".to_string()],
+        "the file is the truth about what is active"
     );
-    let _ = (first, reply);
 }
 
 #[test]
