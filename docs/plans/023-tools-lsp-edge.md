@@ -1,8 +1,17 @@
 # 023 — the `epsilon-tools` → `epsilon-lsp` edge, removed by inversion (A8)
 
-**Ledger row:** A8. **Status:** specified, not started. **Estimate:** one slice, well under an hour warm (reduced by step 0 — see
-below), plus a battery. **Precedent:** `ToolContext::task_host` and `ToolContext::goal_host` — the pattern this
-repository already uses twice for exactly this shape.
+**Ledger row:** A8. **Status: LANDED at M215** (battery `m215` PASS, 1,634 tests across 65 binaries;
+[`docs/milestones/M215-tools-lsp-inversion.md`](../milestones/M215-tools-lsp-inversion.md)). The plan
+below is kept as written — including the two claims its own step 0 corrected — because the way it was
+wrong is the useful part. What actually landed: `Lsp` moved to `epsilon_cli::runtime` rather than
+staying in `epsilon-tools` (a crate that no longer knows what a language server is should not export
+a language-server policy), `diagnostics_for(policy)` is the one construction site, and
+`register_builtins_with` takes `Option<Arc<dyn DiagnosticsProvider>>`. The dependency proof came out
+stronger than step 3 asked for: `cargo tree -p epsilon-tools -i epsilon-lsp` does not report an empty
+path, it reports that **no such package is in that crate's graph**.
+
+**Precedent:** `ToolContext::task_host` and `ToolContext::goal_host` — the pattern this repository
+already used twice for exactly this shape before this slice became the third.
 
 ## The finding, read rather than counted
 

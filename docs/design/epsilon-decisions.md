@@ -1236,6 +1236,24 @@ each alters what a user sees.
   Two deliberate restrictions: **no auto-install paths** (a coding agent that downloads binaries is a supply
   chain), and **silent degradation** (a missing server is not an error — the edit succeeds and the harness
   says nothing, because a harness that fails an edit for want of a tool is worse than one that cannot lint).
+- **ADR-014 amendment (M215) — the tool crate stops linking a language server; the policy moves to the
+  frontend (A8, plan 023).** The M79 amendment above writes the direction as `contracts <- lsp <- tools`,
+  and the last edge is what A8 objected to: `epsilon-tools` declared `epsilon-lsp` for one match arm in
+  which the **tool registry constructed a `DiagnosticsService`**, so every consumer of the tool crate —
+  its tests, and any frontend that later wants tools without diagnostics — linked a language-server
+  client it had no use for. The tools never needed the crate, only the seam: `DiagnosticsProvider`
+  lives in `epsilon-contracts`, and `write` and `edit` already took an
+  `Option<Arc<dyn DiagnosticsProvider>>` through `with_diagnostics`. The edge is therefore removed by
+  the inversion this repository now uses three times — `ToolContext::task_host`,
+  `ToolContext::goal_host`, and this: **the frontend owns the policy because it owns the flag** (`Lsp`
+  lives in `epsilon_cli::runtime` beside the `--lsp` parse, and `diagnostics_for(policy)` is the single
+  place that turns "off/auto" into a handle and attaches `epsilon_safety::scrub_secret_env` to it),
+  **and the library receives the handle**. `register_builtins_with` takes
+  `Option<Arc<dyn DiagnosticsProvider>>`. No new crate, no new edge, no new trait in contracts, and no
+  change to when diagnostics run: `cargo tree -p epsilon-tools -i epsilon-lsp` now reports no such
+  package in that graph, and `epsilon-cli` is the only dependent left. That the behaviour is unchanged
+  is what the suite size says exactly — 1,634 tests across 65 binaries, one more than M214 and no other
+  difference.
 - **ADR-005 amendment (M78) — the mode is per-call truth, and widening is consent.** Three rungs
   (`read-only` / `workspace-write` / `danger-full-access`), resolved once per call from the call's own
   paired arguments and the session's mode, and checked at execution time rather than declared in a

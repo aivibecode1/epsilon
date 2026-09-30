@@ -406,10 +406,13 @@ exactly the row long enough to need it. Both were invisible to every assertion i
 `header.rs` and visible in one rendered frame. That is the M198 rule again, and the reason
 the frames are committed as evidence rather than described.
 
-**Still open, unchanged:** A7 (a killed TUI blocks the workspace for 30 s), A8 (`epsilon-tools`
-depends on `epsilon-lsp`), A9 (no `.gitattributes`), A10 (eight identical `#[allow]`s), A11
-(delegated usage has a reader and no writer), A12 (configuration is read in three crates),
-A14 (no secret scrubbing in the durable store), A15 (the `read`/`@` asymmetry is undeclared).
+**Still open, unchanged:** A7 (a killed TUI blocks the workspace for 30 s), A9 (156 of 768 worktree
+files are CRLF against an all-LF repository, and three text files are CRLF *in the committed blobs*),
+A10 (eight identical `#[allow]`s), A11 (delegated usage has a reader and no writer), A12
+(configuration is read in three crates), A14 (no secret scrubbing in the durable store), A15 (the
+`read`/`@` asymmetry is undeclared). **A8 closed at M215** — `epsilon-tools` no longer depends on
+`epsilon-lsp`; the policy enum moved to the frontend that owns `--lsp`, and one helper builds the
+service.
 
 ---
 
@@ -440,7 +443,7 @@ method, because the method is the part that has gone wrong before:
 | **A5** | **The empty state's alignment has three left edges and no hierarchy.** `E P S I L O N` at col 1, `a coding agent…` at col 1, `model`/`context` at col 3, `ready — …` at col 3 in the *same style as the data above it*. | An instruction rendered as a datum; nothing on the screen says which line is the call to action. | Same frame. An instruction wants its own style, and the block wants one left edge. |
 | **A6** | **The composer's placeholder is drawn as a notice.** `• ask anything` carries the same `•` gutter glyph as a system notice. | The one glyph that means "the system said this" marks a placeholder. This is the M198 family — a glyph carrying the wrong meaning — and it is on screen at every width, in every state. | `brand-new.100x30.txt` vs the real notices in `streaming.100x30.txt`. |
 | **A7** | **D20 — a killed TUI blocks the workspace for 30 s.** | A relaunch straight after End Task refuses to start. | `session/src/lease.rs:88` `STALE_AFTER = 30s`, still live. The CLI shows a countdown; **the TUI shows nothing** (the alternate screen erases the notice). |
-| **A8** | **D3 — `epsilon-tools` depends on `epsilon-lsp` directly.** | A documented decoupling that buys nothing, which is worse than not documenting it. | `crates/epsilon-tools/Cargo.toml:13`. The trait exists so the dependency is not needed. |
+| **A8** | **D3 — `epsilon-tools` depends on `epsilon-lsp` directly.** | A documented decoupling that buys nothing, which is worse than not documenting it. | **CLOSED at M215.** `register_builtins_with` takes `Option<Arc<dyn DiagnosticsProvider>>`; `Lsp` and the service construction moved to `epsilon_cli::runtime::diagnostics_for`; `cargo tree -p epsilon-tools -i epsilon-lsp` reports no such package in that graph, and `epsilon-cli` is the only dependent left. [milestone](../docs/milestones/M215-tools-lsp-inversion.md), `audit/evidence/gate-m215-final.log`. Was `crates/epsilon-tools/Cargo.toml:13`; the trait exists in `epsilon-contracts::diagnostics`, which is why the edge was never needed. |
 | **A9** | **D5 — no `.gitattributes`; the tree is genuinely mixed CRLF/LF.** | Permanent diff noise, host-dependent formatting. Every `git add` in this session printed an LF→CRLF warning. | `ls .gitattributes` → absent. |
 | **A10** | **D9 — eight identical `#[allow(unreachable_patterns)]` in one file.** | Unknown, and that is the problem. | `app/commands.rs`, 8 occurrences. |
 | **A11** | **D17 / F22 — delegated-subagent and compaction usage has a reader and no writer.** `usage_accounts()` and `add_usage_accounts` exist and are read by `app/session.rs:227`; nothing constructs the entry. | A summarization is a real provider call whose cost nothing counts. It is about money, it is silent, and it is unbounded. | `core/tests/compaction_scenarios.rs:837` *asserts the writer does not exist* — the suite pins the absence. Shipping the writer is a design decision (which model is a summarization billed to?), not a patch. |

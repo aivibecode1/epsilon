@@ -14,6 +14,43 @@ use epsilon_contracts::agent_event::AgentEvent;
 use epsilon_core::ToolRegistry;
 use epsilon_ext::ExtHost;
 
+/// Whether edits ask a language server what the compiler thinks (M79).
+///
+/// **The policy lives here because the frontend owns the flag (M215).** `--lsp auto|off` is parsed
+/// in `main`, and what `epsilon-tools` receives is the handle this produces — so the crate that
+/// knows about tools does not have to link a language-server client to be told "never ask".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lsp {
+    /// Ask when a server for the file's language is installed; say nothing when none is.
+    Auto,
+    /// Never ask, never spawn. The default for library callers and tests.
+    Off,
+}
+
+/// The diagnostics handle a language-server policy buys: `None` when the policy is off.
+///
+/// One home for "off means no provider, auto means a default service", so no two callers can
+/// disagree about what `--lsp` bought. The subprocess credential rule lives in `epsilon-safety`
+/// and is attached here, beside the construction, rather than inside a crate that would then need
+/// the whole language-server client to apply it.
+#[must_use]
+pub fn diagnostics_for(
+    policy: Lsp,
+) -> Option<Arc<dyn epsilon_contracts::diagnostics::DiagnosticsProvider>> {
+    match policy {
+        Lsp::Off => None,
+        Lsp::Auto => {
+            let cfg = epsilon_lsp::ServiceConfig {
+                scrub_env: Some(Arc::new(|cmd: &mut tokio::process::Command| {
+                    epsilon_safety::scrub_secret_env(cmd)
+                })),
+                ..Default::default()
+            };
+            Some(Arc::new(epsilon_lsp::DiagnosticsService::new(cfg)))
+        }
+    }
+}
+
 /// Parsed `.epsilon/config.toml` — the project layer of ADR-012.
 ///
 /// Declarative only; unknown keys are preserved on disk but ignored by the runtime.
@@ -3267,6 +3304,31 @@ mod protocol_doc_tests {
             problems.is_empty(),
             "the panel/key cross-reference is out of date:\n{}",
             problems.join("\n")
+        );
+    }
+}
+
+#[cfg(test)]
+mod lsp_policy_tests {
+    use super::{Lsp, diagnostics_for};
+
+    /// The rule that moved in M215 must survive the move: `off` buys no provider at all, and
+    /// `auto` buys one.
+    ///
+    /// This is the whole content of `--lsp`: a caller that asked for `off` and got a provider
+    /// would spawn `rust-analyzer` behind a flag that promised it would not, and a caller that
+    /// asked for `auto` and got `None` would silently lose the feedback M79 added. Neither is
+    /// visible from the type — `Option<Arc<dyn DiagnosticsProvider>>` says nothing about which
+    /// policy produced it — so it is asserted here rather than inferred at the call site.
+    #[test]
+    fn the_policy_decides_whether_a_provider_exists() {
+        assert!(
+            diagnostics_for(Lsp::Off).is_none(),
+            "--lsp off must not build a service"
+        );
+        assert!(
+            diagnostics_for(Lsp::Auto).is_some(),
+            "--lsp auto must build one"
         );
     }
 }

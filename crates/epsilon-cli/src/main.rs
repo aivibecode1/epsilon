@@ -168,7 +168,7 @@ struct Args {
     port: u16,
     confinement: epsilon_tools::Confinement,
     /// M79: ask a language server about edited files (`--lsp auto|off`).
-    lsp: epsilon_tools::Lsp,
+    lsp: epsilon_cli::runtime::Lsp,
     /// Explicit --provider; None = auto-detect from env keys (M14).
     provider: Option<Provider>,
     /// `--model` override; None falls back to saved config then the catalog default.
@@ -323,7 +323,7 @@ fn parse_args() -> Args {
             mcp_servers: Vec::new(),
             port: 8787,
             confinement: epsilon_tools::Confinement::Auto,
-            lsp: epsilon_tools::Lsp::Auto,
+            lsp: epsilon_cli::runtime::Lsp::Auto,
             provider: None,
             model_id: None,
             fallbacks: Vec::new(),
@@ -340,7 +340,7 @@ fn parse_args() -> Args {
     let mut mcp_servers = Vec::new();
     let mut port: u16 = 8787;
     let mut confinement = epsilon_tools::Confinement::Auto;
-    let mut lsp = epsilon_tools::Lsp::Auto;
+    let mut lsp = epsilon_cli::runtime::Lsp::Auto;
     // --plan: read-only research run (opencode plan-agent parity).
     let mut plan_mode = false;
     // --yes: unattended runs approve gated asks (explicit opt-in; default is deny).
@@ -405,8 +405,8 @@ fn parse_args() -> Args {
                     .cloned()
                     .unwrap_or_else(|| die("--lsp requires auto|off"));
                 lsp = match mode.as_str() {
-                    "auto" => epsilon_tools::Lsp::Auto,
-                    "off" => epsilon_tools::Lsp::Off,
+                    "auto" => epsilon_cli::runtime::Lsp::Auto,
+                    "off" => epsilon_cli::runtime::Lsp::Off,
                     other => die(&format!("unknown --lsp mode: {other} (want auto|off)")),
                 };
             }
@@ -1650,7 +1650,7 @@ struct SharedRun {
     stream_fn: Arc<dyn epsilon_llm::StreamFn>,
     mcp_servers: Vec<McpServerConfig>,
     confinement: epsilon_tools::Confinement,
-    lsp: epsilon_tools::Lsp,
+    lsp: epsilon_cli::runtime::Lsp,
     model_id: String,
     /// Whether the user named a model on this invocation (M139). Distinguishes a
     /// deliberate `--model` from a project/config default, which is what decides
@@ -1679,7 +1679,7 @@ struct RunParams<'a> {
     /// Session JSONL path, relative to the workspace (e.g. ".epsilon/sessions/tui.jsonl").
     session_file: String,
     confinement: &'a epsilon_tools::Confinement,
-    lsp: epsilon_tools::Lsp,
+    lsp: epsilon_cli::runtime::Lsp,
     model_id: &'a str,
     /// Whether the user named a model on THIS invocation (`--model`).
     ///
@@ -1714,8 +1714,13 @@ async fn build_runtime(
         plan_mode,
     }: RunParams<'_>,
 ) -> Result<Arc<Agent>, String> {
-    // M79: the product path opts into language-server diagnostics; library callers do not.
-    let mut registry = epsilon_tools::builtin_registry_with(confinement, lsp);
+    // M79/M215: the product path opts into language-server diagnostics, and since M215 the
+    // frontend both decides (`--lsp`) and builds the service; the tool crate receives only the
+    // handle, which is why it no longer links `epsilon-lsp` at all.
+    let mut registry = epsilon_tools::builtin_registry_with(
+        confinement,
+        epsilon_cli::runtime::diagnostics_for(lsp),
+    );
     let mut all_mcp: Vec<McpServerConfig> = mcp_servers.to_vec();
     all_mcp.extend(project.mcp_servers.iter().cloned());
     for cfg in &all_mcp {
@@ -2666,7 +2671,7 @@ action = "allow"
             mcp_servers: &[],
             session_file: ".epsilon/session.jsonl".to_string(),
             confinement: &epsilon_tools::Confinement::Off,
-            lsp: epsilon_tools::Lsp::Off,
+            lsp: epsilon_cli::runtime::Lsp::Off,
             model_id: "test-1",
             model_explicit: false,
             resume: &Resume::No,

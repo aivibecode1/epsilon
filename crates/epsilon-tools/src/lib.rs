@@ -24,6 +24,7 @@ mod webfetch;
 
 use std::sync::Arc;
 
+use epsilon_contracts::diagnostics::DiagnosticsProvider;
 use epsilon_core::ToolRegistry;
 use epsilon_safety::Sandbox;
 
@@ -77,22 +78,13 @@ fn resolve_sandbox(choice: &Confinement) -> Option<Arc<dyn Sandbox>> {
     }
 }
 
-/// Whether edits ask a language server what the compiler thinks (M79).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lsp {
-    /// Ask when a server for the file's language is installed; say nothing when none is.
-    Auto,
-    /// Never ask, never spawn. The default for library callers and tests.
-    Off,
-}
-
 /// Register every built-in tool with diagnostics off.
 ///
 /// The inert default on purpose: a library that silently spawns `rust-analyzer` because a test
-/// wrote a file would be a surprise, and the product path opts in explicitly
-/// ([`register_builtins_with`] with [`Lsp::Auto`]).
+/// wrote a file would be a surprise, and the product path opts in explicitly by passing a
+/// [`DiagnosticsProvider`] to [`register_builtins_with`].
 pub fn register_builtins(registry: &mut ToolRegistry, confinement: &Confinement) {
-    register_builtins_with(registry, confinement, Lsp::Off);
+    register_builtins_with(registry, confinement, None);
 }
 
 /// Register every built-in tool, with the skills the model may load.
@@ -104,32 +96,28 @@ pub fn register_builtins(registry: &mut ToolRegistry, confinement: &Confinement)
 pub fn register_builtins_with_skills(
     registry: &mut ToolRegistry,
     confinement: &Confinement,
-    lsp: Lsp,
+    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
     skills: Vec<crate::skill::LoadableSkill>,
 ) {
-    register_builtins_with(registry, confinement, lsp);
+    register_builtins_with(registry, confinement, diagnostics);
     if !skills.is_empty() {
         registry.register(Arc::new(crate::skill::SkillTool::new(skills)));
     }
 }
 
-/// Register every built-in tool into `registry` under the given confinement and diagnostics choice.
-pub fn register_builtins_with(registry: &mut ToolRegistry, confinement: &Confinement, lsp: Lsp) {
-    let diagnostics: Option<Arc<dyn epsilon_contracts::diagnostics::DiagnosticsProvider>> =
-        match lsp {
-            Lsp::Off => None,
-            Lsp::Auto => {
-                // The subprocess credential rule lives in epsilon-safety; hand it to the LSP
-                // client rather than letting a second copy of the policy drift here.
-                let cfg = epsilon_lsp::ServiceConfig {
-                    scrub_env: Some(Arc::new(|cmd: &mut tokio::process::Command| {
-                        epsilon_safety::scrub_secret_env(cmd)
-                    })),
-                    ..Default::default()
-                };
-                Some(Arc::new(epsilon_lsp::DiagnosticsService::new(cfg)))
-            }
-        };
+/// Register every built-in tool into `registry` under the given confinement and diagnostics handle.
+///
+/// **`diagnostics` is a handle, not a policy (M215).** Whether to start a language server at all,
+/// and how to configure one, is the frontend's decision — it owns the `--lsp` flag and the
+/// workspace. What the write and edit tools need is only the seam, so this is the shape
+/// `ToolContext::task_host` and `goal_host` already use, and it is why this crate does not depend
+/// on `epsilon-lsp`. `None` means no provider, and the tools then say nothing about diagnostics
+/// rather than failing.
+pub fn register_builtins_with(
+    registry: &mut ToolRegistry,
+    confinement: &Confinement,
+    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
+) {
     let sandbox = resolve_sandbox(confinement);
     registry.register(Arc::new(ReadTool::new()));
     let write = WriteTool::new();
@@ -176,10 +164,13 @@ pub fn builtin_registry(confinement: &Confinement) -> ToolRegistry {
     r
 }
 
-/// The full built-in registry: confinement, plus language-server diagnostics when `lsp` asks for
-/// them. This is what the product path uses.
-pub fn builtin_registry_with(confinement: &Confinement, lsp: Lsp) -> ToolRegistry {
+/// The full built-in registry: confinement, plus diagnostics when the caller supplies a provider.
+/// This is what the product path uses.
+pub fn builtin_registry_with(
+    confinement: &Confinement,
+    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
+) -> ToolRegistry {
     let mut r = ToolRegistry::new();
-    register_builtins_with(&mut r, confinement, lsp);
+    register_builtins_with(&mut r, confinement, diagnostics);
     r
 }

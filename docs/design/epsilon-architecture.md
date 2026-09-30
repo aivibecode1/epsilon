@@ -34,7 +34,7 @@ Direct internal production dependencies, as declared in crate manifests:
 | `epsilon-ext` | contracts | Process extension protocol and host |
 | `epsilon-core` | contracts, llm, session | Agent state/loop, scheduling, context, compaction and task host |
 | `epsilon-safety` | contracts, core | Permission rules, approvals, environment filtering and sandbox backends |
-| `epsilon-tools` | contracts, core, safety, lsp | Tool implementations, file observations, mutation exclusion and checkpoints |
+| `epsilon-tools` | contracts, core, safety | Tool implementations, file observations, mutation exclusion and checkpoints |
 | `epsilon-mcp` | contracts, core | MCP connections and tool adaptation |
 | `epsilon-tui` | contracts, core, llm, safety, session | Terminal application, editor, dialogs and transcript |
 | `epsilon-server` | contracts, core, llm, safety, tools | HTTP/SSE frontend |
