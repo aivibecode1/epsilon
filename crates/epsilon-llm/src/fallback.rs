@@ -94,7 +94,7 @@ impl StreamFn for FallbackProvider {
                     // auth resolves on the spot like DirectProvider does.
                     // M28: custom ids (`lmstudio/foo`) resolve under the custom
                     // provider's name (stored key first, then its env_key).
-                    let customs = crate::custom::load_custom_providers();
+                    let customs = crate::custom::custom_providers();
                     let provider = crate::custom::lookup_custom(&customs, id)
                         .map(|c| c.name.as_str())
                         .or_else(|| crate::catalog::lookup_model(id).map(|m| m.provider))

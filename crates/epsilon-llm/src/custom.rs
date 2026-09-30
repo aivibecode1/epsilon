@@ -15,8 +15,11 @@
 //! `auth.json` entry first, then the declared env var). This module owns both
 //! the TOML parsing and the [`CustomProvider`] type so wire routing and its
 //! data live in one crate; nothing else in the workspace re-parses it.
-
-use std::path::Path;
+//!
+//! **M225: this crate no longer parses it.** The reader is `core::config::custom_providers_in`,
+//! because `epsilon-core` depends on this crate and not the other way round, and the rows are
+//! installed here by the composition root. `toml` left this crate's manifest with that move — the
+//! rule it enforced (one reader per file) is worth more than the convenience of parsing in place.
 
 /// One user-declared OpenAI-compatible endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,44 +65,49 @@ pub fn lookup_custom<'a>(
     customs.iter().find(|c| c.matches_id(model_id))
 }
 
-/// Custom providers declared as `[provider_custom.<name>]` tables in
-/// `config_dir/config.toml`, sorted by name. Rows without a usable
-/// `base_url` are skipped — a half-written entry must not take the whole
-/// catalog down.
-pub fn load_custom_providers_in(config_dir: &Path) -> Vec<CustomProvider> {
-    let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
-    let value: toml::Value = match toml::from_str(&raw) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let mut out: Vec<CustomProvider> = value
-        .get("provider_custom")
-        .and_then(|t| t.as_table())
-        .map(|t| {
-            t.iter()
-                .filter_map(|(name, body)| {
-                    CustomProvider::from_config(
-                        name,
-                        body.get("base_url").and_then(|v| v.as_str()).unwrap_or(""),
-                        body.get("env_key").and_then(|v| v.as_str()).unwrap_or(""),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
+/// The custom providers this process was given, read by everyone who needs them.
+///
+/// **M225: the value is installed once, and every reader reads it.** `load_custom_providers` used to
+/// open and parse `config.toml` on *every* call — and its callers are `DirectProvider::stream`, the
+/// fallback chain's key resolution and `try_stream_direct`, so a config file was read on the hot path
+/// of every request, by a crate that is not allowed to own the parse.
+///
+/// The alternative shape (threading `&[CustomProvider]` through) was measured before choosing this:
+/// the readers sit behind the `StreamFn` trait and inside the fallback chain, so the value would have
+/// to cross the trait boundary into every stream call — configuration in the middle of the hot path.
+/// So this is **composition state, not resolution**: the process that owns configuration installs the
+/// rows once, before anything runs, and the readers ask for them.
+static INSTALLED: std::sync::OnceLock<std::sync::RwLock<Vec<CustomProvider>>> =
+    std::sync::OnceLock::new();
+
+/// Install the custom providers for this process, replacing any previous set.
+///
+/// Called once by the composition root (M225). It *replaces* rather than appends, so a second call
+/// from a test observes the second set and never a union no configuration asked for.
+pub fn install_providers(rows: Vec<CustomProvider>) {
+    let slot = INSTALLED.get_or_init(|| std::sync::RwLock::new(Vec::new()));
+    if let Ok(mut current) = slot.write() {
+        *current = rows;
+    }
 }
 
-/// [`load_custom_providers_in`] against the resolved global config directory
-/// (`~/.config/epsilon`; same file that holds `[picker]` state).
-pub fn load_custom_providers() -> Vec<CustomProvider> {
-    crate::auth::global_dir()
-        .map(|d| load_custom_providers_in(&d))
+/// The installed custom providers, or an empty set when nothing was installed.
+///
+/// A clone per call: the readers are on the request path, and handing out a borrow of shared state
+/// would tie every caller's lifetime to a lock this crate does not own.
+#[must_use]
+pub fn custom_providers() -> Vec<CustomProvider> {
+    INSTALLED
+        .get()
+        .and_then(|slot| slot.read().ok().map(|rows| rows.clone()))
         .unwrap_or_default()
+}
+
+/// Whether a model id names one of the installed custom providers — the question the CLI asks while
+/// resolving a model, and the one a user meets when their id is `vendor/model` (M28/M225).
+#[must_use]
+pub fn is_custom_model_id(id: &str) -> bool {
+    lookup_custom(&custom_providers(), id).is_some()
 }
 
 #[cfg(test)]
@@ -132,41 +140,41 @@ mod tests {
         assert!(!c.matches_id("no-slash"));
     }
 
+    /// M225: what was installed is what every reader gets, and a second install replaces the first.
+    ///
+    /// **Kept here because this is the crate's contract**, even though nothing installs in a unit test
+    /// that has not called `install_providers` itself: the readers that matter are on the request path,
+    /// and the question they are asking is "was the process configured, and with what".
     #[test]
-    fn load_from_toml_dir_sorted_and_tolerant() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        std::fs::write(
-            tmp.path().join("config.toml"),
-            "[provider_custom.zserver]\n\
-             base_url = \"http://z.example/v1/\"\n\
-             env_key = \"Z_KEY\"\n\n\
-             [provider_custom.aserver]\n\
-             base_url = \"http://a.example/v1\"\n\n\
-             [provider_custom.broken]\n\
-             env_key = \"NO_BASE_URL\"\n\n\
-             [picker]\n\
-             favorite = [\"faux-1\"]\n",
-        )
-        .unwrap();
+    fn installing_replaces_the_previous_set() {
+        let row = |name: &str| CustomProvider::from_config(name, "http://x/v1", "").unwrap();
+        install_providers(vec![row("first")]);
+        assert_eq!(
+            custom_providers()
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first"]
+        );
 
-        let customs = load_custom_providers_in(tmp.path());
-        assert_eq!(customs.len(), 2, "broken row skipped, valid rows kept");
-        assert_eq!(customs[0].name, "aserver");
-        assert_eq!(customs[0].env_key, "");
-        assert_eq!(customs[1].name, "zserver");
-        assert_eq!(customs[1].env_key, "Z_KEY");
-        assert_eq!(customs[1].base_url, "http://z.example/v1");
+        // A second install is a *set*, not an append: a test that installs twice must not see a union
+        // that no configuration ever asked for.
+        install_providers(vec![row("second")]);
+        assert_eq!(
+            custom_providers()
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second"],
+            "replaced, not merged"
+        );
 
-        // Other config keys survive untouched (we only read).
-        let value: toml::Value =
-            toml::from_str(&std::fs::read_to_string(tmp.path().join("config.toml")).unwrap())
-                .unwrap();
-        assert!(value.get("picker").is_some(), "[picker] still present");
-    }
-
-    #[test]
-    fn missing_file_reads_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(load_custom_providers_in(tmp.path()).is_empty());
+        // And the id question the CLI asks resolves against what is installed.
+        assert!(is_custom_model_id("second/model-x"));
+        assert!(
+            !is_custom_model_id("first/model-x"),
+            "the replaced row is gone"
+        );
+        assert!(!is_custom_model_id("openai/gpt-4"));
     }
 }

@@ -1157,6 +1157,20 @@ async fn dispatch(args: Args) -> i32 {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
+    // M225: **the one place custom providers enter the process.** `config.toml` is read here, by the
+    // one reader (`core::config::custom_providers_in`), and the rows are installed for the readers
+    // that cannot own a parse — `DirectProvider::stream` and the fallback chain, which used to open
+    // and parse the file on the hot path of every request. Before anything reads them, which is why
+    // this line is above the diagnostics collector rather than beside a later use.
+    if let Some(dir) = epsilon_core::config::global_dir() {
+        let rows = epsilon_core::config::custom_providers_in(&dir);
+        if !rows.is_empty() {
+            let names: Vec<&str> = rows.iter().map(|c| c.name.as_str()).collect();
+            eprintln!("custom providers: {}", names.join(", "));
+        }
+        epsilon_llm::custom::install_providers(rows);
+    }
+
     // One diagnostics collector for the whole startup path (plan 008 / DEBT-04):
     // replaces the three ad-hoc Vec<String> patterns (project notices, banners,
     // extension notices) with a single ordered sink flushed once.
@@ -1276,12 +1290,10 @@ async fn dispatch(args: Args) -> i32 {
                 }
                 Some(resolved.info.id.to_string())
             } else if raw.split_once('/').is_some_and(|(prefix, _)| {
-                epsilon_llm::custom::load_custom_providers()
-                    .iter()
-                    .any(|c| {
-                        epsilon_llm::custom::lookup_custom(std::slice::from_ref(c), raw).is_some()
-                            || c.name.eq_ignore_ascii_case(prefix)
-                    })
+                epsilon_llm::custom::custom_providers().iter().any(|c| {
+                    epsilon_llm::custom::lookup_custom(std::slice::from_ref(c), raw).is_some()
+                        || c.name.eq_ignore_ascii_case(prefix)
+                })
             }) {
                 Some(raw.to_string())
             } else {
@@ -1381,7 +1393,7 @@ async fn dispatch(args: Args) -> i32 {
             // M22: say WHERE the key came from so users can tell auth.json from env.
             // M28: custom ids (`lmstudio/foo`) resolve under the custom provider's
             // name, so the diagnostic names it correctly for those too.
-            let customs = epsilon_llm::custom::load_custom_providers();
+            let customs = epsilon_llm::custom::custom_providers();
             let provider = epsilon_llm::custom::lookup_custom(&customs, &model_id)
                 .map(|c| c.name.clone())
                 .or_else(|| {

@@ -57,7 +57,7 @@ impl App {
             favorites: epsilon_core::config::load_favorite_models(),
             favorite_thinking: epsilon_core::config::load_favorite_thinking(),
             live_cache: Vec::new(),
-            customs: epsilon_llm::custom::load_custom_providers(),
+            customs: epsilon_llm::custom::custom_providers(),
             live: None,
             prefs: crate::state::RenderPrefs::default(),
             fetching_hint: None,

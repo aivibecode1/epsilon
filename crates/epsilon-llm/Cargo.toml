@@ -14,7 +14,9 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 bytes = { workspace = true }
-toml = { workspace = true }
+# M225: `toml` was here for `config.toml`, which this crate no longer parses —
+# the reader is `core::config::custom_providers_in` / `oauth_config_in`, and the rows
+# are installed here. `cargo tree -p epsilon-llm -i toml` is the proof it is gone.
 # M49: SigV4 signing for Bedrock (HMAC-SHA256 over the workspace sha2 pin —
 # no new `hmac` crate; the three-line construction lives in `auth.rs`).
 sha2 = { workspace = true }

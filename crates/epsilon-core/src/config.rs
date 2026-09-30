@@ -33,6 +33,45 @@ pub fn load_config_string(table: &str, key: &str) -> Option<String> {
     load_config_string_in(&global_dir()?, table, key)
 }
 
+/// `[provider_custom.<name>]` from `config_dir/config.toml`, sorted by name (M225).
+///
+/// Rows without a usable `base_url` are skipped — a half-written entry must not take the whole
+/// catalog down. A missing or unparseable file is an empty set, never an error, which is the rule
+/// every reader here follows.
+///
+/// **This is the last reader of `config.toml` outside this module**, which is what lets `epsilon-llm`
+/// drop its `toml` dependency (`cargo tree -p epsilon-llm -i toml` is the proof). The rows are
+/// `epsilon_llm::custom::CustomProvider` because `epsilon-core` depends on `epsilon-llm` and not the
+/// other way round — M223's asymmetry deciding where the type may be named.
+#[must_use]
+pub fn custom_providers_in(config_dir: &Path) -> Vec<epsilon_llm::custom::CustomProvider> {
+    let Ok(raw) = std::fs::read_to_string(config_dir.join("config.toml")) else {
+        return Vec::new();
+    };
+    let Ok(value) = raw.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let mut out: Vec<epsilon_llm::custom::CustomProvider> = value
+        .get("provider_custom")
+        .and_then(toml::Value::as_table)
+        .map(|t| {
+            t.iter()
+                .filter_map(|(name, body)| {
+                    let body = body.as_table()?;
+                    let text = |k: &str| body.get(k).and_then(toml::Value::as_str).unwrap_or("");
+                    epsilon_llm::custom::CustomProvider::from_config(
+                        name,
+                        text("base_url"),
+                        text("env_key"),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// `[oauth.<provider>]` from `config_dir/config.toml`, **one parse for both keys** (M224).
 ///
 /// The two keys used to be read by two functions in `epsilon-llm`, each parsing the file for one
@@ -1089,6 +1128,62 @@ fn the_global_directory_is_computed_in_exactly_one_place() {
         1,
         "`~/.config/epsilon` must be *computed* in one place; computed at {computed:?} \
          ({delegating} delegating definition(s) are fine)"
+    );
+}
+
+/// `[provider_custom.<name>]` rows, sorted, with unusable rows skipped (M225).
+///
+/// The name is the one this test had in `epsilon-llm`: the read moved here, the assertion did not,
+/// and the repository's guard against silently-lost coverage (M196's five tests) keys on names.
+#[test]
+fn load_from_toml_dir_sorted_and_tolerant() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    std::fs::write(
+        tmp.path().join("config.toml"),
+        "[provider_custom.zserver]\n\
+         base_url = \"http://z.example/v1/\"\n\
+         env_key = \"Z_KEY\"\n\n\
+         [provider_custom.aserver]\n\
+         base_url = \"http://a.example/v1\"\n\n\
+         [provider_custom.broken]\n\
+         env_key = \"NO_BASE_URL\"\n\n\
+         [picker]\n\
+         favorite = [\"faux-1\"]\n",
+    )
+    .unwrap();
+
+    let customs = custom_providers_in(tmp.path());
+    assert_eq!(customs.len(), 2, "broken row skipped, valid rows kept");
+    assert_eq!(customs[0].name, "aserver");
+    assert_eq!(customs[0].env_key, "");
+    assert_eq!(customs[1].name, "zserver");
+    assert_eq!(customs[1].env_key, "Z_KEY");
+    assert_eq!(customs[1].base_url, "http://z.example/v1");
+
+    // Other config keys survive untouched (we only read).
+    let raw = std::fs::read_to_string(tmp.path().join("config.toml")).unwrap();
+    let value: toml::Table = raw.parse().unwrap();
+    assert!(
+        value.get("picker").is_some(),
+        "[picker] still present: this reader must not rewrite the file"
+    );
+}
+
+/// A workspace with no custom providers has none — a missing file, and a file without the table, are
+/// both "none" rather than an error.
+#[test]
+fn missing_file_reads_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(custom_providers_in(tmp.path()).is_empty());
+    std::fs::write(tmp.path().join("config.toml"), "[picker]\n").unwrap();
+    assert!(
+        custom_providers_in(tmp.path()).is_empty(),
+        "a config with no `[provider_custom]` table yields no rows"
+    );
+    std::fs::write(tmp.path().join("config.toml"), "not = [valid").unwrap();
+    assert!(
+        custom_providers_in(tmp.path()).is_empty(),
+        "an unparseable file is an empty set, never a panic"
     );
 }
 

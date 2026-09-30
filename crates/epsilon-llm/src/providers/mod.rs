@@ -1275,7 +1275,7 @@ pub async fn try_stream_direct(
     key: &str,
     ctx: crate::stream_fn::LlmContext,
 ) -> Result<BoxEventStream, String> {
-    let customs = crate::custom::load_custom_providers();
+    let customs = crate::custom::custom_providers();
     let wire = wire_for(model_id, &customs)?;
     let provider = crate::catalog::lookup_model(model_id)
         .map(|m| m.provider)
@@ -1347,7 +1347,7 @@ pub async fn try_stream_direct(
 #[async_trait::async_trait]
 impl StreamFn for DirectProvider {
     async fn stream(&self, model: &ModelRef, ctx: LlmContext) -> BoxEventStream {
-        let customs = crate::custom::load_custom_providers();
+        let customs = crate::custom::custom_providers();
         let wire = match wire_for(&model.id, &customs) {
             Ok(w) => w,
             Err(detail) => {
