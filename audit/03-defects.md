@@ -23,7 +23,26 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
-# A20 — M205's startup notice can no longer fire, and says the wrong thing when it does (OPEN)
+# A20 — M205's startup notice could no longer fire, and said the wrong thing (CLOSED at M214)
+
+**Closed 2026-09-30.** M214 asks the question the workspace can answer: the notice counts the
+**other** session files in the session directory (excluding this launch's own) and reports how many
+earlier sessions exist, with the two commands that open one. The fix, its three decisions and its
+tests are in [`docs/milestones/M214-earlier-sessions.md`](../docs/milestones/M214-earlier-sessions.md);
+the sentence was read off a real console from the installed binary:
+
+```text
+• this workspace holds 1 earlier session — `epsilon -c` opens the most recent, `/resume <file>`
+  picks another
+```
+
+That it says **"1 earlier session"** while the directory holds **two** files is the whole content of
+the decision — the launch's own file is excluded, where a `read_dir` count would have printed "2".
+
+What remains open from this row, and is recorded rather than dropped: the count is of **files, not
+conversations** (three empty sessions and one real one reports four), and **nothing prunes**, so the
+number only grows — both are the retention question M210's and M211's Limits already name, not a
+defect in this notice.
 
 **Found 2026-09-30 by asking what M210 changed underneath it.** M205 added a launch notice — *"this
 session already holds N entries — this launch starts a fresh conversation in the same file…"* — for
