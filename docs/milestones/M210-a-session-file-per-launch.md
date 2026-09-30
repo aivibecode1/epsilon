@@ -70,10 +70,25 @@ this milestone stated in advance, now visible in real artifacts rather than argu
 token is minted by the caller and the header's id by the store, so the two differ. Nothing reads
 the name's token, and both headers carry the same `cwd`, which is what `--continue` filters on.
 
-**Still not observed: `-c` itself.** The probe run that was meant to reopen the newest session
-failed on shell quoting (`'"…\epsilon.exe -c""' is not recognized`) before the TUI started, so
-the end-to-end resume check remains outstanding — the naming is verified, the resume *path* is
-tested elsewhere, and the join between them is read.
+**Still not observed: `-c` itself — three attempts, and the third rules something out.** The
+probe cannot yet capture past the lease wait:
+
+1. The first attempt died on shell quoting (`'"…\epsilon.exe -c""' is not recognized`) before the
+   TUI started; a one-line `.cmd` wrapper fixed that.
+2. The second ran the wrapper with `--settle 22` and captured a screen whose **last** rows were
+   still `waiting for this session to be released — 4s elapsed, ~26s left`. Two readings fit: the
+   capture landed at ~4 s regardless of `--settle`, or the wait **stalled at four seconds** instead
+   of stealing.
+3. The third removed the variable: two launches, then **both lock files deleted** before `-c`, so
+   no holder existed on disk at all. The capture still ended in the same four-second countdown.
+
+That rules out "a stale lock from the previous run explains it" and leaves the two readings above,
+with the capture-timing one likelier — but *likelier is not measured*, and this milestone will not
+claim the join works until a capture shows the transcript. The discriminator is cheap and written
+down so nobody repeats these three: drive the resume with a frontend that prints to stdout instead
+of taking the screen (`--resume <newest> -p …`, where a refusal names its holder), or establish
+whether `--settle` is honoured after `--submit` at all — the probe's own help calls it the wait
+*after attaching before typing*, which is before the typing and not before the capture.
 Evidence: [`audit/evidence/gate-m210.log`](../../audit/evidence/gate-m210.log).
 
 **Reinstall: done** (2026-09-30, `cargo install --path crates/epsilon-cli --features real --force`, 29m44s cold). It was deliberately deferred It is required — this changes which file a
