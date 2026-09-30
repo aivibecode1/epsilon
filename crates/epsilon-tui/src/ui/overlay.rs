@@ -237,14 +237,41 @@ pub fn list_row(
         // Right-align the metadata so a column of hints or counts lines up and
         // can be scanned without reading the labels. The gutter returns the
         // column it took, so the row lands exactly on `width`.
+        //
+        // **A gap is reserved, and the metadata is what gives way.** With none,
+        // a row that exactly fills its width renders `/sessions` and `browse
+        // session files in this workspace…` as one run — the frame reads
+        // `/sessionsbrowse session files in this workspace an`, and the eye
+        // cannot tell where the command ends. That was measured on the shipped
+        // binary at M218, not reasoned about: the slash popup draws the name and
+        // its description through this function, and 56 columns is wide enough
+        // that `/sessions` plus its description is exactly one full row.
+        //
+        // The label is never shortened to protect the hint: the label is what the
+        // user is typing, and a hint that does not fit is worth less than a
+        // command name that does.
         let used = display_width(bar) + GUTTER_AFTER_BAR + display_width(label);
-        let meta_width = display_width(meta);
-        let pad = width.saturating_sub(used + meta_width);
-        spans.push(Span::raw(" ".repeat(pad)));
-        spans.push(Span::styled(meta.to_string(), theme.faint()));
+        let available = width.saturating_sub(used + MIN_META_GAP);
+        // `truncate_public` appends an ellipsis *after* the `max` characters, so
+        // the budget is one column short — and the guard below is the real
+        // safety net for wide characters, where a char is not a column.
+        let meta = crate::state::truncate_public(meta, available.saturating_sub(1).max(1));
+        let meta_width = display_width(&meta);
+        if meta_width > 0 && used + MIN_META_GAP + meta_width <= width {
+            let pad = width - used - meta_width;
+            spans.push(Span::raw(" ".repeat(pad)));
+            spans.push(Span::styled(meta, theme.faint()));
+        }
     }
     Line::from(spans)
 }
+
+/// Columns of separation between a label and its right-aligned metadata.
+///
+/// Zero is not a layout: it renders the two as one word (M218). Two is the
+/// smallest gap that separates two differently-styled runs without reading as a
+/// column of its own.
+const MIN_META_GAP: usize = 2;
 
 /// Columns between the selection bar and the label.
 const GUTTER_AFTER_BAR: usize = 1;
@@ -392,5 +419,58 @@ mod tests {
         let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(crate::ui::layout::display_width(&text), 30);
         assert!(text.ends_with("164k"), "{text:?}");
+    }
+
+    /// M218: the label and its metadata never touch. The frame that found this was the shipped
+    /// binary's slash popup at 56 columns, where `/sessions` and "browse session files in this
+    /// workspace" exactly fill the row — and rendered as one word:
+    ///
+    /// ```text
+    /// │ ▎ /sessionsbrowse session files in this workspace an │
+    /// ```
+    ///
+    /// The defect is invisible to any test that asserts on the *fields*, which is why it survived
+    /// until a frame was read; it is a property of the drawn row.
+    #[test]
+    fn a_row_too_narrow_for_both_still_separates_them() {
+        let theme = theme();
+        let text_of = |width: usize, label: &str, meta: Option<&str>| -> String {
+            let row = list_row(&theme, false, label, meta, width);
+            row.spans.iter().map(|s| s.content.as_ref()).collect()
+        };
+
+        // The exact case from the frame: label + description fills the width.
+        let full = text_of(
+            54,
+            "/sessions",
+            Some("browse session files in this workspace and resume one"),
+        );
+        assert!(
+            !full.contains("/sessionsbrowse"),
+            "the two must never read as one word: {full:?}"
+        );
+        assert!(
+            crate::ui::layout::display_width(&full) <= 54,
+            "and the row must still fit: {full:?}"
+        );
+        assert!(
+            full.trim_end().ends_with('…') || full.trim_end().ends_with("workspace"),
+            "the hint is clipped, not the command: {full:?}"
+        );
+
+        // A row with room for both is unchanged: right-aligned, exactly `width`.
+        let roomy = text_of(40, "/sessions", Some("browse"));
+        assert_eq!(crate::ui::layout::display_width(&roomy), 40);
+        assert!(roomy.ends_with("browse"), "{roomy:?}");
+
+        // And when there is no room for a separated hint at all, the label wins: the hint is
+        // dropped rather than appended, and the row still fits.
+        let cramped = text_of(12, "/timeline", Some("browse the session timeline"));
+        assert!(
+            crate::ui::layout::display_width(&cramped) <= 12,
+            "the row must not overflow: {cramped:?}"
+        );
+        assert!(!cramped.contains("/timelinebrowse"), "{cramped:?}");
+        assert!(!cramped.contains('…'), "no stub hint: {cramped:?}");
     }
 }
