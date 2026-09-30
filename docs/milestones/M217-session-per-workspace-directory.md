@@ -124,7 +124,20 @@ disclosed: a backtrace from this round would be close to useless).
 - **No end-to-end test drives a real launch into the new directory.** The writer is asserted at
   `fresh_session_file`, the readers at the library union, and the browser through the app; nothing
   launches the binary and checks the path on disk (M212's `Limits` records the same gap for
-  `build_runtime`).
+  `build_runtime`). **That gap is closed by measurement at M218**, which drove the *installed* binary
+  through `scripts/console-probe.py` in a real console and read back what the launch wrote:
+
+  ```text
+  .epsilon/sessions/--C--Users-Hp-AppData-Local-Temp-eps-m218w-f1f6d08b--/
+    2026-09-30T16-11-08-449Z_ses_1a0f31583210.jsonl
+    2026-09-30T16-11-08-449Z_ses_1a0f31583210.lock
+  ```
+
+  with the file's header carrying `"cwd": "C:\Users\Hp\AppData\Local\Temp\eps-m218w-f1f6d08b"` — the
+  directory is pi's name for that path, the file is the timestamp and the monotonic token, and the
+  header agrees with both. Artifact:
+  `audit/evidence/console-probe-m218-sessions-layout.json`. What remains unproven is that no *test*
+  asserts it, which is a different claim and still true.
 
 ## Nothing exercises
 
