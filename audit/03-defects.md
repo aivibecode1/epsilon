@@ -112,6 +112,29 @@ withdrawn here rather than quietly edited: the reasoning was sound for the *old*
 for the new one. The milestone and the changelog both carry that sentence and both need correcting
 when the fix lands.
 
+**Measured, 2026-09-30 — the prediction holds.** Scratch workspace, two TUI launches, then one
+`-c` launch, and the directory listed before and after:
+
+```text
+after two launches                     after one `-c` launch
+2026-09-30T11-39-27-869Z_…8fd0.jsonl   2026-09-30T11-39-27-869Z_…8fd0.jsonl
+2026-09-30T11-39-40-505Z_…a590.jsonl   2026-09-30T11-39-40-505Z_…a590.jsonl
+                                       2026-09-30T11-39-52-792Z_…a580.jsonl   <- new, from the -c run
+```
+
+All three are **147 bytes** — a header and nothing else, which is itself the second measurement:
+a launch writes its session header **at open**, before any turn. That is what makes the resolution
+order fatal rather than merely untidy — by the time `-c` asks for `latest_session_file`, the file it
+created microseconds earlier **is** the newest in the directory. So `-c` resolves to its own empty
+file, opens it a second time (the thirty-second self-lease wait, measured separately), and restores
+nothing from it.
+
+**So all three halves are now measured, not inferred:** a resumed launch creates a file of its own,
+that file is the newest at resolution time, and the wait on it runs the full window. M210's
+withdrawn claim is withdrawn for a reason that is now evidence rather than a reading of the code
+order.
+
+The fix does not change: [`docs/plans/021-a19-resume-opens-once.md`](../docs/plans/021-a19-resume-opens-once.md).
 **This is a prediction from the code order, not a measurement.** The measurement is one launch and a
 directory listing, and it is the first thing the fix round should do: run `-c` in a scratch
 workspace that already holds two sessions and check (a) whether a third file appears, (b) whether it
