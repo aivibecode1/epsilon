@@ -287,7 +287,7 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     },
     SlashItem {
         value: "/tasks",
-        description: "subagent tasks: state, turns, ids (Esc stops them with the run)",
+        description: "subagent tasks: state, turns, ids, cost (Esc stops them with the run)",
     },
     SlashItem {
         // The description names the bare form first because that is the one a user types to
@@ -532,7 +532,7 @@ pub enum Command {
     Sessions,
     /// Show session info and stats.
     Session,
-    /// List delegated subagent tasks (state, turns, ids) — M54.
+    /// List delegated subagent tasks (state, turns, ids, cost) — M54, cost at M230.
     Tasks,
     /// Navigate session tree (alias for timeline).
     Tree,
