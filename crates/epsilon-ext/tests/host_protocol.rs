@@ -424,8 +424,14 @@ async fn an_enormous_line_is_refused_rather_than_buffered() {
 #[tokio::test]
 async fn a_child_that_never_stops_sending_lines_is_cut_off_by_volume() {
     let dir = tempfile::tempdir().unwrap();
-    // 200k receipts of 100 bytes each is ~20 MB, past the 16 MiB per-invoke budget.
-    let host = spawn_ok(dir.path(), "--flood 200000 100").await;
+    // 2,000 receipts of 12,000 bytes is ~24 MB past the 16 MiB per-invoke budget, in **2,000 lines**
+    // rather than 200,000. M227: the previous form spent the budget only if the machine could
+    // deliver 200k lines through a pipe and parse 200k JSON objects inside the ten-second invoke
+    // deadline, and under a loaded box it could not — the clock won, the reader never spent its byte
+    // budget, and this test failed with `Timeout` while asserting `Protocol`. The property under
+    // test is *volume*, so the volume is now carried by bytes-per-line, where the reader's cost per
+    // byte does not depend on how many lines it has to parse.
+    let host = spawn_ok(dir.path(), "--flood 2000 12000").await;
 
     let err = awake(
         host.invoke("ext_echo", "tc_1", serde_json::json!({})),
@@ -635,10 +641,13 @@ async fn a_request_after_the_reader_stops_is_refused_even_though_the_child_is_al
     let dir = tempfile::tempdir().unwrap();
     // Spends the per-invoke byte budget, so the reader aborts — and, unlike `--die`,
     // leaves a live child holding an open stdin. See the fixture note above.
-    let host = spawn_ok(dir.path(), "--flood 200000 100").await;
+    let host = spawn_ok(dir.path(), "--flood 2000 12000").await;
 
     // The flood call is what kills the reader. It is expected to fail; only the fact
-    // that it returns at all matters here.
+    // that it returns at all matters here. (M227: it used to be `--flood 200000 100`, whose
+    // 200,000 per-line parses could not outrun the ten-second deadline on a loaded box — so the
+    // reader had not spent its byte budget yet, `stopped` was still false, and this test then failed
+    // on a two-second bound rather than on the property it names.)
     let _ = awake(
         host.invoke("ext_echo", "flood", serde_json::json!({})),
         Duration::from_secs(20),
