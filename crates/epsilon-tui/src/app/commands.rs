@@ -889,22 +889,29 @@ impl App {
         if !agent.history().is_empty() {
             return;
         }
-        let Some(store) = agent.session_store() else {
+        // A20: this used to count the entries of the store *this launch opened*, which was the right
+        // question while every frontend opened one fixed file — the file held earlier conversations
+        // the model could not see, and saying so was the point. M210 gave each launch a file of its
+        // own, so that count is now zero on every plain launch and the notice never fired. The
+        // question that survived the change is "does this workspace know about earlier
+        // conversations?", and the answer lives in the directory rather than in this file.
+        let Some(own) = agent.session_path() else {
             return;
         };
-        let Ok(guard) = store.lock() else {
+        let Some(session_dir) = own.parent() else {
             return;
         };
-        let entries = guard.len();
-        if entries == 0 {
+        let earlier = epsilon_session::list_sessions(session_dir)
+            .into_iter()
+            .filter(|s| s.path != own)
+            .count();
+        if earlier == 0 {
             return;
         }
-        drop(guard);
         self.ui.push_notice(format!(
-            "this session already holds {entries} entr{} — this launch starts a fresh \
-             conversation in the same file, and the model does not see them; `epsilon -c` (or \
-             `/resume <file>`) opens with that history",
-            if entries == 1 { "y" } else { "ies" }
+            "this workspace holds {earlier} earlier session{} — `epsilon -c` opens the most \
+             recent, `/resume <file>` picks another",
+            if earlier == 1 { "" } else { "s" }
         ));
     }
 

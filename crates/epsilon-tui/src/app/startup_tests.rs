@@ -1,12 +1,10 @@
-//! M205: what the harness knows at startup and does not say.
+//! M214: what the harness knows at startup and does not say (M205's intent, M210's shape).
 //!
-//! Ledger A17. A plain launch opens the session file, appends to it, and starts with an empty
-//! in-memory history — so a returning user sees a first-run screen while the header reports a
-//! few percent of the context already used. Both facts are true and together they read as a bug.
-//!
-//! The condition under test is "the store has entries **and** this process is not carrying
-//! them", because that is exactly the state that looks wrong. A launch that did restore history
-//! says nothing, and an empty session says nothing.
+//! The condition under test is **"this workspace holds earlier sessions this launch is not
+//! carrying"**. It used to be "the file this launch opened holds entries", which was the same
+//! question while every frontend opened one fixed file — and became unreachable the moment M210
+//! gave each launch a file of its own (A20). A launch that restored history says nothing, and a
+//! workspace with no earlier sessions says nothing.
 
 use super::*;
 use crate::app::tests_support::test_app_with_store;
@@ -15,73 +13,65 @@ fn notices(app: &App) -> Vec<String> {
     app.ui.lines().iter().map(|l| l.text.clone()).collect()
 }
 
+/// A second session file in the same directory, written in the real format.
+///
+/// Hand-rolled JSON would rot the moment the header changes; this opens a store the way the product
+/// does, which is also what makes the test's premise — "the directory holds a session that is not
+/// this one" — true by construction rather than by a fixture that agrees with itself.
+fn plant_earlier_session(own: &std::path::Path, name: &str) {
+    let dir = own.parent().expect("a session file has a directory");
+    let mut other = epsilon_session::SessionStore::open_in(dir.join(name), dir)
+        .expect("a second session opens");
+    other
+        .append(epsilon_contracts::EntryKind::SessionInfo {
+            name: Some("an earlier conversation".into()),
+        })
+        .expect("and records something");
+}
+
 #[test]
-fn a_plain_launch_over_an_existing_session_says_so() {
+fn a_launch_in_a_workspace_with_earlier_sessions_says_so() {
     let (mut app, agent, _rx, _dir) = test_app_with_store();
-    // One prior turn in the file that this process is not carrying.
-    {
-        let handle = agent.session_store().expect("attached");
-        let mut guard = handle.lock().unwrap();
-        guard
-            .append(epsilon_contracts::EntryKind::SessionInfo {
-                name: Some("an earlier conversation".into()),
-            })
-            .unwrap();
-    }
-    assert!(
-        agent.history().is_empty(),
-        "a plain launch restores nothing"
-    );
+    let own = agent.session_path().expect("attached");
+    plant_earlier_session(&own, "2026-09-01T00-00-00-000Z_ses_earlier.jsonl");
 
     app.note_prior_history(&agent);
     let said = notices(&app);
     assert!(
         said.iter()
-            .any(|l| l.contains("1 entry") && l.contains("epsilon -c")),
+            .any(|l| l.contains("1 earlier session") && l.contains("epsilon -c")),
         "the notice names the count and the way back: {said:?}"
     );
 }
 
 #[test]
-fn the_notice_is_plural_and_absent_when_there_is_nothing_to_say() {
+fn the_notice_is_plural_and_absent_when_there_is_nothing_earlier() {
     let (mut app, agent, _rx, _dir) = test_app_with_store();
+    let own = agent.session_path().expect("attached");
 
-    // Nothing in the file: silence. "0 entries" would be an announcement that nothing happened.
+    // Nothing else in the directory: silence. The launch's own file is not "earlier".
     app.note_prior_history(&agent);
     assert!(notices(&app).is_empty(), "{:?}", notices(&app));
 
-    // Several entries: the plural, and still one notice.
-    {
-        let handle = agent.session_store().expect("attached");
-        let mut guard = handle.lock().unwrap();
-        for i in 0..3 {
-            guard
-                .append(epsilon_contracts::EntryKind::SessionInfo {
-                    name: Some(format!("turn {i}")),
-                })
-                .unwrap();
-        }
+    // Three earlier sessions: the plural, and still exactly one notice.
+    for i in 0..3 {
+        plant_earlier_session(
+            &own,
+            &format!("2026-09-0{i}T00-00-00-000Z_ses_old{i}.jsonl"),
+        );
     }
     app.note_prior_history(&agent);
     let said = notices(&app);
-    assert_eq!(said.len(), 1, "one notice, not one per entry: {said:?}");
-    assert!(said[0].contains("3 entries"), "{said:?}");
+    assert_eq!(said.len(), 1, "one notice, not one per session: {said:?}");
+    assert!(said[0].contains("3 earlier sessions"), "{said:?}");
 }
 
 #[test]
 fn a_launch_that_did_restore_the_history_says_nothing() {
-    // The condition has two halves and this is the second: if the run *is* carrying the history,
-    // the screen matches the file and there is nothing to explain.
     let (mut app, agent, _rx, _dir) = test_app_with_store();
-    {
-        let handle = agent.session_store().expect("attached");
-        let mut guard = handle.lock().unwrap();
-        guard
-            .append(epsilon_contracts::EntryKind::SessionInfo {
-                name: Some("a prior turn".into()),
-            })
-            .unwrap();
-    }
+    let own = agent.session_path().expect("attached");
+    plant_earlier_session(&own, "2026-09-01T00-00-00-000Z_ses_earlier.jsonl");
+
     agent.restore_history(vec![epsilon_contracts::Message::User(
         epsilon_contracts::message::UserMessage {
             id: "msg_1".into(),

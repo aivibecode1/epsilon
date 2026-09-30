@@ -122,5 +122,8 @@ audit/evidence/*.log
 # M213: the resume invariant, tested. 1633 tests / 65 binaries, 7 of 7 gates.
 !audit/evidence/gate-m213.log
 
+# M214: the earlier-sessions notice. 1633 tests / 65 binaries, 7 of 7 gates.
+!audit/evidence/gate-m214.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/
