@@ -46,6 +46,18 @@ left`.
 
 Neither adds a wire field, a config key or a dependency.
 
+## Superseded in part (2026-09-30, M210) — see [A20](../../audit/03-defects.md)
+
+The prior-history notice **can no longer fire on a plain launch.** It was written for the state
+produced by one fixed file per frontend, and M210 made every launch open a fresh file named for that
+launch — so the store it checks is empty at the moment it checks it, and the function returns before
+printing. Resuming an empty session is the one case left, and there its wording is wrong: the launch
+did not start a fresh conversation *in the same file*; it opened that file.
+
+The paragraph above is kept as written rather than edited, because the reasoning is what a later
+reader needs to see: the notice was correct for its shape and was obsoleted by a change two
+milestones later. The replacement sentence and the work it needs are in A20.
+
 ## Limits — what this does not prove
 
 - **The prior-history notice is one launch late for a session that is *empty* because it was just

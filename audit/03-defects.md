@@ -23,6 +23,45 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+# A20 — M205's startup notice can no longer fire, and says the wrong thing when it does (OPEN)
+
+**Found 2026-09-30 by asking what M210 changed underneath it.** M205 added a launch notice — *"this
+session already holds N entries — this launch starts a fresh conversation in the same file…"* — for
+the state where the store has history the process is not carrying. That state was produced by
+**one fixed file per frontend**. M210 made each launch open a **fresh file named for that launch**,
+so the condition in `note_prior_history` (`crates/epsilon-tui/src/app/commands.rs`) now reads:
+
+```rust
+let Ok(guard) = store.lock() else { return };
+let entries = guard.len();
+if entries == 0 { return; }        // <- a plain launch now always returns here
+```
+
+A plain launch opens a file it just created, so `entries == 0` **every time**. The notice is
+therefore dead in the case it was written for — and in the one case it can still fire (resuming an
+empty session, where history is empty and the file holds a header), its wording is now false: the
+launch did *not* "start a fresh conversation in the same file"; it opened that file.
+
+**This is M205 obsoleted by M210, and it is the third instance of one shape in this ledger** — a
+claim that was true when written and stopped being true when a neighbour changed (A7 written from a
+constant, A11 from fields existing, this from a file layout). The countermeasure is the same one and
+it has now paid three times: *after changing a shape, grep for what assumed the old one.*
+
+## The fix, and why it is not just deletion
+
+Deleting the notice is defensible — dead code that lies is worse than absent code — but it throws
+away the intent, which survives the change: **a returning user should be told the harness knows about
+their earlier conversations.** With per-launch files that sentence becomes a different one:
+
+> this workspace holds 12 earlier sessions; `epsilon -c` opens the most recent, `/resume <file>`
+> picks another.
+
+The work is small and local: `note_prior_history` counts the **other** `*.jsonl` files in
+`.epsilon/sessions/` (it can reuse `epsilon_session::list_sessions`, which already filters foreign
+files and sorts by recency) instead of counting its own store's entries, and the three tests in
+`crates/epsilon-tui/src/app/startup_tests.rs` change with it. The message must name the count and the
+command, keep the plural right, and stay silent when there is nothing older to open — which is what
+the current tests already demand of it.
 # A19 — `--continue` waited thirty seconds on a lease it held itself (CLOSED at M212)
 
 **Closed 2026-09-30.** The fix is the reorder plan 021 specified — resolve the resume target before
