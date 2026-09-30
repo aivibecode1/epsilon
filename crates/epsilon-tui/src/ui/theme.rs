@@ -209,6 +209,15 @@ pub struct Glyphs {
     /// position badge (`↑ 12/40`, `^ 12/40`). Part of the glyph table like every
     /// other character the UI draws, so a legacy code page gets `^`.
     pub back: &'static str,
+    /// The marker that says a model has stored credentials, where no filled band can.
+    ///
+    /// **Was an emoji (`🔑`), and that is a glyph no legacy code page can render at all** (M219):
+    /// not a box-drawing character CP437 happens to carry, an astral-plane codepoint four UTF-8
+    /// bytes wide. On a classic Windows console it is a row of boxes or `?` — the report that
+    /// started this milestone.
+    pub key: &'static str,
+    /// The marker on a system line that records a switch (`⟳`).
+    pub cycle: &'static str,
     /// Spinner frames, advanced on a timer while work is in flight.
     pub spinner: &'static [&'static str],
 }
@@ -233,6 +242,8 @@ pub const UNICODE: Glyphs = Glyphs {
     plus: "+",
     minus: "-",
     back: "↑",
+    key: "🔑",
+    cycle: "⟳",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -256,17 +267,86 @@ pub const ASCII: Glyphs = Glyphs {
     plus: "+",
     minus: "-",
     back: "^",
+    key: "@",
+    cycle: "~",
     spinner: &["|", "/", "-", "\\"],
 };
 
+/// Default for a table nobody chose for: **ASCII**, deliberately (M219).
+///
+/// The repertoire a value gets when nobody asked must be the one that renders *everywhere*, which
+/// is what lets a holder of stored markers (`UiState`) derive `Default` and still promise seven-bit
+/// output without the environment leaking into a per-instance construction.
+/// [`Glyphs::detect`] is the *process* decision and is asked once, by the app.
+impl Default for Glyphs {
+    fn default() -> Self {
+        ASCII
+    }
+}
+
 impl Glyphs {
-    /// Pick the repertoire from the environment.
+    /// Pick the repertoire: an explicit override first, then a per-platform default.
     ///
-    /// `EPSILON_ASCII=1` forces the ASCII set; otherwise Unicode. We do not sniff
-    /// the code page: the variable exists because the answer cannot be detected
-    /// reliably, and a wrong guess is worse than a documented switch.
+    /// - **`EPSILON_ASCII=1`** forces the ASCII set and **`EPSILON_ASCII=0`** forces Unicode, on
+    ///   every platform. Both are documented in `--help` and in `docs/user/troubleshooting.md`,
+    ///   because until M219 the switch existed only in a comment here — a user seeing boxes had
+    ///   nothing to set.
+    /// - **Windows without a UTF-8-capable host gets ASCII.** A classic conhost writes the code page
+    ///   it is configured for, and every byte of a UTF-8 box-drawing character outside it renders as
+    ///   a box or a `?`. **The previous default was Unicode everywhere**, which meant the most common
+    ///   Windows case — plain `cmd.exe`, or PowerShell in a legacy console window — got mojibake by
+    ///   default, and the only fix was a variable nobody was told about.
+    /// - **Windows Terminal** (`WT_SESSION`), **VS Code's terminal** (`TERM_PROGRAM=vscode`), or a
+    ///   `TERM` naming a VT-capable emulator, gets Unicode.
+    /// - **Everywhere else gets Unicode**: a POSIX terminal is UTF-8 by definition.
+    ///
+    /// **This is a default, not a sniff.** Reading the console output code page needs either
+    /// `unsafe` (forbidden workspace-wide) or a new dependency, and neither is worth a guess a user
+    /// cannot correct — which is why both directions of the override exist.
     pub fn detect() -> Self {
-        if std::env::var_os("EPSILON_ASCII").is_some_and(|v| !v.is_empty()) {
+        Self::detect_from(
+            std::env::var("EPSILON_ASCII").ok(),
+            std::env::var_os("WT_SESSION").map(|v| v.to_string_lossy().into_owned()),
+            std::env::var("TERM_PROGRAM").ok(),
+            std::env::var("TERM").ok(),
+            cfg!(windows),
+        )
+    }
+
+    /// The repertoire decision with every input handed in rather than read (M219).
+    ///
+    /// The environment is process-global and the suite is threaded, so a test that set
+    /// `EPSILON_ASCII` to assert a default would be asserting against whatever another test had
+    /// already set. Splitting the decision out is what makes the rule itself testable.
+    pub fn detect_from(
+        override_value: Option<String>,
+        wt_session: Option<String>,
+        term_program: Option<String>,
+        term: Option<String>,
+        on_windows: bool,
+    ) -> Self {
+        let forced = match override_value.as_deref().map(str::trim) {
+            Some(v)
+                if v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") =>
+            {
+                Some(ASCII)
+            }
+            Some(v)
+                if v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("no") =>
+            {
+                Some(UNICODE)
+            }
+            _ => None,
+        };
+        if let Some(set) = forced {
+            return set;
+        }
+        // A UTF-8-capable *host*, not a shell: `cmd.exe` and PowerShell set none of these, and a
+        // legacy conhost is exactly the case being careful about.
+        let utf8_host = wt_session.is_some()
+            || term_program.as_deref() == Some("vscode")
+            || matches!(term.as_deref(), Some(t) if VT_CAPABLE_TERMS.iter().any(|k| t.contains(k)));
+        if on_windows && !utf8_host {
             ASCII
         } else {
             UNICODE
@@ -281,6 +361,12 @@ impl Glyphs {
     /// draws is invisible to both the compiler and that list. Adding a field here
     /// is now the only way to add one to the table, so the next glyph cannot
     /// arrive unchecked — and the reader of that list is the same list.
+    ///
+    /// **That claim was itself wrong once** (M219): this list held sixteen names while the struct had
+    /// seventeen single-glyph fields — `warn` was missing, and so are the two M219 added. So the one
+    /// check that exists to keep the table honest skipped the very glyph that no console can render.
+    /// `named`'s match arm catches a *name with no field*; [`Self::SINGLE_GLYPH_FIELDS`] and the set
+    /// comparison in the tests catch the other direction.
     pub const ALL: &'static [&'static str] = &[
         "top_left",
         "top_right",
@@ -295,14 +381,46 @@ impl Glyphs {
         "prompt",
         "tool_call",
         "tick",
+        "warn",
         "cross",
         "plus",
         "minus",
         "back",
+        "key",
+        "cycle",
+    ];
+
+    /// Every single-glyph field of the table, listed independently of [`Self::ALL`] (M219).
+    ///
+    /// Two lists that are supposed to agree, compared as *sets* rather than by count: a count passes
+    /// when both are wrong in the same way, which is how `warn` went unchecked for months. It is a
+    /// second list to keep in step — the price of a check that can actually fail — and
+    /// `the_glyph_name_list_and_the_table_agree` is what pays it.
+    pub const SINGLE_GLYPH_FIELDS: &'static [&'static str] = &[
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right",
+        "horizontal",
+        "vertical",
+        "bullet",
+        "cursor_bar",
+        "assistant",
+        "thinking",
+        "prompt",
+        "tool_call",
+        "tick",
+        "warn",
+        "cross",
+        "plus",
+        "minus",
+        "back",
+        "key",
+        "cycle",
     ];
 
     /// This table's glyphs by name, for a caller that has to check all of them.
-    pub fn named(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    pub fn named(&self) -> impl Iterator<Item = (&'static str, &str)> + '_ {
         Self::ALL.iter().map(move |name| {
             let glyph = match *name {
                 "top_left" => self.top_left,
@@ -318,10 +436,13 @@ impl Glyphs {
                 "prompt" => self.prompt,
                 "tool_call" => self.tool_call,
                 "tick" => self.tick,
+                "warn" => self.warn,
                 "cross" => self.cross,
                 "plus" => self.plus,
                 "minus" => self.minus,
                 "back" => self.back,
+                "key" => self.key,
+                "cycle" => self.cycle,
                 other => panic!("`{other}` is in `Glyphs::ALL` with no reader: a name there is a promise that a glyph is checked, and this is the arm that keeps it"),
             };
             (*name, glyph)
@@ -347,6 +468,17 @@ impl Glyphs {
         )
     }
 }
+
+/// `TERM` values that mean the terminal speaks UTF-8 and VT escapes.
+const VT_CAPABLE_TERMS: &[&str] = &[
+    "xterm",
+    "vt100",
+    "alacritty",
+    "wezterm",
+    "ghostty",
+    "kitty",
+    "foot",
+];
 
 /// One semantic color slot, in both palettes.
 #[derive(Debug, Clone, Copy)]
@@ -932,6 +1064,71 @@ mod tests {
         for frame in ASCII.spinner {
             check(frame);
         }
+    }
+
+    /// M219: the ASCII check's name list and the table's fields are the same set.
+    ///
+    /// `ALL` is what the check above walks, so a field absent from it is drawn and never verified —
+    /// which is what happened: `warn` (and, after it, `key` and `cycle`) sat outside the list while
+    /// the list's own comment claimed a field could not be added without a name. The old assertion
+    /// compared **counts**, which passes when both lists are wrong together; this compares **sets**.
+    #[test]
+    fn the_glyph_name_list_and_the_table_agree() {
+        let mut named: Vec<&str> = Glyphs::ALL.to_vec();
+        let mut fields: Vec<&str> = Glyphs::SINGLE_GLYPH_FIELDS.to_vec();
+        named.sort_unstable();
+        fields.sort_unstable();
+        named.dedup();
+        fields.dedup();
+        assert_eq!(
+            named, fields,
+            "`ALL` drives the ASCII check, so a field missing from it is never checked; \
+             `SINGLE_GLYPH_FIELDS` is the independent list it is compared against"
+        );
+        // The other direction: a *name* with no field panics inside `named()`, so walking it proves
+        // the two lists agree as code and not merely as text.
+        assert_eq!(ASCII.named().count(), Glyphs::ALL.len());
+    }
+
+    /// M219: the repertoire rule, and the Windows half of it that stopped `cmd.exe` and PowerShell
+    /// from getting mojibake by default.
+    ///
+    /// Driven through [`Glyphs::detect_from`] rather than by setting the variable: the environment is
+    /// process-global and the suite is threaded, so a test that set `EPSILON_ASCII` would be
+    /// asserting against whatever another test left behind.
+    #[test]
+    fn the_repertoire_default_is_ascii_on_a_legacy_windows_console() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            Glyphs::detect_from(None, None, None, None, true),
+            ASCII,
+            "a console with no UTF-8 host must not be handed box-drawing characters by default"
+        );
+        assert_eq!(
+            Glyphs::detect_from(None, None, None, s("xterm-256color"), true),
+            UNICODE,
+            "a VT-capable TERM is the same answer Windows Terminal gives"
+        );
+        assert_eq!(
+            Glyphs::detect_from(None, s("session-id"), None, None, true),
+            UNICODE
+        );
+        assert_eq!(
+            Glyphs::detect_from(None, None, s("vscode"), None, true),
+            UNICODE
+        );
+        assert_eq!(
+            Glyphs::detect_from(None, None, None, None, false),
+            UNICODE,
+            "a POSIX terminal is UTF-8 by definition"
+        );
+        // And the overrides win over both, which is the whole point of shipping them.
+        assert_eq!(Glyphs::detect_from(s("1"), None, None, None, false), ASCII);
+        assert_eq!(
+            Glyphs::detect_from(s("0"), None, None, None, true),
+            UNICODE,
+            "`EPSILON_ASCII=0` is how a legacy console user with a Unicode font opts back in"
+        );
     }
 
     #[test]

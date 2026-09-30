@@ -25,6 +25,7 @@ sandbox backend, session store, and project trust — without starting a run.
 | Session file "damaged" / "newer format" | typed refusal, not corruption: see [`sessions.md`](sessions.md) for the limits of refusal and repair |
 | OAuth login fails to open a browser | use `--paste`; client-id notes in [`auth.md`](auth.md) |
 | Diagnostics nowhere | headless modes print replies to stdout and diagnostics to stderr; `RUST_LOG` does nothing — no crate here installs a tracing subscriber, so setting it changes no output |
+| Boxes or `?` where the UI draws characters | the console cannot render the Unicode set: run `EPSILON_ASCII=1 epsilon` for the seven-bit set (`+-|`, `x`, `>`), or `EPSILON_ASCII=0 epsilon` if your console *does* have a Unicode font and you want the rounded look. Since M219 the default is ASCII on a classic Windows console and Unicode in Windows Terminal, a VS Code terminal, or any VT-capable `$TERM`, so this only applies when the guess is wrong — or on Windows where you want to *opt back in* to Unicode with `0` |
 
 ## Still stuck
 

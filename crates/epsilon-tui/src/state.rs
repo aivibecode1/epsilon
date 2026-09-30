@@ -469,6 +469,18 @@ const UNKNOWN_BILLED_MODEL: &str = "(model not reported)";
 /// Reducible UI state for one TUI session.
 #[derive(Debug, Default, Clone)]
 pub struct UiState {
+    /// The repertoire the markers this state *stores* are drawn from.
+    ///
+    /// `UiState` holds transcript lines, so it has to commit to characters the renderer will later
+    /// paint — and a marker it writes is a marker it cannot take back. That is why the `⟳` on a
+    /// transport-status line was a literal (M219): the holder had no theme to ask.
+    ///
+    /// **The default is ASCII and no field reads the environment**, because `detect()` is a
+    /// *process* decision and `UiState::default()` is a per-instance one: a test that builds two
+    /// states must get the same two. [`UiState::new`] takes the process's detected set, and the app
+    /// passes its own theme's glyphs, so the table in
+    /// [`crate::ui::theme`] stays the single place a glyph is chosen.
+    glyphs: crate::ui::theme::Glyphs,
     lines: Vec<TranscriptLine>,
     streaming_text: String,
     streaming_thinking: String,
@@ -530,8 +542,18 @@ pub struct UiState {
 impl UiState {
     /// Empty state with an idle status line.
     pub fn new() -> Self {
+        Self::with_glyphs(crate::ui::theme::Glyphs::detect())
+    }
+
+    /// The same state, drawing its stored markers from `glyphs` (M219).
+    ///
+    /// The alternative — calling [`crate::ui::theme::Glyphs::detect`] inside `push_system` — would
+    /// make the characters in a transcript depend on when they were written, and a stored `⟳` would
+    /// survive a later change of repertoire as a box.
+    pub fn with_glyphs(glyphs: crate::ui::theme::Glyphs) -> Self {
         Self {
             status: "idle · type a task and press Enter".into(),
+            glyphs,
             ..Default::default()
         }
     }
@@ -1308,7 +1330,10 @@ impl UiState {
                 // status line carries it live; the transcript keeps a dim system
                 // line so a pause after the fact is still explainable.
                 self.status = text.clone();
-                self.push_system(format!("⟳ {text}"));
+                // M219: the marker is a glyph, not a literal. `⟳` is U+27F3, which no legacy
+                // code page carries, so a hard-coded one renders as a box on the consoles this
+                // harness otherwise supports.
+                self.push_system(format!("{} {text}", self.glyphs.cycle));
             }
             AgentEvent::AgentEnd { .. } => {
                 // Flush any dangling stream buffer (error paths skip MessageEnd).

@@ -1,0 +1,135 @@
+{
+  "exe": "C:\\Users\\Hp\\.cargo\\bin\\epsilon.exe",
+  "typed_text": "/sessions",
+  "mode": "late",
+  "size": [
+    100,
+    30
+  ],
+  "wait_s": 9.0,
+  "shell": "cmd",
+  "exe_args": "",
+  "host_class": "ConsoleWindowClass",
+  "resize": {
+    "buffer-big": false,
+    "window": true,
+    "buffer-exact": true
+  },
+  "before": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      0,
+      0
+    ]
+  },
+  "after": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      3,
+      27
+    ]
+  },
+  "after_screen": [
+    "idle                                             ctx 4%*/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH n/a \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "Describe a task, then press enter.",
+    "@ files \u00b7 ! shell \u00b7 / commands",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u276f s",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward         \u2026\\Temp\\eps-m218w-f1f6d08b"
+  ],
+  "typed": {
+    "ok": true,
+    "written": 18,
+    "err": 87
+  },
+  "after_typing": {
+    "buffer": [
+      100,
+      30
+    ],
+    "window_origin": [
+      0,
+      0
+    ],
+    "window_cols": 100,
+    "window_rows": 30,
+    "cursor": [
+      12,
+      27
+    ]
+  },
+  "typed_screen": [
+    "idle                                             ctx 4%*/164k \u00b7 \u21910 \u21930 \u00b7 R0 W0 CH n/a \u00b7 DeepSeek V3.1",
+    "",
+    "E P S I L O N",
+    "a coding agent in your terminal",
+    "",
+    "Describe a task, then press enter.",
+    "@ files \u00b7 ! shell \u00b7 / commands",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "\u276f s/sessions",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "insert \u00b7 enter send \u00b7 pageup scroll back \u00b7 pagedown scroll forward         \u2026\\Temp\\eps-m218w-f1f6d08b"
+  ]
+}

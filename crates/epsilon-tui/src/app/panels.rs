@@ -86,7 +86,11 @@ pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
         // The active-provider mark and the auth badge are leading columns of the
         // label; `list_row` owns the selection bar and right-aligns the count.
         let marker = if *is_active { "● " } else { "  " };
-        let auth = if *auth_ready { "🔑" } else { "· " };
+        let auth = if *auth_ready {
+            app.theme.glyphs.key
+        } else {
+            "· "
+        };
         lines.push(overlay::list_row(
             &app.theme,
             selected,
@@ -230,7 +234,11 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         // The active-model mark, the auth badge and the favorite star are leading
         // columns of the label; the model id stays the right-aligned meta column.
         let marker = if row.id == app.model_id { "● " } else { "  " };
-        let auth = if row.auth_ready { "🔑" } else { "· " };
+        let auth = if row.auth_ready {
+            app.theme.glyphs.key
+        } else {
+            "· "
+        };
         // M23: ★ marks favorites (opencode's star column); Ctrl+F toggles.
         let star = if row.is_favorite { "★" } else { " " };
         lines.push(overlay::list_row(

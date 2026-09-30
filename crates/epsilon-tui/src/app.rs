@@ -897,8 +897,10 @@ impl App {
             return;
         }
         // Auth hint parity (pi/opencode show "needs auth" in the picker; Epsilon
-        // shows 🔑/· but never warns at apply time). Non-blocking — switching
-        // is allowed, you just can't run until the key is there.
+        // shows the key marker or `·` but never warns at apply time). Non-blocking —
+        // switching is allowed, you just can't run until the key is there. The marker is
+        // the `key` glyph rather than the emoji it used to be, because an astral-plane
+        // codepoint cannot be rendered by a legacy console at all (M219).
         let auth_ready = epsilon_llm::catalog::credentials_ready(&id);
         agent.set_model_id(&id);
         // M32d: if we were on faux/offline and the new model is credentialed,

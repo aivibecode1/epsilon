@@ -120,6 +120,11 @@ ENVIRONMENT
   EPSILON_THEME         TUI palette: `dark` (default) or `light`, for a terminal
                         with a light background. `--light` overrides it; an
                         unrecognised value falls back to dark.
+  EPSILON_ASCII         TUI characters: `1` forces the ASCII set (`+-|` instead
+                        of `╭─│╰╯`, `x` instead of `✗`), `0` forces the
+                        Unicode set. Unset, Windows Terminal / a VS Code terminal
+                        / a VT-capable $TERM get Unicode and a legacy console
+                        window gets ASCII — set `0` if yours has a Unicode font.
   EPSILON_STREAM_IDLE_SECS
                         seconds of stream silence before a turn fails as a network
                         error (default 120, 0 disables)
