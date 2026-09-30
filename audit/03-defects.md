@@ -23,6 +23,23 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+**A18 measured again in the real artifact (2026-09-30), and it is not fully closed.** Driving the
+installed binary through the conhost probe: two launches, then `epsilon -c`. The resume run went
+straight into the lease wait — because the two launches had been *killed* by the probe, and a killed
+process leaves its `.lock` behind, so the newest session file was also the locked one. The countdown
+was drawn on screen (M207's premise, confirmed): `waiting for this session to be released — 1s
+elapsed, ~29s left`, then 2s, then 3s.
+
+Two facts follow, and the second is new. First, the wait **is** legible — A18's fix works. Second,
+for a *dead* holder the early steal needs the lock's mtime to sit unmoved across a full `HEARTBEAT`,
+so a workspace where a TUI was just killed waits about a heartbeat before it can start, not
+instantly. That is the A7 design working as written (M207's Limits said so), now observed rather
+than reasoned.
+
+**A consequence of M210 that nobody has designed for:** with one file per launch, each killed
+session leaves its own `.lock` beside its own `.jsonl`, so a sessions directory grows two entries
+per launch, half of them stale. Discovery filters `*.jsonl` and ignores them, so nothing breaks —
+but nothing removes them either, and they are what makes the *next* launch wait.
 **A16 is decided, and the decision goes against this harness.** The row asked whether `tui.jsonl`
 is one rolling session per frontend or one per launch, and noted that the code ships both answers
 (`reset_leaf` exists for the second and is called only from tests). **The reference settles it**:

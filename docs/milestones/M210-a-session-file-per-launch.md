@@ -94,6 +94,11 @@ runs. Recorded rather than glossed, and the next round that spends the build sho
   directory. Correct, and not yet the reference's layout.
 - **Old files are not migrated.** `tui.jsonl` stays readable and stops being created. A user who
   resumes it by name gets the many-conversation file they always had.
+- **Each session now leaves two files, not one.** A killed launch leaves its .lock beside its
+  .jsonl (observed 2026-09-30: two launches, four entries). Discovery filters *.jsonl so nothing
+  breaks, and nothing removes the stale locks either — they are what makes the *next* launch wait
+  for a lease it cannot get. Recorded in the ledger under A18, where the wait is measured.
+
 - **Nothing prunes.** A workspace used daily accumulates a file per launch; the sessions browser is
   the only way to see them, and there is no retention policy. That was true before this change in
   the sense that the *growth* was there — it is now visible as files instead of hidden inside one.
