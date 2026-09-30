@@ -1,6 +1,6 @@
 # 022 — a line-ending policy, and the renormalization that has to go with it (A9)
 
-**Ledger row:** A9. **Status:** specified, not started. **Risk:** low, but *tree-wide*, which is why it
+**Ledger row:** A9. **Status: LANDED at M216** (battery `m216` PASS; [`docs/milestones/M216-line-endings.md`](../milestones/M216-line-endings.md)). Two corrections to the plan below, both found by measuring rather than reading: a `*.lock binary` rule would have made **`Cargo.lock`** an opaque blob (the lease files it was aimed at are never tracked), and **`git checkout-index -a -f` does not refresh a CRLF working copy** under this filter — it wrote the same bytes back, 155 CRLF files before and after, because the CRLF copy already counts as clean. The measured shape was also different from what the plan assumed: the repository was mostly LF already (5 CRLF blobs), and the drift was 155 of 768 *working-tree* files that Git hid behind its stat cache.
 is written down rather than done in passing.
 
 ## The finding

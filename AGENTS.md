@@ -523,7 +523,15 @@ lying one costs the user the belief that the feature exists.
 
 ## Git discipline
 
-- Stage explicit paths only; never `-A` blind into unrelated worktrees.
+- **The repository is LF — in the index and on disk.** `.gitattributes` declares
+  `* text=auto eol=lf` (M216), so an edit that arrives as a whole-file diff means the file was
+  CRLF before you touched it, not that you changed every line; check the endings before believing
+  the diff. `git checkout-index -a -f` will **not** fix such a file under this filter — the CRLF
+  copy already counts as clean, so it writes the same bytes back. And after converting one by hand,
+  `git status` can list it as modified while `git diff` is empty and
+  `git hash-object --path=<f> <f>` equals the index blob's own hash: that is a stale stat cache,
+  cleared by another `git add --renormalize .`, which stages nothing. The full measurement is in
+  [`docs/milestones/M216-line-endings.md`](docs/milestones/M216-line-endings.md).
 - Commit message convention: `feat(mN): …` / `fix(mN): …` / `docs: …`.
 - A commit's message names its evidence: the battery label and the `audit/evidence/…` files the
   claim rests on, so any assertion can be traced to a log. The message is the audit trail, not
