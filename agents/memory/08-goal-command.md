@@ -1,7 +1,7 @@
-# Working note — `/goal` (M203 state, M204 driver; both landed)
+# Working note — `/goal` (M203 state, M204 driver, M206 on the wire; all landed)
 
-**Status: LANDED.** Commits `7ab5c18` and `a7fd0fc`; batteries `m203` and `m204` (GATE PASS,
-1,607 then 1,613 tests across 64 binaries). Milestones:
+**Status: LANDED.** Commit `7ab5c18` (M203) and `a7fd0fc` (M204); batteries `m203` and `m204`
+(GATE PASS, 1,607 then 1,613 tests across 64 binaries). Milestones:
 [`M203`](../../docs/milestones/M203-goal.md) (state, command, tools, prompt) and
 [`M204`](../../docs/milestones/M204-round-driver.md) (the round driver).
 
@@ -20,10 +20,24 @@ armed goal at each turn end.
    event-driven and let the transcript announce a model-initiated change. Still not worth a wire
    variant on its own — but the driver makes it likelier, because a tool now changes the goal
    *during* a turn whose end triggers the next round.
-3. **`/goal` in the RPC and HTTP surfaces.** `session_state()` is the one builder both transports
-   share (D29's lesson); a goal is the next field a client wants.
-4. **A spend warning.** The cap is 256 rounds and nothing warns at round 200. At a real provider's
-   prices that is a money question, not a tidiness one.
+3. ~~**`/goal` in the RPC and HTTP surfaces.**~~ **DONE at M206** — `SessionState.goal`
+   (`SessionGoal`: `id`, `revision`, `armed`, `status`, `rounds_started`, `max_rounds`) is built by
+   the one `session_state()` both transports share, so the field appeared in the RPC reply and the
+   HTTP body and the generated OpenAPI document at once; `gate-m206.log` PASS, milestone
+   [`M206`](../../docs/milestones/M206-goal-on-the-wire.md). **The residual is narrower than "RPC
+   support" and is worth keeping:** the field is *read-only* — there is no `set_goal` op and no
+   `POST /goal`, so a client can render a goal and cannot start, pause or re-arm one. `id` and
+   `revision` are on the wire for exactly that compare-and-set, so the shape is ready; only the
+   verbs are unbuilt. Note also that nothing in-tree consumes the field (M206's `Limits` says so).
+4. **A spend warning — half done, and the other half is a deliberate absence.** The *round* half
+   landed with the driver: `note_goal_budget` (`app/commands.rs:991`) warns once at each rung of a
+   10% / 4% / 2% / last-round ladder, in fractions of the cap rather than fixed counts, because
+   `/goal edit rounds <n>` can set any cap. So "nothing warns at round 200" is stale. What remains
+   is the *money* question, and here the note has to stay honest: DSH deliberately has no token or
+   currency budget (see the checklist below), so a currency warning would mean inventing one. The
+   tractable version is to **report the session's own recorded usage against the goal's rounds** —
+   `Usage` already carries tokens and cache rates per turn, so a goal could show what its rounds
+   have cost without a new budget concept. That is a feature, not a correction.
 
 ## The traps this slice met, recorded so they are not met again
 
