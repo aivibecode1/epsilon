@@ -13,12 +13,11 @@ prior session existed). The rows still open, re-ranked by what each one costs:
 
 | Row | What | Why here |
 |---|---|---|
-| **A18** | a launch that waited for the session lease starts with no record of why it paused | New at M206, and small: the wait *is* rendered (`write_lease_wait`), the alternate screen then erases it, and the fix is plumbing the waited duration into `TuiConfig::startup_notices` — built before the store is opened, which is the whole difficulty. |
-| **A12** | configuration is read in four places (`core/config.rs`, `llm/custom.rs`, `llm/oauth_login.rs`, three in the CLI) | A growing surface with no owner; every new setting makes the drift worse. |
-| **A11** | delegated-subagent and compaction usage has a reader and no writer | About money, silent, unbounded — but it is a **design decision** (which model is a summarization billed to?). |
-| **A16** | `SessionStore::reset_leaf` has no production caller, and `tui.jsonl` is either one rolling session per frontend or one per launch | Seventh instance of the repo's signature class, and the two answers the code ships are inconsistent. |
-| A8/A9/A10 | `epsilon-tools` → `epsilon-lsp` dep, no `.gitattributes`, 8 identical `#[allow]`s | Mechanical. A9 needs its own commit: `* text=auto` marks every file for renormalization. |
-| A14/A15 | secret scrubbing in the durable store, and the `read`/`@` asymmetry | **Decisions, not patches.** One paragraph in `docs/user/permissions.md` answers both. |
+| **A16** | `SessionStore::reset_leaf` has no production caller, and `tui.jsonl` is either one rolling session per frontend or one per launch | The last open *decision*, and the one with the most user-visible consequence: it decides whether a later `-c` reopens one conversation or several at once. |
+| plan 019 | execute the four steps of [`docs/plans/019-one-config-reader.md`](../../docs/plans/019-one-config-reader.md) | Needs a build. Step 1 deletes the duplicate `global_dir` (verified: written byte-for-byte twice); step 2 removes `toml` from `epsilon-llm`. |
+| M207 reinstall | the installed binary is the M206 build | `cargo install` needs a cold release build (~30-45 min) and refills ~1 GB. |
+| A8/A9/A10 | `epsilon-tools` -> `epsilon-lsp` dep, no `.gitattributes`, 8 identical `#[allow]`s | Mechanical. A9 needs its own commit: `* text=auto` marks every file for renormalization. |
+| A14/A15 | secret scrubbing in the durable store, and the `read`/`@` asymmetry | **Documented** (round 13) in `docs/user/permissions.md`; what remains is the owner's choice on scrubbing. |
 
 **A7 was already fixed and is now marked so** — the dead-holder steal has been in `lease.rs` since
 before the ledger was written, with two tests on it, and the wait *is* drawn. Its remaining half is

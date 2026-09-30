@@ -23,6 +23,14 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+**A11 is stale on both halves, and that is the second row this sweep has found written from prose rather than from code.** The row claims "delegated-subagent and compaction usage has a reader and no writer". Re-derived:
+
+| Half | Writer | Reader | Tests that fail if the writer goes |
+|---|---|---|---|
+| compaction | `core/src/lib.rs:2775` — the compaction entry carries `usage` **and** `model_id` (M145/F22, with the reasoning inline: one entry, not two, because `pop_last_message` would otherwise separate a summary from its bill) | the TUI's cost rows | `a_recorded_compaction_bill_reaches_the_sessions_token_rows`, `a_summarizer_billed_to_another_model_keeps_its_own_pricing_row`, `a_compaction_that_billed_nothing_adds_nothing` |
+| delegated subagents | the `task` tool's result carries `usage` + the child's model | `record_tool_usage`, called on the **live** path (`state.rs:1002`) *and* the resume/hydration path (`state.rs:1123`) — the second exists because the first was once the only one | `a_subagents_tokens_reach_the_session_total`, `a_subagents_tokens_survive_a_resume`, `a_tool_usage_without_a_model_is_billed_to_an_unpriced_row` |
+
+So the money the row was worried about is counted, on both paths, with tests on each. **A7 and A11 are two instances of one method failure**: a ledger row is a claim about code, and both were written from a *neighbouring* fact — A7 from the constant `STALE_AFTER = 30s` rather than from what `acquire` does with it, A11 from the fields existing rather than from who fills them. The countermeasure is the one the top of this file already states and that has now paid for itself twice: **re-derive before acting, and name the file:line that would have to change.**
 **A14/A15 are documented; the decision is still the owner's.** Both rows end in the same place —
 one paragraph in `docs/user/permissions.md` — and it now exists: the two ways to get a file in
 front of the model are tabulated (``@`` refuses by name, `read` does not), the refusal list is
