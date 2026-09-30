@@ -5,6 +5,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A launch that waited for the session file now says so afterwards.** Waiting for another
+  window to release the session prints a countdown, and the terminal UI's screen then replaces it,
+  so the wait left no trace. A wait of a second or more is now also a line in the transcript,
+  naming the seconds, the lease, and that nothing was lost (M207).
+
 - **A client can see the session's goal.** get_state and GET /state serve one shared payload,
   and it now carries the goal — objective, phase, rounds against the cap, any blocker, and whether
   the harness is armed to continue it by itself. That last field is the one that matters: a goal

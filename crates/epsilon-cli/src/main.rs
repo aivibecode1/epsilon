@@ -2000,8 +2000,40 @@ fn resumed_model_to_use(
 /// - **Says why.** "another process may still be writing it" is the fact the user
 ///   needs. The pid, if there is one, is in the error they get if the wait runs out.
 fn lease_wait_notice(waited: std::time::Duration, remaining: std::time::Duration) {
+    // Remember the wait, because the line below is written to a console that the TUI's alternate
+    // screen then erases: a launch that waited 25 s would otherwise start with no record of why
+    // it paused (ledger A18). A process-global rather than a parameter because the wait happens
+    // inside `build_runtime`, which four frontends share and which takes this function by name —
+    // threading a second return value through it for one notice would cost more than it explains.
+    // `fetch_max`, so the longest wait of a launch is what gets reported.
+    LEASE_WAIT_MS.fetch_max(
+        waited.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let mut err = std::io::stderr();
     write_lease_wait(&mut err, waited, remaining);
+}
+
+/// The longest lease wait this process performed, in milliseconds. Zero means none.
+///
+/// Written by [`lease_wait_notice`], read once by the TUI path after `build_runtime` returns.
+static LEASE_WAIT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What the TUI says about a wait that happened before it started, or `None` when there was none.
+///
+/// **One second is the threshold**, and it is a judgement worth stating: the ordinary contended
+/// launch waits a few hundred milliseconds for a lease another process released, and a notice
+/// about that would be noise on every second launch. A second is where a person notices a pause
+/// and starts wondering whether the program is stuck — which is the state this closes.
+fn lease_wait_summary(waited_ms: u64) -> Option<String> {
+    if waited_ms < 1_000 {
+        return None;
+    }
+    Some(format!(
+        "this launch waited {}s for the session file's lease — another process had it, and it \
+         has been released. Nothing was lost; the session continued from the same file.",
+        waited_ms / 1_000
+    ))
 }
 
 /// One lease-wait progress line, written to `w`.
@@ -2232,13 +2264,23 @@ async fn tui_mode(
     .await;
     match agent {
         Ok(agent) => {
+            // A18: the lease wait is drawn on the console before the alternate screen exists, and
+            // the alternate screen erases it — so a launch that waited says so in the transcript,
+            // where it survives. Built here rather than in `shared` because `shared` is assembled
+            // before the store is opened, which is when the wait happens.
+            let mut startup_notices = shared.startup_notices.clone();
+            if let Some(waited) =
+                lease_wait_summary(LEASE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                startup_notices.push(waited);
+            }
             epsilon_tui::run(epsilon_tui::TuiConfig {
                 agent,
                 approvals,
                 initial_task,
                 model_id: shared.model_id.clone(),
                 live: live_fetcher(),
-                startup_notices: shared.startup_notices.clone(),
+                startup_notices,
                 trust_review_pending: shared.trust_review_pending,
                 theme_mode,
             })
@@ -2822,6 +2864,45 @@ mod lease_wait_notice_tests {
         assert!(
             render(1, 29.0).ends_with("\x1b[K"),
             "a shorter message must clear what the previous longer one drew"
+        );
+    }
+
+    /// A18: the wait is remembered, so the TUI can say it in a place that survives the
+    /// alternate screen.
+    ///
+    /// Asserted with `>=` rather than `==` because the counter is a process-global and a
+    /// monotonic one: another test in this binary may have waited longer, and a test that
+    /// insisted on exact equality would be asserting on test order.
+    #[test]
+    fn a_wait_is_remembered_for_the_frontend_that_starts_after_it() {
+        let before = LEASE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed);
+        lease_wait_notice(
+            std::time::Duration::from_secs(4),
+            std::time::Duration::from_secs(26),
+        );
+        let after = LEASE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            after >= 4_000,
+            "the wait must be recorded for the TUI to report: {before} -> {after}"
+        );
+    }
+
+    /// The threshold, and the two sentences it produces. A sub-second wait is the ordinary
+    /// contended launch and must stay silent; a second is where a person starts wondering
+    /// whether the program is stuck.
+    #[test]
+    fn only_a_wait_long_enough_to_notice_becomes_a_notice() {
+        assert!(lease_wait_summary(0).is_none(), "no wait, nothing to say");
+        assert!(
+            lease_wait_summary(999).is_none(),
+            "a sub-second contention is not worth a line on every second launch"
+        );
+        let said = lease_wait_summary(25_400).expect("a 25 s wait is worth explaining");
+        assert!(said.contains("waited 25s"), "{said}");
+        assert!(said.contains("lease"), "{said}");
+        assert!(
+            said.contains("Nothing was lost"),
+            "the reader's real question is whether the pause cost them something: {said}"
         );
     }
 

@@ -101,5 +101,8 @@ audit/evidence/*.log
 # M206: the goal on the wire. 1618 tests / 64 binaries, 7 of 7 gates.
 !audit/evidence/gate-m206.log
 
+# M207: the lease wait survives the alternate screen. 1620 tests / 64 binaries, 7 of 7 gates.
+!audit/evidence/gate-m207.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/
