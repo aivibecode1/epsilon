@@ -23,6 +23,60 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+# A19 — `--continue` waits thirty seconds on a lease it holds itself (2026-09-30, OPEN)
+
+**Severity: high, and user-visible on every resume.** Found while trying to verify M210's `-c`
+claim through the conhost probe, and it is the reason four attempts to capture that claim failed.
+
+## The measurement
+
+Scratch workspace, two TUI launches (so two session files exist), then **both `.lock` files
+deleted** so that no holder existed on disk at all, then the installed binary launched with `-c` and
+the console read back at 25 seconds:
+
+```text
+waiting for this session to be released — 21s elapsed, ~9s left (another process may sti…
+waiting for this session to be released — 22s elapsed, ~8s left (another process may sti…
+waiting for this session to be released — 24s elapsed, ~6s left (another process may sti…
+```
+
+The countdown is heading for the **full `STALE_AFTER` window (30 s)**, not the four-second
+`DEAD_HOLDER_SETTLE` that a lock with no live holder is supposed to reach.
+
+## What was ruled out, by measurement rather than argument
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| A killed launch left a stale lock, and the wait is for that | delete the lock files before `-c` | **wait unchanged** — ruled out |
+| Another live epsilon still holds the lease | count processes right after a probe run, delete the locks, wait 6 s, count again | **0 processes alive, 0 locks reappear** — ruled out |
+
+So nothing else holds it. The remaining and best-fitting explanation is a **self-conflict in the
+resume path**: the process acquires a lease for the file it resolves (or for the fresh file M210
+now names per launch), then opens the same session *again* for real — and the second acquire finds
+its **own** live lease. A holder's heartbeat keeps the lock's mtime moving, so the dead-holder
+settle never fires, and the process waits the whole window before the staleness rule lets it steal
+from itself.
+
+## Why this matters
+
+`--continue` is the most-used resume path there is, and this predicts **thirty seconds of countdown
+on every `-c` launch** with the TUI unstarted until it expires. It also means M210's `-c` claim is
+unverified for a reason that is itself a defect, not a probe limitation.
+
+## Not yet established — the two things a fix needs
+
+- **Which file it waits on.** The evidence is a countdown with no holder, not a `Leased { holder }`
+  error naming a path; a run with `-e`-style logging or a breakpoint-free `eprintln!` of the two
+  acquire calls would name it in one launch.
+- **Whether M210 introduced it or merely inherits it.** The pre-M210 TUI also resolved
+  `latest_session_file` for `-c` while naming its own fixed file, so the same double-open plausibly
+  existed then — which would make this an old defect that M210's per-launch naming does not fix
+  rather than one it caused. **Do not assume either way; the fix is the same and the history is one
+  `git log -S` away.**
+
+The fix is almost certainly to drop the first lease before the real open (or to resolve the file
+*without* acquiring), and the verification is the check this row interrupted: a capture past the
+wait that shows the resumed transcript.
 **A18 measured again in the real artifact (2026-09-30), and it is not fully closed.** Driving the
 installed binary through the conhost probe: two launches, then `epsilon -c`. The resume run went
 straight into the lease wait — because the two launches had been *killed* by the probe, and a killed
