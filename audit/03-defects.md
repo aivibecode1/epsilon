@@ -23,6 +23,28 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+**A16 is decided, and the decision goes against this harness.** The row asked whether `tui.jsonl`
+is one rolling session per frontend or one per launch, and noted that the code ships both answers
+(`reset_leaf` exists for the second and is called only from tests). **The reference settles it**:
+pi names one file per session — `repo.ts:42-45` builds
+`sessions/--<cwd>--/<ISO-timestamp>_<id>.jsonl` — and resolves that path on *create*
+(`resolveNewSessionPath`, `repo.ts:77/171/273`). Which is why `--continue` ("newest session for this
+workspace", `latest_session_file_in(dir, cwd)` here) is a meaningful phrase in pi and an empty one
+in a harness that writes one fixed file per frontend.
+
+What the current shape actually does, stated plainly: three TUI launches append three conversations
+to **one lane**, so `-c` hands the model all three as a single context with no boundary; the header
+is written once, so its `id` and `cwd` name the first conversation while every later one is a
+stowaway in it; `/fork`, `export` and the sessions browser all assume file ↔ conversation; and the
+file grows without bound, putting a full fold in front of every `goal()` and label read. M205's
+"this session already holds N entries" notice was the *symptom* of this shape, not a feature of it.
+
+Execution, with the per-cwd directory in the same slice because `-c` across workspaces depends on
+it: [`docs/plans/020-one-session-per-file.md`](../docs/plans/020-one-session-per-file.md). The plan
+carries the costs too (a file per launch with no pruner; no migration of existing files), and its
+step 3 is the disposition of `reset_leaf` itself — **delete it unless the new shape finds a caller**,
+since an uncalled primitive is how this row started.
+
 **A11 is stale on both halves, and that is the second row this sweep has found written from prose rather than from code.** The row claims "delegated-subagent and compaction usage has a reader and no writer". Re-derived:
 
 | Half | Writer | Reader | Tests that fail if the writer goes |

@@ -13,7 +13,7 @@ prior session existed). The rows still open, re-ranked by what each one costs:
 
 | Row | What | Why here |
 |---|---|---|
-| **A16** | `SessionStore::reset_leaf` has no production caller, and `tui.jsonl` is either one rolling session per frontend or one per launch | The last open *decision*, and the one with the most user-visible consequence: it decides whether a later `-c` reopens one conversation or several at once. |
+| **A16** | DECIDED (round 15): a launch gets its own session file. The fixed `tui.jsonl` is a **divergence from pi** — `repo.ts:42-45` names one file per session as `<ISO>_<id>.jsonl` in `sessions/--<cwd>--/`, and `resolveNewSessionPath` runs on *create* — which is what makes `-c` ("newest for this workspace") meaningful at all. Execution: [`docs/plans/020-one-session-per-file.md`](../../docs/plans/020-one-session-per-file.md) | Needs a build. The user-visible win is the largest on the queue: today three launches share one lane, so `-c` hands the model all three conversations as one context and the header's `id` names only the first. |
 | plan 019 | execute the four steps of [`docs/plans/019-one-config-reader.md`](../../docs/plans/019-one-config-reader.md) | Needs a build. Step 1 deletes the duplicate `global_dir` (verified: written byte-for-byte twice); step 2 removes `toml` from `epsilon-llm`. |
 | M207 reinstall | the installed binary is the M206 build | `cargo install` needs a cold release build (~30-45 min) and refills ~1 GB. |
 | A8/A9/A10 | `epsilon-tools` -> `epsilon-lsp` dep, no `.gitattributes`, 8 identical `#[allow]`s | Mechanical. A9 needs its own commit: `* text=auto` marks every file for renormalization. |
