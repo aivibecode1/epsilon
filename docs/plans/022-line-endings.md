@@ -5,6 +5,27 @@ is written down rather than done in passing.
 
 ## The finding
 
+**Measured 2026-09-30, on this machine.** `.gitattributes` does not exist, and the warnings are not
+Git being pedantic about this repository: `core.autocrlf` is **`true`**, and it is set in the
+**system** config — `C:/Program Files/Git/etc/gitconfig`, which is Git for Windows' installer default,
+not a choice anyone made here. So every file added is converted on the way in and on the way out, and
+Git says so each time:
+
+```text
+file:C:/Program Files/Git/etc/gitconfig    core.autocrlf=true
+```
+
+Which splits the fix in two, in this order:
+
+1. **This machine, now:** `git config --local core.autocrlf false` — one command, scoped to this
+   repository, leaving the owner's other checkouts alone and reversible with `--unset`. It silences
+   the warnings immediately. (Local rather than global on purpose: `autocrlf` is a *developer's*
+   setting, and the repository should not require anyone to change it — which is what the second half
+   is for.)
+2. **The repository, durably:** the `.gitattributes` below, so the policy travels with the clone
+   instead of depending on each machine's config. A marked file is not converted regardless of what
+   `core.autocrlf` says, which is the whole reason the file exists.
+
 The repository has **no `.gitattributes`**, and the consequence is visible in every commit made with
 git on Windows:
 
