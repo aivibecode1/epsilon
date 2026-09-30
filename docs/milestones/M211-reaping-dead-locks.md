@@ -51,15 +51,24 @@ call the new function — the fix was the re-export the crate already uses for i
 
 Evidence: [`audit/evidence/gate-m211.log`](../../audit/evidence/gate-m211.log).
 
-**Reinstall: outstanding.** The sweep runs at launch, so the installed binary does not have it yet;
-one release build covers this and anything else landed before the next install.
+**Reinstall: done** (2026-09-30, one release build serving M207, M210 and M211).
 
 ## Limits — what this does not prove
 
-- **No end-to-end observation.** The sweep is unit-tested on a real directory with an aged lock and
-  a fresh one, and the call site compiles; nothing launched the TUI, killed it, and then launched it
-  again to watch the stale lock disappear. The `-c` probe from the previous round is the natural
-  place to add that, and it is still outstanding for the resume question too.
+- **The end-to-end check was made (2026-09-30), after the install.** In a scratch workspace, two
+  lock files were planted: one aged 120 s (`…_ses_dead.jsonl.lock`, a holder that is provably gone)
+  and one 12 s old (`…_ses_live.jsonl.lock`). One launch of the **installed** binary through the
+  conhost probe left:
+
+  ```text
+  2026-09-01T00-00-00-000Z_ses_live.jsonl.lock          age=12s   (survived — correct)
+  2026-09-30T11-30-28-127Z_ses_1a0f2148c9f0.lock        age=0s    (the launch's own)
+  ```
+
+  and the 120-second lock was **gone**. So the predicate holds in the artifact and not only in the
+  unit test — including the half that matters more: a lock inside the window is left alone.
+- **Still not observed: `-c` itself.** That question is M210's, and it remains open for the reason
+  recorded there (the probe's capture window ended inside the four-second lease wait).
 - **The sweep runs on *every* store open**, including `--resume <path>` for a file in an unrelated
   directory — where it will reap that directory's stale locks. That is consistent (the same
   predicate, the same meaning) but it is a side effect of *opening* a file, which a reviewer could
