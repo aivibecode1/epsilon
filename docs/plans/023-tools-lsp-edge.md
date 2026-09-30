@@ -1,7 +1,7 @@
 # 023 — the `epsilon-tools` → `epsilon-lsp` edge, removed by inversion (A8)
 
-**Ledger row:** A8. **Status:** specified, not started. **Estimate:** one slice, ~1 hour warm, plus a
-battery. **Precedent:** `ToolContext::task_host` and `ToolContext::goal_host` — the pattern this
+**Ledger row:** A8. **Status:** specified, not started. **Estimate:** one slice, well under an hour warm (reduced by step 0 — see
+below), plus a battery. **Precedent:** `ToolContext::task_host` and `ToolContext::goal_host` — the pattern this
 repository already uses twice for exactly this shape.
 
 ## The finding, read rather than counted
@@ -26,17 +26,46 @@ on `epsilon-lsp`. The architecture law says LSP communicates through contracts; 
 violation, and it is not a layering nicety — it means every consumer of `epsilon-tools` (including
 tests and any future frontend) links a language-server client whether or not it wants diagnostics.
 
+## Step 0 — the seam is already there (checked 2026-09-30, and it changes the estimate)
+
+**Plan 023's first step was written as "extract the trait's shape from the call sites". That work is
+already done, and this paragraph exists because the plan was written from the ledger's description of
+the row rather than from the code — the fifth time in one session that a claim inherited a neighbour's
+shape. Checking cost one read:**
+
+```rust
+// epsilon-tools/src/files.rs
+use epsilon_contracts::diagnostics::DiagnosticsProvider;   // :15 — the trait is in CONTRACTS
+
+pub struct WriteTool {
+    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,      // :262 — the tool holds the seam
+}
+impl WriteTool {
+    pub fn with_diagnostics(mut self, provider: Arc<dyn DiagnosticsProvider>) -> Self  // :285
+}
+
+async fn diagnostics_note(provider: Option<&Arc<dyn DiagnosticsProvider>>, path: &Path) -> String
+```
+
+So `epsilon-tools` **already talks to contracts, not to `epsilon-lsp`** for the feedback it needs: the
+trait, the injection point and the "no provider means no block" rule are all in place, and the tool
+never names the lsp crate. There is no trait to design.
+
+**What that leaves is narrower and mechanical:** the only use of `epsilon-lsp` in the crate is the
+`Lsp::Auto` arm that *constructs* the service and calls `with_diagnostics`. Move that construction to
+the caller — the CLI, which already passes `lsp:` into `RunParams` — pass the resulting
+`Arc<dyn DiagnosticsProvider>` (or `None`) into `register_builtins_with`, delete the enum and the
+dependency. Steps 2–4 below stand unchanged; **the estimate drops from ~1 hour to well under it, and
+the risk with it**, because nothing about the diagnostics behaviour is touched.
+
 ## The inversion, which is the one already in the tree
 
 The *policy* ("should a server be started for this workspace?") belongs to the frontend, which knows
 the flags; the *handle* ("here is something that can answer for a file") is all the tool needs. That
 is `TaskHost` and `GoalHost` again, and the plan is deliberately shaped after them:
 
-1. **`epsilon-contracts` gains a seam trait**, minimal and derived from the call sites rather than
-   invented: the write and edit tools currently hold "optional LSP feedback on what was just
-   written/edited" (`epsilon-tools/src/files.rs:261`, `:422`). Read those two sites first and extract
-   *only* the methods they call — a trait that guesses wider than its callers is how a seam becomes an
-   abstraction.
+1. ~~`epsilon-contracts` gains a seam trait.~~ **Superseded by step 0 — the trait exists and the tools
+   already use it.** The work is moving the construction, not writing the seam.
 2. **`epsilon-tools` takes the handle**: `register_builtins_with(registry, confinement, diagnostics:
    Option<Arc<dyn DiagnosticsHost>>)`. `Lsp::Off`/`Lsp::Auto` moves to the caller that decides it —
    the CLI, which already passes an `lsp:` value into `RunParams`.
@@ -67,9 +96,10 @@ is `TaskHost` and `GoalHost` again, and the plan is deliberately shaped after th
 
 ## Limits of this plan
 
-- **The trait's shape is not written down here, on purpose.** It depends on what `files.rs` actually
-  calls, and inventing it from memory is the failure mode this repository has paid for four times
-  (A7, A10, A11, A20 were all rows written from a neighbouring fact). Step 1 is a read, not a design.
+- **The trait's shape *is* written down now** — step 0 read it — and the original refusal to write it
+  from memory was right: the guess would have been a new trait in contracts, and the truth is that one
+  already exists there. This plan was itself written from a neighbouring fact, which is the fifth
+  instance this session (A7, A10, A11, A20, and now this). The countermeasure held: one read, no code.
 - **The estimate assumes the diagnostics path is injectable in one step.** If the write/edit tools
   cache a client *per tool instance* rather than per call, the handle has to reach further than
   `register_builtins_with` and the slice grows; that is the first thing to check.
