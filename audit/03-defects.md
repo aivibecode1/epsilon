@@ -88,6 +88,36 @@ Two things follow, and together they are the whole defect:
   self-conflict plausibly predates M210 by a long way. Do not present this as a regression without
   the `git log -S` that shows it; the mechanism is certain, the age is not.
 
+## And the second half, which is worse than the wait (2026-09-30)
+
+Reading the surrounding lines answered a question I had not asked, and it **withdraws a claim M210
+makes**. Two facts, both from the code just read:
+
+1. **The resume block never attaches the store it opens.** `:1891` opens `restored` from `rp`, uses it
+   for migration, repair, the unknown-kind notice, `model_view()` and the resumed-model rule — and
+   then the block ends at `:1956`. The agent's store is still the **primary** one attached at `:1877`.
+2. **Therefore a resumed launch reads conversation N and writes to a different file.** Pre-M210 that
+   difference was invisible: the primary was the fixed `tui.jsonl`, and `latest_session_file` in a
+   TUI-only workspace returns exactly that file — so reads and writes coincided *by accident of the
+   fixed name*.
+
+With M210's per-launch name the accident stops being true, and the consequence is not subtle: **the
+file this launch just created is the newest in the directory**, so `latest_session_file` returns
+**the primary file itself**. `-c` would then resolve to the file this very process created a moment
+ago — the one whose lease it already holds (which is the thirty-second wait) and which is **empty**
+(which is why the wait ends in a session with nothing in it).
+
+**So M210's claim that "`--continue` gets better without being touched" is withdrawn**, and it is
+withdrawn here rather than quietly edited: the reasoning was sound for the *old* shape and inverted
+for the new one. The milestone and the changelog both carry that sentence and both need correcting
+when the fix lands.
+
+**This is a prediction from the code order, not a measurement.** The measurement is one launch and a
+directory listing, and it is the first thing the fix round should do: run `-c` in a scratch
+workspace that already holds two sessions and check (a) whether a third file appears, (b) whether it
+is empty, and (c) whether the countdown is longer than the four-second settle. If the third file is
+the one being written while the second is the one being read, the resume is writing the new
+conversation beside the old one instead of into it.
 ## The fix shape, in the order worth trying
 
 1. **Resolve the resume path before opening anything**, and when it equals the primary path, open
