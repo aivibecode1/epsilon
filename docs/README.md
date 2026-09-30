@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M223 — one implementation of the global directory, found by reading the dependency graph](milestones/M223-one-global-dir.md)
 - [M222 — the notice and `-c` now agree about what exists](milestones/M222-notice-and-continue-agree.md)
 - [M221 — /new starts a new session file, and the primitive it needed is deleted](milestones/M221-new-starts-a-new-file.md)
 - [M220 — every drawn character a CP437 console can actually draw](milestones/M220-every-drawn-character.md)

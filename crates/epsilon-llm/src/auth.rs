@@ -225,8 +225,13 @@ pub(crate) fn auth_path_in(config_dir: &Path) -> PathBuf {
 }
 
 /// `~/.config/epsilon` — resolved from `$HOME`, falling back to `$USERPROFILE`.
-/// Lives here (not core) because the credential store must be reachable from
-/// epsilon-llm and the dependency law forbids llm → core.
+///
+/// **This is the one copy of that rule, and it lives here because of the dependency direction**
+/// (M223): `epsilon-core` depends on `epsilon-llm` and not the other way round, so a rule this
+/// crate needs is one it must own — and `core::config::global_dir` delegates here rather than
+/// repeating the body. The two functions were byte-for-byte identical for a long time, and the plan
+/// to delete one of them assumed the two crates could not see each other, which is true of
+/// `llm → core` and false of `core → llm`.
 pub fn global_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     if home.is_empty() {

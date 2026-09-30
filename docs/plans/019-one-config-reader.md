@@ -1,7 +1,22 @@
 # 019 — one configuration reader, and the value crosses the seam
 
-**Ledger row:** A12. **Status:** decision made (ADR-012 amendment), execution not started.
-**Estimated execution:** one milestone, ~2–3 hours with a warm target.
+**Ledger row:** A12. **Status:** **step 1 LANDED at M223**, and it landed as a *delegation* rather than
+the inversion this plan proposed, because step 1's premise was wrong (below). Steps 2–5 remain, and
+their order is unchanged. **Estimated execution:** steps 2–5, one milestone, warm target.
+
+> **Step 1 was mis-shaped, and the correction is the useful part (M223).** This plan and the ledger
+> row both described the duplicated `global_dir` as *two copies of one rule in crates that cannot
+> see each other* — which is true of `llm → core` and **false of `core → llm`**.
+> `epsilon-core/Cargo.toml` depends on `epsilon-llm`, so the higher crate can see the lower one, and
+> the rule has a forced home in the lower crate: `core::config::global_dir` delegates to
+> `llm::auth::global_dir`. Five lines, no new edge, no signature changes anywhere, and llm's
+> provider-resolution path untouched. What this plan proposed instead — threading a `&Path` through
+> seven credential wrappers, twelve CLI/TUI call sites and `catalog::resolve_api_key` /
+> `custom::load_custom_providers` inside llm — was a refactor measured against a call graph nobody
+> had read. **This is the seventh time in one stretch that a claim in a plan inherited a neighbour's
+> shape** (A7, A11, plan 023's step 1, this, and the three ledger rows written from them); the
+> countermeasure is unchanged and worked again: read the thing the claim is about before planning
+> against it.
 
 ## The finding, measured
 
@@ -83,18 +98,28 @@ read, no code, and a wrong sequencing caught before anyone started it.
 Each step is independently committable and independently verifiable; stop after any of them and the
 tree is coherent.
 
-### Step 1 — the credential store takes its path (removes the duplicate `global_dir`)
+### Step 1 — DONE at M223, and not the way it was written
 
-1. `epsilon-llm/src/auth.rs`: replace the private `global_dir()` with a resolved path. Add
-   `auth::set_store_dir(Option<PathBuf>)`-shaped configuration **or** thread the dir through the
-   four entry points (`load_credentials`, `save_credential`, `remove_credential`,
-   `list_credentials`). Prefer threading: a process-global would recreate the same
-   two-answers problem with an ordering hazard on top.
-2. `epsilon-core/src/config.rs`: keep `global_dir()` — it becomes the single definition — and have
-   the CLI pass `config::global_dir()` into the auth calls.
-3. **Evidence:** a test that the two crates' resolved directory is the same string, with the
-   second copy deleted so it cannot pass by construction; plus
-   `grep -rn "fn global_dir" crates/` returning exactly one hit.
+**Landed:** `epsilon-core/src/config.rs` delegates to `epsilon-llm/src/auth.rs`'s `global_dir`, and
+`the_global_directory_is_computed_in_exactly_one_place` walks the workspace to make a second *body*
+unrepeatable. Five lines, no signature changed.
+
+**Not done, deliberately:** the plan below proposed threading the directory through the credential
+wrappers. Reading the manifests first showed `epsilon-core` depends on `epsilon-llm`, so the copy in
+core could simply ask the one in llm. `llm → core` is the edge the law forbids, and it is the only
+one that would have required threading — the plan had inverted the direction that already exists.
+The credential wrappers keep their `*_in(config_dir, …)` variants, which remain the right shape for a
+caller that wants to say *which* directory; they simply stop being the only way in.
+
+Steps 2–5 below are unchanged and are about a different subject: **parsing one file in three places
+inside `epsilon-llm`**, which is why that crate carries a `toml` dependency at all.
+
+**Evidence delivered (and one correction to this plan's own step 1 evidence):** `grep -rn "fn
+global_dir" crates/` returns **two** hits, not one — two *definitions* exist by design, because a
+delegate is a definition. The property is one *computation*, so the test counts the definitions that
+read `$HOME`, which is what M223 asserts. The plan's version of that check could not have passed
+against the fix it asked for, which is the second time in this file that the check was written from
+the description rather than from the code (the first was step 0's ordering).
 
 ### Step 2 — both OAuth reads take a value (moved ahead of `toml`'s removal)
 

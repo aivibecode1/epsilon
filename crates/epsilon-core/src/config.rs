@@ -34,12 +34,22 @@ pub fn load_config_string(table: &str, key: &str) -> Option<String> {
 }
 
 /// `~/.config/epsilon` — resolved from `$HOME`, falling back to `$USERPROFILE`.
+///
+/// **M223: one implementation, in the crate that cannot delegate.** This body used to be a second,
+/// byte-for-byte copy of `epsilon_llm::auth::global_dir`, and the ledger row that tracked it (A12)
+/// — and plan 019, which planned to remove it — both assumed the duplication was *symmetric*: "two
+/// copies of one rule in crates that cannot see each other". Measured: the DAG runs
+/// **core → llm** (`epsilon-core/Cargo.toml` depends on `epsilon-llm`; the reverse edge is the one
+/// the law forbids), so this crate can see that one. The rule therefore has a forced home in the
+/// *lower* crate, and the higher one asks.
+///
+/// That is the whole fix, and it is why it is worth writing down: the planned version — deleting the
+/// copy and threading a `&Path` through seven credential wrappers, twelve CLI/TUI call sites and the
+/// provider-resolution path inside llm — was answering a problem that did not exist, at a cost
+/// measured against a call graph the plan had not read. `grep -rn "fn global_dir" crates/` must now
+/// return exactly one hit, and a test in this module is what keeps it that way.
 pub fn global_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    if home.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(home).join(".config").join("epsilon"))
+    epsilon_llm::auth::global_dir()
 }
 
 /// Path of the global config file (exists only when a home directory resolves).
@@ -981,4 +991,79 @@ fn an_empty_skill_name_is_refused() {
         load_disabled_skills_in(dir.path()).is_empty(),
         "and nothing was written"
     );
+}
+
+/// M223: the global directory has exactly one implementation in the workspace.
+///
+/// **The assertion is over the source, not over a value.** Two functions that agree right now is not
+/// the property: the defect this replaces was two byte-identical bodies that could drift at any
+/// moment, and no test on a *value* can see that — a test that compares the two results passes for
+/// as long as the environment happens to give the same answer, which is exactly the trap A12's row
+/// describes ("two copies of one rule cannot disagree visibly"). Counting the definitions is what
+/// makes the duplication unrepeatable rather than merely absent today.
+///
+/// Source-scanning, not a unit assertion, because the thing at risk spans two crates.
+#[test]
+fn the_global_directory_is_computed_in_exactly_one_place() {
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut computed: Vec<String> = Vec::new();
+    let mut delegating = 0usize;
+    for entry in walk_sources(&crates.join("..")) {
+        let Ok(text) = std::fs::read_to_string(&entry) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (n, line) in lines.iter().enumerate() {
+            let t = line.trim_start();
+            if !(t.starts_with("pub fn global_dir(") || t.starts_with("fn global_dir(")) {
+                continue;
+            }
+            // The body is what decides: a definition that *asks* another crate's function is a
+            // delegate, and a delegate is the fix working. One that reads the environment is a
+            // second implementation of the rule, which is the defect.
+            let body: String = lines[n..(n + 8).min(lines.len())].join("\n");
+            let where_ = format!(
+                "{}:{}",
+                entry.strip_prefix(crates).unwrap_or(&entry).display(),
+                n + 1
+            );
+            if body.contains("var_os(\"HOME\")") {
+                computed.push(where_);
+            } else {
+                delegating += 1;
+            }
+        }
+    }
+    assert_eq!(
+        computed.len(),
+        1,
+        "`~/.config/epsilon` must be *computed* in one place; computed at {computed:?} \
+         ({delegating} delegating definition(s) are fine)"
+    );
+}
+
+/// Every `.rs` under `dir`, skipping build output.
+///
+/// `#[cfg(test)]` because the only caller is the test above: a function that walks the workspace has
+/// no business in a shipped library, and `dead_code` is right to say so.
+#[cfg(test)]
+fn walk_sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "target" || name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            out.extend(walk_sources(&path));
+        } else if name.ends_with(".rs") {
+            out.push(path);
+        }
+    }
+    out
 }
