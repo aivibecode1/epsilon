@@ -1,0 +1,20 @@
+# Line-ending policy for this repository (A9, plan docs/plans/022-line-endings.md).
+#
+# Every text file is stored as LF *and* checked out as LF, so the working tree matches the
+# repository byte for byte on every platform. The repository's history is already all-LF; what
+# was missing was a rule saying so, which let a Windows Git install (`core.autocrlf=true`, the
+# Git for Windows default) hand contributors a CRLF working tree that Git then hid behind its
+# stat cache — until the day they edited one of those files and a one-line change arrived as a
+# whole-file diff (measured at M215: 156 of 768 tracked files).
+* text=auto eol=lf
+
+# Binary, in every sense that matters to a diff, a merge or a checkout. `*.png` is listed because
+# `assets/Logo.png` is the one binary file in the tree, and an explicit line means a later `*`
+# rule cannot quietly start treating it as text.
+*.png binary
+*.ico binary
+*.exe binary
+
+# Deliberately NOT `*.lock`: the session lease files that rule would be aimed at live under
+# `.epsilon/` at runtime and are never tracked, while the one `*.lock` this repository does track
+# is `Cargo.lock` — which wants text diffs, not an opaque blob.
