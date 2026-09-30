@@ -23,6 +23,14 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+**A12's decision is made, execution planned.** [`docs/plans/019-one-config-reader.md`](../docs/plans/019-one-config-reader.md)
+records the measured finding — `global_dir()` written byte-for-byte twice (`core/config.rs:37`,
+`llm/auth.rs`) and one global `config.toml` parsed by three readers — and the decision the
+architecture law forces: `epsilon-llm` may not depend on `epsilon-core`, contracts is
+types-and-traits-only, and a new crate needs an ADR, so the reader stays above the seam and parsed
+values cross as parameters (the pattern `register_builtins_with_skills` and `ToolContext::task_host`
+already use). The plan is four independently committable steps with per-step evidence, the first of
+which deletes the duplicate path rule.
 **The remnant, which is real and is not fixed — A18, added here:** the notice goes to the console
 and the alternate screen then erases it, so a launch that waited 25 s and found the lock released
 starts with no record of why it paused. Closing it needs the wait's duration to reach
