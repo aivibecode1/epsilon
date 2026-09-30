@@ -23,6 +23,48 @@ Both user-visible consequences the row named are therefore gone: a dead holder n
 seconds, and the wait is visible while it happens. The 30-second window survives only for a
 **live** holder, where it is the correct behaviour (a second window owns the session).
 
+# A10 — reclassified: the eight `#[allow(unreachable_patterns)]` are a pattern, not duplication (CLOSED, 2026-09-30)
+
+**The row said "8 identical `#[allow]`s" and put them under "mechanical". The count is right and the
+classification is wrong**, so this is closed by reading them rather than by changing them.
+
+All eight are in `crates/epsilon-tui/src/app/commands.rs` (652, 723, 1094, 1265, 1370, 1510, 1852,
+2163) and all eight are the same three lines:
+
+```rust
+#[allow(unreachable_patterns)]
+other => {
+    debug_assert!(false, "{other:?} is not a run_provider_command case");
+    return false;
+}
+```
+
+**The attribute is what lets two things be true at once, and both are deliberate:**
+
+- the arms above cover the enum **exhaustively**, so the compiler proves the dispatcher routes every
+  variant — that proof is the point, and it is what a new variant breaks loudly;
+- the catch-all is therefore *unreachable by construction*, and exists to turn a **routing mistake**
+  into something visible: a `debug_assert!` that fires in every test build, and a quiet `false` in
+  release, because a user's binary must not panic over an internal mistake.
+
+Each site carries the reasoning in a comment immediately above it — which is why the row's "eight
+identical" description reads as duplication to anyone who counts instead of reading.
+
+**Do not consolidate them.** A single module-level `#![allow(unreachable_patterns)]` would remove
+eight deliberate traps' worth of noise and in exchange blind the whole file to a genuinely
+unreachable pattern — a real bug class, and exactly the kind of thing this file's dispatcher tests
+exist to catch. Deleting the arms is worse still: it deletes a safety net whose only cost is one
+attribute.
+
+**What would be an improvement, and is not worth a slice on its own:** each could carry
+`reason = "…"`, the style already used once in this crate (`app/view.rs:32`), so the justification
+travels with the attribute instead of living one line above it. Noted here rather than done, because
+the comment is already there and a mechanical pass over eight sites for a cosmetic attribute is the
+kind of change this repository asks you not to make for its own sake.
+
+**The method failure is the same one as A7, A11 and A20** — a row written from a *count* rather than
+from what the code does with the things counted. That is now four, and the queue note carries the
+countermeasure.
 # A20 — M205's startup notice could no longer fire, and said the wrong thing (CLOSED at M214)
 
 **Closed 2026-09-30.** M214 asks the question the workspace can answer: the notice counts the
