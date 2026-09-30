@@ -2157,6 +2157,30 @@ impl Agent {
                 }
 
                 for r in &results {
+                    // M229 / A11: **a tool's own provider call is this turn's spend too.** The
+                    // `task` tool runs a subagent, which makes real billed requests on the
+                    // parent's account; before this, that usage rode in on the tool result
+                    // (`ToolResultMessage.usage`, persisted) and was aggregated nowhere — the
+                    // provider stream below sums assistant messages only, so the turn total,
+                    // `session_usage()` and the per-model cost map each under-reported by
+                    // exactly the child's cost.
+                    //
+                    // Folded here rather than at the tool boundary because this is the point where
+                    // the turn's own total is live, and a fold anywhere else would leave the
+                    // transcript, the header and the cost panel disagreeing about the same tokens.
+                    if let Some(u) = r.usage {
+                        usage_total = usage_total.combine(u);
+                        // Per-model only when the tool says which model it ran on: a bill with no
+                        // model cannot be priced without inventing a rate, which is M141's defect.
+                        // It still counts in the total above, so an unattributed bill under-reports
+                        // *where* it went, never *whether* it was spent.
+                        if let Some(model) = r.details.get("model").and_then(|v| v.as_str())
+                            && let Ok(mut by_model) = self.session_usage_by_model.lock()
+                        {
+                            let row = by_model.entry(model.to_string()).or_default();
+                            *row = row.combine(u);
+                        }
+                    }
                     let m = Message::ToolResult(r.clone());
                     // pi emits full message lifecycle for tool results too — frontends
                     // render from these events, not by scraping internals.

@@ -1789,8 +1789,22 @@ impl App {
                             .as_deref()
                             .map(|m| format!(" · @{m}"))
                             .unwrap_or_default();
+                        // M229: the child's own tokens, in the row that already names its model.
+                        // They are counted in the turn total and the cost panel now; printing
+                        // them here is what makes "why is this session expensive" answerable
+                        // without adding up turns by hand.
+                        let spend = s
+                            .usage
+                            .map(|u| {
+                                format!(
+                                    " · {} in / {} out",
+                                    crate::ui::format::format_tokens(u.input),
+                                    crate::ui::format::format_tokens(u.output)
+                                )
+                            })
+                            .unwrap_or_default();
                         self.ui.push_notice(format!(
-                            "task {} · {state}{on_model} · {} · {} turn(s) · {}",
+                            "task {} · {state}{on_model}{spend} · {} · {} turn(s) · {}",
                             s.id,
                             s.description,
                             s.turns,

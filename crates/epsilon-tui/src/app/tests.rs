@@ -1023,6 +1023,50 @@ async fn tasks_command_lists_the_registry_and_says_when_it_is_empty() {
     );
 }
 
+/// M229: `/task` shows what the child cost.
+///
+/// A **foreground** child, so the assertion cannot be skipped by a task that has not settled yet —
+/// which is why this is its own test rather than a third assertion on the background one above.
+/// The registry has held the child's usage since the child finished; the row listed turns and a
+/// preview without it, so "why is this session expensive" was unanswerable from the screen even
+/// though every number existed.
+#[tokio::test]
+async fn tasks_command_shows_what_a_child_cost() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    let host: std::sync::Arc<dyn epsilon_contracts::tool::TaskHost> =
+        agent.clone() as std::sync::Arc<dyn epsilon_contracts::tool::TaskHost>;
+    host.run_task(epsilon_contracts::tool::TaskRequest {
+        prompt: "look around".into(),
+        description: "repo recon".into(),
+        subagent_type: "default".into(),
+        background: false,
+        resume: None,
+        model: Some("deepseek-flash".into()),
+    })
+    .await
+    .expect("a foreground child completes inline");
+
+    let settled = agent.task_snapshots();
+    assert!(
+        settled
+            .iter()
+            .all(|s| s.state != epsilon_contracts::tool::TaskState::Running),
+        "the child is done: {settled:?}"
+    );
+    assert!(
+        settled.iter().any(|s| s.usage.is_some()),
+        "a completed child carries its bill: {settled:?}"
+    );
+
+    type_and_enter(&mut app, &agent, "/tasks");
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    let joined = texts.join("\n");
+    assert!(
+        joined.contains("in /") && joined.contains("out"),
+        "the spend is in the row that already names the model: {joined}"
+    );
+}
+
 #[tokio::test]
 async fn login_oauth_never_falls_through_to_the_key_store() {
     let (mut app, agent, (_f, _n)) = test_app();
