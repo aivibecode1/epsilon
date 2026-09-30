@@ -5,6 +5,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Session files are about to get one home each.** The naming rule that pi uses — a directory per working copy, one file per session — is now written down in the session crate, so the next change can make --continue reopen *one* conversation instead of every conversation this workspace has ever had in one file (M209, plan 020).
+
 - **One less place for a timestamp rule to drift.** The ISO-8601 formatter the RPC surface uses moved into the session crate, where session file naming will need the same string — so the two cannot disagree later (M208).
 
 - **A launch that waited for the session file now says so afterwards.** Waiting for another
