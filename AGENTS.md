@@ -293,12 +293,33 @@ belongs to the gate script, not to the project. The 21 GB that used to sit in
 Budget a cold round at **~30–45 min with one job** (the C dependency build dominates; a
 release `cargo install` measured ~28 min with deps warm).
 
+**A full battery costs 4 GB, not 33 GB, if you turn debug info off (measured 2026-09-29,
+M208).** The 35–40 GB figure above is *debug-info* weight, and most of it is not needed to
+run a test suite:
+
+```sh
+$env:CARGO_PROFILE_DEV_DEBUG = "0"; $env:CARGO_PROFILE_TEST_DEBUG = "0"
+pwsh -File scripts/gate.ps1 <label>
+```
+
+Measured on the M208 round: the entire workspace build tree after a full seven-gate battery
+was **4.19 GB**, against ~33 GB for the same battery with debug info on, and the gate took
+its usual shape (clippy 240 s, test 675 s, demo 113 s) with **1,622 tests / 64 binaries, 0
+failed**. Nothing about what is compiled or asserted changes — only whether debug info is
+emitted. Cold cost with the knob: `cargo check -p epsilon-cli` 12m46s.
+
+**The trade is real and must be disclosed, not quietly applied:** a panic backtrace in a
+failing test becomes close to useless, so **turn debug info back on for the round that
+debugs a failure** (drop the two variables; only the affected crates rebuild). Name the knob
+in the gate log and the milestone, as M208 does.
+
 **Clear `target/` after every round**, which is what the original rule said and what is
 correct once builds are on C: again — 35–40 GB in the repo's own `target/` is what pushed
 this drive to 96% full. The rule was wrong only while a `CARGO_TARGET_DIR` pointed
 somewhere else, and the fix for that is to stop pointing it elsewhere, not to keep the
 cache. Copy any evidence you want to keep (a gate log) out of `target/` **before** the
-wipe, because the wipe takes it with everything else.
+wipe, because the wipe takes it with everything else. With the `*_DEBUG=0` knob the wipe
+matters much less: a 4 GB cache is worth keeping, a 33 GB one is not.
 
 - When CLI/TUI behavior changed and gates pass, reinstall the global `epsilon.exe`: the
   user tests the installed binary, and an un-reinstalled change is invisible to them. No
