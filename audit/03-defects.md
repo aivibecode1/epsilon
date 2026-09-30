@@ -63,6 +63,45 @@ from itself.
 on every `-c` launch** with the TUI unstarted until it expires. It also means M210's `-c` claim is
 unverified for a reason that is itself a defect, not a probe limitation.
 
+## Located (2026-09-30) — it is two opens of one path, in that order
+
+The sequence is in `crates/epsilon-cli/src/main.rs`, and it is unambiguous:
+
+1. **`main.rs:1813`** opens the primary store at `workspace.join(session_file)` and
+   **`:1877`** attaches it to the agent — so this process holds a lease. Since M210 that path is
+   a *fresh file named for this launch*.
+2. **Only then** does the resume step run: **`:1882-1888`** resolves the path
+   (`Resume::Latest` → `latest_session_file(sessions_dir)`), and **`:1891`** opens that path as a
+   **second** store.
+
+Two things follow, and together they are the whole defect:
+
+- **With `-c`, the newest session file in the directory can be the file this process just created**
+  one step earlier — so the second open acquires a lease on a path whose lease *this same process*
+  already holds. The holder is alive by definition (it is us), its heartbeat keeps the lock's mtime
+  moving, so the dead-holder settle never fires and the wait runs the whole `STALE_AFTER` window
+  before the staleness rule lets it steal from itself. That is the 21/22/24-second countdown, with
+  no other process alive and no lock on disk at the moment of the launch.
+- **Whether M210 caused it is a separate question, and the code says it probably did not.** The
+  order is `open primary → attach → resolve resume`, and before M210 the primary path was the fixed
+  `tui.jsonl` — which *is* what `latest_session_file` returns in a TUI-only workspace. So the
+  self-conflict plausibly predates M210 by a long way. Do not present this as a regression without
+  the `git log -S` that shows it; the mechanism is certain, the age is not.
+
+## The fix shape, in the order worth trying
+
+1. **Resolve the resume path before opening anything**, and when it equals the primary path, open
+   **once** — the resumed store *is* the primary. This removes the double open rather than working
+   around it, and it is the only version that cannot leave a window where two leases exist.
+2. If the reorder is too invasive for one slice: skip the primary open entirely when
+   `Resume::Latest`/`Path` resolves to the same path, and construct the agent's store from the
+   resumed one.
+3. Do **not** "fix" it by releasing the primary lease just before the second open. That works for
+   the same-path case and silently permits a genuine second writer whenever the paths differ —
+   which is the corruption the lease exists to prevent.
+
+The verification is the check A19 interrupted: a capture past the wait that shows the resumed
+transcript, plus a launch timing that does not include a thirty-second countdown.
 ## Not yet established — the two things a fix needs
 
 - **Which file it waits on.** The evidence is a countdown with no holder, not a `Leased { holder }`
