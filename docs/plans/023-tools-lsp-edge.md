@@ -58,6 +58,31 @@ the caller — the CLI, which already passes `lsp:` into `RunParams` — pass th
 dependency. Steps 2–4 below stand unchanged; **the estimate drops from ~1 hour to well under it, and
 the risk with it**, because nothing about the diagnostics behaviour is touched.
 
+### And the caller is already able to do it (checked the same day)
+
+The paragraph above says "move the construction to the CLI" as though that were a new capability. It
+is not — the CLI already has everything it needs:
+
+```text
+crates/epsilon-cli/Cargo.toml   epsilon-lsp = { path = "../epsilon-lsp" }      <- the edge exists
+doctor.rs:279                   lsp_servers: epsilon_lsp::DiagnosticsService::default()
+main.rs:171                     lsp: epsilon_tools::Lsp                        <- the policy, passed in
+main.rs:326/343/401-407         `--lsp auto|off` parsing, defaulting to Auto
+```
+
+So **no new dependency edge is created**, and the construction already exists in the CLI once (in
+`doctor`) — which makes the change "build a `DiagnosticsService` where the enum is matched, and that
+match now lives in `build_runtime` instead of the tool registry". Two consequences worth taking:
+
+- **The `Lsp` enum does not have to move or die.** It is a policy name with no dependency of its own;
+  what must leave `epsilon-tools` is the *match that builds a server*, not the enum. Keeping it means
+  `RunParams.lsp: Lsp` is unchanged, `--lsp` parsing is unchanged, and the diff is one function's
+  body — the smallest version of this slice, and the one to take.
+- **`doctor` and `build_runtime` then construct the same thing in two places.** That is not a new
+  duplication (doctor runs in its own mode and never shares a process with a turn), but it wants a
+  named helper in the CLI — `fn diagnostics_for(policy: Lsp) -> Option<Arc<dyn DiagnosticsProvider>>`
+  — so "off means None, auto means a default service" has one home. Otherwise this plan removes one
+  rule from two places and creates another in two places, which is a poor trade.
 ## The inversion, which is the one already in the tree
 
 The *policy* ("should a server be started for this workspace?") belongs to the frontend, which knows
