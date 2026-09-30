@@ -133,6 +133,51 @@ pub const DEAD_HOLDER_SETTLE: Duration = Duration::from_secs(4);
 /// large enough that a 30-second wait is not thousands of syscalls.
 const WAIT_POLL: Duration = Duration::from_millis(100);
 
+/// Delete lock files in `dir` whose holder has provably gone, and report how many were removed.
+///
+/// ## Why this is safe, in the same terms the steal is
+///
+/// The predicate is **exactly** the one [`SessionLease::acquire`] already uses to decide a lock may
+/// be taken: an mtime that has not moved for [`STALE_AFTER`]. A live holder re-touches its lock
+/// every [`HEARTBEAT`], so a lock untouched for thirty seconds has no live holder — and `acquire`
+/// would steal it without hesitating. This function deletes precisely the files `acquire` would
+/// otherwise have to work around, so it can neither take a lock from a living process nor change
+/// any decision: removing a stealable lock only saves the next process from watching it.
+///
+/// ## Why it is worth doing at all
+///
+/// One session per file (M210) means one *lock* per session, and a session whose process was killed
+/// — a closed terminal window, a `taskkill` — never removes its own. Without this, a workspace used
+/// daily accumulates two entries per launch and half of them are dead, in a directory a user lists
+/// when they go looking for their sessions. Discovery filters `*.jsonl` and is unaffected; a human
+/// reading the directory is not.
+///
+/// Errors are deliberately invisible here: a directory that cannot be read, or a file that cannot be
+/// removed (another process just took it, permissions, a Windows share), is not a reason to fail a
+/// launch. The caller gets a count for logging and nothing else.
+pub fn sweep_stale_locks(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().is_none_or(|x| x != "lock") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age > STALE_AFTER);
+        if stale && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// Outcome of trying to acquire a lease.
 #[derive(Debug)]
 pub enum LeaseOutcome {
@@ -444,6 +489,51 @@ impl Drop for SessionLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sweep_removes_dead_locks_and_keeps_live_ones() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let dead = dir.path().join("a.lock");
+        let live = dir.path().join("b.lock");
+        std::fs::write(&dead, "pid=999999\n").expect("dead holder left this");
+        std::fs::write(&live, "pid=1\n").expect("a live holder's lock");
+        // The dead one is aged past the window; the live one is fresh, exactly as a heartbeating
+        // holder leaves it. Both shapes are what `acquire` would see.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&dead)
+            .expect("open")
+            .set_modified(SystemTime::now() - STALE_AFTER - Duration::from_secs(1))
+            .expect("age it past the window");
+
+        let removed = sweep_stale_locks(dir.path());
+        assert_eq!(removed, 1, "exactly the stale lock, not the fresh one");
+        assert!(!dead.exists(), "a dead holder's lock is reaped");
+        assert!(
+            live.exists(),
+            "a live holder's lock must survive — removing it would be the theft the \
+             settle exists to prevent"
+        );
+    }
+
+    /// A file that is not a lock is not ours to remove, however old it is: the sessions directory
+    /// holds the session files themselves, and a sweep that matched `*` would delete a user's
+    /// history.
+    #[test]
+    fn the_sweep_touches_nothing_but_lock_files() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("old.jsonl");
+        std::fs::write(&session, "{}\n").expect("a session file");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&session)
+            .expect("open")
+            .set_modified(SystemTime::now() - STALE_AFTER - Duration::from_secs(60))
+            .expect("age it");
+
+        assert_eq!(sweep_stale_locks(dir.path()), 0);
+        assert!(session.exists(), "the sweep must not touch session files");
+    }
 
     #[test]
     fn lease_is_exclusive_and_released_on_drop() {

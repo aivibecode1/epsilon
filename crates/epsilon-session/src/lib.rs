@@ -23,7 +23,7 @@ pub use import::{
     ImportReport, import_output_path, import_pi_session, is_pi_v2_entry_shape,
     looks_like_pi_session,
 };
-pub use lease::{LeaseOutcome, SessionLease};
+pub use lease::{LeaseOutcome, SessionLease, sweep_stale_locks};
 pub use search::{SearchOptions, SessionSearchHit, search_session};
 pub use store::{
     FaultOp, LineDiagnosis, ModelViewEntry, SessionStore, StoreError, build_forest_from_entries,

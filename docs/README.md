@@ -78,6 +78,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > than being silently absent. The list is generated from the `H1` of each log, so an entry
 > cannot describe a milestone the log does not.
 
+- [M211 — reaping locks whose holder is gone](milestones/M211-reaping-dead-locks.md)
 - [M210 — a launch writes a session file of its own](milestones/M210-a-session-file-per-launch.md)
 - [M209 — the session-naming rule, transcribed from the reference](milestones/M209-session-naming-rule.md)
 - [M208 — one timestamp formatter, moved before it was duplicated](milestones/M208-one-timestamp-formatter.md)

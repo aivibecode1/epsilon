@@ -1810,6 +1810,16 @@ async fn build_runtime(
     // caller may want one without the other.
     epsilon_cli::runtime::install_extension_turn_hooks(&agent, ext_hosts.clone());
     let session_path = workspace.join(session_file);
+    // Reap locks whose holder is provably gone before opening anything (M211). One session per file
+    // (M210) means one lock per session, and a process that was killed — a closed terminal window, a
+    // `taskkill` — never removes its own, so a daily workspace accumulates two entries per launch
+    // and half of them are dead, in the directory a user lists when looking for their sessions. The
+    // predicate is exactly the one `acquire` uses to decide a lock may be stolen, so this cannot
+    // take a lock from a living process. The count is not logged: a launch is not the place for
+    // housekeeping chatter.
+    if let Some(dir) = session_path.parent() {
+        let _ = epsilon_session::sweep_stale_locks(dir);
+    }
     let mut store = epsilon_session::SessionStore::open_in_with_progress(
         session_path.clone(),
         workspace,

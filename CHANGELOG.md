@@ -5,6 +5,8 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Dead lock files are cleaned up at launch.** A terminal killed mid-session used to leave its lock behind forever, so a busy workspace collected two files per session and half of them stale (M211).
+
 - **Each launch now writes its own session file.** Before this, every terminal UI launch appended to one 	ui.jsonl, so --continue reopened *every* conversation this workspace had ever had as a single context — with no boundary between them. -c now reopens the conversation you were last in (M210).
 
 - **Session files are about to get one home each.** The naming rule that pi uses — a directory per working copy, one file per session — is now written down in the session crate, so the next change can make --continue reopen *one* conversation instead of every conversation this workspace has ever had in one file (M209, plan 020).
