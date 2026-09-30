@@ -885,6 +885,14 @@ impl App {
     ///
     /// Silent when the history *is* restored — the condition is "the store has entries and this
     /// process is not carrying them", which is exactly what makes the screen look wrong.
+    ///
+    /// **The count is the union `epsilon -c` resolves (M222, A17's open half).** This used to list
+    /// the directory the launch's own file sits in, which since M217 is
+    /// `sessions/--<cwd>--/` — so it saw this workspace's own sessions and **none of the pre-M217
+    /// files in the flat root**, which `-c` opens too (M217 reads both). A notice that stays
+    /// silent while `-c` has something to open is the reader/writer asymmetry M217 removed
+    /// everywhere else, reached from the other end: the same argument cannot be true of this count
+    /// and of that one.
     pub(crate) fn note_prior_history(&mut self, agent: &Agent) {
         if !agent.history().is_empty() {
             return;
@@ -901,7 +909,19 @@ impl App {
         let Some(session_dir) = own.parent() else {
             return;
         };
-        let earlier = epsilon_session::list_sessions(session_dir)
+        // The sessions ROOT is the per-cwd directory's parent when the file is in one, and the
+        // file's own directory when it is not — which is both the pre-M217 layout and this crate's
+        // test fixture. Deciding by the directory's *name* is what keeps the two apart without a
+        // second piece of state, and `session_dir_name` is the same rule the writer applied.
+        let root = if session_dir.file_name()
+            == Some(std::ffi::OsStr::new(
+                &epsilon_session::time::session_dir_name(&self.workspace_root),
+            )) {
+            session_dir.parent().unwrap_or(session_dir)
+        } else {
+            session_dir
+        };
+        let earlier = epsilon_session::list_sessions_for_cwd(root, &self.workspace_root)
             .into_iter()
             .filter(|s| s.path != own)
             .count();

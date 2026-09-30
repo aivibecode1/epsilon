@@ -59,13 +59,34 @@ pub fn test_app() -> (App, Arc<Agent>, TestReceivers) {
 /// The goal lives in the session log and nowhere else, so a `/goal` test on an agent with no
 /// store would exercise the refusal path — a real case, with its own test — instead of the
 /// behaviour it means to check.
+/// An app whose store sits where a real launch puts it: the sessions root, the per-working-copy
+/// directory under it, and a named file inside that.
+///
+/// **M222: this fixture used to plant `<temp>/session.jsonl`** — not in a sessions tree at all —
+/// so every line of code that reasons about *where* a session lives was exercised only by accident,
+/// and the one place that derives the root from the directory name (A17's notice) was never
+/// exercised at all. A fixture that misrepresents production is how a layout rule goes untested.
 pub fn test_app_with_store() -> (App, Arc<Agent>, TestReceivers, tempfile::TempDir) {
-    let (app, agent, rx) = test_app();
+    let (mut app, agent, rx) = test_app();
     let dir = tempfile::tempdir().expect("a temporary workspace");
-    let store = epsilon_session::SessionStore::open(dir.path().join("session.jsonl"))
-        .expect("a fresh session file opens");
+    app.workspace_root = dir.path().to_path_buf();
+    let store = open_workspace_session(&app.workspace_root, "session.jsonl");
     agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
     (app, agent, rx, dir)
+}
+
+/// The file a launch in `workspace` would write, named `name` — the sessions root, the per-cwd
+/// directory, and the file inside it, with pi's naming rule applied by the caller.
+///
+/// The directory is created; the store's header lands in it on open.
+pub fn open_workspace_session(
+    workspace: &std::path::Path,
+    name: &str,
+) -> epsilon_session::SessionStore {
+    let sessions = workspace.join(".epsilon").join("sessions");
+    let per_cwd = epsilon_session::time::session_dir_for(&sessions, workspace);
+    std::fs::create_dir_all(&per_cwd).expect("the per-workspace session directory");
+    epsilon_session::SessionStore::open_in(per_cwd.join(name), workspace).expect("a session opens")
 }
 
 /// One screen row as text: every cell's symbol once, stepping by its width.
