@@ -321,6 +321,14 @@ pub enum GoalOp {
         objective: Option<String>,
         /// New cap, when it changes.
         max_rounds: Option<u32>,
+        /// Replace the whole gate list, when it changes. `None` leaves it alone.
+        ///
+        /// **Replace, not append.** "Add a gate" is `fetch the current list, push, send it`,
+        /// and a caller that has to read before it can write cannot lose a gate by racing
+        /// itself. An empty list clears them, which is a different request from omitting the
+        /// field and has to stay different — otherwise "clear the gates" is unreachable
+        /// from a client that omits empty values.
+        gates: Option<Vec<GoalGate>>,
     },
     /// Stop automatic continuation and keep the state.
     Pause,

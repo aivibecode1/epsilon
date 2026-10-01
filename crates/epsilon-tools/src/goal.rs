@@ -20,7 +20,7 @@
 
 use async_trait::async_trait;
 use epsilon_contracts::goal::{
-    BLOCKED_MIN_ROUNDS, DEFAULT_MAX_GOAL_ROUNDS, GoalError, GoalOp, GoalRef, GoalView,
+    BLOCKED_MIN_ROUNDS, DEFAULT_MAX_GOAL_ROUNDS, GoalError, GoalGate, GoalOp, GoalRef, GoalView,
 };
 use epsilon_contracts::tool::{
     ExecutionMode, GoalHost, Tool, ToolContext, ToolDescriptor, ToolFailure, ToolInvocation,
@@ -305,6 +305,18 @@ pub struct UpdateGoalArgs {
     /// What the concrete blocking condition is, for `blocked`.
     #[serde(default)]
     pub blocker_reason: Option<String>,
+    /// The goal's **whole** gate list, for `edit`: shell commands that must exit zero
+    /// before this goal may be completed. Replaces what is there.
+    ///
+    /// **Commands, not objects.** `epsilon-contracts` has no `schemars` dependency and
+    /// adding one for a single field would be a real change to a crate that is deliberately
+    /// dependency-light; the timeout is the only other knob and its default is right.
+    ///
+    /// Replace rather than append, and an empty list is a request rather than an omission:
+    /// a caller omits the field when the list is unchanged, and sends `[]` to take the
+    /// rule off. A rule a user cannot remove is a rule the user is stuck with.
+    #[serde(default)]
+    pub gates: Option<Vec<String>>,
 }
 
 /// Change the current goal, or report that it is finished or stuck.
@@ -372,6 +384,9 @@ impl Tool for UpdateGoalTool {
             GoalAction::Edit => GoalOp::Edit {
                 objective: args.objective,
                 max_rounds: args.max_goal_rounds,
+                gates: args
+                    .gates
+                    .map(|cmds| cmds.iter().map(GoalGate::new).collect()),
             },
             GoalAction::Pause => GoalOp::Pause,
             GoalAction::Resume => GoalOp::Resume,
@@ -479,6 +494,16 @@ mod tests {
 
     impl FakeHost {
         fn with_rounds(rounds: u32) -> Self {
+            Self::build(rounds, Vec::new())
+        }
+
+        /// A host whose goal carries `gates` — the fixture the gate tests need, and the
+        /// reason the gates live on the snapshot rather than beside it.
+        fn with_gates(gates: Vec<GoalGate>) -> Self {
+            Self::build(0, gates)
+        }
+
+        fn build(rounds: u32, gates: Vec<GoalGate>) -> Self {
             let host = Self::default();
             *host.goal.lock().unwrap() = Some(GoalSnapshot {
                 id: "g1".into(),
@@ -488,7 +513,7 @@ mod tests {
                 max_rounds: 8,
                 rounds_started: rounds,
                 blocker: None,
-                gates: Vec::new(),
+                gates,
                 created_at_ms: 0,
                 updated_at_ms: 0,
             });
@@ -566,6 +591,76 @@ mod tests {
             epsilon_contracts::content::ContentBlock::Text { text } => text.clone(),
             other => panic!("text expected, got {other:?}"),
         }
+    }
+
+    /// **The test M240 was missing**: a goal can declare a gate, and the gate is enforced
+    /// when the model tries to complete it.
+    ///
+    /// The gate tests in `tests/goal_gates.rs` prove the runner works and that the field
+    /// decodes. This one proves the two are **connected**, which is the whole feature: a
+    /// gate that can be declared but never blocks completion is a field, not a rule.
+    #[tokio::test]
+    async fn a_declared_gate_refuses_a_completion_it_fails() {
+        let host: Arc<dyn GoalHost> = Arc::new(FakeHost::with_gates(vec![GoalGate::new(
+            "cargo definitely-not-a-subcommand",
+        )]));
+        let tool = UpdateGoalTool::new()
+            .with_gate_runner(Arc::new(crate::goal_gate::GoalGateRunner::new(None)));
+        let err = call(
+            &tool,
+            serde_json::json!({"action": "complete", "goal_id": "g1", "revision": 2}),
+            host,
+        )
+        .await
+        .expect_err("a failing gate must refuse the completion");
+        assert!(
+            err.message.contains("refused"),
+            "the refusal must say it refused: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("cargo definitely-not-a-subcommand"),
+            "and name the command, which is the only part a reader can act on: {}",
+            err.message
+        );
+        assert!(
+            !err.message.contains("goal updated"),
+            "and must not have recorded the completion anyway: {}",
+            err.message
+        );
+    }
+
+    /// The other half, so the refusal above is the gate working rather than the tool
+    /// refusing everything.
+    #[tokio::test]
+    async fn a_declared_gate_that_passes_lets_the_completion_through() {
+        let host: Arc<dyn GoalHost> =
+            Arc::new(FakeHost::with_gates(vec![GoalGate::new("cargo --version")]));
+        let tool = UpdateGoalTool::new()
+            .with_gate_runner(Arc::new(crate::goal_gate::GoalGateRunner::new(None)));
+        let out = call(
+            &tool,
+            serde_json::json!({"action": "complete", "goal_id": "g1", "revision": 2}),
+            host,
+        )
+        .await
+        .expect("a passing gate must not refuse");
+        assert!(body(&out).contains("goal updated"), "{}", body(&out));
+    }
+
+    /// A goal with **no** gates is exactly as completable as it was. A feature that made
+    /// completion harder for everyone until they declared a rule would be adopted by nobody.
+    #[tokio::test]
+    async fn a_goal_with_no_gates_completes_as_it_always_did() {
+        let host: Arc<dyn GoalHost> = Arc::new(FakeHost::with_gates(Vec::new()));
+        let tool = UpdateGoalTool::new();
+        call(
+            &tool,
+            serde_json::json!({"action": "complete", "goal_id": "g1", "revision": 2}),
+            host,
+        )
+        .await
+        .expect("a goal with no gates is unaffected by this feature");
     }
 
     #[tokio::test]

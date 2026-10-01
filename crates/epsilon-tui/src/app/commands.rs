@@ -808,6 +808,7 @@ impl App {
                     Ok(n) if n > 0 => Some(GoalOp::Edit {
                         objective: None,
                         max_rounds: Some(n),
+                        gates: None,
                     }),
                     _ => {
                         self.ui
@@ -815,10 +816,26 @@ impl App {
                         return;
                     }
                 }
+            } else if kind.eq_ignore_ascii_case("gate") || kind.eq_ignore_ascii_case("gates") {
+                // The whole list, replaced. `/goal edit gate clear` takes the rule off and
+                // `/goal edit gate cargo test` sets it to exactly that — replace rather
+                // than append, so a user re-reading their own goal cannot accumulate
+                // three tests and wonder why completion stopped.
+                let gates = if rest.trim().is_empty() || rest.trim().eq_ignore_ascii_case("clear") {
+                    Vec::new()
+                } else {
+                    vec![epsilon_contracts::goal::GoalGate::new(rest.trim())]
+                };
+                Some(GoalOp::Edit {
+                    objective: None,
+                    max_rounds: None,
+                    gates: Some(gates),
+                })
             } else {
                 Some(GoalOp::Edit {
                     objective: Some(tail.to_string()),
                     max_rounds: None,
+                    gates: None,
                 })
             }
         } else {

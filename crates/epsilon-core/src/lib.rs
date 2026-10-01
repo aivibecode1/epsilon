@@ -1309,12 +1309,14 @@ impl Agent {
                 GoalOp::Edit {
                     objective,
                     max_rounds,
+                    gates,
                 },
                 Some(mut g),
             ) => {
-                if objective.is_none() && max_rounds.is_none() {
+                if objective.is_none() && max_rounds.is_none() && gates.is_none() {
                     return Err(GoalError::Invalid(
-                        "edit needs an objective, a round cap, or both".into(),
+                        "edit needs an objective, a round cap, a gate list, or some combination"
+                            .into(),
                     ));
                 }
                 if let Some(objective) = objective {
@@ -1331,6 +1333,20 @@ impl Agent {
                         return Err(GoalError::Invalid("max_rounds must be at least 1".into()));
                     }
                     g.max_rounds = *max_rounds;
+                }
+                if let Some(gates) = gates {
+                    // An empty gate list is a **request**, not a no-op: it is how a user
+                    // takes the rule back off a goal, and a rule that cannot be removed
+                    // is a rule the user is stuck with.
+                    if let Some(bad) = gates.iter().find(|g| !g.is_runnable()) {
+                        let _ = bad;
+                        return Err(GoalError::Invalid(
+                            "a gate needs a command; one with an empty command could never pass \
+                             and would block completion for ever"
+                                .into(),
+                        ));
+                    }
+                    g.gates.clone_from(gates);
                 }
                 g
             }

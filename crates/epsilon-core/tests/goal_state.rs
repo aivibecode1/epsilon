@@ -379,6 +379,7 @@ fn a_round_is_counted_and_the_cap_stops_it() {
             GoalOp::Edit {
                 objective: None,
                 max_rounds: Some(4),
+                gates: None,
             },
         )
         .unwrap();
@@ -396,6 +397,7 @@ fn an_edit_can_raise_the_objective_or_the_cap_and_refuses_to_blank_either() {
             GoalOp::Edit {
                 objective: Some("sharpened objective".into()),
                 max_rounds: None,
+                gates: None,
             },
         )
         .unwrap()
@@ -408,7 +410,8 @@ fn an_edit_can_raise_the_objective_or_the_cap_and_refuses_to_blank_either() {
                 None,
                 GoalOp::Edit {
                     objective: Some("   ".into()),
-                    max_rounds: None
+                    max_rounds: None,
+                    gates: None,
                 }
             )
             .is_err(),
@@ -420,7 +423,8 @@ fn an_edit_can_raise_the_objective_or_the_cap_and_refuses_to_blank_either() {
                 None,
                 GoalOp::Edit {
                     objective: None,
-                    max_rounds: None
+                    max_rounds: None,
+                    gates: None,
                 }
             )
             .is_err(),
@@ -437,4 +441,102 @@ fn a_session_with_no_goal_says_so_instead_of_inventing_one() {
         GoalError::NoGoal
     ));
     assert!(agent.goal_begin_round().unwrap().is_none());
+}
+
+/// A gate whose command is empty would block completion for ever with nothing a user can
+/// fix, so it is refused **when it is declared**, not when completion is attempted.
+///
+/// It lives here rather than beside the tool tests because the refusal is `goal_apply`'s:
+/// the tool test drives a fake host, which would have passed against a build where the
+/// check did not exist. A test in the wrong place is how a rule looks covered and is not.
+#[test]
+fn a_gate_with_no_command_cannot_be_declared() {
+    let (agent, _dir) = agent_with_store();
+    agent
+        .goal_apply(
+            None,
+            GoalOp::Create {
+                objective: "finish the slice".into(),
+                max_rounds: None,
+            },
+        )
+        .expect("a goal is created");
+
+    let err = agent
+        .goal_apply(
+            None,
+            GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(vec![epsilon_contracts::goal::GoalGate::new("   ")]),
+            },
+        )
+        .expect_err("a gate that can never pass cannot be declared");
+    assert!(
+        format!("{err}").contains("empty command"),
+        "the refusal names the problem: {err}"
+    );
+}
+
+/// The positive half, so the refusal above is the rule and not a broken goal.
+#[test]
+fn a_gate_can_be_declared_replaced_and_taken_off() {
+    let (agent, _dir) = agent_with_store();
+    agent
+        .goal_apply(
+            None,
+            GoalOp::Create {
+                objective: "finish the slice".into(),
+                max_rounds: None,
+            },
+        )
+        .expect("a goal is created");
+
+    let set = agent
+        .goal_apply(
+            None,
+            GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(vec![epsilon_contracts::goal::GoalGate::new("cargo test")]),
+            },
+        )
+        .expect("a gate is declared");
+    let gates = set.expect("the goal survives").goal.gates;
+    assert_eq!(gates.len(), 1, "{gates:?}");
+    assert_eq!(gates[0].command, "cargo test");
+
+    // **Replaced, not appended**: re-reading your own goal must not leave two rules behind,
+    // and completion blocked by a test you forgot was there is a bad afternoon.
+    let replaced = agent
+        .goal_apply(
+            None,
+            GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(vec![
+                    epsilon_contracts::goal::GoalGate::new("cargo test"),
+                    epsilon_contracts::goal::GoalGate::new("cargo clippy"),
+                ]),
+            },
+        )
+        .expect("a gate list is replaced");
+    assert_eq!(replaced.expect("the goal survives").goal.gates.len(), 2);
+
+    // An **empty list is a request**, not an omission: it is how the rule comes off, and a
+    // rule a user cannot remove is a rule they are stuck with.
+    let cleared = agent
+        .goal_apply(
+            None,
+            GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(Vec::new()),
+            },
+        )
+        .expect("the gates clear");
+    assert!(
+        cleared.expect("the goal survives").goal.gates.is_empty(),
+        "clearing the gates must be possible"
+    );
 }

@@ -40,3 +40,9 @@ and the gate that judged it.
    an unchanged workspace is the obvious next use; `GateReport::carried_over` is the field for it.
 4. **No gate has ever run confined in a test.** Every gate test runs with `Confinement::Off`,
    because that is the only backend the harness sets up. The production branch is unexercised.
+5. **The `/goal edit gate` parser is not driven by a test** for `gate clear` versus `gate <cmd>.
+
+**A trap worth remembering:** a test beside the tool that exercised `goal_apply` rules **passed
+against a build where the rule did not exist**, because it drove a `FakeHost`. A test that
+exercises a stand-in is a test of the stand-in. Rules live in `Agent::goal_apply`; their tests live in
+`epsilon-core/tests/goal_state.rs`.
