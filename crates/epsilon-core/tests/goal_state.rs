@@ -115,6 +115,7 @@ fn a_fresh_process_does_not_inherit_the_permission_to_continue() {
                 max_rounds: 4,
                 rounds_started: 0,
                 blocker: None,
+                gates: Vec::new(),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             },

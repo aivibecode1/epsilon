@@ -310,6 +310,13 @@ pub struct UpdateGoalArgs {
 /// Change the current goal, or report that it is finished or stuck.
 pub struct UpdateGoalTool {
     descriptor: ToolDescriptor,
+    /// Runs the goal's gates when a completion is claimed.
+    ///
+    /// `None` means no evidence is available, and then **completion is still refused** when
+    /// the goal declares gates. A tool that quietly stops enforcing a rule when its
+    /// collaborator is missing is worse than one that never had it: the user reads "done"
+    /// and believes a test passed.
+    gate_runner: Option<Arc<crate::goal_gate::GoalGateRunner>>,
 }
 
 impl UpdateGoalTool {
@@ -324,7 +331,14 @@ impl UpdateGoalTool {
                     .unwrap_or(serde_json::json!({"type":"object"})),
                 execution_mode: ExecutionMode::Parallel,
             },
+            gate_runner: None,
         }
+    }
+
+    /// Give the tool the means to check a goal's completion rule.
+    pub fn with_gate_runner(mut self, runner: Arc<crate::goal_gate::GoalGateRunner>) -> Self {
+        self.gate_runner = Some(runner);
+        self
     }
 }
 
@@ -361,7 +375,54 @@ impl Tool for UpdateGoalTool {
             },
             GoalAction::Pause => GoalOp::Pause,
             GoalAction::Resume => GoalOp::Resume,
-            GoalAction::Complete => GoalOp::Complete,
+            GoalAction::Complete => {
+                // **A gate is the evidence that "done" means done.**
+                //
+                // The model's opinion is not evidence, and an unattended goal loop that
+                // ends on one ends on the only judgement with nothing behind it. Gates run
+                // before the completion is recorded, not after: recording it and then
+                // checking would leave a durable `complete` to walk back.
+                let gates = host
+                    .current_goal()
+                    .map(|v| v.goal.gates.clone())
+                    .unwrap_or_default();
+                if !gates.is_empty() {
+                    let Some(runner) = self.gate_runner.as_ref() else {
+                        return Err(ToolFailure::msg(format!(
+                            "this goal declares {} completion gate(s) and this process cannot \
+                             run them, so completion is refused rather than recorded unevidenced. \
+                             Re-run with a confinement backend, or clear the gates first.",
+                            gates.len()
+                        )));
+                    };
+                    let mut failures = Vec::new();
+                    for gate in &gates {
+                        let report = runner.run(gate, &ctx.cwd).await;
+                        if !report.passed {
+                            failures.push(report);
+                        }
+                    }
+                    if !failures.is_empty() {
+                        let detail = failures
+                            .iter()
+                            .map(|r| {
+                                let tail = if r.output_tail.trim().is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("\n{}", r.output_tail)
+                                };
+                                format!("{}{tail}", r.sentence())
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        return Err(ToolFailure::msg(format!(
+                            "completion refused: the goal's gate(s) have not passed.\n\n{detail}\n\n\
+                             Fix what they report, or tell the user the rule no longer applies.",
+                        )));
+                    }
+                }
+                GoalOp::Complete
+            }
             GoalAction::Clear => GoalOp::Clear,
             GoalAction::Blocked => {
                 // DSH's floor, enforced: a blocker declared on the first obstacle is a model
@@ -427,6 +488,7 @@ mod tests {
                 max_rounds: 8,
                 rounds_started: rounds,
                 blocker: None,
+                gates: Vec::new(),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             });

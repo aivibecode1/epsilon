@@ -3269,6 +3269,11 @@ fn new_goal(objective: &str, max_rounds: Option<u32>, now: u64) -> Result<GoalSn
         max_rounds,
         rounds_started: 0,
         blocker: None,
+        // A new goal has no completion rule beyond the caller's own judgement. Gates are
+        // added by an explicit edit, never inferred from the objective's text: a harness
+        // that guesses `cargo test` from the word "fix" would run a command the user never
+        // asked for.
+        gates: Vec::new(),
         created_at_ms: now,
         updated_at_ms: now,
     })

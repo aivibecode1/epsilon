@@ -30,6 +30,7 @@ use epsilon_safety::Sandbox;
 
 pub use files::{EditArgs, EditTool, ReadArgs, ReadTool, WriteArgs, WriteTool};
 pub use find::{FindArgs, FindTool};
+pub mod goal_gate;
 pub use goal::{
     CreateGoalArgs, CreateGoalTool, GetGoalArgs, GetGoalTool, GoalAction, UpdateGoalArgs,
     UpdateGoalTool,
@@ -153,7 +154,16 @@ pub fn register_builtins_with(
     // obscurely. (A `task` child gets its own host through the same seam.)
     registry.register(Arc::new(goal::CreateGoalTool::new()));
     registry.register(Arc::new(goal::GetGoalTool::new()));
-    registry.register(Arc::new(goal::UpdateGoalTool::new()));
+    // The gate runner is built from **the same `sandbox`** the shell tool got. That is the
+    // security property, not an implementation convenience: a goal gate runs a shell
+    // command, and a gate running outside the session's confinement would be a command the
+    // agent's own `bash` is refused — a confused deputy wearing the permission gate as a
+    // disguise. One resolution, so a transcript cannot name one backend for a tool call and
+    // another for the gate that decided whether it succeeded.
+    let update_goal = goal::UpdateGoalTool::new().with_gate_runner(Arc::new(
+        crate::goal_gate::GoalGateRunner::new(sandbox.clone()),
+    ));
+    registry.register(Arc::new(update_goal));
     registry.register(Arc::new(TaskTool::new()));
 }
 

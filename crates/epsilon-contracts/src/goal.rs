@@ -40,6 +40,62 @@ pub const DEFAULT_MAX_GOAL_ROUNDS: u32 = 256;
 /// stuck, uncertain, or merely having more work to do is not blocked.
 pub const BLOCKED_MIN_ROUNDS: u32 = 3;
 
+/// How long a gate may run before it is treated as failed.
+///
+/// Five minutes is a full test suite on a slow machine, and it is the default rather than a
+/// protocol constant because "how long is too long" is a policy choice the person who wrote
+/// the gate can override per gate.
+pub const DEFAULT_GATE_TIMEOUT_SECS: u32 = 300;
+
+/// A deterministic command that must pass before a goal may be called done.
+///
+/// # Why this exists when the model already says "done"
+///
+/// Because the model saying it is not evidence. A goal's whole purpose is unattended
+/// continuation, and an unattended loop that ends on the model's opinion ends on the one
+/// judgement with nothing behind it. `cargo test` exits zero or it does not; "I believe the
+/// fix is correct" is neither reproducible nor checkable.
+///
+/// Hermes calls this `GoalGate` (`hermes_cli/goals.py:337-368`) and it is the single most
+/// valuable idea in that reference: gates run at the turn boundary **before** the model is
+/// asked to judge completion, and a failing gate's bounded output becomes the continuation
+/// prompt. Epsilon has no LLM judge — the caller that records completion is authoritative,
+/// which this module's header already says — so a gate is exactly that caller's evidence.
+///
+/// # It is durable state, not a setting
+///
+/// A gate is part of the objective. It lives on [`GoalSnapshot`] beside `objective`, because
+/// "the goal is not done until the tests pass" is a fact about the goal, and a goal whose
+/// completion rule lives somewhere else can be completed by anything that forgets to look.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalGate {
+    /// The shell command to run. Shell text, exactly as `bash` takes it.
+    pub command: String,
+    /// Wall-clock limit in seconds; a gate that exceeds it fails.
+    #[serde(default = "default_gate_timeout_secs")]
+    pub timeout_seconds: u32,
+}
+
+fn default_gate_timeout_secs() -> u32 {
+    DEFAULT_GATE_TIMEOUT_SECS
+}
+
+impl GoalGate {
+    /// A gate with the default timeout.
+    pub fn new(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
+            timeout_seconds: DEFAULT_GATE_TIMEOUT_SECS,
+        }
+    }
+
+    /// Whether this gate can be run at all — an empty command is a rule that can never pass,
+    /// which would block completion for ever with nothing to fix.
+    pub fn is_runnable(&self) -> bool {
+        !self.command.trim().is_empty()
+    }
+}
+
 /// A goal's durable phase.
 ///
 /// Four, and no more: DSH folds provider limits, exhausted budgets, execution errors and
@@ -134,6 +190,13 @@ pub struct GoalSnapshot {
     /// Set while [`GoalStatus::Blocked`], cleared by resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<GoalBlocker>,
+    /// Commands that must pass before this goal may be completed.
+    ///
+    /// Empty — the default — means "the caller decides", which is the status quo and the
+    /// right default: a goal with no gate is not blocked from completing, it simply has no
+    /// evidence beyond the caller's own judgement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gates: Vec<GoalGate>,
     /// Unix epoch milliseconds when the goal was created.
     #[serde(default)]
     pub created_at_ms: u64,
@@ -378,6 +441,7 @@ mod tests {
             max_rounds: max,
             rounds_started: rounds,
             blocker: None,
+            gates: Vec::new(),
             created_at_ms: 1,
             updated_at_ms: 2,
         }

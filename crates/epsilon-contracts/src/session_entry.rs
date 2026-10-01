@@ -510,6 +510,7 @@ mod tests {
                         max_rounds: 8,
                         rounds_started: 0,
                         blocker: None,
+                        gates: Vec::new(),
                         created_at_ms: 0,
                         updated_at_ms: 0,
                     },
