@@ -5,6 +5,7 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Sidebar rows say when they have been cut.** A task description, a model name or a session name too long for the pane used to stop mid-word with no marker, which on screen is indistinguishable from the whole value. They now end in `…`, so a partial value reads as a partial one (M247).
 - **The desktop's subagent list is now verified rather than trusted.** A running, finished and failed subagent read differently, every row names the model it actually ran on and how many turns it took, and a subagent with no recorded model says so instead of leaving a blank (M246).
 - **The desktop session list says when each conversation ran.** The ordering was already newest-first; now each row carries its age, so a reader can check the ordering rather than take it. A session whose timestamp the filesystem could not supply says nothing rather than `0s` (M245).
 - **Long sessions keep their constraints.** When a session compacts a second time, the summarizer is now told to carry forward the objective, the user's instructions and the work in flight *even when the newest part of the conversation does not mention them* -- and to drop something only when it is finished. Previously it was told to update the summary from the new conversation, which quietly discarded anything only the older part of the session knew, so the agent could forget what it had been told (M244).

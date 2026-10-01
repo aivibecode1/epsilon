@@ -112,6 +112,39 @@ pub struct IdeApp {
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
 }
+/// Shorten `text` so it fits `points` at `font_size`, marking that it was cut.
+///
+/// # Why this exists rather than letting the widget clip
+///
+/// egui clips a label that overflows **silently**. A row that ends mid-word with no marker
+/// is indistinguishable from the whole value, and the two failures are opposites: a reader
+/// who believes a truncated model name is the full one is misled about what ran; a reader
+/// who believes a truncated description is complete is misled about what the agent is doing.
+/// This is the same rule this repository keeps arriving at — **a partial value must say it
+/// is partial** — and a diff line cut without a marker is the identical mistake elsewhere.
+///
+/// # The budget is an approximation, and deliberately so
+///
+/// It assumes an average advance of `AVG_ADVANCE` ems, which holds to within about a
+/// fifth for proportional text and is wrong for a run of narrow glyphs. That is acceptable
+/// *because the result is only ever shortened, never lengthened*: the budget is
+/// deliberately conservative, so the worst case is a row a little shorter than it could have
+/// been. A budget that could drop a readable character would not be acceptable.
+pub fn fit(text: &str, points: f32, font_size: f32) -> String {
+    let budget = (points / (font_size * AVG_ADVANCE)).floor().max(4.0) as usize;
+    if text.chars().count() <= budget {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(budget.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
+/// Average glyph advance as a fraction of the font size, for proportional text.
+const AVG_ADVANCE: f32 = 0.55;
+
+/// The font the sidebar's rows are drawn at, and the one [`fit`] assumes.
+const ROW_FONT: f32 = 13.0;
+
 impl IdeApp {
     /// Build the application around an already-composed session.
     pub fn new(
@@ -415,7 +448,10 @@ impl IdeApp {
         ui.colored_label(theme.dim, header.clone());
         summary.rows.push(("tasks".into(), header));
         for task in &tasks {
+            // Both lines are elided to the pane: a model name cut mid-token is
+            // indistinguishable from the whole model.
             for (color, text) in Self::task_lines(task, &theme) {
+                let text = fit(&text, rect.width() - 16.0, ROW_FONT);
                 ui.colored_label(color, text.clone());
                 summary.rows.push(("tasks".into(), text));
             }
@@ -518,7 +554,7 @@ impl IdeApp {
             return;
         }
         let header = format!("{} stored", sessions.len());
-        ui.colored_label(theme.dim, header.clone());
+        ui.colored_label(theme.dim, fit(&header, rect.width() - 16.0, ROW_FONT));
         summary.rows.push(("sessions".into(), header));
         for entry in &sessions {
             let is_current = current.as_deref() == Some(entry.path.as_path());
@@ -530,10 +566,9 @@ impl IdeApp {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| entry.path.display().to_string());
-            let response = ui.selectable_label(is_current, format!("{marker}{name}"));
-            summary
-                .rows
-                .push(("sessions".into(), format!("{marker}{name}")));
+            let shown = fit(&format!("{marker}{name}"), rect.width() - 16.0, ROW_FONT);
+            let response = ui.selectable_label(is_current, shown.clone());
+            summary.rows.push(("sessions".into(), shown.clone()));
             // **The age, on its own line.** The list is newest-first, so a reader who
             // wants the newest already has it — what they do not have is *evidence*.
             // "2h ago" is what turns an ordering into something they can check, and it
@@ -1499,6 +1534,56 @@ mod tests {
         assert!(header.starts_with("1 task,"), "{header}");
         assert!(!header.contains("(s)"), "{header}");
     }
+
+    /// A row that does not fit is **marked as cut**, never silently clipped.
+    ///
+    /// egui clips an overflowing label without a word. A truncated model name and the whole
+    /// model name look identical on screen, and the two failures are opposites: one misleads
+    /// a reader about what ran, the other about what the agent is doing.
+    #[test]
+    fn a_row_that_does_not_fit_is_marked_rather_than_clipped() {
+        assert_eq!(fit("short", 200.0, ROW_FONT), "short");
+
+        let long = "a".repeat(200);
+        let cut = fit(&long, 200.0, ROW_FONT);
+        assert!(cut.ends_with('…'), "a cut row must say so: {cut:?}");
+        assert!(
+            cut.chars().count() < long.chars().count(),
+            "and must actually be shorter"
+        );
+        // Never empty: a budget of zero is a value that vanished rather than one that was
+        // shortened, which is the failure this is here to prevent.
+        assert!(fit(&"x".repeat(50), 1.0, ROW_FONT).chars().count() >= 4);
+    }
+
+    /// The budget only ever **shortens**. A number that could drop a readable character
+    /// would be worse than no elision at all.
+    #[test]
+    fn the_budget_never_returns_more_than_was_put_in() {
+        for width in [1.0f32, 12.0, 47.0, 120.0, 264.0, 900.0] {
+            for n in [0usize, 1, 5, 39, 40, 41, 200] {
+                let text = "m".repeat(n);
+                let out = fit(&text, width, ROW_FONT);
+                assert!(
+                    out.chars().count() <= text.chars().count().max(4),
+                    "width {width}, {n} chars: {:?} is longer than what went in",
+                    out
+                );
+            }
+        }
+    }
+
+    /// Non-ASCII text is cut on a character boundary, so the row never ends in the
+    /// replacement character that a byte slice would leave behind.
+    #[test]
+    fn a_cut_row_never_ends_in_half_a_character() {
+        let text = "日本語のテキスト".repeat(20);
+        for width in [20.0f32, 60.0, 130.0, 260.0] {
+            let cut = fit(&text, width, ROW_FONT);
+            assert!(!cut.contains('\u{FFFD}'), "width {width}: {cut:?}");
+        }
+    }
+
     #[test]
     fn a_long_path_is_shortened_rather_than_overflowing_the_pane() {
         let short = display_path(std::path::Path::new("/a/b"));

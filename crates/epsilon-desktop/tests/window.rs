@@ -598,6 +598,43 @@ fn a_session_that_cannot_be_resumed_is_refused_with_a_reason() {
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
     assert!(frame.drew("sessions"), "{}", frame.describe());
 }
+/// A row that does not fit the pane is **marked as cut**, not silently clipped.
+///
+/// This is the frame-level half: `fit()` is unit-tested, and this asserts the elision is
+/// actually applied on the way to the screen. A helper that is correct and never called is
+/// the same shape of defect as a button that is drawn and never wired.
+#[test]
+fn a_long_session_name_is_shown_as_cut_rather_than_clipped() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    // A name long enough that it cannot fit a 264-point sidebar.
+    let long = "x".repeat(200);
+    let mut store =
+        epsilon_session::SessionStore::open_in(ws.path().join(format!("{long}.jsonl")), ws.path())
+            .expect("the session file");
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: assistant_markdown("hello"),
+            api_request_sha256: None,
+        })
+        .expect("the message lands");
+    drop(store);
+
+    let (ctx, mut app) = wire(ws.path());
+    app.set_sidebar_view(epsilon_desktop::app::SidebarView::Sessions);
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let pane = frame.region("sessions").join("\n");
+    assert!(
+        pane.contains('…'),
+        "a name too long for the pane must be marked as cut:\n{}",
+        frame.describe()
+    );
+    assert!(
+        !pane.contains(&"x".repeat(200)),
+        "and the full name must not be what is drawn -- a clipped label is \
+         indistinguishable from the whole one"
+    );
+}
 /// A session row carries **when it ran**, not just its name.
 ///
 /// The list is newest-first, so a reader who wants the newest already has the ordering.
