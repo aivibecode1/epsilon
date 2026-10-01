@@ -69,28 +69,48 @@ converged, and for the same reason: **a prompt that can scroll out of reach behi
 answer is not a prompt.** They come from the approvals channel, not the transcript, so a run
 that blocks at its very first gate still tells the reader what is waiting.
 
+## The input path, and the measurement that settled it
+
+The test above **types.** Not `set_draft` — `egui::Event::Text` and `Event::Key{Enter}`
+through `RawInput` with `focused: true`, which is what egui requires before it will deliver
+a key at all.
+
+Getting there took a probe rather than a guess, and the probe is the useful part. Four
+attempts to make the composer accept a character all failed, and each was a plausible cause:
+focus not requested, an unstable widget id, `RawInput::focused` defaulting to false, the wrong
+`Event::Text` shape. Changing each in turn changed nothing.
+
+So the next step was to stop asking and **measure**: render one bare `TextEdit` into an
+off-screen context, feed it the same events, and see whether *it* received them. It did —
+**including unfocused**, which ruled out all four candidates at once. The real cause was a
+fact about immediate-mode drawing: an egui frame paints top to bottom, the transcript is
+painted before the composer, so a row the composer adds during a frame cannot appear in that
+frame's output. The prompt is on screen on the next repaint, which is well inside a display
+cycle.
+
+Four rounds were spent looking for a product bug that did not exist, and the thing that ended
+it was a twenty-line probe rather than a fourth theory. `audit/04-tui.md` records what four
+unreproduced theories cost this project; the shape of the mistake is the same one.
+
 ## Verification
 
-**Battery `m235` — GATE PASS on attempt 1, 1,703 tests across 72 binaries, 0 failed**
-(`audit/evidence/gate-m235.log`). Up from 1,687: sixteen desktop tests, of which four are the
-end-to-end ones. clippy clean across 13 crates; check-links and check-line-endings clean.
+**Battery `m236-r2` — GATE PASS on attempt 2, 1,704 tests across 72 binaries, 0 failed.**
+Attempt 1 (`gate-m236.log`) failed `the_history_timeline_is_structurally_sound` — the
+repository's own guard catching a milestone row I had inserted out of order. It is recorded
+because it is the guard working as designed, on the same kind of mistake it was written for.
 
-The built binary was launched against this repository: it composes an agent, opens, and stays
-up with empty stderr.
+clippy clean across 13 crates; check-links and check-line-endings clean. The built binary was
+launched against this repository: it composes an agent, opens, and stays up with empty stderr.
 
 ## What nothing exercises
 
-- **Keystrokes.** The draft is set and sent through `set_draft`/`send_draft` — the same
-  functions the composer calls — but the route from an egui `Event::Text` into the draft is
-  **not** driven. Four attempts through `RawInput.events` failed to move a character and the
-  cause is not isolated; the file says so and lists what was already ruled out. Nothing is
-  known to be broken (a real window gets focus and events from winit), and nothing is known
-  to work.
-- **The keyboard shortcuts.** `Enter`, `Shift+Enter` and `Escape` are handled in
-  `draw_composer`, and the *rules* behind them are tested through `send_draft`; the key
-  consumption itself is not.
+- **A real window.** Every frame here is painted into an off-screen `egui::Context`.
+  Keystrokes go in through `RawInput`; a real window receives them from winit. The paths
+  meet at `egui::InputState` but the two have never been run together in a test.
 - **A window the user has resized.** The layout is a pure function with its own tests, but
-  `IdeSession` has never repainted at a size other than the ones the layout tests cover.
+  the session has never repainted at a size other than those.
+- **Shift+Enter for a newline.** `Enter` and `Escape` are covered; the modified variant is
+  handled by the same `consume_key` with different modifiers and is not driven.
 - **Two windows at once.** `IdeSession` was made `Sync` (interior mutability) precisely so a
   second window *could* hold one; nothing opens one.
 - **The sidebar and editor panes** still draw placeholder rows. They are labelled, and the

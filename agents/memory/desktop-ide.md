@@ -55,18 +55,20 @@ the same lesson as ADR-012's `global_dir`.
    screen until the window is shown. That belongs in `logic`.
 4. **Markdown in the transcript.** `pulldown-cmark` is already in the tree via the TUI.
 
-## Open: keystrokes into the composer are not verified
+## Keystrokes: settled, and how
 
-`crates/epsilon-desktop/tests/window.rs` sets the draft and sends it through `set_draft` /
-`send_draft` — the same functions the composer calls — but the route from an egui
-`Event::Text` into the draft is **not** driven. Four attempts through `RawInput.events` failed
-to move a character. Ruled out already: focus is requested unconditionally, the composer's
-widget id is stable, `RawInput::focused` is set true, and the events use the documented
-`Event::Text(String)` shape.
+Typing works, and it is tested with real egui input (`RawInput.events`, `focused: true`).
+Getting there took **four rounds of changing plausible causes** — focus requests, widget id,
+`RawInput::focused`, the `Event::Text` shape — and changing any of them changed nothing.
 
-Next to try: a two-frame sequence (focus on one frame, type on the next) against a context
-that has been tessellated, or drive the real `eframe` window. Guessing again would be the
-fourth theory in a row.
+What ended it: a twenty-line **probe** rendering one bare `TextEdit` off-screen and feeding
+it the same events. It received them, *unfocused*, which ruled out all four at once.
+
+The real cause was immediate-mode drawing: an egui frame paints top to bottom, the transcript
+is painted **before** the composer, so a row the composer adds during a frame cannot be in
+that frame's output. The prompt is on screen on the next repaint.
+
+**When something does not respond to input, probe the toolkit before changing the product.**
 
 ## Traps paid for
 
@@ -76,6 +78,11 @@ fourth theory in a row.
   `extern location for mio does not exist`. Use `cargo clean`, which knows the layout, or
   delete nothing and let the space go. A cold rebuild with `CARGO_PROFILE_*_DEBUG=0` is
   cheaper than the hours this costs.
+- **A bare `pwsh` session cannot build this repo.** `cargo check` from a fresh shell failed
+  in `proc-macro2`'s build script. The fix is gate.ps1's vcvars load; the cheapest
+  reproduction in one line is
+  `cmd /c '"<vcvars64.bat>" >nul 2>&1 && set "CARGO_BUILD_JOBS=1" && set "CARGO_TARGET_DIR=…" && cargo …'`
+  — note `set "VAR=value"`, because `set VAR=value && …` puts the space in the value.
 - **`Context::run_ui` returns a `FullOutput` whose `TexturesDelta` panics in `Drop`** if
   dropped unapplied. A test harness that throws the frame away is not measuring the frame;
   six failures had that message.

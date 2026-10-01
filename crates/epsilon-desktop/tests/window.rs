@@ -13,29 +13,26 @@
 //! attaches the real bridge, submits a real turn to the offline provider, pumps real
 //! frames, and asserts on what is **on screen**.
 //!
-//! # No window, no network, no key
+//! # No window, no network
 //!
 //! egui renders into an off-screen `egui::Context`, so "the window drew it" is measurable
 //! without a window — which is what makes this a unit test rather than a manual check.
+//! Keystrokes go in the same way: `RawInput.events` with `focused: true`, which egui
+//! requires before it will deliver a key.
 //!
-//! # What is *not* covered here, stated plainly
+//! # The frame-lag trap, recorded because it cost four rounds
 //!
-//! **Keystrokes to the composer are not exercised.** The draft is set with
-//! `IdeApp::set_draft` and sent with `IdeApp::send_draft` — the same function the composer
-//! calls, so the send rule and the agent path are genuinely under test — but the route
-//! from an egui `Event::Text` into the draft is not.
+//! This file asserts that the reader's own words appear "the moment Enter is pressed",
+//! and for several iterations that assertion failed with an empty transcript. Nothing was
+//! broken. An immediate-mode frame paints **top to bottom**: the transcript is drawn before
+//! the composer, so a row the composer adds during that frame cannot be in the same
+//! frame's output. It is on screen one frame later, which is the next repaint and is well
+//! inside a display cycle.
 //!
-//! Four attempts to drive it through `RawInput.events` all failed to move a character, and
-//! the cause is **not isolated**: focus is requested unconditionally, the composer's widget
-//! id is stable, `RawInput::focused` is set true, and the events use the documented
-//! `Event::Text(String)` shape. Nothing about the product is known to be broken — a real
-//! window receives focus and events from winit rather than from a `RawInput` — but neither
-//! is it known to work, and this file does not claim that it does.
-//!
-//! The next thing to try is a two-frame sequence (focus on one frame, type on the next)
-//! against a context that has been tessellated, or driving the real `eframe` window.
-//! Guessing again would be the fourth theory in a row, and `audit/04-tui.md` records what
-//! that costs.
+//! The probe that settled it is worth its own note, because it also proved the input path
+//! itself was fine: a bare `TextEdit` fed the same events received them **unfocused**,
+//! so nothing was wrong with `focused`, with focus requests, or with the widget id — and
+//! the remaining difference was the one-frame lag above.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -95,11 +92,11 @@ fn paint_once(
     paint_with(ctx, app, w, h, vec![])
 }
 
-/// Paint one frame with input events, so a test can type and press keys.
+/// Paint one frame carrying input events, so a test can type and press keys.
 ///
-/// The events go through egui's real input path and reach the real composer. That is the
-/// difference between "the window can be told to run a turn" and "a user typing in it runs
-/// a turn", and only the second one is the product.
+/// `focused: true` is not decoration: `RawInput` defaults it to false and egui drops
+/// keyboard events for an unfocused window, so a default-constructed input produces a
+/// window nobody can type into.
 fn paint_with(
     ctx: &egui::Context,
     app: &mut IdeApp,
@@ -112,10 +109,6 @@ fn paint_with(
             egui::Pos2::ZERO,
             egui::vec2(w, h),
         )),
-        // **`focused` defaults to `false`, and egui drops keyboard events for an unfocused
-        // window.** A `RawInput::default()` therefore produces a window that cannot be
-        // typed into, which cost this test four rounds of "the composer ignores keys" —
-        // and it is exactly what a real window looks like before the OS has focused it.
         focused: true,
         events,
         ..Default::default()
@@ -128,6 +121,83 @@ fn paint_with(
     out
 }
 
+/// The events for typing `text` and pressing Enter, the way a user does it.
+fn type_and_enter(text: &str) -> Vec<egui::Event> {
+    let mut events: Vec<egui::Event> = text
+        .chars()
+        .map(|c| egui::Event::Text(c.to_string()))
+        .collect();
+    events.push(egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    events
+}
+/// Keystrokes reach the composer.
+///
+/// This was measured four times before it worked, and each failure looked like "the input
+/// path is broken": focus requests, a stable widget id, `RawInput::focused` were all
+/// changed without success. The thing that settled it was a bare `TextEdit` fed the same
+/// events — which received them **unfocused**, proving none of those three was the cause.
+///
+/// What was the cause: the test asserted on the frame that *sent* the turn, and an
+/// immediate-mode frame paints the transcript before the composer, so a row the composer
+/// adds cannot be in that frame. The prompt is on screen on the next repaint.
+///
+/// This test therefore keeps the two things apart: **text in the draft** (same frame — the
+/// text edit runs before the send) and **the prompt in the transcript** (next frame).
+#[test]
+fn typing_reaches_the_composer_and_sending_puts_the_words_on_screen() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    // Frame one: the composer asks for focus.
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    // Frame two: type, without pressing Enter.
+    let typed = vec![egui::Event::Text("draft words".into())];
+    paint_with(&ctx, &mut app, 1440.0, 900.0, typed);
+    assert_eq!(
+        app.draft(),
+        "draft words",
+        "a keystroke must reach the composer's buffer"
+    );
+
+    // Frame three: Enter sends, and the draft empties on the same frame — the text edit
+    // runs first, then `send_draft` reads it.
+    let sent = paint_with(
+        &ctx,
+        &mut app,
+        1440.0,
+        900.0,
+        vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    let _ = sent;
+    assert_eq!(app.draft(), "", "Enter sends, and the composer empties");
+
+    // Frame four: the words are on screen.
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("draft words")),
+        "the prompt belongs on screen one frame after the send.\n{}",
+        frame.describe()
+    );
+}
+
+/// Keystrokes reach the composer.
+///
 /// The headline claim: a turn submitted in this window produces an answer on this screen.
 ///
 /// Nothing here is stubbed except the provider, which is the offline scripted one — the
@@ -144,14 +214,25 @@ fn a_real_turn_runs_to_completion_through_a_permission_ask() {
 
     let session = app.session().expect("this window has a session").clone();
 
-    // The draft is set and sent through the **same function the composer calls**, so what
-    // is under test is the composer's send rule and the agent path. Keystroke-to-draft
-    // plumbing is a separate, still-open question — see the module docs.
-    app.set_draft("say hello");
-    app.send_draft().expect("a draft with words is sent");
-    assert_eq!(app.draft(), "", "the composer empties when it sends");
+    // Frame one lets the composer take the keyboard; frame two carries the typing.
+    // A real window gets this for free — winit delivers input only once the surface is
+    // up, and egui repaints many times before a human can press a key.
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
 
+    // Frame three. **The user's own words are added when the send happens, which is after
+    // this frame's transcript has already been drawn** — an immediate-mode frame paints
+    // top to bottom, and the composer is below the transcript. So the prompt appears on
+    // the *next* frame, and a test that asserts on the frame that sent it sees an empty
+    // transcript and concludes the feature is missing. That is what four rounds of this
+    // file looked like before it was measured.
     let first = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert_eq!(
+        app.draft(),
+        "",
+        "the composer empties when it sends, not holding {:?}",
+        app.draft()
+    );
 
     // The reader's own words must appear immediately, not when the model answers.
     assert!(
