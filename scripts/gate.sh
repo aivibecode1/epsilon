@@ -60,6 +60,11 @@ run "check-links"    python scripts/check-links.py --quiet        || overall=1
 # `epsilon-lsp` had exactly that bug (D1/D21), found by a human reading twelve
 # manifests; this is the check that means nobody has to.
 run "check-lint-tables" python scripts/check-lint-tables.py       || overall=1
+# A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises on
+# commit) and breaks every source-parsing test in the tree while reporting
+# something else entirely -- M231 lost a battery to a dispatcher reported as
+# having no catch-all arm, which was false.  One second, and it names the file.
+run "check-line-endings" python scripts/check-line-endings.py --quiet || overall=1
 run "fmt --check"   "$CARGO" fmt --all -- --check            || overall=1
 run "clippy"        "$CARGO" clippy --workspace --all-targets -- -D warnings || overall=1
 # `-D warnings`: the workspace denies its configured lints, but clippy's own `-W clippy::all`

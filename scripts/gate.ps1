@@ -173,6 +173,12 @@ $gates = @(
     # that bug (D1/D21) and it was found by a human reading twelve manifests.
     # This is the check that means nobody has to.
     @{ Name = "check-lint-tables"; Exe = "python"; Args = @("scripts/check-lint-tables.py") },
+    # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises
+    # on commit), and it breaks every source-parsing test in the tree in a way that
+    # reports something else entirely -- M231 lost a battery to a dispatcher
+    # reported as having no catch-all arm, which was a lie. This costs a second and
+    # it names the file and the line.
+    @{ Name = "check-line-endings"; Exe = "python"; Args = @("scripts/check-line-endings.py", "--quiet") },
     @{ Name = "fmt --check"; Exe = $cargo; Args = @("fmt", "--all", "--", "--check") },
     # `-D warnings`: the workspace denies its configured lints, but clippy's own
     # `-W clippy::all` findings exit 0 by default - which is how a warning got past
