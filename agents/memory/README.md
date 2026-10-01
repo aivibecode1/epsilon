@@ -34,6 +34,7 @@ next.
 | [`m199-containment.md`](m199-containment.md) | **M199 landed: symlink containment, the bypass it nearly shipped, and the open items it left** | live |
 | [`ranked-sweep-2026-09-29.md`](ranked-sweep-2026-09-29.md) | **The t2 ranked sweep, what M201 closed, and the order the rest goes in** | live — heads the implementation queue |
 | [`08-goal-command.md`](08-goal-command.md) | **`/goal` is complete (state at M203, the round driver at M204, on the wire at M206) — the two follow-ups still open, and the five traps it met** | live — heads the capability queue |
+| [`goal-gates.md`](goal-gates.md) | **A goal's completion rule, the sandbox trap in it, and the four things still missing** | live — heads the harness queue |
 | [`prompt-cache.md`](prompt-cache.md) | **Where the provider cache marker goes, and the test that guards it** | live — a one-line rule with a regression test |
 | [`desktop-ide.md`](desktop-ide.md) | **The native desktop IDE: the toolkit decision, the `epsilon-runtime` extraction, and the wiring slice that comes next** | **live — heads the implementation queue** |
 | [`10-handoff-2026-09-30.md`](10-handoff-2026-09-30.md) | **Session handoff (M201-M214)** — state at HEAD, the defects this session added and where each stands, what to do next in order, and the traps it paid for | **read first** if you are picking this project up cold |
