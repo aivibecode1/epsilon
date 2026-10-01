@@ -881,6 +881,159 @@ so both catalog rows and customs ride one implementation.
 
 ---
 
+## ADR-020: A native desktop IDE, rendered by egui, over the same agent
+
+**Status: accepted; slice 1 landed (crate `epsilon-desktop`), wiring in progress.**
+
+**The problem.** Epsilon has one terminal frontend, one headless mode and one HTTP/SSE
+server. The product this project is becoming is a **desktop IDE**, and no part of this
+repository could become one: a desktop app needs a window, and every window path in Rust
+either embeds a web browser or means writing a renderer from scratch.
+
+**The constraint that decides it: a real desktop application, not a web application.**
+That rules out Electron, and rules out Tauri-with-an-HTML-frontend, and rules out DSH's
+own route — its "desktop" is an Electron shell that spawns a Node child running the *same*
+web profile and points a `BrowserWindow` at it over HTTP
+(`references/deepseek-harness-dsh-v0.2.0-rc.1/apps/desktop/src/main.ts:408,421`). That is a
+browser. We are taking DSH's *workflow*, not its *carrier*.
+
+**Decision: `egui` + `eframe` 0.36.2, rendering natively through winit + wgpu.**
+
+Measured against the five serious Rust GUI toolkits before choosing:
+
+| | Native (no webview) | Licence | Accessibility | Build-host deps | Verdict |
+|---|---|---|---|---|---|
+| **egui / eframe 0.36.2** | winit + wgpu | MIT **or** Apache-2.0 | **AccessKit in default features** | none — no `bindgen`/`clang` | **chosen** |
+| gpui (Zed's) | yes (Blade/D3D12) | Apache-2.0 | **none in the published crate** | `bindgen`, `cbindgen`, `embed-resource` | second best; see below |
+| iced 0.14 | winit + wgpu | MIT | **none** | none | last release 2025-12-07; master mid-rewrite, unreleased; ~96% one maintainer |
+| Dioxus desktop | **no** — `wry` + `webview2-com` | Apache-2.0/MIT | — | — | violates the constraint outright |
+| Slint 1.18 | yes | **GPL-3.0 / royalty** | AccessKit present | **`skia-safe` + `bindgen` in every desktop config** | licence contamination *and* a Skia source build |
+
+Four reasons, in order of weight:
+
+1. **It is the only one that clears every bar at once.** Native rendering, a licence that does
+   not change this workspace's, working screen-reader support, and — measured on the resolved
+   dependency tree — **no `bindgen`, `clang-sys` or `embed-resource`**. That last one is not a
+   footnote on this machine: every build failure recorded in `AGENTS.md` is an MSVC toolchain
+   problem (`D8050: cannot execute c1.dll`, missing `vcvars`, missing NASM), and a toolkit that
+   needs clang to build would add a fifth way to hit them.
+2. **The objection that motivated the search is gone.** egui rasterised text with `ab_glyph`
+   and no shaping through 0.33. At 0.34 it moved to `skrifa` + `vello_cpu`; at 0.35 it added
+   `harfrust`, a full HarfBuzz port, for kerning and ligatures. Code and English Markdown —
+   which is all this window shows — shape correctly today.
+3. **Accessibility is not optional here and almost nothing else has it.** egui exposes roles and
+   labels on its widgets and egui's `Harness` test API queries *the same AccessKit tree a screen
+   reader consumes*. For a product that claims to be usable, that is the difference between a
+   claim and a feature. It is also why the palette in [`theme.rs`](../../crates/epsilon-desktop/src/theme.rs)
+   is written against a WCAG contrast floor with a test on it, rather than chosen by eye.
+4. **The test story fits this repository.** egui renders into an off-screen `egui::Context`, so
+   a frame can be painted in a unit test at any size — the same discipline the terminal frontend
+   uses (`render_rows`) and the one `AGENTS.md` insists on after M198.
+
+**Known costs, stated rather than discovered later.**
+
+- **MSRV rises from 1.88 to 1.95.** egui 0.36 declares `rust-version = "1.95"`. The CI MSRV job
+  (`.github/workflows/ci.yml`) is raised with it. This is a gate change and is called out as one;
+  the alternative was pinning egui ≤ 0.33 and giving up text shaping.
+- **No bidi.** `epaint` still carries `// TODO(emilk): heed bidi characters` and strips the
+  directional control characters. HarfBuzz does the *shaping*; UAX #9 *reordering* is not
+  implemented. Correct for code and for the English Markdown this window renders; wrong for an
+  RTL codebase's comments or an RTL UI string. Revisit when a user asks, not before.
+- **`wgpu` over `glow`.** `glutin`'s OpenGL path fails on some Windows configurations that DX12
+  does not, and this project's primary target is Windows. DX12 is present on every machine we
+  support; a working surface on a machine with no usable GL driver is worth the extra crates.
+- **Immediate mode.** Every frame rebuilds the widget tree, so any list that can be large — the
+  file tree, the transcript — must be virtualized by hand from the first version. A repository
+  with a 10k-file workspace is not a hypothetical user.
+- **Text is rasterized on the CPU** (`vello_cpu`) rather than from a GPU glyph atlas. Unmeasured
+  on this machine. The transcript pane's throughput is a measurement to take before the
+  transcript lands, not after.
+
+**Why not gpui, which is the better product and the worse dependency.** gpui is Apache-2.0
+(the GPL attaches to the Zed application, not to the crate) and it is the only proven *native
+code-editor* stack in existence — cosmic-text, Blade on D3D12, and `gpui-component`'s ready-made
+desktop components. It loses on three measurable counts: the published `gpui 0.2.2` is ~11 months
+stale while Zed itself shipped v1.22.0, so adopting it means tracking an unreleased API; it needs
+`bindgen` + `cbindgen` + `embed-resource` on the build host; and it hard-pins `cocoa = "=0.26.0"`,
+which produced a real workspace resolution conflict against another desktop target when
+measured. It also has **no accessibility** in the published crate. It wins if a11y becomes
+optional and a vendored git dependency becomes acceptable. Both conditions are recorded here so
+the next reader does not have to re-run the search.
+
+**What this ADR does not decide.** The desktop's *content* — file tree, editor, diff view,
+terminal, task panel — is a series of slices, each with its own evidence. And what it composes
+is ADR-021, not this file.
+
+---
+
+## ADR-021: Composition is a library crate (`epsilon-runtime`), not a binary's private function
+
+**Status: accepted; extraction in progress.**
+
+**The problem.** Exactly one function in this repository knows how to turn a workspace plus a
+configuration into a running agent: `build_runtime` (`crates/epsilon-cli/src/main.rs:1727`), a
+`pub`-less `async fn` in a **binary** crate, together with 3,199 lines of helpers in
+`crates/epsilon-cli/src/runtime.rs`. The terminal UI gets it, the headless modes get it, the
+HTTP server gets it and the stdio RPC frontend gets it — because they all live in the same
+binary.
+
+A second frontend in a second crate cannot. It would have to reimplement the whole composition:
+skill roots, extension roots and trust gating, the permission layers, the resume ordering, the
+session-lease sweep, the migration and repair passes, the system-prompt overlay, agent
+definitions, and the extension event forwarder. That is the definition of the "faithful port, no
+production caller" defect in its most expensive form: two copies of a rule that cannot disagree
+visibly, which is this repository's D-class (see ADR-012's amendment on `global_dir`).
+
+**Decision: move composition into a new crate, `epsilon-runtime`.**
+
+`crates/epsilon-cli/src/runtime.rs` becomes `crates/epsilon-runtime/src/lib.rs` essentially
+verbatim, and `build_runtime` moves with it as a public function. `epsilon-cli` keeps `main.rs`,
+argument parsing and mode dispatch; `epsilon-desktop` calls the same `build_runtime` the
+terminal does.
+
+**Why a new crate rather than depending on `epsilon-cli` as a library.** `epsilon-cli` *is* a
+library — `crates/epsilon-cli/src/lib.rs` exports `doctor`, `rpc_mode` and `runtime` — so
+`epsilon-desktop` could depend on it today with no refactoring at all. That is rejected for
+three reasons, in order:
+
+1. It drags `epsilon-tui` (ratatui, crossterm), `epsilon-server` (axum) and `epsilon-mcp`
+   (rmcp) into a native GUI that wants none of them, on a machine whose build budget is already
+   the binding constraint.
+2. The architecture law reads "no library may depend on CLI". Depending on it from a *binary*
+   does not break that law's letter, and this ADR does not pretend otherwise — but it inverts its
+   intent, and a rule kept only in its letter is a rule the next agent will read past.
+3. It makes the second frontend a *consumer of the CLI* rather than a peer of it. The TUI does
+   not depend on the CLI either — it is composed by it. The desktop should have the same shape.
+
+**Why this is the smallest change that works.** The extraction is mechanical: 35 references to
+`epsilon_cli::` exist in the workspace, 33 of them inside `epsilon-cli` itself and 2 in its own
+integration tests. `runtime.rs` has no dependency the CLI does not already have, and the new
+crate's manifest is the CLI's minus the frontend crates. Nothing is redesigned in the move, which
+is the point — a refactor that also changes behaviour cannot be reviewed for the refactor.
+
+**What moves, and what stays.**
+
+| Moves to `epsilon-runtime` | Stays in `epsilon-cli` |
+|---|---|
+| `runtime.rs` in full: trust store, skill/extension/agent roots, extension attach and hooks, project rules → `Ruleset`, `diagnostics_for`, session-path rules | `parse_args`, `dispatch`, `Mode` |
+| `build_runtime` + `RunParams` | `doctor` diagnostics *presentation* (its inputs move) |
+| `session_path_for`, `resumed_model_to_use`, the lease-wait notices | the binary, `--help`, the auth ceremony |
+
+**The one thing this does not fix, named so it is not assumed fixed.** `dispatch` builds the
+`StreamFn` — retrying ∘ panic-guard ∘ direct provider, or the `--fallback` chain — inline at
+`crates/epsilon-cli/src/main.rs:1390-1440`, together with custom-provider installation and the
+real-vs-faux decision. That is provider composition, and it is the second half of the same
+problem: the desktop needs it too, and a second copy would silently disagree about which model
+the window is about to call — which is exactly the lie M233 closed in the terminal header.
+It moves in the same slice as `build_runtime`, not after it.
+
+**`epsilon-server` stays as it is.** It is a real and useful surface (an external client over
+HTTP/SSE) and it is not how the desktop talks to the agent. The desktop hosts the agent
+**in process**, on its own tokio runtime, sharing one `Arc<Agent>`. Going over the wire would buy
+nothing here and would cost the whole session surface, which the HTTP surface does not expose.
+
+---
+
 ## Superseded / deferred
 
 **Amendment (M24).** Two previously deferred items from the research pass landed:

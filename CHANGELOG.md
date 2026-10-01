@@ -5,6 +5,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A native desktop IDE.** `epsilon-desktop` opens a real window -- the operating system's, rendered natively, not a browser tab -- with a workspace pane, an editor pane, an agent panel, and geometry that gives way sensibly as the window shrinks. It is the first slice: the window opens and draws, and it says "no agent attached" rather than showing numbers it has not measured. See `docs/milestones/M233-desktop-ide-and-runtime-crate.md` (M233).
+
+- **The offline marker in the TUI header now names the provider the process is actually calling.** `--provider faux` beside a saved `deepseek/...` model used to render `DeepSeek V3.1` with no offline marker, because the header re-derived offline-ness from the model id. The CLI's decision is carried instead (M233).
+
 - **--continue works again.** A resumed launch used to open its session twice — the file it would write to, then the file it was resuming — and once each launch got its own file name, the second open landed on the empty file the launch had just created: -c waited thirty seconds and came back with nothing. It now resolves first and opens once (M212).
 
 - **Dead lock files are cleaned up at launch.** A terminal killed mid-session used to leave its lock behind forever, so a busy workspace collected two files per session and half of them stale (M211).

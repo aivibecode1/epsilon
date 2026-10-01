@@ -38,6 +38,7 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         startup_notices,
         trust_review_pending,
         theme_mode,
+        offline,
     } = cfg;
 
     let mut events_rx = agent.subscribe();
@@ -51,6 +52,9 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         app.theme.set_palette(mode);
     }
     app.live = live;
+    // M233: the header reads this rather than re-deriving offline-ness from the model id, which
+    // is the fact that let it name DeepSeek over a faux turn.
+    app.offline = offline;
     // Prompt templates are discovered once here rather than per submit: expansion runs on
     // every message, and walking two directories to find files that have not changed would
     // tax the one path that has to stay fast. `/reload` refreshes them.

@@ -21,7 +21,7 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 |---|---|---|
 | [`../AGENTS.md`](../AGENTS.md) | the rules for anyone writing code here: gates, conventions, disk hygiene | before your first change |
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
-| [`qa/`](qa) | design conversations turned into notes: why Rust, the brick methodology, the harness primer, TUI keymaps, OAuth client ids, provider extension points, the repository layout | you need the convention behind a choice |
+| [`qa/`](qa) | design conversations turned into notes: why Rust, the brick methodology, the harness primer, TUI keymaps, OAuth client ids, provider extension points, the repository layout, **which code belongs to a frontend and which to the composition** | you need the convention behind a choice |
 | [`plans/README.md`](plans/README.md) | historical plans and their recorded statuses, not fresh authorization | you want to trace earlier scope |
 | [`../audit/`](../audit) | the dated assessment: usability review, defect ledger D1–D32, port plan, verification log, reference comparison, roadmap | you want to know what is broken or what to do next |
 
@@ -46,6 +46,11 @@ saying which parts were verified when, so read a claim there as a hypothesis to 
 **New to the codebase?** Root README → [`design/epsilon-architecture.md`](design/epsilon-architecture.md)
 → the crate that owns what you are touching → its milestone log in `milestones/` → the tests in
 that crate.
+
+**Writing a frontend, or changing one?** [`qa/11-frontend-ownership.md`](qa/11-frontend-ownership.md)
+first. It is the rule that decides whether a change belongs in `epsilon-tui`,
+`epsilon-desktop`, or `epsilon-runtime`, and it exists because the first attempt at this
+would have needed fourteen steps copied into a second place.
 
 **Reviewing a change?** `AGENTS.md` (gates), then the ADR log
 ([`design/epsilon-decisions.md`](design/epsilon-decisions.md)) for the behaviour it changes,
@@ -79,6 +84,7 @@ first, newest at the top, and it is kept current from M83 forward.
 > cannot describe a milestone the log does not.
 
 - [M231 — a 202 ms startup scan, counted instead of summarized](milestones/M231-counting-instead-of-summarizing.md)
+- [M233 — a native desktop IDE, and the composition crate it needed first](milestones/M233-desktop-ide-and-runtime-crate.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

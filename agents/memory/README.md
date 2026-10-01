@@ -34,6 +34,7 @@ next.
 | [`m199-containment.md`](m199-containment.md) | **M199 landed: symlink containment, the bypass it nearly shipped, and the open items it left** | live |
 | [`ranked-sweep-2026-09-29.md`](ranked-sweep-2026-09-29.md) | **The t2 ranked sweep, what M201 closed, and the order the rest goes in** | live — heads the implementation queue |
 | [`08-goal-command.md`](08-goal-command.md) | **`/goal` is complete (state at M203, the round driver at M204, on the wire at M206) — the two follow-ups still open, and the five traps it met** | live — heads the capability queue |
+| [`desktop-ide.md`](desktop-ide.md) | **The native desktop IDE: the toolkit decision, the `epsilon-runtime` extraction, and the wiring slice that comes next** | **live — heads the implementation queue** |
 | [`10-handoff-2026-09-30.md`](10-handoff-2026-09-30.md) | **Session handoff (M201-M214)** — state at HEAD, the defects this session added and where each stands, what to do next in order, and the traps it paid for | **read first** if you are picking this project up cold |
 | [`f09-path-policy.md`](f09-path-policy.md) | **F09: the resolved-path policy** — the lexical resolver, what it delegated, and the containment work that followed | historical reasoning; the landed result is M199 (`m199-containment.md`) |
 | [`port-revalidation.md`](port-revalidation.md) | **The autonomous audit + complete-port arc**: its authority and scope, and the port-fidelity thread it opened | standing context for why the port frames the project; superseded as *status* by `audit/01`-`07` |

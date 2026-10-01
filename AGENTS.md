@@ -647,7 +647,7 @@ scripts/gate.ps1   the same seven gates, native Windows (the one that works here
 scripts/gate-until-pass.ps1  wraps either: own label per attempt, stops on a repeated
                              failure fingerprint instead of burning three batteries
 scripts/console-probe.py  drives the built TUI in a real conhost window and measures it
-crates/            the 12 workspace crates
+crates/            the 14 workspace crates
 references/        the four reference harnesses (not committed)
 agents/            agent working memory (open work state; see "Agent memory")
 .agents/skills/    repo-local skills (procedures agents and contributors follow)

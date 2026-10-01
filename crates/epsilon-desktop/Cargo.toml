@@ -1,0 +1,51 @@
+[package]
+name = "epsilon-desktop"
+version.workspace = true
+edition.workspace = true
+# The one crate with a higher MSRV than the workspace. egui 0.36 declares
+# `rust-version = "1.95"`, and a dependency's floor is the floor for anything that
+# links it.
+#
+# Declared here rather than by raising the workspace value on purpose: the CLI, the
+# server and the agent core build on 1.88, and a desktop window is not a reason to
+# make a headless build on a CI runner need a newer toolchain. `.github/workflows/ci.yml`
+# excludes this crate from the 1.88 job for exactly this reason, and says so.
+rust-version = "1.95"
+license.workspace = true
+authors.workspace = true
+description = "Epsilon desktop IDE: a native window onto the same agent loop the CLI drives."
+
+[[bin]]
+name = "epsilon-desktop"
+path = "src/main.rs"
+
+[features]
+# Forwarded exactly as `epsilon-tui` does (M175). Without `real`,
+# `Agent::try_hot_swap_to_real` compiles to its `false` stub and the app would
+# silently run faux-only while still naming a paid model in its header — the
+# lie M233 closed in the TUI. The `REAL_PATH_ENABLED` binding in `lib.rs` makes
+# a missed forward a compile error rather than a silent degradation.
+default = ["real"]
+real = ["epsilon-core/real", "epsilon-runtime/real"]
+
+[dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+epsilon-core = { path = "../epsilon-core" }
+epsilon-llm = { path = "../epsilon-llm" }
+# ADR-021: the desktop composes its agent through the same `build_runtime` the
+# terminal uses. It is a peer frontend, not a second implementation.
+epsilon-runtime = { path = "../epsilon-runtime" }
+epsilon-session = { path = "../epsilon-session" }
+# The **palette only** (ADR-020): `epsilon_tui::Theme` resolves semantic roles to
+# colors and the desktop converts them. The desktop draws no terminals and depends
+# on no terminal behaviour; if that ever stops being true, the edge is one module.
+epsilon-tui = { path = "../epsilon-tui" }
+ratatui = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+egui_extras = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+
+[lints]
+workspace = true

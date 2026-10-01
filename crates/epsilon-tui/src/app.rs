@@ -65,6 +65,17 @@ pub struct TuiConfig {
     /// and `OSC 11` needs a round-trip that may never come back inside a pipe,
     /// over SSH, or in `tmux` — so the answer is the user's to give.
     pub theme_mode: Option<crate::ui::theme::ThemeMode>,
+    /// Whether the harness is running **offline**, decided by the CLI (`--provider faux`, or no
+    /// usable credentials), and carried rather than re-derived — the same reasoning as
+    /// [`Self::theme_mode`] and [`Self::model_id`]: the frontend does not decide a second time.
+    ///
+    /// M233: without this the header named the *selected* model over a faux turn. Keying the
+    /// offline marker off `model_id.starts_with("faux")` meant `--provider faux` beside a saved
+    /// `deepseek/…` model rendered `DeepSeek V3.1` with no offline marker — **a screen naming a
+    /// provider the harness is not calling**, which is the same class as the silent no-op M194
+    /// closed. The headless path already said so (`provider: faux (offline scripted)`);
+    /// the TUI did not.
+    pub offline: bool,
 }
 
 /// Redraw cadence (spinner/clock resolution).
@@ -378,6 +389,12 @@ pub(crate) struct App {
     auth_pick_index: usize,
     /// Workspace root for the footer (pi footer parity).
     workspace_root: std::path::PathBuf,
+    /// Whether the CLI decided this process runs offline (M233).
+    ///
+    /// Carried rather than re-derived from `model_id`, because those are different facts: a user can
+    /// have a saved `deepseek/…` model **and** ask for `--provider faux`, and then the header has to
+    /// name the faux row.
+    offline: bool,
     /// Prompt templates discovered at startup and on `/reload`.
     ///
     /// Cached rather than re-read per submit: expansion happens on every message, and

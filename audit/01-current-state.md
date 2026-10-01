@@ -17,9 +17,15 @@ reference harnesses. Documentation is a *claim about* the code, never evidence f
 
 ## Shape of the repository
 
-107,837 lines of Rust across **12 crates**. The dependency graph is a clean DAG —
-`contracts` → {llm, session, ext, lsp} → `core` → {tools, safety, mcp, tui, server} →
-`cli`. The apparent `tools`↔`safety` cycle is a dev-dependency only.
+**Corrected at M233**, which added two crates and moved a third's contents. The line count
+below is the 2026-09-28 measurement and is kept for comparison; the crate list is current.
+
+14 crates. The dependency graph is a clean DAG —
+`contracts` → {llm, session, ext, lsp} → `core` → {safety, mcp} → `tools` →
+{`runtime`, tui, server} → {cli, desktop}. `epsilon-runtime` holds **composition**
+(the `runtime.rs` helpers and `build_runtime`, both moved out of the `epsilon` binary at
+M233); `epsilon-desktop` is the native IDE. The apparent `tools`↔`safety` cycle is a
+dev-dependency only.
 
 | Crate | Lines | What it owns |
 |---|---|---|
@@ -35,6 +41,8 @@ reference harnesses. Documentation is a *claim about* the code, never evidence f
 | `epsilon-lsp` | 1,560 | Language-server integration |
 | `epsilon-server` | 1,229 | The axum server mode |
 | `epsilon-mcp` | 672 | MCP stdio transport |
+| `epsilon-runtime` | *new at M233* | Composition: workspace + configuration → a running agent |
+| `epsilon-desktop` | *new at M233* | The native desktop IDE: window, layout, palette, frame |
 
 **Read:** the crate boundaries are correct and ADR-014's "brick earns existence" rule is
 holding. The problem is not the layout — it is that `crates/epsilon-core/src/lib.rs` is

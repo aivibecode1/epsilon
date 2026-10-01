@@ -1,0 +1,44 @@
+[package]
+name = "epsilon-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Composition: the one place that turns a workspace plus a configuration into a running agent."
+
+[features]
+# Forwarded exactly as the frontends do (M52, M63). `Agent::try_hot_swap_to_real`
+# compiles to a `false` stub without it, and the failure is silent: the app runs,
+# names a paid model, and never calls it.
+default = ["real"]
+real = ["epsilon-core/real"]
+
+[dependencies]
+epsilon-contracts = { path = "../epsilon-contracts" }
+epsilon-llm = { path = "../epsilon-llm" }
+epsilon-core = { path = "../epsilon-core" }
+epsilon-tools = { path = "../epsilon-tools" }
+epsilon-lsp = { path = "../epsilon-lsp" }
+epsilon-safety = { path = "../epsilon-safety" }
+epsilon-session = { path = "../epsilon-session" }
+epsilon-ext = { path = "../epsilon-ext" }
+epsilon-mcp = { path = "../epsilon-mcp" }
+sha2 = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }
+# `ExtensionToolHooks` implements `ToolHooks`, which is `#[async_trait]`. Every
+# other crate that implements a contracts trait declares this the same way.
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "fs", "process"] }
+
+# The trust-store and extension tests need a real directory. They used to reach
+# `tempfile` through `epsilon-cli`'s dev-dependencies; a crate's tests belong to the
+# crate, so the dependency comes with them.
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

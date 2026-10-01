@@ -4,11 +4,11 @@
   <img src="assets/Logo.png" alt="Epsilon logo" width="720">
 </p>
 
-Epsilon is a coding-agent harness written in Rust: a terminal UI, a headless
-mode, an HTTP/SSE server and a stdio RPC frontend over one agent core. It began
-as a port of [pi-agent](https://github.com/earendil-works/pi) and has since taken
-execution, permission and recovery ideas from DeepSeek Harness, Hermes Agent and
-opencode.
+Epsilon is a coding-agent harness written in Rust: a native desktop IDE, a terminal
+UI, a headless mode, an HTTP/SSE server and a stdio RPC frontend over one agent
+core. It began as a port of [pi-agent](https://github.com/earendil-works/pi) and has
+since taken execution, permission and recovery ideas from DeepSeek Harness, Hermes
+Agent and opencode.
 
 The port is **not complete**, and this file says where it stops rather than
 leaving that to be discovered.
@@ -36,11 +36,21 @@ It is a single binary with no required Node or Python runtime.
 
 ## Install
 
-Rust 1.88 or newer.
+Rust 1.88 or newer for the CLI and the server. The desktop IDE needs **1.95**, because egui
+declares it; see [ADR-020](docs/design/epsilon-decisions.md) for why that is one crate's floor
+and not the workspace's.
 
 ```sh
 cargo install --path crates/epsilon-cli --force
 epsilon --help
+```
+
+The desktop IDE is a second binary, so it installs separately:
+
+```sh
+cargo install --path crates/epsilon-desktop --force
+epsilon-desktop            # opens the IDE on the current directory
+epsilon-desktop C:\work\my-repo
 ```
 
 From a clone, without installing:
@@ -48,6 +58,7 @@ From a clone, without installing:
 ```sh
 cargo run -q -p epsilon-cli -- --demo     # offline, scripted, no provider needed
 cargo run -q -p epsilon-cli               # the terminal UI
+cargo run -q -p epsilon-desktop           # the desktop IDE
 ```
 
 Platform notes, shell requirements and what each confinement backend does and
@@ -58,6 +69,7 @@ does not do are in [Install](docs/user/install.md) and
 
 | Command | What it does |
 |---|---|
+| `epsilon-desktop` | The desktop IDE, in a native window |
 | `epsilon` | Interactive terminal UI |
 | `epsilon -p "summarize this repo"` | One prompt, headless; approvals default to denial |
 | `epsilon doctor` | Report configuration and available capabilities without running a model |
@@ -105,7 +117,7 @@ Use backed-up or disposable workspaces until that list is shorter.
 
 ## How it is built
 
-Twelve crates under `crates/`. Each has one job, and the edges between them are
+Fourteen crates under `crates/`. Each has one job, and the edges between them are
 documented rather than assumed — Cargo rejects cycles but will happily accept an
 edge nobody meant to add.
 
@@ -120,9 +132,11 @@ edge nobody meant to add.
 | `epsilon-lsp` | Optional language-server client and diagnostics |
 | `epsilon-ext` | The process-extension protocol and its host |
 | `epsilon-mcp` | MCP client and tool adapter |
+| `epsilon-runtime` | Composition: the one place a workspace and a configuration become a running agent |
 | `epsilon-tui` | Terminal frontend |
 | `epsilon-server` | HTTP/SSE frontend |
-| `epsilon-cli` | The binary: arguments, configuration, runtime composition |
+| `epsilon-desktop` | Native desktop IDE: a real window, rendered natively |
+| `epsilon-cli` | The binary: argument parsing and mode dispatch |
 
 The [architecture guide](docs/design/epsilon-architecture.md) maps the real edges
 and the execution paths. Decisions and their reasoning are recorded as ADRs in

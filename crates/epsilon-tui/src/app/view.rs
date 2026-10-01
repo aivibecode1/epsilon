@@ -25,6 +25,15 @@ use super::*;
 /// layer draws with. Keeping them here — rather than letting widgets read the
 /// app — is what lets every screen be rendered in a test without an agent.
 impl App {
+    /// Whether the header should say this process is offline (M233).
+    ///
+    /// The CLI's decision **or** a selected faux model: a caller that sets `model_id` directly (the
+    /// TUI's own tests, `/model faux-1`) has no CLI to tell it, and the old rule — `model_id` starts
+    /// with `faux` — is what made the header name DeepSeek over a faux turn. Both facts, either one
+    /// is enough.
+    pub(crate) fn is_offline(&self) -> bool {
+        self.offline || self.model_id.starts_with("faux")
+    }
     /// The look this session was started with.
     ///
     /// Public so a caller outside the draw path (a future integration test, a
@@ -237,8 +246,16 @@ impl App {
             latest_prompt
         };
         crate::ui::metrics::Metrics {
-            model_label: epsilon_llm::catalog::display_label(&self.model_id).to_string(),
-            offline: self.model_id.starts_with("faux"),
+            // M233: the label names the provider this process is actually calling. Keying both
+            // off `model_id` made `--provider faux` beside a saved `deepseek/...` model render
+            // `DeepSeek V3.1` over a faux turn -- a screen naming a provider the harness is
+            // not calling, which is the class of lie this repository refuses.
+            model_label: if self.is_offline() {
+                epsilon_llm::catalog::display_label("faux-1").to_string()
+            } else {
+                epsilon_llm::catalog::display_label(&self.model_id).to_string()
+            },
+            offline: self.is_offline(),
             context_used: (context_now > 0).then_some(context_now),
             context_window: info.as_ref().map(|i| i.context_window).filter(|w| *w > 0),
             context_estimated: self.ui.context_estimated,

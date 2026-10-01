@@ -10,9 +10,11 @@ members = [
     "crates/epsilon-ext",
     "crates/epsilon-mcp",
     "crates/epsilon-lsp",
+    "crates/epsilon-runtime",
     "crates/epsilon-tui",
     "crates/epsilon-server",
     "crates/epsilon-cli",
+    "crates/epsilon-desktop",
 ]
 
 [workspace.package]
@@ -97,6 +99,26 @@ base64 = "=0.23.1"
 # parameter. std has no RNG; hand-rolling one would be worse. Already in-tree
 # transitively at this exact version (via tempfile/ring); pinned exact.
 getrandom = "=0.3.4"
+
+# ---------------------------------------------------------------------------
+# Native desktop IDE (ADR-020)
+# ---------------------------------------------------------------------------
+#
+# egui is the only native, non-webview Rust GUI toolkit that clears every bar
+# this project needs at once: it renders natively (winit + wgpu, no embedded
+# browser), it is MIT-OR-Apache-2.0 so the workspace licence is unchanged, it
+# ships AccessKit in its default features so the app is actually reachable by a
+# screen reader, and its dependency tree contains **no `bindgen`, `clang-sys` or
+# `embed-resource`** -- which matters on a machine whose documented build
+# failures are all `cl.exe` / `c1.dll` / NASM problems.
+#
+# Pinned exact per ADR-016. `wgpu` is selected over `glow` deliberately: DX12 is
+# present on every Windows machine this project supports, so the surface comes up
+# on a machine with no usable OpenGL driver, which is a real failure mode for
+# `glutin` on Windows.
+eframe = "=0.36.2"
+egui = "=0.36.2"
+egui_extras = { version = "=0.36.2", features = ["syntect"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

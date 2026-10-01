@@ -27,12 +27,15 @@ path = "src/main.rs"
 # (found while wiring OAuth login, which lands on that same path). The
 # `REAL_PATH_ENABLED` guard below makes the omission a build error.
 default = ["real"]
-real = ["epsilon-llm/real", "epsilon-core/real", "epsilon-tui/real"]
+real = ["epsilon-llm/real", "epsilon-core/real", "epsilon-tui/real", "epsilon-runtime/real"]
 
 [dependencies]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-llm = { path = "../epsilon-llm" }
 epsilon-core = { path = "../epsilon-core" }
+# ADR-021: composition lives here so the desktop IDE builds the same agent this
+# binary does. `epsilon-cli` is a consumer, not the owner.
+epsilon-runtime = { path = "../epsilon-runtime" }
 epsilon-tools = { path = "../epsilon-tools" }
 epsilon-lsp = { path = "../epsilon-lsp" }
 epsilon-safety = { path = "../epsilon-safety" }

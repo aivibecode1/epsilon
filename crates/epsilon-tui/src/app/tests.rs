@@ -981,6 +981,46 @@ async fn session_command_shows_where_the_money_went_not_just_how_much() {
     );
 }
 
+/// M233: with the CLI in offline mode beside a **saved real model**, the header names the provider
+/// the process is actually calling.
+///
+/// Found by reading a frame, not a test: `console-probe.py` captured the TUI running
+/// `--provider faux` with a saved `deepseek/…` model, and the header read `DeepSeek V3.1` with no
+/// offline marker — the headless path printed `provider: faux (offline scripted)` for the same
+/// decision. A screen naming a provider it is not calling is the class of lie this repository
+/// refuses, so the frame is the assertion.
+#[test]
+fn an_offline_launch_names_the_provider_it_is_actually_calling() {
+    let (mut app, _agent, (_f, _n)) = test_app();
+    // The saved model is a real one: exactly the state that produced the defect.
+    app.model_id = "deepseek/deepseek-chat-v3.1".into();
+    app.offline = true;
+
+    let rows = render_rows(&mut app, 100, 30);
+    let header = rows.first().cloned().unwrap_or_default();
+    assert!(
+        !header.contains("DeepSeek"),
+        "the header must not name a provider the harness is not calling: {header:?}"
+    );
+    assert!(
+        header.contains("Faux (offline scripted)") || header.contains("offline"),
+        "and it says what is actually running: {header:?}"
+    );
+
+    // The other direction still holds: a real run names the real model.
+    let (mut real_app, _a2, (_f2, _n2)) = test_app();
+    real_app.model_id = "deepseek/deepseek-chat-v3.1".into();
+    real_app.offline = false;
+    let real_header = render_rows(&mut real_app, 100, 30)
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        real_header.contains("DeepSeek"),
+        "a real run still names its model: {real_header:?}"
+    );
+}
+
 #[tokio::test]
 async fn tasks_command_lists_the_registry_and_says_when_it_is_empty() {
     let (mut app, agent, (_f, _n)) = test_app();

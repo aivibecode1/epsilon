@@ -46,6 +46,9 @@ impl App {
             geometry: TranscriptGeometry::default(),
             model_id,
             picker_open: false,
+            // M233: set from the CLI's decision after `App::new`, like `live` and `theme`. The
+            // default here is "not known", which the header must not read as "online".
+            offline: false,
             picker_index: 0,
             // One until the first paint teaches it the real window; see the field's doc.
             picker_capacity: 1,

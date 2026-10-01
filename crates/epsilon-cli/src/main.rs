@@ -17,10 +17,14 @@ use std::sync::Arc;
 
 use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
 use epsilon_contracts::message::{Message, StopReason};
-use epsilon_core::{Agent, LoopLimits, ToolRegistry};
+use epsilon_core::{LoopLimits, ToolRegistry};
 use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PacedProvider, PanicGuard};
 use epsilon_mcp::McpServerConfig;
-use epsilon_safety::{ApprovalUi, ChannelApprovalUi, RulesetGate};
+use epsilon_safety::{ApprovalUi, ChannelApprovalUi};
+// ADR-021: composition is a library crate now, so the desktop IDE can build the same agent
+// this binary does. `Resume` came with it, because a frontend cannot ask for a session
+// without also saying which one it meant.
+use epsilon_runtime::{Resume, RunParams, build_runtime, lease_wait_millis, lease_wait_summary};
 
 /// M52 guard: if this crate is built with `real` while `epsilon-core` is not,
 /// `Agent::try_hot_swap_to_real` silently degrades to "restart epsilon".
@@ -197,17 +201,8 @@ struct Args {
     light: bool,
 }
 
-/// Session-restore selection (M12).
-#[derive(Debug, Clone, Default)]
-enum Resume {
-    /// Fresh transcript (default).
-    #[default]
-    No,
-    /// `--continue`: newest session file for the chosen mode under `.epsilon/sessions`.
-    Latest,
-    /// `--resume <path>`: explicit session file.
-    Path(PathBuf),
-}
+// Session-restore selection (M12) moved to psilon-runtime with uild_runtime (ADR-021);
+// it is imported above.
 
 /// Model source: the offline faux provider (default) or a real direct-HTTP provider
 /// (M17 pi port).
@@ -1474,6 +1469,7 @@ async fn dispatch(args: Args) -> i32 {
         project,
         project_trusted: trusted_now,
         plan_mode: args.plan_mode,
+        offline: !use_real,
         startup_notices,
         trust_review_pending,
     };
@@ -1688,521 +1684,10 @@ struct SharedRun {
     startup_notices: Vec<String>,
     /// Typed trust-review trigger for the TUI gate (audit: no string sniffing).
     trust_review_pending: bool,
-}
-
-/// Everything `build_runtime` needs to compose one agent (plan 008 / DEBT-01).
-/// One `workspace` field replaces the old twin (`workspace` + `workspace`
-/// were always the same path at every call site — the second name was pure noise).
-struct RunParams<'a> {
-    workspace: &'a Path,
-    stream_fn: Arc<dyn epsilon_llm::StreamFn>,
-    approvals: Arc<dyn ApprovalUi>,
-    mcp_servers: &'a [McpServerConfig],
-    /// Session JSONL path, relative to the workspace (e.g. ".epsilon/sessions/tui.jsonl").
-    session_file: String,
-    confinement: &'a epsilon_tools::Confinement,
-    lsp: epsilon_cli::runtime::Lsp,
-    model_id: &'a str,
-    /// Whether the user named a model on THIS invocation (`--model`).
-    ///
-    /// M139 needs this to decide precedence, and `model_id` alone cannot say it: by the
-    /// time `build_runtime` runs, `model_id` is already the *resolved* id, which is
-    /// equally true whether it came from the flag, the project file, the saved config,
-    /// or a default. Only the flag is a deliberate instruction for this run; the rest
-    /// are standing preferences a resumed session may legitimately override.
-    model_explicit: bool,
-    resume: &'a Resume,
-    project: &'a epsilon_cli::runtime::ProjectConfig,
-    /// M39: config-hash trust from dispatch (`Changed` ⇒ false). Gates the
-    /// trusted root variants so project code never loads untrusted.
-    project_trusted: bool,
-    plan_mode: bool,
-}
-
-async fn build_runtime(
-    RunParams {
-        workspace,
-        stream_fn,
-        approvals,
-        mcp_servers,
-        session_file,
-        confinement,
-        lsp,
-        model_id,
-        model_explicit,
-        resume,
-        project,
-        project_trusted,
-        plan_mode,
-    }: RunParams<'_>,
-) -> Result<Arc<Agent>, String> {
-    // M79/M215: the product path opts into language-server diagnostics, and since M215 the
-    // frontend both decides (`--lsp`) and builds the service; the tool crate receives only the
-    // handle, which is why it no longer links `epsilon-lsp` at all.
-    let mut registry = epsilon_tools::builtin_registry_with(
-        confinement,
-        epsilon_cli::runtime::diagnostics_for(lsp),
-    );
-    let mut all_mcp: Vec<McpServerConfig> = mcp_servers.to_vec();
-    all_mcp.extend(project.mcp_servers.iter().cloned());
-    for cfg in &all_mcp {
-        let attached = epsilon_mcp::attach_stdio_server(&mut registry, cfg).await?;
-        eprintln!("mcp server '{}' attached ({attached} tools)", cfg.name);
-    }
-
-    // Skills (M8 brick, wired M11): conventional roots feed the CONTEXT-tier catalog.
-    // M39: untrusted projects see global roots only.
-    let skills = epsilon_core::skills::discover(&epsilon_cli::runtime::skill_roots_trusted(
-        workspace,
-        project_trusted,
-    ));
-    // The catalog tells the model a skill exists; the `skill` tool is how it opens
-    // one. Registering the tool from the same list keeps the two from disagreeing —
-    // and a skill the user marked as not-model-invocable is filtered out here, so
-    // the model cannot reach it even by guessing its name.
-    let loadable: Vec<epsilon_tools::skill::LoadableSkill> = skills
-        .iter()
-        .filter(|s| !s.disable_model_invocation)
-        .map(|s| epsilon_tools::skill::LoadableSkill {
-            name: s.name.clone(),
-            description: s.description.clone(),
-            dir: s.dir.clone(),
-        })
-        .collect();
-    if !loadable.is_empty() {
-        registry.register(std::sync::Arc::new(epsilon_tools::skill::SkillTool::new(
-            loadable,
-        )));
-    }
-    if !skills.is_empty() {
-        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
-        eprintln!("skills: {}", names.join(", "));
-    }
-
-    // Extensions (M8/M9a bricks, wired M11): conventional roots PLUS project-declared
-    // dirs resolved against the workspace's .epsilon/ (ADR-012 project layer, M12).
-    // M39: project-declared dirs join ONLY when trusted — an untrusted config
-    // must not smuggle extension code in through its own declarations.
-    let mut ext_roots = epsilon_cli::runtime::extension_roots_trusted(workspace, project_trusted);
-    if project_trusted && !project.extension_dirs.is_empty() {
-        let base = workspace.join(".epsilon");
-        ext_roots.extend(project.extension_dirs.iter().map(|d| base.join(d)));
-    }
-    let (ext_hosts, ext_notices) =
-        epsilon_cli::runtime::attach_extensions(&mut registry, &ext_roots).await;
-    for line in &ext_notices {
-        eprintln!("{line}");
-    }
-
-    // Ruleset gate: defaults + optional project [[rules]] layer (last-match-wins; any
-    // deny still wins immediately — ADR-006 stacking semantics). `--plan` prepends the
-    // plan-mode layer: mutating capabilities are DENIED outright and monotonic-deny
-    // makes that boundary hold regardless of project rules or approvals.
-    let base_engine = if plan_mode {
-        let mut layers = vec![epsilon_safety::plan_ruleset()];
-        if !project.rules.is_empty() {
-            layers.push(epsilon_cli::runtime::project_rules_layer(&project.rules));
-        }
-        epsilon_safety::PermissionEngine::layered(layers)
-    } else if project.rules.is_empty() {
-        epsilon_safety::PermissionEngine::with_defaults()
-    } else {
-        epsilon_safety::PermissionEngine::layered(vec![epsilon_cli::runtime::project_rules_layer(
-            &project.rules,
-        )])
-    };
-    let gate = Arc::new(RulesetGate::layered(base_engine, approvals));
-    // `Agent::new` already returns an `Arc`, which is why the extension hooks below can be
-    // installed through it without unwrapping or re-wrapping.
-    let agent = Agent::new(
-        LoopLimits::for_model(model_id),
-        stream_fn,
-        Arc::new(registry),
-        gate,
-        workspace.to_path_buf(),
-    );
-
-    // ADR-019: let extensions intercept tool calls. Installed only when something is
-    // actually attached, because a harness with no extensions must not pay a round trip
-    // per tool call to discover there is nobody to ask. This is the first production
-    // `set_tool_hooks` call in the repository -- until now every one was a test.
-    if epsilon_cli::runtime::install_extension_hooks(&agent, ext_hosts.clone()) {
-        eprintln!(
-            "[harness] {} extension(s) may intercept tool calls",
-            ext_hosts.len()
-        );
-    }
-    // Turn-level hooks: swap the model between turns and end a run cleanly. Installed
-    // separately from the tool hooks because the two have different risk profiles, and a
-    // caller may want one without the other.
-    epsilon_cli::runtime::install_extension_turn_hooks(&agent, ext_hosts.clone());
-    // A19: resolve the resume target BEFORE opening anything, and make it the file this launch
-    // opens. The order used to be `open primary → attach → resolve resume → open resume`, which was
-    // harmless only while the primary had a fixed name: `latest_session_file` then returned the same
-    // file. Since M210 the primary is named for this launch, so it *is* the newest — and `-c`
-    // resolved to the empty file this process had created microseconds earlier, opened it a second
-    // time (waiting on its own lease for a full STALE_AFTER window) and restored nothing from it.
-    // Measured: a third 147-byte file per `-c` launch and 21/22/24s of countdown. See plan 021.
-    let resume_path = match resume {
-        Resume::No => None,
-        Resume::Path(p) => Some(p.clone()),
-        Resume::Latest => {
-            // M217: the per-cwd directory a launch writes into, plus the flat root where every
-            // session written before that move still is — one union, so a launch can continue a
-            // session whether or not it predates the directory.
-            epsilon_session::latest_session_for_cwd(
-                &epsilon_cli::runtime::sessions_root(workspace),
-                workspace,
-            )
-        }
-    };
-    let (session_path, resuming) =
-        session_path_for(workspace, &session_file, resume_path.as_deref());
-    // Reap locks whose holder is provably gone before opening anything (M211). One session per file
-    // (M210) means one lock per session, and a process that was killed — a closed terminal window, a
-    // `taskkill` — never removes its own, so a daily workspace accumulates two entries per launch
-    // and half of them are dead, in the directory a user lists when looking for their sessions. The
-    // predicate is exactly the one `acquire` uses to decide a lock may be stolen, so this cannot
-    // take a lock from a living process. The count is not logged: a launch is not the place for
-    // housekeeping chatter.
-    if let Some(dir) = session_path.parent() {
-        let _ = epsilon_session::sweep_stale_locks(dir);
-    }
-    let mut store = epsilon_session::SessionStore::open_in_with_progress(
-        session_path.clone(),
-        workspace,
-        lease_wait_notice,
-    )
-    // The path is in the message because the refusal is not actionable without it:
-    // `session line #3: …` names a line inside a file the reader has not been told the
-    // name of, and the file that fails is usually the *default* one — chosen by the
-    // harness, not typed by the user. (M202: the installed binary refused to start in
-    // this repository for exactly this reason, and the message did not say which file.)
-    // A19: when the file being opened IS the one being resumed, the refusal is phrased for the
-    // file that is actually there (`resume_open_error`) — that message is what a user resuming a
-    // foreign or damaged session needs, and it used to be produced by the second open this fix
-    // removed. A plain launch keeps the shorter one.
-    .map_err(|e| {
-        if resuming {
-            resume_open_error(&session_path, e)
-        } else {
-            format!("open session store {}: {e}", session_path.display())
-        }
-    })?;
-    if store.migrated() {
-        match store.persist_migration() {
-            // Name the backup. Converting an older session rewrites it in place, and the one
-            // thing a user needs to know when that happens to a file another tool wrote is
-            // where the previous bytes went — a `.pre-epsilon` sibling, kept once and never
-            // overwritten. Silence here would be the same class of problem the migration
-            // itself had: something changed the user's file and did not say so.
-            Ok(()) => eprintln!(
-                "migrated session store to current version (previous bytes kept at {})",
-                epsilon_session::original_backup_path(store.path()).display()
-            ),
-            Err(e) => eprintln!("migration warning (continuing): {e}"),
-        }
-    }
-    agent.set_model_id(model_id);
-    agent.set_skills(skills);
-    // Identity tier: `.epsilon/SYSTEM.md` replaces the built-in contract and
-    // `.epsilon/APPEND_SYSTEM.md` extends it (pi `discoverSystemPromptFile`). The same trust
-    // decision that gates skills decides whether the project's copy loads, so the prompt the
-    // user is asked about at startup is the prompt that takes effect; the global pair under
-    // ~/.config/epsilon is the fallback. Announced, because "I wrote SYSTEM.md, was asked to
-    // trust it, and nothing changed" is the report this wiring exists to answer.
-    let overlay = epsilon_core::prompt::load_system_overlay(workspace, project_trusted);
-    if let Some(path) = &overlay.custom_path {
-        eprintln!("system prompt: {path} replaces the built-in contract");
-    }
-    if let Some(path) = &overlay.append_path {
-        eprintln!("system prompt: {path} appended");
-    }
-    agent.set_system_overlay(overlay);
-    // Agent defs (M50: pi `agents.ts` parity) — user roots always, project
-    // roots only when trusted (same gate as skills). The `task` tool routes
-    // `subagent_type` through these; unknown named types fail naming the list.
-    let agents = epsilon_core::agents::discover_agents(
-        &epsilon_cli::runtime::agent_user_roots(),
-        &epsilon_cli::runtime::agent_project_roots(workspace, project_trusted),
-        project_trusted,
-    );
-    if !agents.is_empty() {
-        let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
-        eprintln!("agents: {}", names.join(", "));
-    }
-    agent.set_agents(agents);
-    agent.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
-    epsilon_cli::runtime::spawn_event_forwarder(agent.subscribe(), ext_hosts);
-
-    // Resume (M12): seed runtime history from a prior transcript. The restored view is
-    // the store's SHADOWED model view, so resumed sessions continue post-compaction.
-    //
-    // A19: the store is already open and attached — `session_path` above *is* the resumed path when
-    // there is one, so this block no longer opens a second store. It used to, and that second open
-    // was the defect: same path, second lease, thirty-second wait, empty restored conversation.
-    if let Some(rp) = resume_path {
-        let attached = agent
-            .session_store()
-            .ok_or("no session store attached for a resume")?;
-        let mut restored_guard = attached.lock().map_err(|_| "session store lock poisoned")?;
-        let restored: &mut epsilon_session::SessionStore = &mut restored_guard;
-        // M41: a resumed file may predate headers — migrate before repair reads
-        // it, so the repair pass sees healed entries, never legacy shapes.
-        if restored.migrated() {
-            match restored.persist_migration() {
-                // The resume path is where a *foreign* file is most likely to arrive, so the
-                // message names the backup too — see the note on the other call site.
-                Ok(()) => eprintln!(
-                    "migrated {} to current version (previous bytes kept at {})",
-                    rp.display(),
-                    epsilon_session::original_backup_path(restored.path()).display()
-                ),
-                Err(e) => eprintln!("migration warning (continuing): {e}"),
-            }
-        }
-        // ponytail-audit follow-up: repair is now WIRED, not test-only — a crashed
-        // prior run leaves dangling tool calls on the active branch; synthesize
-        // tombstones before the model view so the resumed context stays provider-valid.
-        match epsilon_session::repair::repair_on_open(&mut *restored) {
-            Ok(report) => {
-                for line in report.summary() {
-                    eprintln!("repaired {}: {line}", rp.display());
-                }
-            }
-            Err(e) => eprintln!("repair warning (continuing): {e}"),
-        }
-        // An entry kind this build does not know is preserved, not refused (M113), which leaves
-        // it in the file and out of the transcript by construction: the session opens looking
-        // complete while something in it was silently skipped. Nothing else on this path can
-        // tell the user that, so say it here, beside the repairs and in the same voice.
-        if let Some(notice) = restored.preserved_unknown_notice() {
-            eprintln!("{}: {notice}", rp.display());
-        }
-        let msgs: Vec<Message> = restored
-            .model_view()
-            .map_err(|e| format!("read {}: {e}", rp.display()))?
-            .into_iter()
-            .map(|v| v.into_message())
-            .collect();
-        let count = msgs.len();
-        agent.restore_history(msgs);
-        eprintln!("resumed {} entries from {}", count, rp.display());
-        // M139: a model switch recorded in the session used to be read by nobody, so a
-        // resumed conversation silently came back on the launch model. Apply it here —
-        // and only here, because this is the point where the session is known and the
-        // agent still exists.
-        //
-        // Precedence, and it is not arbitrary: an explicit `--model` on THIS invocation
-        // is a deliberate instruction for this run, while the session's model is a
-        // remembered default. So flag > session > project/config, which is exactly the
-        // order `candidate_raw` already builds above — the session slots in only when the
-        // user expressed no preference of their own.
-        if let Some(resumed) = resumed_model_to_use(model_explicit, &*restored, model_id) {
-            let (provider, session_model) = resumed;
-            if session_model != model_id {
-                eprintln!(
-                    "resumed session was last used on {provider}/{session_model}; continuing there \
-                     (pass --model to override)"
-                );
-                agent.set_model_id(session_model);
-            }
-        }
-    }
-    Ok(agent)
-}
-
-/// Which file a launch opens, and whether that makes it a resumed launch.
-///
-/// **A19's invariant, written where it can be tested: the resume target wins.** A launch must write
-/// to the file it resumes. The old shape kept the frontend's default as the session path and opened
-/// the resume target as a *second* store — invisible while the default name was fixed
-/// (`latest_session_file` then returned the same file) and fatal once each launch named its own: the
-/// newest file in the directory was the empty one this process had just created, so `--continue`
-/// resolved to its own file, waited a full lease window on its own lock, and restored nothing.
-///
-/// Extracted for the same reason `resumed_model_to_use` was: the rule is what the product runs, and
-/// a copy of it inside a test would test the copy.
-///
-/// The returned `bool` is not decoration — the caller uses it to phrase the open's error message for
-/// a resumed file (`resume_open_error`) rather than for a launch.
-fn session_path_for(
-    workspace: &std::path::Path,
-    session_file: &str,
-    resume_path: Option<&std::path::Path>,
-) -> (std::path::PathBuf, bool) {
-    match resume_path {
-        Some(rp) => (rp.to_path_buf(), true),
-        None => (workspace.join(session_file), false),
-    }
-}
-
-#[cfg(test)]
-mod session_path_tests {
-    use super::session_path_for;
-    use std::path::{Path, PathBuf};
-
-    /// The property A19 was: **the file written is the file resumed.**
-    #[test]
-    fn a_resume_target_becomes_the_file_this_launch_opens() {
-        let workspace = Path::new("/ws");
-        let resumed = Path::new("/ws/.epsilon/sessions/2026-09-30T00-00-00-000Z_ses_a.jsonl");
-        let (path, resuming) =
-            session_path_for(workspace, ".epsilon/sessions/tui.jsonl", Some(resumed));
-        assert_eq!(path, PathBuf::from(resumed));
-        assert!(
-            resuming,
-            "the caller needs to know, to phrase a refusal for a resumed file"
-        );
-    }
-
-    /// A plain launch is unchanged: the frontend's own name, relative to the workspace.
-    #[test]
-    fn a_launch_without_a_resume_keeps_its_own_file() {
-        let (path, resuming) =
-            session_path_for(Path::new("/ws"), ".epsilon/sessions/tui.jsonl", None);
-        assert_eq!(path, PathBuf::from("/ws/.epsilon/sessions/tui.jsonl"));
-        assert!(!resuming);
-    }
-}
-/// Which model a resumed run should continue on, and why. `None` means "keep the launch
-/// model" — the caller then changes nothing.
-///
-/// Extracted from `build_runtime` so the precedence is testable without standing up a
-/// workspace, a provider and a registry. A closure copy of the same rule inside a test
-/// would have tested the copy; this tests the rule the product actually runs.
-///
-/// The precedence is the whole content of the function: an explicit `--model` is a
-/// deliberate instruction for *this* invocation, while the session's model is a
-/// remembered default. So the session may only take over when the user said nothing.
-fn resumed_model_to_use(
-    model_explicit: bool,
-    store: &epsilon_session::SessionStore,
-    launch_model: &str,
-) -> Option<(String, String)> {
-    if model_explicit {
-        return None;
-    }
-    let settings = store.context_settings().ok()?;
-    let (provider, session_model) = settings.model?;
-    if session_model == launch_model {
-        return None;
-    }
-    // Resolve through the catalog so a session that recorded an alias or a partial id
-    // still lands on a real row; fall back to the raw id for a custom model the catalog
-    // does not know, which pi also accepts.
-    let resolved = epsilon_llm::catalog::resolve_model_for_run(&session_model)
-        .map_or_else(|| session_model.clone(), |r| r.info.id.to_string());
-    Some((provider, resolved))
-}
-
-/// Tell the user that a session lease is being waited out, and for roughly how much longer.
-///
-/// M138. M136 stopped the refusal, so a killed TUI no longer locks the next launch
-/// out for 30 seconds — but it replaced a clear error with a silent wait, and a
-/// silent wait is the same shape of failure the owner reported about this harness:
-/// the screen does nothing while work is happening underneath.
-///
-/// Design notes, because a progress line in a terminal is easy to get wrong:
-///
-/// - **stderr, not stdout.** Every other startup note here uses `eprintln!`, so a
-///   caller piping stdout does not get control characters in its data, and nothing
-///   else in the process is drawing at this point.
-/// - **One line, redrawn in place.** `\r` plus clear-to-end-of-line stops the notice
-///   becoming a 20-line scrollback of near-identical text. That works in both CMD
-///   and PowerShell, which is the whole platform matrix here. It is not a
-///   TTY-sniffing progress bar.
-/// - **Not a spinner.** A spinner needs a timer thread and a redraw loop; this runs
-///   on a blocking path before the async runtime is doing anything. A countdown
-///   that changes about once a second is enough to prove liveness, and costs nothing.
-/// - **Says why.** "another process may still be writing it" is the fact the user
-///   needs. The pid, if there is one, is in the error they get if the wait runs out.
-fn lease_wait_notice(waited: std::time::Duration, remaining: std::time::Duration) {
-    // Remember the wait, because the line below is written to a console that the TUI's alternate
-    // screen then erases: a launch that waited 25 s would otherwise start with no record of why
-    // it paused (ledger A18). A process-global rather than a parameter because the wait happens
-    // inside `build_runtime`, which four frontends share and which takes this function by name —
-    // threading a second return value through it for one notice would cost more than it explains.
-    // `fetch_max`, so the longest wait of a launch is what gets reported.
-    LEASE_WAIT_MS.fetch_max(
-        waited.as_millis() as u64,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    let mut err = std::io::stderr();
-    write_lease_wait(&mut err, waited, remaining);
-}
-
-/// The longest lease wait this process performed, in milliseconds. Zero means none.
-///
-/// Written by [`lease_wait_notice`], read once by the TUI path after `build_runtime` returns.
-static LEASE_WAIT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// What the TUI says about a wait that happened before it started, or `None` when there was none.
-///
-/// **One second is the threshold**, and it is a judgement worth stating: the ordinary contended
-/// launch waits a few hundred milliseconds for a lease another process released, and a notice
-/// about that would be noise on every second launch. A second is where a person notices a pause
-/// and starts wondering whether the program is stuck — which is the state this closes.
-fn lease_wait_summary(waited_ms: u64) -> Option<String> {
-    if waited_ms < 1_000 {
-        return None;
-    }
-    Some(format!(
-        "this launch waited {}s for the session file's lease — another process had it, and it \
-         has been released. Nothing was lost; the session continued from the same file.",
-        waited_ms / 1_000
-    ))
-}
-
-/// One lease-wait progress line, written to `w`.
-///
-/// Split out from [`lease_wait_notice`] so the rendering is testable. The defect M138
-/// fixes is "nothing appears on the screen", and a function that writes straight to the
-/// process's stderr cannot be asserted on by any test. Here it can: the test builds the
-/// same bytes the user would see and checks the countdown, the carriage return, and the
-/// clear-to-end-of-line that stops each redraw leaving a stale tail behind.
-fn write_lease_wait(
-    w: &mut impl std::io::Write,
-    waited: std::time::Duration,
-    remaining: std::time::Duration,
-) {
-    let waited = waited.as_secs();
-    let remaining = remaining.as_secs_f64().ceil() as u64;
-    // `\r` redraws in place; `\x1b[K` clears to end of line. Both are understood by
-    // CMD and PowerShell's console host, which is the whole platform matrix here.
-    let _ = write!(
-        w,
-        "\r  waiting for this session to be released — {waited}s elapsed, ~{remaining}s left \
-         (another process may still be writing it)   \x1b[K"
-    );
-    let _ = w.flush();
-}
-
-/// Why `--resume` could not open this file, phrased for the file that is actually there.
-///
-/// The store's own message for a current pi session is true and useless: "session line #2: valid
-/// JSON that is not an entry, a header or a legacy entry — a shape this build does not know"
-/// names what this build *cannot* read, not what the file *is* or what to do about it. A refusal
-/// a user cannot act on is half a feature, so when the file turns out to be a pi tree the
-/// diagnosis is followed by the exact command that converts it — and by the promise the import
-/// keeps, that the pi file stays untouched.
-fn resume_open_error(path: &std::path::Path, e: epsilon_session::StoreError) -> String {
-    let base = format!("open {}: {e}", path.display());
-    if !epsilon_session::looks_like_pi_session(path) {
-        return base;
-    }
-    let quoted = if path.to_string_lossy().contains(' ') {
-        format!("\"{}\"", path.display())
-    } else {
-        path.display().to_string()
-    };
-    format!(
-        "{base}\n{} is a current pi session (entries carry id/parentId, the kind sits at the \
-         top level), which this build cannot open in place — run:\n  epsilon --import {quoted}\n\
-         that writes an Epsilon session beside it and leaves the pi file exactly as it is; \
-         resume the copy it names",
-        path.display()
-    )
+    /// Whether this process runs **offline** (M233): --provider faux, or no usable
+    /// credential. Decided once here and carried, because the TUI header must name the
+    /// provider it is actually calling, and the model id alone cannot say that.
+    offline: bool,
 }
 
 /// Build the user message for `text`, resolving any `@` references into attachments (M74).
@@ -2391,9 +1876,7 @@ async fn tui_mode(
             // where it survives. Built here rather than in `shared` because `shared` is assembled
             // before the store is opened, which is when the wait happens.
             let mut startup_notices = shared.startup_notices.clone();
-            if let Some(waited) =
-                lease_wait_summary(LEASE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed))
-            {
+            if let Some(waited) = lease_wait_summary(lease_wait_millis()) {
                 startup_notices.push(waited);
             }
             epsilon_tui::run(epsilon_tui::TuiConfig {
@@ -2405,6 +1888,11 @@ async fn tui_mode(
                 startup_notices,
                 trust_review_pending: shared.trust_review_pending,
                 theme_mode,
+                // M233: the header has to name the provider this process is actually calling.
+                // `--provider faux` with a saved `deepseek/...` model used to render
+                // `DeepSeek V3.1` over a faux turn, because the offline marker was keyed off the
+                // model id instead of this decision.
+                offline: shared.offline,
             })
             .await
         }
@@ -2804,7 +2292,7 @@ action = "allow"
 
         let provider = FauxProvider::new(vec![FauxStep::say("answered anyway")]);
         let recorded = provider.recorded_requests_handle();
-        let agent = Agent::new(
+        let agent = epsilon_core::Agent::new(
             LoopLimits::default(),
             Arc::new(PanicGuard(provider)),
             Arc::new(ToolRegistry::new()),
@@ -2944,96 +2432,6 @@ mod mask_tests {
         assert_eq!(masked.chars().count(), 5); // … + last 4 chars
 
         assert_eq!(mask_key("ééé"), "****"); // 4 or fewer chars: hidden fully
-    }
-}
-
-#[cfg(test)]
-mod lease_wait_notice_tests {
-    use super::*;
-
-    fn render(waited: u64, remaining: f64) -> String {
-        let mut buf: Vec<u8> = Vec::new();
-        write_lease_wait(
-            &mut buf,
-            std::time::Duration::from_secs(waited),
-            std::time::Duration::from_secs_f64(remaining),
-        );
-        String::from_utf8(buf).expect("notice is utf-8")
-    }
-
-    /// The user-visible defect M138 fixes is a blank screen, so assert on the bytes the
-    /// user would actually see: a redrawn line carrying a real countdown and a reason.
-    #[test]
-    fn the_notice_shows_a_countdown_and_why_it_is_waiting() {
-        let out = render(3, 27.0);
-        assert!(
-            out.starts_with('\r'),
-            "each poll must redraw in place, not append a line: {out:?}"
-        );
-        assert!(out.contains("3s elapsed"), "{out:?}");
-        assert!(out.contains("~27s left"), "{out:?}");
-        assert!(
-            out.contains("another process may still be writing it"),
-            "the user must be told why, not just that something is slow: {out:?}"
-        );
-    }
-
-    /// Clear-to-end-of-line is what stops each redraw leaving the previous, longer
-    /// countdown visible as a stale tail. Dropping the `\x1b[K` is the natural
-    /// simplification and it produces garbage a user reads as wrong numbers.
-    #[test]
-    fn the_notice_clears_the_previous_polls_tail() {
-        assert!(
-            render(1, 29.0).ends_with("\x1b[K"),
-            "a shorter message must clear what the previous longer one drew"
-        );
-    }
-
-    /// A18: the wait is remembered, so the TUI can say it in a place that survives the
-    /// alternate screen.
-    ///
-    /// Asserted with `>=` rather than `==` because the counter is a process-global and a
-    /// monotonic one: another test in this binary may have waited longer, and a test that
-    /// insisted on exact equality would be asserting on test order.
-    #[test]
-    fn a_wait_is_remembered_for_the_frontend_that_starts_after_it() {
-        let before = LEASE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed);
-        lease_wait_notice(
-            std::time::Duration::from_secs(4),
-            std::time::Duration::from_secs(26),
-        );
-        let after = LEASE_WAIT_MS.load(std::sync::atomic::Ordering::Relaxed);
-        assert!(
-            after >= 4_000,
-            "the wait must be recorded for the TUI to report: {before} -> {after}"
-        );
-    }
-
-    /// The threshold, and the two sentences it produces. A sub-second wait is the ordinary
-    /// contended launch and must stay silent; a second is where a person starts wondering
-    /// whether the program is stuck.
-    #[test]
-    fn only_a_wait_long_enough_to_notice_becomes_a_notice() {
-        assert!(lease_wait_summary(0).is_none(), "no wait, nothing to say");
-        assert!(
-            lease_wait_summary(999).is_none(),
-            "a sub-second contention is not worth a line on every second launch"
-        );
-        let said = lease_wait_summary(25_400).expect("a 25 s wait is worth explaining");
-        assert!(said.contains("waited 25s"), "{said}");
-        assert!(said.contains("lease"), "{said}");
-        assert!(
-            said.contains("Nothing was lost"),
-            "the reader's real question is whether the pause cost them something: {said}"
-        );
-    }
-
-    /// Sub-second remainders round UP. A countdown showing `0s left` while 400ms remain
-    /// reads as "finished" when it has not, which is the confusion this line removes.
-    #[test]
-    fn a_sub_second_remainder_rounds_up_not_down() {
-        let out = render(0, 0.4);
-        assert!(out.contains("~1s left"), "{out:?}");
     }
 }
 
@@ -3318,66 +2716,6 @@ mod print_outcome_tests {
             Some(expected),
             "{variable}={raw:?} must select {expected:?} — a typo falls back to the \
              default, not through to the config key"
-        );
-    }
-    // ---- M139: model precedence on resume ----
-
-    /// Build a session whose last entry is a `model_change` to `session_model`, and return
-    /// the store. The lease is dropped at the end of this function so the caller can open
-    /// it again without contending with itself.
-    fn store_with_model_change(
-        dir: &std::path::Path,
-        session_model: &str,
-    ) -> epsilon_session::SessionStore {
-        let path = dir.join("resume.jsonl");
-        let mut store = epsilon_session::SessionStore::open_in(&path, dir).expect("store");
-        store
-            .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
-                provider: "testprov".into(),
-                model_id: session_model.into(),
-            })
-            .expect("append model_change");
-        drop(store);
-        epsilon_session::SessionStore::open_in(&path, dir).expect("reopen")
-    }
-
-    /// The flag wins. This is the regression that would be silent and unnerving: the user
-    /// explicitly names a model, gets overridden anyway, and has no way to notice.
-    #[test]
-    fn an_explicit_model_is_never_overridden_by_the_session() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_model_change(dir.path(), "some-other-model");
-        assert_eq!(
-            resumed_model_to_use(true, &store, "faux-1"),
-            None,
-            "a --model flag must survive a resume untouched"
-        );
-    }
-
-    /// With no flag, the session's model is what the user was last using.
-    #[test]
-    fn the_sessions_model_takes_over_when_no_flag_was_given() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_model_change(dir.path(), "some-other-model");
-        let chosen = resumed_model_to_use(false, &store, "faux-1")
-            .expect("the session's model should be adopted when the user named none");
-        assert_eq!(chosen.0, "testprov");
-        assert_eq!(
-            chosen.1, "some-other-model",
-            "an id the catalog does not know is kept verbatim, as pi does for custom models"
-        );
-    }
-
-    /// A session whose model already matches the launch model changes nothing — no
-    /// announcement, no pointless `set_model_id`.
-    #[test]
-    fn a_matching_model_is_left_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = store_with_model_change(dir.path(), "faux-1");
-        assert_eq!(
-            resumed_model_to_use(false, &store, "faux-1"),
-            None,
-            "no change means no change, and no confusing announcement"
         );
     }
 }
