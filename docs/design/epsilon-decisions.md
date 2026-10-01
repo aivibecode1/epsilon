@@ -1027,6 +1027,38 @@ problem: the desktop needs it too, and a second copy would silently disagree abo
 the window is about to call — which is exactly the lie M233 closed in the terminal header.
 It moves in the same slice as `build_runtime`, not after it.
 
+**Amendment (M234) — the second half moved, and the refusal path is why.** `resolve_launch` now
+lives in `epsilon-runtime`, taking a `LaunchRequest` and returning a `Launch` or an `Err(String)`.
+Four branches of the old block were **`die()` — a process exit** — and those are the four the
+desktop could not have reached even by copying the function:
+
+| Branch | Before | After |
+|---|---|---|
+| a model reference that matches nothing | `die("unknown model …")` | `Err("unknown model …")` |
+| a reference matching several rows | `die("ambiguous model … — matches: …")` | `Err(…)` |
+| `--provider real` with no credential anywhere | `die("--provider real requested …")` | `Err(…)` |
+| `--script` that will not read or parse | `die("read …" / "invalid script json …")` | `Err(…)` |
+
+That table is the argument, and it is not about tidiness: **a refusal path that exits the
+process is a refusal path a window cannot have.** The desktop needs to show the sentence and
+keep running. `Launch` deliberately does not derive `Debug` — `dyn StreamFn` is not `Debug`, and
+a hand-written shim would print nothing a reader could use — which is why
+`an_unknown_model_is_an_error_a_frontend_can_show_not_an_exit` uses `let … else` rather than
+`expect_err`.
+
+Three properties are now frozen by tests rather than by reading the branch:
+
+- an unknown model is an error a frontend can display, and the sentence quotes what the user
+  typed;
+- a faux launch resolves with no provider and no key, and says so in its notices;
+- **`a named real model beside `--provider faux` still reports `offline`** — the M233 lie,
+  expressed as the field that prevents it.
+
+`LaunchRequest::for_workspace` defaults to `Lsp::Off` and `Confinement::Auto`, which is the
+library-caller's default rather than the CLI's (`--lsp auto` is what the CLI passes). The
+difference is recorded because a default is a policy: a library caller that does not ask for
+language-server diagnostics should not spawn one.
+
 **`epsilon-server` stays as it is.** It is a real and useful surface (an external client over
 HTTP/SSE) and it is not how the desktop talks to the agent. The desktop hosts the agent
 **in process**, on its own tokio runtime, sharing one `Arc<Agent>`. Going over the wire would buy

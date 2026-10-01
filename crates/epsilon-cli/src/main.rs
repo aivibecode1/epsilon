@@ -18,7 +18,7 @@ use std::sync::Arc;
 use epsilon_contracts::agent_event::{AgentEvent, TurnEndReason};
 use epsilon_contracts::message::{Message, StopReason};
 use epsilon_core::{LoopLimits, ToolRegistry};
-use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PacedProvider, PanicGuard};
+use epsilon_llm::{FauxProvider, FauxStep, FauxToolCall, PanicGuard};
 use epsilon_mcp::McpServerConfig;
 use epsilon_safety::{ApprovalUi, ChannelApprovalUi};
 // ADR-021: composition is a library crate now, so the desktop IDE can build the same agent
@@ -1152,326 +1152,49 @@ async fn dispatch(args: Args) -> i32 {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    // M225: **the one place custom providers enter the process.** `config.toml` is read here, by the
-    // one reader (`core::config::custom_providers_in`), and the rows are installed for the readers
-    // that cannot own a parse — `DirectProvider::stream` and the fallback chain, which used to open
-    // and parse the file on the hot path of every request. Before anything reads them, which is why
-    // this line is above the diagnostics collector rather than beside a later use.
-    if let Some(dir) = epsilon_core::config::global_dir() {
-        let rows = epsilon_core::config::custom_providers_in(&dir);
-        if !rows.is_empty() {
-            let names: Vec<&str> = rows.iter().map(|c| c.name.as_str()).collect();
-            eprintln!("custom providers: {}", names.join(", "));
-        }
-        epsilon_llm::custom::install_providers(rows);
-    }
-
-    // One diagnostics collector for the whole startup path (plan 008 / DEBT-04):
-    // replaces the three ad-hoc Vec<String> patterns (project notices, banners,
-    // extension notices) with a single ordered sink flushed once.
-    struct Diagnostics(Vec<String>);
-    impl Diagnostics {
-        fn push(&mut self, line: impl Into<String>) {
-            self.0.push(line.into());
-        }
-        fn flush_stderr(&self) {
-            for line in &self.0 {
-                eprintln!("{line}");
-            }
-        }
-    }
-    let mut diag = Diagnostics(Vec::new());
-
-    // Project layer (ADR-012, M12): .epsilon/config.toml + trust hash.
-    // M22: the trust decision is explicit. Headless modes keep the loud-banner
-    // policy (still load); the TUI re-prompts interactively via startup_notices.
-    let (project, trust, project_notices) = epsilon_cli::runtime::load_project_config(&workspace);
-    let mut startup_notices = project_notices;
-    // M45: remembered per-path trust (pi `trust.json`) composes with the hash:
-    // an explicit `false` denies even an unchanged config; `true` trusts even
-    // a changed one (the user already answered); `None`/unreadable falls back
-    // to the hash decision. "No memory" is never a decision.
-    let remembered: Option<bool> =
-        epsilon_cli::runtime::ProjectTrustStore::open().and_then(|s| s.get(&workspace));
-    let trusted_now = match remembered {
-        Some(false) => false,
-        Some(true) => true,
-        None => !matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. }),
+    // ADR-021: which provider, which model, and what to tell the user about both, are
+    // decided in `epsilon-runtime` so every frontend decides them the same way. The CLI
+    // used to do this inline; a desktop window could not have reached it, and three of
+    // the branches are ways a window ends up naming a provider it is not calling.
+    let launch = match epsilon_runtime::resolve_launch(&epsilon_runtime::LaunchRequest {
+        workspace: workspace.clone(),
+        model_reference: args.model_id.clone(),
+        provider: match args.provider {
+            Some(Provider::Faux) => epsilon_runtime::ProviderChoice::Faux,
+            Some(Provider::Real) => epsilon_runtime::ProviderChoice::Real,
+            None => epsilon_runtime::ProviderChoice::Auto,
+        },
+        fallbacks: args.fallbacks.clone(),
+        script_path: args.script_path.as_ref().map(std::path::PathBuf::from),
+        stream_pace_ms: args.stream_pace_ms,
+        lsp: args.lsp,
+        plan_mode: args.plan_mode,
+        confinement: args.confinement.clone(),
+        resume: args.resume.clone(),
+    }) {
+        Ok(launch) => launch,
+        Err(message) => die(&message),
     };
-    // M39: untrusted projects curtail skills/extensions/prompts at the roots —
-    // the config hash gates config.toml, but third-party CODE never loads
-    // without trust (pi's project-trust scoping).
-    if !trusted_now {
-        startup_notices.push(
-            "project skills/extensions curtailed until trusted \
-             (global skills still loaded)"
-                .to_string(),
-        );
-    }
-    let trust_review_pending = matches!(trust, epsilon_cli::runtime::TrustDecision::Changed { .. });
-    if trust_review_pending {
-        startup_notices.extend([
-            "WARNING: .epsilon/config.toml CHANGED since it was trusted; \
-             review before running untrusted projects"
-                .to_string(),
-            "(the interactive TUI asks before anything executes; --yes skips the ask)".to_string(),
-        ]);
-    }
-
-    // ---- provider + model resolution (M14: real harness out of the box) ------------
-    // Precedence for the model id: --model flag > project config > global saved.
-    // Provider: explicit --provider wins; otherwise AUTO — if any catalog provider's
-    // API key is present in the environment (and the chosen model's credentials are
-    // ready), run REAL; only when nothing is configured do we fall back to the offline
-    // faux provider, with a banner saying exactly how to go real. pi/opencode parity:
-    // a fresh user with one env var gets a working agent with zero flags.
-    //
-    // M40: the raw flag/config/env candidate is a *reference*, not an id — it
-    // goes through pi's match order (exact → provider/id → case-insensitive →
-    // partial) so `--model opus`, `anthropic/claude-opus-4-6`, or a bare alias
-    // all land on a catalog row. Custom `<name>/...` ids bypass the catalog
-    // (M28) but are still accepted. Unknown references die with candidates.
-    let candidate_raw = args
-        .model_id
-        .clone()
-        .or_else(|| project.model_id.clone())
-        .or_else(epsilon_core::config::load_model_id);
-    let candidate_model: Option<String> = match candidate_raw.as_deref() {
-        None => None,
-        Some(raw) => {
-            use epsilon_llm::catalog::resolve_model_for_run;
-            if let Some(resolved) = resolve_model_for_run(raw) {
-                if !matches!(resolved.kind, epsilon_llm::catalog::ModelMatchKind::Exact) {
-                    diag.push(format!(
-                        "model {:?} matched catalog entry {:?}",
-                        raw, resolved.info.id
-                    ));
-                }
-                // M63: never let a name collide with a capability. When the row
-                // the reference landed on has no credentials but a sibling row
-                // for the same reference does, the harness runs the one the user
-                // can actually call — and says so, because silently running a
-                // different model would be worse than saying it.
-                if let Some(replaced) = resolved.replaced {
-                    diag.push(format!(
-                        "{} has no credentials — using {:?} ({}) instead",
-                        replaced.id, resolved.info.id, resolved.info.provider
-                    ));
-                } else if !epsilon_llm::catalog::row_credentials_ready(resolved.info)
-                    && !resolved.info.env_key.is_empty()
-                {
-                    // The requested model cannot run: name the provider, the env
-                    // var, the login command, and which providers DO have keys.
-                    diag.push(format!(
-                        "no credentials for provider {:?} — set {} or run: \
-                         epsilon auth login {}",
-                        resolved.info.provider, resolved.info.env_key, resolved.info.provider
-                    ));
-                    let ready = epsilon_llm::catalog::credentialed_providers();
-                    if !ready.is_empty() {
-                        diag.push(format!(
-                            "providers with stored credentials: {} (pick one with --model)",
-                            ready.join(", ")
-                        ));
-                    }
-                    // Naming the missing provider is only half an answer; give the
-                    // user a model they can run right now.
-                    if let Some(suggestion) = epsilon_llm::catalog::suggested_ready_model() {
-                        diag.push(format!(
-                            "try: --model {} ({})",
-                            suggestion.id, suggestion.provider
-                        ));
-                    }
-                }
-                Some(resolved.info.id.to_string())
-            } else if raw.split_once('/').is_some_and(|(prefix, _)| {
-                epsilon_llm::custom::custom_providers().iter().any(|c| {
-                    epsilon_llm::custom::lookup_custom(std::slice::from_ref(c), raw).is_some()
-                        || c.name.eq_ignore_ascii_case(prefix)
-                })
-            }) {
-                Some(raw.to_string())
-            } else {
-                let candidates = epsilon_llm::catalog::resolve_model_candidates(raw);
-                if candidates.is_empty() {
-                    die(&format!(
-                        "unknown model {raw:?} (not in catalog, no custom provider prefix matches)"
-                    ));
-                }
-                die(&format!(
-                    "ambiguous model {raw:?} — matches: {}",
-                    candidates
-                        .iter()
-                        .map(|m| m.id)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-    };
-
-    let auto_real = |candidate: &Option<String>| -> Option<(String, String)> {
-        if let Some(m) = candidate
-            && epsilon_llm::catalog::credentials_ready(m)
-        {
-            let key = epsilon_llm::catalog::env_key_for(m)
-                .unwrap_or("")
-                .to_string();
-            return Some((m.clone(), key));
-        }
-        // No usable candidate: first tooled model whose key is present.
-        epsilon_llm::catalog::curated()
-            .iter()
-            .find(|i| {
-                i.supports_tools && !i.env_key.is_empty() && std::env::var_os(i.env_key).is_some()
-            })
-            .map(|i| (i.id.to_string(), i.env_key.to_string()))
-    };
-
-    if args.plan_mode {
-        diag.push(
-            "PLAN MODE: read-only research run — write/edit and bash/shell are denied \
-             outright; re-run without --plan to apply changes",
-        );
-    }
-    let use_real: bool = match args.provider {
-        Some(Provider::Faux) => false,
-        Some(Provider::Real) => true,
-        None => {
-            #[cfg(feature = "real")]
-            {
-                auto_real(&candidate_model).is_some()
-            }
-            #[cfg(not(feature = "real"))]
-            {
-                if auto_real(&candidate_model).is_some() {
-                    diag.push(
-                        "API key detected but this binary lacks --features real — \
-                         running offline faux. Rebuild: cargo install --path crates/epsilon-cli --features real",
-                    );
-                }
-                false
-            }
-        }
-    };
-
-    let model_id = if use_real {
-        match candidate_model.filter(|m| epsilon_llm::catalog::credentials_ready(m)) {
-            Some(m) => m,
-            None => match auto_real(&None) {
-                Some((m, _)) => m,
-                None => die("--provider real requested but no provider API key found \
-                     (set e.g. DEEPSEEK_API_KEY / ANTHROPIC_API_KEY)"),
-            },
-        }
-    } else {
-        candidate_model.unwrap_or_else(|| epsilon_core::config::DEFAULT_MODEL_ID.to_string())
-    };
-
-    let steps: Vec<FauxStep> = if use_real {
-        Vec::new()
-    } else {
-        match &args.script_path {
-            Some(p) => {
-                let raw =
-                    std::fs::read_to_string(p).unwrap_or_else(|e| die(&format!("read {p}: {e}")));
-                serde_json::from_str(&raw)
-                    .unwrap_or_else(|e| die(&format!("invalid script json: {e}")))
-            }
-            None => default_steps(),
-        }
-    };
-
-    let stream_fn: Arc<dyn epsilon_llm::StreamFn> = if use_real {
-        #[cfg(feature = "real")]
-        {
-            // M22: say WHERE the key came from so users can tell auth.json from env.
-            // M28: custom ids (`lmstudio/foo`) resolve under the custom provider's
-            // name, so the diagnostic names it correctly for those too.
-            let customs = epsilon_llm::custom::custom_providers();
-            let provider = epsilon_llm::custom::lookup_custom(&customs, &model_id)
-                .map(|c| c.name.clone())
-                .or_else(|| {
-                    epsilon_llm::catalog::lookup_model(model_id.as_str())
-                        .map(|m| m.provider.to_string())
-                })
-                .unwrap_or_default();
-            let key_source = if epsilon_llm::auth::load_credentials().contains_key(&provider) {
-                "stored (epsilon auth login)"
-            } else {
-                "env var"
-            };
-            diag.push(format!(
-                "provider: real (direct HTTP) · model: {model_id} · key {key_source}"
-            ));
-            // DIRECTION-03: with --fallback, wrap in the chain provider
-            // (primary first, candidates after; per-turn primary restoration).
-            // M60: the retry policy is engaged here (it was implemented but never
-            // wrapped around a production stream, so transient failures were fatal).
-            // Waits go to stderr: stdout stays exactly the transcript for `-p`.
-            let retrying = |inner: Arc<dyn epsilon_llm::StreamFn>| {
-                Arc::new(
-                    epsilon_llm::Retrying::new(inner)
-                        .with_max_attempts(epsilon_llm::RETRY_MAX_ATTEMPTS)
-                        .with_on_retry(|n| {
-                            eprintln!("[retry] {}", epsilon_core::retry_notice_text(n))
-                        }),
-                )
-            };
-            if args.fallbacks.is_empty() {
-                retrying(Arc::new(PanicGuard(epsilon_llm::DirectProvider::new())))
-            } else {
-                diag.push(format!("fallbacks: {}", args.fallbacks.join(" -> ")));
-                retrying(Arc::new(PanicGuard(
-                    epsilon_llm::fallback::FallbackProvider::new(
-                        std::iter::once(model_id.as_str())
-                            .chain(args.fallbacks.iter().map(String::as_str)),
-                    ),
-                )))
-            }
-        }
-        #[cfg(not(feature = "real"))]
-        unreachable!("use_real cannot be true without the real feature")
-    } else {
-        diag.push("provider: faux (offline scripted)");
-        diag.push(
-            "go real:  epsilon auth login <provider>   (or set the provider's API key env var)",
-        );
-        if args.stream_pace_ms > 0 {
-            diag.push(format!(
-                "stream pace: {}ms per event (test hook; see epsilon-llm/src/paced.rs)",
-                args.stream_pace_ms
-            ));
-        }
-        let faux = FauxProvider::new(steps);
-        if args.stream_pace_ms > 0 {
-            Arc::new(PanicGuard(PacedProvider::new(faux, args.stream_pace_ms)))
-        } else {
-            Arc::new(PanicGuard(faux))
-        }
-    };
-    // Silence the never-read warning in faux builds: fallbacks only matter on
-    // the real path (see the use_real branch above).
-    #[cfg(not(feature = "real"))]
-    let _ = &args.fallbacks;
     // Startup notices flush here, in order, once (plan 008).
-    diag.flush_stderr();
+    for line in &launch.notices {
+        eprintln!("{line}");
+    }
 
     let shared = SharedRun {
-        workspace,
-        stream_fn,
+        workspace: launch.workspace.clone(),
+        stream_fn: launch.stream_fn.clone(),
         mcp_servers: args.mcp_servers.clone(),
-        confinement: args.confinement.clone(),
-        lsp: args.lsp,
-        model_id,
-        model_explicit: args.model_id.is_some(),
-        resume: args.resume.clone(),
-        project,
-        project_trusted: trusted_now,
-        plan_mode: args.plan_mode,
-        offline: !use_real,
-        startup_notices,
-        trust_review_pending,
+        confinement: launch.confinement.clone(),
+        lsp: launch.lsp,
+        model_id: launch.model_id.clone(),
+        model_explicit: launch.model_explicit,
+        resume: launch.resume.clone(),
+        project: launch.project.clone(),
+        project_trusted: launch.project_trusted,
+        plan_mode: launch.plan_mode,
+        offline: launch.offline,
+        startup_notices: launch.notices.clone(),
+        trust_review_pending: launch.trust_review_pending,
     };
     match &args.mode {
         Mode::Auth(_) => unreachable!("auth subcommands exit inside main() before dispatch"),
@@ -1647,17 +1370,6 @@ fn explicit_theme_mode(value: &str) -> Option<epsilon_tui::ThemeMode> {
         return None;
     }
     Some(epsilon_tui::ThemeMode::from_name(value).unwrap_or_default())
-}
-
-fn default_steps() -> Vec<FauxStep> {
-    vec![
-        FauxStep::call(
-            "tc_1",
-            "bash",
-            serde_json::json!({"command": "echo epsilon-ready"}),
-        ),
-        FauxStep::say("Run complete."),
-    ]
 }
 
 /// Shared composition: real tools + ruleset gate over the given approval UI.
