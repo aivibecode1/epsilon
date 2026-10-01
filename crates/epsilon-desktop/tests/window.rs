@@ -136,6 +136,139 @@ fn type_and_enter(text: &str) -> Vec<egui::Event> {
     });
     events
 }
+
+/// The window opens on a tree of the workspace's real files.
+///
+/// The workspace pane used to draw three placeholder labels. It now walks the workspace,
+/// and a frame that draws nothing would be the "no file open" state wearing a file tree's
+/// chrome — which is exactly the shape of defect this repository has paid for twice.
+#[test]
+fn the_window_draws_the_workspaces_own_files() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    std::fs::create_dir_all(ws.path().join("src")).unwrap();
+    std::fs::write(ws.path().join("README.md"), "# hi\n").unwrap();
+    std::fs::write(ws.path().join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::create_dir_all(ws.path().join("target")).unwrap();
+    std::fs::write(ws.path().join("target").join("junk.bin"), "").unwrap();
+
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let tree = frame.region("workspace").join(" ");
+    assert!(
+        tree.contains("files"),
+        "the pane reports how much it found.\n{}",
+        frame.describe()
+    );
+    assert!(
+        !tree.contains("target"),
+        "build output must not be in the tree: {tree}"
+    );
+}
+
+/// Clicking a file opens it in the editor, and the editor says it is read-only.
+///
+/// The click is a synthesized pointer press at a row's own rectangle, so it goes through
+/// egui's hit testing. A tree that draws correctly and cannot be clicked is a screenshot.
+#[test]
+fn clicking_a_file_opens_it_read_only() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    std::fs::create_dir_all(ws.path().join("src")).unwrap();
+    std::fs::write(ws.path().join("src").join("only.rs"), "one\ntwo\nthree\n").unwrap();
+
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+
+    // Frame one lets the tree lay out; frame two presses the row's **recorded**
+    // rectangle, so the test presses what was drawn rather than guessing a coordinate.
+    // A guessed y passes or fails with the sidebar's height, which is the layout
+    // module's business and not this test's.
+    let laid_out = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let row = laid_out
+        .hotspot("tree:src/only.rs")
+        .expect("the tree drew a row for src/only.rs");
+    let click = row.center();
+
+    // A real click is three frames: move, press, release. Sending the press and the
+    // release in one input frame is not something a user can do, and egui treats the
+    // two as separate passes — so a one-frame "click" tests a state the product is never
+    // in, which is the same mistake the frame-lag test below records.
+    paint_with(
+        &ctx,
+        &mut app,
+        1440.0,
+        900.0,
+        vec![egui::Event::PointerMoved(click)],
+    );
+    paint_with(
+        &ctx,
+        &mut app,
+        1440.0,
+        900.0,
+        vec![egui::Event::PointerButton {
+            pos: click,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    let frame = paint_with(
+        &ctx,
+        &mut app,
+        1440.0,
+        900.0,
+        vec![egui::Event::PointerButton {
+            pos: click,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+
+    let editor = frame.region("editor").join(" ");
+    assert!(
+        editor.contains("only.rs"),
+        "the editor should have opened the row recorded at {row:?} (sidebar {:?}).\n{}",
+        laid_out
+            .hotspot("tree:README.md")
+            .unwrap_or(egui::Rect::ZERO),
+        frame.describe()
+    );
+    assert!(
+        editor.contains("read-only"),
+        "and it must not pretend it can be typed into.\n{}",
+        frame.describe()
+    );
+}
+
+/// What is open when nothing was clicked must not look like something is.
+///
+/// The empty state names the action, because a blank editor pane reads as a broken pane.
+#[test]
+fn an_unopened_editor_says_what_to_do() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame
+            .region("editor")
+            .iter()
+            .any(|t| t.contains("Pick a file")),
+        "{}",
+        frame.describe()
+    );
+    assert!(
+        !frame
+            .region("editor")
+            .iter()
+            .any(|t| t.contains("read-only")),
+        "an editor with nothing open must not claim to be showing a file:\n{}",
+        frame.describe()
+    );
+}
+
 /// Keystrokes reach the composer.
 ///
 /// This was measured four times before it worked, and each failure looked like "the input

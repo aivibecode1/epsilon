@@ -1,0 +1,213 @@
+//! Walking a workspace to list the files that are *content* rather than build output.
+//!
+//! # Why this lives here and not in the frontend that first needed it
+//!
+//! `epsilon_tui::at_files` wrote it for `@`-completion, and its own module doc said what
+//! would happen when somebody else needed the same answer: *"If a third consumer of this
+//! walk ever appears, the walk belongs in core beside `IgnoreSet` — two copies of 'what to
+//! skip' is one more than the rule allows."* The desktop file tree is that third consumer,
+//! so the walk moved here and `at_files` now delegates.
+//!
+//! The alternative was a third traversal written from `IgnoreSet`'s rules, and it is worth
+//! being concrete about what that costs: a file that `grep` refuses to search appearing in
+//! the editor's tree, or `target/debug` being absent from `@` but present in the file list.
+//! Neither is a bug anyone would report, because both look like a list being a list.
+//!
+//! # What is the same and what is deliberately different
+//!
+//! The *rules* about what to skip are [`IgnoreSet`]'s, and there is exactly one answer to
+//! "is this file part of the workspace". The *traversal* differs by caller, and that is a
+//! deliberate difference rather than an oversight: a completion list is budgeted for
+//! typing latency, while a tool walk must see everything it was asked about.
+//!
+//! Two skip rules are the easy ones to get wrong and both are load-bearing:
+//!
+//! * **A hidden file stays visible.** `.env` is content, and the read tools must be able
+//!   to see it.
+//! * **A hidden directory is skipped unconditionally.** The `.gitignore` negation that is
+//!   supposed to be the escape hatch cannot work through [`IgnoreSet::is_ignored`], in this
+//!   walk or the tools' own: it resolves ancestors and returns **false** for a directory
+//!   that was ignored and then re-included — the same answer it gives for a directory no
+//!   rule mentions. Making the escape hatch real needs a matcher query that can tell "no
+//!   rule" from "re-included"; until then this walk matches what the tools actually do
+//!   rather than what they say they do.
+
+use std::path::Path;
+
+use crate::ignore::{IgnoreSet, skip_dir};
+
+/// How many `.gitignore` files a listing walk will read before giving up on finding more.
+///
+/// Bounded because a repository with a deep vendored tree can hold hundreds, and reading
+/// every one of them to rank a keystroke is not a trade this path makes.
+pub const IGNORE_FILES: usize = 64;
+
+/// Rows a walk may collect before it stops looking.
+pub const ROW_BUDGET: usize = 200;
+
+/// Depth cap, so a symlinked or pathological tree cannot walk forever.
+pub const MAX_DEPTH: usize = 16;
+
+/// Workspace-relative paths — forward slashes, like every path the model sees — that are
+/// content rather than output.
+///
+/// `budget` is decremented per file found, so a caller can share one allowance across
+/// several walks; it is left holding whatever remains. A walk that runs out of budget is
+/// **truncated, not failed**: the caller still gets a usable list and can say it is partial.
+pub fn walk_files(root: &Path, ignore: &IgnoreSet, budget: &mut usize) -> Vec<String> {
+    let mut out = Vec::new();
+    walk_inner(root, root, 0, ignore, budget, &mut out);
+    out
+}
+
+fn walk_inner(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    ignore: &IgnoreSet,
+    budget: &mut usize,
+    out: &mut Vec<String>,
+) {
+    if depth > MAX_DEPTH || *budget == 0 {
+        return;
+    }
+    // A workspace that cannot be read is an empty list, not a panic: the window opens on
+    // a directory the user chose and must still open.
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    // Sorted so the same workspace always produces the same list: an unstable order makes
+    // the tree jump while the user clicks, and makes a test flaky rather than wrong.
+    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        if *budget == 0 {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let is_dir = path.is_dir();
+
+        // Build directories are skipped whatever `.gitignore` says. A universe of
+        // generated files is not a preference, and listing one makes both `@` and the
+        // editor's tree useless exactly in the repositories that need them most.
+        if is_dir && skip_dir(&name) {
+            continue;
+        }
+        // A hidden directory is skipped, always; a hidden FILE is content and stays.
+        // See the module docs for why the `.gitignore` escape hatch does not apply.
+        if is_dir && name.starts_with('.') {
+            continue;
+        }
+        if ignore.is_ignored(&relative, is_dir) {
+            continue;
+        }
+
+        if is_dir {
+            walk_inner(root, &path, depth + 1, ignore, budget, out);
+        } else {
+            out.push(relative);
+            *budget -= 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n/build/\n").unwrap();
+        std::fs::write(dir.path().join("ignored.txt"), "secret").unwrap();
+        std::fs::create_dir_all(dir.path().join("build")).unwrap();
+        std::fs::write(dir.path().join("build").join("out.bin"), "").unwrap();
+        std::fs::create_dir_all(dir.path().join(".hidden")).unwrap();
+        std::fs::write(dir.path().join(".hidden").join("deep.txt"), "").unwrap();
+        std::fs::write(dir.path().join(".env"), "KEY=1").unwrap();
+        std::fs::create_dir_all(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("target").join("junk"), "").unwrap();
+        dir
+    }
+
+    fn rows(root: &Path) -> Vec<String> {
+        let ignore = IgnoreSet::load(root, IGNORE_FILES);
+        let mut budget = ROW_BUDGET;
+        let mut out = walk_files(root, &ignore, &mut budget);
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn the_ignore_answer_is_the_one_the_tools_give() {
+        let dir = workspace();
+        let out = rows(dir.path());
+        assert!(out.contains(&"main.rs".to_string()), "{out:?}");
+        assert!(out.contains(&"src/lib.rs".to_string()), "{out:?}");
+        assert!(!out.contains(&"ignored.txt".to_string()), "{out:?}");
+        assert!(!out.contains(&"build/out.bin".to_string()), "{out:?}");
+        assert!(!out.contains(&".hidden/deep.txt".to_string()), "{out:?}");
+        assert!(!out.contains(&"target/junk".to_string()), "{out:?}");
+    }
+
+    #[test]
+    fn a_hidden_file_is_content_and_stays() {
+        // `.env` is in every repository and a file tree that hides it is a file tree that
+        // lies about what the agent can see.
+        let dir = workspace();
+        assert!(rows(dir.path()).contains(&".env".to_string()));
+    }
+
+    #[test]
+    fn the_same_workspace_always_produces_the_same_order() {
+        let dir = workspace();
+        let a = {
+            let mut budget = ROW_BUDGET;
+            walk_files(
+                dir.path(),
+                &IgnoreSet::load(dir.path(), IGNORE_FILES),
+                &mut budget,
+            )
+        };
+        let b = {
+            let mut budget = ROW_BUDGET;
+            walk_files(
+                dir.path(),
+                &IgnoreSet::load(dir.path(), IGNORE_FILES),
+                &mut budget,
+            )
+        };
+        assert_eq!(
+            a, b,
+            "an unstable order makes a tree jump while the user clicks"
+        );
+    }
+
+    #[test]
+    fn the_budget_truncates_without_failing() {
+        let dir = workspace();
+        let ignore = IgnoreSet::load(dir.path(), IGNORE_FILES);
+        let mut budget = 1usize;
+        let out = walk_files(dir.path(), &ignore, &mut budget);
+        assert_eq!(out.len(), 1, "one row of budget, one row of output");
+        assert_eq!(budget, 0);
+    }
+
+    #[test]
+    fn a_directory_that_is_not_there_is_an_empty_list_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("not-here");
+        let ignore = IgnoreSet::load(&gone, IGNORE_FILES);
+        let mut budget = ROW_BUDGET;
+        assert!(walk_files(&gone, &ignore, &mut budget).is_empty());
+    }
+}

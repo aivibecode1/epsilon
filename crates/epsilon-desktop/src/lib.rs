@@ -51,11 +51,13 @@ pub mod app;
 pub mod layout;
 pub mod session;
 pub mod theme;
+pub mod workspace;
 
 pub use app::IdeApp;
 pub use layout::IdeLayout;
 pub use session::{IdeSession, Row, RowKind, Transcript};
 pub use theme::IdeTheme;
+pub use workspace::{FileTree, OpenFile, Row as TreeRow};
 
 /// How the desktop window is opened.
 #[derive(Debug, Clone)]

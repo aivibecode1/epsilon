@@ -1,0 +1,506 @@
+//! The workspace file tree and a read-only editor.
+//!
+//! # Why a tree and not a list
+//!
+//! A flat list of every path in a repository is unusable past a few hundred files: the
+//! shared prefix repeats on every row, and the thing a reader is looking for — "the files
+//! in `crates/epsilon-core`" — has no shape. So the flat walk result is folded into a
+//! tree, and the tree is **flattened to rows with a depth** so it can be drawn by a scroll
+//! area rather than by a recursive widget walk.
+//!
+//! # Why virtualization is not optional
+//!
+//! `ScrollArea::show_rows` draws only the visible span. A recursive `Tree` over a few
+//! thousand files builds a widget per node **every frame**, and that cost lands exactly
+//! where it hurts: on the window the agent is streaming into.
+//!
+//! # What is deliberately missing
+//!
+//! **Editing.** This pane shows what a file contains and refuses to pretend it can change
+//! it: the header says `read-only` while it is. A read-only view that lies about being
+//! read-only is worse than no view. The agent edits files here, and the pane that shows
+//! the result is the diff view, not this one.
+
+use std::path::{Path, PathBuf};
+
+use crate::theme::IdeTheme;
+
+/// Rows a workspace listing will collect before it stops looking.
+///
+/// Higher than `@`'s 200 because a tree is browsed, not typed at: a truncated tree looks
+/// like a repository that has no more files, which is a lie. The pane's footer says
+/// `partial` when the budget runs out.
+pub const TREE_ROW_BUDGET: usize = 5_000;
+
+/// How many `.gitignore` files the tree will read.
+const TREE_IGNORE_FILES: usize = 64;
+
+/// One row in the flattened tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// Workspace-relative path with forward slashes, exactly what the model sees.
+    pub path: String,
+    /// The name to draw, without the parents.
+    pub name: String,
+    /// Nesting level, 0 for a top-level entry.
+    pub depth: usize,
+    /// `true` for a directory.
+    pub is_dir: bool,
+    /// `true` while the directory's children are shown.
+    pub expanded: bool,
+}
+
+/// What the reader clicked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeClick {
+    /// Open this file.
+    File(String),
+    /// Open or close this directory.
+    Directory(String),
+}
+
+/// A flattened, expandable workspace tree.
+///
+/// Built once per workspace and then filtered by a search string; rebuilding on every
+/// keystroke is what makes a file tree feel slow, and the walk is the expensive half.
+#[derive(Debug, Clone, Default)]
+pub struct FileTree {
+    /// Every row, in display order, including collapsed directories' children.
+    rows: Vec<Row>,
+    /// True when the walk hit its budget and the list is **partial**.
+    truncated: bool,
+}
+
+impl FileTree {
+    /// Walk `workspace` and fold the result into a tree.
+    ///
+    /// A workspace that cannot be read produces an **empty tree, not an error**: the
+    /// window opens on a directory the user chose and must open.
+    pub fn load(workspace: &Path) -> Self {
+        let ignore = epsilon_core::ignore::IgnoreSet::load(workspace, TREE_IGNORE_FILES);
+        let mut budget = TREE_ROW_BUDGET;
+        let files = epsilon_core::walk::walk_files(workspace, &ignore, &mut budget);
+        let mut rows = build_rows(&files);
+        // Top level open on first sight. Anything deeper is a decision the reader makes,
+        // and a tree that arrives entirely collapsed looks empty.
+        set_all_expanded(&mut rows, true);
+        Self {
+            rows,
+            truncated: budget == 0,
+        }
+    }
+
+    /// An empty tree, for a window with no workspace.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Whether the walk stopped early, so the pane must say the list is partial.
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+
+    /// How many rows the tree holds, open or not.
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// The rows to draw, after collapsing and filtering.
+    ///
+    /// Both are applied here rather than in the draw path, so a test can ask the tree the
+    /// same question the pane asks it.
+    pub fn visible(&self, query: &str) -> Vec<&Row> {
+        let needle = query.trim().to_lowercase();
+        self.rows
+            .iter()
+            .filter(|r| needle.is_empty() || r.path.to_lowercase().contains(&needle))
+            .filter(|r| is_shown(&self.rows, r))
+            .collect()
+    }
+
+    /// Open or close one directory.
+    ///
+    /// Matching on the *path*, not on an index: the visible list is a filtered view, and
+    /// an index into it means something different every time the filter changes.
+    pub fn toggle(&mut self, path: &str) {
+        if let Some(row) = self.rows.iter_mut().find(|r| r.is_dir && r.path == path) {
+            row.expanded = !row.expanded;
+        }
+    }
+}
+
+/// Open or close every directory in `rows`.
+fn set_all_expanded(rows: &mut [Row], on: bool) {
+    for row in rows.iter_mut() {
+        if row.is_dir {
+            row.expanded = on;
+        }
+    }
+}
+
+/// Whether a row's parent chain is open.
+fn is_shown(rows: &[Row], row: &Row) -> bool {
+    if row.depth == 0 {
+        return true;
+    }
+    // Walk the parents: for `a/b/c.rs`, both `a` and `a/b` must be expanded.
+    let mut prefix = String::new();
+    let segments: Vec<&str> = row.path.split('/').collect();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(segment);
+        match rows.iter().find(|r| r.is_dir && r.path == prefix) {
+            Some(dir) if dir.expanded => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Fold flat `a/b/c.rs` paths into display rows.
+///
+/// Directories are synthesised from the paths of the files beneath them, because the walk
+/// returns files only — a directory with no files is not content and does not belong in a
+/// list of things the agent can act on.
+fn build_rows(files: &[String]) -> Vec<Row> {
+    let mut rows: Vec<Row> = Vec::new();
+    for file in files {
+        let segments: Vec<&str> = file.split('/').collect();
+        let mut prefix = String::new();
+        for (i, segment) in segments.iter().enumerate() {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            let is_last = i + 1 == segments.len();
+            if is_last {
+                rows.push(Row {
+                    path: prefix.clone(),
+                    name: (*segment).to_string(),
+                    depth: i,
+                    is_dir: false,
+                    expanded: false,
+                });
+            } else if !rows.iter().any(|r| r.is_dir && r.path == prefix) {
+                rows.push(Row {
+                    path: prefix.clone(),
+                    name: (*segment).to_string(),
+                    depth: i,
+                    is_dir: true,
+                    expanded: false,
+                });
+            }
+        }
+    }
+    // The walk emits a parent before its contents, but siblings are not ordered against
+    // each other; one stable sort makes the tree stable frame to frame.
+    rows.sort_by(|a, b| a.path.cmp(&b.path).then(a.is_dir.cmp(&b.is_dir)));
+    rows
+}
+
+/// A file opened in the editor pane.
+///
+/// Read-only, and says so. The whole file is held: truncating it would make the line
+/// numbers lie, and a megabyte of text is nothing next to a code editor that will one day
+/// hold more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenFile {
+    /// Workspace-relative path.
+    pub path: String,
+    /// Its lines, without terminators.
+    pub lines: Vec<String>,
+}
+
+impl OpenFile {
+    /// Read `path` under `workspace`.
+    ///
+    /// Returns the reason rather than panicking: a file deleted between the click and the
+    /// read is an ordinary thing for a reader to do, and the pane should say so.
+    pub fn read(workspace: &Path, path: &str) -> Result<Self, String> {
+        let full = workspace.join(path);
+        let raw = std::fs::read_to_string(&full).map_err(|e| format!("{path}: {e}"))?;
+        let lines = raw.lines().map(str::to_string).collect();
+        Ok(Self {
+            path: path.to_string(),
+            lines,
+        })
+    }
+
+    /// How many lines it has.
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// Whether the file has no lines at all.
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+}
+
+/// The absolute path for a workspace-relative one.
+pub fn absolute(workspace: &Path, path: &str) -> PathBuf {
+    workspace.join(path)
+}
+
+/// The id a tree row's hotspot is recorded under.
+///
+/// The path, not an index: a tree is filtered and collapsed, so an index means
+/// something different on every frame, and a caller that stored one would press the wrong
+/// row after typing one character.
+pub fn hotspot_id(path: &str) -> String {
+    format!("tree:{path}")
+}
+
+/// Draw the tree into `rect`, reporting what was clicked.
+///
+/// Virtualized: `show_rows` draws only the visible span, which is the difference between a
+/// tree that opens instantly and one that spends its first second building widgets for
+/// files nobody asked for. Every row's rectangle is pushed into `hotspots` as it is drawn.
+pub fn draw_tree(
+    ui: &mut egui::Ui,
+    theme: &IdeTheme,
+    rect: egui::Rect,
+    tree: &FileTree,
+    query: &str,
+    selected: Option<&str>,
+    hotspots: &mut Vec<(String, egui::Rect)>,
+) -> Option<TreeClick> {
+    let visible = tree.visible(query);
+    let mut clicked: Option<TreeClick> = None;
+    // **One scroll area, in a scope pinned to `rect`.** Both halves matter, and the first
+    // version had neither right in the way that matters: a `show` nested inside a
+    // `show_rows` built its `Ui` from the scroll area's own origin rather than the pane's,
+    // and nothing pinned the scroll area to `rect` at all — so it started wherever the
+    // root `Ui`'s cursor happened to be, which is `(0, 0)`. Every row was recorded at the
+    // left edge of the *window* and a click on the recorded rectangle hit nothing. A tree
+    // that draws correctly and cannot be clicked is a screenshot.
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::LEFT)),
+        |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("epsilon-file-tree")
+                .auto_shrink([false, true])
+                .show_rows(ui, 18.0, visible.len(), |ui, range| {
+                    let range = range.clone();
+                    for row in visible[range.clone()].iter() {
+                        let indent = 10.0 + row.depth as f32 * 12.0;
+                        let marker = match (row.is_dir, row.expanded) {
+                            (true, true) => "▾ ",
+                            (true, false) => "▸ ",
+                            _ => "  ",
+                        };
+                        let is_selected = selected == Some(row.path.as_str());
+                        let color = if row.is_dir {
+                            theme.title
+                        } else if is_selected {
+                            theme.accent
+                        } else {
+                            theme.text
+                        };
+                        // Allocate rather than position: an allocated response carries
+                        // both the screen rectangle and the click handling, and the two
+                        // cannot drift apart.
+                        let (row_rect, response) = ui.allocate_exact_size(
+                            egui::vec2(rect.width(), 17.0),
+                            egui::Sense::click(),
+                        );
+                        let painter = ui.painter();
+                        if is_selected {
+                            painter.rect_filled(row_rect, 0.0, theme.selection_focus);
+                        }
+                        painter.text(
+                            row_rect.left_top() + egui::vec2(indent, 13.0),
+                            egui::Align2::LEFT_CENTER,
+                            format!("{marker}{}", row.name),
+                            egui::FontId::proportional(13.0),
+                            color,
+                        );
+                        if response.clicked() {
+                            let path = row.path.clone();
+                            clicked = Some(if row.is_dir {
+                                TreeClick::Directory(path)
+                            } else {
+                                TreeClick::File(path)
+                            });
+                        }
+                        hotspots.push((hotspot_id(&row.path), row_rect));
+                    }
+                });
+        },
+    );
+    clicked
+}
+
+/// Draw the open file, read-only, with line numbers.
+pub fn draw_editor(ui: &mut egui::Ui, theme: &IdeTheme, rect: egui::Rect, file: &OpenFile) {
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, theme.background);
+    painter.rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(1.0, theme.border),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.left_top() + egui::vec2(12.0, 16.0),
+        egui::Align2::LEFT_CENTER,
+        format!("{}  ·  {} lines  ·  read-only", file.path, file.len()),
+        egui::FontId::proportional(12.0),
+        theme.dim,
+    );
+    let body_top = rect.top() + 30.0;
+    if rect.height() <= 44.0 {
+        return;
+    }
+    let gutter = 52.0;
+    let line_h = 16.0;
+    let visible = ((rect.height() - 34.0) / line_h).floor().max(1.0) as usize;
+    let start = file.len().saturating_sub(visible);
+    for (i, line) in file.lines[start..].iter().enumerate() {
+        let y = body_top + i as f32 * line_h;
+        if y > rect.bottom() - 14.0 {
+            break;
+        }
+        painter.text(
+            egui::pos2(rect.left() + 8.0, y),
+            egui::Align2::LEFT_TOP,
+            format!("{:>5}", start + i + 1),
+            egui::FontId::monospace(12.0),
+            theme.gutter(),
+        );
+        painter.text(
+            egui::pos2(rect.left() + gutter, y),
+            egui::Align2::LEFT_TOP,
+            line,
+            egui::FontId::monospace(12.0),
+            theme.text,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("README.md"), "one\ntwo\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("src").join("deep")).unwrap();
+        std::fs::write(dir.path().join("src/deep/inner.rs"), "x\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("target").join("junk.bin"), "").unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_tree_shows_the_workspaces_own_files_and_not_its_build_output() {
+        let dir = workspace();
+        let tree = FileTree::load(dir.path());
+        let paths: Vec<&str> = tree.visible("").iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains(&"README.md"), "{paths:?}");
+        assert!(paths.contains(&"src/main.rs"), "{paths:?}");
+        assert!(paths.contains(&"src/deep/inner.rs"), "{paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains("target")),
+            "build output is not workspace content: {paths:?}"
+        );
+    }
+
+    #[test]
+    fn a_directory_is_in_the_tree_only_when_it_has_files() {
+        // An empty directory is not something the agent can act on, and listing it would
+        // be the tree claiming a workspace has content it does not have.
+        let dir = workspace();
+        std::fs::create_dir_all(dir.path().join("empty")).unwrap();
+        let tree = FileTree::load(dir.path());
+        let paths: Vec<&str> = tree.visible("").iter().map(|r| r.path.as_str()).collect();
+        assert!(!paths.contains(&"empty"), "{paths:?}");
+    }
+
+    #[test]
+    fn nesting_is_recorded_so_the_tree_indents_rather_than_guesses() {
+        let dir = workspace();
+        let tree = FileTree::load(dir.path());
+        let row = tree
+            .visible("")
+            .into_iter()
+            .find(|r| r.path == "src/deep/inner.rs")
+            .expect("the nested file");
+        assert_eq!(row.depth, 2, "{row:?}");
+    }
+
+    #[test]
+    fn collapsing_a_directory_hides_its_children_and_toggling_brings_them_back() {
+        let dir = workspace();
+        let mut tree = FileTree::load(dir.path());
+        assert!(
+            tree.visible("")
+                .iter()
+                .any(|r| r.path == "src/deep/inner.rs"),
+            "the fixture is nested"
+        );
+        tree.toggle("src");
+        let collapsed: Vec<&str> = tree.visible("").iter().map(|r| r.path.as_str()).collect();
+        assert!(!collapsed.contains(&"src/main.rs"), "{collapsed:?}");
+        assert!(
+            !collapsed.contains(&"src/deep/inner.rs"),
+            "a child of a collapsed child is hidden too: {collapsed:?}"
+        );
+        tree.toggle("src");
+        assert!(tree.visible("").iter().any(|r| r.path == "src/main.rs"));
+    }
+
+    #[test]
+    fn a_filter_narrows_the_tree_by_path() {
+        let dir = workspace();
+        let tree = FileTree::load(dir.path());
+        let hits: Vec<&str> = tree
+            .visible("main")
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect();
+        assert_eq!(hits, vec!["src/main.rs"], "{hits:?}");
+    }
+
+    #[test]
+    fn a_missing_workspace_is_an_empty_tree_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("not-here");
+        assert!(FileTree::load(&gone).visible("").is_empty());
+    }
+
+    #[test]
+    fn opening_a_file_reads_its_lines_and_says_so_when_it_cannot() {
+        let dir = workspace();
+        let file = OpenFile::read(dir.path(), "src/main.rs").expect("the file is there");
+        assert_eq!(file.lines, vec!["fn main() {}"]);
+        assert_eq!(file.len(), 1);
+
+        let err = OpenFile::read(dir.path(), "gone.rs").expect_err("must say why");
+        assert!(err.contains("gone.rs"), "the refusal names the file: {err}");
+    }
+
+    #[test]
+    fn a_trailing_newline_does_not_invent_a_line() {
+        // `str::lines()` on "a\nb\n" gives ["a", "b"]; the bug this guards is the
+        // opposite one, a phantom empty last line the editor's count would report.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "a\nb\n").unwrap();
+        let file = OpenFile::read(dir.path(), "a.txt").unwrap();
+        assert_eq!(file.lines, vec!["a", "b"], "{:?}", file.lines);
+    }
+
+    #[test]
+    fn a_long_line_is_one_line_and_does_not_become_a_page_of_widgets() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("big.txt"), "x".repeat(80)).unwrap();
+        let file = OpenFile::read(dir.path(), "big.txt").unwrap();
+        assert_eq!(file.len(), 1, "one long line is one line");
+    }
+}

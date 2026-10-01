@@ -160,6 +160,11 @@ impl Transcript {
             .collect()
     }
 
+    /// Add a harness notice the reader should see.
+    pub fn push_notice(&mut self, text: &str) {
+        self.push(RowKind::Notice, text.to_string());
+    }
+
     /// Add a row the user produced themselves.
     ///
     /// The prompt is an **input**, so no `AgentEvent` carries it — and a frontend that

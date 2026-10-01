@@ -275,6 +275,24 @@ impl IdeTheme {
         self
     }
 
+    /// A role that carries no text of its own, for the gutter of a numbered listing.
+    ///
+    /// Line numbers are context rather than content, so they get their own colour rather
+    /// than borrowing `dim` and being one notch too loud for every file. Recomputed from
+    /// the palette rather than declared, so it follows `EPSILON_THEME` and the contrast
+    /// floors below instead of being a third thing that can disagree with them.
+    pub fn gutter(&self) -> Color32 {
+        let towards = if Self::luminance(self.background) < 0.5 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        };
+        mix(
+            separate(self.dim, self.background, SURFACE_FLOOR),
+            towards,
+            0.35,
+        )
+    }
     /// The dark palette, or `palette` when one was chosen.
     ///
     /// `None` follows `EPSILON_THEME`, the same environment variable the terminal

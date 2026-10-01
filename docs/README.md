@@ -87,6 +87,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M233 — a native desktop IDE, and the composition crate it needed first](milestones/M233-desktop-ide-and-runtime-crate.md)
 - [M234 — the second half of ADR-021: launch resolution is a library function too](milestones/M234-launch-resolution-is-a-library-function.md)
 - [M235 — the agent is in the window](milestones/M235-the-agent-is-in-the-window.md)
+- [M236 — the file tree and a read-only editor](milestones/M236-file-tree-and-a-read-only-editor.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

@@ -6,32 +6,33 @@
 //! is exactly one answer to "is this file part of the workspace", and this module does not
 //! get a second opinion.
 //!
-//! What it does own is the traversal, and that is a deliberate difference rather than an
-//! oversight: this walk is budgeted for typing latency — a few hundred rows, capped depth,
-//! stopping early — while a tool walk must see everything it was asked about. The rules
-//! about *what to skip* mirror `epsilon_tools::util::walk_inner`, including the two that
-//! are easy to get wrong: a hidden **file** stays visible (`.env` is content, and the read
-//! tools must be able to see it), while a hidden **directory** is skipped unconditionally
-//! — the `.gitignore` negation that is supposed to be the escape hatch cannot work through
-//! `IgnoreSet::is_ignored`, in this walk or the tool's (see `walk_inner`'s comment).
+//! # The walk moved to core at M236, as this module said it would
 //!
-//! If a third consumer of this walk ever appears, the walk belongs in core beside
-//! `IgnoreSet` — two copies of "what to skip" is one more than the rule allows.
+//! The doc this file used to carry ended: *"If a third consumer of this walk ever appears,
+//! the walk belongs in core beside `IgnoreSet` — two copies of 'what to skip' is one more
+//! than the rule allows."* The desktop file tree was the third consumer, so the walk is now
+//! [`epsilon_core::walk::walk_files`] and this module is the thin front-end wrapper.
+//!
+//! It stays rather than being deleted because `@` is a **capped, latency-budgeted** list —
+//! 200 rows, 64 ignore files — and those numbers are a property of completion, not of the
+//! walk. The editor's tree wants a different budget from the same traversal, which is
+//! exactly why one traversal and two budgets is the right shape.
+//!
+//! What is deliberately different from a tool walk, and why, is written down in
+//! `epsilon_core::walk`: a hidden **file** stays visible (`.env` is content, and the read
+//! tools must be able to see it), while a hidden **directory** is skipped unconditionally,
+//! because the `.gitignore` negation that should be the escape hatch cannot work through
+//! `IgnoreSet::is_ignored` — in this walk or the tool's.
 
 use std::path::Path;
 
 /// How many `.gitignore` files a completion walk will read before giving up on finding
-/// more. Matches the tool walk's cap in spirit and is smaller in fact: completion is
-/// interactive, and reading a thousand ignore files to rank a keystroke is not a trade
-/// this path makes.
-pub const AT_IGNORE_FILES: usize = 64;
+/// more. Completion is interactive, and reading a thousand ignore files to rank a
+/// keystroke is not a trade this path makes.
+pub const AT_IGNORE_FILES: usize = epsilon_core::walk::IGNORE_FILES;
 
 /// Rows the completion list may collect before it stops looking.
-pub const AT_ROW_BUDGET: usize = 200;
-
-/// Depth cap, matching the tool walk so `@` cannot offer a path deeper than the tools
-/// would reach.
-const AT_MAX_DEPTH: usize = 16;
+pub const AT_ROW_BUDGET: usize = epsilon_core::walk::ROW_BUDGET;
 
 /// Workspace-relative paths (forward slashes, like every path the model sees) that `@`
 /// may offer.
@@ -43,74 +44,7 @@ pub fn walk(
     ignore: &epsilon_core::ignore::IgnoreSet,
     budget: &mut usize,
 ) -> Vec<String> {
-    let mut out = Vec::new();
-    walk_inner(root, root, 0, ignore, budget, &mut out);
-    out
-}
-
-fn walk_inner(
-    root: &Path,
-    dir: &Path,
-    depth: usize,
-    ignore: &epsilon_core::ignore::IgnoreSet,
-    budget: &mut usize,
-    out: &mut Vec<String>,
-) {
-    if depth > AT_MAX_DEPTH || *budget == 0 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    // Sorted so the same workspace always produces the same list: an unstable order makes
-    // the popup jump while the user types, and makes a test flaky rather than wrong.
-    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        if *budget == 0 {
-            return;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let is_dir = path.is_dir();
-
-        // Build directories first: a universe of generated files is not a preference, and
-        // listing it makes `@` useless exactly in the repositories that need it most.
-        if is_dir && epsilon_core::ignore::skip_dir(&name) {
-            continue;
-        }
-        // A hidden directory is skipped, always; a hidden FILE is content and stays.
-        //
-        // The tool walk writes this check as `name.starts_with('.') && !ignore.is_ignored(..)`,
-        // with a comment promising that a `.gitignore` negation can re-include a hidden
-        // directory. It cannot, in either walk: `is_ignored` resolves ancestors and returns
-        // **false** for a directory that was ignored and then re-included — the same answer
-        // it gives for a directory no rule mentions — so that extra clause changes the
-        // outcome only in the case where the very next check skips the entry anyway. It is
-        // dead logic, and copying it here would copy the illusion that goes with it. Making
-        // the escape hatch real needs a matcher query able to tell "no rule" from
-        // "re-included"; until then this walk matches what the tools actually do rather than
-        // what they say.
-        if is_dir && name.starts_with('.') {
-            continue;
-        }
-        if ignore.is_ignored(&relative, is_dir) {
-            continue;
-        }
-
-        if is_dir {
-            walk_inner(root, &path, depth + 1, ignore, budget, out);
-        } else {
-            out.push(relative);
-            *budget -= 1;
-        }
-    }
+    epsilon_core::walk::walk_files(root, ignore, budget)
 }
 
 #[cfg(test)]

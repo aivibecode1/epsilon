@@ -5,6 +5,7 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop window has a file tree and a reader.** The workspace pane walks the workspace — reusing the same ignore rules the tools and `@` completion use, so a file the agent cannot read is not offered — and clicking a file opens it in a read-only editor with line numbers. The pane says how many files it found and marks the list *partial* if the walk hit its budget, rather than silently ending (M236).
 - **The desktop window now runs the agent.** `epsilon-desktop` composes a real agent through the same resolution and composition the CLI uses, shows the transcript as it streams, prompts for permissions where they cannot scroll out of reach behind a long answer, and takes an answer back. `Enter` sends, `Escape` stops the turn. It is still a first-slice IDE: the file tree and the editor draw placeholders and say so (M235).
 - **A native desktop IDE.** `epsilon-desktop` opens a real window -- the operating system's, rendered natively, not a browser tab -- with a workspace pane, an editor pane, an agent panel, and geometry that gives way sensibly as the window shrinks. It is the first slice: the window opens and draws, and it says "no agent attached" rather than showing numbers it has not measured. See `docs/milestones/M233-desktop-ide-and-runtime-crate.md` (M233).
 

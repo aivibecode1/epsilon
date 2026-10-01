@@ -37,6 +37,14 @@ use epsilon_contracts::agent_event::PermissionDecision;
 pub struct FrameSummary {
     /// `(region, text)` in paint order.
     pub rows: Vec<(String, String)>,
+    /// `(id, rect)` for every thing this frame made clickable.
+    ///
+    /// Present because a painted row has no response of its own, so anything that needs
+    /// to know where one was drawn — a test pressing a tree row, a keyboard shortcut
+    /// moving the caret to the selection — cannot recover it after the fact. Cheap to
+    /// record while the rectangle is in scope, and impossible to reconstruct from the
+    /// text alone because indentation is not geometry.
+    pub hotspots: Vec<(String, egui::Rect)>,
     /// Which degradation rule was in force.
     pub tier: Tier,
     /// Window size the frame was painted at, for the assertion message.
@@ -51,6 +59,11 @@ impl FrameSummary {
             .filter(|(r, _)| r == region)
             .map(|(_, t)| t.as_str())
             .collect()
+    }
+
+    /// Where a clickable thing was drawn, by id.
+    pub fn hotspot(&self, id: &str) -> Option<egui::Rect> {
+        self.hotspots.iter().find(|(k, _)| k == id).map(|(_, r)| *r)
     }
 
     /// Whether `region` drew anything at all.
@@ -97,6 +110,12 @@ pub struct IdeApp {
     placeholder: &'static str,
     /// Set when the last submit was refused, so the pane can say why.
     refusal: Option<String>,
+    /// The workspace's files, walked once and folded into a tree.
+    tree: crate::workspace::FileTree,
+    /// The sidebar's filter box.
+    tree_query: String,
+    /// The file open in the editor, if any.
+    open: Option<crate::workspace::OpenFile>,
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
 }
@@ -114,6 +133,9 @@ impl IdeApp {
         // user does is type.
         session.attach_bridge(ctx);
         let theme = IdeTheme::resolve(opts.theme);
+        // Loaded before opts moves, so the tree is built from the workspace the caller
+        // named rather than from a borrow of a moved value.
+        let tree = crate::workspace::FileTree::load(&opts.workspace);
         let layout = IdeLayout::new(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
             Preferences::default(),
@@ -128,6 +150,9 @@ impl IdeApp {
             draft: String::new(),
             placeholder: "ask anything  ·  enter sends  ·  shift+enter for a new line",
             refusal: None,
+            tree,
+            tree_query: String::new(),
+            open: None,
             layout,
         }
     }
@@ -138,6 +163,7 @@ impl IdeApp {
     /// frame that draws a plausible model for it would be a lie — the M233 defect. The
     /// only way to test that is to be able to build the frame.
     pub fn without_agent(opts: Options) -> Self {
+        let tree = crate::workspace::FileTree::load(&opts.workspace);
         Self {
             opts,
             theme: IdeTheme::resolve(None),
@@ -148,6 +174,9 @@ impl IdeApp {
             draft: String::new(),
             placeholder: "no agent attached",
             refusal: None,
+            tree,
+            tree_query: String::new(),
+            open: None,
             layout: IdeLayout::new(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
                 Preferences::default(),
@@ -269,23 +298,11 @@ impl IdeApp {
         }
 
         if l.sidebar_visible {
-            self.pane(
-                ui,
-                &mut summary,
-                l.sidebar,
-                "Workspace",
-                &self.sidebar_rows(),
-            );
+            self.workspace_pane(ui, &mut summary, l.sidebar);
         }
 
         if l.center_visible {
-            self.pane(
-                ui,
-                &mut summary,
-                l.center,
-                "Editor",
-                &["No file open".to_string()],
-            );
+            self.editor_pane(ui, &mut summary, l.center);
         }
 
         if l.agent_visible {
@@ -295,14 +312,138 @@ impl IdeApp {
         summary
     }
 
-    /// The workspace pane's rows.
-    fn sidebar_rows(&self) -> Vec<String> {
-        vec![
-            "Files".into(),
-            "Sessions".into(),
-            "Tasks".into(),
+    /// The workspace pane: a search box and the file tree.
+    ///
+    /// Drawn with widgets rather than as text rows, so it can take clicks and a keyboard
+    /// — a tree made of painted text is a picture of a tree.
+    fn workspace_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        let theme = self.theme;
+        {
+            let painter = ui.painter();
+            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_stroke(
+                rect,
+                4.0,
+                egui::Stroke::new(1.0, theme.border),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.left_top() + egui::vec2(12.0, 16.0),
+                egui::Align2::LEFT_CENTER,
+                "Workspace",
+                egui::FontId::proportional(12.0),
+                theme.dim,
+            );
+        }
+        summary.rows.push(("workspace".into(), "Workspace".into()));
+        summary.rows.push((
+            "workspace".into(),
             format!("workspace  {}", display_path(&self.opts.workspace)),
-        ]
+        ));
+
+        let search = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 8.0, rect.top() + 28.0),
+            egui::vec2((rect.width() - 16.0).max(0.0), 24.0),
+        );
+        if search.width() > 60.0 {
+            ui.put(
+                search,
+                egui::TextEdit::singleline(&mut self.tree_query)
+                    .hint_text("filter files")
+                    .desired_width(search.width() - 8.0),
+            );
+        }
+
+        let body = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + 8.0, search.max.y + 6.0),
+            egui::pos2(rect.right() - 8.0, rect.bottom() - 26.0),
+        );
+        if body.height() > 10.0 && body.width() > 20.0 {
+            let selected = self.open.as_ref().map(|f| f.path.as_str());
+            match crate::workspace::draw_tree(
+                ui,
+                &theme,
+                body,
+                &self.tree,
+                &self.tree_query,
+                selected,
+                &mut summary.hotspots,
+            ) {
+                Some(crate::workspace::TreeClick::File(path)) => self.open_file(&path),
+                Some(crate::workspace::TreeClick::Directory(path)) => self.tree.toggle(&path),
+                None => {}
+            }
+        }
+
+        // The footer of the pane states what the walk found, and says **partial** when it
+        // stopped early. A tree that silently ends looks like a workspace with no more
+        // files in it, which is a claim the pane cannot support.
+        let note = if self.tree.is_truncated() {
+            format!(
+                "{}+ files · list is partial (raise the budget in code)",
+                self.tree.row_count()
+            )
+        } else {
+            format!("{} files", self.tree.row_count())
+        };
+        let painter = ui.painter();
+        painter.text(
+            egui::pos2(rect.left() + 12.0, rect.bottom() - 14.0),
+            egui::Align2::LEFT_BOTTOM,
+            &note,
+            egui::FontId::proportional(11.0),
+            theme.dim,
+        );
+        summary.rows.push(("workspace".into(), note));
+    }
+
+    /// The editor pane: the open file, read-only.
+    fn editor_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        let theme = self.theme;
+        match self.open.clone() {
+            Some(file) => {
+                crate::workspace::draw_editor(ui, &theme, rect, &file);
+                summary.rows.push((
+                    "editor".into(),
+                    format!("{} · {} lines · read-only", file.path, file.len()),
+                ));
+                summary.rows.push(("editor".into(), "read-only".into()));
+            }
+            None => {
+                let painter = ui.painter();
+                painter.rect_filled(rect, 4.0, theme.background);
+                painter.rect_stroke(
+                    rect,
+                    4.0,
+                    egui::Stroke::new(1.0, theme.border),
+                    egui::StrokeKind::Inside,
+                );
+                // The empty state says what to do, not merely that there is nothing.
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Pick a file on the left to read it",
+                    egui::FontId::proportional(13.0),
+                    theme.dim,
+                );
+                summary
+                    .rows
+                    .push(("editor".into(), "Pick a file on the left to read it".into()));
+            }
+        }
+    }
+
+    /// Open `path` in the editor, or say why it could not be opened.
+    ///
+    /// The failure is shown in the transcript rather than swallowed: a click that appears
+    /// to do nothing is the state this repository keeps failing to rule out.
+    fn open_file(&mut self, path: &str) {
+        match crate::workspace::OpenFile::read(&self.opts.workspace, path) {
+            Ok(file) => self.open = Some(file),
+            Err(reason) => self
+                .transcript
+                .push_notice(&format!("cannot open {reason}")),
+        }
     }
 
     /// What to show after the workspace name: the provider this window is calling.
@@ -363,52 +504,6 @@ impl IdeApp {
         }
         parts.push(self.layout.tier.name().to_string());
         parts.join("  ·  ")
-    }
-
-    /// Draw one titled pane with a list of body rows.
-    fn pane(
-        &self,
-        ui: &mut egui::Ui,
-        summary: &mut FrameSummary,
-        rect: egui::Rect,
-        title: &str,
-        rows: &[String],
-    ) {
-        let painter = ui.painter();
-        painter.rect_filled(rect, 4.0, self.theme.background);
-        painter.rect_stroke(
-            rect,
-            4.0,
-            egui::Stroke::new(1.0, self.theme.border),
-            egui::StrokeKind::Inside,
-        );
-        painter.text(
-            rect.left_top() + egui::vec2(12.0, 16.0),
-            egui::Align2::LEFT_CENTER,
-            title,
-            egui::FontId::proportional(12.0),
-            self.theme.dim,
-        );
-        summary.rows.push((title.to_lowercase(), title.to_string()));
-
-        let mut y = rect.top() + 34.0;
-        for row in rows {
-            if y > rect.bottom() - 14.0 {
-                // Do not draw a row that would be clipped: a half-drawn row reads as a
-                // rendering fault, and "there is more below" is the layout's job.
-                summary.rows.push((title.to_lowercase(), "…".to_string()));
-                break;
-            }
-            painter.text(
-                egui::pos2(rect.left() + 12.0, y),
-                egui::Align2::LEFT_TOP,
-                row,
-                egui::FontId::proportional(13.0),
-                self.theme.text,
-            );
-            summary.rows.push((title.to_lowercase(), row.clone()));
-            y += 19.0;
-        }
     }
 
     /// The agent panel: status, transcript, approvals, composer.
@@ -793,9 +888,23 @@ mod tests {
         // contains -- the assertion is on the body rows, not on an exact list.
         let workspace = f.region("workspace");
         assert!(workspace.contains(&"Workspace"), "{workspace:?}");
-        assert!(workspace.contains(&"Files"), "{workspace:?}");
-        assert!(workspace.contains(&"Sessions"), "{workspace:?}");
-        assert!(workspace.contains(&"Tasks"), "{workspace:?}");
+        assert!(
+            workspace.iter().any(|t| t.starts_with("workspace  ")),
+            "the pane names the workspace it is bound to: {workspace:?}"
+        );
+        // The file count, and the word that says the list is only what the walk found.
+        // A tree whose footer said nothing would let a truncated walk look like a
+        // repository with no more files in it.
+        assert!(
+            workspace.iter().any(|t| t.contains("files")),
+            "the pane says how much it found: {workspace:?}"
+        );
+        // The editor's empty state says what to do, not merely that there is nothing.
+        assert!(
+            f.region("editor").iter().any(|t| t.contains("Pick a file")),
+            "{:?}",
+            f.region("editor")
+        );
         assert!(
             f.drew("composer"),
             "the agent panel has no composer.\n{}",

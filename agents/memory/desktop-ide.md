@@ -46,14 +46,29 @@ the same lesson as ADR-012's `global_dir`.
 
 ## Next slice, in order
 
-1. **The file tree and the editor.** They draw placeholders now. Both need virtualization
-   from the first version — `ScrollArea::show_rows`, never a `Tree` over a whole repository.
-2. **Diff review**, which the agent needs more than the user does: a tool call that edits a
+1. **Diff review**, which the agent needs more than the user does: a tool call that edits a
    file should show the change, in the pane, before the next tool runs.
-3. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
+2. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
    window is hidden, so a run that finished in the background produces no `AgentEnd` on
    screen until the window is shown. That belongs in `logic`.
-4. **Markdown in the transcript.** `pulldown-cmark` is already in the tree via the TUI.
+3. **Markdown in the transcript.** `pulldown-cmark` is already in the tree via the TUI.
+4. **Sessions and Tasks panes** in the sidebar. Both have a public API waiting:
+   `epsilon_session::list_sessions` and the task tools.
+
+## egui lessons worth not re-learning
+
+- **Allocate a clickable row, do not position it.** `ui.allocate_exact_size` returns the
+  screen rect *and* the response together, so they cannot drift. Positioning by hand cost
+  three bugs: a scroll area never pinned to its pane (it started at `(0,0)`), a `show`
+  nested inside a `show_rows`, and `next_widget_position` being content-relative.
+- **A click is three frames**: `PointerMoved`, `PointerButton{pressed:true}`, then
+  `pressed:false`. Four attempts used a one-frame "click" and all four failed.
+- **A frame paints top to bottom.** A row added by a widget *below* the transcript cannot
+  appear in that frame's output; it appears on the next repaint. Asserting on the frame
+  that caused a change is a test of a state the product is never in.
+- **`RawInput::focused` defaults to false** and egui drops keyboard events for an unfocused
+  window. A default-constructed input is a window nobody can type into.
+- **`Context::painter()` is gone**; paint through a `&Ui` or `&mut Ui`.
 
 ## Keystrokes: settled, and how
 

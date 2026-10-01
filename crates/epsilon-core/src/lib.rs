@@ -28,6 +28,12 @@ pub mod skills;
 pub mod test_support;
 mod untrusted;
 mod verify;
+/// Walking a workspace to list content rather than build output.
+///
+/// Lives beside [`ignore`] because the two are one answer. `epsilon_tui::at_files`
+/// predicted this move in its own module doc: *"If a third consumer of this walk ever
+/// appears, the walk belongs in core"* — and the desktop file tree was the third.
+pub mod walk;
 
 #[doc(hidden)]
 pub mod testing;
