@@ -5,6 +5,7 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop's subagent list is now verified rather than trusted.** A running, finished and failed subagent read differently, every row names the model it actually ran on and how many turns it took, and a subagent with no recorded model says so instead of leaving a blank (M246).
 - **The desktop session list says when each conversation ran.** The ordering was already newest-first; now each row carries its age, so a reader can check the ordering rather than take it. A session whose timestamp the filesystem could not supply says nothing rather than `0s` (M245).
 - **Long sessions keep their constraints.** When a session compacts a second time, the summarizer is now told to carry forward the objective, the user's instructions and the work in flight *even when the newest part of the conversation does not mention them* -- and to drop something only when it is finished. Previously it was told to update the summary from the new conversation, which quietly discarded anything only the older part of the session knew, so the agent could forget what it had been told (M244).
 - **The desktop IDE switches sessions, and a mistyped one no longer invents a conversation.** The Sessions view lists what this workspace has stored and clicking one resumes it — the same handover the terminal's `/resume` does. Resuming a path that does not exist is now refused with a reason instead of quietly creating an empty session that the next write would land in (M243).

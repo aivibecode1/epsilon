@@ -19,16 +19,12 @@
 //! When there is nothing to say, it says nothing: before M233's wiring landed, this pane
 //! said "no agent attached" rather than inventing a cost. That rule has not changed, and a
 //! test still enforces it for the case where there is genuinely no agent.
-
-use std::sync::Arc;
-
 use crate::Options;
 use crate::layout::{IdeLayout, Preferences, Tier};
 use crate::session::{IdeSession, RowKind, Transcript};
 use crate::theme::IdeTheme;
-
 use epsilon_contracts::agent_event::PermissionDecision;
-
+use std::sync::Arc;
 /// What one painted frame contained.
 ///
 /// Region name plus the text drawn into it. Rectangles come from [`IdeApp::layout`], so a
@@ -50,7 +46,6 @@ pub struct FrameSummary {
     /// Window size the frame was painted at, for the assertion message.
     pub size: [f32; 2],
 }
-
 impl FrameSummary {
     /// Every line drawn into `region`, in order.
     pub fn region(&self, region: &str) -> Vec<&str> {
@@ -60,17 +55,14 @@ impl FrameSummary {
             .map(|(_, t)| t.as_str())
             .collect()
     }
-
     /// Where a clickable thing was drawn, by id.
     pub fn hotspot(&self, id: &str) -> Option<egui::Rect> {
         self.hotspots.iter().find(|(k, _)| k == id).map(|(_, r)| *r)
     }
-
     /// Whether `region` drew anything at all.
     pub fn drew(&self, region: &str) -> bool {
         self.rows.iter().any(|(r, _)| r == region)
     }
-
     /// A one-line rendering of the frame, for a test failure message.
     ///
     /// A failing assertion that prints `"the sidebar did not draw"` is actionable.
@@ -88,7 +80,6 @@ impl FrameSummary {
         out
     }
 }
-
 /// The desktop application.
 pub struct IdeApp {
     opts: Options,
@@ -121,7 +112,6 @@ pub struct IdeApp {
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
 }
-
 impl IdeApp {
     /// Build the application around an already-composed session.
     pub fn new(
@@ -160,7 +150,6 @@ impl IdeApp {
             layout,
         }
     }
-
     /// An application with **no** agent, for the test that asserts the absent state.
     ///
     /// Exists because "no agent attached" is a state a user can genuinely reach and a
@@ -189,22 +178,18 @@ impl IdeApp {
             ),
         }
     }
-
     /// The geometry of the last painted frame.
     pub fn layout(&self) -> &IdeLayout {
         &self.layout
     }
-
     /// The workspace this window is bound to.
     pub fn workspace(&self) -> &std::path::Path {
         &self.opts.workspace
     }
-
     /// The transcript, for a caller that wants to read rather than draw.
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
     }
-
     /// The harness this window is driving, if it has one.
     ///
     /// Public because it is the only way to drive a turn from outside the draw path, and
@@ -212,12 +197,10 @@ impl IdeApp {
     pub fn session(&self) -> Option<&Arc<IdeSession>> {
         self.session.as_ref()
     }
-
     /// What the composer currently holds.
     pub fn draft(&self) -> &str {
         &self.draft
     }
-
     /// Replace the transcript.
     ///
     /// For a test that needs a particular history without running a turn to produce it.
@@ -225,17 +208,14 @@ impl IdeApp {
     pub fn seed_transcript(&mut self, transcript: Transcript) {
         self.transcript = transcript;
     }
-
     /// Put a draft in the composer, as typing would.
     pub fn set_draft(&mut self, text: &str) {
         self.draft = text.to_string();
     }
-
     /// Which view the sidebar is showing.
     pub fn sidebar_view(&self) -> SidebarView {
         self.sidebar
     }
-
     /// Choose the sidebar's view directly.
     ///
     /// The activity bar does this with a click; a test that has to drive three frames
@@ -243,7 +223,6 @@ impl IdeApp {
     pub fn set_sidebar_view(&mut self, view: SidebarView) {
         self.sidebar = view;
     }
-
     /// Drain the agent's event queue into the transcript.
     ///
     /// Called from [`IdeApp::paint`] **and** from [`eframe::App::logic`], and both call
@@ -263,7 +242,6 @@ impl IdeApp {
             session.drain(&mut self.transcript);
         }
     }
-
     /// Paint one frame and describe what it drew.
     ///
     /// This is the whole of the draw path. [`eframe::App::ui`] is a thin wrapper so a test
@@ -277,11 +255,9 @@ impl IdeApp {
             size: [screen.width(), screen.height()],
             ..FrameSummary::default()
         };
-
         // The drain lives in `pump`, which both `paint` and `eframe::App::logic` call — see
         // there for why neither call site can be the only one.
         self.pump();
-
         // ---- window chrome --------------------------------------------------
         let painter = ui.painter();
         if l.title.height() > 0.0 {
@@ -307,7 +283,6 @@ impl IdeApp {
             );
             summary.rows.push(("title".into(), line));
         }
-
         if l.status.height() > 0.0 {
             painter.rect_filled(l.status, 0.0, self.theme.panel);
             painter.line_segment(
@@ -324,27 +299,21 @@ impl IdeApp {
             );
             summary.rows.push(("status".into(), text));
         }
-
         // ---- panes ----------------------------------------------------------
         if l.activity.width() > 0.0 {
             self.activity_bar(ui, &mut summary, l.activity);
         }
-
         if l.sidebar_visible {
             self.workspace_pane(ui, &mut summary, l.sidebar);
         }
-
         if l.center_visible {
             self.editor_pane(ui, &mut summary, l.center);
         }
-
         if l.agent_visible {
             self.agent_panel(ui, &mut summary, l.agent);
         }
-
         summary
     }
-
     /// The icon strip that chooses what the sidebar shows.
     ///
     /// Two views, because that is what an agent IDE needs to switch between: the **files**
@@ -363,7 +332,6 @@ impl IdeApp {
             egui::Stroke::new(1.0, theme.border),
             egui::StrokeKind::Inside,
         );
-
         let mut y = rect.top() + 10.0;
         for view in SidebarView::ALL {
             let selected = view == self.sidebar;
@@ -393,7 +361,6 @@ impl IdeApp {
             y += 34.0;
         }
     }
-
     /// The workspace pane: whichever view the activity bar selected.
     fn workspace_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
         match self.sidebar {
@@ -402,7 +369,6 @@ impl IdeApp {
             SidebarView::Sessions => self.sessions_pane(ui, summary, rect),
         }
     }
-
     /// The sidebar's tasks view: every subagent this session has dispatched.
     ///
     /// Read from [`IdeSession`]'s agent rather than kept here, because the agent owns the
@@ -428,13 +394,11 @@ impl IdeApp {
             );
         }
         summary.rows.push(("tasks".into(), "Subagents".into()));
-
         let tasks = self
             .session
             .as_ref()
             .map(|s| s.agent().task_snapshots())
             .unwrap_or_default();
-
         if tasks.is_empty() {
             // The empty state says how to make one, because "no tasks" on its own reads
             // as "subagents are broken".
@@ -447,42 +411,70 @@ impl IdeApp {
             summary.rows.push(("tasks".into(), line.to_string()));
             return;
         }
-
+        let header = Self::task_header(&tasks);
+        ui.colored_label(theme.dim, header.clone());
+        summary.rows.push(("tasks".into(), header));
+        for task in &tasks {
+            for (color, text) in Self::task_lines(task, &theme) {
+                ui.colored_label(color, text.clone());
+                summary.rows.push(("tasks".into(), text));
+            }
+        }
+    }
+    /// The count line above the subagent list.
+    ///
+    /// `pluralise` because "1 task(s), 1 running" is the kind of row a reader stops reading,
+    /// and it costs four characters to not do that.
+    pub fn task_header(tasks: &[epsilon_contracts::tool::TaskSnapshot]) -> String {
         let running = tasks
             .iter()
             .filter(|t| t.state == epsilon_contracts::tool::TaskState::Running)
             .count();
-        let header = format!("{} task(s), {running} running", tasks.len());
-        ui.colored_label(theme.dim, header.clone());
-        summary.rows.push(("tasks".into(), header));
-
-        for task in &tasks {
-            let (marker, color) = match task.state {
-                epsilon_contracts::tool::TaskState::Running => ("▸ ", theme.accent),
-                epsilon_contracts::tool::TaskState::Completed => ("✓ ", theme.success),
-                epsilon_contracts::tool::TaskState::Failed => ("✗ ", theme.danger),
-            };
-            let title = format!("{marker}{}", task.description);
-            ui.colored_label(color, title.clone());
-            summary.rows.push(("tasks".into(), title));
-
-            // The model and the turn count are what a reader cannot work out from the
-            // description: a delegation that silently ran on a different model from the
-            // one that was asked for is exactly the thing worth catching.
-            let detail = format!(
-                "   {} · {} turn(s){}",
-                task.subagent_type,
-                task.turns,
-                task.model
-                    .as_deref()
-                    .map(|m| format!(" · {m}"))
-                    .unwrap_or_default()
-            );
-            ui.colored_label(theme.dim, detail.clone());
-            summary.rows.push(("tasks".into(), detail));
-        }
+        format!(
+            "{} {}, {running} running",
+            tasks.len(),
+            Self::plural(tasks.len())
+        )
     }
-
+    fn plural(n: usize) -> &'static str {
+        if n == 1 { "task" } else { "tasks" }
+    }
+    /// One task as the two lines it draws, coloured.
+    ///
+    /// Extracted from the draw path because **this is the part that was written and never
+    /// checked**: the pane reached `Agent::task_snapshots()` and drew three markers, and no test
+    /// asserted that a `Running` child looks different from a `Failed` one. A live delegation is
+    /// a race — it can finish before the first frame — so the state machine is tested here and
+    /// the *acquisition* stays where `epsilon-core`'s own `task_scenarios.rs` already covers it.
+    pub fn task_lines(
+        task: &epsilon_contracts::tool::TaskSnapshot,
+        theme: &IdeTheme,
+    ) -> Vec<(egui::Color32, String)> {
+        use epsilon_contracts::tool::TaskState;
+        let (marker, color) = match task.state {
+            TaskState::Running => ("▸ ", theme.accent),
+            TaskState::Completed => ("✓ ", theme.success),
+            TaskState::Failed => ("✗ ", theme.danger),
+        };
+        vec![
+            (color, format!("{marker}{}", task.description)),
+            // The model and the turn count are what a reader cannot work out from the
+            // description: a delegation that silently ran on a different model from the one
+            // that was asked for is exactly the sort of thing worth catching.
+            (
+                theme.dim,
+                format!(
+                    "   {} · {} turn(s){}",
+                    task.subagent_type,
+                    task.turns,
+                    task.model
+                        .as_deref()
+                        .map(|m| format!(" · {m}"))
+                        .unwrap_or_default()
+                ),
+            ),
+        ]
+    }
     /// The conversations stored for this workspace, and a real switch.
     ///
     /// This view exists **only because it can switch**. A list of session files that could
@@ -511,28 +503,23 @@ impl IdeApp {
             );
         }
         summary.rows.push(("sessions".into(), "Sessions".into()));
-
         let Some(session) = self.session.as_ref() else {
             let line = "no agent attached";
             ui.colored_label(theme.dim, line);
             summary.rows.push(("sessions".into(), line.to_string()));
             return;
         };
-
         let current = session.session_path();
         let sessions = session.sessions(&self.opts.workspace);
-
         if sessions.is_empty() {
             let line = "none stored for this workspace yet";
             ui.colored_label(theme.dim, line);
             summary.rows.push(("sessions".into(), line.to_string()));
             return;
         }
-
         let header = format!("{} stored", sessions.len());
         ui.colored_label(theme.dim, header.clone());
         summary.rows.push(("sessions".into(), header));
-
         for entry in &sessions {
             let is_current = current.as_deref() == Some(entry.path.as_path());
             let marker = if is_current { "● " } else { "  " };
@@ -547,7 +534,6 @@ impl IdeApp {
             summary
                 .rows
                 .push(("sessions".into(), format!("{marker}{name}")));
-
             // **The age, on its own line.** The list is newest-first, so a reader who
             // wants the newest already has it — what they do not have is *evidence*.
             // "2h ago" is what turns an ordering into something they can check, and it
@@ -561,7 +547,6 @@ impl IdeApp {
                 ui.colored_label(theme.dim, line.clone());
                 summary.rows.push(("sessions".into(), line));
             }
-
             // Clicking the session you are already in is neither an error nor a
             // spinner: it is the same conversation, and doing nothing is right.
             if response.clicked() && !is_current {
@@ -583,7 +568,6 @@ impl IdeApp {
             }
         }
     }
-
     /// Resume `path` and rebuild the transcript from what came back.
     ///
     /// The rebuild is not optional. `live_resume` restores history onto the agent and
@@ -600,7 +584,6 @@ impl IdeApp {
         self.transcript = Transcript::from_messages(&history);
         Ok(count)
     }
-
     /// The file tree.
     ///
     /// Drawn with widgets rather than as text rows, so it can take clicks and a keyboard
@@ -629,7 +612,6 @@ impl IdeApp {
             "workspace".into(),
             format!("workspace  {}", display_path(&self.opts.workspace)),
         ));
-
         let search = egui::Rect::from_min_size(
             egui::pos2(rect.left() + 8.0, rect.top() + 28.0),
             egui::vec2((rect.width() - 16.0).max(0.0), 24.0),
@@ -642,7 +624,6 @@ impl IdeApp {
                     .desired_width(search.width() - 8.0),
             );
         }
-
         let body = egui::Rect::from_min_max(
             egui::pos2(rect.left() + 8.0, search.max.y + 6.0),
             egui::pos2(rect.right() - 8.0, rect.bottom() - 26.0),
@@ -663,7 +644,6 @@ impl IdeApp {
                 None => {}
             }
         }
-
         // The footer of the pane states what the walk found, and says **partial** when it
         // stopped early. A tree that silently ends looks like a workspace with no more
         // files in it, which is a claim the pane cannot support.
@@ -685,7 +665,6 @@ impl IdeApp {
         );
         summary.rows.push(("workspace".into(), note));
     }
-
     /// The editor pane: the open file, read-only.
     fn editor_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
         let theme = self.theme;
@@ -721,7 +700,6 @@ impl IdeApp {
             }
         }
     }
-
     /// Open `path` in the editor, or say why it could not be opened.
     ///
     /// The failure is shown in the transcript rather than swallowed: a click that appears
@@ -734,7 +712,6 @@ impl IdeApp {
                 .push_notice(&format!("cannot open {reason}")),
         }
     }
-
     /// What to show after the workspace name: the provider this window is calling.
     ///
     /// **Never a guess.** With no session there is nothing to name, and with one the name
@@ -755,7 +732,6 @@ impl IdeApp {
         let offline = if launch.offline { "  ·  offline" } else { "" };
         format!("  ·  {label}{offline}")
     }
-
     /// The bottom bar's one line.
     ///
     /// Priority order matters more than the wording: what is *waiting on the user* outranks
@@ -794,7 +770,6 @@ impl IdeApp {
         parts.push(self.layout.tier.name().to_string());
         parts.join("  ·  ")
     }
-
     /// Draw an assistant's markdown as blocks rather than as one flat line.
     ///
     /// Everything else in the transcript draws as a single coloured label; this is the
@@ -869,7 +844,6 @@ impl IdeApp {
             }
         }
     }
-
     /// The agent panel: status, transcript, approvals, composer.
     ///
     /// Split into three regions inside one pane, and the split is decided here rather
@@ -879,7 +853,6 @@ impl IdeApp {
     fn agent_panel(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
         const COMPOSER_H: f32 = 92.0;
         const HEADER_H: f32 = 34.0;
-
         let theme = self.theme;
         // Scoped: `Ui::painter()` borrows the `Ui`, and the scroll area below needs it
         // mutably. Holding the painter across that is the classic egui borrow conflict.
@@ -901,7 +874,6 @@ impl IdeApp {
             );
         }
         summary.rows.push(("agent".into(), "Agent".into()));
-
         // ---- header: what the launch said ------------------------------------
         let mut y = rect.top() + HEADER_H;
         {
@@ -921,7 +893,6 @@ impl IdeApp {
                 y += 17.0;
             }
         }
-
         // ---- transcript -----------------------------------------------------
         let composer_top = rect.bottom() - COMPOSER_H;
         let body = egui::Rect::from_min_max(
@@ -941,7 +912,6 @@ impl IdeApp {
                     self.draw_rows(ui, summary);
                 });
         }
-
         // ---- composer -------------------------------------------------------
         let composer = egui::Rect::from_min_size(
             egui::pos2(rect.left() + 8.0, composer_top),
@@ -964,7 +934,6 @@ impl IdeApp {
             summary.rows.push(("agent".into(), line.into()));
         }
     }
-
     /// Draw the transcript rows.
     fn draw_rows(&self, ui: &mut egui::Ui, summary: &mut FrameSummary) {
         let theme = self.theme;
@@ -1008,7 +977,6 @@ impl IdeApp {
             } else {
                 row.text.clone()
             };
-
             // **Only the assistant's text is interpreted.** A user who types `**hi**`
             // must see `**hi**`; a diff line is a diff line. Rendering is an
             // interpretation, and applying it to text that is not prose makes the
@@ -1017,12 +985,10 @@ impl IdeApp {
                 self.draw_markdown(ui, summary, marker, color, &body);
                 continue;
             }
-
             let text = format!("{marker}{body}");
             ui.colored_label(color, text.clone());
             summary.rows.push(("agent".into(), text));
         }
-
         // The pending approvals are drawn after the rows, where they cannot scroll out of
         // reach behind a long answer — the composer-adjacent placement opencode and DSH
         // both converged on, and the reason is not aesthetic.
@@ -1040,7 +1006,6 @@ impl IdeApp {
             summary.rows.push(("agent".into(), text));
         }
     }
-
     /// Send whatever the composer holds.
     ///
     /// Extracted from the draw path because **the interesting part is not the drawing.**
@@ -1073,7 +1038,6 @@ impl IdeApp {
         self.transcript.push_user(&text);
         Some(text)
     }
-
     /// The composer's text box, and the two ways to send.
     ///
     /// `Enter` sends and `Shift+Enter` inserts a newline, which is what every editor a
@@ -1085,7 +1049,6 @@ impl IdeApp {
         } else {
             self.placeholder
         };
-
         // **Consume the keys first, act on them last.** The order is the whole trick and
         // getting it wrong is invisible until someone types and presses Enter:
         //
@@ -1100,7 +1063,6 @@ impl IdeApp {
         let escaped = ui
             .ctx()
             .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-
         let editor =
             egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), rect.height() - 28.0));
         let response = ui.put(
@@ -1111,7 +1073,6 @@ impl IdeApp {
                 .desired_width(editor.width() - 8.0)
                 .font(egui::TextStyle::Monospace),
         );
-
         let send_clicked = ui
             .put(
                 egui::Rect::from_min_size(
@@ -1121,7 +1082,6 @@ impl IdeApp {
                 egui::Button::new("Send"),
             )
             .clicked();
-
         if sent || send_clicked {
             self.send_draft();
         }
@@ -1150,7 +1110,6 @@ impl IdeApp {
         summary.rows.push(("composer".into(), hint.to_string()));
     }
 }
-
 /// The composer's widget id.
 ///
 /// Named rather than derived from a position, because the composer is the one widget whose
@@ -1159,7 +1118,6 @@ impl IdeApp {
 fn composer_id() -> egui::Id {
     egui::Id::new("epsilon-composer")
 }
-
 /// The visible text of a block's runs, for the frame summary.
 ///
 /// The summary is what tests assert on, so it must carry **what the reader sees** — not
@@ -1182,7 +1140,6 @@ pub enum SidebarView {
     /// Conversations stored for this workspace. Switching is a real handover.
     Sessions,
 }
-
 impl SidebarView {
     /// Every view, in bar order.
     pub const ALL: [SidebarView; 3] = [
@@ -1190,7 +1147,6 @@ impl SidebarView {
         SidebarView::Tasks,
         SidebarView::Sessions,
     ];
-
     /// A stable key, for the hotspot id a test presses.
     pub fn key(self) -> &'static str {
         match self {
@@ -1199,7 +1155,6 @@ impl SidebarView {
             Self::Sessions => "sessions",
         }
     }
-
     /// What the button says.
     pub fn label(self) -> &'static str {
         match self {
@@ -1208,7 +1163,6 @@ impl SidebarView {
             Self::Sessions => "sessions",
         }
     }
-
     /// The glyph on the button.
     pub fn glyph(self) -> &'static str {
         match self {
@@ -1218,7 +1172,6 @@ impl SidebarView {
         }
     }
 }
-
 /// A path, shortened for a narrow pane: the last two components, with the root elided.
 fn display_path(path: &std::path::Path) -> String {
     let text = path.display().to_string();
@@ -1228,7 +1181,6 @@ fn display_path(path: &std::path::Path) -> String {
     }
     format!("…/{}", parts[parts.len() - 2..].join("/"))
 }
-
 impl eframe::App for IdeApp {
     /// eframe 0.36 splits the old `update` in two, and **the split is not a detail**:
     /// `ui` does not run at all while the window is hidden.
@@ -1243,13 +1195,11 @@ impl eframe::App for IdeApp {
         self.pump();
         let _ = ctx;
     }
-
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().set_visuals(self.theme.visuals());
         self.paint(ui);
     }
 }
-
 /// Answer a pending approval from the keyboard, if one is waiting.
 ///
 /// Split out from [`IdeApp::paint`] because it is the part with a policy — Enter allows,
@@ -1269,12 +1219,10 @@ pub fn approve_pending(session: &IdeSession, ctx: &egui::Context) -> Option<(Str
     }
     None
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::layout::{MEDIUM, NARROW};
-
     /// Paint a frame at `w` x `h` with no window, and describe it.
     ///
     /// egui renders into an off-screen context, so this is a measurement of the real
@@ -1312,7 +1260,6 @@ mod tests {
         full.textures_delta.clear();
         out
     }
-
     #[test]
     fn a_comfortable_window_draws_every_pane_with_a_title_and_a_body() {
         let f = paint_at(1440.0, 900.0);
@@ -1362,7 +1309,6 @@ mod tests {
             f.describe()
         );
     }
-
     #[test]
     fn narrowing_the_window_folds_the_sidebar_and_then_the_editor() {
         let medium = paint_at(MEDIUM - 1.0, 900.0);
@@ -1377,20 +1323,17 @@ mod tests {
             "the editor must survive first.\n{}",
             medium.describe()
         );
-
         let narrow = paint_at(NARROW - 1.0, 900.0);
         assert_eq!(narrow.tier, Tier::AgentOnly);
         assert!(!narrow.drew("editor"));
         assert!(narrow.drew("agent"));
     }
-
     #[test]
     fn a_short_window_folds_the_status_bar_then_the_title_bar() {
         let short = paint_at(1440.0, crate::layout::SHORT - 1.0);
         assert_eq!(short.tier, Tier::CompactHeight);
         assert!(!short.drew("status"));
         assert!(short.drew("title"));
-
         let tiny = paint_at(1440.0, crate::layout::COMPACT - 1.0);
         assert_eq!(tiny.tier, Tier::ChromeOnly);
         assert!(!tiny.drew("title"));
@@ -1400,7 +1343,6 @@ mod tests {
             tiny.describe()
         );
     }
-
     #[test]
     fn no_frame_at_any_size_is_empty() {
         // The terminal frontend's standing invariant: "nothing happened" must never be a
@@ -1423,7 +1365,6 @@ mod tests {
             }
         }
     }
-
     #[test]
     fn the_workspace_name_is_on_screen() {
         let f = paint_at(1440.0, 900.0);
@@ -1435,7 +1376,6 @@ mod tests {
             f.describe()
         );
     }
-
     #[test]
     fn the_status_line_does_not_invent_a_provider_or_a_cost() {
         // M233 in the terminal: the header must name what the process is actually
@@ -1459,7 +1399,6 @@ mod tests {
             f.describe()
         );
     }
-
     #[test]
     fn a_pending_approval_outranks_the_layout_tier_in_the_status_line() {
         // A status line that shows the layout while a permission ask is unanswered is a
@@ -1472,7 +1411,94 @@ mod tests {
             "{line}"
         );
     }
-
+    /// The task pane renders three states, and that is the part that was written and
+    /// never checked.
+    ///
+    /// A live delegation is a race -- it can finish before the first frame -- so the state
+    /// machine is tested here and the *acquisition* stays where `epsilon-core`'s own
+    /// `task_scenarios.rs` already covers it. What this pins is the thing the pane is for:
+    /// a reader must be able to tell a running child from a failed one at a glance.
+    #[test]
+    fn each_subagent_state_reads_differently_and_names_its_model() {
+        use epsilon_contracts::tool::{TaskSnapshot, TaskState};
+        let theme = IdeTheme::from(epsilon_tui::ThemeMode::Dark);
+        let base = TaskSnapshot {
+            id: "task-1".into(),
+            description: "audit the auth tests".into(),
+            subagent_type: "reviewer".into(),
+            model: Some("fast-model".into()),
+            state: TaskState::Running,
+            output: String::new(),
+            turns: 3,
+            usage: None,
+        };
+        let mut rendered: Vec<Vec<String>> = Vec::new();
+        for state in [TaskState::Running, TaskState::Completed, TaskState::Failed] {
+            let mut snapshot = base.clone();
+            snapshot.state = state;
+            rendered.push(
+                IdeApp::task_lines(&snapshot, &theme)
+                    .into_iter()
+                    .map(|(_, text)| text)
+                    .collect(),
+            );
+        }
+        let markers: Vec<String> = rendered
+            .iter()
+            .map(|lines| lines[0].chars().take(2).collect())
+            .collect();
+        assert_eq!(
+            markers,
+            vec!["▸ ".to_string(), "✓ ".to_string(), "✗ ".to_string()],
+            "a running child and a failed one must not read the same: {markers:?}"
+        );
+        // Every state names the model it ran on. A delegation that silently ran on a
+        // different model from the one asked for is invisible unless the model is on the row.
+        for lines in &rendered {
+            assert!(
+                lines[1].contains("fast-model") && lines[1].contains("3 turn(s)"),
+                "every row carries its model and turn count: {:?}",
+                lines[1]
+            );
+        }
+    }
+    /// A model the snapshot does not know is omitted rather than printed as an empty gap.
+    #[test]
+    fn a_subagent_with_no_recorded_model_shows_no_model_rather_than_a_blank() {
+        use epsilon_contracts::tool::{TaskSnapshot, TaskState};
+        let theme = IdeTheme::from(epsilon_tui::ThemeMode::Dark);
+        let snapshot = TaskSnapshot {
+            id: "task-2".into(),
+            description: "no model recorded".into(),
+            subagent_type: "default".into(),
+            model: None,
+            state: TaskState::Completed,
+            output: String::new(),
+            turns: 0,
+            usage: None,
+        };
+        let detail = IdeApp::task_lines(&snapshot, &theme)[1].1.clone();
+        assert!(
+            !detail.ends_with(" · "),
+            "a trailing separator is a value that is missing, printed as if it were empty: {detail}"
+        );
+    }
+    #[test]
+    fn one_task_is_not_one_tasks() {
+        use epsilon_contracts::tool::TaskSnapshot;
+        let header = IdeApp::task_header(&[TaskSnapshot {
+            id: "t".into(),
+            description: "d".into(),
+            subagent_type: "s".into(),
+            model: None,
+            state: epsilon_contracts::tool::TaskState::Running,
+            output: String::new(),
+            turns: 0,
+            usage: None,
+        }]);
+        assert!(header.starts_with("1 task,"), "{header}");
+        assert!(!header.contains("(s)"), "{header}");
+    }
     #[test]
     fn a_long_path_is_shortened_rather_than_overflowing_the_pane() {
         let short = display_path(std::path::Path::new("/a/b"));
