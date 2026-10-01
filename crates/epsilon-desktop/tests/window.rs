@@ -526,6 +526,76 @@ fn an_empty_subagent_pane_says_what_is_missing() {
         frame.describe()
     );
 }
+/// Switching sessions **restores that session's conversation**, rather than showing an
+/// empty pane.
+///
+/// `live_resume` puts the history back on the agent and **nothing emits an event for it**,
+/// so a window that only reduced events would switch files and show nothing at all.
+#[test]
+fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
+    let ws = tempfile::tempdir().expect("a workspace");
+
+    // A real session file, written by a real store with a real message in it.
+    let mut store = epsilon_session::SessionStore::open(ws.path().join("older.jsonl")).unwrap();
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: assistant_markdown("a memorable line from last time"),
+            api_request_sha256: None,
+        })
+        .expect("the message lands in the log");
+    drop(store);
+
+    let (ctx, mut app) = wire(ws.path());
+    app.set_sidebar_view(epsilon_desktop::app::SidebarView::Sessions);
+
+    let before = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        before
+            .region("sessions")
+            .iter()
+            .any(|t| t.contains("stored")),
+        "the stored session must be listed.\n{}",
+        before.describe()
+    );
+
+    let restored = app
+        .switch_session(&ws.path().join("older.jsonl"))
+        .expect("an unlocked session resumes");
+    assert!(restored >= 1, "it had a message in it");
+
+    let after = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        after
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("a memorable line from last time")),
+        "the resumed conversation must be on screen, not an empty pane.\n{}",
+        after.describe()
+    );
+}
+
+/// A file the harness cannot open is refused, and the window still draws.
+///
+/// A click that appears to do nothing is the state this repository keeps failing to rule
+/// out, and a session held by another process is an ordinary thing to hit.
+#[test]
+fn a_session_that_cannot_be_resumed_is_refused_with_a_reason() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    app.set_sidebar_view(epsilon_desktop::app::SidebarView::Sessions);
+
+    let reason = app
+        .switch_session(&ws.path().join("not-here.jsonl"))
+        .expect_err("a file that is not there must be refused");
+    assert!(!reason.trim().is_empty(), "the refusal must say something");
+    assert!(
+        !ws.path().join("not-here.jsonl").exists(),
+        "a mistyped path must not leave an empty session behind"
+    );
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(frame.drew("sessions"), "{}", frame.describe());
+}
 /// Keystrokes reach the composer.
 ///
 /// This was measured four times before it worked, and each failure looked like "the input

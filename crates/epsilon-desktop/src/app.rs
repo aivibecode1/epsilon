@@ -399,6 +399,7 @@ impl IdeApp {
         match self.sidebar {
             SidebarView::Files => self.files_pane(ui, summary, rect),
             SidebarView::Tasks => self.tasks_pane(ui, summary, rect),
+            SidebarView::Sessions => self.sessions_pane(ui, summary, rect),
         }
     }
 
@@ -480,6 +481,110 @@ impl IdeApp {
             ui.colored_label(theme.dim, detail.clone());
             summary.rows.push(("tasks".into(), detail));
         }
+    }
+
+    /// The conversations stored for this workspace, and a real switch.
+    ///
+    /// This view exists **only because it can switch**. A list of session files that could
+    /// not be opened would be a list of files with extra steps, and a "Sessions" control
+    /// that looks switchable and is not is the kind of thing this project keeps refusing to
+    /// ship. The handover underneath is [`IdeSession::resume`], the same `live_resume` the
+    /// terminal's `/resume` uses: release the lease, open the other file, repair it,
+    /// re-derive the model view, restore the history, re-attach.
+    fn sessions_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        let theme = self.theme;
+        {
+            let painter = ui.painter();
+            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_stroke(
+                rect,
+                4.0,
+                egui::Stroke::new(1.0, theme.border),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.left_top() + egui::vec2(12.0, 16.0),
+                egui::Align2::LEFT_CENTER,
+                "Sessions",
+                egui::FontId::proportional(12.0),
+                theme.dim,
+            );
+        }
+        summary.rows.push(("sessions".into(), "Sessions".into()));
+
+        let Some(session) = self.session.as_ref() else {
+            let line = "no agent attached";
+            ui.colored_label(theme.dim, line);
+            summary.rows.push(("sessions".into(), line.to_string()));
+            return;
+        };
+
+        let current = session.session_path();
+        let sessions = session.sessions(&self.opts.workspace);
+
+        if sessions.is_empty() {
+            let line = "none stored for this workspace yet";
+            ui.colored_label(theme.dim, line);
+            summary.rows.push(("sessions".into(), line.to_string()));
+            return;
+        }
+
+        let header = format!("{} stored", sessions.len());
+        ui.colored_label(theme.dim, header.clone());
+        summary.rows.push(("sessions".into(), header));
+
+        for entry in &sessions {
+            let is_current = current.as_deref() == Some(entry.path.as_path());
+            let marker = if is_current { "● " } else { "  " };
+            // Name first, timestamp second: the name is what a reader recognises, and
+            // the timestamp is what they check afterwards.
+            let name = entry
+                .path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| entry.path.display().to_string());
+            let response = ui.selectable_label(is_current, format!("{marker}{name}"));
+            summary
+                .rows
+                .push(("sessions".into(), format!("{marker}{name}")));
+
+            // Clicking the session you are already in is neither an error nor a
+            // spinner: it is the same conversation, and doing nothing is right.
+            if response.clicked() && !is_current {
+                match self.switch_session(&entry.path) {
+                    Ok(restored) => summary.rows.push((
+                        "sessions".into(),
+                        format!("resumed {name} — {restored} message(s)"),
+                    )),
+                    Err(reason) => {
+                        // A refusal is on screen, in the pane the click happened in. It
+                        // is never swallowed: a click that appears to do nothing is the
+                        // state this crate keeps failing to rule out, and a file held by
+                        // another process is an ordinary thing to hit.
+                        summary
+                            .rows
+                            .push(("sessions".into(), format!("cannot resume {name}: {reason}")));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resume `path` and rebuild the transcript from what came back.
+    ///
+    /// The rebuild is not optional. `live_resume` restores history onto the agent and
+    /// **nothing emits an event for it**, so a window that only reduced events would switch
+    /// files and show an empty pane — "nothing happened", reached by opening something.
+    pub fn switch_session(&mut self, path: &std::path::Path) -> Result<usize, String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| "no agent attached".to_string())?;
+        session.resume(path)?;
+        let history = session.agent().history();
+        let count = history.len();
+        self.transcript = Transcript::from_messages(&history);
+        Ok(count)
     }
 
     /// The file tree.
@@ -1060,17 +1165,24 @@ pub enum SidebarView {
     Files,
     /// The subagents this session has dispatched.
     Tasks,
+    /// Conversations stored for this workspace. Switching is a real handover.
+    Sessions,
 }
 
 impl SidebarView {
     /// Every view, in bar order.
-    pub const ALL: [SidebarView; 2] = [SidebarView::Files, SidebarView::Tasks];
+    pub const ALL: [SidebarView; 3] = [
+        SidebarView::Files,
+        SidebarView::Tasks,
+        SidebarView::Sessions,
+    ];
 
     /// A stable key, for the hotspot id a test presses.
     pub fn key(self) -> &'static str {
         match self {
             Self::Files => "files",
             Self::Tasks => "tasks",
+            Self::Sessions => "sessions",
         }
     }
 
@@ -1079,6 +1191,7 @@ impl SidebarView {
         match self {
             Self::Files => "files",
             Self::Tasks => "subagents",
+            Self::Sessions => "sessions",
         }
     }
 
@@ -1087,6 +1200,7 @@ impl SidebarView {
         match self {
             Self::Files => "◧",
             Self::Tasks => "⑂",
+            Self::Sessions => "☰",
         }
     }
 }

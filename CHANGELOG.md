@@ -5,6 +5,7 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop IDE switches sessions, and a mistyped one no longer invents a conversation.** The Sessions view lists what this workspace has stored and clicking one resumes it — the same handover the terminal's `/resume` does. Resuming a path that does not exist is now refused with a reason instead of quietly creating an empty session that the next write would land in (M243).
 - **The desktop sidebar switches between files and subagents.** The icon strip picks what the sidebar shows, and the tasks view lists every subagent this session has dispatched with its state, model and turn count. An agent with nothing running says so, and tells you what starts one (M242).
 - **A goal's completion rule is now something you can say.** `/goal edit gate cargo test` sets what must pass before the goal may be completed; `/goal edit gate clear` takes the rule off. The list is replaced rather than appended, so re-reading your goal cannot quietly stack three tests on it (M241).
 - **A goal can declare what "done" means.** A goal's gates are commands that must pass before it can be completed -- `cargo test` decides, not the model's opinion. A goal with no gates behaves exactly as before, so nothing is harder until you ask for it. This lands the storage and the enforcement; declaring a gate from the `/goal` command is next (M240).

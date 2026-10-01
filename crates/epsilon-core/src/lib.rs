@@ -907,6 +907,18 @@ impl Agent {
     /// history, and re-attaches the new store. The TUI then rehydrates the visible
     /// transcript from [`Self::history`]. Ponytail: reuse existing repair + model_view.
     pub fn live_resume(&self, path: &std::path::Path) -> Result<usize, String> {
+        // A session you are resuming has to **exist**. `SessionStore::open` creates what
+        // is missing, so without this a mistyped path silently produces an empty session —
+        // and the next thing written goes into that new file, while the reader believes
+        // they are continuing the conversation they named. That is data loss dressed as
+        // success, and it is the one failure mode here that keeps no trace.
+        if !path.is_file() {
+            return Err(format!(
+                "no session at {} — `resume` continues a conversation that exists; \
+                 use a new session to start one",
+                path.display()
+            ));
+        }
         // M61: the store owns a cross-process write lease, so re-resuming the
         // session this process already holds would conflict with ourselves.
         // Release first — and keep the old handle so a failed open (locked by

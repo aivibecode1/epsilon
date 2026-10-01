@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use epsilon_contracts::agent_event::{AgentEvent, PermissionDecision, PermissionRequest};
+use epsilon_contracts::content::ContentBlock;
 use epsilon_contracts::message::Message;
 use epsilon_core::Agent;
 use epsilon_safety::ChannelApprovalUi;
@@ -140,6 +141,99 @@ pub struct Transcript {
 }
 
 impl Transcript {
+    /// Build a transcript from messages already in history, with no events.
+    ///
+    /// Needed for **opening a session**: switching to a stored conversation restores its
+    /// history on the agent, and nothing emits an event for it, so a window that only
+    /// reduced events would open the file and show an empty pane. That is the "nothing
+    /// happened" state again, arrived at by a different road — and it is the *first* thing
+    /// a reader sees after choosing "resume", so it would be the first thing they judge
+    /// the window on.
+    ///
+    /// Tool calls become their own rows and tool results their own rows, because a
+    /// transcript that showed only the prose would hide half of what the agent did.
+    pub fn from_messages(messages: &[Message]) -> Self {
+        let mut t = Transcript::new(std::env::temp_dir());
+        for message in messages {
+            match message {
+                Message::User(u) => {
+                    let text: String = u
+                        .content
+                        .iter()
+                        .filter_map(|c| match c {
+                            epsilon_contracts::content::UserContent::Text { text } => {
+                                Some(text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !text.trim().is_empty() {
+                        t.push(RowKind::User, text);
+                    }
+                }
+                Message::Assistant(a) => {
+                    let mut thinking = String::new();
+                    let mut answer = String::new();
+                    for block in &a.content {
+                        match block {
+                            ContentBlock::Thinking { text, .. } => thinking.push_str(text),
+                            ContentBlock::Text { text } => answer.push_str(text),
+                            ContentBlock::ToolCall { name, .. } => {
+                                // The result row carries the outcome; this one only has to
+                                // say the call happened, or the transcript shows a tool
+                                // answering a question nobody recorded asking.
+                                t.push(
+                                    RowKind::Tool {
+                                        name: name.clone(),
+                                        failed: None,
+                                    },
+                                    String::new(),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    if !thinking.trim().is_empty() {
+                        t.push(RowKind::Thinking, thinking);
+                    }
+                    if !answer.trim().is_empty() {
+                        t.push(RowKind::Assistant, answer);
+                    }
+                }
+                Message::ToolResult(r) => {
+                    let text: String = r
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Mark the **last** tool row with this outcome rather than adding a row
+                    // per result: the pair is what a reader reads, and two rows for one
+                    // call makes the transcript longer without adding anything.
+                    let failed = r.is_error;
+                    if let Some(i) = t
+                        .rows
+                        .iter()
+                        .rposition(|row| matches!(row.kind, RowKind::Tool { failed: None, .. }))
+                    {
+                        if let RowKind::Tool { failed: f, .. } = &mut t.rows[i].kind {
+                            *f = Some(failed);
+                        }
+                        if !text.trim().is_empty() {
+                            t.rows[i].text = text;
+                        }
+                    }
+                }
+                Message::Custom(_) => {}
+            }
+        }
+        t
+    }
+
     /// An empty transcript for `workspace`.
     pub fn new(workspace: impl Into<PathBuf>) -> Self {
         Self {
@@ -514,6 +608,27 @@ pub struct IdeSession {
 }
 
 impl IdeSession {
+    /// Compose an agent for `launch` on `runtime` and start listening to it.
+    /// Switch this session to a stored conversation.
+    ///
+    /// Returns the message count that was restored, or the reason it could not be. The
+    /// refusal is **returned, not swallowed**: a click that appears to do nothing is the
+    /// state this crate keeps failing to rule out, and a session file held by another
+    /// process is an ordinary thing to hit.
+    pub fn resume(&self, path: &std::path::Path) -> Result<usize, String> {
+        self.agent.live_resume(path)
+    }
+
+    /// Every session stored under the workspace for `cwd`, newest first.
+    pub fn sessions(&self, cwd: &std::path::Path) -> Vec<epsilon_session::SessionSummary> {
+        epsilon_session::list_sessions_for_cwd(self.agent.workspace_root(), cwd)
+    }
+
+    /// The session file this agent currently holds.
+    pub fn session_path(&self) -> Option<PathBuf> {
+        self.agent.session_path()
+    }
+
     /// Compose an agent for `launch` on `runtime` and start listening to it.
     ///
     /// Called before the window exists: nothing here needs the render thread, and building
