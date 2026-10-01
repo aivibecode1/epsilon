@@ -116,6 +116,8 @@ pub struct IdeApp {
     tree_query: String,
     /// The file open in the editor, if any.
     open: Option<crate::workspace::OpenFile>,
+    /// Which view the sidebar is showing, chosen from the activity bar.
+    sidebar: SidebarView,
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
 }
@@ -154,6 +156,7 @@ impl IdeApp {
             tree,
             tree_query: String::new(),
             open: None,
+            sidebar: SidebarView::Files,
             layout,
         }
     }
@@ -179,6 +182,7 @@ impl IdeApp {
             tree,
             tree_query: String::new(),
             open: None,
+            sidebar: SidebarView::Files,
             layout: IdeLayout::new(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
                 Preferences::default(),
@@ -225,6 +229,19 @@ impl IdeApp {
     /// Put a draft in the composer, as typing would.
     pub fn set_draft(&mut self, text: &str) {
         self.draft = text.to_string();
+    }
+
+    /// Which view the sidebar is showing.
+    pub fn sidebar_view(&self) -> SidebarView {
+        self.sidebar
+    }
+
+    /// Choose the sidebar's view directly.
+    ///
+    /// The activity bar does this with a click; a test that has to drive three frames
+    /// of hit-testing to change one field would be testing the input system instead.
+    pub fn set_sidebar_view(&mut self, view: SidebarView) {
+        self.sidebar = view;
     }
 
     /// Drain the agent's event queue into the transcript.
@@ -310,15 +327,7 @@ impl IdeApp {
 
         // ---- panes ----------------------------------------------------------
         if l.activity.width() > 0.0 {
-            painter.rect_filled(l.activity, 0.0, self.theme.panel);
-            painter.text(
-                l.activity.center(),
-                egui::Align2::CENTER_CENTER,
-                "◧",
-                egui::FontId::proportional(18.0),
-                self.theme.dim,
-            );
-            summary.rows.push(("activity".into(), "◧".into()));
+            self.activity_bar(ui, &mut summary, l.activity);
         }
 
         if l.sidebar_visible {
@@ -336,11 +345,148 @@ impl IdeApp {
         summary
     }
 
-    /// The workspace pane: a search box and the file tree.
+    /// The icon strip that chooses what the sidebar shows.
+    ///
+    /// Two views, because that is what an agent IDE needs to switch between: the **files**
+    /// the agent can act on, and the **subagents** it is already running. One pane trying
+    /// to hold both would put a task list under a file tree, and a reader would scroll past
+    /// a thousand paths to find out whether anything was still running.
+    ///
+    /// Drawn as widgets rather than painted, because it is clickable, and a painted strip
+    /// is a picture of a control.
+    fn activity_bar(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        let theme = self.theme;
+        ui.painter().rect_filled(rect, 4.0, theme.panel);
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        let mut y = rect.top() + 10.0;
+        for view in SidebarView::ALL {
+            let selected = view == self.sidebar;
+            let button = ui.put(
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.left() + 6.0, y),
+                    egui::vec2((rect.width() - 12.0).max(8.0), 30.0),
+                ),
+                egui::Button::new(view.glyph())
+                    .selected(selected)
+                    .fill(if selected {
+                        theme.selection_focus
+                    } else {
+                        theme.panel
+                    }),
+            );
+            summary
+                .hotspots
+                .push((crate::workspace::hotspot_id(view.key()), button.rect));
+            summary.rows.push((
+                "activity".into(),
+                format!("{} {}", view.glyph(), view.label()),
+            ));
+            if button.clicked() {
+                self.sidebar = view;
+            }
+            y += 34.0;
+        }
+    }
+
+    /// The workspace pane: whichever view the activity bar selected.
+    fn workspace_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        match self.sidebar {
+            SidebarView::Files => self.files_pane(ui, summary, rect),
+            SidebarView::Tasks => self.tasks_pane(ui, summary, rect),
+        }
+    }
+
+    /// The sidebar's tasks view: every subagent this session has dispatched.
+    ///
+    /// Read from [`IdeSession`]'s agent rather than kept here, because the agent owns the
+    /// registry and a copy would go stale the moment a child finished — which is exactly
+    /// when a reader is looking.
+    fn tasks_pane(&self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        let theme = self.theme;
+        {
+            let painter = ui.painter();
+            painter.rect_filled(rect, 4.0, theme.background);
+            painter.rect_stroke(
+                rect,
+                4.0,
+                egui::Stroke::new(1.0, theme.border),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.left_top() + egui::vec2(12.0, 16.0),
+                egui::Align2::LEFT_CENTER,
+                "Subagents",
+                egui::FontId::proportional(12.0),
+                theme.dim,
+            );
+        }
+        summary.rows.push(("tasks".into(), "Subagents".into()));
+
+        let tasks = self
+            .session
+            .as_ref()
+            .map(|s| s.agent().task_snapshots())
+            .unwrap_or_default();
+
+        if tasks.is_empty() {
+            // The empty state says how to make one, because "no tasks" on its own reads
+            // as "subagents are broken".
+            let line = if self.session.is_some() {
+                "none yet — the model starts them with the `task` tool"
+            } else {
+                "no agent attached"
+            };
+            ui.colored_label(theme.dim, line);
+            summary.rows.push(("tasks".into(), line.to_string()));
+            return;
+        }
+
+        let running = tasks
+            .iter()
+            .filter(|t| t.state == epsilon_contracts::tool::TaskState::Running)
+            .count();
+        let header = format!("{} task(s), {running} running", tasks.len());
+        ui.colored_label(theme.dim, header.clone());
+        summary.rows.push(("tasks".into(), header));
+
+        for task in &tasks {
+            let (marker, color) = match task.state {
+                epsilon_contracts::tool::TaskState::Running => ("▸ ", theme.accent),
+                epsilon_contracts::tool::TaskState::Completed => ("✓ ", theme.success),
+                epsilon_contracts::tool::TaskState::Failed => ("✗ ", theme.danger),
+            };
+            let title = format!("{marker}{}", task.description);
+            ui.colored_label(color, title.clone());
+            summary.rows.push(("tasks".into(), title));
+
+            // The model and the turn count are what a reader cannot work out from the
+            // description: a delegation that silently ran on a different model from the
+            // one that was asked for is exactly the thing worth catching.
+            let detail = format!(
+                "   {} · {} turn(s){}",
+                task.subagent_type,
+                task.turns,
+                task.model
+                    .as_deref()
+                    .map(|m| format!(" · {m}"))
+                    .unwrap_or_default()
+            );
+            ui.colored_label(theme.dim, detail.clone());
+            summary.rows.push(("tasks".into(), detail));
+        }
+    }
+
+    /// The file tree.
     ///
     /// Drawn with widgets rather than as text rows, so it can take clicks and a keyboard
     /// — a tree made of painted text is a picture of a tree.
-    fn workspace_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+    fn files_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
         let theme = self.theme;
         {
             let painter = ui.painter();
@@ -902,6 +1048,49 @@ fn composer_id() -> egui::Id {
 fn plain_of(runs: &[crate::markup::Run]) -> String {
     runs.iter().map(|r| r.text.as_str()).collect()
 }
+/// What the sidebar shows, chosen from the activity bar.
+///
+/// Two, not three: **files** and **tasks** are what this window can act on and show. A
+/// "sessions" view needs the ability to *switch* the session — which is a lease handover,
+/// not a list — so it will be added when it can do the thing a reader expects rather than
+/// only look like it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarView {
+    /// The workspace's files.
+    Files,
+    /// The subagents this session has dispatched.
+    Tasks,
+}
+
+impl SidebarView {
+    /// Every view, in bar order.
+    pub const ALL: [SidebarView; 2] = [SidebarView::Files, SidebarView::Tasks];
+
+    /// A stable key, for the hotspot id a test presses.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Tasks => "tasks",
+        }
+    }
+
+    /// What the button says.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Tasks => "subagents",
+        }
+    }
+
+    /// The glyph on the button.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Files => "◧",
+            Self::Tasks => "⑂",
+        }
+    }
+}
+
 /// A path, shortened for a narrow pane: the last two components, with the root elided.
 fn display_path(path: &std::path::Path) -> String {
     let text = path.display().to_string();

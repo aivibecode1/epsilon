@@ -446,6 +446,86 @@ fn a_users_markdown_is_not_interpreted() {
     );
 }
 
+/// The activity bar switches the sidebar, and the switch is visible on screen.
+///
+/// A test that only checks the enum would pass against a window whose buttons were never
+/// wired. This presses the recorded hotspot -- a real click through egui's hit testing --
+/// and asserts on what the *next* frame draws.
+#[test]
+fn the_activity_bar_switches_the_sidebar_and_the_change_is_on_screen() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    std::fs::write(ws.path().join("a.rs"), "fn a() {}\n").unwrap();
+
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+
+    // Frame one: lay the bar out and find the tasks button's rectangle.
+    let laid_out = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let tasks = laid_out
+        .hotspot("tree:tasks")
+        .expect("the activity bar records a hotspot per view");
+    assert!(
+        laid_out
+            .region("workspace")
+            .iter()
+            .any(|t| t.contains("files")),
+        "the file tree is the default view.\n{}",
+        laid_out.describe()
+    );
+
+    // Move, press, release: the sequence a person produces.
+    let pos = tasks.center();
+    for event in [
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ] {
+        paint_with(&ctx, &mut app, 1440.0, 900.0, vec![event]);
+    }
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert_eq!(app.sidebar_view(), epsilon_desktop::app::SidebarView::Tasks);
+    assert!(
+        frame.drew("tasks"),
+        "the subagent pane must be what is drawn, not just what is selected.\n{}",
+        frame.describe()
+    );
+    assert!(
+        !frame
+            .region("workspace")
+            .iter()
+            .any(|t| t.contains("files")),
+        "and the file tree must be gone.\n{}",
+        frame.describe()
+    );
+}
+
+/// The subagent pane with no agent says so, rather than drawing an empty list that
+/// reads as "subagents are broken".
+#[test]
+fn an_empty_subagent_pane_says_what_is_missing() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+    app.set_sidebar_view(epsilon_desktop::app::SidebarView::Tasks);
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let pane = frame.region("tasks").join(" ");
+    assert!(
+        pane.contains("no agent attached"),
+        "with no agent, that is the truth.\n{}",
+        frame.describe()
+    );
+}
 /// Keystrokes reach the composer.
 ///
 /// This was measured four times before it worked, and each failure looked like "the input
