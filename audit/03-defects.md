@@ -1320,3 +1320,28 @@ directory. Nothing failed; every test passed. Found by *listing the directory* a
 wire probe. Two spellings in one place sort into two groups and there is no visible reason
 why. Fixed by moving the convention into `SessionStore::new_session_path()` — a second
 caller cannot invent a third name — in `1b79f8a`.
+
+### A24 — the milestone timeline in `docs/history.md` stops at M178
+
+**Status: OPEN. Found 2026-10-02 while writing M248's history row.**
+
+`docs/history.md` is the file `AGENTS.md` and `agents/memory/README.md` both point at as
+"what landed, in order". Its timeline ends at **M178**; **M179–M247 are absent**, and the
+rows below M148 are visibly damaged in the way the D25 row describes — text glued onto
+itself, e.g. the M148 row appears twice with the second copy's tail running into it, and
+M149–M160 carry a five-column row shape the rest of the table does not use.
+
+**Why it is a real defect and not cosmetics.** A reader who is told "the timeline is here"
+and finds 69 consecutive milestones missing has no way to tell missing rows from rows that
+never happened. The count is the only thing making it visible.
+
+**Not fixed here deliberately.** The rows can be reconstructed from `docs/milestones/` (231
+files) and `docs/README.md`, which both carry the full run, so nothing is *lost* — but a
+mechanical rewrite of a historical record is exactly the kind of edit that turns a record
+into a reconstruction. M248 therefore **appends its row at the point the gap became visible
+and states the gap underneath**, so the table says what it is rather than pretending to be
+whole. The rebuild belongs to whoever wants to own it, with the milestone docs as the source
+rather than memory.
+
+**Acceptance criteria:** every milestone in `docs/milestones/` has a row; the table has one
+shape; `scripts/check-links.py` passes.

@@ -1,7 +1,31 @@
 # Working note — the desktop IDE, and the shape it forced
 
-**Status: M233 landed the shell; the wiring slice is next.** ADR-020 (toolkit) and ADR-021
-(composition crate) are the two decisions everything else hangs off.
+**Status: M248 landed the tab strip and six frame-level defects — the ones a state test
+cannot see.** The wiring slice before it is in; what is next is listed below. ADR-020
+(toolkit) and ADR-021 (composition crate) are the two decisions everything else hangs off.
+
+## M248: measure the frame, because reading it was not enough
+
+The suite had 103 tests and every one of them passed while the **conversation was painted
+on top of the file tree**. `paint()` shared one `Ui` across four panes; a `Ui`'s cursor
+walks, so each pane started where the last stopped. Measured with a scratch probe before
+the fix: agent pane `[920,42]-[1440,870]`, transcript laid out at `[0,142]-[504,817]`.
+
+`layout.rs`'s non-overlap sweep kept passing throughout — **the panes never overlapped,
+only their contents did.** That is the generalisation worth keeping: a geometry test on the
+containers says nothing about the widgets inside them.
+
+Now every pane gets a `Ui` of its own (`pane_ui`), and `FrameSummary` grew **`row_rects`**,
+because `rows` records *what* was drawn and nothing recorded *where*. Expect the same class
+of bug anywhere a container is tested and its contents are not.
+
+Also in M248: `approve_pending` had **no caller in the crate** — the window painted
+`[enter] allow [esc] refuse` and the composer ate both keys. Sixth instance of the
+"faithful port, no production caller" class, and the second in this crate.
+
+**Verified by battery `m248b`: 1,804 tests / 74 binaries, 0 failed.** Attempt 1 failed on a
+new test that painted a frame and *then* checked whether a gate was waiting — it passed
+alone and failed under load. Check-then-act, in the test.
 
 ## What exists now
 
@@ -51,9 +75,15 @@ the same lesson as ADR-012's `global_dir`.
 2. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
    window is hidden, so a run that finished in the background produces no `AgentEnd` on
    screen until the window is shown. That belongs in `logic`.
-3. **Markdown in the transcript.** `pulldown-cmark` is already in the tree via the TUI.
-4. **Sessions and Tasks panes** in the sidebar. Both have a public API waiting:
-   `epsilon_session::list_sessions` and the task tools.
+3. **Reload the file tree when the agent edits files.** It is a startup snapshot: the tree
+   is walked once in `new`, so the files the agent has just written are not in it, and a
+   reader looking for a file the agent created does not find it. `Transcript::push_change`
+   is where the signal already exists.
+4. **The tasks and sessions panes are never measured for containment.** M248's
+   `row_rects` covers the transcript and the editor; these two share the isolation fix but
+   a regression moving only them would not be caught.
+5. **A close button on tabs**, and keyboard focus that the composer does not take
+   unconditionally (M248 left both, with reasons).
 
 ## egui lessons worth not re-learning
 

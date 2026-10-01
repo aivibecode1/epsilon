@@ -336,8 +336,14 @@ pub fn draw_tree(
 }
 
 /// Draw the open file, read-only, with line numbers.
-pub fn draw_editor(ui: &mut egui::Ui, theme: &IdeTheme, rect: egui::Rect, file: &OpenFile) {
-    let painter = ui.painter();
+pub fn draw_editor(
+    ui: &mut egui::Ui,
+    theme: &IdeTheme,
+    rect: egui::Rect,
+    file: &OpenFile,
+    mut summary: Option<&mut crate::app::FrameSummary>,
+) {
+    let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 4.0, theme.background);
     painter.rect_stroke(
         rect,
@@ -352,34 +358,53 @@ pub fn draw_editor(ui: &mut egui::Ui, theme: &IdeTheme, rect: egui::Rect, file: 
         egui::FontId::proportional(12.0),
         theme.dim,
     );
-    let body_top = rect.top() + 30.0;
-    if rect.height() <= 44.0 {
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + 30.0),
+        egui::pos2(rect.right(), rect.bottom()),
+    );
+    if body.height() <= 8.0 || file.lines.is_empty() {
         return;
     }
     let gutter = 52.0;
     let line_h = 16.0;
-    let visible = ((rect.height() - 34.0) / line_h).floor().max(1.0) as usize;
-    let start = file.len().saturating_sub(visible);
-    for (i, line) in file.lines[start..].iter().enumerate() {
-        let y = body_top + i as f32 * line_h;
-        if y > rect.bottom() - 14.0 {
-            break;
-        }
-        painter.text(
-            egui::pos2(rect.left() + 8.0, y),
-            egui::Align2::LEFT_TOP,
-            format!("{:>5}", start + i + 1),
-            egui::FontId::monospace(12.0),
-            theme.gutter(),
-        );
-        painter.text(
-            egui::pos2(rect.left() + gutter, y),
-            egui::Align2::LEFT_TOP,
-            line,
-            egui::FontId::monospace(12.0),
-            theme.text,
-        );
-    }
+    // **From the top, and scrollable.** This showed `lines[len - visible..]` — the tail of
+    // the file, with no scrollbar and no way to reach line 1, so opening a 900-line source
+    // file showed its last forty lines and called it an editor. Every file begins at line
+    // 1 now, and the reader scrolls down like every other editor they have used.
+    //
+    // The scope is pinned to `body` because the pane's own `Ui` starts at the top of the
+    // pane, which is where the header was painted; without it the scroll area would open
+    // underneath the header line.
+    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("epsilon-file-body")
+            .auto_shrink([false, false])
+            .show_rows(ui, line_h, file.len(), |ui, range| {
+                for i in range {
+                    let line = &file.lines[i];
+                    let row = ui.min_rect();
+                    let number = format!("{:>5}", i + 1);
+                    ui.painter().text(
+                        egui::pos2(row.left() + 8.0, row.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        &number,
+                        egui::FontId::monospace(12.0),
+                        theme.gutter(),
+                    );
+                    ui.painter().text(
+                        egui::pos2(row.left() + gutter, row.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        line,
+                        egui::FontId::monospace(12.0),
+                        theme.text,
+                    );
+                    if let Some(s) = summary.as_deref_mut() {
+                        s.rows.push(("editor".into(), format!("{number} {line}")));
+                        s.row_rects.push(("editor".into(), row));
+                    }
+                }
+            });
+    });
 }
 
 #[cfg(test)]

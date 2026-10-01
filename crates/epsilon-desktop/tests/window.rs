@@ -137,6 +137,126 @@ fn type_and_enter(text: &str) -> Vec<egui::Event> {
     events
 }
 
+/// One press of `key`, as egui receives it.
+fn press(key: egui::Key) -> Vec<egui::Event> {
+    vec![egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]
+}
+
+/// A parked run is answerable **from the window**, by pressing Enter.
+///
+/// The test above this one walks the same gate and then calls `session.resolve` directly,
+/// calling it "the way the user would" — which it is not. It proves the *harness* can be
+/// answered, and nothing about the *window*. Those are different claims, and the second one
+/// was false: the ask was painted with `[enter] allow   [esc] refuse`, the composer
+/// consumed both keys to send and to abort, and `approve_pending` had no caller anywhere in
+/// the crate. A user who met a permission gate had no way past it.
+///
+/// So this presses the key the window advertises and asserts the gate opened.
+#[test]
+fn a_permission_gate_is_answered_by_pressing_enter_in_the_window() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
+
+    // Wait for the gate to be on screen and waiting.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut parked = false;
+    while Instant::now() < deadline {
+        // **Check, then paint — in that order.** The first version painted, then asked
+        // whether a gate was waiting, and asserted on the frame it had already painted.
+        // The agent's thread registers the ask on its own schedule, so that ordering
+        // asserts on a frame from *before* the ask existed whenever the thread happened to
+        // land between the two calls — which it did under battery load and never did alone.
+        // A race that only shows up when seventy other binaries are competing is still a
+        // race, and "it passed when I ran it alone" is not a fix.
+        if session.pending_approvals().is_empty() {
+            paint_once(&ctx, &mut app, 1440.0, 900.0);
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("[enter] allow")),
+            "a waiting ask must say how to answer it.\n{}",
+            frame.describe()
+        );
+        parked = true;
+        break;
+    }
+    assert!(
+        parked,
+        "the run never parked on a gate.\n{}",
+        paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+    );
+
+    // The key the row names. Nothing here knows about the session beyond holding it.
+    paint_with(&ctx, &mut app, 1440.0, 900.0, press(egui::Key::Enter));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !session.pending_approvals().is_empty() {
+        paint_once(&ctx, &mut app, 1440.0, 900.0);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        session.pending_approvals().is_empty(),
+        "Enter is painted on the ask as the way to allow it, and pressing it left the gate \
+         standing — the window advertises a key that does nothing."
+    );
+}
+
+/// Escape refuses, and refuses *only* the gate.
+///
+/// Enter sends a prompt and Escape aborts a run; both keys are also how a permission gate
+/// is answered. This pins which meaning wins while a gate is waiting, because "the same
+/// key does two things" is how one of them quietly stops working.
+#[test]
+fn escape_refuses_a_waiting_gate() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut parked = false;
+    while Instant::now() < deadline {
+        if session.pending_approvals().is_empty() {
+            paint_once(&ctx, &mut app, 1440.0, 900.0);
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        parked = true;
+        break;
+    }
+    assert!(parked, "the run never parked on a gate");
+
+    paint_with(&ctx, &mut app, 1440.0, 900.0, press(egui::Key::Escape));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !session.pending_approvals().is_empty() {
+        paint_once(&ctx, &mut app, 1440.0, 900.0);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        session.pending_approvals().is_empty(),
+        "Escape is painted on the ask as the way to refuse it, and pressing it left the gate \
+         standing."
+    );
+}
+
 /// The window opens on a tree of the workspace's real files.
 ///
 /// The workspace pane used to draw three placeholder labels. It now walks the workspace,

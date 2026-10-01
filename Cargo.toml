@@ -118,7 +118,11 @@ getrandom = "=0.3.4"
 # `glutin` on Windows.
 eframe = "=0.36.2"
 egui = "=0.36.2"
-egui_extras = { version = "=0.36.2", features = ["syntect"] }
+# `egui_extras` was declared here (with the `syntect` feature, a full syntax-highlighting
+# engine) and read by nothing: a search of every `.rs` in the workspace found no
+# reference. It is gone rather than left as an unused dependency with a build cost —
+# if highlighting is ever wanted, it is `egui_extras::syntax_highlighting` plus the
+# palette roles `theme.rs` already defines, and that is a change with a reason attached.
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

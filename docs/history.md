@@ -292,6 +292,13 @@ runner was the one deliberate deferral, with rationale in ADR-005.
 | M176 | **Driving a picker in a real console, and the key the probe could not send.** M170's `--submit` reached commands whose behaviour is one action. The pickers need key *sequences* — moving through rows and choosing — so the probe gains `<up>`/`<down>`/`<enter>`/`<tab>`/`<esc>` and the sweep drives a real picker in a real window. |
 | M177 | **PowerShell measured for the first time.** The owner's reported symptom, quoted in this project's brief: the TUI *"freezes and shows no input or output the moment you start typing, in both CMD and PowerShell, even though tokens are clearly being consumed underneath."* M176's picker arithmetic is repeated in PowerShell, the shell named in the report, rather than only in CMD. |
 | M178 | **Putting the shell in the suite, and a stale test that had been failing for 27 milestones.** `Session::start_in_shell` runs the TUI as a child of a real shell, so the terminal tests enter the battery with no setup. The first run then failed on `the_screen_reports_what_the_harness_is_doing` — broken since M151, because the suite skipped the test that needed a built binary. Fixed by Cargo's own `CARGO_BIN_EXE_epsilon` fallback. |
+| M248 | **The window shows the conversation.** Six desktop-IDE defects, one cause: correct in every way a test could see, and not on the screen. The panes shared one `Ui`, so the transcript laid out at `[0,142]` while its pane was at `[920,42]` — the conversation painted on top of the file tree, with `layout.rs`'s non-overlap sweep passing throughout, because the *containers* never overlapped, only their contents. Each pane now gets its own `Ui` and `FrameSummary` grew `row_rects`, since `rows` records what was drawn and nothing recorded where. `approve_pending` had **no caller in the crate** — the window painted `[enter] allow [esc] refuse` and the composer ate both keys; sixth instance of "faithful port, no production caller". The editor opened every file at its **last** line. A tab strip shipped half-built whose clicks could never fire. `egui_extras` (with `syntect`) deleted: 14 packages, zero users. |
+
+> **M179–M247 are missing from this table.** The timeline above ends where it ends rather
+> than where it should — the rows were lost with the M148–M159 corruption recorded in
+> `audit/03-defects.md`. `docs/milestones/` and `docs/README.md` carry the full run. M248 is
+> appended at the point the gap became visible rather than stitched in above it, so the gap
+> stays visible.
 
 ## Decision-log index
 

@@ -33,6 +33,8 @@ use std::sync::Arc;
 pub struct FrameSummary {
     /// `(region, text)` in paint order.
     pub rows: Vec<(String, String)>,
+    /// `(name, selected)` for each open tab, so a test can say which one is showing.
+    pub tabs: Vec<(String, bool)>,
     /// `(id, rect)` for every thing this frame made clickable.
     ///
     /// Present because a painted row has no response of its own, so anything that needs
@@ -41,11 +43,19 @@ pub struct FrameSummary {
     /// record while the rectangle is in scope, and impossible to reconstruct from the
     /// text alone because indentation is not geometry.
     pub hotspots: Vec<(String, egui::Rect)>,
+    /// `(region, rect)` for every painted row, so a test can ask **where** it landed.
+    ///
+    /// Added after a measurement rather than a review: the panes used to share one `Ui`,
+    /// so the transcript was drawn at `[0,142]` while its pane was at `[920,42]` — on top
+    /// of the file tree — and 103 tests passed, because `rows` records *what* was drawn
+    /// and nothing recorded *where*. `hotspots` above had the same reason to exist.
+    pub row_rects: Vec<(String, egui::Rect)>,
     /// Which degradation rule was in force.
     pub tier: Tier,
     /// Window size the frame was painted at, for the assertion message.
     pub size: [f32; 2],
 }
+
 impl FrameSummary {
     /// Every line drawn into `region`, in order.
     pub fn region(&self, region: &str) -> Vec<&str> {
@@ -80,6 +90,26 @@ impl FrameSummary {
         out
     }
 }
+/// A `Ui` of its own, clipped to `rect`.
+///
+/// Every pane gets one. The alternative — sharing the root `Ui` — makes the panes a
+/// linked list: each starts where the last one stopped, so the file tree decides where
+/// the conversation is drawn. This returns a `Ui` with its own cursor starting at
+/// `rect.min`, and a clip rect that stops a long line from painting into the pane next
+/// door. A painter's clip is not decoration here: `OpenFile` deliberately keeps whole
+/// lines, so a 400-character line in a 500-pixel editor was a 400-character line drawn
+/// across the transcript.
+fn pane_ui(ui: &egui::Ui, rect: egui::Rect, id: &str) -> egui::Ui {
+    egui::Ui::new(
+        ui.ctx().clone(),
+        ui.id().with(id),
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layer_id(ui.layer_id())
+            .layout(egui::Layout::top_down(egui::Align::LEFT)),
+    )
+}
+
 /// The desktop application.
 pub struct IdeApp {
     opts: Options,
@@ -107,6 +137,8 @@ pub struct IdeApp {
     tree_query: String,
     /// The file open in the editor, if any.
     open: Option<crate::workspace::OpenFile>,
+    /// Open files, oldest first; the last is what the editor shows.
+    tabs: Vec<String>,
     /// Which view the sidebar is showing, chosen from the activity bar.
     sidebar: SidebarView,
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
@@ -138,6 +170,15 @@ pub fn fit(text: &str, points: f32, font_size: f32) -> String {
     let kept: String = text.chars().take(budget.saturating_sub(1)).collect();
     format!("{kept}…")
 }
+
+/// Height of the editor's tab strip.
+const TAB_H: f32 = 28.0;
+
+/// Largest width a tab may take; the strip shares what is left between its tabs.
+const TAB_W: f32 = 96.0;
+
+/// Font a tab's label is drawn at, and the one the label's [`fit`] budget assumes.
+const TAB_FONT: f32 = 12.0;
 
 /// Average glyph advance as a fraction of the font size, for proportional text.
 const AVG_ADVANCE: f32 = 0.55;
@@ -179,6 +220,7 @@ impl IdeApp {
             tree,
             tree_query: String::new(),
             open: None,
+            tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout,
         }
@@ -204,6 +246,7 @@ impl IdeApp {
             tree,
             tree_query: String::new(),
             open: None,
+            tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout: IdeLayout::new(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
@@ -291,6 +334,15 @@ impl IdeApp {
         // The drain lives in `pump`, which both `paint` and `eframe::App::logic` call — see
         // there for why neither call site can be the only one.
         self.pump();
+        // **Approvals, before anything else can want a key.** While a run is parked on a
+        // gate, `Enter` and `Escape` belong to that gate. The composer below reads the same
+        // two keys to send and to abort, so whichever ran first decided what those keys
+        // meant — and the ask was painted with `[enter] allow [esc] refuse` while the
+        // composer consumed both. `approve_pending` existed, was correct, had a test, and
+        // **had no caller in the crate**: the window drew a gate it could not open.
+        if let Some(s) = self.session.clone() {
+            approve_pending(&s, ui.ctx());
+        }
         // ---- window chrome --------------------------------------------------
         let painter = ui.painter();
         if l.title.height() > 0.0 {
@@ -333,17 +385,33 @@ impl IdeApp {
             summary.rows.push(("status".into(), text));
         }
         // ---- panes ----------------------------------------------------------
+        //
+        // **Each pane gets its own `Ui`, pinned to its own rect.** They used to share the
+        // root `Ui`, whose cursor walks: whichever pane drew first moved it, and the next
+        // pane started wherever the previous one stopped. Measured, not reasoned — with
+        // the agent pane at `[920,42]-[1440,870]`, the transcript laid itself out at
+        // `[0,142]-[504,817]`, which is on top of the file tree, leaving the right-hand
+        // pane empty. Every pane painted text correctly and the conversation was invisible
+        // behind the sidebar.
+        //
+        // `UiBuilder::max_rect` alone does not fix it: `scope_builder` confines what is
+        // drawn and still advances the parent's cursor to the scope's edge. A fresh `Ui`
+        // has its own cursor and its own clip rect, which is what a pane is.
         if l.activity.width() > 0.0 {
-            self.activity_bar(ui, &mut summary, l.activity);
+            let mut pane = pane_ui(ui, l.activity, "activity");
+            self.activity_bar(&mut pane, &mut summary, l.activity);
         }
         if l.sidebar_visible {
-            self.workspace_pane(ui, &mut summary, l.sidebar);
+            let mut pane = pane_ui(ui, l.sidebar, "sidebar");
+            self.workspace_pane(&mut pane, &mut summary, l.sidebar);
         }
         if l.center_visible {
-            self.editor_pane(ui, &mut summary, l.center);
+            let mut pane = pane_ui(ui, l.center, "center");
+            self.editor_pane(&mut pane, &mut summary, l.center);
         }
         if l.agent_visible {
-            self.agent_panel(ui, &mut summary, l.agent);
+            let mut pane = pane_ui(ui, l.agent, "agent");
+            self.agent_panel(&mut pane, &mut summary, l.agent);
         }
         summary
     }
@@ -368,19 +436,26 @@ impl IdeApp {
         let mut y = rect.top() + 10.0;
         for view in SidebarView::ALL {
             let selected = view == self.sidebar;
-            let button = ui.put(
-                egui::Rect::from_min_size(
-                    egui::pos2(rect.left() + 6.0, y),
-                    egui::vec2((rect.width() - 12.0).max(8.0), 30.0),
-                ),
-                egui::Button::new(view.glyph())
-                    .selected(selected)
-                    .fill(if selected {
-                        theme.selection_focus
-                    } else {
-                        theme.panel
-                    }),
-            );
+            let button = ui
+                .put(
+                    egui::Rect::from_min_size(
+                        egui::pos2(rect.left() + 6.0, y),
+                        egui::vec2((rect.width() - 12.0).max(8.0), 30.0),
+                    ),
+                    egui::Button::new(view.glyph())
+                        .selected(selected)
+                        .fill(if selected {
+                            theme.selection_focus
+                        } else {
+                            theme.panel
+                        }),
+                )
+                // The glyph is a picture of the view; the label is its name. Both existed and
+                // only the glyph reached the screen, so the one control in this window that
+                // chooses what everything else shows was three unlabelled symbols. The name is
+                // a tooltip rather than a second line of text because the bar is 48 pixels
+                // wide, and 48 pixels is not enough to set a word in.
+                .on_hover_text(view.label());
             summary
                 .hotspots
                 .push((crate::workspace::hotspot_id(view.key()), button.rect));
@@ -591,13 +666,15 @@ impl IdeApp {
                         format!("resumed {name} — {restored} message(s)"),
                     )),
                     Err(reason) => {
-                        // A refusal is on screen, in the pane the click happened in. It
-                        // is never swallowed: a click that appears to do nothing is the
-                        // state this crate keeps failing to rule out, and a file held by
-                        // another process is an ordinary thing to hit.
-                        summary
-                            .rows
-                            .push(("sessions".into(), format!("cannot resume {name}: {reason}")));
+                        // **Two places, because only one of them is a screen.** The
+                        // transcript is painted, so a refusal lands where the reader is
+                        // already looking; `FrameSummary` is test instrumentation and
+                        // paints nothing at all. The comment this replaced claimed the
+                        // refusal was on screen while the only code that carried it was
+                        // a vector a test reads and a user never does.
+                        let text = format!("cannot resume {name}: {reason}");
+                        self.transcript.push_notice(&text);
+                        summary.rows.push(("sessions".into(), text));
                     }
                 }
             }
@@ -703,9 +780,18 @@ impl IdeApp {
     /// The editor pane: the open file, read-only.
     fn editor_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
         let theme = self.theme;
+        // Before the body is read, so a tab press shows its file in the same frame the
+        // click landed — the alternative is a frame that shows the file you just left.
+        if let Some(path) = self.draw_tabs(ui, summary, rect) {
+            self.open_file(&path);
+        }
+        let body = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + TAB_H),
+            egui::pos2(rect.right(), rect.bottom()),
+        );
         match self.open.clone() {
             Some(file) => {
-                crate::workspace::draw_editor(ui, &theme, rect, &file);
+                crate::workspace::draw_editor(ui, &theme, body, &file, Some(summary));
                 summary.rows.push((
                     "editor".into(),
                     format!("{} · {} lines · read-only", file.path, file.len()),
@@ -714,16 +800,16 @@ impl IdeApp {
             }
             None => {
                 let painter = ui.painter();
-                painter.rect_filled(rect, 4.0, theme.background);
+                painter.rect_filled(body, 4.0, theme.background);
                 painter.rect_stroke(
-                    rect,
+                    body,
                     4.0,
                     egui::Stroke::new(1.0, theme.border),
                     egui::StrokeKind::Inside,
                 );
                 // The empty state says what to do, not merely that there is nothing.
                 painter.text(
-                    rect.center(),
+                    body.center(),
                     egui::Align2::CENTER_CENTER,
                     "Pick a file on the left to read it",
                     egui::FontId::proportional(13.0),
@@ -735,18 +821,94 @@ impl IdeApp {
             }
         }
     }
+
+    /// The tab strip: every open file, and which one is showing.
+    ///
+    /// A tab strip drawn as painted text is a picture of a tab strip. These are buttons, so
+    /// they take clicks — and, like the file tree, the strip **returns** what was pressed
+    /// rather than leaving the frame to go looking for it afterwards. Reading a frame's
+    /// hotspots after the pane that fills them has not run yet yields an empty list every
+    /// time, which is how a strip that looks clickable turns out not to be.
+    ///
+    /// One file means one tab and no strip: a single tab with nothing to switch to is
+    /// chrome that costs a row and says nothing.
+    fn draw_tabs(
+        &mut self,
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+        rect: egui::Rect,
+    ) -> Option<String> {
+        if self.tabs.len() < 2 {
+            return None;
+        }
+        let theme = self.theme;
+        let painter = ui.painter();
+        let strip = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), TAB_H));
+        painter.rect_filled(strip, 0.0, theme.panel);
+        painter.line_segment(
+            [strip.left_bottom(), strip.right_bottom()],
+            egui::Stroke::new(1.0, theme.border),
+        );
+        summary
+            .rows
+            .push(("tabs".into(), format!("{} open", self.tabs.len())));
+
+        // The strip shares its width between every tab rather than giving each a fixed one.
+        // With a fixed width the tenth open file is drawn past the right edge, where it
+        // cannot be clicked and no test sees it — an open file that cannot be reached is
+        // worse than a short tab label. Sharing has no threshold at which that happens.
+        let count = self.tabs.len() as f32;
+        let width = ((strip.width() - 12.0) / count - 4.0).clamp(8.0, TAB_W);
+        let mut pressed = None;
+        for (index, path) in self.tabs.clone().into_iter().enumerate() {
+            let selected = index == self.tabs.len() - 1;
+            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            // The file stem, not the whole name: `layout.rs` reads as a name and
+            // `layout.rs.modified.rs` does not.
+            let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
+            // Shortened, never clipped: a narrow tab says so with an ellipsis, and the full
+            // path is in the editor's own header underneath either way.
+            let label = fit(stem, width - 10.0, TAB_FONT);
+            let response = ui.put(
+                egui::Rect::from_min_size(
+                    egui::pos2(
+                        strip.left() + 6.0 + index as f32 * (width + 4.0),
+                        strip.top() + 4.0,
+                    ),
+                    egui::vec2(width, TAB_H - 9.0),
+                ),
+                egui::Button::new(label).selected(selected),
+            );
+            summary
+                .hotspots
+                .push((crate::workspace::hotspot_id(&path), response.rect));
+            summary.tabs.push((stem.to_string(), selected));
+            if response.clicked() {
+                pressed = Some(path);
+            }
+        }
+        pressed
+    }
     /// Open `path` in the editor, or say why it could not be opened.
     ///
     /// The failure is shown in the transcript rather than swallowed: a click that appears
     /// to do nothing is the state this repository keeps failing to rule out.
     fn open_file(&mut self, path: &str) {
         match crate::workspace::OpenFile::read(&self.opts.workspace, path) {
-            Ok(file) => self.open = Some(file),
+            Ok(file) => {
+                self.open = Some(file);
+                // Re-opening a file already open **moves it to the front** rather than
+                // adding a second tab for it. Two tabs showing the same path is a tab
+                // strip that cannot answer "which one am I editing".
+                self.tabs.retain(|p| p != path);
+                self.tabs.push(path.to_string());
+            }
             Err(reason) => self
                 .transcript
                 .push_notice(&format!("cannot open {reason}")),
         }
     }
+
     /// What to show after the workspace name: the provider this window is calling.
     ///
     /// **Never a guess.** With no session there is nothing to name, and with one the name
@@ -802,7 +964,12 @@ impl IdeApp {
         if self.transcript.dropped() > 0 {
             parts.push(format!("{} event(s) dropped", self.transcript.dropped()));
         }
-        parts.push(self.layout.tier.name().to_string());
+        // Only when the layout has actually given something up. `full` is a word about the
+        // window's size that a reader cannot act on; `no-sidebar` explains a sidebar that
+        // has just disappeared, which is the one a reader *does* need explained.
+        if self.layout.tier != Tier::Full {
+            parts.push(self.layout.tier.name().to_string());
+        }
         parts.join("  ·  ")
     }
     /// Draw an assistant's markdown as blocks rather than as one flat line.
@@ -938,14 +1105,19 @@ impl IdeApp {
             // max_height rather than a hard rect: the scroll area is handed the
             // Ui and lays out inside the space the composer left, which is the only way
             // three regions share one pane without one of them clipping the others.
-            egui::ScrollArea::vertical()
+            let decided = egui::ScrollArea::vertical()
                 .id_salt("epsilon-agent-transcript")
                 .stick_to_bottom(true)
                 .max_height(body.height())
                 .show(ui, |ui| {
                     ui.set_width(body.width());
-                    self.draw_rows(ui, summary);
+                    self.draw_rows(ui, summary)
                 });
+            // Applied here rather than inside the draw, so the click is resolved once,
+            // in one place, and the draw path stays a draw path.
+            if let (Some((id, decision)), Some(s)) = (decided.inner, self.session.as_ref()) {
+                s.resolve(&id, decision);
+            }
         }
         // ---- composer -------------------------------------------------------
         let composer = egui::Rect::from_min_size(
@@ -970,7 +1142,16 @@ impl IdeApp {
         }
     }
     /// Draw the transcript rows.
-    fn draw_rows(&self, ui: &mut egui::Ui, summary: &mut FrameSummary) {
+    ///
+    /// Returns the permission decision a reader made with the mouse, which the caller
+    /// applies. Buttons as well as keys because a gate that stops the whole run cannot be
+    /// reachable only from the keyboard: the ask is drawn where a reader is already
+    /// looking, so the two answers belong beside it.
+    fn draw_rows(
+        &self,
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+    ) -> Option<(String, PermissionDecision)> {
         let theme = self.theme;
         let pending: Vec<_> = self
             .session
@@ -985,7 +1166,7 @@ impl IdeApp {
             };
             ui.colored_label(theme.dim, line);
             summary.rows.push(("agent".into(), line.to_string()));
-            return;
+            return None;
         }
         for row in rows {
             let (marker, color) = match &row.kind {
@@ -1021,8 +1202,9 @@ impl IdeApp {
                 continue;
             }
             let text = format!("{marker}{body}");
-            ui.colored_label(color, text.clone());
+            let painted = ui.colored_label(color, text.clone());
             summary.rows.push(("agent".into(), text));
+            summary.row_rects.push(("agent".into(), painted.rect));
         }
         // The pending approvals are drawn after the rows, where they cannot scroll out of
         // reach behind a long answer — the composer-adjacent placement opencode and DSH
@@ -1032,6 +1214,7 @@ impl IdeApp {
         // the authority on what is waiting, and a run that parks on a gate before its first
         // message has produced no rows at all. A reader in that state must still be told
         // the run is blocked on *them*.
+        let mut decided = None;
         for ask in pending {
             let text = format!(
                 "allow {} {} ?   [enter] allow   [esc] refuse",
@@ -1039,7 +1222,32 @@ impl IdeApp {
             );
             ui.colored_label(theme.warn, text.clone());
             summary.rows.push(("agent".into(), text));
+            summary.row_rects.push(("agent".into(), ui.min_rect()));
+            // The two answers, drawn where the ask is drawn. `horizontal` keeps them on
+            // one line with the ask; a run that is blocked on this row and has no way to
+            // unblock it is the window's worst state, so the buttons are not a
+            // convenience.
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Allow")
+                    .on_hover_text("Run this now. Enter does the same.")
+                    .clicked()
+                {
+                    decided = Some((ask.request_id.clone(), PermissionDecision::AllowOnce));
+                }
+                if ui
+                    .button("Refuse")
+                    .on_hover_text("Decline it. Escape does the same.")
+                    .clicked()
+                {
+                    decided = Some((ask.request_id.clone(), PermissionDecision::Deny));
+                }
+            });
+            summary
+                .hotspots
+                .push((format!("approval:allow:{}", ask.request_id), ui.min_rect()));
         }
+        decided
     }
     /// Send whatever the composer holds.
     ///
@@ -1435,15 +1643,39 @@ mod tests {
         );
     }
     #[test]
-    fn a_pending_approval_outranks_the_layout_tier_in_the_status_line() {
-        // A status line that shows the layout while a permission ask is unanswered is a
-        // status line pointing the reader at the wrong thing.
+    fn the_status_line_does_not_lead_with_window_geometry() {
+        // `full` is a word about the window's size that a reader cannot act on, and it used
+        // to be on every status line in the product. What a reader must do comes first;
+        // geometry comes last, and only when geometry has actually taken something away.
         let app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));
         let line = app.status_line();
         assert!(line.starts_with("no agent attached"), "{line}");
         assert!(
-            line.contains("no-sidebar") || line.contains("full"),
-            "{line}"
+            !line.contains("full"),
+            "an undegraded layout has nothing to explain, so it says nothing: {line}"
+        );
+    }
+
+    /// A layout that **has** given something up says so, because that is the one case
+    /// where the reader needs the reason a pane is missing.
+    #[test]
+    fn a_degraded_layout_says_which_pane_it_dropped() {
+        let (dir, _keep) = scratch_workspace("tier");
+        let mut h = Harness::sized(dir, 600.0, 700.0);
+        let line = {
+            let _ = h.paint();
+            h.app.status_line()
+        };
+        assert!(
+            !line.contains("full"),
+            "a 600-pixel window is not a full layout: {line}"
+        );
+        assert!(
+            line.contains("chrome-only")
+                || line.contains("compact-height")
+                || line.contains("no-sidebar")
+                || line.contains("agent-only"),
+            "a window too small for the full layout must say which tier it fell to: {line}"
         );
     }
     /// The task pane renders three states, and that is the part that was written and
@@ -1573,6 +1805,110 @@ mod tests {
         }
     }
 
+    /// Every painted transcript row lands **inside the agent pane**.
+    ///
+    /// This is the test the shared-`Ui` defect needed and did not have. The panes drew
+    /// correct text and a suite of 103 tests passed, because `rows` records what was drawn
+    /// and nothing recorded where: the transcript was laid out at `[0,142]` while the
+    /// agent pane was at `[920,42]`, so the conversation was painted on top of the file
+    /// tree and the right-hand pane stood empty. The panes themselves never overlapped —
+    /// `layout.rs` proves that — which is exactly why the gap survived a passing sweep.
+    #[test]
+    fn the_transcript_is_drawn_inside_the_agent_pane_and_nowhere_else() {
+        let (dir, _keep) = scratch_workspace("inside");
+        let mut h = Harness::new(dir.clone());
+        let mut t = Transcript::new(dir.clone());
+        for i in 0..8 {
+            t.push_user(&format!("question {i}"));
+        }
+        h.app.seed_transcript(t);
+        let f = h.paint();
+
+        assert!(
+            f.row_rects.iter().any(|(r, _)| r == "agent"),
+            "the probe needs painted agent rows to measure.\n{}",
+            f.describe()
+        );
+        let pane = h.app.layout.agent;
+        for (region, rect) in &f.row_rects {
+            assert!(
+                rect.left() >= pane.left() - 0.5
+                    && rect.right() <= pane.right() + 0.5
+                    && rect.top() >= pane.top() - 0.5
+                    && rect.bottom() <= pane.bottom() + 0.5,
+                "a {region} row was painted at {rect:?}, outside the agent pane {pane:?}."
+            );
+        }
+    }
+
+    /// An editor shows the file **from the beginning**, because that is what opening a file
+    /// means.
+    ///
+    /// It used to draw `lines[len - visible..]` — the tail, with no scrollbar — so opening a
+    /// 900-line source file showed its last forty lines and offered no way to reach line 1.
+    /// The assertion is on the *first drawn line number*, not on "a line is drawn": a test that
+    /// only checks the pane is non-empty passed against the broken version for exactly as long
+    /// as the broken version existed.
+    #[test]
+    fn the_editor_starts_at_the_first_line_of_the_file() {
+        let (dir, _keep) = scratch_workspace("editor");
+        let long: String = (1..=900).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.join("long.rs"), long).expect("a long file");
+        let mut h = Harness::new(dir);
+        h.app.open_file("long.rs");
+        let f = h.paint();
+
+        let first = f
+            .region("editor")
+            .iter()
+            .find(|r| r.contains("line "))
+            .copied()
+            .unwrap_or_else(|| {
+                panic!("the editor drew no file content.\n{}", f.describe());
+            });
+        assert!(
+            first.contains("    1 line 1"),
+            "the editor must open at line 1, drew {first:?}.\n{}",
+            f.describe()
+        );
+        assert!(
+            !f.region("editor").iter().any(|r| r.contains("line 900")),
+            "the whole file fits in a 900-line window, which it does not; the pane is \
+             showing a tail again."
+        );
+    }
+
+    /// Every line the editor draws lands inside the editor pane.
+    ///
+    /// `OpenFile` keeps whole lines on purpose, so a 400-character line is 400 characters
+    /// wide. With no clip it painted straight across the transcript beside it. The clip is
+    /// the fix; this is what would notice it going away.
+    #[test]
+    fn editor_lines_are_drawn_inside_the_editor_pane() {
+        let (dir, _keep) = scratch_workspace("clip");
+        let wide: String = (1..=200)
+            .map(|i| format!("let x{i} = \"{}\";\n", "z".repeat(300)))
+            .collect();
+        std::fs::write(dir.join("wide.rs"), wide).expect("a wide file");
+        let mut h = Harness::new(dir);
+        h.app.open_file("wide.rs");
+        let f = h.paint();
+
+        let pane = h.app.layout.center;
+        let lines: Vec<_> = f.row_rects.iter().filter(|(r, _)| r == "editor").collect();
+        assert!(
+            !lines.is_empty(),
+            "no editor lines were drawn.\n{}",
+            f.describe()
+        );
+        for (_, rect) in lines {
+            assert!(
+                rect.left() >= pane.left() - 0.5 && rect.right() <= pane.right() + 0.5,
+                "an editor line was drawn at {rect:?}, outside the editor pane {pane:?}"
+            );
+        }
+    }
+
     /// Non-ASCII text is cut on a character boundary, so the row never ends in the
     /// replacement character that a byte slice would leave behind.
     #[test]
@@ -1594,5 +1930,218 @@ mod tests {
             long.chars().count() < 24,
             "a shortened path is still too long: {long}"
         );
+    }
+
+    /// An app that outlives one frame, so a test can click something and then look at
+    /// what the **next** frame drew.
+    ///
+    /// Every other helper here paints one frame and throws the app away. That is fine for
+    /// "what does a frame contain" and useless for "what does a click do", because a click
+    /// needs a pointer that moves, then a button that goes down and up, and then a frame
+    /// that acts on it. This is why the tab strip shipped with hotspots recorded for a test
+    /// that did not exist: nothing here could produce a click at all.
+    struct Harness {
+        ctx: egui::Context,
+        app: IdeApp,
+        input: egui::RawInput,
+    }
+
+    impl Harness {
+        fn new(workspace: std::path::PathBuf) -> Self {
+            Self::sized(workspace, 1440.0, 900.0)
+        }
+        fn sized(workspace: std::path::PathBuf, w: f32, h: f32) -> Self {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(w, h),
+                )),
+                ..Default::default()
+            };
+            Self {
+                ctx: egui::Context::default(),
+                app: IdeApp::without_agent(Options::for_workspace(workspace)),
+                input,
+            }
+        }
+        /// One frame, with no pointer.
+        fn paint(&mut self) -> FrameSummary {
+            let mut out = FrameSummary::default();
+            let mut full = self
+                .ctx
+                .run_ui(self.input.clone(), |ui| out = self.app.paint(ui));
+            full.textures_delta.clear();
+            out
+        }
+        /// Put the pointer on `p`, press, then release on a later frame — and return the
+        /// frame the release produced.
+        ///
+        /// Three frames, not one, and each one paints. A press and a release delivered in
+        /// the same frame arrive at a widget that egui has not yet registered the pointer
+        /// against, so nothing registers a click; the version this replaced looked like a
+        /// working harness and silently clicked nothing. A real pointer press is also held
+        /// across frames, so this is the shape a person produces anyway.
+        fn click(&mut self, p: egui::Pos2) -> FrameSummary {
+            let button = |pressed: bool| egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            // Every frame paints, including the ones whose output is thrown away. egui
+            // resolves a click against widgets that existed when the press landed, and a
+            // frame that builds no widgets registers nothing for the press to land on —
+            // which is why the first version of this helper looked like a working harness
+            // and clicked nothing.
+            let feed = |h: &mut Harness, events: Vec<egui::Event>| {
+                let mut input = h.input.clone();
+                input.events = events;
+                let mut full = h.ctx.run_ui(input, |ui| {
+                    h.app.paint(ui);
+                });
+                full.textures_delta.clear();
+            };
+            feed(self, vec![egui::Event::PointerMoved(p)]);
+            feed(self, vec![egui::Event::PointerMoved(p), button(true)]);
+            let mut out = FrameSummary::default();
+            let mut input = self.input.clone();
+            input.events = vec![egui::Event::PointerMoved(p), button(false)];
+            let mut full = self.ctx.run_ui(input, |ui| out = self.app.paint(ui));
+            full.textures_delta.clear();
+            out
+        }
+    }
+
+    /// A workspace on disk with two readable files, removed when the test ends.
+    fn scratch_workspace(name: &str) -> (std::path::PathBuf, TempWorkspace) {
+        let dir = std::env::temp_dir().join(format!("epsilon-tabs-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch workspace");
+        std::fs::write(dir.join("alpha.rs"), "fn alpha() {}\n").expect("alpha");
+        std::fs::write(dir.join("beta.rs"), "fn beta() {}\n").expect("beta");
+        (dir.clone(), TempWorkspace(dir))
+    }
+
+    /// Deletes its directory on drop, so a failing assertion cannot leave a workspace
+    /// behind for the next run to trip over.
+    struct TempWorkspace(std::path::PathBuf);
+
+    impl Drop for TempWorkspace {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Two open files draw a strip, and the one the editor is showing is the marked one.
+    ///
+    /// This is the frame-level assertion the strip needs. Asserting on `app.tabs` alone
+    /// would pass with a strip that draws nothing, which is exactly what the first version
+    /// of this feature did: the field existed, the tabs were correct, and nothing had ever
+    /// been on screen.
+    #[test]
+    fn two_open_files_draw_a_tab_strip_and_mark_the_one_being_shown() {
+        let (dir, _keep) = scratch_workspace("strip");
+        let mut h = Harness::new(dir);
+        h.app.open_file("alpha.rs");
+        h.app.open_file("beta.rs");
+        let f = h.paint();
+
+        assert_eq!(
+            f.tabs,
+            vec![("alpha".to_string(), false), ("beta".to_string(), true)],
+            "the strip shows every open file and marks the current one.\n{}",
+            f.describe()
+        );
+        assert!(
+            f.drew("tabs"),
+            "the strip itself must be a region, not just a field.\n{}",
+            f.describe()
+        );
+    }
+
+    /// One open file is one tab with nothing to switch to, so no strip is drawn.
+    #[test]
+    fn a_single_open_file_draws_no_strip() {
+        let (dir, _keep) = scratch_workspace("one");
+        let mut h = Harness::new(dir);
+        h.app.open_file("alpha.rs");
+        let f = h.paint();
+
+        assert!(f.tabs.is_empty(), "{:?}", f.tabs);
+        assert!(!f.drew("tabs"), "{}\n", f.describe());
+    }
+
+    /// Clicking a tab switches the editor to that file.
+    ///
+    /// Driven by coordinates taken from the frame's own hotspots, so the test presses
+    /// where the tab was actually drawn rather than where the arithmetic says it should
+    /// be. This is the test the feature did not have: `draw_tabs` used to record hotspots
+    /// and then be ignored, so the strip was drawn, was clickable-looking, and did nothing.
+    #[test]
+    fn clicking_a_tab_switches_the_editor_to_that_file() {
+        let (dir, _keep) = scratch_workspace("switch");
+        let mut h = Harness::new(dir);
+        h.app.open_file("alpha.rs");
+        h.app.open_file("beta.rs");
+
+        let before = h.paint();
+        assert!(
+            before
+                .region("editor")
+                .iter()
+                .any(|t| t.contains("beta.rs")),
+            "beta.rs should be showing first: {:?}",
+            before.region("editor")
+        );
+        let tab = before
+            .hotspot(&crate::workspace::hotspot_id("alpha.rs"))
+            .expect("the strip records where each tab was drawn");
+
+        let after = h.click(tab.center());
+        assert!(
+            after
+                .region("editor")
+                .iter()
+                .any(|t| t.contains("alpha.rs")),
+            "clicking the alpha tab must switch the editor to it, got {:?}.\n{}",
+            after.region("editor"),
+            after.describe()
+        );
+        // The strip is still there afterwards, still with two tabs, still marking the new
+        // current file — a switch that empties the strip has switched the whole pane.
+        assert_eq!(
+            after.tabs,
+            vec![("beta".to_string(), false), ("alpha".to_string(), true)],
+            "the strip survives the switch and re-marks the current file.\n{}",
+            after.describe()
+        );
+    }
+
+    /// Every open tab stays inside the strip, however many files are open.
+    ///
+    /// A fixed tab width pushed the tenth file past the right edge of the pane, where it
+    /// could not be clicked and no assertion could see it. Sharing the width has no
+    /// threshold at which that starts happening.
+    #[test]
+    fn every_open_tab_stays_inside_the_pane_however_many_are_open() {
+        let (dir, _keep) = scratch_workspace("many");
+        let mut h = Harness::new(dir.clone());
+        for i in 0..12 {
+            std::fs::write(dir.join(format!("f{i}.rs")), "fn f() {}\n").expect("file");
+            h.app.open_file(&format!("f{i}.rs"));
+        }
+        let f = h.paint();
+        assert_eq!(f.tabs.len(), 12, "every open file has a tab: {:?}", f.tabs);
+
+        let strip = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(f.size[0], f.size[1]));
+        for (index, path) in (0..12).map(|i| format!("f{i}.rs")).enumerate() {
+            let r = f
+                .hotspot(&crate::workspace::hotspot_id(&path))
+                .unwrap_or_else(|| panic!("f{index}.rs has no tab rect"));
+            assert!(
+                r.right() <= strip.right() + 0.5 && r.width() > 0.0,
+                "tab {index} ({path}) is drawn at {r:?}, outside the pane {strip:?}"
+            );
+        }
     }
 }

@@ -51,7 +51,6 @@ epsilon-tui = { path = "../epsilon-tui" }
 ratatui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
-egui_extras = { workspace = true }
 # The markdown parser the terminal frontend already uses. Only the *drawing* differs
 # between the two frontends — `epsilon_tui::markdown` emits ratatui `Line`s coupled to
 # a width-aware table layout, which is not portable; the parse is.
