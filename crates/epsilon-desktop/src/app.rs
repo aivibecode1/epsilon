@@ -136,6 +136,7 @@ impl IdeApp {
         // Loaded before opts moves, so the tree is built from the workspace the caller
         // named rather than from a borrow of a moved value.
         let tree = crate::workspace::FileTree::load(&opts.workspace);
+        let transcript = crate::session::Transcript::new(&opts.workspace);
         let layout = IdeLayout::new(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
             Preferences::default(),
@@ -146,7 +147,7 @@ impl IdeApp {
             prefs: Preferences::default(),
             session: Some(Arc::new(session)),
             notices,
-            transcript: Transcript::new(),
+            transcript,
             draft: String::new(),
             placeholder: "ask anything  ·  enter sends  ·  shift+enter for a new line",
             refusal: None,
@@ -164,13 +165,14 @@ impl IdeApp {
     /// only way to test that is to be able to build the frame.
     pub fn without_agent(opts: Options) -> Self {
         let tree = crate::workspace::FileTree::load(&opts.workspace);
+        let transcript = crate::session::Transcript::new(&opts.workspace);
         Self {
             opts,
             theme: IdeTheme::resolve(None),
             prefs: Preferences::default(),
             session: None,
             notices: vec!["not connected to an agent".into()],
-            transcript: Transcript::new(),
+            transcript,
             draft: String::new(),
             placeholder: "no agent attached",
             refusal: None,
@@ -217,6 +219,26 @@ impl IdeApp {
         self.draft = text.to_string();
     }
 
+    /// Drain the agent's event queue into the transcript.
+    ///
+    /// Called from [`IdeApp::paint`] **and** from [`eframe::App::logic`], and both call
+    /// sites are needed. `logic` is the one that matters for correctness — eframe skips
+    /// `ui` entirely while the window is hidden, so a run that finished in the background
+    /// would otherwise never reach the screen. `paint` is the one that matters for tests,
+    /// which drive the draw path directly.
+    ///
+    /// Twice in a frame is not twice the work: the drain is a queue read, and the second
+    /// call finds it empty. Making it conditional on *how* the frame was reached would
+    /// leave two paths that can disagree about what is on screen.
+    fn pump(&mut self) {
+        // Through the `Arc`, and that is the whole reason `drain` takes `&self`: anything
+        // else holding this session — a shortcut, a second window, a test — must not be
+        // able to stop the frame from updating.
+        if let Some(session) = self.session.as_ref() {
+            session.drain(&mut self.transcript);
+        }
+    }
+
     /// Paint one frame and describe what it drew.
     ///
     /// This is the whole of the draw path. [`eframe::App::ui`] is a thin wrapper so a test
@@ -231,15 +253,9 @@ impl IdeApp {
             ..FrameSummary::default()
         };
 
-        // Through the `Arc`, and that is the whole reason `drain` takes `&self`: anything
-        // else holding this session — a shortcut, a second window, a test — must not be
-        // able to stop the frame from updating. An earlier version used
-        // `Arc::get_mut`, which returns `None` the moment a handle exists, and the
-        // symptom was a window whose status line knew a run was in flight while its
-        // transcript stayed empty forever.
-        if let Some(session) = self.session.as_ref() {
-            session.drain(&mut self.transcript);
-        }
+        // The drain lives in `pump`, which both `paint` and `eframe::App::logic` call — see
+        // there for why neither call site can be the only one.
+        self.pump();
 
         // ---- window chrome --------------------------------------------------
         let painter = ui.painter();
@@ -630,6 +646,8 @@ impl IdeApp {
                     Some(true) => ("✗ ", theme.danger),
                 },
                 RowKind::Approval { .. } => ("! ", theme.warn),
+                RowKind::Changed => ("± ", theme.accent),
+                RowKind::Diff => ("  ", theme.dim),
                 RowKind::Notice => ("  ", theme.dim),
             };
             // A tool row with no arguments yet still has to say which tool it is: an
@@ -795,12 +813,20 @@ fn display_path(path: &std::path::Path) -> String {
 }
 
 impl eframe::App for IdeApp {
-    /// eframe 0.36 splits the old `update` in two: `logic` runs even while the window is
-    /// hidden, so background work can keep counting, and may not paint; `ui` draws. This
-    /// frontend drains its event queue in `ui`, which is deliberate — a run that finished
-    /// while the window was hidden produces no `AgentEnd` on screen until the window is
-    /// shown again, and `eframe` skips the whole `ui` pass while hidden. `logic` is where
-    /// that belongs, and it is the next slice.
+    /// eframe 0.36 splits the old `update` in two, and **the split is not a detail**:
+    /// `ui` does not run at all while the window is hidden.
+    ///
+    /// A turn that finishes in the background therefore produces no `AgentEnd` on screen
+    /// — no status change, no `idle` — until the window is shown again, which reads as
+    /// "still working" for as long as the window is in the background. That is the shape
+    /// of the freeze this repository has chased across four audits, so the drain has to
+    /// happen here too. It takes `&mut self` and must not paint, which is exactly what
+    /// draining is.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.pump();
+        let _ = ctx;
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().set_visuals(self.theme.visuals());
         self.paint(ui);

@@ -48,12 +48,14 @@
 const _REAL_PATH_FORWARDED: () = epsilon_core::REAL_PATH_ENABLED;
 
 pub mod app;
+pub mod diff;
 pub mod layout;
 pub mod session;
 pub mod theme;
 pub mod workspace;
 
 pub use app::IdeApp;
+pub use diff::{Change, ChangeWatcher, DiffLine};
 pub use layout::IdeLayout;
 pub use session::{IdeSession, Row, RowKind, Transcript};
 pub use theme::IdeTheme;

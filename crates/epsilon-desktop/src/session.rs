@@ -28,6 +28,7 @@
 //! Nothing here decides anything. It draws what the agent says, and it shows refusals as
 //! refusals — see [`crate::IdeApp::paint`].
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -46,6 +47,9 @@ use epsilon_runtime::Launch;
 /// difference between a transcript that streams and one that flickers; the terminal
 /// frontend measured the same thing and bounded its drain the same way.
 const REPAINT_COALESCE: Duration = Duration::from_millis(16);
+
+/// How many changed lines one change contributes to the transcript.
+const MAX_DIFF_LINES: usize = 12;
 
 /// Rows are retained up to this count, oldest dropped.
 ///
@@ -84,6 +88,10 @@ pub enum RowKind {
     },
     /// A harness notice, including a lost-event warning.
     Notice,
+    /// A file changed, as one summary line: path, additions, removals.
+    Changed,
+    /// One changed line inside a `RowKind::Changed` block.
+    Diff,
 }
 
 /// One drawable row.
@@ -102,6 +110,14 @@ pub struct Row {
 /// that lagged) testable without a provider or a window.
 #[derive(Debug, Default, Clone)]
 pub struct Transcript {
+    /// The workspace watched files are resolved against.
+    ///
+    /// Held here rather than passed per event because the watcher *reads files*, and a
+    /// reducer that could not say where the workspace is would be one argument short of
+    /// being able to review a change.
+    workspace: PathBuf,
+    /// Files the running tool call might change, and what they held when it started.
+    watcher: crate::diff::ChangeWatcher,
     rows: Vec<Row>,
     /// Index of the assistant row currently streaming, so `MessageUpdate` replaces rather
     /// than appends. One per run: a second `MessageStart` starts a new one.
@@ -124,9 +140,43 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    /// An empty transcript.
-    pub fn new() -> Self {
-        Self::default()
+    /// An empty transcript for `workspace`.
+    pub fn new(workspace: impl Into<PathBuf>) -> Self {
+        Self {
+            workspace: workspace.into(),
+            ..Self::default()
+        }
+    }
+
+    /// The workspace this transcript watches.
+    pub fn workspace(&self) -> &std::path::Path {
+        &self.workspace
+    }
+
+    /// Record what a tool call changed: one summary row, then the changed lines.
+    ///
+    /// The lines are capped. A rewrite of a thousand-line file is not something a
+    /// transcript row should carry in full — the summary already says how big it was, and
+    /// the editor pane has the file itself.
+    pub fn push_change(&mut self, change: &crate::diff::Change) {
+        self.push(RowKind::Changed, change.summary());
+        let changed: Vec<&crate::diff::DiffLine> = change
+            .lines
+            .iter()
+            .filter(|l| !matches!(l, crate::diff::DiffLine::Context(_)))
+            .collect();
+        for line in changed.iter().take(MAX_DIFF_LINES) {
+            self.push(RowKind::Diff, format!("{} {}", line.marker(), line.text()));
+        }
+        if changed.len() > MAX_DIFF_LINES {
+            self.push(
+                RowKind::Diff,
+                format!(
+                    "   … {} more changed lines — open the file",
+                    changed.len() - MAX_DIFF_LINES
+                ),
+            );
+        }
     }
 
     /// The rows, oldest first.
@@ -225,6 +275,11 @@ impl Transcript {
             AgentEvent::ToolExecutionStart {
                 tool_name, args, ..
             } => {
+                // **Snapshot before the tool runs.** `ToolExecutionStart` is emitted
+                // before execution, so reading now is genuinely "before" — reading after
+                // would produce an empty diff for every edit, which is the failure mode
+                // of a review pane that silently shows nothing.
+                self.watcher.begin(args, &self.workspace);
                 let row = Row {
                     kind: RowKind::Tool {
                         name: tool_name.clone(),
@@ -242,6 +297,13 @@ impl Transcript {
                     && let RowKind::Tool { failed, .. } = &mut self.rows[i].kind
                 {
                     *failed = Some(*is_error);
+                }
+                // What actually changed on disk, which is the only version worth
+                // reviewing. A call that changed nothing produces **no row**: a review
+                // pane full of "no changes" is one nobody reads.
+                let changes = self.watcher.finish(&self.workspace);
+                for change in &changes {
+                    self.push_change(change);
                 }
             }
 
@@ -671,6 +733,14 @@ mod tests {
     use epsilon_contracts::content::ContentBlock;
     use epsilon_contracts::message::{AssistantMessage, StopReason};
 
+    /// A transcript over a scratch workspace.
+    ///
+    /// The reducer tests feed synthetic events, so nothing is read; the path is here
+    /// because the change watcher resolves files against one and the constructor asks.
+    fn transcript() -> Transcript {
+        Transcript::new(std::env::temp_dir())
+    }
+
     fn assistant(text: &str) -> Message {
         Message::Assistant(AssistantMessage {
             id: "m1".into(),
@@ -703,7 +773,7 @@ mod tests {
             },
             |_t: &mut Transcript| {},
         ] {
-            let mut t = Transcript::new();
+            let mut t = transcript();
             opening(&mut t);
             for text in ["H", "He", "Hel", "Hell", "Hello"] {
                 t.apply(&AgentEvent::MessageUpdate {
@@ -732,7 +802,7 @@ mod tests {
     /// reader has to decode.
     #[test]
     fn a_message_with_no_text_creates_no_row() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         t.apply(&AgentEvent::MessageStart {
             message: Box::new(assistant("   ")),
         });
@@ -745,7 +815,7 @@ mod tests {
 
     #[test]
     fn a_tool_call_shows_what_it_is_doing_and_how_it_ended() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         t.apply(&AgentEvent::ToolExecutionStart {
             tool_call_id: "c1".into(),
             tool_name: "bash".into(),
@@ -783,7 +853,7 @@ mod tests {
     #[test]
     fn a_long_tool_call_is_marked_truncated_rather_than_silently_cut() {
         let long = "x".repeat(400);
-        let mut t = Transcript::new();
+        let mut t = transcript();
         t.apply(&AgentEvent::ToolExecutionStart {
             tool_call_id: "c1".into(),
             tool_name: "read".into(),
@@ -801,7 +871,7 @@ mod tests {
     /// who scrolled past a permission prompt could not tell whether it was ever answered.
     #[test]
     fn an_answered_approval_keeps_the_ask_and_records_the_outcome() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         let request = PermissionRequest {
             request_id: "perm-1".into(),
             capability: "bash".into(),
@@ -836,7 +906,7 @@ mod tests {
     /// particular carries text the user wrote, and it must be visible that they wrote it.
     #[test]
     fn a_refusal_is_shown_as_a_refusal() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         t.apply(&AgentEvent::PermissionDecided {
             request_id: "perm-x".into(),
             decision: PermissionDecision::DenyWithGuidance {
@@ -850,7 +920,7 @@ mod tests {
 
     #[test]
     fn a_lagging_broadcast_is_reported_and_counted_not_swallowed() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         t.note_lag(12);
         assert_eq!(t.dropped(), 12);
         assert!(
@@ -862,7 +932,7 @@ mod tests {
 
     #[test]
     fn the_transcript_is_bounded_and_the_trim_drops_the_oldest() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         for i in 0..(MAX_ROWS + 50) {
             t.apply(&AgentEvent::Notice {
                 text: format!("row {i}"),
@@ -883,7 +953,7 @@ mod tests {
 
     #[test]
     fn reasoning_and_the_answer_are_separate_rows() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         let mut m = assistant("the answer");
         if let Message::Assistant(a) = &mut m {
             a.content.insert(
@@ -910,7 +980,7 @@ mod tests {
 
     #[test]
     fn a_newline_in_tool_arguments_does_not_make_a_row_break_the_pane() {
-        let mut t = Transcript::new();
+        let mut t = transcript();
         t.apply(&AgentEvent::ToolExecutionStart {
             tool_call_id: "c1".into(),
             tool_name: "bash".into(),

@@ -269,6 +269,104 @@ fn an_unopened_editor_says_what_to_do() {
     );
 }
 
+/// When a file really does change, the window says so — with the path and both counts.
+///
+/// Driven through the reducer rather than a live agent, because the scripted turn happens
+/// not to edit anything, and a test that needed a lucky script would stop testing the
+/// feature the day the script changed.
+#[test]
+fn a_change_is_reviewed_with_its_path_and_counts() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    std::fs::write(ws.path().join("a.rs"), "one\ntwo\nthree\n").unwrap();
+
+    let mut t = epsilon_desktop::Transcript::new(ws.path());
+    // A call whose arguments carry a `path` — which is what `edit` and `write` send —
+    // then the file actually changing underneath it.
+    t.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "c1".into(),
+        tool_name: "edit".into(),
+        args: serde_json::json!({ "path": "a.rs" }),
+    });
+    std::fs::write(ws.path().join("a.rs"), "one\nTWO\nthree\n").unwrap();
+    t.apply(&AgentEvent::ToolExecutionEnd {
+        tool_call_id: "c1".into(),
+        tool_name: "edit".into(),
+        is_error: false,
+    });
+
+    let text: Vec<String> = t.rows().iter().map(|r| r.text.clone()).collect();
+    let joined = text.join("\n");
+    assert!(
+        joined.contains("a.rs") && joined.contains("+1"),
+        "the change must name the file and its additions:\n{joined}"
+    );
+    assert!(
+        text.iter().any(|l| l.starts_with('+') && l.contains("TWO")),
+        "and show the added line:\n{joined}"
+    );
+    assert!(
+        text.iter().any(|l| l.starts_with('-') && l.contains("two")),
+        "and the removed one:\n{joined}"
+    );
+}
+
+/// The scripted turn runs `echo`, which touches no file — so the honest live claim is
+/// narrow: **the watcher did not invent a change.** A review pane that shows a diff for a
+/// call which changed nothing is worse than one that shows none, because it is a pane you
+/// have to check.
+#[test]
+fn a_tool_call_that_changes_nothing_produces_no_change_row() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    std::fs::write(ws.path().join("untouched.rs"), "fn main() {}\n").unwrap();
+
+    let (ctx, mut app) = wire(ws.path());
+    app.set_draft("do something");
+    app.send_draft().expect("a draft with words is sent");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut asked = false;
+    while Instant::now() < deadline && !asked {
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        asked = frame.region("agent").iter().any(|t| t.contains("allow"));
+        if !asked {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert!(asked, "the turn never reached its permission gate");
+
+    let ask = app
+        .session()
+        .expect("a session")
+        .pending_approvals()
+        .into_iter()
+        .next()
+        .expect("an ask is waiting");
+    app.session()
+        .expect("a session")
+        .resolve(&ask.request_id, PermissionDecision::AllowOnce);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut finished = false;
+    while Instant::now() < deadline && !finished {
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        finished = !frame.region("status").join(" ").contains("running");
+        if !finished {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert!(finished, "the turn never finished");
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let transcript = frame.region("agent").join("\n");
+    assert!(
+        !transcript.contains("· +") && !transcript.contains("created "),
+        "a tool call that changed no file must produce no change row.\n{}",
+        frame.describe()
+    );
+}
+
 /// Keystrokes reach the composer.
 ///
 /// This was measured four times before it worked, and each failure looked like "the input

@@ -76,7 +76,7 @@ first four attempts all used a one-frame "click", which tests a state the produc
 
 ## Verification
 
-**Battery `m237` — GATE PASS on attempt 1, 1,721 tests across 72 binaries, 0 failed**
+**Battery `m236` — GATE PASS on attempt 1, 1,721 tests across 72 binaries, 0 failed**
 (`audit/evidence/gate-m237.log`). Up from 1,704: the walker's five tests moved to core, plus
 thirteen for the tree, the editor and the click. clippy clean across 14 crates;
 check-links and check-line-endings clean.
