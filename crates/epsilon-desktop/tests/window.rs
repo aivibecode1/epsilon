@@ -367,6 +367,85 @@ fn a_tool_call_that_changes_nothing_produces_no_change_row() {
     );
 }
 
+/// An assistant message carrying markdown.
+fn assistant_markdown(text: &str) -> epsilon_contracts::message::Message {
+    use epsilon_contracts::content::ContentBlock;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason};
+    Message::Assistant(AssistantMessage {
+        id: "md".into(),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![ContentBlock::text(text)],
+        stop_reason: StopReason::EndTurn,
+        error_message: None,
+        usage: Default::default(),
+    })
+}
+
+/// The transcript renders the assistant's markdown rather than showing it.
+///
+/// The unit tests in `markup` prove the *renderer* works. This proves the **frame**
+/// uses it, which is the distinction this repository keeps having to relearn: at M196 a
+/// search field had passing state tests and had never been drawn.
+#[test]
+fn assistant_markdown_reaches_the_screen_as_text_not_as_markup() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let mut t = epsilon_desktop::Transcript::new(std::env::temp_dir());
+    t.apply(&AgentEvent::MessageEnd {
+        message: Box::new(assistant_markdown(
+            "I **changed** two things:\n\n- one\n- two\n",
+        )),
+    });
+
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));
+    app.seed_transcript(t);
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let agent = frame.region("agent");
+    assert!(
+        !agent.iter().any(|l| l.contains("**")),
+        "the asterisks are still on screen: {agent:?}"
+    );
+    assert!(
+        agent.iter().any(|l| l.contains("changed")),
+        "and the words are: {agent:?}"
+    );
+    assert!(
+        agent.iter().any(|l| l.trim_start().starts_with('•')),
+        "a bullet must be a bullet: {agent:?}"
+    );
+}
+
+/// The user's own text is **not** interpreted.
+///
+/// The rule that keeps the window honest about what was said: a prompt containing
+/// `**markdown**` is text the user typed, and a window that renders it is a window
+/// showing something they did not.
+#[test]
+fn a_users_markdown_is_not_interpreted() {
+    let mut t = epsilon_desktop::Transcript::new(std::env::temp_dir());
+    t.push_user("**do not bold this**");
+    t.push_notice("`this too`");
+
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));
+    app.seed_transcript(t);
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let agent = frame.region("agent");
+    assert!(
+        agent.iter().any(|l| l.contains("**do not bold this**")),
+        "a user's prompt is verbatim: {agent:?}"
+    );
+    assert!(
+        agent.iter().any(|l| l.contains("`this too`")),
+        "and so is a harness notice: {agent:?}"
+    );
+}
+
 /// Keystrokes reach the composer.
 ///
 /// This was measured four times before it worked, and each failure looked like "the input

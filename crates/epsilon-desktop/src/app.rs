@@ -214,6 +214,14 @@ impl IdeApp {
         &self.draft
     }
 
+    /// Replace the transcript.
+    ///
+    /// For a test that needs a particular history without running a turn to produce it.
+    /// `None` clears it.
+    pub fn seed_transcript(&mut self, transcript: Transcript) {
+        self.transcript = transcript;
+    }
+
     /// Put a draft in the composer, as typing would.
     pub fn set_draft(&mut self, text: &str) {
         self.draft = text.to_string();
@@ -522,6 +530,81 @@ impl IdeApp {
         parts.join("  ·  ")
     }
 
+    /// Draw an assistant's markdown as blocks rather than as one flat line.
+    ///
+    /// Everything else in the transcript draws as a single coloured label; this is the
+    /// one place that interprets, and it is reached only from the assistant row. The
+    /// visible text of every block is pushed into the frame summary, so a test can
+    /// assert that `**bold**` reached the reader as *bold* and not as asterisks.
+    fn draw_markdown(
+        &self,
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+        marker: &str,
+        color: egui::Color32,
+        text: &str,
+    ) {
+        let theme = self.theme;
+        let blocks = crate::markup::render(text);
+        // A renderer that produced nothing for a non-empty answer would leave a gap in
+        // the transcript, so fall back to the raw text rather than to nothing.
+        if blocks.is_empty() {
+            let line = format!("{marker}{text}");
+            ui.colored_label(color, line.clone());
+            summary.rows.push(("agent".into(), line));
+            return;
+        }
+        for (i, block) in blocks.iter().enumerate() {
+            let prefix = if i == 0 { marker } else { "  " };
+            match block {
+                crate::markup::Block::Heading { runs, .. } => {
+                    let job = crate::markup::job(runs, theme.title, theme.code);
+                    let line = format!("{prefix}{}", plain_of(runs));
+                    ui.label(egui::WidgetText::from(job));
+                    summary.rows.push(("agent".into(), line));
+                }
+                crate::markup::Block::Paragraph(runs) => {
+                    let job = crate::markup::job(runs, color, theme.code);
+                    let line = format!("{prefix}{}", plain_of(runs));
+                    ui.label(egui::WidgetText::from(job));
+                    summary.rows.push(("agent".into(), line));
+                }
+                crate::markup::Block::ListItem {
+                    marker: bullet,
+                    runs,
+                } => {
+                    let job = crate::markup::job(runs, color, theme.code);
+                    let line = format!("{prefix}{bullet}{}", plain_of(runs));
+                    ui.label(egui::WidgetText::from(job));
+                    summary.rows.push(("agent".into(), line));
+                }
+                crate::markup::Block::Quote(runs) => {
+                    let job = crate::markup::job(runs, theme.dim, theme.code);
+                    let line = format!("{prefix}❯ {}", plain_of(runs));
+                    ui.label(egui::WidgetText::from(job));
+                    summary.rows.push(("agent".into(), line));
+                }
+                crate::markup::Block::Code { language, lines } => {
+                    let tag = language
+                        .as_deref()
+                        .map(|l| format!("[{l}]"))
+                        .unwrap_or_else(|| "[code]".to_string());
+                    for line in lines {
+                        let shown = format!("{prefix}{tag} {line}");
+                        ui.colored_label(theme.code, shown.clone());
+                        summary.rows.push(("agent".into(), shown));
+                    }
+                }
+                crate::markup::Block::Rule => {
+                    ui.colored_label(theme.border, format!("{prefix}--------"));
+                    summary
+                        .rows
+                        .push(("agent".into(), format!("{prefix}--------")));
+                }
+            }
+        }
+    }
+
     /// The agent panel: status, transcript, approvals, composer.
     ///
     /// Split into three regions inside one pane, and the split is decided here rather
@@ -660,6 +743,16 @@ impl IdeApp {
             } else {
                 row.text.clone()
             };
+
+            // **Only the assistant's text is interpreted.** A user who types `**hi**`
+            // must see `**hi**`; a diff line is a diff line. Rendering is an
+            // interpretation, and applying it to text that is not prose makes the
+            // window lie about what was said.
+            if matches!(row.kind, RowKind::Assistant) {
+                self.draw_markdown(ui, summary, marker, color, &body);
+                continue;
+            }
+
             let text = format!("{marker}{body}");
             ui.colored_label(color, text.clone());
             summary.rows.push(("agent".into(), text));
@@ -802,6 +895,13 @@ fn composer_id() -> egui::Id {
     egui::Id::new("epsilon-composer")
 }
 
+/// The visible text of a block's runs, for the frame summary.
+///
+/// The summary is what tests assert on, so it must carry **what the reader sees** — not
+/// the markup, and not a reconstruction that could disagree with the drawing.
+fn plain_of(runs: &[crate::markup::Run]) -> String {
+    runs.iter().map(|r| r.text.as_str()).collect()
+}
 /// A path, shortened for a narrow pane: the last two components, with the root elided.
 fn display_path(path: &std::path::Path) -> String {
     let text = path.display().to_string();

@@ -155,3 +155,17 @@ If it turns out to be loss, the prime suspect is already located in the code:
 is not immediately ready, and crossterm's `EventStream` carries one-shot wake state
 (`stream_wake_task_executed`) that a dropped poll leaves armed — see
 `crossterm-0.29.0/src/event/stream.rs:99-137` and the blocking thread it spawns at `:47-61`.
+
+## egui 0.36 facts worth not re-learning
+
+- **`RichText` has private fields and no public concatenation.** Mixed styling is built with a
+  `LayoutJob` (`job.append(text, 0.0, TextFormat::simple(font, color))`) and handed to a widget
+  via `WidgetText::from(job)`. Collecting `RichText`s with `collect()` does not compile.
+- **`egui_extras` 0.36 ships only `datepicker` and `loaders`** — there is no `markup` module.
+  For inline markdown, build your own or take a dependency; there is nothing to reuse.
+- **`ScrollArea::show_rows(ui, row_height, count, …)`** — height before count, the opposite of
+  the obvious order.
+- **A `Ui` inside `show_rows` is positioned from the scroll area's content**, so a row's
+  rectangle must come from `allocate_exact_size` and not from `next_widget_position`.
+- **pulldown-cmark's table header cells arrive with no `TableRow` around them**; `End(TableHead)`
+  needs the same handling as `End(TableRow)` or the header disappears.

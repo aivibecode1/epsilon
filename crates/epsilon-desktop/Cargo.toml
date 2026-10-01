@@ -32,8 +32,6 @@ real = ["epsilon-core/real", "epsilon-runtime/real"]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-core = { path = "../epsilon-core" }
 epsilon-llm = { path = "../epsilon-llm" }
-# `display_label` is what the window uses to name the provider it is calling, so the two
-# frontends cannot spell the same model differently.
 # ADR-021: the desktop composes its agent through the same `build_runtime` the
 # terminal uses. It is a peer frontend, not a second implementation.
 epsilon-runtime = { path = "../epsilon-runtime" }
@@ -54,6 +52,10 @@ ratatui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
+# The markdown parser the terminal frontend already uses. Only the *drawing* differs
+# between the two frontends — `epsilon_tui::markdown` emits ratatui `Line`s coupled to
+# a width-aware table layout, which is not portable; the parse is.
+pulldown-cmark = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 

@@ -50,6 +50,7 @@ const _REAL_PATH_FORWARDED: () = epsilon_core::REAL_PATH_ENABLED;
 pub mod app;
 pub mod diff;
 pub mod layout;
+pub mod markup;
 pub mod session;
 pub mod theme;
 pub mod workspace;

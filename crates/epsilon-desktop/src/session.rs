@@ -258,6 +258,15 @@ impl Transcript {
             }
 
             AgentEvent::MessageEnd { message } => {
+                // **`MessageEnd` opens a row as well as updating one.** It updates only
+                // a row that `MessageStart` or `MessageUpdate` already opened, so a
+                // provider that emits the completed message and nothing before it
+                // produced **no transcript row at all** — the agent answered and the
+                // window stayed empty. Found by the markdown frame test, which seeded
+                // exactly that event shape.
+                if self.live_assistant.is_none() && self.live_thinking.is_none() {
+                    self.open_live_rows(message);
+                }
                 if let Some(i) = self.live_assistant
                     && let Some(text) = message_text(message)
                 {
@@ -949,6 +958,25 @@ mod tests {
             "the oldest is what goes: {:?}",
             t.rows()[0]
         );
+    }
+
+    #[test]
+    fn a_completed_message_with_nothing_before_it_still_reaches_the_transcript() {
+        // `MessageEnd` alone. A provider that reports only the finished message must
+        // still produce a row -- otherwise the agent answers and the window is empty,
+        // which is the state this transcript exists to rule out. Found by the markdown
+        // frame test, which seeded exactly that event shape.
+        let mut t = transcript();
+        t.apply(&AgentEvent::MessageEnd {
+            message: Box::new(assistant("the whole answer, at once")),
+        });
+        let rows: Vec<&Row> = t
+            .rows()
+            .iter()
+            .filter(|r| r.kind == RowKind::Assistant)
+            .collect();
+        assert_eq!(rows.len(), 1, "{:?}", t.rows());
+        assert_eq!(rows[0].text, "the whole answer, at once");
     }
 
     #[test]
