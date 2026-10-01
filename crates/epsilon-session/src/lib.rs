@@ -19,8 +19,8 @@ mod store;
 pub mod time;
 
 pub use discover::{
-    SessionSummary, latest_session, latest_session_for_cwd, list_sessions, list_sessions_for_cwd,
-    summarize,
+    SessionSummary, count_sessions_for_cwd, latest_session, latest_session_for_cwd, list_sessions,
+    list_sessions_for_cwd, summarize,
 };
 pub use import::{
     ImportReport, import_output_path, import_pi_session, is_pi_v2_entry_shape,

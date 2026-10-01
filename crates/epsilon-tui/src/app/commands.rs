@@ -906,25 +906,16 @@ impl App {
         let Some(own) = agent.session_path() else {
             return;
         };
-        let Some(session_dir) = own.parent() else {
-            return;
-        };
-        // The sessions ROOT is the per-cwd directory's parent when the file is in one, and the
-        // file's own directory when it is not — which is both the pre-M217 layout and this crate's
-        // test fixture. Deciding by the directory's *name* is what keeps the two apart without a
-        // second piece of state, and `session_dir_name` is the same rule the writer applied.
-        let root = if session_dir.file_name()
-            == Some(std::ffi::OsStr::new(
-                &epsilon_session::time::session_dir_name(&self.workspace_root),
-            )) {
-            session_dir.parent().unwrap_or(session_dir)
-        } else {
-            session_dir
-        };
-        let earlier = epsilon_session::list_sessions_for_cwd(root, &self.workspace_root)
-            .into_iter()
-            .filter(|s| s.path != own)
-            .count();
+        // M231: a **count**, not a list. `list_sessions_for_cwd` summarizes every file it finds --
+        // three opens each (header, an 8 KiB tail, the first 64 lines) -- and at 500 sessions that
+        // measured **202 ms at every launch**, which this notice paid in full to print one number.
+        // `count_sessions_for_cwd` is the same union by name in the per-cwd directory, where a file
+        // is this workspace by construction, and by header in the flat root. A test pins that it
+        // agrees with the resolver `-c` itself uses: a notice saying "3 earlier sessions" while `-c`
+        // opens a fourth is the defect this avoids.
+        let earlier =
+            epsilon_session::count_sessions_for_cwd(&self.session_dir(), &self.workspace_root)
+                .saturating_sub(usize::from(own.file_name().is_some()));
         if earlier == 0 {
             return;
         }

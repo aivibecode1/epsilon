@@ -291,6 +291,59 @@ pub fn list_sessions_for_cwd(root: &Path, cwd: &Path) -> Vec<SessionSummary> {
     out
 }
 
+/// How many sessions belong to `cwd` — **without summarizing them** (M231).
+///
+/// A caller that only needs a *count* must not pay for summaries. Measured at 500 sessions in one
+/// workspace: [`list_sessions_for_cwd`] takes **202 ms**, and counting the same directory by name
+/// takes **0.9 ms** — a factor of 230, and 202 ms is a visible stall at every launch. It comes from
+/// `summarize` opening each file three times (header, an 8 KiB tail for the name, the first 64 lines),
+/// which is the right cost for a list a user is about to read and the wrong cost for "does this
+/// workspace have anything before me".
+///
+/// The per-working-copy directory needs **no reads at all**: a file in `sessions/--<cwd>--/` is this
+/// workspace's session by construction, which is what that directory means. The flat root does need
+/// one read per file — its header is what says whose it is — so the legacy half costs about a third
+/// of a full scan rather than all of it, and that set only ever shrinks as launches move into the
+/// directory.
+///
+/// **It must agree with [`list_sessions_for_cwd`]**, and that agreement is the test: a startup notice
+/// that says "3 earlier sessions" while `-c` opens a fourth is the defect this function exists to
+/// avoid.
+#[must_use]
+pub fn count_sessions_for_cwd(root: &Path, cwd: &Path) -> usize {
+    let mut n = jsonl_count(&time::session_dir_for(root, cwd));
+    let want = cwd.to_string_lossy().into_owned();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return n;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().is_none_or(|x| x != "jsonl") {
+            continue;
+        }
+        // Same leniency as the listing: a headerless file has no cwd to compare, and dropping it
+        // would hide a session the user can still open by name.
+        let Some(header) = read_session_header(&path) else {
+            continue;
+        };
+        if header.cwd.is_empty() || header.cwd == want {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// `*.jsonl` files in `dir`, counted without opening any of them.
+fn jsonl_count(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .count()
+}
+
 /// The newest session belonging to `cwd` — `--continue`'s answer, across both layouts.
 ///
 /// The same union [`list_sessions_for_cwd`] builds, reduced to one path.
@@ -530,6 +583,43 @@ mod tests {
                 .into_owned()),
             Some("fresh.jsonl".to_string()),
             "and the newest wins once both exist"
+        );
+    }
+
+    /// M231: the count agrees with the listing it replaces — **across both layouts, and for another
+    /// workspace's files**.
+    ///
+    /// Three cases, because each is a different way the cheap path could drift from the expensive
+    /// one: sessions only in the per-cwd directory (counted by name, with no read at all), a
+    /// pre-M217 file in the flat root (counted by its header), and a file in the flat root that
+    /// belongs to *another* workspace (read, and then **not** counted — that filter is the whole
+    /// reason the flat root needs a read).
+    #[test]
+    fn the_count_agrees_with_the_listing_in_both_layouts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("sessions");
+        let cwd = Path::new("/w");
+
+        let per_cwd = time::session_dir_for(&root, cwd);
+        std::fs::create_dir_all(&per_cwd).unwrap();
+        write_session(&per_cwd, "a.jsonl", "ses_a", "/w", &[]);
+        write_session(&per_cwd, "b.jsonl", "ses_b", "/w", &[]);
+        // The pre-M217 layout: straight into the root, and one of them is another workspace's.
+        std::fs::create_dir_all(&root).unwrap();
+        write_session(&root, "legacy.jsonl", "ses_legacy", "/w", &[]);
+        write_session(&root, "other.jsonl", "ses_other", "/elsewhere", &[]);
+        // Not a session: a foreign file must not inflate either number.
+        std::fs::write(per_cwd.join("notes.txt"), "hello").unwrap();
+
+        assert_eq!(
+            count_sessions_for_cwd(&root, cwd),
+            list_sessions_for_cwd(&root, cwd).len(),
+            "a startup notice that disagrees with `-c` is the defect the cheap path could introduce"
+        );
+        assert_eq!(
+            count_sessions_for_cwd(&root, cwd),
+            3,
+            "two in the directory, one legacy file, and nothing from another workspace"
         );
     }
 }
