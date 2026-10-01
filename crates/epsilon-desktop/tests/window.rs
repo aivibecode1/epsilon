@@ -536,7 +536,8 @@ fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
     let ws = tempfile::tempdir().expect("a workspace");
 
     // A real session file, written by a real store with a real message in it.
-    let mut store = epsilon_session::SessionStore::open(ws.path().join("older.jsonl")).unwrap();
+    let mut store =
+        epsilon_session::SessionStore::open_in(ws.path().join("older.jsonl"), ws.path()).unwrap();
     store
         .append(epsilon_contracts::session_entry::EntryKind::Message {
             message: assistant_markdown("a memorable line from last time"),
@@ -553,8 +554,9 @@ fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
         before
             .region("sessions")
             .iter()
-            .any(|t| t.contains("stored")),
-        "the stored session must be listed.\n{}",
+            .any(|t| t.contains("older")),
+        "the stored session must be listed. Note that the empty state says 'none stored', so\n\
+         an assertion on the word 'stored' would pass for the wrong reason.\n{}",
         before.describe()
     );
 
@@ -595,6 +597,57 @@ fn a_session_that_cannot_be_resumed_is_refused_with_a_reason() {
 
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
     assert!(frame.drew("sessions"), "{}", frame.describe());
+}
+/// A session row carries **when it ran**, not just its name.
+///
+/// The list is newest-first, so a reader who wants the newest already has the ordering.
+/// What they do not have is evidence, and "2h ago" is the difference between a list and
+/// something a reader can check.
+#[test]
+fn a_session_row_says_when_it_ran() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let mut store =
+        epsilon_session::SessionStore::open_in(ws.path().join("older.jsonl"), ws.path()).unwrap();
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: assistant_markdown("something said once"),
+            api_request_sha256: None,
+        })
+        .expect("the message lands in the log");
+    drop(store);
+
+    let (ctx, mut app) = wire(ws.path());
+    app.set_sidebar_view(epsilon_desktop::app::SidebarView::Sessions);
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let pane = frame.region("sessions").join("\n");
+    assert!(
+        pane.contains("older"),
+        "the session must be listed.\n{}",
+        frame.describe()
+    );
+    assert!(
+        pane.contains("ago"),
+        "and must say when it ran, so the ordering can be checked:\n{}",
+        frame.describe()
+    );
+}
+
+/// The relative-time helper is shared, and its edges are what a listing hits first.
+#[test]
+fn a_timestamp_the_filesystem_did_not_supply_prints_nothing_rather_than_zero() {
+    // `0s` against every row would be a measurement the filesystem never made.
+    assert_eq!(epsilon_core::human_age_ms(10_000, 0), None);
+    assert_eq!(
+        epsilon_core::human_age_ms(10_000, 7_000),
+        Some("3s".to_string())
+    );
+    // A clock that disagrees, or a file written by a machine ahead of us, must not wrap
+    // into "18250d".
+    assert_eq!(
+        epsilon_core::human_age_ms(1_000, 9_000_000),
+        Some("0s".to_string())
+    );
 }
 /// Keystrokes reach the composer.
 ///

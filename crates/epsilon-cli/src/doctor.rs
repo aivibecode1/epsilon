@@ -210,7 +210,9 @@ impl Facts {
             Some((name, bytes, age)) => {
                 out.push_str(&format!("  newest             {name} ({bytes} bytes"));
                 match age {
-                    Some(secs) => out.push_str(&format!(", {} ago)\n", human_age(*secs))),
+                    Some(secs) => {
+                        out.push_str(&format!(", {} ago)\n", epsilon_core::human_age(*secs)))
+                    }
                     None => out.push_str(")\n"),
                 }
                 if let Some(entries) = self.session_entries {
@@ -255,15 +257,6 @@ impl Facts {
     /// Exit code: non-zero when a blocker was found, so `doctor` can be used in a script.
     pub fn exit_code(&self) -> i32 {
         if self.blockers.is_empty() { 0 } else { 1 }
-    }
-}
-
-fn human_age(secs: u64) -> String {
-    match secs {
-        0..=59 => format!("{secs}s"),
-        60..=3599 => format!("{}m", secs / 60),
-        3600..=86_399 => format!("{}h", secs / 3600),
-        _ => format!("{}d", secs / 86_400),
     }
 }
 
@@ -850,10 +843,10 @@ mod tests {
 
     #[test]
     fn ages_are_humanized_without_lying_about_precision() {
-        assert_eq!(human_age(30), "30s");
-        assert_eq!(human_age(90), "1m");
-        assert_eq!(human_age(3_600), "1h");
-        assert_eq!(human_age(90_000), "1d");
+        assert_eq!(epsilon_core::human_age(30), "30s");
+        assert_eq!(epsilon_core::human_age(90), "1m");
+        assert_eq!(epsilon_core::human_age(3_600), "1h");
+        assert_eq!(epsilon_core::human_age(90_000), "1d");
     }
 
     #[test]

@@ -79,6 +79,36 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// A duration as something a person reads at a glance: `42s`, `7m`, `3h`, `12d`.
+///
+/// Two units at each scale, not three: a reader comparing two sessions wants to know
+/// "just now" or "a while ago", and a finer scale is noise between them.
+///
+/// It lived in `epsilon-cli`'s doctor and came here when the desktop's sessions pane
+/// needed the same answer — which is the same situation as the workspace walk at M236,
+/// one layer down: one question, two consumers, and a second copy that would drift.
+pub fn human_age(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86_399 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86_400),
+    }
+}
+
+/// The same answer for an epoch-millisecond timestamp, or `None` when it carries nothing.
+///
+/// `None` rather than `"0s"`: a listing whose timestamps are all zero is a filesystem that
+/// said nothing, and printing `0s` against every row would be a measurement.
+pub fn human_age_ms(now: u64, then_ms: u64) -> Option<String> {
+    if then_ms == 0 {
+        return None;
+    }
+    // A timestamp in the future is a clock change or a file written by a machine whose
+    // clock disagrees; saturating keeps it at "0s" rather than wrapping into "18250d".
+    Some(human_age(now.saturating_sub(then_ms) / 1000))
+}
+
 /// ISO-ish date via civil-from-days (Hinnant); no chrono dependency needed.
 fn today_string() -> String {
     let secs = std::time::SystemTime::now()

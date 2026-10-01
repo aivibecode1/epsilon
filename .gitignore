@@ -138,6 +138,7 @@ audit/evidence/*.log
 !audit/evidence/gate-m242.log
 !audit/evidence/gate-m243.log
 !audit/evidence/gate-m244.log
+!audit/evidence/gate-m245.log
 
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

@@ -548,6 +548,20 @@ impl IdeApp {
                 .rows
                 .push(("sessions".into(), format!("{marker}{name}")));
 
+            // **The age, on its own line.** The list is newest-first, so a reader who
+            // wants the newest already has it — what they do not have is *evidence*.
+            // "2h ago" is what turns an ordering into something they can check, and it
+            // is the difference between a list and a judgement.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            if let Some(age) = epsilon_core::human_age_ms(now, entry.modified_ms) {
+                let line = format!("   {age} ago");
+                ui.colored_label(theme.dim, line.clone());
+                summary.rows.push(("sessions".into(), line));
+            }
+
             // Clicking the session you are already in is neither an error nor a
             // spinner: it is the same conversation, and doing nothing is right.
             if response.clicked() && !is_current {
