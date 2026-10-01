@@ -74,12 +74,22 @@ impl ProviderWire for AnthropicWire {
         ctx: &crate::LlmContext,
     ) -> Result<serde_json::Value, String> {
         let mut messages = Vec::new();
-        for m in &ctx.messages {
+        // Which message index gets the tail breakpoint, decided **before** the loop so
+        // the body is not mutated while it is being read, and because the decision is a
+        // property of the conversation rather than of any one block's shape.
+        let tail_break = crate::cache_policy::CachePolicy::DEFAULT
+            .mark_last_user_message
+            .then(|| last_user_message_index(&ctx.messages))
+            .flatten();
+        for (index, m) in ctx.messages.iter().enumerate() {
             match m {
-                Message::User(u) => messages.push(json!({
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_text(u)}],
-                })),
+                Message::User(u) => {
+                    let mut blocks = user_blocks(u);
+                    if Some(index) == tail_break {
+                        mark_last_block(&mut blocks);
+                    }
+                    messages.push(json!({"role": "user", "content": blocks}));
+                }
                 Message::Assistant(a) => {
                     // Assistant turns carry text + thinking + tool_use blocks.
                     let mut blocks = Vec::new();
@@ -136,14 +146,21 @@ impl ProviderWire for AnthropicWire {
             "messages": messages,
             "stream": true,
         });
+        let policy = crate::cache_policy::CachePolicy::DEFAULT;
         if !ctx.system_prompt.is_empty() {
-            body["system"] = json!([{
-                "type": "text",
-                "text": ctx.system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }]);
+            let mut block = json!({"type": "text", "text": ctx.system_prompt});
+            if policy.mark_last_system {
+                block["cache_control"] = crate::cache_policy::ephemeral();
+            }
+            body["system"] = json!([block]);
         }
         if !tools.is_empty() {
+            let mut tools = tools;
+            if policy.mark_last_tool
+                && let Some(last) = tools.last_mut()
+            {
+                last["cache_control"] = crate::cache_policy::ephemeral();
+            }
             body["tools"] = json!(tools);
         }
         // Thinking configuration (pi anthropic-messages.ts:1049-1073). Every
@@ -288,6 +305,34 @@ fn user_text(u: &epsilon_contracts::message::UserMessage) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A user turn's blocks, as the wire wants them.
+///
+/// Split out from the loop so the cache marker has something to attach to that is the
+/// same shape the unmarked turn would have had. A helper that produced a *different*
+/// block shape depending on the marker would make the wire untestable.
+fn user_blocks(u: &epsilon_contracts::message::UserMessage) -> Vec<serde_json::Value> {
+    vec![json!({"type": "text", "text": user_text(u)})]
+}
+
+/// Put `cache_control` on the last block of `blocks`, if there is one.
+///
+/// Guarded rather than assumed: an empty user turn must not gain a marker on a block that
+/// does not exist, and a silently dropped marker is exactly the failure this policy exists
+/// to stop costing money.
+fn mark_last_block(blocks: &mut [serde_json::Value]) {
+    if let Some(last) = blocks.last_mut() {
+        last["cache_control"] = crate::cache_policy::ephemeral();
+    }
+}
+
+/// The index of the **last** user message, or `None` when there is none.
+///
+/// Last, not first: the point is a prefix that does not move while the turn's own tool
+/// round-trips extend the transcript after it.
+fn last_user_message_index(messages: &[Message]) -> Option<usize> {
+    messages.iter().rposition(|m| matches!(m, Message::User(_)))
 }
 
 /// Tool results replay as a user turn carrying `tool_result` blocks (pi's

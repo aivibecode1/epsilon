@@ -9,6 +9,7 @@
 //! each model's [`crate::catalog::ModelInfo::wire`] field.
 
 pub mod auth;
+pub mod cache_policy;
 pub mod catalog;
 pub mod config_value;
 pub mod custom;

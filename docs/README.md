@@ -90,6 +90,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M236 — the file tree and a read-only editor](milestones/M236-file-tree-and-a-read-only-editor.md)
 - [M237 — reviewing what the agent changed, and the window that was never idle](milestones/M237-reviewing-what-the-agent-changed.md)
 - [M238 — the assistant's markdown, and a message that arrived alone](milestones/M238-the-assistant-s-markdown.md)
+- [M239 — the prompt cache was marking the one place that never moves](milestones/M239-the-prompt-cache-was-marking-the-wrong-place.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)
