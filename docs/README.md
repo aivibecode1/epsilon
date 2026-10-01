@@ -95,6 +95,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M241 — declaring a gate](milestones/M241-declaring-a-gate.md)
 - [M242 — a switchable sidebar, and the agent's own subagents](milestones/M242-a-switchable-sidebar.md)
 - [M243 — a sessions view that can actually switch sessions](milestones/M243-a-sessions-view-that-switches.md)
+- [M244 — the compaction instruction that let an agent forget what it was told](milestones/M244-the-compaction-instruction-that-let-an-agent-forget.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

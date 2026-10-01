@@ -135,10 +135,44 @@ fn block_len(b: &ContentBlock) -> usize {
 pub const MIN_TAIL_TOKENS: usize = 2_000;
 pub const MAX_TAIL_TOKENS: usize = 15_000;
 
+/// What to say when amending an existing summary rather than writing the first one.
+///
+/// Two rules, and the second one is the point of this constant.
+///
+/// **1. On a conflict the conversation wins.** The new window is newer evidence, so state
+/// the corrected fact and drop the old claim rather than keeping both and leaving the
+/// model to pick.
+///
+/// **2. Carry forward what the new window does not mention.** This is the rule whose absence
+/// causes the common compaction failure, and it is worth being precise about why. The
+/// newest window of a long session is a *local* conversation: the last twenty messages are
+/// about the bug in front of the model, not about the constraint the user set an hour ago
+/// ("do not change the public API", "keep this under 200 lines", "the fixtures must not
+/// touch the network"). A summarizer told to *"update with anything important from the new
+/// conversation"* will faithfully do exactly that — and drop the constraint, because the
+/// constraint is not in the conversation.
+///
+/// That produces a session where the agent **forgets what it was told** and starts
+/// confidently violating an instruction the user is still relying on. Hermes names this
+/// explicitly (`goals.py`/`compact` update instructions: *"carry forward objectives,
+/// constraints, user directives, decisions, and parallel workstreams from the prior summary
+/// even when the conversation does not mention them; drop only what is finished and no
+/// longer needed"*), and it is the single cheapest sentence in this file.
+pub const AMEND_INSTRUCTIONS: &str = "The conversation below is newer than the summary above.\n\
+     - Where they disagree, the conversation wins: state the corrected fact and drop the old claim.\n\
+     - Carry forward objectives, constraints, user directives, decisions and work still in\n\
+       flight from the summary above EVEN WHEN the conversation does not mention them. The\n\
+       newest part of a session is a local conversation; a constraint the user set an hour\n\
+       ago will not appear in it, and dropping it is how an agent forgets what it was told.\n\
+     - Drop something only when it is finished and no longer needed — never because this\n\
+       window happens not to mention it.";
+
 /// Build the summarization request context: strict template + serialized transcript.
 ///
 /// `prior_summary` triggers amend-mode (Hermes rule): we ask for a DELTA update rather than
-/// re-summarizing everything, which keeps summaries stable across successive compactions.
+/// re-summarizing everything, which keeps summaries stable across successive compactions —
+/// and the delta instruction is [`AMEND_INSTRUCTIONS`], which is what stops the delta from
+/// silently dropping everything the newest window does not mention.
 ///
 /// `ledger` rides outside the template: the model is told not to reproduce it because
 /// it is harness-maintained fact, not something to remember (`FileLedger`).
@@ -151,10 +185,9 @@ pub fn summary_context(
     if let Some(prev) = prior_summary {
         body.push_str("<prior_summary>\n");
         body.push_str(prev);
-        body.push_str(
-            "\n</prior_summary>\n\nUpdate this summary with anything important from \
-                       the NEW conversation below. Keep every section.\n\n",
-        );
+        body.push_str("\n</prior_summary>\n\n");
+        body.push_str(AMEND_INSTRUCTIONS);
+        body.push_str("\n\n");
     }
     let block = ledger.render();
     if !block.is_empty() {
@@ -1244,6 +1277,76 @@ mod ledger_tests {
         assert!(
             rendered.contains("do") && rendered.contains("NOT copy it"),
             "and is told the block is harness-maintained, not summary material"
+        );
+    }
+
+    /// An amend must tell the model what to do about the part it cannot see.
+    ///
+    /// The rule that was missing, and whose absence is the common compaction failure: the
+    /// newest window of a session is a **local** conversation, so a constraint the user set
+    /// an hour ago is not in it, and "update this summary with anything important from the
+    /// new conversation" is an instruction to drop it. The agent then confidently violates
+    /// an instruction the user is still relying on.
+    #[test]
+    fn an_amend_carries_forward_what_the_new_window_does_not_mention() {
+        let ctx = summary_context(
+            &[Message::User(epsilon_contracts::message::UserMessage {
+                id: "u".into(),
+                timestamp_ms: 0,
+                content: vec![UserContent::Text {
+                    text: "fix the flaky test".into(),
+                }],
+            })],
+            Some("Constraints: do not change the public API."),
+            &FileLedger::default(),
+        );
+        let Message::User(u) = &ctx.messages[0] else {
+            panic!("a user prompt, got {:?}", ctx.messages[0]);
+        };
+        let UserContent::Text { text } = &u.content[0] else {
+            panic!("a text prompt");
+        };
+        assert!(
+            text.contains("EVEN WHEN the conversation does not mention them"),
+            "the carry-forward rule must be stated in capitals or it reads as optional:\n{text}"
+        );
+        assert!(
+            text.contains("how an agent forgets what it was told"),
+            "and it must say why, so the rule survives being summarised in turn:\n{text}"
+        );
+        assert!(
+            text.contains("the conversation wins"),
+            "the conflict rule must be there too:\n{text}"
+        );
+    }
+
+    /// The first compaction has no prior to carry, so it must not ask for one.
+    #[test]
+    fn a_first_compaction_carries_nothing_and_says_so() {
+        let ctx = summary_context(
+            &[Message::User(epsilon_contracts::message::UserMessage {
+                id: "u".into(),
+                timestamp_ms: 0,
+                content: vec![UserContent::Text {
+                    text: "hello".into(),
+                }],
+            })],
+            None,
+            &FileLedger::default(),
+        );
+        let Message::User(u) = &ctx.messages[0] else {
+            panic!("a user prompt, got {:?}", ctx.messages[0]);
+        };
+        let UserContent::Text { text } = &u.content[0] else {
+            panic!("a text prompt");
+        };
+        assert!(
+            !text.contains("<prior_summary>"),
+            "there is no prior:\n{text}"
+        );
+        assert!(
+            !text.contains(AMEND_INSTRUCTIONS),
+            "asking a first summary to carry something forward is a request it cannot fill:\n{text}"
         );
     }
 
