@@ -69,15 +69,41 @@ Nothing here has been measured through wgpu. No screenshot, no text-throughput n
 under `vello_cpu` (egui rasterizes text on the CPU since 0.34). ADR-020 names that as the
 open risk and it is still open.
 
-## Open: a flake in the terminal integration test
+## Open: load-dependent input behaviour in the TUI (is this the reported freeze?)
 
 `m233` attempt 1 failed `typing_still_works_while_a_turn_is_streaming`; attempt 2 passed the
 same tree (`m233-r2`, 1,683 tests / 71 binaries). The captured screen showed the typed text
-**arriving and truncated** -- `typed while stre` for `typed while streaming` -- on a turn that
-was in flight. Not caused by M233 (it touches the header label, not the composer), but
-**not explained either**, and "it passed the retry" is not an answer.
+**arriving and truncated** — `typed while stre` for `typed while streaming` — on a turn that
+was in flight.
 
-Next move: run that single test ten times in isolation and count. If it flakes alone, the
-TUI drops keystrokes under streaming load -- i.e. the reported freeze, reproduced, and worth
-more than the desktop IDE. `type_text` sends a char every 30 ms while deltas also arrive every
-30 ms; a full input queue drops from the end, which is the shape observed.
+**Measured after the battery, which narrows it a lot:**
+
+| condition | result |
+|---|---|
+| the test alone, 8 runs | 8 pass, 0 fail |
+| the whole `terminal.rs` binary, default parallelism, 4 runs | 4 pass, 0 fail |
+| the full workspace battery | 1 fail, 1 pass |
+
+So it needs **seventy other test binaries' worth of load**. Not a cross-test race between the
+eight terminal tests; not this milestone's change (a header label cannot reach the composer's
+width). It is load-dependent behaviour in the shipped TUI — the family the owner has been
+reporting across four audits.
+
+**Latency vs loss is undecided, and that is the whole question.** Five missing characters is
+about 150 ms of extra delay: the right magnitude for a starved process, the wrong magnitude for
+a lost keystroke.
+
+Next experiment: **sample the screen every 50 ms for two seconds after the typing burst.**
+Growing → latency. Stopping at 17 → input loss. Fifteen minutes, and it is the first
+measurement that puts the reported freeze within reach (`audit/04-tui.md` records that it has
+never been reproduced).
+
+**Do not** raise the 800 ms settle, and do not add `--test-threads=1`. Both make the battery
+green and answer nothing.
+
+If it turns out to be loss, the prime suspect is already located in the code:
+`crates/epsilon-tui/src/app/event.rs:142-153` wraps `term_events.next()` in
+`tokio::time::timeout(Duration::ZERO, …)`. A zero timeout **drops the future** when the stream
+is not immediately ready, and crossterm's `EventStream` carries one-shot wake state
+(`stream_wake_task_executed`) that a dropped poll leaves armed — see
+`crossterm-0.29.0/src/event/stream.rs:99-137` and the blocking thread it spawns at `:47-61`.

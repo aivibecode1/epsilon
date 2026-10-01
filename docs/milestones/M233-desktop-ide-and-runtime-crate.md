@@ -121,26 +121,39 @@ typed text **arriving and truncated**: `❯ typed while stre` where the test typ
 `typed while streaming`. Five characters were missing, from the end, on a turn that was
 genuinely in flight. Attempt 2 passed the same tree.
 
-So it is a flake, not a regression, and specifically **not** one this milestone caused: the
-change in `view.rs` touches the header's model label and nothing in the composer's width or
-the editor's insert path. But "it passed the second time" is exactly the reasoning
-`AGENTS.md` warns against, so the honest reading is: **the mechanism is not yet understood,
-and the test is not yet reliable.** It is recorded here as an open item rather than as a
-resolved one.
+### Measured since, which narrows it considerably
 
-The two candidate mechanisms, neither measured yet:
+Three measurements after the battery:
 
-1. **Keystrokes lost under streaming load.** `type_text` sends one character every 30 ms
-   while deltas also arrive every 30 ms. If the harness's input queue fills, characters go
-   from the end — which is the shape that was observed.
-2. **A cross-test race.** The eight terminal tests each open their own pseudo-console;
-   `gate-until-pass` stopped specifically to rule this out, and the retry's fingerprint was
-   the same test name, which is consistent with both.
+| Condition | Result |
+|---|---|
+| The test alone, 8 runs | **8 pass, 0 fail** |
+| The whole `terminal.rs` binary at default parallelism, 4 runs | **4 pass, 0 fail** |
+| The full workspace battery | **1 fail, then 1 pass** |
 
-The next thing to do is not another battery. It is to run that one test ten times in
-isolation and count. If it flakes alone, it is (1) and the TUI's input path is dropping keys
-under load — which would be the reported freeze, finally reproduced. **Until that is measured,
-neither story is the answer.**
+So it is not a cross-test race between the eight terminal tests, and it is not a property of the
+test alone. **It needs the load of seventy other test binaries.** That reframes it, and the
+reframing is more interesting than "flaky":
+
+- It is **not** caused by this milestone. The change in `view.rs` touches the header's model
+  label; nothing in it reaches the composer's width or the editor's insert path.
+- It is **load-dependent behaviour in the shipped TUI**, which is the family the owner has been
+  reporting. `type_text` writes one character every 30 ms and then waits 800 ms for the draft to
+  appear; five characters' worth of missing work is roughly 150 ms of extra delay — the right
+  magnitude for a starved process, and the wrong magnitude for a lost keystroke.
+- **Latency and loss are different defects and the evidence does not yet distinguish them.** A
+  draft that grows to the full string, slowly, is a responsiveness bug. A draft that stops at 17
+  characters forever is an input-loss bug, and the second is far more serious.
+
+The next experiment is written down rather than guessed at: **sample the screen every 50 ms for
+two seconds after the typing burst and record whether the draft keeps growing.** Growing is
+latency; stopping is loss. That is a small change to a test helper and it settles a question four
+audits have left open — `audit/04-tui.md` records that the reported freeze has never been
+reproduced, and this is the first measurement that puts it within reach.
+
+What must **not** happen next: raising the 800 ms, or adding `--test-threads=1`, or any other
+change that makes the battery green without answering the question. `AGENTS.md` is right about
+that, and this is exactly the case it describes.
 
 ## What nothing exercises
 

@@ -1,0 +1,590 @@
+cargo: C:\Users\Hp\.cargo\bin\cargo.exe
+CARGO_BUILD_JOBS: 1
+
+===== check-links =====
+check-links: 562 relative links, 0 broken
+[exit=0 1s]
+
+===== check-lint-tables =====
+lint tables OK � 13 crate(s) inherit the workspace, 1 hand-copied and matching it
+[exit=0 0s]
+
+===== check-line-endings =====
+[exit=0 1s]
+
+===== fmt --check =====
+[exit=0 5s]
+
+===== clippy =====
+    Checking windows-sys v0.61.2
+    Checking log v0.4.34
+    Checking mio v1.2.2
+    Checking socket2 v0.6.5
+    Checking smallvec v1.15.2
+    Checking tokio v1.53.1
+    Checking tokio-util v0.7.19
+    Checking epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+    Checking tracing v0.1.44
+    Checking icu_normalizer v2.1.1
+    Checking idna_adapter v1.2.1
+    Checking idna v1.1.0
+    Checking url v2.5.8
+    Checking hyper v1.11.0
+    Checking rustls v0.23.43
+    Checking hyper-util v0.1.20
+    Checking tower v0.5.3
+    Checking tokio-rustls v0.26.4
+    Checking hyper-rustls v0.27.9
+    Checking tower-http v0.6.11
+    Checking rustls-platform-verifier v0.7.0
+   Compiling libm v0.2.16
+   Compiling num-traits v0.2.19
+    Checking reqwest v0.13.4
+    Checking epsilon-llm v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-llm)
+    Checking epsilon-session v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-session)
+    Checking tempfile v3.23.0
+    Checking epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+   Compiling bytemuck_derive v1.12.1
+    Checking bytemuck v1.25.2
+    Checking windows-core v0.62.2
+    Checking windows-future v0.3.2
+    Checking windows-numerics v0.3.1
+    Checking windows-collections v0.3.2
+    Checking chrono v0.4.45
+    Checking regex-automata v0.4.18
+    Checking schemars v1.2.2
+    Checking windows v0.62.2
+    Checking parking_lot_core v0.9.12
+    Checking parking_lot v0.12.5
+    Checking regex v1.13.1
+    Checking epsilon-safety v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-safety)
+   Compiling cfg_aliases v0.2.2
+    Checking epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+    Checking time v0.3.55
+    Checking process-wrap v9.1.0
+    Checking tokio-stream v0.1.19
+    Checking rmcp v3.1.4
+    Checking epsilon-ext v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-ext)
+   Compiling zerocopy v0.8.56
+    Checking moxcms v0.8.1
+   Compiling zerocopy-derive v0.8.56
+    Checking image v0.25.10
+    Checking epsilon-mcp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-mcp)
+    Checking epsilon-lsp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-lsp)
+    Checking ratatui-widgets v0.3.2
+    Checking crossterm v0.29.0
+    Checking arboard v3.6.1
+    Checking ratatui-crossterm v0.1.2
+    Checking ratatui-macros v0.7.2
+   Compiling khronos_api v3.1.0
+    Checking ratatui v0.30.2
+    Checking raw-window-handle v0.6.2
+    Checking polycool v0.4.0
+   Compiling xml-rs v0.8.29
+    Checking profiling v1.0.18
+    Checking rustc-hash v1.1.0
+    Checking naga-types v30.0.1
+   Compiling gl_generator v0.14.0
+    Checking kurbo v0.13.1
+    Checking epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Checking epsilon-runtime v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-runtime)
+   Compiling naga v30.0.1
+    Checking font-types v0.12.5
+    Checking color v0.3.3
+    Checking euclid v0.22.14
+    Checking libloading v0.8.9
+   Compiling version_check v0.9.5
+   Compiling ash v0.38.0+1.3.281
+    Checking bit-vec v0.9.1
+    Checking linebender_resource_handle v0.1.1
+   Compiling windows_x86_64_msvc v0.52.6
+    Checking peniko v0.6.1
+    Checking bit-set v0.10.0
+   Compiling ahash v0.8.12
+    Checking guillotiere v0.7.0
+    Checking read-fonts v0.41.0
+   Compiling glutin_wgl_sys v0.6.1
+    Checking half v2.7.1
+    Checking axum-core v0.5.6
+    Checking accesskit v0.24.1
+    Checking codespan-reporting v0.13.1
+    Checking spirv v0.4.0+sdk-1.4.341.0
+   Compiling unicode-general-category v1.1.0
+    Checking fearless_simd v0.4.1
+    Checking unicode-ident v1.0.24
+   Compiling khronos-egl v6.0.0
+    Checking vello_common v0.1.0
+    Checking axum v0.8.9
+    Checking wgpu-types v30.0.1
+   Compiling wgpu-hal v30.0.1
+    Checking emath v0.36.2
+    Checking presser v0.3.1
+    Checking gpu-allocator v0.28.0
+    Checking ecolor v0.36.2
+    Checking wgpu-naga-bridge v30.0.1
+    Checking windows-targets v0.52.6
+    Checking vello_cpu v0.1.0
+    Checking harfrust v0.12.0
+    Checking skrifa v0.44.0
+   Compiling winit v0.30.13
+    Checking ordered-float v4.6.0
+    Checking epaint_default_fonts v0.36.2
+    Checking renderdoc-sys v1.1.0
+    Checking nohash-hasher v0.2.0
+    Checking self_cell v1.3.0
+    Checking glow v0.17.0
+   Compiling siphasher v1.0.3
+    Checking range-alloc v0.1.5
+   Compiling phf_shared v0.11.3
+    Checking epaint v0.36.2
+    Checking windows-sys v0.52.0
+    Checking epsilon-server v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-server)
+   Compiling wgpu-core v30.0.1
+    Checking itertools v0.15.0
+    Checking cursor-icon v1.2.0
+    Checking dpi v0.1.2
+    Checking smol_str v0.2.2
+    Checking egui v0.36.2
+   Compiling phf v0.11.3
+    Checking wgpu-core-deps-windows-linux-android v30.0.1
+    Checking accesskit_consumer v0.35.0
+   Compiling wgpu v30.0.1
+    Checking serial2 v0.2.38
+    Checking winapi-util v0.1.11
+    Checking bit-vec v0.8.0
+    Checking portable-pty v0.9.0
+    Checking bit-set v0.8.0
+    Checking vt100 v0.15.2
+    Checking same-file v1.0.6
+    Checking accesskit_windows v0.32.1
+   Compiling mime_guess2 v2.3.1
+    Checking epsilon-cli v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-cli)
+    Checking quick-xml v0.42.0
+    Checking linked-hash-map v0.5.6
+    Checking web-time v1.1.0
+    Checking rustc-hash v2.1.3
+    Checking type-map v0.5.1
+    Checking yaml-rust v0.4.5
+    Checking plist v1.10.1
+    Checking accesskit_winit v0.32.2
+    Checking walkdir v2.5.0
+    Checking fancy-regex v0.16.2
+    Checking webbrowser v1.2.4
+    Checking bincode v1.3.3
+   Compiling enum-map-derive v0.17.0
+    Checking fnv v1.0.7
+    Checking syntect v5.3.0
+    Checking enum-map v2.7.3
+    Checking egui-winit v0.36.2
+    Checking egui-wgpu v0.36.2
+    Checking pollster v1.0.1
+    Checking eframe v0.36.2
+    Checking egui_extras v0.36.2
+    Checking epsilon-desktop v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-desktop)
+    Finished `dev` profile [unoptimized] target(s) in 10m 36s
+[exit=0 637s]
+
+===== test =====
+   Compiling windows-sys v0.61.2
+   Compiling mio v1.2.2
+   Compiling socket2 v0.6.5
+   Compiling log v0.4.34
+   Compiling tokio v1.53.1
+   Compiling smallvec v1.15.2
+   Compiling tokio-util v0.7.19
+   Compiling epsilon-contracts v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-contracts)
+   Compiling tracing v0.1.44
+   Compiling icu_normalizer v2.1.1
+   Compiling idna_adapter v1.2.1
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling hyper v1.11.0
+   Compiling rustls v0.23.43
+   Compiling hyper-util v0.1.20
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling reqwest v0.13.4
+   Compiling epsilon-llm v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-llm)
+   Compiling libm v0.2.16
+   Compiling num-traits v0.2.19
+   Compiling epsilon-session v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-session)
+   Compiling tempfile v3.23.0
+   Compiling epsilon-core v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-core)
+   Compiling bytemuck v1.25.2
+   Compiling chrono v0.4.45
+   Compiling schemars v1.2.2
+   Compiling windows-core v0.62.2
+   Compiling regex-automata v0.4.18
+   Compiling windows-future v0.3.2
+   Compiling windows-collections v0.3.2
+   Compiling windows-numerics v0.3.1
+   Compiling windows v0.62.2
+   Compiling regex v1.13.1
+   Compiling epsilon-safety v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-safety)
+   Compiling parking_lot_core v0.9.12
+   Compiling parking_lot v0.12.5
+   Compiling epsilon-tools v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tools)
+   Compiling process-wrap v9.1.0
+   Compiling tokio-stream v0.1.19
+   Compiling rmcp v3.1.4
+   Compiling time v0.3.55
+   Compiling epsilon-ext v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-ext)
+   Compiling moxcms v0.8.1
+   Compiling epsilon-mcp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-mcp)
+   Compiling epsilon-lsp v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-lsp)
+   Compiling image v0.25.10
+   Compiling ratatui-widgets v0.3.2
+   Compiling crossterm v0.29.0
+   Compiling arboard v3.6.1
+   Compiling zerocopy v0.8.56
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+   Compiling epsilon-runtime v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-runtime)
+   Compiling raw-window-handle v0.6.2
+   Compiling axum-core v0.5.6
+   Compiling polycool v0.4.0
+   Compiling profiling v1.0.18
+   Compiling rustc-hash v1.1.0
+   Compiling naga-types v30.0.1
+   Compiling axum v0.8.9
+   Compiling kurbo v0.13.1
+   Compiling font-types v0.12.5
+   Compiling color v0.3.3
+   Compiling euclid v0.22.14
+   Compiling libloading v0.8.9
+   Compiling linebender_resource_handle v0.1.1
+   Compiling bit-vec v0.9.1
+   Compiling bit-set v0.10.0
+   Compiling peniko v0.6.1
+   Compiling guillotiere v0.7.0
+   Compiling read-fonts v0.41.0
+   Compiling half v2.7.1
+   Compiling accesskit v0.24.1
+   Compiling codespan-reporting v0.13.1
+   Compiling spirv v0.4.0+sdk-1.4.341.0
+   Compiling fearless_simd v0.4.1
+   Compiling vello_common v0.1.0
+   Compiling naga v30.0.1
+   Compiling ash v0.38.0+1.3.281
+   Compiling windows_x86_64_msvc v0.52.6
+   Compiling epsilon-server v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-server)
+   Compiling wgpu-types v30.0.1
+   Compiling emath v0.36.2
+   Compiling presser v0.3.1
+   Compiling gpu-allocator v0.28.0
+   Compiling ecolor v0.36.2
+   Compiling wgpu-naga-bridge v30.0.1
+   Compiling windows-targets v0.52.6
+   Compiling ahash v0.8.12
+   Compiling glutin_wgl_sys v0.6.1
+   Compiling khronos-egl v6.0.0
+   Compiling vello_cpu v0.1.0
+   Compiling unicode-general-category v1.1.0
+   Compiling skrifa v0.44.0
+   Compiling harfrust v0.12.0
+   Compiling ordered-float v4.6.0
+   Compiling range-alloc v0.1.5
+   Compiling glow v0.17.0
+   Compiling nohash-hasher v0.2.0
+   Compiling renderdoc-sys v1.1.0
+   Compiling epaint_default_fonts v0.36.2
+   Compiling self_cell v1.3.0
+   Compiling epaint v0.36.2
+   Compiling wgpu-hal v30.0.1
+   Compiling windows-sys v0.52.0
+   Compiling itertools v0.15.0
+   Compiling serial2 v0.2.38
+   Compiling smol_str v0.2.2
+   Compiling cursor-icon v1.2.0
+   Compiling dpi v0.1.2
+   Compiling portable-pty v0.9.0
+   Compiling vt100 v0.15.2
+   Compiling winit v0.30.13
+   Compiling egui v0.36.2
+   Compiling wgpu-core-deps-windows-linux-android v30.0.1
+   Compiling epsilon-cli v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-cli)
+   Compiling accesskit_consumer v0.35.0
+   Compiling winapi-util v0.1.11
+   Compiling bit-vec v0.8.0
+   Compiling bit-set v0.8.0
+   Compiling same-file v1.0.6
+   Compiling accesskit_windows v0.32.1
+   Compiling wgpu-core v30.0.1
+   Compiling quick-xml v0.42.0
+   Compiling rustc-hash v2.1.3
+   Compiling web-time v1.1.0
+   Compiling linked-hash-map v0.5.6
+   Compiling yaml-rust v0.4.5
+   Compiling type-map v0.5.1
+   Compiling plist v1.10.1
+   Compiling wgpu v30.0.1
+   Compiling accesskit_winit v0.32.2
+   Compiling walkdir v2.5.0
+   Compiling fancy-regex v0.16.2
+   Compiling webbrowser v1.2.4
+   Compiling bincode v1.3.3
+   Compiling fnv v1.0.7
+   Compiling syntect v5.3.0
+   Compiling enum-map v2.7.3
+   Compiling egui-winit v0.36.2
+   Compiling egui-wgpu v0.36.2
+   Compiling mime_guess2 v2.3.1
+   Compiling pollster v1.0.1
+   Compiling eframe v0.36.2
+   Compiling egui_extras v0.36.2
+   Compiling epsilon-desktop v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-desktop)
+    Finished `test` profile [unoptimized] target(s) in 13m 04s
+     Running unittests src\lib.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\epsilon_cli-8ccf6cbf1efcf8b0.exe)
+
+running 86 tests
+test doctor::tests::an_intact_setup_reports_no_blockers_and_exits_zero ... ok
+test doctor::tests::ages_are_humanized_without_lying_about_precision ... ok
+test doctor::tests::a_held_lease_is_reported_with_its_holder ... ok
+test doctor::tests::a_lease_file_with_no_holder_still_counts_as_held ... ok
+test doctor::tests::an_offline_build_says_so_loudly ... ok
+test doctor::tests::absent_sections_are_reported_as_absent_never_invented ... ok
+test doctor::tests::long_failure_lines_are_clipped_to_one_line ... ok
+test doctor::tests::missing_credentials_are_a_blocker_with_the_command_that_fixes_them ... ok
+test doctor::tests::recent_failures_are_listed_newest_last ... ok
+test doctor::tests::the_sandbox_line_comes_from_the_backend_not_from_this_file ... ok
+test doctor::tests::the_report_never_carries_a_secret ... ok
+test rpc_mode::tests::a_label_reaches_the_wire_and_a_clear_reaches_it_too ... ok
+test rpc_mode::tests::a_second_prompt_is_rejected_while_a_run_is_admitted ... ok
+test rpc_mode::tests::abort_during_an_admitted_run_reports_true_and_ends_it ... ok
+test rpc_mode::tests::abort_on_an_idle_agent_returns_cores_false ... ok
+test rpc_mode::tests::an_undefined_queue_mode_is_refused_and_changes_nothing ... ok
+test rpc_mode::tests::a_switched_sessions_cost_is_not_its_cheapest_models_price ... ok
+test rpc_mode::tests::available_models_carry_renderable_fields_and_credential_state ... ok
+test rpc_mode::tests::available_thinking_levels_match_the_canonical_ladder ... ok
+test rpc_mode::tests::both_tags_on_one_frame_are_read_as_one_op ... ok
+test rpc_mode::tests::clear_queue_empties_both_queues_and_reports_both_counts ... ok
+test rpc_mode::tests::a_session_that_switches_models_is_billed_per_model ... ok
+test rpc_mode::tests::clone_refuses_when_there_is_no_leaf ... ok
+test rpc_mode::tests::cycle_model_and_set_model_agree_on_the_key_they_answer_with ... ok
+test rpc_mode::tests::a_run_after_a_fork_persists_to_the_forked_file ... ok
+test rpc_mode::tests::a_fork_and_a_new_session_are_named_by_the_same_convention ... ok
+test rpc_mode::tests::cycle_model_stays_within_the_current_provider ... ok
+test rpc_mode::tests::cycle_thinking_level_advances_and_reports_the_new_level ... ok
+test rpc_mode::tests::every_iso_timestamp_round_trips_through_its_own_fields ... ok
+test rpc_mode::tests::cycle_thinking_level_wraps_at_the_top ... ok
+test rpc_mode::tests::every_get_entries_entry_has_pis_four_fields ... ok
+test rpc_mode::tests::get_commands_carries_a_source_path_for_each_command ... ok
+test rpc_mode::tests::clone_duplicates_the_current_leaf ... ok
+test rpc_mode::tests::get_commands_reads_the_tuis_own_registry ... ok
+test rpc_mode::tests::fork_refuses_an_entry_id_that_does_not_exist ... ok
+test rpc_mode::tests::fork_writes_a_new_file_and_rebinds_the_agent_to_it ... ok
+test rpc_mode::tests::get_messages_is_empty_before_anything_is_said ... ok
+test rpc_mode::tests::get_messages_returns_the_conversation ... ok
+test doctor::tests::a_row_without_a_credential_always_comes_with_the_command_that_fixes_it ... ok
+test doctor::tests::an_unknown_model_argument_is_a_blocker_that_names_it ... ok
+test rpc_mode::tests::get_state_uses_pis_camel_case_keys_and_no_snake_case ... ok
+test rpc_mode::tests::get_entries_with_an_unresolvable_since_returns_everything ... ok
+test rpc_mode::tests::get_state_is_built_by_the_shared_constructor ... ok
+test rpc_mode::tests::get_state_values_equal_the_live_agents ... ok
+test rpc_mode::tests::iso8601_conversion_is_correct_at_the_calendar_boundaries ... ok
+test rpc_mode::tests::lagged_notice_matches_the_http_frame_shape ... ok
+test rpc_mode::tests::ids_echo_per_request_in_arrival_order ... ok
+test rpc_mode::tests::last_assistant_text_is_null_before_any_reply ... ok
+test doctor::tests::a_row_with_a_credential_reports_ok_and_no_blocker ... ok
+test rpc_mode::tests::legacy_requests_still_work_without_ids ... ok
+test rpc_mode::tests::model_reference_accepts_both_wire_shapes ... ok
+test rpc_mode::tests::malformed_lines_fail_without_inventing_a_correlation ... ok
+test rpc_mode::tests::new_ops_accept_pis_type_tag ... ok
+test rpc_mode::tests::last_assistant_text_is_the_assistants_reply ... ok
+test rpc_mode::tests::get_entries_since_returns_only_the_newer_entries ... ok
+test rpc_mode::tests::ops_deserialize_with_snake_tags ... ok
+test rpc_mode::tests::get_entries_and_get_tree_agree_on_every_entries_shape ... ok
+test rpc_mode::tests::pi_spelled_op_names_reach_their_handlers ... ok
+test rpc_mode::tests::pi_type_tag_is_read_as_op ... ok
+test rpc_mode::tests::replies_are_single_lines_and_keep_the_legacy_keys ... ok
+test rpc_mode::tests::session_stats_cost_is_null_before_anything_runs ... ok
+test rpc_mode::tests::set_model_accepts_a_bare_model_id ... ok
+test rpc_mode::tests::set_model_accepts_pis_documented_field_name ... ok
+test rpc_mode::tests::set_model_refuses_an_unresolvable_name ... ok
+test rpc_mode::tests::set_model_switches_the_model_and_reports_the_new_one ... ok
+test rpc_mode::tests::set_model_without_a_model_is_refused ... ok
+test rpc_mode::tests::session_stats_report_the_run_core_actually_recorded ... ok
+test rpc_mode::tests::set_thinking_level_accepts_pis_xhigh_spelling ... ok
+test rpc_mode::tests::session_stats_bill_each_response_to_its_own_model ... ok
+test rpc_mode::tests::get_tree_is_a_nested_forest_of_every_entry ... ok
+test rpc_mode::tests::set_thinking_level_round_trips_through_the_agent ... ok
+test rpc_mode::tests::store_backed_ops_say_why_when_there_is_no_store ... ok
+test rpc_mode::tests::set_session_name_appends_a_name_entry_the_discoverer_can_read ... ok
+test rpc_mode::tests::setting_one_queue_mode_does_not_move_the_other ... ok
+test rpc_mode::tests::the_legacy_followup_spelling_still_reaches_its_handler ... ok
+test rpc_mode::tests::the_four_new_ops_accept_pis_type_tag ... ok
+test rpc_mode::tests::the_queue_mode_ops_take_effect_and_read_back_through_get_state ... ok
+test rpc_mode::tests::the_wire_tree_and_the_store_tree_agree ... ok
+test rpc_mode::tests::unknown_op_reports_failure_with_the_echoed_id ... ok
+test rpc_mode::tests::get_tree_includes_entries_off_the_current_branch ... ok
+test rpc_mode::tests::the_m189_ops_accept_pis_type_tag ... ok
+test rpc_mode::tests::new_session_empties_the_conversation_not_just_the_file ... ok
+test rpc_mode::tests::new_session_then_switch_session_round_trips ... ok
+test rpc_mode::tests::switch_session_refuses_a_missing_file ... ok
+test rpc_mode::tests::the_m192_ops_accept_pis_camel_case_fields ... ok
+test rpc_mode::tests::available_models_can_be_filtered_by_provider ... ok
+
+test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running unittests src\main.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\epsilon-ee8eb83e29c2fc66.exe)
+
+running 16 tests
+test mask_tests::mask_hides_short_keys_entirely ... ok
+test mask_tests::mask_shows_only_last_four_of_long_keys ... ok
+test print_outcome_tests::an_unrecognised_theme_value_falls_back_to_dark_not_to_the_config ... ok
+test mask_tests::mask_is_char_boundary_safe_on_non_ascii_tails ... ok
+test print_outcome_tests::budget_and_token_limits_name_their_cause ... ok
+test print_outcome_tests::help_does_not_advertise_an_environment_variable_nothing_reads ... ok
+test print_outcome_tests::abort_reports_aborted_and_empty_turn_explains_itself ... ok
+test print_outcome_tests::clean_end_turn_prints_the_reply_and_reports_nothing ... ok
+test print_outcome_tests::partial_text_is_kept_and_flagged_not_thrown_away ... ok
+test print_outcome_tests::provider_error_surfaces_the_provider_message_not_a_generic_line ... ok
+test print_outcome_tests::help_text_documents_every_mode_the_parser_accepts ... ok
+test runtime_tests::the_serve_boot_task_reports_a_failed_run_instead_of_discarding_it ... ok
+test print_outcome_tests::the_light_flag_selects_the_light_palette_regardless_of_the_environment ... ok
+test print_outcome_tests::the_environment_value_decides_including_a_malformed_one ... ok
+test runtime_tests::a_durable_write_failure_on_the_serve_path_reaches_the_server_log ... ok
+test runtime_tests::plan_mode_preserves_project_read_deny ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests\doctor.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\doctor-986afbac0d48748b.exe)
+
+running 7 tests
+test a_workspace_without_sessions_says_so_instead_of_guessing ... ok
+test a_held_lease_is_a_blocker_with_a_nonzero_exit ... ok
+test the_report_describes_the_workspace_it_was_pointed_at ... ok
+test a_stale_lock_file_is_still_reported_because_liveness_cannot_be_known ... ok
+test the_lease_is_read_from_the_lock_file_beside_the_session ... ok
+test the_binary_accepts_the_read_only_sandbox_rung_and_refuses_invention ... ok
+test the_binary_accepts_both_spellings_and_exits_with_a_verdict ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests\import.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\import-a6017a762a3f1c03.exe)
+
+running 3 tests
+test import_of_a_missing_file_names_the_path ... ok
+test import_writes_a_copy_beside_the_pi_file_and_leaves_it_alone ... ok
+test resume_on_a_pi_session_names_the_file_and_the_command_that_converts_it ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\observation_ownership.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\observation_ownership-709083854c5cad16.exe)
+
+running 2 tests
+test restored_history_does_not_restore_file_write_authority ... ok
+test parent_and_task_child_do_not_share_file_observations ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\session_file.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\session_file-9d3aeb636b221e81.exe)
+
+running 5 tests
+test the_clock_the_name_uses_is_this_century ... ok
+test the_writer_and_the_reader_agree_on_where_a_file_goes ... ok
+test two_launches_do_not_land_on_one_file ... ok
+test the_file_lands_in_its_own_workspaces_directory ... ok
+test the_name_is_a_generated_token_and_not_the_header_id ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\terminal.rs (C:\Users\Hp\AppData\Local\Temp\epsilon-target\debug\deps\terminal-5d7ac22b4240930f.exe)
+
+running 8 tests
+test the_binary_starts_a_tui_and_draws_its_chrome ... ok
+test typing_echoes_into_the_composer ... ok
+test typing_still_works_while_a_turn_is_streaming ... FAILED
+test a_narrow_terminal_is_survived_rather_than_mangled ... ok
+test the_tui_works_when_started_from_powershell ... ok
+test the_tui_works_when_started_from_cmd ... ok
+test a_typed_line_is_submitted_and_the_run_is_visible ... ok
+test the_screen_reports_what_the_harness_is_doing ... ok
+
+failures:
+
+---- typing_still_works_while_a_turn_is_streaming stdout ----
+
+thread 'typing_still_works_while_a_turn_is_streaming' (15780) panicked at crates\epsilon-cli\tests\terminal.rs:502:5:
+typing during a live turn did not reach the screen:
+⠏ running 1s · streaming…    ctx 4%*/164k · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) · offline
+▎ ❯ explain the freeze
+• This answer is long on purpose so that the turn stays in flight while the test types into the     
+• composer. This answer is long on purpose so that the turn stays in flight while the test types    
+• into the composer. This answer is long on p
+                                  
+                              
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+❯ typed while stre  
+────────────────────────────────────────────────────────────────────────────────────────────────────
+run · enter queue · pageup scroll back · pagedown scroll forward · esc    …\epsilon-build\.tmpAf5Bzk
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    typing_still_works_while_a_turn_is_streaming
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.69s
+
+error: test failed, to rerun pass `-p epsilon-cli --test terminal`
+[exit=101 837s]
+
+===== demo =====
+model "deepseek-chat" matched catalog entry "deepseek/deepseek-chat-v3.1"
+no credentials for provider "openrouter" — set OPENROUTER_API_KEY or run: epsilon auth login openrouter
+providers with stored credentials: deepseek (pick one with --model)
+try: --model deepseek-flash (deepseek)
+provider: faux (offline scripted)
+go real:  epsilon auth login <provider>   (or set the provider's API key env var)
+
+=== run start ===
+-- turn 0 --
+assistant> I'll inspect the two files, then write the fix.
+tool-call> echo
+tool-call> echo
+tool-result[echo]> reading src/auth.rs
+tool-result[echo]> reading tests/auth.rs
+-- turn 1 --
+tool-call> fail
+tool-result[fail]> ERROR: intentional failure
+-- turn 2 --
+assistant> One check failed; here is the summary of what I found.
+=== run end ===
+
+final reason: Completed
+messages produced: 6
+tokens in/out: 300/150
+[exit=0 48s]
+
+===== real-check =====
+    Checking epsilon-runtime v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-runtime)
+    Checking epsilon-tui v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-tui)
+    Checking epsilon-cli v0.1.0 (C:\Users\Hp\Desktop\My Agent Space\Epsilon\crates\epsilon-cli)
+    Finished `dev` profile [unoptimized] target(s) in 37.55s
+[exit=0 38s]
+
+===== GATE FAIL =====
