@@ -32,10 +32,20 @@ real = ["epsilon-core/real", "epsilon-runtime/real"]
 epsilon-contracts = { path = "../epsilon-contracts" }
 epsilon-core = { path = "../epsilon-core" }
 epsilon-llm = { path = "../epsilon-llm" }
+# `display_label` is what the window uses to name the provider it is calling, so the two
+# frontends cannot spell the same model differently.
 # ADR-021: the desktop composes its agent through the same `build_runtime` the
 # terminal uses. It is a peer frontend, not a second implementation.
 epsilon-runtime = { path = "../epsilon-runtime" }
 epsilon-session = { path = "../epsilon-session" }
+# `ChannelApprovalUi` is the approvals seam the desktop drives its dialog from: it parks a
+# request, hands back a list for a panel to draw, and resolves by id out of order — the
+# same type the terminal uses, so a permission behaves identically in both windows.
+epsilon-safety = { path = "../epsilon-safety" }
+# `Confinement` is a `RunParams` field, so naming it here is unavoidable.
+epsilon-tools = { path = "../epsilon-tools" }
+# `McpServerConfig` is a `RunParams` field too.
+epsilon-mcp = { path = "../epsilon-mcp" }
 # The **palette only** (ADR-020): `epsilon_tui::Theme` resolves semantic roles to
 # colors and the desktop converts them. The desktop draws no terminals and depends
 # on no terminal behaviour; if that ever stops being true, the edge is one module.
@@ -46,6 +56,10 @@ egui = { workspace = true }
 egui_extras = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+
+[dev-dependencies]
+# The end-to-end window tests compose a real agent, which needs a real workspace.
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

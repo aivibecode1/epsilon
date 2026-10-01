@@ -1467,11 +1467,15 @@ dependencies = [
  "epsilon-contracts",
  "epsilon-core",
  "epsilon-llm",
+ "epsilon-mcp",
  "epsilon-runtime",
+ "epsilon-safety",
  "epsilon-session",
+ "epsilon-tools",
  "epsilon-tui",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

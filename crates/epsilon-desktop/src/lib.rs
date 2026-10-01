@@ -49,10 +49,12 @@ const _REAL_PATH_FORWARDED: () = epsilon_core::REAL_PATH_ENABLED;
 
 pub mod app;
 pub mod layout;
+pub mod session;
 pub mod theme;
 
 pub use app::IdeApp;
 pub use layout::IdeLayout;
+pub use session::{IdeSession, Row, RowKind, Transcript};
 pub use theme::IdeTheme;
 
 /// How the desktop window is opened.
@@ -84,20 +86,48 @@ impl Options {
 
 /// Open the IDE window and run until the user closes it.
 ///
-/// The tokio runtime is started here rather than by the caller because the window
-/// loop owns the thread: egui repaints on the thread that owns the winit event
-/// loop, and every agent call that has to touch the loop (`Agent::run`, an approval
-/// round trip) runs on the multi-thread runtime this creates.
+/// # Order matters here, and it is not obvious
+///
+/// The agent is composed **before** the window opens. `build_runtime` scans extension
+/// manifests, opens a session lease and may migrate a session file; doing that after
+/// `run_native` would mean a window that shows an empty agent panel for as long as the
+/// scan takes, which is precisely the "nothing happened" state the terminal frontend's
+/// invariant exists to forbid. It is also the same reason a launch that *fails* — an
+/// unreadable session, a model with no credentials — produces a sentence and no window,
+/// rather than a window that cannot do anything.
+///
+/// The runtime is created here and owned by the [`IdeSession`], because the window loop
+/// owns the thread: egui repaints on the thread that owns the winit event loop, and every
+/// agent call that has to touch the loop runs on this runtime.
 ///
 /// The error is a [`String`] rather than `eframe::Error` on purpose. `eframe`'s own
 /// errors are about the window and the adapter, which the caller cannot act on; what
 /// a person running this needs is a sentence, and mapping an opaque library error
 /// through `Display` into one message is what the CLI's `die()` does everywhere else.
 pub fn run(opts: Options) -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("could not start the agent runtime: {e}"))?;
+    let runtime = std::sync::Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("could not start the agent runtime: {e}"))?,
+    );
+
+    // The same resolution the CLI runs, through the same function (ADR-021). A window
+    // that decided its own model would be a window that could name a provider it is not
+    // calling — the M233 defect, in a new place.
+    let request = epsilon_runtime::LaunchRequest {
+        workspace: opts.workspace.clone(),
+        model_reference: opts.model_id.clone(),
+        resume: match opts.session.clone() {
+            Some(path) => epsilon_runtime::Resume::Path(path),
+            None => epsilon_runtime::Resume::No,
+        },
+        ..epsilon_runtime::LaunchRequest::for_workspace(opts.workspace.clone())
+    };
+    let launch = epsilon_runtime::resolve_launch(&request)?;
+    let notices = launch.notices.clone();
+
+    let session = runtime.block_on(IdeSession::start(runtime.clone(), launch))?;
 
     let title = opts
         .workspace
@@ -117,7 +147,7 @@ pub fn run(opts: Options) -> Result<(), String> {
     eframe::run_native(
         "Epsilon",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(IdeApp::new(opts, runtime)))),
+        Box::new(move |cc| Ok(Box::new(IdeApp::new(opts, session, notices, &cc.egui_ctx)))),
     )
     .map_err(|e| format!("could not open the Epsilon window: {e}"))
 }

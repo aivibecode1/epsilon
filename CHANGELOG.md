@@ -5,6 +5,7 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop window now runs the agent.** `epsilon-desktop` composes a real agent through the same resolution and composition the CLI uses, shows the transcript as it streams, prompts for permissions where they cannot scroll out of reach behind a long answer, and takes an answer back. `Enter` sends, `Escape` stops the turn. It is still a first-slice IDE: the file tree and the editor draw placeholders and say so (M235).
 - **A native desktop IDE.** `epsilon-desktop` opens a real window -- the operating system's, rendered natively, not a browser tab -- with a workspace pane, an editor pane, an agent panel, and geometry that gives way sensibly as the window shrinks. It is the first slice: the window opens and draws, and it says "no agent attached" rather than showing numbers it has not measured. See `docs/milestones/M233-desktop-ide-and-runtime-crate.md` (M233).
 
 - **The offline marker in the TUI header now names the provider the process is actually calling.** `--provider faux` beside a saved `deepseek/...` model used to render `DeepSeek V3.1` with no offline marker, because the header re-derived offline-ness from the model id. The CLI's decision is carried instead (M233).

@@ -10,8 +10,16 @@
 | Native window | `crates/epsilon-desktop` | opens, renders, closes — smoke-tested |
 | Geometry | `src/layout.rs` | pure fn; overlap + degradation tests |
 | Palette | `src/theme.rs` | adapted from the terminal's roles, with contrast floors |
-| Frame | `src/app.rs` | chrome + four panes; **no agent** |
-| Composition | `crates/epsilon-runtime` | `runtime.rs` + `build_runtime`, public |
+| Composition | `crates/epsilon-runtime` | `resolve_launch` + `build_runtime`, both public |
+| The agent | `src/session.rs` | `IdeSession`, `Transcript`, the event bridge |
+| The frame | `src/app.rs` | chrome, panes, status, transcript, approvals, composer |
+
+**M235 wired the agent in.** An end-to-end test composes a real offline agent, sends a turn,
+waits for a permission ask to reach the screen, answers it, and waits for the turn to finish.
+It found four defects that no state-level test could have: `Arc::get_mut` silently stopping
+the drain, a reducer that depended on a `MessageStart` the loop does not always emit, a
+composer that never took the keyboard, and Enter consumed before the frame's characters were
+ingested.
 
 ## The toolkit decision, in one paragraph
 
@@ -38,18 +46,36 @@ the same lesson as ADR-012's `global_dir`.
 
 ## Next slice, in order
 
-1. **Wire the agent.** `epsilon_runtime::build_runtime` with a `ChannelApprovalUi`, exactly
-   as `tui_mode` does. The one design question to settle first: `AgentEvent` is a
-   `tokio::broadcast`, and the egui frame is not async. Forward on a runtime task into an
-   `mpsc::Sender`, hold a cloned `egui::Context`, and call `request_repaint()` from the
-   forwarder. Never block the render thread on the broadcast.
-2. **Transcript + composer**, from the same `FrameSummary` discipline: assert on what the
-   frame *drew*, not on state that ought to produce a frame.
-3. **Approvals** — composer-adjacent, two outcomes, Escape rejects (DSH's placement).
-4. **File tree**, virtualized from the first version. Then the editor.
+1. **The file tree and the editor.** They draw placeholders now. Both need virtualization
+   from the first version — `ScrollArea::show_rows`, never a `Tree` over a whole repository.
+2. **Diff review**, which the agent needs more than the user does: a tool call that edits a
+   file should show the change, in the pane, before the next tool runs.
+3. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
+   window is hidden, so a run that finished in the background produces no `AgentEnd` on
+   screen until the window is shown. That belongs in `logic`.
+4. **Markdown in the transcript.** `pulldown-cmark` is already in the tree via the TUI.
+
+## Open: keystrokes into the composer are not verified
+
+`crates/epsilon-desktop/tests/window.rs` sets the draft and sends it through `set_draft` /
+`send_draft` — the same functions the composer calls — but the route from an egui
+`Event::Text` into the draft is **not** driven. Four attempts through `RawInput.events` failed
+to move a character. Ruled out already: focus is requested unconditionally, the composer's
+widget id is stable, `RawInput::focused` is set true, and the events use the documented
+`Event::Text(String)` shape.
+
+Next to try: a two-frame sequence (focus on one frame, type on the next) against a context
+that has been tessellated, or drive the real `eframe` window. Guessing again would be the
+fourth theory in a row.
 
 ## Traps paid for
 
+- **Never `Remove-Item -Recurse` inside a cargo target directory.** Deleting
+  `%TEMP%\epsilon-target\debug\incremental` on this box freed 18 GB and took the rest of
+  `debug/` with it — `deps/` was down to 12 files and the next build failed with a wall of
+  `extern location for mio does not exist`. Use `cargo clean`, which knows the layout, or
+  delete nothing and let the space go. A cold rebuild with `CARGO_PROFILE_*_DEBUG=0` is
+  cheaper than the hours this costs.
 - **`Context::run_ui` returns a `FullOutput` whose `TexturesDelta` panics in `Drop`** if
   dropped unapplied. A test harness that throws the frame away is not measuring the frame;
   six failures had that message.
