@@ -462,11 +462,11 @@ pub struct IdeApp {
     /// Shared, because a caller that drives a turn from outside the draw path — which is
     /// what a test does, and what an in-app shortcut will — needs a handle that outlives
     /// the borrow the frame takes.
-    session: Option<Arc<IdeSession>>,
+    pub(crate) session: Option<Arc<IdeSession>>,
     /// What the launch said, in order. Shown before anything runs.
     notices: Vec<String>,
     /// The transcript, reduced from the agent's events.
-    transcript: Transcript,
+    pub(crate) transcript: Transcript,
     /// The composer's draft.
     draft: String,
     /// What the composer should say when it is empty.
@@ -899,7 +899,15 @@ impl IdeApp {
         // (`run` builds a multi-thread runtime before the window opens), so this is not the
         // product path — but a paint with no runtime is also a test, and a round driver that
         // takes the window down rather than skipping a round is the wrong trade in both.
+        //
+        // **And it says so rather than returning silently.** Silence is how the round channel's
+        // two-halves defect stayed invisible for six milestones: a key that does nothing, in a
+        // window that looks fine. In the product this is rare, and rare is exactly when a
+        // silent failure costs most — nobody looks for the one path nobody exercises.
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            self.transcript.push_notice(
+                "cannot continue the goal: this window is not running on an agent runtime",
+            );
             self.goal_round_pending = false;
             return;
         };

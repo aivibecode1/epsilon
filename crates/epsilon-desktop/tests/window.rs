@@ -1521,6 +1521,74 @@ fn every_command_head_the_window_lacks_is_refused_by_name() {
     }
 }
 
+/// **A gate declared in the window gates the goal — the window can now declare one.**
+///
+/// Until M267 the window refused `/goal edit`, `/goal complete` and `/goal blocked` **by name**,
+/// because the parser was ninety lines inside the terminal's command handler and this crate had
+/// no copy to ask. Moving it to `epsilon-runtime::goal_command` is what makes the whole goal
+/// feature agent-level rather than terminal-level.
+///
+/// The band is where it becomes visible, so the assertion is on the band: `1 gate(s)` is the
+/// fact that distinguishes "declared" from "the word appeared somewhere".
+#[test]
+fn a_gate_declared_by_typing_it_lands_on_the_goal_band() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    // A goal first: editing the gate of a goal that does not exist is refused, and should be.
+    let Outcome::Ran(_) = app.try_command("/goal make the suite green") else {
+        panic!("creating a goal must be accepted");
+    };
+
+    let outcome = app.try_command("/goal edit gate cargo test");
+    assert!(
+        matches!(outcome, Outcome::Ran(_)),
+        "`/goal edit gate` is a verb the window has now, got {outcome:?}"
+    );
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame.region("goal").iter().any(|t| t.contains("1 gate(s)")),
+        "the band must count the gate that was just declared.\n{}",
+        frame.describe()
+    );
+}
+
+/// A malformed verb is **refused with a reason**, not applied as something plausible.
+///
+/// `/goal blocked <code>` with no reason is the case worth pinning: the reason is the half a
+/// reader acts on, so a blocker without one is not recorded at all.
+///
+/// **And what is deliberately *not* pinned:** `/goal blocked` on its own, and
+/// `/goal pause whatever`. A verb is a verb only when it is the **whole argument**, so those
+/// are objectives — `/goal clear the failing gates and pause nothing` creates a goal, and the
+/// terminal has a test named after that rule. An early version of this milestone "fixed" it
+/// as a typo, and `an_objective_that_starts_with_a_verb_is_still_an_objective` failed, which
+/// is the test doing what it was written to do.
+#[test]
+fn a_malformed_goal_verb_says_why_instead_of_doing_something() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (_ctx, mut app) = wire(ws.path());
+
+    for line in [
+        "/goal edit",
+        "/goal edit rounds zero",
+        "/goal blocked just-a-code",
+    ] {
+        let Outcome::Ran(said) = app.try_command(line) else {
+            panic!("{line} must produce a refusal that says something");
+        };
+        assert!(
+            said.contains("usage") || said.contains("needs"),
+            "{line} must say what is wrong with it, got {said:?}"
+        );
+    }
+}
+
 /// With no goal there is no band, so the transcript gets the space back.
 #[test]
 fn no_goal_draws_no_goal_band() {

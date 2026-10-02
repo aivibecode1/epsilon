@@ -174,5 +174,10 @@ audit/evidence/*.log
 !audit/evidence/gate-m267b.log
 !audit/evidence/gate-m267-FAILED-crlf.log
 
+# M268: one /goal, two frontends. The parser moved from the terminal's command handler to
+# epsilon_runtime::goal_command, so the desktop window gains every goal verb.
+# 1897 tests / 77 binaries, 7 of 7 gates, attempt 1.
+!audit/evidence/gate-m268.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

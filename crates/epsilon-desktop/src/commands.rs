@@ -40,6 +40,8 @@
 //! * **terminal-only** — the effect is on a terminal that does not exist here: `/timeline`,
 //!   `/fork`, `/editor`, `/hotkeys`.
 
+use std::sync::Arc;
+
 use epsilon_tui::picker::{self, Command};
 
 use crate::IdeApp;
@@ -88,49 +90,91 @@ impl IdeApp {
     ///
     /// The tail goes whole, for the reason the terminal's parser documents: splitting an
     /// objective in the parser is how a goal ends up reading "make the doc".
+    ///
+    /// **The parsing is the terminal's** — `epsilon_runtime::goal_command`, moved there at M267
+    /// precisely so this window is not the second implementation. Before that, every verb other
+    /// than the four the palette already had was refused *by name*, because the rules lived in a
+    /// frontend this crate is not.
     fn run_goal_argument(&mut self, argument: Option<String>) -> Outcome {
-        let Some(argument) = argument else {
-            return match self.goal.as_ref() {
-                Some(view) => Outcome::Ran(format!(
-                    "goal · {} · round {}/{} · {} gate(s) · {}",
-                    view.goal.status.as_str(),
-                    view.goal.rounds_started,
-                    view.goal.max_rounds,
-                    view.goal.gates.len(),
-                    if view.armed {
-                        "continuing automatically"
-                    } else {
-                        "not armed"
-                    }
-                )),
-                None => Outcome::Ran("no goal is set — /goal <what you want> creates one".into()),
+        use epsilon_runtime::GoalCommand;
+
+        let parsed = epsilon_runtime::goal_command(argument.as_deref());
+        match parsed {
+        GoalCommand::Show => match self.goal.as_ref() {
+            Some(view) => Outcome::Ran(format!(
+                "goal · {} · round {}/{} · {} gate(s) · {}",
+                view.goal.status.as_str(),
+                view.goal.rounds_started,
+                view.goal.max_rounds,
+                view.goal.gates.len(),
+                if view.armed {
+                    "continuing automatically"
+                } else {
+                    "not armed"
+                }
+            )),
+            None => Outcome::Ran(
+                "no goal is set — `/goal <what to achieve>` starts one, `/goal help` lists the verbs"
+                    .into(),
+            ),
+        },
+        GoalCommand::Help(lines) => {
+            // One transcript row per line, because this is the window's help for a verb table
+            // a keyboard cannot open: `/goal help` is the only way to learn the verbs here.
+            for line in lines {
+                self.transcript.push_notice(line);
+            }
+            Outcome::Ran("/goal help".to_string())
+        }
+        GoalCommand::Invalid(why) => Outcome::Ran(why),
+        GoalCommand::Apply(op) => {
+            use epsilon_contracts::goal::GoalOp;
+            let verb = describe(&op);
+            // A created or resumed goal is **armed**, for the same reason the terminal does
+            // it: the reader should not have to know that a goal needs arming to continue.
+            let starts_work = matches!(op, GoalOp::Create { .. } | GoalOp::Resume);
+            let Some(agent) = self.session.as_ref().map(|s| Arc::clone(s.agent())) else {
+                return Outcome::Ran("there is no agent attached".to_string());
             };
-        };
-        let (verb, rest) = match argument.split_once(char::is_whitespace) {
-            Some((v, r)) => (v.to_ascii_lowercase(), r.trim().to_string()),
-            None => (argument.to_ascii_lowercase(), String::new()),
-        };
-        let command = match verb.as_str() {
-            "pause" => crate::app::GoalCommand::Pause,
-            "resume" => crate::app::GoalCommand::Resume,
-            "clear" => crate::app::GoalCommand::Clear,
-            // `edit`, `complete` and `blocked` exist in the terminal and their verbs are real
-            // (`GoalOp` carries all of them). Saying "not here" is honest; guessing at them
-            // would be a second implementation of the goal rule, which is the thing ADR-021
-            // exists to prevent.
-            "edit" | "complete" | "blocked" => {
-                return Outcome::Refused(format!(
-                    "/goal {verb} — the terminal has it; the window has not built it yet"
-                ));
+            match agent.goal_apply(None, op) {
+                Ok(Some(view)) => {
+                    if starts_work {
+                        agent.set_goal_armed(true);
+                    }
+                    // The band reads the cache, and this changed the thing it caches.
+                    self.refresh_goal();
+                    Outcome::Ran(format!(
+                        "goal {verb} · {} · round {}/{} · {} gate(s)",
+                        view.goal.status.as_str(),
+                        view.goal.rounds_started,
+                        view.goal.max_rounds,
+                        view.goal.gates.len(),
+                    ))
+                }
+                Ok(None) => {
+                    self.refresh_goal();
+                    Outcome::Ran("goal cleared".to_string())
+                }
+                Err(e) => Outcome::Ran(format!("/goal refused: {e}")),
             }
-            _ => {
-                // An objective, not a verb: create one from the whole sentence.
-                self.run_goal_command(crate::app::GoalCommand::Create, &argument);
-                return Outcome::Ran(format!("goal created · {}", argument.trim()));
-            }
-        };
-        self.run_goal_command(command, &rest);
-        Outcome::Ran(format!("/goal {verb}"))
+        }
+    }
+    }
+}
+
+/// Past-tense name of an operation, for the notice.
+///
+/// Not `{:?}`: a reader is shown this.
+fn describe(op: &epsilon_contracts::goal::GoalOp) -> String {
+    use epsilon_contracts::goal::GoalOp;
+    match op {
+        GoalOp::Create { .. } => "created".into(),
+        GoalOp::Pause => "paused".into(),
+        GoalOp::Resume => "resumed".into(),
+        GoalOp::Complete => "completed".into(),
+        GoalOp::Clear => "cleared".into(),
+        GoalOp::Blocked { .. } => "blocked".into(),
+        GoalOp::Edit { .. } => "edited".into(),
     }
 }
 

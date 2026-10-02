@@ -268,12 +268,27 @@ more than the fix:
   it watched `rounds_started`, which `begin_goal_round` moves *before* it sends. It now waits
   for the notice `start_goal_round` pushes.
 
+## M268: the goal rules moved out of the terminal
+
+`/goal` was ninety lines inside the TUI's command handler, which is why M267 had to refuse
+`/goal edit`, `/goal complete` and `/goal blocked` **by name** — the window had no parser to
+ask. It is now `epsilon_runtime::goal_command`, called by both frontends.
+
+**The lesson I got wrong, and it is worth more than the move.** Reading
+`if head.eq_ignore_ascii_case("pause") && tail.is_empty()` I concluded `/goal pause whatever`
+silently replaced your goal, and wrote a milestone section about the "defect". It is a
+deliberate rule with a test named after it:
+`an_objective_that_starts_with_a_verb_is_still_an_objective`. **A verb is a verb only when it
+is the whole argument**, because an objective is a sentence. That test failed and was right.
+
+**Two general rules from it:** a confident reading of code is not a decision record, and a
+behaviour-locking test next to the code it locks is worth more than the comment above it.
+
 ## Next slice, in order
 
-0. ~~**The window has no slash commands at all.**~~ **DONE at M267** — `/compact`, `/goal`,
-   `/sessions` work; everything else the terminal has is refused by name. **`/new` and
-   `/goal edit|complete|blocked` are the obvious next verbs**, and the refusal table is derived
-   from the parser, so each is a line plus its behaviour.
+0. ~~**The window has no slash commands at all.**~~ **DONE at M267**, and the goal half of it
+   **DONE at M268**. **`/new` is the remaining verb** the terminal has and this window does
+   not — it needs a new-session-file action, which is a feature rather than a line.
 1. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
    **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
    as six — so the transcript builds a text widget for every block of every row, on screen or
@@ -282,17 +297,14 @@ more than the fix:
    20–30% that parsing was, and `Agent::goal()` is cached — it was 30 ms at 400 stored
    messages, twice per frame, under the store lock.) Re-measure first:
    `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`.
-2. **`Handle::try_current()` failing degrades to silence** in both the round driver and
-   `/compact`. In the product eframe is inside a runtime, so that is the test-only path — but
-   "the feature does not happen, with no notice" is how the channel defect's test gap happened.
-3. **One table for the palette and the typed verb.** With `commands.rs` in place, a palette
+2. **One table for the palette and the typed verb.** With `commands.rs` in place, a palette
    entry and a typed `/word` should come from one registry rather than two.
-4. **Build a desktop probe** — `scripts/desktop-probe.py` beside `console-probe.py`. Nothing
+3. **Build a desktop probe** — `scripts/desktop-probe.py` beside `console-probe.py`. Nothing
    after tessellation is verifiable without it (A25).
-5. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
-6. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
+4. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
+5. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
    the transcript and the editor only.
-7. **Arrow keys in the palette are implemented and untested.**
+6. **Arrow keys in the palette are implemented and untested.**
 
 **The full parity and defect list is not here**: it is rows A27–A45 of
 [`audit/03-defects.md`](../../audit/03-defects.md), written by four parallel read-only reviews

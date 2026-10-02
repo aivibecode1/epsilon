@@ -119,6 +119,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M265 — the workspace walk followed a link out of the workspace](milestones/M265-the-walk-followed-a-link-out-of-the-workspace.md)
 - [M266 — the desktop frame path had never been measured, and it is not what the review said](milestones/M266-the-desktop-frame-path-had-never-been-measured.md)
 - [M267 — the window had no slash commands, and the goal round channel was two channels](milestones/M267-window-commands.md)
+- [M268 — one `/goal`, two frontends](milestones/M268-one-goal-command.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

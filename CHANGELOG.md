@@ -5,6 +5,14 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **`/goal` now works in full in the desktop IDE.** Declaring the gate a goal is judged by —
+  `/goal edit gate cargo test` — editing its round cap, marking it complete or blocked, and
+  `/goal help` all work in the window now, and a declared gate shows up on the goal band. The
+  rules moved out of the terminal into shared code so both windows read them the same way
+  (M268).
+- **The desktop IDE says when it cannot act instead of doing nothing.** If the window cannot
+  reach its agent's runtime, it now says so rather than silently not continuing a goal — the
+  kind of quiet that hides defects (M268).
 - **The desktop IDE understands slash commands — and says so when it doesn't.** Typing
   `/compact` in the window used to send the literal text to the model, which answered
   something plausible and never mentioned that the window had never heard of a slash command.

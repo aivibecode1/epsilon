@@ -740,113 +740,30 @@ impl App {
     /// indistinguishable from a broken program applies to commands at least as much as to keys,
     /// and a `/goal` that printed nothing after a typo would read as a hang.
     fn run_goal_command(&mut self, agent: &Arc<Agent>, arg: Option<&str>) {
-        use epsilon_contracts::goal::{GoalBlocker, GoalOp};
-
-        let arg = arg.map(str::trim).unwrap_or("");
-        if arg.is_empty() {
-            self.notice_goal(agent);
-            return;
-        }
-        if arg == "help" || arg == "?" {
-            for line in [
-                "/goal <objective> — start one (it replaces a completed goal)",
-                "/goal — show it · /goal edit <objective> · /goal edit rounds <n>",
-                "/goal pause · /goal resume · /goal complete",
-                "/goal blocked <code> <reason> · /goal clear",
-                "the model has the same controls as create_goal / get_goal / update_goal",
-            ] {
-                self.ui.push_notice(line);
-            }
-            return;
-        }
-
-        let (head, tail) = match arg.split_once(char::is_whitespace) {
-            Some((h, t)) => (h, t.trim()),
-            None => (arg, ""),
-        };
-
-        let op = if head.eq_ignore_ascii_case("pause") && tail.is_empty() {
-            Some(GoalOp::Pause)
-        } else if head.eq_ignore_ascii_case("resume") && tail.is_empty() {
-            Some(GoalOp::Resume)
-        } else if head.eq_ignore_ascii_case("complete") && tail.is_empty() {
-            Some(GoalOp::Complete)
-        } else if head.eq_ignore_ascii_case("clear") && tail.is_empty() {
-            Some(GoalOp::Clear)
-        } else if head.eq_ignore_ascii_case("blocked") && !tail.is_empty() {
-            let (code, reason) = match tail.split_once(char::is_whitespace) {
-                Some((c, r)) => (c.trim(), r.trim()),
-                None => (tail, ""),
-            };
-            if reason.is_empty() {
-                self.ui.push_notice(
-                    "usage: /goal blocked <code> <reason> — the reason is what a reader acts on",
-                );
+        // **Parsing lives in `epsilon-runtime::goal_command`** (M267). It was ninety lines
+        // here, which is how the desktop window came to refuse `/goal edit`, `/goal complete`
+        // and `/goal blocked` by name: the rules belonged to a frontend, so the other frontend
+        // had none. The rules are the verb table, the `rounds <n>` sub-form and the
+        // replace-don't-append gate list, and none of them are about pixels.
+        //
+        // What stays here is the *application*, and the two halves are genuinely different:
+        // a created or resumed goal starts a round here, through `continue_goal`.
+        let op = match epsilon_runtime::goal_command(arg) {
+            epsilon_runtime::GoalCommand::Show => {
+                self.notice_goal(agent);
                 return;
             }
-            Some(GoalOp::Blocked {
-                blocker: GoalBlocker {
-                    code: code.to_string(),
-                    reason: reason.to_string(),
-                },
-            })
-        } else if head.eq_ignore_ascii_case("edit") {
-            if tail.is_empty() {
-                self.ui
-                    .push_notice("usage: /goal edit <new objective> | /goal edit rounds <n>");
-                return;
-            }
-            // `rounds <n>` is the one sub-form, because a number is not a sentence and a user
-            // who typed "edit rounds 40" meant the cap.
-            let (kind, rest) = match tail.split_once(char::is_whitespace) {
-                Some((k, r)) => (k, r.trim()),
-                None => (tail, ""),
-            };
-            if kind.eq_ignore_ascii_case("rounds") {
-                match rest.parse::<u32>() {
-                    Ok(n) if n > 0 => Some(GoalOp::Edit {
-                        objective: None,
-                        max_rounds: Some(n),
-                        gates: None,
-                    }),
-                    _ => {
-                        self.ui
-                            .push_notice("/goal edit rounds <n> needs a positive number of rounds");
-                        return;
-                    }
+            epsilon_runtime::GoalCommand::Help(lines) => {
+                for line in lines {
+                    self.ui.push_notice(*line);
                 }
-            } else if kind.eq_ignore_ascii_case("gate") || kind.eq_ignore_ascii_case("gates") {
-                // The whole list, replaced. `/goal edit gate clear` takes the rule off and
-                // `/goal edit gate cargo test` sets it to exactly that — replace rather
-                // than append, so a user re-reading their own goal cannot accumulate
-                // three tests and wonder why completion stopped.
-                let gates = if rest.trim().is_empty() || rest.trim().eq_ignore_ascii_case("clear") {
-                    Vec::new()
-                } else {
-                    vec![epsilon_contracts::goal::GoalGate::new(rest.trim())]
-                };
-                Some(GoalOp::Edit {
-                    objective: None,
-                    max_rounds: None,
-                    gates: Some(gates),
-                })
-            } else {
-                Some(GoalOp::Edit {
-                    objective: Some(tail.to_string()),
-                    max_rounds: None,
-                    gates: None,
-                })
+                return;
             }
-        } else {
-            Some(GoalOp::Create {
-                objective: arg.to_string(),
-                max_rounds: None,
-            })
-        };
-
-        let Some(op) = op else {
-            self.notice_goal(agent);
-            return;
+            epsilon_runtime::GoalCommand::Invalid(why) => {
+                self.ui.push_notice(&why);
+                return;
+            }
+            epsilon_runtime::GoalCommand::Apply(op) => op,
         };
         // No compare-and-set ref: the user is looking at the current goal and acting on it, and
         // asking them to type a revision would be asking them to do the harness's bookkeeping.
@@ -856,7 +773,11 @@ impl App {
         // idle: `/goal fix the gates` that parked an objective and then sat there until the user
         // typed something else would be a note, not a goal. `pause` is how a user parks one
         // without starting it, and the round it spends is counted and reported like any other.
-        let starts_work = matches!(op, GoalOp::Create { .. } | GoalOp::Resume);
+        let starts_work = matches!(
+            op,
+            epsilon_contracts::goal::GoalOp::Create { .. }
+                | epsilon_contracts::goal::GoalOp::Resume
+        );
         match agent.goal_apply(None, op) {
             Ok(Some(view)) => {
                 self.ui.push_notice(goal_lines(&view).join("\n"));

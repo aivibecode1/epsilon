@@ -3589,6 +3589,321 @@ mod lsp_policy_tests {
 }
 
 // ==========================================================================================
+// The `/goal` command, parsed once for both frontends
+// ==========================================================================================
+
+/// What a `/goal …` line asks for.
+///
+/// A **parser**, deliberately: it turns text into an operation and nothing else. Applying it
+/// is the frontend's business — the terminal also starts a round when the operation creates or
+/// resumes, and the window does not have that shape yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoalCommand {
+    /// No argument: show the goal, or say there is none.
+    Show,
+    /// `/goal help`: these lines, in order.
+    Help(&'static [&'static str]),
+    /// Do this to the goal.
+    Apply(epsilon_contracts::goal::GoalOp),
+    /// Not a line this understands. This is what to say about it.
+    Invalid(String),
+}
+
+/// The help text, one place, so the two frontends cannot describe the verbs differently.
+const GOAL_HELP: &[&str] = &[
+    "/goal <objective> — start one (it replaces a completed goal)",
+    "/goal — show it · /goal edit <objective> · /goal edit rounds <n>",
+    "/goal pause · /goal resume · /goal complete",
+    "/goal blocked <code> <reason> · /goal clear",
+    "the model has the same controls as create_goal / get_goal / update_goal",
+];
+
+/// Parse a `/goal …` argument into an operation.
+///
+/// # Why it lives here and not in a frontend
+///
+/// It was ninety lines inside `epsilon_tui`'s `run_goal_command`, reachable only from the
+/// terminal — which is how the desktop window came to refuse `/goal edit`, `/goal complete`
+/// and `/goal blocked` **by name** while the goal feature they belong to was, otherwise,
+/// entirely agent-level (M240–M257). The rule this repository keeps arriving at is one
+/// implementation per behaviour; the verb table, the `rounds <n>` sub-form and the
+/// replace-don't-append gate list are all *rules*, and rules that live in a frontend are rules
+/// one frontend has.
+///
+/// The signature is pure text in, enum out, so it is testable without an agent and without a
+/// window — which is exactly what was missing when the terminal had the only copy.
+pub fn goal_command(arg: Option<&str>) -> GoalCommand {
+    use epsilon_contracts::goal::{GoalBlocker, GoalOp};
+
+    let arg = arg.map(str::trim).unwrap_or("");
+    if arg.is_empty() {
+        return GoalCommand::Show;
+    }
+    if arg == "help" || arg == "?" {
+        return GoalCommand::Help(GOAL_HELP);
+    }
+
+    let (head, tail) = match arg.split_once(char::is_whitespace) {
+        Some((h, t)) => (h, t.trim()),
+        None => (arg, ""),
+    };
+    let head = head.to_ascii_lowercase();
+
+    let op = match head.as_str() {
+        "pause" if tail.is_empty() => GoalOp::Pause,
+        "resume" if tail.is_empty() => GoalOp::Resume,
+        "complete" if tail.is_empty() => GoalOp::Complete,
+        "clear" if tail.is_empty() => GoalOp::Clear,
+        "blocked" if !tail.is_empty() => {
+            let (code, reason) = match tail.split_once(char::is_whitespace) {
+                Some((c, r)) => (c.trim(), r.trim()),
+                None => (tail, ""),
+            };
+            if reason.is_empty() {
+                // The reason is the half a reader acts on, so a blocker without one is
+                // refused rather than recorded as an unexplained stop.
+                return GoalCommand::Invalid(
+                    "usage: /goal blocked <code> <reason> — the reason is what a reader acts on"
+                        .to_string(),
+                );
+            }
+            GoalOp::Blocked {
+                blocker: GoalBlocker {
+                    code: code.to_string(),
+                    reason: reason.to_string(),
+                },
+            }
+        }
+        // **A verb is a verb only when it is the WHOLE argument.** `/goal clear the failing gates
+        // and pause nothing` is an objective, not a clear followed by words — and the
+        // terminal has a test named `an_objective_that_starts_with_a_verb_is_still_an_objective`
+        // for exactly that. This is the rule a naive `match` gets wrong, and it is asserted,
+        // so it is written down here rather than left to the next reader.
+        //
+        // The cost is that `/goal pause whatever` creates a goal called "pause whatever".
+        // That is the deliberate trade: an objective is a sentence, and a harness that
+        // guesses which sentences meant to be commands destroys goals.
+        "edit" => return parse_goal_edit(tail),
+        _ => GoalOp::Create {
+            objective: arg.to_string(),
+            max_rounds: None,
+        },
+    };
+    GoalCommand::Apply(op)
+}
+
+/// The `/goal edit` sub-forms, which is where the rules actually live.
+fn parse_goal_edit(tail: &str) -> GoalCommand {
+    use epsilon_contracts::goal::GoalOp;
+
+    if tail.is_empty() {
+        return GoalCommand::Invalid(
+            "usage: /goal edit <new objective> | /goal edit rounds <n>".to_string(),
+        );
+    }
+    // `rounds <n>` is the one sub-form, because a number is not a sentence and a user who
+    // typed "edit rounds 40" meant the cap.
+    let (kind, rest) = match tail.split_once(char::is_whitespace) {
+        Some((k, r)) => (k, r.trim()),
+        None => (tail, ""),
+    };
+    let kind = kind.to_ascii_lowercase();
+    let op = if kind == "rounds" {
+        match rest.parse::<u32>() {
+            Ok(n) if n > 0 => GoalOp::Edit {
+                objective: None,
+                max_rounds: Some(n),
+                gates: None,
+            },
+            _ => {
+                return GoalCommand::Invalid(
+                    "/goal edit rounds <n> needs a positive number of rounds".to_string(),
+                );
+            }
+        }
+    } else if kind == "gate" || kind == "gates" {
+        // The whole list, **replaced**. `/goal edit gate clear` takes the rule off and
+        // `/goal edit gate cargo test` sets it to exactly that — replace rather than append,
+        // so a user re-reading their own goal cannot accumulate three tests and wonder why
+        // completion stopped.
+        let rest = rest.trim();
+        let gates = if rest.is_empty() || rest.eq_ignore_ascii_case("clear") {
+            Vec::new()
+        } else {
+            vec![epsilon_contracts::goal::GoalGate::new(rest)]
+        };
+        GoalOp::Edit {
+            objective: None,
+            max_rounds: None,
+            gates: Some(gates),
+        }
+    } else {
+        GoalOp::Edit {
+            objective: Some(tail.to_string()),
+            max_rounds: None,
+            gates: None,
+        }
+    };
+    GoalCommand::Apply(op)
+}
+
+#[cfg(test)]
+mod goal_command_tests {
+    use super::{GoalCommand, goal_command};
+    use epsilon_contracts::goal::{GoalBlocker, GoalOp};
+
+    /// Every verb reaches the operation it names.
+    ///
+    /// Exhaustive on purpose. The parser used to live inside the terminal's command handler,
+    /// where its coverage was whatever that handler's tests happened to press — which is how
+    /// the desktop window ended up **refusing** `/goal edit`, `/goal complete` and
+    /// `/goal blocked` by name: it had no parser to ask.
+    #[test]
+    fn every_verb_reaches_its_operation() {
+        let cases: Vec<(&str, GoalOp)> = vec![
+            ("pause", GoalOp::Pause),
+            ("resume", GoalOp::Resume),
+            ("complete", GoalOp::Complete),
+            ("clear", GoalOp::Clear),
+            (
+                "edit rounds 40",
+                GoalOp::Edit {
+                    objective: None,
+                    max_rounds: Some(40),
+                    gates: None,
+                },
+            ),
+            (
+                "edit gate cargo test",
+                GoalOp::Edit {
+                    objective: None,
+                    max_rounds: None,
+                    gates: Some(vec![epsilon_contracts::goal::GoalGate::new("cargo test")]),
+                },
+            ),
+            (
+                "edit make the docs read well",
+                GoalOp::Edit {
+                    objective: Some("make the docs read well".into()),
+                    max_rounds: None,
+                    gates: None,
+                },
+            ),
+            (
+                "blocked missing-credential waiting on the owner",
+                GoalOp::Blocked {
+                    blocker: GoalBlocker {
+                        code: "missing-credential".into(),
+                        reason: "waiting on the owner".into(),
+                    },
+                },
+            ),
+        ];
+        for (line, want) in cases {
+            assert_eq!(
+                goal_command(Some(line)),
+                GoalCommand::Apply(want),
+                "/goal {line}"
+            );
+        }
+    }
+
+    /// An objective is a **sentence**, so it arrives whole.
+    ///
+    /// Splitting it in the parser is how a goal ends up reading "make the doc" — the exact
+    /// wording the terminal's own doc comment used.
+    #[test]
+    fn an_objective_arrives_whole_even_with_spaces() {
+        assert_eq!(
+            goal_command(Some("make the docs read well")),
+            GoalCommand::Apply(GoalOp::Create {
+                objective: "make the docs read well".into(),
+                max_rounds: None,
+            })
+        );
+    }
+
+    /// `edit gate …` **replaces** the list, so a user cannot accumulate three tests.
+    #[test]
+    fn the_gate_list_is_replaced_not_appended() {
+        assert_eq!(
+            goal_command(Some("edit gate clear")),
+            GoalCommand::Apply(GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(Vec::new()),
+            }),
+            "an empty gate takes the rule off"
+        );
+        assert_eq!(
+            goal_command(Some("edit gate")),
+            GoalCommand::Apply(GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(Vec::new()),
+            }),
+            "and a bare `edit gate` means the same, not an empty-string command"
+        );
+    }
+
+    /// The malformed lines are refused **with a reason**, not turned into something plausible.
+    ///
+    /// Note what is **not** here: `/goal pause whatever` and `/goal clear everything`. Those
+    /// are objectives — a verb is a verb only when it is the whole argument — and an early
+    /// version of this milestone refused them as typos. The terminal's own
+    /// `an_objective_that_starts_with_a_verb_is_still_an_objective` failed, which is the
+    /// test doing exactly what it was written to do.
+    #[test]
+    fn a_malformed_line_is_refused_rather_than_guessed_at() {
+        for line in [
+            "blocked just-a-code",
+            "edit",
+            "edit rounds",
+            "edit rounds zero",
+        ] {
+            assert!(
+                matches!(goal_command(Some(line)), GoalCommand::Invalid(_)),
+                "/goal {line} must be refused with a reason, not applied as something plausible"
+            );
+        }
+    }
+
+    /// **A verb is a verb only when it is the whole argument.**
+    ///
+    /// The rule a naive `match` gets wrong, and the reason the terminal has a test named
+    /// after it: `/goal clear the failing gates and pause nothing` is an *objective*, not a
+    /// clear. The cost is that a stray word after a verb produces a goal with that word in it,
+    /// which is the deliberate trade — a harness that guesses which sentences were meant to
+    /// be commands destroys goals.
+    #[test]
+    fn an_objective_that_starts_with_a_verb_is_still_an_objective() {
+        for line in [
+            "clear the failing gates and pause nothing",
+            "pause whatever",
+            "complete the migration",
+        ] {
+            assert_eq!(
+                goal_command(Some(line)),
+                GoalCommand::Apply(GoalOp::Create {
+                    objective: line.to_string(),
+                    max_rounds: None,
+                }),
+                "/goal {line} is an objective, not a verb with an argument"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_goal_shows_and_help_lists_the_verbs() {
+        assert_eq!(goal_command(None), GoalCommand::Show);
+        assert_eq!(goal_command(Some("")), GoalCommand::Show);
+        assert_eq!(goal_command(Some("   ")), GoalCommand::Show);
+        assert!(matches!(goal_command(Some("help")), GoalCommand::Help(_)));
+        assert!(matches!(goal_command(Some("?")), GoalCommand::Help(_)));
+    }
+}
+
+// ==========================================================================================
 // Composition
 //
 // Everything below moved here from `crates/epsilon-cli/src/main.rs` (ADR-021). It was a
