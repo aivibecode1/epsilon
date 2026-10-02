@@ -110,6 +110,21 @@ path. Do not change security configuration from an agent session. Workaround if 
 the test profile under fresh metadata (`CARGO_PROFILE_TEST_DEBUG=1` changes every test binary's
 name) and disclose the knob.
 
+**The pin is on the path, so the knob is a one-time cost per tree, not per battery** (measured
+2026-10-02, three rounds running). `LNK1104` named
+`debug\deps\epsilon_core-4a8081d0361ce74c.exe` on two consecutive batteries; the third set
+`CARGO_PROFILE_TEST_DEBUG=1` and did not hit it again. Cost breakdown:
+
+| state | test leg |
+|---|---|
+| warm tree, default metadata | ~675 s, **and vulnerable to the pin** |
+| cold tree, `CARGO_PROFILE_TEST_DEBUG=1` | 1,489–2,402 s — every test executable relinks |
+| warm tree, `CARGO_PROFILE_TEST_DEBUG=1` | **505 s, and immune** |
+
+So: set the knob the first time a session hits the fault, keep it for the rest of the session,
+and do not `cargo clean` between rounds unless the disk forces it — cleaning throws away the
+immunity along with the 4 GB.
+
 ## The PowerShell trap
 
 `bash` on this machine is WSL: different `$HOME`, different `PATH`, no Windows `cargo`. It exits
