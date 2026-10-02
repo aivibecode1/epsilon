@@ -1706,7 +1706,36 @@ moves *before* it sends anything. It now waits on the notice `start_goal_round` 
 fails against the disconnected form.
 [milestone](../docs/milestones/M267-window-commands.md)
 
-### A39 — three desktop UI defects a frame would have caught
+### A46 — `gate-until-pass.ps1` names the **wrong gate** in its failure fingerprint
+
+`Get-FailureFingerprint` matches `^===== ([a-z-]+) =====\r?\n[\s\S]{0,4000}?^\[exit=([1-9])` —
+that is, a gate **header** followed by the first **non-zero** exit within 4000 characters. With
+the fast legs this script runs first, that is the *next* leg's exit, so a
+`check-line-endings` failure is reported as `check-links:1`.
+
+Measured at M267, where it mattered:
+
+```
+check-links: 615 relative links, 0 broken     <- passed
+===== check-lint-tables =====   [exit=0]
+===== check-line-endings ====   [exit=1]      <- the actual failure
+fingerprint: tests:|gates:check-links:1       <- wrong gate
+"same fingerprint as the previous attempt - that is not a flake, that is the code."
+```
+
+The wrapper then stops on a **doc-gate failure it believes is the code**, which is the exact
+call it exists to avoid making. The fingerprint has to be anchored to the leg it belongs to —
+match the header and the *immediately following* `[exit=`, not the first non-zero one.
+
+### A47 — the desktop window's frame cannot `spawn` in a test, and degrades to silence
+
+`Handle::try_current()` fails off a runtime, and both `drive_goal_round` and `run_compact`
+**handle that by doing nothing**: the round driver puts its pending flag back and returns; a
+test that avoids the spawn path sees nothing wrong. In the product eframe runs inside a
+runtime, so this is the test-only path — but "the feature does not happen, with no notice" is
+how A45's test gap happened in the first place. `tests/window.rs::wire_with_runtime` is the
+seam, and a notice (rather than silence) is the honest behaviour.
+[milestone](../docs/milestones/M267-window-commands.md)
 
 1. **A submit refusal sticks for the rest of the session.** `app.rs:2116` sets `self.refusal`;
    nothing ever clears it, and `session.rs:813-818` refuses every submit while a turn is in
