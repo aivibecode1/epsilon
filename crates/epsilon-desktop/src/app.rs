@@ -153,6 +153,38 @@ enum PaletteAction {
     Sidebar(SidebarView),
     /// Walk the workspace again.
     ReloadTree,
+    /// Do this to the session's goal.
+    Goal(GoalCommand),
+}
+
+/// The goal verbs the window can run.
+///
+/// `Create` takes the palette's own query as the objective: typing the objective and
+/// choosing the verb is one gesture, and it is the same one `/goal <objective>` is in the
+/// terminal. A `create` with an empty query refuses and says so rather than creating a goal
+/// whose objective is the empty string — a goal with nothing to aim at that runs to its cap.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GoalCommand {
+    Create,
+    Pause,
+    Resume,
+    Clear,
+}
+
+/// One command the window offers.
+///
+/// **The `id` is the point of the table.** Without a stable name every consumer — the
+/// palette, a future shortcut binding, a `/help` — has to match on the *label*, and a label
+/// is what a reader sees and therefore what gets reworded. `opencode` builds its palette from
+/// its command ids for exactly this reason.
+struct Command {
+    /// Stable, for bindings and help. Never shown to the reader.
+    id: &'static str,
+    /// What the reader sees and types.
+    label: &'static str,
+    /// Shown on the right, so a file and a command sharing a name are told apart.
+    hint: &'static str,
+    action: PaletteAction,
 }
 
 /// One row in the palette.
@@ -161,6 +193,13 @@ struct PaletteEntry {
     label: String,
     /// A hint on the right, so a file and the command that mentions it are told apart.
     hint: String,
+    /// The stable command id, for rows that are commands.
+    ///
+    /// Carried so a hotspot can name the row by `command:<id>` rather than by its label. A
+    /// label is what a reader sees and therefore what gets reworded; a test that finds
+    /// `goal: pause` by its text fails the day someone improves the wording, and fails for a
+    /// reason that has nothing to do with what it was testing.
+    command: Option<&'static str>,
     action: PaletteAction,
 }
 
@@ -176,7 +215,47 @@ fn palette_input_id() -> egui::Id {
     egui::Id::new("epsilon-palette-search")
 }
 
-/// What the palette can reach: every file in the workspace, plus the window's own commands.
+/// Every command this window offers, in the order it is listed.
+///
+/// One table, read by the palette and by whatever binds keys next. The goal verbs are here
+/// because until this milestone the window could **watch** a goal (M258) and not **control**
+/// one — the terminal's `/goal` had create, pause, resume and clear, and the desktop had
+/// none of them, which is the asymmetry this whole milestone is about closing.
+fn commands() -> Vec<Command> {
+    fn view(id: &'static str, label: &'static str, v: SidebarView) -> Command {
+        Command {
+            id,
+            label,
+            hint: "command",
+            action: PaletteAction::Sidebar(v),
+        }
+    }
+    fn goal(id: &'static str, label: &'static str, c: GoalCommand) -> Command {
+        Command {
+            id,
+            label,
+            hint: "goal",
+            action: PaletteAction::Goal(c),
+        }
+    }
+    vec![
+        view("view.files", "files", SidebarView::Files),
+        view("view.subagents", "subagents", SidebarView::Tasks),
+        view("view.sessions", "sessions", SidebarView::Sessions),
+        Command {
+            id: "tree.reload",
+            label: "reload tree",
+            hint: "command",
+            action: PaletteAction::ReloadTree,
+        },
+        goal("goal.create", "goal: create", GoalCommand::Create),
+        goal("goal.pause", "goal: pause", GoalCommand::Pause),
+        goal("goal.resume", "goal: resume", GoalCommand::Resume),
+        goal("goal.clear", "goal: clear", GoalCommand::Clear),
+    ]
+}
+
+/// What the palette can reach: every file in the workspace, plus every command.
 impl IdeApp {
     /// The rows the palette is currently offering.
     ///
@@ -192,20 +271,17 @@ impl IdeApp {
             .map(|r| PaletteEntry {
                 label: r.path.clone(),
                 hint: "file".into(),
+                command: None,
                 action: PaletteAction::Open(r.path.clone()),
             })
             .collect();
-        for (label, action) in [
-            ("files", PaletteAction::Sidebar(SidebarView::Files)),
-            ("subagents", PaletteAction::Sidebar(SidebarView::Tasks)),
-            ("sessions", PaletteAction::Sidebar(SidebarView::Sessions)),
-            ("reload tree", PaletteAction::ReloadTree),
-        ] {
-            if needle.is_empty() || label.contains(&needle) {
+        for cmd in commands() {
+            if needle.is_empty() || cmd.label.contains(&needle) {
                 out.push(PaletteEntry {
-                    label: label.into(),
-                    hint: "command".into(),
-                    action,
+                    label: cmd.label.into(),
+                    hint: cmd.hint.into(),
+                    command: Some(cmd.id),
+                    action: cmd.action,
                 });
             }
         }
@@ -264,7 +340,7 @@ impl IdeApp {
                 .copied()
             && let Some(entry) = entries.get(index)
         {
-            self.run_palette_action(entry.action.clone());
+            self.run_palette_action(entry.action.clone(), &query);
             self.palette = None;
             return;
         }
@@ -280,19 +356,87 @@ impl IdeApp {
         if submitted
             && let Some(entry) = entries.get(self.palette.as_ref().map(|p| p.selected).unwrap_or(0))
         {
-            self.run_palette_action(entry.action.clone());
+            self.run_palette_action(entry.action.clone(), &query);
             self.palette = None;
         }
     }
     /// Do what a palette row asked for.
-    fn run_palette_action(&mut self, action: PaletteAction) {
+    ///
+    /// `query` is the palette's own text, because one command needs it: `goal: create` takes
+    /// the objective the reader typed. Every other command ignores it, which is why it is passed
+    /// once here rather than to the few verbs that want it.
+    fn run_palette_action(&mut self, action: PaletteAction, query: &str) {
         match action {
             PaletteAction::Open(path) => self.open_file(&path),
             PaletteAction::Sidebar(view) => self.sidebar = view,
             PaletteAction::ReloadTree => {
                 self.tree = crate::workspace::FileTree::load(&self.opts.workspace)
             }
+            PaletteAction::Goal(cmd) => self.run_goal_command(cmd, query),
         }
+    }
+
+    /// Run one goal verb, and say what happened.
+    ///
+    /// **Every failure lands in the transcript.** A verb that does nothing looks exactly like a
+    /// verb that worked, and a goal that refused to pause because it is not continuable leaves
+    /// the reader believing it is paused — which is the "nothing happened" state this window
+    /// keeps producing. The terminal's `/goal` says the same things for the same reasons.
+    fn run_goal_command(&mut self, cmd: GoalCommand, query: &str) {
+        let Some(session) = self.session.as_ref() else {
+            self.transcript
+                .push_notice("no agent attached, so there is no goal to change");
+            return;
+        };
+        let agent = Arc::clone(session.agent());
+        let objective = query.trim();
+        let op = match cmd {
+            GoalCommand::Create => {
+                if objective.is_empty() {
+                    self.transcript.push_notice(
+                        "type the objective first, then choose `goal: create` — a goal with no \
+                     objective runs to its round cap and gets nowhere",
+                    );
+                    return;
+                }
+                epsilon_contracts::goal::GoalOp::Create {
+                    objective: objective.to_string(),
+                    max_rounds: None,
+                }
+            }
+            GoalCommand::Pause => epsilon_contracts::goal::GoalOp::Pause,
+            GoalCommand::Resume => epsilon_contracts::goal::GoalOp::Resume,
+            GoalCommand::Clear => epsilon_contracts::goal::GoalOp::Clear,
+        };
+        let said = format!("goal {}", said_for(cmd));
+        match agent.goal_apply(None, op) {
+            Ok(Some(view)) => {
+                // A created goal is armed; the reader should not have to know that.
+                if cmd == GoalCommand::Create || cmd == GoalCommand::Resume {
+                    agent.set_goal_armed(true);
+                }
+                self.transcript.push_notice(&format!(
+                    "{said} · {} · round {}/{}",
+                    view.goal.status.as_str(),
+                    view.goal.rounds_started,
+                    view.goal.max_rounds
+                ));
+            }
+            Ok(None) => self
+                .transcript
+                .push_notice(&format!("{said} — there is no goal to change")),
+            Err(e) => self.transcript.push_notice(&format!("{said} refused: {e}")),
+        }
+    }
+}
+
+/// What a verb reads as past tense, for the notice.
+fn said_for(cmd: GoalCommand) -> &'static str {
+    match cmd {
+        GoalCommand::Create => "created",
+        GoalCommand::Pause => "paused",
+        GoalCommand::Resume => "resumed",
+        GoalCommand::Clear => "cleared",
     }
 }
 
@@ -675,6 +819,22 @@ impl IdeApp {
     pub fn start_goal_round_for_test(&mut self, round: epsilon_runtime::GoalRound) -> bool {
         self.start_goal_round(round)
     }
+
+    /// Run the command with this **id**, as choosing its palette row would.
+    ///
+    /// Keyed on the id rather than the label on purpose, which is the whole reason the table
+    /// carries one. `query` is the palette's text, which `goal: create` takes as the
+    /// objective.
+    #[doc(hidden)]
+    pub fn run_palette_command(&mut self, id: &str, query: &str) -> bool {
+        match commands().into_iter().find(|c| c.id == id) {
+            Some(cmd) => {
+                self.run_palette_action(cmd.action, query);
+                true
+            }
+            None => false,
+        }
+    }
     /// Re-read what the agent just changed: the tree, and the open file if it is one.
     ///
     /// **A window is a snapshot, and nothing told it the world had moved.** The tree was
@@ -906,6 +1066,13 @@ impl IdeApp {
             summary.rows.push(("palette".into(), entry.label.clone()));
             summary.row_rects.push(("palette".into(), row));
             self.palette_rects.push((index, row));
+            // A command row is addressable by its **id**, so a test presses
+            // `command:goal.pause` rather than the label a reader sees — a label is what
+            // gets reworded, and a test keyed on it fails for a reason unrelated to what it
+            // was testing.
+            if let Some(id) = entry.command {
+                summary.hotspots.push((format!("command:{id}"), row));
+            }
             y += 22.0;
         }
         if entries.len() > PALETTE_LIMIT {

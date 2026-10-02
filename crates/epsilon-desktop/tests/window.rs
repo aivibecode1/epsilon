@@ -1228,6 +1228,150 @@ fn an_agent_less_window_draws_without_a_goal_band() {
     );
 }
 
+/// **The palette lists the goal verbs, addressed by their stable ids.**
+///
+/// M258 gave the desktop a goal band and a round driver and left the reader with no way to
+/// create, pause, resume or clear a goal from the window, while the terminal has had all
+/// four as `/goal` since M240. A feature the terminal has and the window does not is the
+/// asymmetry this milestone exists to close.
+///
+/// Found by **id**, not by label: `command:goal.pause` is the name a future key binding
+/// would use, and a test keyed on the words a reader sees fails the day someone improves
+/// the wording — for a reason that has nothing to do with what it was testing.
+#[test]
+fn the_palette_offers_the_goal_verbs_by_id() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let _ = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let open = paint_with(
+        &ctx,
+        &mut app,
+        1440.0,
+        900.0,
+        vec![egui::Event::Key {
+            key: egui::Key::P,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        }],
+    );
+    for id in ["goal.create", "goal.pause", "goal.resume", "goal.clear"] {
+        assert!(
+            open.hotspot(&format!("command:{id}")).is_some(),
+            "the palette must offer `{id}`.\n{}",
+            open.describe()
+        );
+    }
+}
+
+/// Creating a goal from the window works, and takes the typed text as the objective.
+///
+/// Typing the objective and choosing the verb is one gesture, and it is the same one
+/// `/goal <objective>` is in the terminal — so a reader who knows one does not have to
+/// learn another.
+#[test]
+fn creating_a_goal_from_the_window_uses_the_typed_objective() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    let _ = paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    assert!(app.run_palette_command("goal.create", "make the suite green"));
+    let view = agent.goal().expect("a goal now exists");
+    assert_eq!(
+        view.goal.objective, "make the suite green",
+        "the typed objective must be the goal's"
+    );
+    assert!(
+        view.armed,
+        "a created goal must be armed, or the window made one that never runs"
+    );
+
+    // And it must reach the screen, because that is the whole point of the band.
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame
+            .region("goal")
+            .iter()
+            .any(|t| t.contains("make the suite green")),
+        "a goal created in the window must appear in it.\n{}",
+        frame.describe()
+    );
+}
+
+/// A verb with nothing to do **says so**, rather than doing nothing quietly.
+///
+/// Pausing with no goal is a click that appears to work, which is the state this window has
+/// produced five other ways and has now been tested against five times.
+///
+/// The assertion is on the *shape* of the refusal — it says it refused, and it names the
+/// reason — rather than on one wording. The first version of this test expected the
+/// window's own `Ok(None)` sentence and failed, because `goal_apply` answers a pause with
+/// no goal as an **`Err` carrying the contract's own words**. Both are correct; only the
+/// second tells the reader why.
+#[test]
+fn a_goal_verb_with_nothing_to_change_says_so() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let _ = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    app.run_palette_command("goal.pause", "");
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let rows = frame.region("agent");
+    assert!(
+        rows.iter().any(|t| t.contains("refused")),
+        "a verb that could not run must say it refused: {rows:?}\n{}",
+        frame.describe()
+    );
+    assert!(
+        rows.iter().any(|t| t.contains("no goal")),
+        "and name the reason, which is the part a reader can act on: {rows:?}"
+    );
+}
+
+/// `goal: create` with nothing typed refuses, because a goal with no objective runs to its
+/// round cap and gets nowhere.
+#[test]
+fn creating_a_goal_with_no_objective_refuses_in_words() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    let _ = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    app.run_palette_command("goal.create", "");
+    assert!(agent.goal().is_none(), "no objective, no goal");
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("type the objective")),
+        "the refusal has to say what to do.\n{}",
+        frame.describe()
+    );
+}
+
+/// A window with **no agent** refuses the verbs in words too, and does not fall over.
+///
+/// The assertion is on the **refusal sentence**, not on "no agent attached" — which the
+/// agent-less panel prints as its *empty state*. The first version of this test asserted
+/// that substring and passed on a build where the command never ran at all, which is the
+/// same trap `agents/memory/goal-gates.md` records about a `FakeHost` test.
+#[test]
+fn goal_verbs_without_an_agent_say_so() {
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));
+    app.run_palette_command("goal.pause", "");
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("there is no goal to change")),
+        "the refusal has to name the reason, in words the empty state does not also use.\n{}",
+        frame.describe()
+    );
+}
+
 #[test]
 fn a_window_with_no_agent_says_so_and_claims_no_numbers() {
     let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));

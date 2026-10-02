@@ -12,7 +12,7 @@ Source of truth for *what* to do: `audit/07-plan.md`. This file tracks *where I 
 | `47ca904` | Per-frame context-mirror measurement (test only) | 13.4µs@20, 144.3µs@200 — 10.8× for 10× |
 | `b8b9b18` | The audit: 01–07, 2 retractions, defects D17–D21 | every claim names its command |
 | `6c7a9d5` | 9 links repaired + `scripts/fix-links.py` | 146 left alone deliberately |
-| `8907658` | 6 ponytail skills deleted, evidence recorded | — |
+| ~~`8907658`~~ | 6 ponytail skills deleted, evidence recorded | **SUPERSEDED 2026-10-03 — the six are back.** The owner asked for Ponytail to be installed for this project and used as an engineering discipline, which supersedes the deletion decision. They are in `.agents/skills/` (project scope, not global), restored in `bfc48de`. `.agents/skills/README.md` now carries **both** decisions and the evidence, because the original deletion was made on recorded reasoning and a silent reversal would be indistinguishable from an agent that never read it. Two thirds of the original objection still holds. `audit/07-plan.md` item 0.5 is superseded by that file. |
 | `f318bc5` | `PacedProvider` + `--stream-pace-ms` | 125ms → 3875ms |
 | `f9f1d25` | **Freeze measured: not reproducible** | typed 42 chars at `running 2s`, cmd + PowerShell |
 | `b3fa012` | `typing_still_works_while_a_turn_is_streaming` | 8/8, negative control confirmed |

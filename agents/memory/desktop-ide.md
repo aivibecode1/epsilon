@@ -199,6 +199,28 @@ Battery `m258`: **1,842 tests / 76 binaries, 0 failed**, attempt 1.
 **Next slice: there is still no way to create, pause or clear a goal from the window** — only
 to watch one. That wants the command table, not another hand-written palette entry.
 
+## M259: a command table, so the window can control a goal
+
+M258 let the window *watch* a goal. The palette's four hardcoded entries are now a table of
+`Command { id, label, hint, action }` carrying **goal create/pause/resume/clear**, which is
+the last thing the terminal's `/goal` has and the window did not.
+
+**The `id` is the point, and it needed a consumer or clippy would be right.** A row records
+`command:<id>` in its hotspots, so tests press ids rather than the words on screen. Without
+that the field was dead — and deleting it would have lost the seam a future key binding
+needs. A label is what a reader sees and therefore what gets reworded.
+
+`goal: create` takes **the palette's own query** as the objective: type it, choose the verb —
+one gesture, the same one `/goal <objective>` is. Empty query refuses **in words**.
+
+**A test that passed on a build where the command never ran.**
+`goal_verbs_without_an_agent_say_so` asserted *"no agent attached"*, which the agent-less
+panel prints as its **empty state**. It passed under the negative control, which is how it
+was caught. This is the `FakeHost` trap one layer up: **run the control against the NEW tests
+specifically, not as a formality.**
+
+Battery `m259`: **1,847 tests / 76 binaries, 0 failed**, attempt 1.
+
 ## Next slice, in order
 
 1. **A command table.** The palette reaches four things because that is all the window

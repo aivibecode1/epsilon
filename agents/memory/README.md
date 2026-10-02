@@ -37,6 +37,7 @@ next.
 | [`goal-gates.md`](goal-gates.md) | **A goal's completion rule, the sandbox trap in it, and the four things still missing** | live — heads the harness queue |
 | [`prompt-cache.md`](prompt-cache.md) | **Where the provider cache marker goes, and the test that guards it** | live — a one-line rule with a regression test |
 | [`desktop-ide.md`](desktop-ide.md) | **The native desktop IDE: the toolkit decision, the `epsilon-runtime` extraction, and the wiring slice that comes next** | **live — heads the implementation queue** |
+| [`references-five.md`](references-five.md) | **The five reference harnesses: what each one actually is, and what to take from it** | live — read before studying a reference |
 | [`10-handoff-2026-09-30.md`](10-handoff-2026-09-30.md) | **Session handoff (M201-M214)** — state at HEAD, the defects this session added and where each stands, what to do next in order, and the traps it paid for | **read first** if you are picking this project up cold |
 | [`f09-path-policy.md`](f09-path-policy.md) | **F09: the resolved-path policy** — the lexical resolver, what it delegated, and the containment work that followed | historical reasoning; the landed result is M199 (`m199-containment.md`) |
 | [`port-revalidation.md`](port-revalidation.md) | **The autonomous audit + complete-port arc**: its authority and scope, and the port-fidelity thread it opened | standing context for why the port frames the project; superseded as *status* by `audit/01`-`07` |
