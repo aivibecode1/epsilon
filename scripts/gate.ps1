@@ -152,7 +152,22 @@ if (-not $cargo) {
 
 New-Item -ItemType Directory -Force -Path target | Out-Null
 $log = "target/gate-$Label.log"
-Set-Content -Path $log -Value "cargo: $cargo`nCARGO_BUILD_JOBS: $env:CARGO_BUILD_JOBS" -Encoding utf8
+# **The debug knobs are written into the log when they are set, because they change what
+# the evidence is.** `CARGO_PROFILE_DEV_DEBUG=0` / `CARGO_PROFILE_TEST_DEBUG=0` cut a full
+# battery from ~33 GB to ~4 GB (M208, measured) and make it far faster, and the price is a
+# backtrace in a failing test that is close to useless. That trade is fine — but only if the
+# log says it happened, because a log that does not record it describes a run that did not
+# occur. The rule AGENTS.md states ("name the knob in the gate log and the milestone") was
+# half-implemented: the milestone named it, the log did not.
+$profile = @(
+    'CARGO_PROFILE_DEV_DEBUG', 'CARGO_PROFILE_TEST_DEBUG', 'CARGO_PROFILE_RELEASE_DEBUG'
+) | ForEach-Object {
+    $v = [Environment]::GetEnvironmentVariable($_)
+    if ($null -ne $v -and $v -ne '') { "$_=$v" }
+}
+$header = @("cargo: $cargo", "CARGO_BUILD_JOBS: $env:CARGO_BUILD_JOBS")
+if ($profile) { $header += "profile knobs: $($profile -join ' ')" }
+Set-Content -Path $log -Value ($header -join "`n") -Encoding utf8
 
 # Each gate: a name, then the argument list. Kept as data so the log records what
 # actually ran rather than what the script hoped it ran.

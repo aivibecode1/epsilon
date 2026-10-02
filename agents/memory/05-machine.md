@@ -19,8 +19,37 @@ export CARGO_BUILD_JOBS=1     # NOT superstition: parallel jobs fail here with 0
 df -h /c                       # watch C:, it is the only drive that matters now
 ```
 
-**Do not set `CARGO_TARGET_DIR`, and do not add a `[build] target-dir` to any config.**
-Builds go where cargo puts them by default: `C:/Users/Hp/Desktop/My Agent Space/Epsilon/target`.
+**Do not add a `[build] target-dir` to any `cargo.toml`.** That is the standing rule and it
+is right: the setting is per-machine and belongs to the gate script, not the project.
+
+**But `scripts/gate.ps1` points `CARGO_TARGET_DIR` at `%TEMP%\epsilon-target`, and so
+should your own `cargo` calls.** This note used to say the opposite — "builds go where
+cargo puts them by default", into the repo — and it was **wrong**: writing build output
+*inside this repository* makes `cl.exe` fail with
+`Command line error D8050 : cannot execute c1.dll`, which cargo reports as a failed custom
+build command for some C dependency, naming the crate rather than the cause. It is specific
+to this directory: a sibling repo, a longer path, and a path with more spaces all build
+fine. Seven controlled runs are in [`build-blockers-resolved.md`](build-blockers-resolved.md).
+
+The note was wrong for weeks while being indexed as live, because nobody re-read it against
+the script it claims to describe — which is the lesson this very file teaches two sections
+below. **A note is a claim about the machine; the machine is the fact.**
+
+**The disk knob that actually matters: turn debug info off.**
+
+```sh
+export CARGO_PROFILE_DEV_DEBUG=0     # measured 2026-09-29 (M208): a full seven-gate
+export CARGO_PROFILE_TEST_DEBUG=0    # battery goes from ~33 GB to 4.19 GB
+```
+
+Measured again this round, without the knob: the cache reached **20.3 GB** and free space
+fell to **15.6 GB**; with it, the same tree is **4.0 GB** and free space **45 GB**. Two
+rounds of a battery is the difference between "plenty" and "a build fails halfway".
+
+The price is real and must be disclosed rather than quietly applied: a panic backtrace in a
+failing test becomes close to useless, so **drop the two variables for the round that
+debugs a failure**. `gate.ps1` now writes the knobs into the gate log when they are set,
+because a log that does not record them describes a run that did not happen.
 
 `D:/eps-target` held 21 GB of build output and **has been deleted**. It is not coming back.
 

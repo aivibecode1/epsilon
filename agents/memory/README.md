@@ -27,7 +27,7 @@ next.
 | [`03-port-gaps.md`](03-port-gaps.md) | **Session 2: the 24 missing pi capabilities; `branch_with_summary` wiring first** | live |
 | [`04-session3-env-and-structure.md`](04-session3-env-and-structure.md) | **Session 3: the MSVC-env build blocker, the link-debt repair, G7 markdown** | live |
 | [`build-blockers-resolved.md`](build-blockers-resolved.md) | **Five stacked environment faults that made this repo unbuildable — now fixed** | live |
-| [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps | reference |
+| [`05-machine.md`](05-machine.md) | This machine: build/disk/verification procedure and its traps. **Sets `CARGO_TARGET_DIR` and the debug-info knobs.** | reference |
 | [`06-m197-baseline-and-ext-hang.md`](06-m197-baseline-and-ext-hang.md) | **M197: the tree was left RED, and a dead extension waited the full invoke budget** | live |
 | [`07-m198-frame-path.md`](07-m198-frame-path.md) | **M198: render a frame and look at it — the transcript printed every marker twice** | live |
 | [`frame-reading-pass.md`](frame-reading-pass.md) | **CLOSED by M201 — the findings, and the method that found them** | closed — the recipe still applies |
