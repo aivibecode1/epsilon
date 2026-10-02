@@ -124,6 +124,159 @@ struct TranscriptClicks {
     change: Option<String>,
 }
 
+/// The palette's search box and cursor.
+///
+/// A field rather than two, because "what is open" and "what is selected" are one piece of
+/// state: a palette that remembered its query but forgot its selection would highlight
+/// something other than the row Enter would open.
+#[derive(Default)]
+struct Palette {
+    query: String,
+    /// Index into the filtered entries.
+    selected: usize,
+}
+
+/// What a palette row does when it is chosen.
+///
+/// An enum rather than a function pointer, deliberately: a table of `fn(&mut IdeApp)` would
+/// be shorter to write and would make every entry's effect invisible at the point it is
+/// listed — and a list of commands whose effects cannot be read in the list is a list
+/// nobody trusts.
+///
+/// `Clone` because the chosen row is read after the borrow that produced it has ended, and
+/// borrowing through would mean holding `self` across the action that mutates it.
+#[derive(Clone)]
+enum PaletteAction {
+    /// Open this workspace-relative file in the editor.
+    Open(String),
+    /// Show this view in the sidebar.
+    Sidebar(SidebarView),
+    /// Walk the workspace again.
+    ReloadTree,
+}
+
+/// One row in the palette.
+struct PaletteEntry {
+    /// What the reader sees, and what the query matches against.
+    label: String,
+    /// A hint on the right, so a file and the command that mentions it are told apart.
+    hint: String,
+    action: PaletteAction,
+}
+
+/// How many rows the palette shows before it says it is showing fewer.
+///
+/// A cap with a marker rather than a silent truncation: the same rule as every other list in
+/// this window, and the same reason — a row that is quietly missing reads as a row that does
+/// not exist.
+const PALETTE_LIMIT: usize = 40;
+
+/// The palette's search box, so its focus survives between frames.
+fn palette_input_id() -> egui::Id {
+    egui::Id::new("epsilon-palette-search")
+}
+
+/// What the palette can reach: every file in the workspace, plus the window's own commands.
+impl IdeApp {
+    /// The rows the palette is currently offering.
+    ///
+    /// Files first, then commands, which is the order a reader means them in: typing a name
+    /// wants the file, and the commands are there when the name was not what they meant.
+    fn palette_entries(&self, query: &str) -> Vec<PaletteEntry> {
+        let needle = query.trim().to_lowercase();
+        let mut out: Vec<PaletteEntry> = self
+            .tree
+            .visible(&needle)
+            .into_iter()
+            .filter(|r| !r.is_dir)
+            .map(|r| PaletteEntry {
+                label: r.path.clone(),
+                hint: "file".into(),
+                action: PaletteAction::Open(r.path.clone()),
+            })
+            .collect();
+        for (label, action) in [
+            ("files", PaletteAction::Sidebar(SidebarView::Files)),
+            ("subagents", PaletteAction::Sidebar(SidebarView::Tasks)),
+            ("sessions", PaletteAction::Sidebar(SidebarView::Sessions)),
+            ("reload tree", PaletteAction::ReloadTree),
+        ] {
+            if needle.is_empty() || label.contains(&needle) {
+                out.push(PaletteEntry {
+                    label: label.into(),
+                    hint: "command".into(),
+                    action,
+                });
+            }
+        }
+        out
+    }
+    /// Read the palette's keys, and act on one.
+    ///
+    /// **Before the panes, and before the composer**, which is the only reason Enter and
+    /// Escape mean anything here. The composer consumes both unconditionally — they are how
+    /// it sends and aborts — so a palette that read them later would be reading events that
+    /// had already been taken. Which is the same mistake the tab strip made in M250, one
+    /// layer down: a key read after the widget that wanted it has already had it.
+    fn palette_keys(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::P)) {
+            // Toggling rather than only opening, because the chord people press twice
+            // because it did not seem to work must not need a different one.
+            self.palette = if self.palette.is_some() {
+                None
+            } else {
+                Some(Palette::default())
+            };
+        }
+        let Some(query) = self.palette.as_ref().map(|p| p.query.clone()) else {
+            return;
+        };
+        let mut closed = false;
+        let mut submitted = false;
+        let mut step: i32 = 0;
+        ctx.input_mut(|i| {
+            closed = i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+            submitted = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                step += 1;
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                step -= 1;
+            }
+        });
+        if closed {
+            self.palette = None;
+            return;
+        }
+        let entries = self.palette_entries(&query);
+        if let Some(p) = self.palette.as_mut() {
+            if step != 0 {
+                let last = entries.len().saturating_sub(1) as i32;
+                p.selected = (p.selected as i32 + step).clamp(0, last) as usize;
+            }
+            if submitted {
+                p.selected = p.selected.min(entries.len().saturating_sub(1));
+            }
+        }
+        if submitted
+            && let Some(entry) = entries.get(self.palette.as_ref().map(|p| p.selected).unwrap_or(0))
+        {
+            self.run_palette_action(entry.action.clone());
+            self.palette = None;
+        }
+    }
+    /// Do what a palette row asked for.
+    fn run_palette_action(&mut self, action: PaletteAction) {
+        match action {
+            PaletteAction::Open(path) => self.open_file(&path),
+            PaletteAction::Sidebar(view) => self.sidebar = view,
+            PaletteAction::ReloadTree => {
+                self.tree = crate::workspace::FileTree::load(&self.opts.workspace)
+            }
+        }
+    }
+}
+
 /// The desktop application.
 pub struct IdeApp {
     opts: Options,
@@ -169,6 +322,13 @@ pub struct IdeApp {
     /// M248 had this shape and read it **after** the pane that fills it, which is why it
     /// always came back empty. Same data, opposite order — the order is the whole of it.
     tab_rects: Vec<(String, egui::Rect)>,
+    /// The command palette, when it is open.
+    ///
+    /// This window had **two** keys before it — `Enter` and `Escape`, both the composer's.
+    /// Everything else was reachable only by clicking, which makes an IDE a browser. The
+    /// palette is the one route to every file and every command from the keyboard, which is
+    /// what every one of the four reference harnesses has and this one did not.
+    palette: Option<Palette>,
     /// Open files, oldest first; the last is what the editor shows.
     tabs: Vec<String>,
     /// Which view the sidebar is showing, chosen from the activity bar.
@@ -254,6 +414,7 @@ impl IdeApp {
             open: None,
             review: None,
             tab_rects: Vec::new(),
+            palette: None,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout,
@@ -282,6 +443,7 @@ impl IdeApp {
             open: None,
             review: None,
             tab_rects: Vec::new(),
+            palette: None,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout: IdeLayout::new(
@@ -417,6 +579,9 @@ impl IdeApp {
         if let Some(s) = self.session.clone() {
             approve_pending(&s, ui.ctx());
         }
+        // The palette reads Enter and Escape, so it goes before the composer — which takes
+        // both unconditionally, to send and to abort.
+        self.palette_keys(ui.ctx());
         // ---- window chrome --------------------------------------------------
         let painter = ui.painter();
         if l.title.height() > 0.0 {
@@ -487,7 +652,121 @@ impl IdeApp {
             let mut pane = pane_ui(ui, l.agent, "agent");
             self.agent_panel(&mut pane, &mut summary, l.agent);
         }
+        // Drawn **last**, so it is on top of every pane rather than behind whichever one
+        // happened to be laid out last.
+        self.draw_palette(ui, &mut summary);
         summary
+    }
+
+    /// The palette: a search box over the window, and the rows it offers.
+    ///
+    /// Positioned rather than centred because the eye goes to the top for a thing you are
+    /// typing into, and because a centred box covers the transcript the reader may be
+    /// choosing a file *because* of.
+    fn draw_palette(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary) {
+        let Some(palette) = self.palette.as_ref() else {
+            return;
+        };
+        let query = palette.query.clone();
+        let selected = palette.selected;
+        let entries = self.palette_entries(&query);
+        let shown: Vec<&PaletteEntry> = entries.iter().take(PALETTE_LIMIT).collect();
+
+        let screen = ui.ctx().content_rect();
+        let width = (screen.width() * 0.6).clamp(240.0, 720.0);
+        let height = (28.0 + shown.len() as f32 * 22.0 + 12.0).min(screen.height() * 0.6);
+        let box_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
+            egui::vec2(width, height),
+        );
+        let theme = self.theme;
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        // The search box. **It must hold the keyboard**, and the composer's focus rule
+        // yields only to whatever already has it, so the request is made here every frame
+        // the palette is open rather than once on the frame it opened.
+        let search = egui::Rect::from_min_size(
+            box_rect.left_top() + egui::vec2(8.0, 8.0),
+            egui::vec2(box_rect.width() - 16.0, 24.0),
+        );
+        let response = ui.put(
+            search,
+            egui::TextEdit::singleline(&mut self.palette.as_mut().expect("checked").query)
+                .id(palette_input_id())
+                .hint_text("files and commands")
+                .desired_width(search.width() - 8.0),
+        );
+        response.request_focus();
+        summary
+            .hotspots
+            .push(("palette-search".into(), response.rect));
+
+        let mut y = search.max.y + 4.0;
+        for (index, entry) in shown.iter().enumerate() {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(box_rect.left() + 8.0, y),
+                egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0),
+            );
+            if index == selected {
+                painter.rect_filled(row, 3.0, theme.selection_focus);
+            }
+            let color = if index == selected {
+                theme.title
+            } else {
+                theme.text
+            };
+            painter.text(
+                row.left_top() + egui::vec2(4.0, 14.0),
+                egui::Align2::LEFT_CENTER,
+                entry.label.clone(),
+                egui::FontId::proportional(13.0),
+                color,
+            );
+            // The hint on the right, so `sessions` the file and `sessions` the command
+            // are told apart before either is opened.
+            painter.text(
+                row.right_top() - egui::vec2(4.0, 14.0),
+                egui::Align2::RIGHT_CENTER,
+                entry.hint.clone(),
+                egui::FontId::proportional(11.0),
+                theme.dim,
+            );
+            summary.rows.push(("palette".into(), entry.label.clone()));
+            summary.row_rects.push(("palette".into(), row));
+            y += 22.0;
+        }
+        if entries.len() > PALETTE_LIMIT {
+            let note = format!("… {} more — keep typing", entries.len() - PALETTE_LIMIT);
+            painter.text(
+                egui::pos2(box_rect.left() + 12.0, y + 10.0),
+                egui::Align2::LEFT_CENTER,
+                note.clone(),
+                egui::FontId::proportional(11.0),
+                theme.dim,
+            );
+            summary.rows.push(("palette".into(), note));
+        }
+        if shown.is_empty() {
+            let none = "nothing matches";
+            painter.text(
+                egui::pos2(box_rect.left() + 12.0, search.max.y + 18.0),
+                egui::Align2::LEFT_CENTER,
+                none,
+                egui::FontId::proportional(12.0),
+                theme.dim,
+            );
+            summary.rows.push(("palette".into(), none.into()));
+        }
+        summary
+            .rows
+            .push(("palette".into(), "esc closes · enter opens".into()));
     }
     /// The icon strip that chooses what the sidebar shows.
     ///
@@ -1497,7 +1776,7 @@ impl IdeApp {
         // promised is the code above: a composer that steals the keyboard back from
         // whichever control the reader is actually using is a composer nobody else can
         // type into.
-        if !response.has_focus() && !focused_elsewhere {
+        if !response.has_focus() && !focused_elsewhere && self.palette.is_none() {
             response.request_focus();
         }
         summary.rows.push(("composer".into(), hint.to_string()));
@@ -2364,6 +2643,124 @@ mod tests {
         );
     }
 
+    /// Did the frame draw this exact palette row?
+    ///
+    /// A helper rather than four spellings of one lookup. `region` yields `&str`, and a
+    /// palette test that passes because `alpha` matched `alpha.rs.bak` has measured nothing
+    /// — so the comparison is exact, by name.
+    fn palette_has(f: &FrameSummary, label: &str) -> bool {
+        f.region("palette").contains(&label)
+    }
+    /// `Ctrl+P` opens a palette that lists files and commands.
+    ///
+    /// The window had **two** keys before this — `Enter` and `Escape`, both the composer's.
+    /// Every file was reachable only by clicking through the tree, and the tree is the pane
+    /// that disappears first as the window narrows. A reader who cannot type a name has to
+    /// know where the file is already, which is the browser, not the IDE.
+    #[test]
+    fn control_p_opens_a_palette_of_files_and_commands() {
+        let (dir, _keep) = scratch_workspace("palette");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+
+        let opened = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        assert!(
+            palette_has(&opened, "alpha.rs"),
+            "the palette must list the workspace's files.\n{}",
+            opened.describe()
+        );
+        assert!(
+            palette_has(&opened, "reload tree"),
+            "and the window's own commands, not only files.\n{}",
+            opened.describe()
+        );
+    }
+
+    /// Typing filters it, and `Enter` opens what is highlighted.
+    ///
+    /// The whole point is reaching a file **by name**, so the test types a name rather than
+    /// clicking a row: a palette that opens correctly and cannot be searched is a menu.
+    #[test]
+    fn typing_in_the_palette_filters_and_enter_opens_the_file() {
+        let (dir, _keep) = scratch_workspace("palette-filter");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        h.type_text("beta");
+
+        let filtered = h.paint();
+        let rows = filtered.region("palette");
+        assert!(
+            palette_has(&filtered, "beta.rs"),
+            "the typed name must be found: {rows:?}"
+        );
+        assert!(
+            !palette_has(&filtered, "alpha.rs"),
+            "and a row that does not match must be gone, not merely further down: {rows:?}"
+        );
+
+        let opened = h.press(egui::Key::Enter);
+        assert!(
+            h.app.open.is_some_and(|f| f.path == "beta.rs"),
+            "Enter must open the highlighted row.\n{}",
+            opened.describe()
+        );
+        assert!(
+            !palette_has(&opened, "beta.rs"),
+            "and the palette must close once it has done its job.\n{}",
+            opened.describe()
+        );
+    }
+
+    /// `Escape` closes it, and does **not** clear the draft.
+    ///
+    /// This is the collision that decides the order things happen in. The composer takes
+    /// `Escape` unconditionally — it is how a run is aborted — so a palette that read it later
+    /// would be reading an event already taken. Reading it first is right; what has to be
+    /// checked is that doing so did not steal the composer's meaning.
+    #[test]
+    fn escape_closes_the_palette_and_leaves_the_draft_alone() {
+        let (dir, _keep) = scratch_workspace("palette-esc");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        h.app.set_draft("half a thought");
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+
+        let closed = h.press(egui::Key::Escape);
+        assert!(h.app.palette.is_none(), "Escape must close the palette");
+        assert!(
+            !closed.drew("palette"),
+            "and it must be gone from the frame.\n{}",
+            closed.describe()
+        );
+        assert_eq!(
+            h.app.draft, "half a thought",
+            "Escape closed the palette, not the draft"
+        );
+    }
+
+    /// A palette row can run a **command**, not only open a file.
+    ///
+    /// A palette that only opens files is a file finder wearing a command palette's name. The
+    /// commands are the window's own: there is no command table in this crate to draw on yet,
+    /// and three entries that demonstrably work beat thirty that do not.
+    #[test]
+    fn a_palette_row_can_switch_the_sidebar() {
+        let (dir, _keep) = scratch_workspace("palette-cmd");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        h.type_text("sessions");
+
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        assert_eq!(
+            h.app.sidebar,
+            crate::app::SidebarView::Sessions,
+            "the palette must be able to reach the window's commands"
+        );
+    }
+
     /// Non-ASCII text is cut on a character boundary, so the row never ends in the
     /// replacement character that a byte slice would leave behind.
     #[test]
@@ -2441,20 +2838,24 @@ mod tests {
             });
             full.textures_delta.clear();
         }
-        /// Press and release one key.
-        fn press(&mut self, key: egui::Key) {
+        /// Press and release one key, and return the frame it produced.
+        fn press(&mut self, key: egui::Key) -> FrameSummary {
+            self.chord(egui::Modifiers::NONE, key)
+        }
+        /// Press and release one key with modifiers, and return the frame it produced.
+        fn chord(&mut self, modifiers: egui::Modifiers, key: egui::Key) -> FrameSummary {
             let mut input = self.input.clone();
             input.events = vec![egui::Event::Key {
                 key,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers: egui::Modifiers::NONE,
+                modifiers,
             }];
-            let mut full = self.ctx.run_ui(input, |ui| {
-                self.app.paint(ui);
-            });
+            let mut out = FrameSummary::default();
+            let mut full = self.ctx.run_ui(input, |ui| out = self.app.paint(ui));
             full.textures_delta.clear();
+            out
         }
         /// Put the pointer on `p`, press, then release on a later frame — and return the
         /// frame the release produced.

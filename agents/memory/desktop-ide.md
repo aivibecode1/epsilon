@@ -86,6 +86,22 @@ relative to where it is produced.**
 Battery `m250`: **1,813 tests / 74 binaries, 0 failed**, attempt 1. Clippy 46 s, test 381 s,
 demo 149 s — against 1,058/1,696/290 s for the same battery with debug info on.
 
+## M251: the window had two keys
+
+`Enter` and `Escape`, both the composer's. Everything else needed the mouse, and the file
+tree — the first pane to vanish as the window narrows — was the only route to a file.
+`Ctrl+P` now opens a palette listing every workspace file plus the window's own commands.
+
+**The order lesson, for the third time now.** The palette reads `Enter`/`Escape` **before**
+the composer, because the composer takes both unconditionally. That is M250's tab-strip bug
+one layer down: *read a key before the widget that wanted it, not after.* Three instances in
+two milestones is a pattern, not a coincidence.
+
+Four commands, not thirty — there is no command table in this crate, and working entries
+beat aspirational ones. `palette_entries` is the seam to widen when one exists.
+
+**Battery `m251`: 1,817 tests / 74 binaries, 0 failed**, attempt 1.
+
 ## What exists now
 
 | Piece | Where | State |
@@ -134,19 +150,18 @@ the same lesson as ADR-012's `global_dir`.
 2. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
    window is hidden, so a run that finished in the background produces no `AgentEnd` on
    screen until the window is shown. That belongs in `logic`.
-1. **Watch the diff pane on a real screen.** Every claim about it is an offscreen-`Context`
-   measurement; M250 has never been rendered through wgpu. Added/removed legibility needs eyes.
-2. **Reviewed state for changes.** OpenCode's diff viewer tracks which files the reader has
-   reviewed, so "what is left to look at" is answerable. Epsilon cannot answer that.
-3. **Reload the tree on a filesystem event**, not only on the agent's own change events.
-4. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
-   window is hidden, so a run that finished in the background produces no `AgentEnd` on
-   screen until the window is shown. That belongs in `logic`.
-5. **The tasks and sessions panes are never measured for containment.** M248's
-   `row_rects` covers the transcript and the editor; these two share the isolation fix but
-   a regression moving only them would not be caught.
-6. **A close button on tabs**, and a settings surface — `Preferences` is still constructed
-   once and never mutated, so `sidebar_width` and `sidebar_visible` are unreachable.
+1. **Watch the desktop on a real screen.** Five milestones have now said "every claim is an
+   offscreen-`Context` measurement"; the palette is the largest surface that has never been
+   seen at all. The way to settle it is `cargo run -p epsilon-desktop` on this box with a
+   real workspace, and looking — the TUI already has `scripts/console-probe.py` for its half.
+2. **A command table.** The palette can reach four things because that is all the window
+   offers. A real registry — model picker, sessions, diff review, sidebar — is the next
+   slice and wants an id/label/handler table rather than more palette entries.
+3. **Arrow keys in the palette are implemented and untested.**
+4. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
+5. **A filesystem watcher** for the tree, and `App::logic` draining so a background run's
+   `AgentEnd` reaches the screen while the window is hidden.
+6. **The tasks and sessions panes are never measured for containment.**
 
 ## egui lessons worth not re-learning
 
