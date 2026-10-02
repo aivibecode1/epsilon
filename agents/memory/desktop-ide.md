@@ -249,13 +249,31 @@ the frame test still failed, because the drawing never reached `FrameSummary.row
 summary does not carry is a line no frame test can see — *painting without recording is how a
 feature ships unverified*, and it is the sixth time this window has produced that shape.
 
+## M267: commands, and a channel that was never connected
+
+`send_draft` parsed nothing, so `/compact` typed in the window went to the model as a prompt.
+Now three outcomes — run it, send it (not a command), or **refuse it by name** — and the match
+on `Command` is exhaustive, so a new terminal command breaks `commands.rs` until someone
+decides what the window does with it.
+
+**The bigger find:** `goal_round_tx: unbounded_channel().0` with `…rx: unbounded_channel().1`
+is two different channels, so **an armed goal in the window has never continued itself** since
+M258. Found because `/compact`'s own completion channel copied the shape. Two lessons worth
+more than the fix:
+
+- **The shape that already shipped is the one a new writer copies.** A fresh channel written
+  next to a broken one inherited the bug.
+- **The test that would have caught it was built not to** (`start_goal_round_for_test` skips
+  the channel), and the first version of the new one **passed against the broken channel** —
+  it watched `rounds_started`, which `begin_goal_round` moves *before* it sends. It now waits
+  for the notice `start_goal_round` pushes.
+
 ## Next slice, in order
 
-0. **The window has no slash commands at all** (A38) — the largest gap left: `/compact` typed
-   in the window is sent to the model as literal text. `epsilon-desktop` already depends on
-   `epsilon-tui` (the palette, ADR-020), so `parse_command` is reachable with no new crate edge;
-   the design question is which behaviours are agent-level — shareable through
-   `epsilon-runtime` — and which are TUI-local and cannot be.
+0. ~~**The window has no slash commands at all.**~~ **DONE at M267** — `/compact`, `/goal`,
+   `/sessions` work; everything else the terminal has is refused by name. **`/new` and
+   `/goal edit|complete|blocked` are the obvious next verbs**, and the refusal table is derived
+   from the parser, so each is a line plus its behaviour.
 1. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
    **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
    as six — so the transcript builds a text widget for every block of every row, on screen or
@@ -264,22 +282,22 @@ feature ships unverified*, and it is the sixth time this window has produced tha
    20–30% that parsing was, and `Agent::goal()` is cached — it was 30 ms at 400 stored
    messages, twice per frame, under the store lock.) Re-measure first:
    `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`.
-2. **A command table.** The palette reaches four things because that is all the window
-   offers. A real registry — model picker, sessions, diff review — wants an id/label/handler
-   table rather than more palette entries.
-3. **Drive the round driver end to end.** The tests drive the answer half and the band; no
-   test starts a round from an armed goal and watches it arrive.
-4. **Build a desktop probe** — a `scripts/desktop-probe.py` that launches
-   `epsilon-desktop`, injects input and captures the window, the way `console-probe.py`
-   does for the TUI. Nothing after tessellation is verifiable without it (A25).
+2. **`Handle::try_current()` failing degrades to silence** in both the round driver and
+   `/compact`. In the product eframe is inside a runtime, so that is the test-only path — but
+   "the feature does not happen, with no notice" is how the channel defect's test gap happened.
+3. **One table for the palette and the typed verb.** With `commands.rs` in place, a palette
+   entry and a typed `/word` should come from one registry rather than two.
+4. **Build a desktop probe** — `scripts/desktop-probe.py` beside `console-probe.py`. Nothing
+   after tessellation is verifiable without it (A25).
 5. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
 6. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
    the transcript and the editor only.
 7. **Arrow keys in the palette are implemented and untested.**
 
-**The full parity and defect list is not here**: it is rows A27–A44 of
+**The full parity and defect list is not here**: it is rows A27–A45 of
 [`audit/03-defects.md`](../../audit/03-defects.md), written by four parallel read-only reviews
-at M262, and [`review-sweep-m262.md`](review-sweep-m262.md) says what to do first.
+at M262 and kept current since, and [`review-sweep-m262.md`](review-sweep-m262.md) says what
+to do first.
 
 ## egui lessons worth not re-learning
 

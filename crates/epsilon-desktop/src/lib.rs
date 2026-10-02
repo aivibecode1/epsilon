@@ -48,6 +48,7 @@
 const _REAL_PATH_FORWARDED: () = epsilon_core::REAL_PATH_ENABLED;
 
 pub mod app;
+pub mod commands;
 pub mod diff;
 pub mod layout;
 pub mod markup;

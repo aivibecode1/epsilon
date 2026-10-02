@@ -1677,15 +1677,34 @@ covers the product's own route without refreshing by hand.
 every paint — measured at **0.9 ms** for fifty files. The **202 ms-at-500 estimate beside it
 should not be cited again as if it were a measurement.**
 
-### A38 — the largest parity gaps between the terminal and the window
+### A38 — **PARTLY CLOSED at M267.** the largest parity gaps between the terminal and the window
 
 | Gap | Evidence | Cost |
 |---|---|---|
-| **No slash commands at all.** `send_draft` → `session.submit` → `user_message`; nothing parses a command. | `desktop/src/app.rs:2108-2129`, `session.rs:819` | Typing `/compact` sends the literal string **to the model**. The terminal has ~40 verbs (`tui/src/picker.rs:737-822`); the window's table has 8. **Cheaper to reach than it looks:** `epsilon-desktop` already depends on `epsilon-tui` for the palette (ADR-020), so `parse_command` needs no new crate edge — the open question is which behaviours are agent-level and therefore shareable. |
+| **CLOSED — no slash commands at all.** `send_draft` → `session.submit` → `user_message`; nothing parsed a command. | `desktop/src/app.rs` `send_draft` | Typing `/compact` sent the literal string **to the model**. Now three outcomes: run it, send it (it is not a command), or **refuse it by name** — with `/timeline` (a gap in *this* product) and `/timelin` (nobody's) worded differently, because they are different facts. The match on `Command` is **exhaustive**, so a new terminal command **breaks this module's build** until someone decides what the window does with it; it caught two forgotten variants on the first compile. `/compact`, `/goal`, `/sessions` work; `/new` and `/goal edit` are refused rather than half-built. [milestone](../docs/milestones/M267-window-commands.md) |
 | **CLOSED at M264 — tool output never reached the live transcript.** `ToolExecutionUpdate` fell into `_ => {}` while the *resume* path did show results. | was `desktop/src/session.rs:497` vs `:257-268` | No `bash` stdout was visible and the same session had two transcripts depending on whether you had just resumed it. Now handled, matched by `tool_call_id`, bounded to 40 lines, and **the replay path writes the same field the live one does**. The single-slot `live_tool` went with it — deleted, not left without a reader. |
-| **The window cannot declare a gate, a round cap, or complete/blocked.** `GoalOp` has 7 variants; the window builds 4. | `contracts/src/goal.rs:310-346` vs `app.rs:251-254` | The band's `"{n} gate(s)"` always reads `0` from this window. M240–M257 has no desktop equivalent. |
-| **No context, cost or token figures.** `Agent::session_state` is never called, though `layout.rs:133` promises "workspace, model, context, cost". | `desktop/src/app.rs:924,1645` | A reader cannot decide when to compact. |
-| **No model picker, no compaction, no conversation search, no theme switch** without a relaunch. | `desktop/src/app.rs:1635-1647`, `session.rs:497` | Each is a one-line argument from a capability the terminal already has. |
+| **The window cannot declare a gate, a round cap, or complete/blocked.** `GoalOp` has 7 variants; the window builds 4. | `contracts/src/goal.rs` vs `app.rs` `GoalCommand` | The band's `"{n} gate(s)"` always reads `0` from this window. `/goal edit` is now refused **by name** rather than silently ignored — the gap became visible, which it was not. |
+| **No context, cost or token figures.** `Agent::session_state` is never called, though `layout.rs:133` promises "workspace, model, context, cost". | `desktop/src/app.rs` | A reader cannot decide when to compact. |
+| **No model picker, no conversation search, no theme switch** without a relaunch. | `desktop/src/app.rs` | Each is a verb the terminal already has, and each is now **refused by name** instead of being forwarded to the model. |
+
+### A45 — **CLOSED at M267.** an unattended goal in the window never continued itself
+
+`goal_round_tx: unbounded_channel().0` and `goal_round_rx: unbounded_channel().1` are the `.0`
+of one call and the `.1` of **another** — two channels. The round driver spawned a task that
+sent where nothing listened; `take_goal_round` read where nothing wrote; the answer could
+never be applied. **The feature has been inert since M258**, in both constructors.
+
+Found while wiring `/compact`, whose completion channel copied the same mistake — which is the
+useful part: **the shape that had already shipped is the one a new writer copies by muscle
+memory.** One `eprintln` in the drain located it.
+
+Invisible because every goal test drives `start_goal_round_for_test`, which bypasses the
+channel by design — **the one test that could have shown it was the one built not to.** The
+test that closes it (`a_goal_round_spawned_by_the_driver_really_arrives`) **passed against the
+broken channel on its first version**: it waited on `rounds_started`, which `begin_goal_round`
+moves *before* it sends anything. It now waits on the notice `start_goal_round` pushes, and
+fails against the disconnected form.
+[milestone](../docs/milestones/M267-window-commands.md)
 
 ### A39 — three desktop UI defects a frame would have caught
 

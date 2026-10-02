@@ -5,6 +5,16 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop IDE understands slash commands — and says so when it doesn't.** Typing
+  `/compact` in the window used to send the literal text to the model, which answered
+  something plausible and never mentioned that the window had never heard of a slash command.
+  `/compact`, `/goal` and `/sessions` now work; anything else the terminal understands is
+  refused *by name*, with a note about where it does work — so a smaller window stops being a
+  misleading one (M267).
+- **An unattended goal in the desktop IDE now continues itself.** It never did. The window
+  was reading its round answers from a different channel than the one it wrote them to, so the
+  feature was inert since it shipped; the tests missed it because every one of them bypassed
+  that channel by design (M267).
 - **The desktop IDE draws faster on a long conversation.** Two things it was doing on every
   repaint are now done once. Assistant answers were re-parsed from Markdown whether or not the
   text had changed, and the current goal was read out of the session log — which meant copying

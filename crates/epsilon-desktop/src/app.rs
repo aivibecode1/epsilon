@@ -164,10 +164,14 @@ enum PaletteAction {
 /// terminal. A `create` with an empty query refuses and says so rather than creating a goal
 /// whose objective is the empty string — a goal with nothing to aim at that runs to its cap.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum GoalCommand {
+pub enum GoalCommand {
+    /// Create a goal whose objective is the query that came with it.
     Create,
+    /// Stop an armed goal from continuing itself.
     Pause,
+    /// Arm it again.
     Resume,
+    /// Remove the goal entirely.
     Clear,
 }
 
@@ -382,7 +386,7 @@ impl IdeApp {
     /// verb that worked, and a goal that refused to pause because it is not continuable leaves
     /// the reader believing it is paused — which is the "nothing happened" state this window
     /// keeps producing. The terminal's `/goal` says the same things for the same reasons.
-    fn run_goal_command(&mut self, cmd: GoalCommand, query: &str) {
+    pub(crate) fn run_goal_command(&mut self, cmd: GoalCommand, query: &str) {
         let Some(session) = self.session.as_ref() else {
             self.transcript
                 .push_notice("no agent attached, so there is no goal to change");
@@ -541,7 +545,15 @@ pub struct IdeApp {
     ///
     /// The terminal solved this shape at M198 and the shape is the same one: cache it and
     /// refresh at the two places a goal can change.
-    goal: Option<epsilon_contracts::goal::GoalView>,
+    pub(crate) goal: Option<epsilon_contracts::goal::GoalView>,
+    /// What a running `/compact` reported, when it reports.
+    ///
+    /// A channel rather than an event because `compact_now`'s success and failure are
+    /// otherwise indistinguishable at the window: the reducer folds neither
+    /// `CompactionStarted` nor `CompactionFinished`, so a compaction that failed would leave
+    /// a reader who pressed `/compact` looking at an unchanged transcript.
+    compact_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    compact_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     /// Where each palette row was drawn last frame, with its index, so a click can be
     /// applied **before** the rows are drawn again.
     ///
@@ -619,6 +631,28 @@ impl IdeApp {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
             Preferences::default(),
         );
+        // **One channel, bound once.** These fields used to read `unbounded_channel().0` and
+        // `unbounded_channel().1` — which is *two different channels*, the `.0` of one call
+        // and the `.1` of another. The goal round's answer went to a channel nothing read
+        // from, so `take_goal_round` could only ever return `None` and **an unattended goal
+        // in the window never continued itself**, which is the whole feature.
+        //
+        // Nothing caught it because the tests drive `start_goal_round_for_test`, which
+        // bypasses the channel by design: the one test that could have shown it was the one
+        // built not to. `a_goal_round_spawned_by_the_driver_really_arrives` closes that.
+        // **One channel, bound once.** These fields used to read `unbounded_channel().0` and
+        // `unbounded_channel().1` — which is *two different channels*, the `.0` of one call
+        // and the `.1` of another. The goal round's answer went to a channel nothing read
+        // from, so `take_goal_round` could only ever return `None` and **an unattended goal
+        // in the window never continued itself**, which is the whole feature.
+        //
+        // Nothing caught it because the tests drive `start_goal_round_for_test`, which
+        // bypasses the channel by design: the one test that could have shown it was the one
+        // built not to. `a_goal_round_spawned_by_the_driver_really_arrives` closes that, and
+        // its first version passed against the broken channel — it waited on the round
+        // *count*, which `begin_goal_round` moves before it sends anything.
+        let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             opts,
             theme,
@@ -635,11 +669,13 @@ impl IdeApp {
             review: None,
             tab_rects: Vec::new(),
             palette: None,
-            goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
-            goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
+            goal_round_tx,
+            goal_round_rx,
             goal_round_pending: false,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             goal: None,
+            compact_tx,
+            compact_rx,
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -654,6 +690,9 @@ impl IdeApp {
     pub fn without_agent(opts: Options) -> Self {
         let tree = crate::workspace::FileTree::load(&opts.workspace);
         let transcript = crate::session::Transcript::new(&opts.workspace);
+        // Bound once, as in `new` — see there for why this used to be two channels.
+        let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             opts,
             theme: IdeTheme::resolve(None),
@@ -670,11 +709,13 @@ impl IdeApp {
             review: None,
             tab_rects: Vec::new(),
             palette: None,
-            goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
-            goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
+            goal_round_tx,
+            goal_round_rx,
             goal_round_pending: false,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             goal: None,
+            compact_tx,
+            compact_rx,
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -755,6 +796,9 @@ impl IdeApp {
         if arrived > 0 {
             self.refresh_goal();
         }
+        if let Some(said) = self.take_compact_notice() {
+            self.transcript.push_notice(&said);
+        }
         self.drive_goal_round();
         self.refresh_changed_files();
     }
@@ -775,6 +819,48 @@ impl IdeApp {
             .session
             .as_ref()
             .and_then(|session| session.agent().goal());
+    }
+
+    /// Compact the session context, on a task, because the summariser is a provider call.
+    ///
+    /// The terminal's `/compact` (M264) and this are the same two lines of behaviour against
+    /// the same `Agent::compact_now`, which is the point: a capability with one
+    /// implementation behaves identically in both frontends.
+    ///
+    /// **Off the paint thread.** `compact_now` resends the whole history — the most expensive
+    /// call in a session — and awaiting it here would freeze the window for the duration,
+    /// which is the failure this window has already produced five other ways.
+    ///
+    /// The answer comes back on a channel, the same shape as the goal round's. It cannot come
+    /// back as an event: `compact_now` emits `CompactionStarted`/`CompactionFinished`, and the
+    /// window's reducer folds neither, so a failure would end with a reader who pressed
+    /// `/compact` and saw nothing at all.
+    pub fn run_compact(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let agent = Arc::clone(session.agent());
+        let tx = self.compact_tx.clone();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            eprintln!("DIAG no runtime handle");
+            self.transcript
+                .push_notice("compact needs the agent's runtime — it is not running here");
+            return;
+        };
+        handle.spawn(async move {
+            let mut produced = Vec::new();
+            let outcome = agent.compact_now(&mut produced).await;
+            tx.send(match outcome {
+                Ok(_) => "context compacted".to_string(),
+                Err(e) => format!("compaction failed: {e}"),
+            })
+            .ok();
+        });
+    }
+
+    /// Drain whatever the compaction reported, if anything is waiting.
+    fn take_compact_notice(&mut self) -> Option<String> {
+        self.compact_rx.try_recv().ok()
     }
     /// Continue an armed goal once the agent has gone idle.
     ///
@@ -2222,19 +2308,42 @@ impl IdeApp {
         if text.is_empty() {
             return None;
         }
-        self.refusal = self.session.as_ref().and_then(|s| s.submit(&text).err());
-        if self.refusal.is_some() {
-            return None;
+        // **A command is not a prompt.** Before this, anything starting with `/` went
+        // straight to the model as text, so a reader who knew the terminal asked the model to
+        // compact and got a plausible paragraph back. `try_command` answers with what the
+        // window did, and the third outcome — refused *by name* — is the one that matters:
+        // a window with three commands is smaller, but one that forwards the rest silently is
+        // lying. See `crate::commands`.
+        match self.try_command(&text) {
+            crate::commands::Outcome::Send(text) => {
+                self.refusal = self.session.as_ref().and_then(|s| s.submit(&text).err());
+                if self.refusal.is_some() {
+                    return None;
+                }
+                self.draft.clear();
+                // The user's own words, on screen at the moment they are sent.
+                //
+                // `AgentEvent` has no "you said this" — the prompt is an input, not an output, so
+                // no event carries it — and a frontend that waits for one shows an empty transcript
+                // until the model answers. The reader pressed Enter and nothing appeared, which is
+                // the state this whole repository keeps trying to rule out.
+                self.transcript.push_user(&text);
+                Some(text)
+            }
+            crate::commands::Outcome::Ran(said) => {
+                self.draft.clear();
+                self.transcript.push_notice(&said);
+                None
+            }
+            crate::commands::Outcome::Refused(said) => {
+                // **The draft is deliberately left as it was typed.** Clearing it would make a
+                // refused command indistinguishable from one that ran, and the reader's words
+                // are still the right words — they want to edit the argument, or send it as a
+                // prompt on purpose.
+                self.transcript.push_notice(&said);
+                None
+            }
         }
-        self.draft.clear();
-        // The user's own words, on screen at the moment they are sent.
-        //
-        // `AgentEvent` has no "you said this" — the prompt is an input, not an output, so
-        // no event carries it — and a frontend that waits for one shows an empty transcript
-        // until the model answers. The reader pressed Enter and nothing appeared, which is
-        // the state this whole repository keeps trying to rule out.
-        self.transcript.push_user(&text);
-        Some(text)
     }
     /// The composer's text box, and the two ways to send.
     ///

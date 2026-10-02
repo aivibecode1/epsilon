@@ -168,5 +168,11 @@ audit/evidence/*.log
 !audit/evidence/gate-m266.log
 !audit/evidence/gate-m266b.log
 
+# M267: the window had no slash commands, and the goal round channel was two channels.
+# 1889 tests / 77 binaries, 7 of 7 gates, attempt 1. Both logs kept: the first attempt
+# failed on check-line-endings because my own tooling rewrote a file with CRLF.
+!audit/evidence/gate-m267b.log
+!audit/evidence/gate-m267-FAILED-crlf.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

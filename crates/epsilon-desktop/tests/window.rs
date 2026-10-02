@@ -82,6 +82,45 @@ fn wire(workspace: &std::path::Path) -> (egui::Context, IdeApp) {
     (ctx, app)
 }
 
+/// A window, a context, **and the runtime its frame has to run inside**.
+///
+/// [`wire`] builds a session on its own runtime but does not hand it back, so a caller that
+/// needs the frame to be able to `spawn` — `/compact`, the goal round driver — has nothing to
+/// enter. Both use [`tokio::runtime::Handle::try_current`] and both **degrade quietly
+/// without a context**: the round driver sets its pending flag back and returns, so the
+/// feature simply does not happen and every test that avoided the spawn path stayed green.
+///
+/// That is exactly the shape of the defect this fixture exists for, so it returns the
+/// runtime and the two tests hold `runtime.enter()` for the whole of their body.
+fn wire_with_runtime(
+    workspace: &std::path::Path,
+) -> (Arc<tokio::runtime::Runtime>, egui::Context, IdeApp) {
+    let runtime = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a test runtime"),
+    );
+    let launch = epsilon_runtime::resolve_launch(&LaunchRequest {
+        workspace: workspace.to_path_buf(),
+        provider: ProviderChoice::Faux,
+        ..LaunchRequest::for_workspace(workspace)
+    })
+    .expect("a faux launch always resolves");
+    let session = runtime
+        .block_on(IdeSession::start(Arc::clone(&runtime), launch))
+        .expect("composing an agent in an empty workspace");
+    let ctx = egui::Context::default();
+    let app = IdeApp::new(
+        Options::for_workspace(workspace),
+        session,
+        vec!["provider: faux (offline scripted)".to_string()],
+        &ctx,
+    );
+    (runtime, ctx, app)
+}
+
 /// Paint one frame at `w` x `h`, disposing of what it produced.
 fn paint_once(
     ctx: &egui::Context,
@@ -1247,6 +1286,239 @@ fn an_unarmed_goal_says_it_will_not_continue() {
         "an active goal that will not continue must say so.\n{}",
         frame.describe()
     );
+}
+
+/// **A goal round the driver spawned really arrives.**
+///
+/// This is the test `agents/memory/desktop-ide.md` listed as "drive the round driver end to
+/// end — the tests drive the answer half and the band", and building it found the reason
+/// nobody had: **the round channel was two different channels**.
+///
+/// `goal_round_tx: unbounded_channel().0, goal_round_rx: unbounded_channel().1` is the `.0`
+/// of one call and the `.1` of another. The driver spawned a task that sent its answer into
+/// a channel nothing was receiving from, `take_goal_round` read a channel nothing wrote to,
+/// and the answer was therefore never applied — so **an unattended goal in the window never
+/// continued itself**, which is the entire point of M258's round driver.
+///
+/// It was invisible because every goal test drives `start_goal_round_for_test`, which skips
+/// the channel by design. The one test that could have shown the defect was the one test
+/// built not to.
+#[test]
+fn a_goal_round_spawned_by_the_driver_really_arrives() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (runtime, ctx, mut app) = wire_with_runtime(ws.path());
+    // **The context is held for the whole body.** `drive_goal_round` spawns with
+    // `Handle::try_current` and, without one, returns *silently* — pending flag back, nothing
+    // spawned. That quiet path is how a disconnected channel survived a green suite.
+    let guard = runtime.enter();
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Create {
+                objective: "keep going".into(),
+                max_rounds: Some(3),
+            },
+        )
+        .expect("a goal is created");
+    agent.set_goal_armed(true);
+    app.refresh_goal();
+
+    // Let the driver spawn its gate check, then pump frames as the window does.
+    //
+    // **The thing to wait for is the notice `start_goal_round` pushes**, not
+    // `rounds_started`. The first version of this test waited for the round count and
+    // **passed against the disconnected channel** — because `begin_goal_round` records the
+    // round before it sends anything, so the count moves whether or not the answer ever
+    // crosses. Asserting on the number proved the spawn happened and said nothing about the
+    // channel, which is the half that was broken.
+    let mut applied = false;
+    for _ in 0..300 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        if paint_once(&ctx, &mut app, 1440.0, 900.0)
+            .describe()
+            .contains("goal continuing")
+        {
+            applied = true;
+            break;
+        }
+    }
+    drop(guard);
+    assert!(
+        applied,
+        "the round the driver spawned must arrive and be applied.\n{}",
+        paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+    );
+}
+
+/// **A slash command the window does not have is refused by name, never sent to the model.**
+///
+/// This is the defect this slice exists to close. `send_draft` used to hand its text to
+/// `session.submit` unexamined, so a reader who knew the terminal typed `/compact` and the
+/// model was asked to compact **as a prompt** — it answered something plausible and nothing
+/// said the window had never heard of a slash command.
+///
+/// So the assertion is not "the window supports `/compact`". It is that a command it does
+/// *not* support produces a refusal **and no run**: the refusal names the command and says
+/// where it lives, and the transcript gains a notice rather than a user row, because a user
+/// row would mean it was sent.
+#[test]
+fn a_command_the_window_lacks_is_refused_and_never_sent_to_the_model() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    // `/timeline` walks the session tree and draws it in a terminal overlay. There is no such
+    // thing here, and the honest answer is that rather than forwarding it.
+    let outcome = app.try_command("/timeline");
+    match &outcome {
+        Outcome::Refused(refusal) => {
+            assert!(
+                refusal.contains("/timeline"),
+                "an unbuilt command must be refused by name, got {refusal:?}"
+            );
+            assert!(
+                refusal.contains("terminal"),
+                "and the refusal must say where it lives: {refusal:?}"
+            );
+        }
+        other => panic!("an unbuilt command must be refused, got {other:?}"),
+    }
+
+    // And through the route a reader actually uses.
+    app.set_draft("/timeline");
+    assert!(
+        app.send_draft().is_none(),
+        "a refused command must not be submitted"
+    );
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let screen = frame.describe();
+    assert!(
+        screen.contains("/timeline"),
+        "the refusal must be on screen and must name the command:\n{screen}"
+    );
+    assert!(
+        screen.contains("terminal"),
+        "and say where it lives, so the reader knows it is not a typo:\n{screen}"
+    );
+}
+
+/// **A line that is not a command is still the reader's words.**
+///
+/// The obvious over-correction: treat anything starting with `/` as a command and swallow a
+/// message about a path. The parser already draws the line — anything with a leading `/` is a
+/// command, and an unrecognised head becomes `Unknown` — so this is really a test that the
+/// window kept that rule rather than inventing a looser one of its own, which would mean the
+/// two frontends disagree about what a given line **means**.
+#[test]
+fn a_line_that_is_not_a_command_is_still_sent() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (_ctx, mut app) = wire(ws.path());
+    for line in [
+        "please refactor crates/epsilon-core/src/lib.rs",
+        "run the tests, then explain what broke",
+        "",
+    ] {
+        assert_eq!(
+            app.try_command(line),
+            Outcome::Send(line.to_string()),
+            "a line with no leading slash is the reader's words: {line:?}"
+        );
+    }
+}
+
+/// A `/word` **nobody** has is a typo, and says so — rather than sending the reader to the
+/// terminal for something that is not there either.
+///
+/// The two refusals are different facts and the window has to tell them apart: `/timeline` is
+/// a gap in *this product* and works in the terminal; `/timelin` is nobody's.
+#[test]
+fn an_unknown_slash_word_says_unknown_rather_than_not_in_this_window() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (_ctx, mut app) = wire(ws.path());
+    let Outcome::Refused(said) = app.try_command("/timelin") else {
+        panic!("a `/word` is always a command, so this must be a refusal");
+    };
+    assert!(
+        said.contains("unknown") && said.contains("timelin"),
+        "an unrecognised head must say it is unknown, and name it: {said:?}"
+    );
+    assert!(
+        !said.contains("it works in the terminal"),
+        "and must NOT send the reader to the terminal for a command that does not exist: {said:?}"
+    );
+}
+
+/// **`/compact` in the window compacts, and says so.**
+///
+/// The point is not that `compact_now` works — the terminal has proved that since M264 — it
+/// is that the window now *has* the verb at all, and that the completion reaches the
+/// transcript. The last part is the one a spawn can lose: the answer arrives on a channel,
+/// and a reader who pressed `/compact` and saw nothing has learned nothing.
+#[test]
+fn compact_from_the_typed_line_compacts_and_reports() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (runtime, ctx, mut app) = wire_with_runtime(ws.path());
+    // Same reason as the round driver: `/compact` spawns onto `Handle::try_current`, and
+    // without a context it reports "no runtime here" instead of compacting.
+    let guard = runtime.enter();
+
+    let outcome = app.try_command("/compact");
+    assert!(
+        matches!(outcome, Outcome::Ran(_)),
+        "/compact is a command the window has, got {outcome:?}"
+    );
+
+    // Let the spawned compaction answer, then pump as a frame would.
+    let mut reported = false;
+    for _ in 0..300 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        if frame.describe().contains("compact") {
+            reported = true;
+            break;
+        }
+    }
+    drop(guard);
+    assert!(
+        reported,
+        "the compaction must report back into the transcript.\n{}",
+        paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+    );
+}
+
+/// The refusal table and the parser have not drifted apart.
+///
+/// `refused_heads` is derived **from** the parser rather than hand-written — the same
+/// discipline M171/M172 applied to the terminal's own sweep, for the same reason: a
+/// hand-written list is a gap waiting for a new command to land in.
+#[test]
+fn every_command_head_the_window_lacks_is_refused_by_name() {
+    let refused = epsilon_desktop::commands::refused_heads();
+    assert!(
+        refused.len() > 20,
+        "the terminal has far more commands than the window: {refused:?}"
+    );
+    for head in &refused {
+        assert!(
+            !epsilon_desktop::commands::SUPPORTED.contains(head),
+            "/{head} is listed as supported AND refused: {refused:?}"
+        );
+    }
+    for head in epsilon_desktop::commands::SUPPORTED {
+        assert!(
+            !refused.contains(head),
+            "/{head} is supported but also refused: {refused:?}"
+        );
+    }
 }
 
 /// With no goal there is no band, so the transcript gets the space back.
