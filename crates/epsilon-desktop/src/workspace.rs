@@ -335,6 +335,104 @@ pub fn draw_tree(
     clicked
 }
 
+/// Draw what the agent changed to `change`, in place of the file.
+///
+/// **This is the review, and the pane had none.** The transcript could report a change in
+/// prose — a summary line and a capped number of diff rows — but a report is not a review:
+/// the reader cannot see the whole change, cannot tell a removal from an addition at a
+/// glance, and has to scroll back through the conversation to find it.
+///
+/// Three things it does that a coloured text row does not:
+///
+/// * **Added and removed are different colours, not just different characters.** A `+` and
+///   a `-` are the whole signal, and they are two greys rendered next to each other.
+/// * **A coarse change says so.** A block replacement past eight changed lines is not a
+///   line-accurate diff, and a diff that quietly presents itself as one is worse than the
+///   prose it replaced.
+/// * **The clipping is the pane's**, so a long line cannot paint across the transcript.
+pub fn draw_diff(
+    ui: &mut egui::Ui,
+    theme: &IdeTheme,
+    rect: egui::Rect,
+    change: &crate::diff::Change,
+    mut summary: Option<&mut crate::app::FrameSummary>,
+) {
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.rect_filled(rect, 4.0, theme.background);
+    painter.rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(1.0, theme.border),
+        egui::StrokeKind::Inside,
+    );
+    let heading = format!(
+        "{}  ·  +{} −{}  ·  {}  ·  open the file to read it",
+        change.path,
+        change.added(),
+        change.removed(),
+        if change.created {
+            "new file"
+        } else if change.is_coarse() {
+            "middle replaced as a block"
+        } else {
+            "changed"
+        }
+    );
+    painter.text(
+        rect.left_top() + egui::vec2(12.0, 16.0),
+        egui::Align2::LEFT_CENTER,
+        heading.clone(),
+        egui::FontId::proportional(12.0),
+        theme.dim,
+    );
+    if let Some(s) = summary.as_deref_mut() {
+        s.rows.push(("editor".into(), heading));
+    }
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + 30.0),
+        egui::pos2(rect.right(), rect.bottom()),
+    );
+    if body.height() <= 8.0 {
+        return;
+    }
+    // A "+" and a "-" as two greys is the failure this whole pane exists to fix, so the
+    // colours are the palette's success and danger roles rather than two more greys: they
+    // are already separated by the contrast floor, and `theme.rs` already asserts they are
+    // not the same colour.
+    let (add, remove, context) = (theme.success, theme.danger, theme.dim);
+    let line_h = 16.0;
+    let gutter = 52.0;
+    let rows = change.lines.len();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("epsilon-diff-body")
+            .auto_shrink([false, false])
+            .show_rows(ui, line_h, rows, |ui, range| {
+                for i in range {
+                    let line = &change.lines[i];
+                    let row = ui.min_rect();
+                    let (marker, text, color) = match line {
+                        crate::diff::DiffLine::Added(t) => ('+', t.as_str(), add),
+                        crate::diff::DiffLine::Removed(t) => ('-', t.as_str(), remove),
+                        crate::diff::DiffLine::Context(t) => (' ', t.as_str(), context),
+                    };
+                    let painted = format!("{marker}{text}");
+                    ui.painter().text(
+                        egui::pos2(row.left() + gutter, row.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        &painted,
+                        egui::FontId::monospace(12.0),
+                        color,
+                    );
+                    if let Some(s) = summary.as_deref_mut() {
+                        s.rows.push(("editor".into(), painted));
+                        s.row_rects.push(("editor".into(), row));
+                    }
+                }
+            });
+    });
+}
+
 /// Draw the open file, read-only, with line numbers.
 pub fn draw_editor(
     ui: &mut egui::Ui,

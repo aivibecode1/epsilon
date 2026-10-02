@@ -110,6 +110,20 @@ fn pane_ui(ui: &egui::Ui, rect: egui::Rect, id: &str) -> egui::Ui {
     )
 }
 
+/// What a reader did in the transcript pane during one frame.
+///
+/// Named rather than a tuple because the two halves are different kinds of thing — one
+/// answers a gate, the other opens a review — and a caller reading
+/// `if let Some((id, decision))` next to `if let Some(path)` cannot tell at a glance which
+/// is which.
+#[derive(Default)]
+struct TranscriptClicks {
+    /// A permission answered with the mouse: `(request id, decision)`.
+    decision: Option<(String, PermissionDecision)>,
+    /// A "changed" row clicked, as the summary text the row carries.
+    change: Option<String>,
+}
+
 /// The desktop application.
 pub struct IdeApp {
     opts: Options,
@@ -137,6 +151,24 @@ pub struct IdeApp {
     tree_query: String,
     /// The file open in the editor, if any.
     open: Option<crate::workspace::OpenFile>,
+    /// A change to review in place of the file, when the reader asked for one.
+    ///
+    /// `None` is the ordinary state. Set by clicking a "changed" row in the transcript,
+    /// cleared by opening any file — including the same one — because the tab strip and the
+    /// tree are already the reader's two ways back, and a second "close" control would be
+    /// chrome answering a question they had not asked.
+    review: Option<crate::diff::Change>,
+    /// Where each tab was drawn last frame, so a click can be applied **before** the strip
+    /// is drawn again.
+    ///
+    /// egui hands a widget its click result while it is being drawn, so a strip that both
+    /// draws and reacts to clicks cannot also redraw itself correctly in the same frame:
+    /// the reader got the file but the marker still named the old one. Using last frame's
+    /// rectangles puts the action first and the drawing second.
+    ///
+    /// M248 had this shape and read it **after** the pane that fills it, which is why it
+    /// always came back empty. Same data, opposite order — the order is the whole of it.
+    tab_rects: Vec<(String, egui::Rect)>,
     /// Open files, oldest first; the last is what the editor shows.
     tabs: Vec<String>,
     /// Which view the sidebar is showing, chosen from the activity bar.
@@ -220,6 +252,8 @@ impl IdeApp {
             tree,
             tree_query: String::new(),
             open: None,
+            review: None,
+            tab_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout,
@@ -246,6 +280,8 @@ impl IdeApp {
             tree,
             tree_query: String::new(),
             open: None,
+            review: None,
+            tab_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout: IdeLayout::new(
@@ -819,18 +855,25 @@ impl IdeApp {
         );
         summary.rows.push(("workspace".into(), note));
     }
-    /// The editor pane: the open file, read-only.
+    /// The editor pane: the open file, read-only — or the change being reviewed.
     fn editor_pane(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
         let theme = self.theme;
-        // Before the body is read, so a tab press shows its file in the same frame the
-        // click landed — the alternative is a frame that shows the file you just left.
-        if let Some(path) = self.draw_tabs(ui, summary, rect) {
+        // **A tab press is applied before the strip is drawn**, against the rectangles it
+        // occupied last frame. Applied afterwards — which is where egui's own answer lands,
+        // because that answer only exists once the widget has been drawn — the reader got
+        // the file while the marker still named the old one, in the same frame.
+        if let Some(path) = self.pressed_tab(ui) {
             self.open_file(&path);
         }
+        self.draw_tabs(ui, summary, rect);
         let body = egui::Rect::from_min_max(
             egui::pos2(rect.left(), rect.top() + TAB_H),
             egui::pos2(rect.right(), rect.bottom()),
         );
+        if let Some(change) = self.review.clone() {
+            crate::workspace::draw_diff(ui, &theme, body, &change, Some(summary));
+            return;
+        }
         match self.open.clone() {
             Some(file) => {
                 crate::workspace::draw_editor(ui, &theme, body, &file, Some(summary));
@@ -866,22 +909,18 @@ impl IdeApp {
 
     /// The tab strip: every open file, and which one is showing.
     ///
-    /// A tab strip drawn as painted text is a picture of a tab strip. These are buttons, so
-    /// they take clicks — and, like the file tree, the strip **returns** what was pressed
-    /// rather than leaving the frame to go looking for it afterwards. Reading a frame's
-    /// hotspots after the pane that fills them has not run yet yields an empty list every
-    /// time, which is how a strip that looks clickable turns out not to be.
+    /// A tab strip drawn as painted text is a picture of a tab strip, so these are buttons.
+    /// The strip **records where each tab went** and the click is applied by
+    /// [`IdeApp::pressed_tab`] *before* this runs — egui only knows a button was pressed once
+    /// it has been drawn, so a strip that reacted to its own answer could not also redraw
+    /// itself correctly in that frame.
     ///
     /// One file means one tab and no strip: a single tab with nothing to switch to is
     /// chrome that costs a row and says nothing.
-    fn draw_tabs(
-        &mut self,
-        ui: &mut egui::Ui,
-        summary: &mut FrameSummary,
-        rect: egui::Rect,
-    ) -> Option<String> {
+    fn draw_tabs(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+        self.tab_rects.clear();
         if self.tabs.len() < 2 {
-            return None;
+            return;
         }
         let theme = self.theme;
         let painter = ui.painter();
@@ -901,7 +940,6 @@ impl IdeApp {
         // worse than a short tab label. Sharing has no threshold at which that happens.
         let count = self.tabs.len() as f32;
         let width = ((strip.width() - 12.0) / count - 4.0).clamp(8.0, TAB_W);
-        let mut pressed = None;
         for (index, path) in self.tabs.clone().into_iter().enumerate() {
             let selected = index == self.tabs.len() - 1;
             let name = path.rsplit('/').next().unwrap_or(&path).to_string();
@@ -911,31 +949,55 @@ impl IdeApp {
             // Shortened, never clipped: a narrow tab says so with an ellipsis, and the full
             // path is in the editor's own header underneath either way.
             let label = fit(stem, width - 10.0, TAB_FONT);
-            let response = ui.put(
-                egui::Rect::from_min_size(
-                    egui::pos2(
-                        strip.left() + 6.0 + index as f32 * (width + 4.0),
-                        strip.top() + 4.0,
-                    ),
-                    egui::vec2(width, TAB_H - 9.0),
+            let tab_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    strip.left() + 6.0 + index as f32 * (width + 4.0),
+                    strip.top() + 4.0,
                 ),
-                egui::Button::new(label).selected(selected),
+                egui::vec2(width, TAB_H - 9.0),
             );
+            let response = ui.put(tab_rect, egui::Button::new(label).selected(selected));
+            // `tab:` rather than the bare path id: the file tree records the **same** id for the
+            // same path, and `FrameSummary::hotspot` returns the first match. A test
+            // asking for "alpha.rs" would get the tree row and click that, never the tab
+            // it meant to press.
             summary
                 .hotspots
-                .push((crate::workspace::hotspot_id(&path), response.rect));
+                .push((format!("tab:{path}"), response.rect));
             summary.tabs.push((stem.to_string(), selected));
-            if response.clicked() {
-                pressed = Some(path);
-            }
+            self.tab_rects.push((path, response.rect));
         }
-        pressed
+    }
+
+    /// The tab the pointer clicked, resolved against where the tabs were drawn last frame.
+    ///
+    /// Same data as `FrameSummary::hotspots`, opposite order — and the order is the whole
+    /// of it. M248 read the frame's hotspots *after* the pane that fills them and so always
+    /// got an empty answer; here the reading happens *before* the strip is drawn, so the
+    /// file is open and the marker already agrees by the time it is drawn.
+    fn pressed_tab(&self, ui: &egui::Ui) -> Option<String> {
+        let (clicked, at) = ui.input(|i| (i.pointer.any_click(), i.pointer.interact_pos()));
+        // No pointer position means no hit test is possible, which is the same answer as
+        // "not over a tab" — said once here rather than at both ends.
+        let at = at?;
+        if !clicked {
+            return None;
+        }
+        self.tab_rects
+            .iter()
+            .find(|(_, r)| r.contains(at))
+            .map(|(p, _)| p.clone())
     }
     /// Open `path` in the editor, or say why it could not be opened.
     ///
     /// The failure is shown in the transcript rather than swallowed: a click that appears
     /// to do nothing is the state this repository keeps failing to rule out.
     fn open_file(&mut self, path: &str) {
+        // Opening a file ends a review: the reader asked to read, and leaving a diff on
+        // screen because they opened the file to read it would be the window ignoring its
+        // own click. The tree and the tab strip are therefore the way back from a diff,
+        // which is why this pane needs no separate close control.
+        self.review = None;
         match crate::workspace::OpenFile::read(&self.opts.workspace, path) {
             Ok(file) => {
                 self.open = Some(file);
@@ -1147,7 +1209,7 @@ impl IdeApp {
             // max_height rather than a hard rect: the scroll area is handed the
             // Ui and lays out inside the space the composer left, which is the only way
             // three regions share one pane without one of them clipping the others.
-            let decided = egui::ScrollArea::vertical()
+            let clicks = egui::ScrollArea::vertical()
                 .id_salt("epsilon-agent-transcript")
                 .stick_to_bottom(true)
                 .max_height(body.height())
@@ -1155,10 +1217,25 @@ impl IdeApp {
                     ui.set_width(body.width());
                     self.draw_rows(ui, summary)
                 });
-            // Applied here rather than inside the draw, so the click is resolved once,
-            // in one place, and the draw path stays a draw path.
-            if let (Some((id, decision)), Some(s)) = (decided.inner, self.session.as_ref()) {
+            // Applied here rather than inside the draw, so a click is resolved once, in
+            // one place, and the draw path stays a draw path.
+            if let (Some((id, decision)), Some(s)) = (clicks.inner.decision, self.session.as_ref())
+            {
                 s.resolve(&id, decision);
+            }
+            // A clicked "changed" row opens the review. It lands on the **next** frame,
+            // because this pane is drawn after the editor pane — an immediate-mode frame
+            // paints top to bottom, and pretending otherwise would mean moving the agent
+            // panel in front of the file view to save one repaint.
+            if let Some(summary_text) = clicks.inner.change
+                && let Some(change) = self
+                    .transcript
+                    .diffs()
+                    .iter()
+                    .find(|c| c.summary() == summary_text)
+                    .cloned()
+            {
+                self.review = Some(change);
             }
         }
         // ---- composer -------------------------------------------------------
@@ -1185,16 +1262,13 @@ impl IdeApp {
     }
     /// Draw the transcript rows.
     ///
-    /// Returns the permission decision a reader made with the mouse, which the caller
-    /// applies. Buttons as well as keys because a gate that stops the whole run cannot be
-    /// reachable only from the keyboard: the ask is drawn where a reader is already
-    /// looking, so the two answers belong beside it.
-    fn draw_rows(
-        &self,
-        ui: &mut egui::Ui,
-        summary: &mut FrameSummary,
-    ) -> Option<(String, PermissionDecision)> {
+    /// Returns what the reader clicked: a permission answered with the mouse, or a change
+    /// row opened for review. Buttons as well as keys because a gate that stops the whole
+    /// run cannot be reachable only from the keyboard: the ask is drawn where a reader is
+    /// already looking, so the two answers belong beside it.
+    fn draw_rows(&self, ui: &mut egui::Ui, summary: &mut FrameSummary) -> TranscriptClicks {
         let theme = self.theme;
+        let mut clicks = TranscriptClicks::default();
         let pending: Vec<_> = self
             .session
             .as_ref()
@@ -1208,7 +1282,7 @@ impl IdeApp {
             };
             ui.colored_label(theme.dim, line);
             summary.rows.push(("agent".into(), line.to_string()));
-            return None;
+            return clicks;
         }
         for row in rows {
             let (marker, color) = match &row.kind {
@@ -1245,8 +1319,26 @@ impl IdeApp {
             }
             let text = format!("{marker}{body}");
             let painted = ui.colored_label(color, text.clone());
+            // **A change row is a link.** The row under it says "open the file", and until
+            // this existed there was nothing to open: a review instruction with no control
+            // beside it is the "nothing happened" state reached by asking the agent to do
+            // its job. Alloc rather than position, so the rectangle and the click cannot
+            // drift apart.
+            let response = if matches!(row.kind, RowKind::Changed) {
+                let (rect, response) =
+                    ui.allocate_exact_size(painted.rect.size(), egui::Sense::click());
+                summary
+                    .hotspots
+                    .push((format!("change:{}", row.text), rect));
+                Some(response)
+            } else {
+                None
+            };
             summary.rows.push(("agent".into(), text));
             summary.row_rects.push(("agent".into(), painted.rect));
+            if response.is_some_and(|r| r.clicked()) {
+                clicks.change = Some(row.text.clone());
+            }
         }
         // The pending approvals are drawn after the rows, where they cannot scroll out of
         // reach behind a long answer — the composer-adjacent placement opencode and DSH
@@ -1289,7 +1381,8 @@ impl IdeApp {
                 .hotspots
                 .push((format!("approval:allow:{}", ask.request_id), ui.min_rect()));
         }
-        decided
+        clicks.decision = decided;
+        clicks
     }
     /// Send whatever the composer holds.
     ///
@@ -2099,6 +2192,178 @@ mod tests {
         );
     }
 
+    /// Clicking something, then typing, still types into the composer.
+    ///
+    /// M249 stopped the composer from stealing the keyboard unconditionally, which traded one
+    /// silent failure for a possible new one: **egui gives a clicked `Button` keyboard focus**,
+    /// and this window is full of buttons. If a tab took the keyboard, a reader who clicked a
+    /// file and then typed would watch nothing arrive — which is the same "the window ignored
+    /// me" state M249 was fixing, arriving by the door the fix opened.
+    ///
+    /// So both kinds of clickable row are asserted here: a tree row (a bare click allocation)
+    /// and a tab (a real `Button`). Neither may take the keyboard from the composer.
+    #[test]
+    fn clicking_a_file_then_typing_still_reaches_the_composer() {
+        let (dir, _keep) = scratch_workspace("click-file");
+        let mut h = Harness::new(dir.clone());
+        let first = h.paint();
+        let row = first
+            .hotspot(&crate::workspace::hotspot_id("alpha.rs"))
+            .expect("the tree records where each row was drawn");
+
+        h.click(row.center());
+        assert!(h.app.open.is_some(), "the click must still open the file");
+        h.type_text("hello");
+        assert_eq!(
+            h.app.draft, "hello",
+            "clicking a file must not take the keyboard away from the composer"
+        );
+    }
+
+    #[test]
+    fn clicking_a_tab_then_typing_still_reaches_the_composer() {
+        let (dir, _keep) = scratch_workspace("click-tab");
+        let mut h = Harness::new(dir);
+        h.app.open_file("alpha.rs");
+        h.app.open_file("beta.rs");
+        let first = h.paint();
+        let tab = first
+            .hotspot("tab:alpha.rs")
+            .expect("the strip records each tab");
+
+        h.click(tab.center());
+        assert_eq!(
+            h.app.open.as_ref().map(|f| f.path.as_str()),
+            Some("alpha.rs"),
+            "the click must still switch the editor"
+        );
+        h.type_text("hello");
+        assert_eq!(
+            h.app.draft, "hello",
+            "clicking a tab must not take the keyboard away from the composer"
+        );
+    }
+
+    /// A change with real lines in it, for tests that review a diff rather than assert on a
+    /// summary.
+    fn edited(dir: &std::path::Path, path: &str) -> Transcript {
+        let mut t = Transcript::new(dir.to_path_buf());
+        t.push_change(&crate::diff::Change {
+            path: path.to_string(),
+            lines: vec![
+                crate::diff::DiffLine::Context("fn alpha() {".into()),
+                crate::diff::DiffLine::Removed("    old();".into()),
+                crate::diff::DiffLine::Added("    fresh();".into()),
+                crate::diff::DiffLine::Context("}".into()),
+            ],
+            created: false,
+            coarse: false,
+        });
+        t
+    }
+
+    /// The rectangle of the first clickable "changed" row in a frame.
+    fn change_row(f: &FrameSummary) -> egui::Rect {
+        f.hotspots
+            .iter()
+            .find(|(k, _)| k.starts_with("change:"))
+            .map(|(_, r)| *r)
+            .expect("a changed row is something to click")
+    }
+
+    /// Clicking a "changed" row opens the change, in the pane, as a review.
+    ///
+    /// The transcript row used to say *"… more changed lines — open the file"* with nothing to
+    /// open: a review instruction beside no control. And a report is not a review anyway — the
+    /// rows are capped, interleaved with the conversation, and gone when the transcript trims,
+    /// so the whole change was never on screen at once.
+    #[test]
+    fn clicking_a_changed_row_opens_the_change_for_review() {
+        let (dir, _keep) = scratch_workspace("review");
+        let mut h = Harness::new(dir.clone());
+        h.app.seed_transcript(edited(&dir, "alpha.rs"));
+        let row = change_row(&h.paint());
+        h.click(row.center());
+        let after = h.paint();
+
+        let editor = after.region("editor");
+        assert!(
+            editor.iter().any(|t| t.contains("+1") && t.contains("−1")),
+            "the review must say how much changed: {editor:?}.\n{}",
+            after.describe()
+        );
+        assert!(
+            editor.iter().any(|t| t.contains("-    old();")),
+            "the removed line must be on screen, not merely counted: {editor:?}"
+        );
+        assert!(
+            editor.iter().any(|t| t.contains("+    fresh();")),
+            "and so must the added one: {editor:?}"
+        );
+    }
+
+    /// A coarse change says so, rather than presenting a block replacement as a line diff.
+    #[test]
+    fn a_coarse_change_is_labelled_as_one() {
+        let (dir, _keep) = scratch_workspace("coarse");
+        let mut h = Harness::new(dir.clone());
+        let mut t = Transcript::new(dir.clone());
+        t.push_change(&crate::diff::Change {
+            path: "alpha.rs".into(),
+            lines: vec![crate::diff::DiffLine::Added("whatever".into())],
+            created: false,
+            coarse: true,
+        });
+        h.app.seed_transcript(t);
+        let row = change_row(&h.paint());
+        h.click(row.center());
+        let after = h.paint();
+
+        assert!(
+            after
+                .region("editor")
+                .iter()
+                .any(|t| t.contains("replaced as a block")),
+            "a diff that is not line-accurate must say so.\n{}",
+            after.describe()
+        );
+    }
+
+    /// Opening a file ends a review.
+    ///
+    /// One way back, not two: the reader clicks a file to read it, and leaving a diff on screen
+    /// because they did would be the window ignoring its own click. No separate "close" control,
+    /// because the tree and the tab strip are already the answer.
+    #[test]
+    fn opening_a_file_ends_the_review() {
+        let (dir, _keep) = scratch_workspace("endreview");
+        let mut h = Harness::new(dir.clone());
+        h.app.open_file("alpha.rs");
+        h.app.seed_transcript(edited(&dir, "alpha.rs"));
+        let row = change_row(&h.paint());
+        h.click(row.center());
+        assert!(
+            h.paint()
+                .region("editor")
+                .iter()
+                .any(|t| t.contains("-    old();")),
+            "precondition: the review is on screen"
+        );
+
+        h.app.open_file("beta.rs");
+        let after = h.paint();
+        assert!(
+            !after.region("editor").iter().any(|t| t.contains("old();")),
+            "opening a file must show that file, not the diff.\n{}",
+            after.describe()
+        );
+        assert!(
+            after.region("editor").iter().any(|t| t.contains("beta.rs")),
+            "and it must be the file that was asked for.\n{}",
+            after.describe()
+        );
+    }
+
     /// Non-ASCII text is cut on a character boundary, so the row never ends in the
     /// replacement character that a byte slice would leave behind.
     #[test]
@@ -2311,8 +2576,12 @@ mod tests {
             "beta.rs should be showing first: {:?}",
             before.region("editor")
         );
+        // **`tab:alpha.rs`, not the bare path id.** The tree records the same id for the same
+        // path and `hotspot` returns the first match, so this test was clicking the *file
+        // tree row* — which opens alpha.rs too, so it passed, and was named for a control it
+        // never touched. A test can be green and still be about the wrong thing.
         let tab = before
-            .hotspot(&crate::workspace::hotspot_id("alpha.rs"))
+            .hotspot("tab:alpha.rs")
             .expect("the strip records where each tab was drawn");
 
         let after = h.click(tab.center());
@@ -2354,7 +2623,7 @@ mod tests {
         let strip = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(f.size[0], f.size[1]));
         for (index, path) in (0..12).map(|i| format!("f{i}.rs")).enumerate() {
             let r = f
-                .hotspot(&crate::workspace::hotspot_id(&path))
+                .hotspot(&format!("tab:{path}"))
                 .unwrap_or_else(|| panic!("f{index}.rs has no tab rect"));
             assert!(
                 r.right() <= strip.right() + 0.5 && r.width() > 0.0,

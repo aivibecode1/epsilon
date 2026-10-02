@@ -147,9 +147,29 @@ pub struct Transcript {
     /// still showing the text it replaced. This is the signal that says "your view is
     /// stale" without the frontend having to diff the workspace itself.
     changes: Vec<String>,
+    /// The changes themselves, newest last, so a reader can be shown what the agent did.
+    ///
+    /// The rows a change produces are enough to *read about* and not enough to *review*:
+    /// they are capped, interleaved with everything else, and gone the moment the
+    /// transcript trims. A diff that only exists as prose in a scrollback is a report, not
+    /// a review.
+    ///
+    /// Bounded because this is a review surface, not an archive — the session log is the
+    /// archive, and it already holds every one of these.
+    diffs: Vec<crate::diff::Change>,
 }
 
 impl Transcript {
+    /// The retained changes, oldest first.
+    pub fn diffs(&self) -> &[crate::diff::Change] {
+        &self.diffs
+    }
+
+    /// How many changes are kept for review.
+    ///
+    /// Chosen against the transcript's own `MAX_ROWS`: a review list longer than the
+    /// conversation that produced it is not a list anyone scrolls.
+    const MAX_DIFFS: usize = 200;
     /// Forget which paths have been reported, so the next caller sees only new ones.
     ///
     /// Taking rather than reading, so a frontend that does not act on a change cannot leave
@@ -273,6 +293,10 @@ impl Transcript {
     /// the editor pane has the file itself.
     pub fn push_change(&mut self, change: &crate::diff::Change) {
         self.changes.push(change.path.clone());
+        self.diffs.push(change.clone());
+        if self.diffs.len() > Self::MAX_DIFFS {
+            self.diffs.remove(0);
+        }
         self.push(RowKind::Changed, change.summary());
         let changed: Vec<&crate::diff::DiffLine> = change
             .lines

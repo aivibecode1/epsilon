@@ -50,12 +50,41 @@ copy. Git normalised the *commits* (blob hash == HEAD hash, all LF), so the dama
 confined to the checkout — and it still took a gate to find it. **A passing battery
 validates the source it compiled; it says nothing about the markdown it also checked.**
 
-### Known open risk from M249, untested
+### Known open risk from M249, untested — **resolved by measurement in M250**
 
 egui gives a clicked `Button` keyboard focus. The composer now yields to whatever holds
 focus, so **clicking a tab may leave the keyboard on that button.** Untested, and probably
 a defect. The likely fix is to give the filter a stable id like the composer's and yield
 only to text inputs.
+
+> **Measured in M250: it is not real.** Both clickable kinds — a tree row (a bare
+> `allocate_exact_size`) and a tab (a real `egui::Button`) — leave the keyboard with the
+> composer. Both are now asserted, so it is a guard rather than a note.
+
+## M250: the review, and a green test about the wrong control
+
+The transcript said *"… N more changed lines — open the file"* and **nothing was openable**:
+no clickable row, no diff pane. `layout.rs` had called the centre pane *"The editor or
+diff"* since M233 and it had never been one. A changed row is now a link; clicking it shows
+the whole change in the editor pane, with added/removed in the palette's `success`/`danger`
+roles rather than two greys, a coarse change labelled as a block replacement, and the pane's
+own clip. Opening any file ends the review — one way back, not two.
+
+**The lesson worth more than the feature.** `clicking_a_tab_switches_the_editor_to_that_file`
+had passed since M248 while **never clicking a tab**: `FrameSummary::hotspot` returns the
+first match, and the tree records the same id for the same path as the strip does, so it
+clicked the tree row — which opens the file, so the assertion passed. Giving tabs their own
+`tab:<path>` id exposed it, the honest version **failed**, and the failure was a real defect:
+egui hands a widget its click result *while drawing it*, so the strip drew `beta` as current
+while the body already showed `alpha` — one frame where the pane contradicts itself.
+
+The fix is the same data read in the opposite order: test the pointer against **last frame's**
+rects *before* drawing. M248 read the frame's hotspots *after* the pane that fills them and
+always got an empty answer. **When a mechanism returns the answer, check where you read it
+relative to where it is produced.**
+
+Battery `m250`: **1,813 tests / 74 binaries, 0 failed**, attempt 1. Clippy 46 s, test 381 s,
+demo 149 s — against 1,058/1,696/290 s for the same battery with debug info on.
 
 ## What exists now
 
@@ -105,12 +134,11 @@ the same lesson as ADR-012's `global_dir`.
 2. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
    window is hidden, so a run that finished in the background produces no `AgentEnd` on
    screen until the window is shown. That belongs in `logic`.
-1. **Check whether clicking a button steals the keyboard** — the untested risk M249 left
-   behind, and the most likely thing a user hits next.
-2. **Reload the tree on a filesystem event**, not only on the agent's own change events. An
-   edit made in another window still does not refresh it.
-3. **Diff review**, which the agent needs more than the user does: a tool call that edits a
-   file should show the change, in the pane, before the next tool runs.
+1. **Watch the diff pane on a real screen.** Every claim about it is an offscreen-`Context`
+   measurement; M250 has never been rendered through wgpu. Added/removed legibility needs eyes.
+2. **Reviewed state for changes.** OpenCode's diff viewer tracks which files the reader has
+   reviewed, so "what is left to look at" is answerable. Epsilon cannot answer that.
+3. **Reload the tree on a filesystem event**, not only on the agent's own change events.
 4. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
    window is hidden, so a run that finished in the background produces no `AgentEnd` on
    screen until the window is shown. That belongs in `logic`.
