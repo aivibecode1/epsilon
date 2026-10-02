@@ -415,6 +415,12 @@ impl IdeApp {
                 if cmd == GoalCommand::Create || cmd == GoalCommand::Resume {
                     agent.set_goal_armed(true);
                 }
+                // **The cache, refreshed here.** This is the second of the two places a goal
+                // can change; the first is a frame that applied events. Leaving either out
+                // does not fail loudly — the band shows the previous phase and the round
+                // driver spends rounds on a paused goal — which is why both are named here
+                // rather than "refreshed somewhere sensible".
+                self.refresh_goal();
                 self.transcript.push_notice(&format!(
                     "{said} · {} · round {}/{}",
                     view.goal.status.as_str(),
@@ -422,9 +428,11 @@ impl IdeApp {
                     view.goal.max_rounds
                 ));
             }
-            Ok(None) => self
-                .transcript
-                .push_notice(&format!("{said} — there is no goal to change")),
+            Ok(None) => {
+                self.refresh_goal();
+                self.transcript
+                    .push_notice(&format!("{said} — there is no goal to change"));
+            }
             Err(e) => self.transcript.push_notice(&format!("{said} refused: {e}")),
         }
     }
@@ -514,6 +522,26 @@ pub struct IdeApp {
     /// thread's private cache. The borrow does not escape: [`Cache::blocks`] hands back an
     /// `Rc`, not a reference into the map.
     markdown: std::cell::RefCell<crate::markup::Cache>,
+    /// The session goal, read once per change rather than twice per frame.
+    ///
+    /// `Agent::goal()` walks `SessionStore::read_all()`, which **deep-clones every stored
+    /// entry**, and it does that under the mutex the agent's own append path takes. Measured
+    /// against a real store (`tests/frame_cost.rs`):
+    ///
+    /// | stored messages | `agent.goal()` | ×2, as the window calls it |
+    /// |---|---|---|
+    /// | 50 | 3.3 ms | 6.6 ms/frame |
+    /// | 400 | 30.5 ms | **60.9 ms/frame** |
+    /// | 1600 | 102.3 ms | **204.6 ms/frame** |
+    ///
+    /// Both callers are per-frame and neither can avoid being: the band has to say the phase
+    /// and the round budget, and the round driver has to decide whether a round is allowed.
+    /// The cost was never the problem — reading it *while holding the store lock* is, because
+    /// that is the lock a running agent wants to append through.
+    ///
+    /// The terminal solved this shape at M198 and the shape is the same one: cache it and
+    /// refresh at the two places a goal can change.
+    goal: Option<epsilon_contracts::goal::GoalView>,
     /// Where each palette row was drawn last frame, with its index, so a click can be
     /// applied **before** the rows are drawn again.
     ///
@@ -611,6 +639,7 @@ impl IdeApp {
             goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
             goal_round_pending: false,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
+            goal: None,
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -645,6 +674,7 @@ impl IdeApp {
             goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
             goal_round_pending: false,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
+            goal: None,
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -714,11 +744,37 @@ impl IdeApp {
         // Through the `Arc`, and that is the whole reason `drain` takes `&self`: anything
         // else holding this session — a shortcut, a second window, a test — must not be
         // able to stop the frame from updating.
+        let mut arrived = 0;
         if let Some(session) = self.session.as_ref() {
-            session.drain(&mut self.transcript);
+            arrived = session.drain(&mut self.transcript);
+        }
+        // The goal is re-read **only when something actually arrived**. Every event is a way
+        // the model can have changed it (`create_goal`, `update_goal` ride inside a turn), and
+        // a frame that drained nothing has learned nothing — so this is per *event batch*,
+        // not per frame, and it is the only thing keeping the band off the store lock.
+        if arrived > 0 {
+            self.refresh_goal();
         }
         self.drive_goal_round();
         self.refresh_changed_files();
+    }
+
+    /// Re-read the session goal into [`Self::goal`].
+    ///
+    /// Called from the two places a goal can change and nowhere else: a frame that applied
+    /// events, and [`Self::run_goal_command`] for the palette's own verbs.
+    ///
+    /// **Public so a caller that reaches into the agent directly can say what it did.** The
+    /// three tests that set a goal up by calling `agent.goal_apply` directly are testing a
+    /// route the product does not have — but they are the only thing in this crate that can,
+    /// so they call this afterwards rather than being rewritten to fake a turn. A future
+    /// caller that mutates the agent behind the app's back and forgets this gets a band
+    /// showing the previous phase, which is a silent wrong answer and nothing else.
+    pub fn refresh_goal(&mut self) {
+        self.goal = self
+            .session
+            .as_ref()
+            .and_then(|session| session.agent().goal());
     }
     /// Continue an armed goal once the agent has gone idle.
     ///
@@ -737,7 +793,7 @@ impl IdeApp {
         if self.goal_round_pending || session.running() {
             return;
         }
-        let Some(view) = session.agent().goal() else {
+        let Some(view) = self.goal.clone() else {
             return;
         };
         if !view.is_continuable() {
@@ -1919,7 +1975,7 @@ impl IdeApp {
         top: f32,
         height: f32,
     ) -> Option<f32> {
-        let view = self.session.as_ref()?.agent().goal()?;
+        let view = self.goal.clone()?;
         let theme = self.theme;
         // The band's x comes from the **pane**, not from zero.
         //

@@ -1652,9 +1652,30 @@ So the real defect is the one that was last, and its fix is named:
 
 **Closed in the same milestone:** `markup::Cache` (20–30%, keyed by the source text).
 
-**Still real, and now known to be small** — left alone deliberately, which is the finding:
-`Agent::goal()` deep-clones every session entry twice per frame (`app.rs:1905`, `:725`), and
-the sessions pane re-summarises every file on every paint.
+### CLOSED at M266 — `Agent::goal()` read the whole store, twice per frame
+
+The same review ranked this **#2**, on a reading of the code, and it was right — while the
+measurement *under-counted it*, because the frame benchmark seeds the window's **view model**
+and this reads the **durable store**. Measured against a real store:
+
+| stored messages | `agent.goal()` | ×2 per frame |
+|---|---|---|
+| 50 | 3.3 ms | 6.6 ms |
+| 400 | 30.5 ms | **60.9 ms** |
+| 1600 | 102.3 ms | **204.6 ms** |
+
+`SessionStore::goal()` walks `read_all()`, which **deep-clones every entry**, and does it
+**under the mutex the agent's own append path takes** — a stall, not just a cost.
+
+**Fixed**: `IdeApp::goal`, refreshed at the two places a goal can change (a frame that applied
+events — `pump` re-reads only when `drain` returned something — and `run_goal_command`), so
+it is per *event batch* rather than per frame. `refresh_goal` is public so a caller reaching
+past the app says so, and `a_goal_created_from_the_palette_is_on_screen_on_the_next_frame`
+covers the product's own route without refreshing by hand.
+
+**Still real, and left alone deliberately:** the sessions pane re-summarises every file on
+every paint — measured at **0.9 ms** for fifty files. The **202 ms-at-500 estimate beside it
+should not be cited again as if it were a measurement.**
 
 ### A38 — the largest parity gaps between the terminal and the window
 

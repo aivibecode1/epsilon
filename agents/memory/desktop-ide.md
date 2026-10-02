@@ -256,15 +256,14 @@ feature ships unverified*, and it is the sixth time this window has produced tha
    `epsilon-tui` (the palette, ADR-020), so `parse_command` is reachable with no new crate edge;
    the design question is which behaviours are agent-level — shareable through
    `epsilon-runtime` — and which are TUI-local and cannot be.
-1. **Virtualize the transcript.** M266 measured the frame path for the first time and found
-   the review's ranking inverted: the sessions pane costs **+0.9 ms**, the transcript costs
-   **104 ms at 800 rows**. Cost tracks **blocks** — the same rows cost 13.2 ms as plain labels
-   and 31.2 ms as one markdown block each — so the transcript builds a text widget for every
-   block of every row, on screen or not. The fix needs **cached per-row heights**, because
-   egui's `show_rows` requires a uniform height and a transcript's rows are not uniform.
-   Re-measure first: `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`.
-   (`markup::Cache` already took the 20–30% that parsing was; `Agent::goal()`'s per-frame
-   clone is real and now known to be *small*.)
+1. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
+   **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
+   as six — so the transcript builds a text widget for every block of every row, on screen or
+   not. The fix needs **cached per-row heights**, because egui's `show_rows` requires a
+   uniform height and a transcript's rows are not uniform. (`markup::Cache` already took the
+   20–30% that parsing was, and `Agent::goal()` is cached — it was 30 ms at 400 stored
+   messages, twice per frame, under the store lock.) Re-measure first:
+   `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`.
 2. **A command table.** The palette reaches four things because that is all the window
    offers. A real registry — model picker, sessions, diff review — wants an id/label/handler
    table rather than more palette entries.

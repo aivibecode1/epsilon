@@ -1127,6 +1127,11 @@ fn the_window_shows_the_goal_it_is_working_toward() {
         )
         .expect("the gate is recorded");
     agent.set_goal_armed(true);
+    // The window caches the goal (M266: reading it twice a frame cost 205 ms on a long
+    // session), and this fixture set the goal up **on the agent**, which is a route the
+    // product does not have. Production refreshes on an event or on a palette command; a
+    // test that reaches past the app says so out loud.
+    app.refresh_goal();
 
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
     let goal = frame.region("goal");
@@ -1179,6 +1184,11 @@ fn the_goal_band_is_drawn_inside_the_agent_pane() {
             },
         )
         .expect("a goal is created");
+    // Set on the agent, so the window's goal cache needs telling — see the note on the
+    // other goal fixture. This one is the **negative control** for that arrangement: with the
+    // refresh removed the band is simply absent and this test fails, because `row_rects`
+    // holds no `goal` entry to measure.
+    app.refresh_goal();
 
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
     let pane = app.layout().agent;
@@ -1229,6 +1239,7 @@ fn an_unarmed_goal_says_it_will_not_continue() {
         )
         .expect("a goal is created");
     agent.set_goal_armed(false);
+    app.refresh_goal(); // set on the agent; see the note on the other goal fixture
 
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
     assert!(
@@ -1248,6 +1259,38 @@ fn no_goal_draws_no_goal_band() {
         !frame.drew("goal"),
         "a window with no goal must not reserve a band for one.\n{}",
         frame.describe()
+    );
+}
+
+/// A goal created **through the window's own palette** is on screen on the very next frame,
+/// with nothing told to refresh anything.
+///
+/// The window caches the goal — reading it costs 30 ms against a 400-message session, and it
+/// was doing that twice per painted frame (M266). A cache is only safe if the product's own
+/// routes keep it fresh, and the other two goal fixtures here set a goal up **on the agent**
+/// and then call `refresh_goal` by hand, which is a route the product does not have.
+///
+/// So this one goes the way a reader does: the palette, then a frame. If the refresh inside
+/// `run_goal_command` were lost, the band would simply never appear and this fails — with no
+/// other test able to see it.
+#[test]
+fn a_goal_created_from_the_palette_is_on_screen_on_the_next_frame() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    let before = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(!before.drew("goal"), "the precondition: no goal, no band");
+
+    app.run_palette_command("goal.create", "make the suite green");
+
+    let after = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        after
+            .region("goal")
+            .iter()
+            .any(|t| t.contains("make the suite green")),
+        "a goal set from the palette must be on the next frame.\n{}",
+        after.describe()
     );
 }
 

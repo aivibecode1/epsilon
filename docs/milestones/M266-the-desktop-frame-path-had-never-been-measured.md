@@ -36,7 +36,53 @@ the number disagrees.
 The estimate itself is not wrong, it is extrapolated — and extrapolation is exactly what a
 measurement is for.
 
-## What the remaining cost actually is
+## The measurement had a hole in it, and finding it was worth more than the cache
+
+The first version of this milestone concluded that the two remaining per-frame costs —
+`agent.goal()` and the sessions pane — were "real and now *small*", and left them alone.
+
+**That conclusion was wrong, and the reason it was wrong is the interesting part.** The frame
+benchmark seeds the window's **view model**. `agent.goal()` reads the **durable store**. So
+every number in the table above was measured against a store this benchmark never wrote, and
+the cost of reading the goal was measured on an almost-empty file.
+
+Measured properly — a real `SessionStore`, real appended messages:
+
+| stored messages | `agent.goal()` | ×2, as the window calls it |
+|---|---|---|
+| 50 | 3.3 ms | 6.6 ms/frame |
+| 400 | 30.5 ms | **60.9 ms/frame** |
+| 1600 | 102.3 ms | **204.6 ms/frame** |
+
+**At 400 messages — an ordinary session — reading the goal twice cost more than the entire
+transcript did.** `SessionStore::goal()` walks `read_all()`, which deep-clones every entry, and
+it does that **under the mutex the agent's own append path takes**: not a cost, a stall.
+
+So the honest sequence is: measure, find a hole in the measurement, fix the hole, measure
+again. And the second half of this milestone is that fix.
+
+### The goal is cached, refreshed where it can change
+
+`Agent::goal()` is now read into `IdeApp::goal` and refreshed at exactly two places:
+
+1. **a frame that applied events** — `pump` re-reads only when `drain` returned something, so
+   this is per *event batch*, not per frame. Every event is a way the model can have changed
+   the goal, since `create_goal` and `update_goal` ride inside a turn.
+2. **`run_goal_command`** — the palette's own verbs.
+
+Both are named on the field, and the field documents that a caller reaching into the agent
+directly must call `refresh_goal()` itself. The three existing goal fixtures do exactly that,
+and each now says so.
+
+`refresh_goal` is **public** for that reason, not for testing convenience: the alternative was
+to invent a `*_for_test` name for something the product legitimately does.
+
+**The test that matters is the one that does not call it.** The three fixtures set a goal up on
+the agent and refresh by hand; `a_goal_created_from_the_palette_is_on_screen_on_the_next_frame`
+goes the way a reader does — palette, then a frame — so if the refresh inside `run_goal_command`
+were ever lost, the band would simply never appear and nothing else in the crate would notice.
+
+## What the remaining transcript cost actually is
 
 The cache bought 20–30%, which is real and is **not the bulk**. Attribution says the cost
 tracks **blocks**:
@@ -81,12 +127,17 @@ taken once per assistant row for one thread's private cache. `Cache::blocks` han
 
 **PENDING** — battery not yet run this round.
 
-Battery `m266` — **GATE PASS: 1,882 tests across 77 binaries, 0 failed**, all seven gates,
-**attempt 1** (`audit/evidence/gate-m266.log`). Up from 1,879 at M265: three cache tests, and
-one new binary (`frame_cost.rs`, whose single test reports as ignored by design).
+Battery `m266b` — **GATE PASS: 1,883 tests across 77 binaries, 0 failed**, all seven gates,
+**attempt 1** (`audit/evidence/gate-m266b.log`). Up from 1,879 at M265: three cache tests, one
+palette-refresh test, and one new binary (`frame_cost.rs`, whose two tests report as ignored by
+design). `m266` was the earlier battery for the first half of this milestone; both are kept.
 
-Three tests, because the dangerous failure here is invisible to correctness:
+Tests, and why each is the one it is:
 
+- `a_goal_created_from_the_palette_is_on_screen_on_the_next_frame` — the staleness guard. It
+  refreshes nothing by hand, so it is the only test that can catch the product's own refresh
+  going missing; the other three goal fixtures call `refresh_goal()` themselves and would pass
+  with the product broken.
 - `the_cache_parses_once_per_distinct_text` — asserts the **miss count**, not just the answer.
   A cache that stopped being consulted returns *correct* blocks forever, and every frame test
   in this crate would still pass. **Negative control: with the lookup disabled it fails with
@@ -102,9 +153,8 @@ Three tests, because the dangerous failure here is invisible to correctness:
   paint at roughly four frames a second. That is the honest state of it and it is measured,
   not estimated.
 - **Virtualization is not built**, for the uniform-height reason above.
-- **`Agent::goal()` still deep-clones every session entry twice per frame**
-  (`app.rs:1905`, `:725`), and the sessions pane still re-summarises on every paint. Both are
-  real and both are now *small* — which is itself the finding, and the reason they were left
-  alone this round.
+- **The sessions pane still re-summarises every file on every paint.** Measured at 0.9 ms for
+  fifty files, so it is left alone deliberately — but the *estimate* beside it (202 ms at 500)
+  should not be cited again as if it were a measurement.
 - **These are offscreen numbers.** Nothing below tessellation has been measured here (A25), and
   a real window adds a present step these frames do not.

@@ -206,3 +206,82 @@ fn what_a_frame_costs() {
     app.set_sidebar_view(epsilon_desktop::app::SidebarView::Sessions);
     ms_per_frame("800 rows, 50 sessions on disk", &ctx, &mut app, 20);
 }
+
+/// What `Agent::goal()` costs with a **real store behind it**.
+///
+/// `what_a_frame_costs` above seeds the window's *view* model, and that is a hole in the
+/// measurement rather than a detail: `agent.goal()` reads the **durable store**, and against
+/// a store this bench never wrote it measured a near-empty file. The window calls it twice per
+/// painted frame (`app.rs:1905` for the band, `:725` for the round driver), and `store.goal()`
+/// walks `read_all()`, which **deep-clones every entry** under the mutex the agent's own
+/// append path takes.
+///
+/// So: how expensive is it, really, on a session of a realistic size?
+#[test]
+#[ignore = "a timing measurement on one machine; run it when the draw path changes"]
+fn what_the_goal_read_costs() {
+    println!("Agent::goal() against a real store");
+    for n in [50usize, 400, 1_600] {
+        let ws = tempfile::tempdir().expect("a workspace");
+        let (_ctx, app) = wire(ws.path());
+        let agent = Arc::clone(app.session().expect("a session").agent());
+
+        let store = Arc::new(std::sync::Mutex::new(
+            epsilon_session::SessionStore::open_in(ws.path().join("bench.jsonl"), ws.path())
+                .expect("a store"),
+        ));
+        {
+            let mut guard = store.lock().expect("the store lock");
+            for i in 0..n {
+                guard
+                    .append(epsilon_contracts::session_entry::EntryKind::Message {
+                        message: assistant_markdown(&format!(
+                            "an answer number {i} with **bold**, a list:\n\n- one\n- two\n"
+                        )),
+                        api_request_sha256: None,
+                    })
+                    .expect("an entry lands in the log");
+            }
+        }
+        agent.attach_session_store(Arc::clone(&store));
+
+        let goal = agent.goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Create {
+                objective: "make the suite green".into(),
+                max_rounds: Some(7),
+            },
+        );
+        assert!(
+            goal.is_ok(),
+            "a goal is created so the read has something to find"
+        );
+
+        let t = Instant::now();
+        let reps = 20;
+        for _ in 0..reps {
+            std::hint::black_box(agent.goal());
+        }
+        let each = t.elapsed().as_secs_f64() * 1000.0 / f64::from(reps);
+        println!(
+            "  {n:>5} stored messages -> agent.goal() {each:>8.3} ms  \
+             (called twice per painted frame: {:.1} ms)",
+            each * 2.0
+        );
+    }
+    let _ = egui::Context::default();
+}
+
+/// A minimal assistant message for seeding a store.
+fn assistant_markdown(body: &str) -> epsilon_contracts::message::Message {
+    epsilon_contracts::message::Message::Assistant(epsilon_contracts::message::AssistantMessage {
+        id: epsilon_contracts::ids::new_id("msg"),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![epsilon_contracts::content::ContentBlock::text(body)],
+        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+        error_message: None,
+        usage: epsilon_contracts::message::Usage::default(),
+    })
+}

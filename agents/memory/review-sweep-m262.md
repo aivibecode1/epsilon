@@ -51,15 +51,19 @@ itself twice over (A27 was the most severe defect found in the round).
    `is_symlink()` does not report. Still open in that group: **A33** (`.env.` / `.env::$DATA`
    bypassing the ask) and **A34** (extension and MCP children inheriting the credential
    environment).
-5. ~~**Desktop per-frame cost — measure before sizing it.**~~ **MEASURED at M266, and the
-   review's ranking was wrong.** The sessions pane it ranked first costs **+0.9 ms** for
-   fifty files; the transcript it ranked fifth costs **104 ms** at 800 rows. Cost tracks
-   **blocks**: 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
-   as six. So the transcript is O(rows) rather than O(visible), and the fix needs cached
-   per-row heights because egui's `show_rows` requires a uniform height. `markup::Cache`
-   landed the 20–30% that parsing was. Re-measure with
+5. ~~**Desktop per-frame cost — measure before sizing it.**~~ **MEASURED and FIXED at M266.**
+   Two separate errors, both worth remembering:
+   - The review's ranking was **inverted**: the sessions pane it ranked first costs **0.9 ms**
+     for fifty files; the transcript it ranked fifth costs **104 ms** at 800 rows.
+   - **My own first measurement had a hole**: it seeded the window's *view model* while
+     `agent.goal()` reads the *durable store*, so it under-counted that cost by measuring an
+     empty store. Properly measured, `agent.goal()` was **30 ms at 400 messages, 102 ms at
+     1600**, twice per frame, **under the lock the agent writes through** — more than the
+     whole transcript at an ordinary session size. Now cached and refreshed per event batch.
+   Re-measure before sizing anything else here:
    `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`
-   before sizing anything else here.
+   **A benchmark that does not exercise the storage a code path actually reads will
+   under-count that path, and it will look like a small number.**
 
 ## Two things the reviews found that are about the *method*, not the code
 
