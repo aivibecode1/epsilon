@@ -94,6 +94,24 @@ fn walk_inner(
             .replace('\\', "/");
         let is_dir = path.is_dir();
 
+        // **A link is not descended into.** `is_dir()` above follows it — a symlink, or a
+        // Windows junction, which needs no privilege and which `is_symlink()` does not even
+        // report — so without this a repository holding `docs -> ~/Documents` hands `grep`,
+        // `@` completion and the file tree every file underneath, with no permission ask,
+        // because every name is still workspace-relative. See [`crate::paths::is_link`].
+        //
+        // The cost is one `symlink_metadata` per entry, and the walk cannot leave the root
+        // any other way: normal descent from the root stays inside it.
+        //
+        // A skipped link **spends budget**, so the caller's existing "the walk stopped
+        // early" signal can fire — the list really is narrower than the filesystem, and a
+        // tree that says `400 files` when the disk holds 405 through a link is lying in the
+        // way this repository cares most about.
+        if crate::paths::is_link(&path) {
+            *budget = budget.saturating_sub(1);
+            continue;
+        }
+
         // Build directories are skipped whatever `.gitignore` says. A universe of
         // generated files is not a preference, and listing one makes both `@` and the
         // editor's tree useless exactly in the repositories that need them most.
@@ -209,5 +227,126 @@ mod tests {
         let ignore = IgnoreSet::load(&gone, IGNORE_FILES);
         let mut budget = ROW_BUDGET;
         assert!(walk_files(&gone, &ignore, &mut budget).is_empty());
+    }
+
+    /// **The walk does not leave the workspace through a link.**
+    ///
+    /// A link is the only way ordinary descent can leave the root, so this is the whole
+    /// containment rule for an enumeration — cheaper than canonicalising every entry, which
+    /// is what `resolve_for_access` does and is right for a single named file.
+    ///
+    /// Both kinds are covered because they behave differently and the obvious check catches
+    /// only one: a **symlink to a directory** and a **symlink to a file** (which `is_dir()`
+    /// answers `false` for, so it was pushed into the list as content — an out-of-workspace
+    /// file the model could then read by name).
+    ///
+    /// Windows junctions are the same rule by a different mechanism and cannot be created
+    /// portably in a test without a privilege this project does not take; the production
+    /// check is `is_link`'s, which tests the reparse-point attribute rather than
+    /// `is_symlink()` for exactly that reason.
+    #[test]
+    fn a_link_out_of_the_workspace_is_neither_listed_nor_descended() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "TOKEN = hunter2").unwrap();
+
+        let dir = workspace();
+        let link_dir = dir.path().join("escape");
+        // **The precondition is asserted, not assumed.** A test that skips and still reports
+        // `ok` is the false control this repository keeps warning about, so if the link could
+        // not be created the test says so *loudly* and the milestone records that it did not
+        // run here — rather than passing on the strength of the assertions that follow a
+        // `return`.
+        //
+        // A directory **junction** is used because it needs no elevation on Windows, and
+        // because it is the form `FileType::is_symlink()` does not report — the case the
+        // obvious check misses.
+        if let Err(e) = dir_junction(outside.path(), &link_dir) {
+            panic!(
+                "a directory junction needs no elevation; if this fired the test cannot run: {e}"
+            );
+        }
+        assert!(
+            crate::paths::is_link(&link_dir),
+            "the precondition itself: the production predicate must call a junction a link"
+        );
+
+        let ignore = IgnoreSet::load(dir.path(), IGNORE_FILES);
+        let mut budget = ROW_BUDGET;
+        let out = walk_files(dir.path(), &ignore, &mut budget);
+
+        assert!(
+            !out.iter()
+                .any(|p| p.contains("secret.txt") || p.contains("escape")),
+            "nothing behind a link may appear in the listing: {out:?}"
+        );
+        assert!(
+            out.iter().any(|p| p == "main.rs"),
+            "and the walk must still find the real files: {out:?}"
+        );
+    }
+
+    /// The **file**-link half, which is the one `Path::is_dir()` answers `false` for — so
+    /// before this fix it was not even descended into, it was *listed*, and the model could
+    /// read an out-of-workspace file by name.
+    ///
+    /// Separate from the junction test because creating a file symlink on Windows needs
+    /// Developer Mode, and one unavailable half must not take the other down with it.
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn a_link_to_a_file_outside_is_not_listed_as_content() {
+        let outside = tempfile::tempdir().unwrap();
+        let real = outside.path().join("secret.txt");
+        std::fs::write(&real, "TOKEN = hunter2").unwrap();
+
+        let dir = workspace();
+        let linked = dir.path().join("secret.txt");
+        if let Err(e) = file_link(&real, &linked) {
+            eprintln!(
+                "SKIPPED, and this milestone records it: creating a file symlink needs \
+                 Developer Mode ({e}). The junction half above did run."
+            );
+            return;
+        }
+
+        let ignore = IgnoreSet::load(dir.path(), IGNORE_FILES);
+        let mut budget = ROW_BUDGET;
+        let out = walk_files(dir.path(), &ignore, &mut budget);
+        assert!(
+            !out.iter().any(|p| p.contains("secret.txt")),
+            "a link to a file outside is not content the model may read: {out:?}"
+        );
+    }
+
+    /// A directory junction, which Windows creates without elevation.
+    #[cfg(windows)]
+    fn dir_junction(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        let out = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "mklink /J refused: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )))
+        }
+    }
+
+    #[cfg(unix)]
+    fn dir_junction(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn file_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+
+    #[cfg(unix)]
+    fn file_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
     }
 }

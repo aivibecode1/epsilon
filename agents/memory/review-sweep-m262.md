@@ -45,9 +45,12 @@ itself twice over (A27 was the most severe defect found in the round).
    pixels and changes `epsilon-runtime` when it needs behaviour the composition lacks. So a
    command whose effect is agent-level (`/goal …`, `/compact`) can be shared, and one whose
    effect is TUI-local (`/theme`, `/timeline`) cannot.
-4. **Security rows A31–A37** if the round is going to security: the symlink/junction escape
-   (A31) is the highest and is **already specced by the project** at
-   `audit/evidence/f09-path-policy-map.md:26,29` — recorded in 2026-09 and never implemented.
+4. ~~**Security row A31 — the walk followed a link out of the workspace.**~~ **CLOSED at
+   M265.** `paths::is_link`, used by both walkers; the Windows branch tests the reparse-point
+   attribute because a junction is the form that needs no privilege *and* the form
+   `is_symlink()` does not report. Still open in that group: **A33** (`.env.` / `.env::$DATA`
+   bypassing the ask) and **A34** (extension and MCP children inheriting the credential
+   environment).
 5. **Desktop per-frame cost — measure before sizing it.** `Agent::goal()` deep-clones every
    session entry **twice per frame** (`app.rs:1905`, `:725`), and the sessions pane re-summarises
    every session file on every paint (the repo's own doc measures **202 ms at 500 sessions**).

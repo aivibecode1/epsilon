@@ -1508,7 +1508,7 @@ already states: **a comment about ordering is a promise, and only a test makes i
 
 ## Open — security, ranked by what it costs a developer on their own machine
 
-### A31 — `grep`, `find` and the `@` popup walk **out of the workspace** through a symlink or junction, with no prompt
+### A31 — **CLOSED at M265.** `grep`, `find` and the `@` popup walked **out of the workspace** through a symlink or junction, with no prompt
 
 `tools/src/util.rs:252` uses `path.is_dir()`, which follows symlinks, and recurses at
 `:272-277`; `core/src/walk.rs:95,112` has the same shape and feeds `@` completion
@@ -1522,6 +1522,21 @@ On Windows a **directory junction needs no privilege**, so this is not a Linux-o
 The project's own review already names it at `audit/evidence/f09-path-policy-map.md:26,29`
 ("do not follow discovered links/reparse directories implicitly") — **recorded but never
 implemented.**
+
+**Closed by M265, with a control rather than an argument.** With the fix removed the core walk
+returns `[".env", ".gitignore", "escape/secret.txt", "main.rs", "src/lib.rs"]` and the tools'
+walker returns `["escape/secret.txt", "main.rs"]` — `escape/secret.txt` is a file that does not
+exist inside the workspace.
+
+The fix is `epsilon_core::paths::is_link`, used by both walkers: **refuse to descend into a
+link**, which is sufficient because normal descent from the root cannot leave it, and costs one
+`symlink_metadata` per entry instead of a `canonicalize` per entry. Windows tests the
+reparse-point attribute rather than `is_symlink()`, because a junction is reported as an
+ordinary directory and needs no privilege — it is the case that matters most here and the one
+the obvious check misses. A skipped link **spends the walk budget**, so the caller's existing
+"this list is partial" signal can fire rather than the list narrowing silently.
+
+[milestone](../docs/milestones/M265-the-walk-followed-a-link-out-of-the-workspace.md)
 
 *Acceptance:* both walkers classify with a non-following `symlink_metadata`, skip or refuse a
 link directory, and **say in the result that traversal was partial** — the project's own

@@ -249,6 +249,18 @@ fn walk_inner(
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
+        // **A link is not descended into.** `is_dir()` below follows it — a symlink, or a
+        // Windows junction, which needs no privilege — so without this a repository holding
+        // `docs -> ~/Documents` has a plain `grep` walk it and print every matching line into
+        // the tool result, the transcript and the durable session log, with **no permission
+        // ask**: `gate_subject` saw only a workspace-relative name, so no `external_dir`
+        // capability was ever raised. See [`epsilon_core::paths::is_link`] for the whole
+        // story, and the project's own review that named this in 2026-09 and left it
+        // unimplemented (`audit/evidence/f09-path-policy-map.md:26,29`).
+        if epsilon_core::paths::is_link(&path) {
+            *budget = budget.saturating_sub(1);
+            continue;
+        }
         let is_dir = path.is_dir();
         // The always-skip list first: a build directory is not a preference, and
         // walking one turns a fast tool into a stalled one.
@@ -1054,6 +1066,73 @@ mod tests {
             names.contains(&"keep.log".to_string()),
             "a negated pattern must re-include: {names:?}"
         );
+    }
+
+    /// **The tool walk does not leave the workspace through a link.**
+    ///
+    /// This is the one that mattered: `grep` with no path argument walks `cwd`, and every path
+    /// it then reports is workspace-relative — so the permission layer never raised an
+    /// `external_dir` ask and the user never saw one. The only thing that could take it out
+    /// of the workspace was a link, and `is_dir()` followed it.
+    ///
+    /// Named in the project's own review in 2026-09 and left unimplemented until now:
+    /// `audit/evidence/f09-path-policy-map.md:26,29`.
+    #[test]
+    fn the_tool_walk_stops_at_a_link_to_the_outside() {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "TOKEN = hunter2").unwrap();
+
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("main.rs"), "fn main() {}").unwrap();
+        let link = root.path().join("escape");
+        if let Err(e) = make_dir_link(outside.path(), &link) {
+            panic!(
+                "a directory junction needs no elevation; if this fired the test cannot run: {e}"
+            );
+        }
+        // The precondition, asserted: a test that never made the link would pass on the
+        // strength of a walk that had nothing to escape through.
+        assert!(
+            epsilon_core::paths::is_link(&link),
+            "the production predicate must call the junction a link, or this test proves nothing"
+        );
+
+        let names: Vec<String> = walk_files(root.path())
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains("secret.txt") || n.contains("escape")),
+            "nothing behind a link may reach a tool walk: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "main.rs"),
+            "and the real files must still be walked: {names:?}"
+        );
+    }
+
+    /// A **junction** where privilege is required, a symlink where it is not. On Windows the
+    /// junction is the form that matters — it is the one `is_symlink()` does not report, and
+    /// the one that needs no elevation.
+    #[cfg(unix)]
+    fn make_dir_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn make_dir_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        let out = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("mklink /J refused"))
+        }
     }
 
     /// G21: the byte budget shared by `find` and `ls`, tested on its own so both tools'

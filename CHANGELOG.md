@@ -5,6 +5,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **A search can no longer walk out of your workspace.** If a repository contained a link to
+  a directory elsewhere on your machine, `grep`, `find`, `ls`, `@`-completion and the desktop
+  file tree all followed it — and printed what they found into the conversation and into the
+  saved session, without ever asking you, because every path they handled looked like it was
+  inside the workspace. Links are now treated as the boundary they are. The trade is stated:
+  a workspace that *deliberately* links in another directory no longer sees it in those tools,
+  and the escape hatch is not built yet (M265).
 - **`/compact` works more than once per session.** The "compaction in progress" flag was set
   when the work started and never cleared, so a session could compact exactly once — every
   later `/compact` said *compact already running — wait for it to finish* for a task that had

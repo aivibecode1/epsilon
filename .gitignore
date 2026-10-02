@@ -156,5 +156,10 @@ audit/evidence/*.log
 !audit/evidence/gate-m264-FAILED-LNK1104.log
 !audit/evidence/gate-m264r-interrupted.log
 
+# M265: the workspace walk followed a link out of the workspace (grep/find/ls, @ completion,
+# the desktop tree). 1879 tests / 76 binaries, 7 of 7 gates, attempt 1 -- the LNK1104 pin
+# did not recur because the test profile was already under fresh metadata.
+!audit/evidence/gate-m265.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

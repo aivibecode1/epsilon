@@ -153,6 +153,60 @@ pub fn resolve_for_access(root: &Path, raw: &str) -> Resolution {
     }
 }
 
+/// Whether `path` is a **link** rather than a real file or directory.
+///
+/// # Why this exists, given that [`resolve_for_access`] already follows links
+///
+/// Because the two answer different questions, and a *walk* was using the wrong one.
+///
+/// `resolve_for_access` is the enforcement primitive: "may we touch this path?", answered by
+/// canonicalising and comparing against the root. It costs a syscall per path, which is right
+/// for a boundary check on one named file and wrong for enumerating five thousand.
+///
+/// Enumeration does not need it. A walk that descends from the root through **real**
+/// directories cannot leave the root — the only way out is a link, because that is the only
+/// thing on the way that points somewhere else. So the cheap and sufficient rule for a walker
+/// is: **do not descend into a link.**
+///
+/// # What that was worth, before this existed
+///
+/// Both walkers classified entries with `Path::is_dir()`, which calls `fs::metadata` and
+/// therefore **follows links**, then recursed into the answer. A repository containing
+/// `docs -> C:\Users\<you>\Documents` (or `link -> ~/.aws`) had a plain `grep` walk it, print
+/// the matching lines into the tool result, the transcript and the durable session log — with
+/// **no permission ask**, because `gate_subject` saw only a workspace-relative name and no
+/// `external_dir` capability was ever raised. Nothing was out of place from the harness's point
+/// of view; every path it handled began with the workspace.
+///
+/// The project's own review named this in 2026-09 and it was never implemented:
+/// `audit/evidence/f09-path-policy-map.md:26,29` — *"do not follow discovered
+/// links/reparse directories implicitly."*
+///
+/// # Why the Windows branch is not `is_symlink()`
+///
+/// A **junction** is a reparse point that `FileType::is_symlink()` reports as an ordinary
+/// directory, and creating one needs no privilege — so it is both the case that matters most
+/// on this platform and the one the obvious check misses. The attribute test covers symlinks
+/// and junctions together, from the standard library, with no new dependency.
+pub fn is_link(path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        // A path that cannot be stat'd is not a link, and the walker's own read already
+        // decided what to do with it. Answering `false` here keeps this a predicate and
+        // not a second error path.
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
+    }
+}
+
 /// A canonical path as a person should read it.
 ///
 /// `std::fs::canonicalize` on Windows returns the **verbatim** form: the same path
