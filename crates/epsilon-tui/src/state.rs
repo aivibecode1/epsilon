@@ -1653,12 +1653,20 @@ pub fn truncate_public(s: &str, max: usize, ellipsis: &str) -> String {
     truncate(s, max, ellipsis)
 }
 
+/// Truncate to `max` **screen columns**, marking the cut with `ellipsis`.
+///
+/// It used to count `char`s, which is wrong in the same two ways everywhere: a hundred
+/// CJK characters are two hundred columns — so a card headline overflowed the pane it was
+/// built to fit — and a `char` boundary is not a grapheme boundary, so a cut can leave a
+/// combining accent or half a wide glyph behind. [`crate::wrap::fit_width_with`] is the one
+/// implementation, because two truncation policies are one more place for a card to
+/// disagree with its own header.
+///
+/// **For ASCII this is byte-identical to the old behaviour**, which is why no existing
+/// card test had to be rewritten and why the defect survived 260 milestones: the suite's
+/// fixtures are all ASCII, where a column is a character.
 fn truncate(s: &str, max: usize, ellipsis: &str) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(max).collect();
-    format!("{head}{ellipsis}")
+    crate::wrap::fit_width_with(s, max, ellipsis)
 }
 
 /// Whether expandable rows currently render their full payload.
@@ -1695,6 +1703,37 @@ mod tests {
             error_message: None,
             usage,
         }
+    }
+
+    /// Every card headline in the transcript goes through `truncate`, so this is the
+    /// single assertion that stands behind all of them.
+    ///
+    /// It counted `char`s, and a card headline is drawn into a pane measured in columns:
+    /// 60 Japanese characters is a 120-column headline in a pane that had room for 60, so
+    /// the tail was clipped by the pane with no mark — the reader could not tell a
+    /// truncated card from a complete one. **For ASCII the behaviour is unchanged**, which
+    /// is why 260 milestones of card tests never saw it: every fixture in the suite is
+    /// ASCII, where one column is one character.
+    #[test]
+    fn a_card_headline_is_cut_to_columns_not_characters() {
+        let wide: String = "目的赶到目标".repeat(30); // 60 characters, 120 columns
+        let cut = truncate_public(&wide, 60, "…");
+        let shown = unicode_width::UnicodeWidthStr::width(cut.as_str());
+        assert!(
+            shown <= 60,
+            "a 60-column budget produced {shown} columns: {cut:?}"
+        );
+        assert!(cut.ends_with('…'), "and must say it was cut: {cut:?}");
+    }
+
+    /// The same property through the ASCII repertoire's mark, which is three cells
+    /// against `…`'s one — a card that reserved one and wrote three came back two columns
+    /// wide and cost the footer a hint at M220.
+    #[test]
+    fn a_card_headline_reserves_the_columns_its_mark_actually_uses() {
+        let cut = truncate_public("abcdefghij", 6, "...");
+        assert_eq!(cut, "abc...");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(cut.as_str()), 6);
     }
 
     // ---- M142: the per-model accumulation M141 left untested ----

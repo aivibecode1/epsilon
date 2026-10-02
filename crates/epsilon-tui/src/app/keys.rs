@@ -106,6 +106,18 @@ pub(crate) fn begin_auth_key_prompt(app: &mut App, provider: String) {
 /// Deliberately tiny: navigation, and a way out. There is no editable query yet — the
 /// query comes from `/search <text>` and refining it means leaving and retyping, which
 /// `search.rs` records as the obvious next slice rather than a half-built filter box.
+///
+/// # Every arm returns `false`, and that is the whole point of this milestone
+///
+/// `handle_key` returns *true when the app should quit*, and `handle_term_event` passes it
+/// to the run loop. This function returned `true` from **every arm** — written in the other
+/// vocabulary, where `true` means "handled" — so `/search` followed by any key at all ended
+/// the harness: `Esc` closed the search and quit in the same keystroke, and a stray letter
+/// quit without closing anything.
+///
+/// The catch-all therefore cannot stay silent either. A key the search view does not bind
+/// is exactly the "nothing happened" state `AGENTS.md` names as the defect this repository
+/// keeps rediscovering, so it says so, in the same words the composer uses.
 pub(crate) fn handle_search_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
@@ -118,21 +130,26 @@ pub(crate) fn handle_search_key(app: &mut App, key: KeyEvent) -> bool {
                 return false;
             }
             app.search_close();
-            true
+            false
         }
         KeyCode::Down | KeyCode::Enter | KeyCode::Char('n') => {
             app.search_step(true);
-            true
+            false
         }
         KeyCode::Up | KeyCode::PageUp | KeyCode::Char('p') => {
             app.search_step(false);
-            true
+            false
         }
         KeyCode::Char('q') => {
             app.search_close();
-            true
+            false
         }
-        _ => true,
+        other => {
+            app.notice(format!(
+                "{other} is not bound in the search view — n/p step, esc or q close"
+            ));
+            false
+        }
     }
 }
 
@@ -440,11 +457,17 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     // It is placed after the approval branch on purpose. A pending permission ask is a
     // question about *doing work*, and a search is a question about *reading*; answering the
     // first with `n` should deny the tool, not silently move the viewport.
-    if app.search.is_some() {
-        return handle_search_key(app, key);
-    }
+    //
+    // **It was not.** The two guards sat in the opposite order to the paragraph above them
+    // for as long as that paragraph existed, so with an ask parked and a search open, `n`
+    // stepped the viewport and left the tool running — the precise outcome the comment
+    // exists to forbid, described correctly and implemented backwards. A comment about
+    // ordering is a promise; this file already holds another one to that rule by test.
     if app.pending_ask.is_some() && !app.keybindings.matches("app.exit", &key) {
         return handle_approval_key(app, key);
+    }
+    if app.search.is_some() && !app.keybindings.matches("app.exit", &key) {
+        return handle_search_key(app, key);
     }
     // M32: masked API-key prompt takes all keys while open (Esc cancels, Enter saves).
     if app.auth_prompt_open {

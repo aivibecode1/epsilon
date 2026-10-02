@@ -37,6 +37,7 @@ next.
 | [`goal-gates.md`](goal-gates.md) | **A goal's completion rule, the sandbox trap in it, and the four things still missing** | live — heads the harness queue |
 | [`prompt-cache.md`](prompt-cache.md) | **Where the provider cache marker goes, and the test that guards it** | live — a one-line rule with a regression test |
 | [`desktop-ide.md`](desktop-ide.md) | **The native desktop IDE: the toolkit decision, the `epsilon-runtime` extraction, and the wiring slice that comes next** | **live — heads the implementation queue** |
+| [`review-sweep-m262.md`](review-sweep-m262.md) | **The M262 four-reviewer sweep: what to do first, and the two method lessons** | **live — read first; the queue itself is `audit/03-defects.md` A27–A44** |
 | [`references-five.md`](references-five.md) | **The five reference harnesses: what each one actually is, and what to take from it** | live — read before studying a reference |
 | [`10-handoff-2026-09-30.md`](10-handoff-2026-09-30.md) | **Session handoff (M201-M214)** — state at HEAD, the defects this session added and where each stands, what to do next in order, and the traps it paid for | **read first** if you are picking this project up cold |
 | [`f09-path-policy.md`](f09-path-policy.md) | **F09: the resolved-path policy** — the lexical resolver, what it delegated, and the containment work that followed | historical reasoning; the landed result is M199 (`m199-containment.md`) |

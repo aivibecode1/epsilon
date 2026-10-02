@@ -113,6 +113,8 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M259 — the window can control a goal, and a fifth reference arrived](milestones/M259-the-window-can-control-a-goal.md)
 - [M260 — a command cannot be displayed as something it is not](milestones/M260-a-command-cannot-be-displayed-as-something-it-is-not.md)
 - [M261 — the permission dialog cannot be lied to, and the footer stopped agreeing with it](milestones/M261-the-permission-dialog-cannot-be-lied-to.md)
+- [M262 — the search view could end the session](milestones/M262-the-search-view-could-end-the-session.md)
+- [M263 — a band painted across the file tree, and a budget in the wrong unit](milestones/M263-the-wrong-unit-and-the-wrong-pane.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

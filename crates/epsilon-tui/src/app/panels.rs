@@ -620,8 +620,11 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     // in this file asserted on state and none rendered this panel. The test that
     // now exists is `the_tree_panel_draws_its_filter_search_field_and_fold_glyphs`.
     if app.tree_searching || !app.tree_query.is_empty() {
+        // The budget is in COLUMNS (it subtracts the `/` prefix and the cursor block),
+        // so it must be spent in columns: taking `budget` *characters* of a CJK query
+        // draws a row twice as wide as the panel it is typed into.
         let budget = (inner.width as usize).saturating_sub(6);
-        let shown: String = app.tree_query.chars().take(budget).collect();
+        let shown = crate::wrap::fit_width(&app.tree_query, budget);
         lines.push(Line::from(vec![
             Span::styled("/", app.theme.accent()),
             Span::styled(shown, app.theme.assistant()),
@@ -867,7 +870,7 @@ pub(super) fn draw_label_prompt(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     let target = app.label_prompt_target.as_deref().unwrap_or("?");
-    let shown: String = app.label_prompt_text.chars().take(60).collect();
+    let shown = crate::wrap::fit_width(&app.label_prompt_text, 60);
     lines.push(Line::from(Span::styled(
         format!("entry {target}"),
         theme.system(),

@@ -221,8 +221,26 @@ specifically, not as a formality.**
 
 Battery `m259`: **1,847 tests / 76 binaries, 0 failed**, attempt 1.
 
+## M263: the goal band was painted at the window's left edge
+
+`draw_goal_band` took a **width** and built its rect at `pos2(0.0, top)`; `with_clip_rect`
+replaces rather than intersects the clip, so the pane's own clip did not contain it either.
+Measured with a negative control: the band painted at `[0,97]-[520,131]` while the agent pane
+is `[920,42]-[1440,870]` — on the activity bar, the file filter and the first tree rows.
+
+**The lesson is the fixture, not the code.** `app.rs`'s containment sweep iterates every
+`row_rects` entry and would have caught this on sight; its fixture seeded **no goal**, so the
+band never entered `row_rects`. A green sweep over a fixture that cannot produce the thing you
+are worried about is not a green sweep. The band also needed a *real session* to exist, which is
+why this lived entirely in `tests/window.rs` and not in the unit tests.
+
 ## Next slice, in order
 
+0. **The window has never shown what a tool printed.** `ToolExecutionUpdate` falls into
+   `_ => {}` (`session.rs:497`), so `▸ bash {…}` is followed by `✓` and nothing in between —
+   **while the resume path does show results** (`:257-268`), so the same session shows two
+   different transcripts before and after a session switch. `RowKind::Tool` has no output field.
+   The terminal's pattern (M152): `partial` is a **delta**, so keep a bounded tail.
 1. **A command table.** The palette reaches four things because that is all the window
    offers. A real registry — **goal create/pause/clear** (M258 made the window *watch* a goal
    but left no way to control one), model picker, sessions, diff review — is the next slice
@@ -239,7 +257,11 @@ Battery `m259`: **1,847 tests / 76 binaries, 0 failed**, attempt 1.
    in the background produces an `AgentEnd` while the window is hidden.
 6. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
    the transcript and the editor only.
-6. **Arrow keys in the palette are implemented and untested.**
+7. **Arrow keys in the palette are implemented and untested.**
+
+**The full parity and defect list is not here**: it is rows A27–A44 of
+[`audit/03-defects.md`](../../audit/03-defects.md), written by four parallel read-only reviews
+at M262, and [`review-sweep-m262.md`](review-sweep-m262.md) says what to do first.
 
 ## egui lessons worth not re-learning
 

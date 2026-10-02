@@ -2959,6 +2959,43 @@ async fn an_empty_session_says_which_picker_was_asked_for() {
     );
 }
 
+/// A long **CJK** preview fits its pane, where a character is two columns.
+///
+/// The defect this closes was measured, not imagined: the budget was `chars().take(100)`,
+/// and a hundred ideographs are two hundred columns, so the preview overflowed the very
+/// column it existed to fit — and it only ever overflowed for someone whose file names are
+/// not ASCII.
+#[test]
+fn a_wide_script_preview_does_not_overflow_its_pane() {
+    let long: String = "目的赶到目标".repeat(60); // 240 columns
+    let entry = epsilon_contracts::SessionEntry {
+        id: "e1".into(),
+        seq: 0,
+        parent_id: None,
+        timestamp_ms: 0,
+        kind: epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m1".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text { text: long }],
+                },
+            ),
+            api_request_sha256: None,
+        },
+    };
+    let snip = timeline_snip(&entry);
+    let width = unicode_width::UnicodeWidthStr::width(snip.as_str());
+    assert!(
+        width <= 100,
+        "the preview must fit its budget: {width} columns in {snip:?}"
+    );
+    assert!(
+        snip.ends_with('\u{2026}'),
+        "and must say it was cut: {snip:?}"
+    );
+}
+
 #[test]
 fn a_long_entry_is_cut_and_marked_rather_than_pushed_off_screen() {
     let long = "x".repeat(500);
@@ -2979,10 +3016,15 @@ fn a_long_entry_is_cut_and_marked_rather_than_pushed_off_screen() {
         },
     };
     let snip = timeline_snip(&entry);
+    // **The budget is columns and it includes the mark.** This said "100 characters plus
+    // the ellipsis" — 101 columns for a 100-column budget, one over the pane the preview
+    // exists to fit. The *claim* the old assertion made (cut, and marked) still holds; only
+    // the unit was wrong, and it was wrong in the same direction for every script where a
+    // character is not a column.
     assert_eq!(
-        snip.chars().count(),
-        101,
-        "100 characters plus the ellipsis"
+        unicode_width::UnicodeWidthStr::width(snip.as_str()),
+        100,
+        "the marked preview must fit the budget it was given, including the ellipsis"
     );
     assert!(
         snip.ends_with('\u{2026}'),
@@ -4171,6 +4213,168 @@ fn the_tree_panel_draws_its_filter_search_field_and_fold_glyphs() {
         screen.contains('\u{25b8}'),
         "and an expanded one carries the OTHER glyph -- the same glyph for both \
          states would make them indistinguishable: {screen}"
+    );
+}
+
+/// **A search field wider than its panel must say it was cut, and on the frame.**
+///
+/// The panel's budget was `(inner.width - 6)` — already a count of *columns*, since it
+/// subtracts the `/` prefix and the cursor block — and it was then spent on `chars()`. For
+/// ASCII the two are the same number, which is why no test failed; for a Japanese query
+/// they are not, and the field drew twice as wide as the box it is typed into, so the pane
+/// clipped the tail with no mark and the last thing a reader saw was a half-word.
+///
+/// Asserted on the rendered row rather than on the helper, for the reason the test above
+/// gives: `fit_width` has its own unit tests, and those would pass on a build where this
+/// panel never called it.
+#[test]
+fn a_wide_script_in_the_tree_filter_is_cut_and_says_so_on_the_frame() {
+    use crate::app::TimelineRow;
+
+    let (mut app, _agent, _rx) = test_app();
+    app.timeline_open = true;
+    app.tree_searching = true;
+    // The panel returns early on an empty list -- correctly, because `/tree` refuses to
+    // open on one ("tree: session is empty"), so this state is reachable only from a
+    // test. It still needs a row, or there is no panel to look at.
+    app.timeline_all = vec![TimelineRow {
+        seq: 0,
+        id: "a".into(),
+        kind: "user".into(),
+        snippet: "目的赶到目标".repeat(30),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: None,
+    }];
+    app.timeline_entries = app.timeline_all.clone();
+    app.timeline_index = 0;
+    // 240 characters, 480 columns -- wider than any panel this suite renders.
+    app.tree_query = "目的赶到目标".repeat(30);
+
+    let rows = render_rows(&mut app, 100, 30);
+    let field = rows.iter().find(|r| r.contains("/目")).unwrap_or_else(|| {
+        panic!("the filter field must be on screen while it is being typed: {rows:?}")
+    });
+    assert!(
+        field.contains('\u{2026}'),
+        "a query wider than its panel must be marked as cut, not silently clipped: {field:?}"
+    );
+    // Scoped to this row on purpose: the frame's other rows may legitimately carry an
+    // ellipsis from their own truncation, and an assertion over the whole screen would
+    // pass on a build where this field drew the full 480 columns.
+    assert!(
+        !field.contains(&"目的赶到目标".repeat(30)),
+        "and the cut must actually be a cut: {field:?}"
+    );
+}
+
+/// **No key pressed inside the search view may end the session.**
+///
+/// `handle_key` returns *true when the app should quit* (`keys.rs:419`), and
+/// `handle_term_event` hands that straight to the run loop. `handle_search_key` returns
+/// `true` from **every arm**, including its catch-all — so `/search`, and then *any* key at
+/// all, quit the harness: `Esc` closed the search **and** exited, and a stray letter did it
+/// without even closing anything.
+///
+/// It is invisible to the four tests that cover search, because they call
+/// `search_own_transcript` / `search_step` / `search_close` directly and never press a key.
+/// A view whose entire key surface is untested is how a return value written in the other
+/// vocabulary ("handled") survives: the two conventions are `true = done` and
+/// `true = quit`, and one `return` line separates them.
+///
+/// Every arm is swept rather than testing one key, because the catch-all and the bound
+/// arms are different code and either alone would pass against a build that broke the other.
+#[test]
+fn no_key_inside_the_search_view_can_end_the_session() {
+    let (mut app, agent, _rx) = test_app();
+    for text in [
+        "alpha",
+        "the needle is here",
+        "beta",
+        "another needle",
+        "gamma",
+    ] {
+        app.ui.push_notice(text);
+    }
+
+    for code in [
+        KeyCode::Esc,
+        KeyCode::Enter,
+        KeyCode::Down,
+        KeyCode::Up,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Char('n'),
+        KeyCode::Char('p'),
+        KeyCode::Char('q'),
+        KeyCode::Char('x'),
+    ] {
+        // Esc and `q` close the search, so it is reopened per key: a loop that ran on
+        // one search would test the composer for every key after the first.
+        app.search_own_transcript("needle");
+        assert!(
+            app.search.is_some(),
+            "the search view must be open or this tests the composer instead"
+        );
+        assert!(
+            !handle_key(&mut app, &agent, key(code)),
+            "{code:?} ended the session from inside the search view"
+        );
+    }
+}
+
+/// The other half of the fix: withdrawing the search's accidental claim on `true` must not
+/// leave the user with **no** way to quit.
+///
+/// The exit chord keeps its precedence over an open search for the same reason the
+/// approval branch has it (`keys.rs:446`) — quitting drops what the view was holding, and
+/// refusing to quit is strictly worse than a search that ignored a stray key. This is the
+/// regression the first version of the fix would have shipped.
+#[test]
+fn the_exit_chord_still_works_while_a_search_is_open() {
+    let (mut app, agent, _rx) = test_app();
+    app.ui.push_notice("the needle is here");
+    app.search_own_transcript("needle");
+    assert!(app.search.is_some(), "the fixture must open a real search");
+    assert!(
+        handle_key(&mut app, &agent, ctrl(KeyCode::Char('q'))),
+        "ctrl+q must still quit from inside the search view"
+    );
+}
+
+/// **A parked permission ask outranks an open search — because the comment says so.**
+///
+/// `keys.rs` has explained this ordering for as long as the comment has existed: *"A pending
+/// permission ask is a question about **doing work**, and a search is a question about
+/// **reading**; answering the first with `n` should deny the tool, not silently move the
+/// viewport."* The two guards were in the **opposite** order the whole time.
+///
+/// The consequence is a real one, not a stylistic one: with a tool waiting for permission
+/// and a search open behind it, `n` stepped the search viewport, the dialog stayed up, and
+/// the tool stayed parked — so the key the footer advertises as *deny* did something else
+/// entirely, on the one screen where the reader is deciding whether work runs.
+///
+/// This is the second instance in this file of the rule `the_backward_jump_chord_arms_backward_not_forward`
+/// already states: **a comment about ordering is a promise, and the only thing that makes it
+/// one is a test.**
+#[tokio::test]
+async fn a_pending_ask_outranks_an_open_search() {
+    let (mut app, agent, _receivers) = test_app();
+    app.ui.push_notice("the needle is here");
+    app.search_own_transcript("needle");
+    assert!(app.search.is_some(), "the fixture must open a real search");
+    let approvals = ChannelApprovalUi::new();
+    let _response = park_ask(&mut app, &approvals, "over-search").await;
+    let _ = render_rows(&mut app, 80, 24); // the dialog paints over the search panel
+
+    // `n` is bound in BOTH views: deny in one, step-next in the other. Which one wins is
+    // the whole question, and it cannot be answered by reading either handler.
+    handle_key(&mut app, &agent, key(KeyCode::Char('n')));
+
+    assert!(
+        app.pending_ask.is_none(),
+        "`n` must answer the parked ask, not move the search viewport"
     );
 }
 

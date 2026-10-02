@@ -6,7 +6,149 @@
 //! plus width to wrapped rows, using unicode display widths so CJK/emoji columns
 //! match what ratatui will actually render.
 
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Shorten `text` to at most `budget` **screen columns**, marking a cut with an ellipsis.
+///
+/// # Why not `.chars().take(n)`
+///
+/// Three previews did exactly that, and it is wrong in two independent ways.
+///
+/// **The budget was in the wrong unit.** A hundred CJK characters are two hundred columns,
+/// so a "100-character" preview overflowed the pane it was built to fit — the opposite of
+/// what a truncation is for, and invisible until someone names a file in Japanese.
+///
+/// **It split grapheme clusters.** Taking 100 `char`s can cut a combining sequence or leave
+/// half a wide glyph, which is how a row ends in a broken box in CP437.
+///
+/// Both are already solved elsewhere in this crate — [`wrap_line`] has measured display
+/// width since M16a — so this is the same rule applied where it was missing, not a new
+/// policy.
+pub fn fit_width(text: &str, budget: usize) -> String {
+    fit_width_with(text, budget, "…")
+}
+
+/// [`fit_width`] with the truncation mark supplied by the caller.
+///
+/// The mark is a parameter because it is a **repertoire** decision, not a cosmetic one:
+/// `…` is one column on a modern terminal and **not representable at all in CP437**,
+/// where the ASCII repertoire passes `...` instead (`ui::theme::Glyphs`, M219/A22). That
+/// difference is three cells against one, and a budget that reserved the wrong one came
+/// back two columns wide and cost the footer a hint at M220 — so the mark is *measured*,
+/// never assumed.
+///
+/// The budget must leave room for the mark beside some text; a cut that spends the whole
+/// budget on the mark says less than no mark, so an impossible budget gets the mark alone.
+pub fn fit_width_with(text: &str, budget: usize, mark: &str) -> String {
+    if budget == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(text) <= budget {
+        return text.to_string();
+    }
+    let mark_width = UnicodeWidthStr::width(mark);
+    if mark_width >= budget {
+        return mark.chars().take(budget).collect();
+    }
+    let text_budget = budget - mark_width;
+    let mut out = String::new();
+    let mut used = 0usize;
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        let w = UnicodeWidthStr::width(grapheme);
+        if used + w > text_budget {
+            break;
+        }
+        out.push_str(grapheme);
+        used += w;
+    }
+    out.push_str(mark);
+    out
+}
+
+#[cfg(test)]
+mod fit_width_tests {
+    use super::fit_width;
+
+    #[test]
+    fn short_text_is_returned_untouched() {
+        assert_eq!(fit_width("hello", 10), "hello");
+        assert_eq!(fit_width("", 10), "");
+    }
+
+    /// The defect this replaced: a 100-*character* budget is a 200-*column* row in CJK, so
+    /// the preview overflowed the pane it was built to fit.
+    #[test]
+    fn a_wide_script_is_cut_to_the_column_budget_not_the_character_count() {
+        // 120 ideographs: 240 columns against a 100-column budget.
+        let wide = "鯨".repeat(120);
+        let cut = fit_width(&wide, 100);
+        assert!(
+            unicode_width::UnicodeWidthStr::width(cut.as_str()) <= 100,
+            "the preview must fit its budget, got {} columns",
+            unicode_width::UnicodeWidthStr::width(cut.as_str())
+        );
+        assert!(cut.ends_with('…'), "and must say it was cut");
+    }
+
+    /// A cut must not leave half a glyph or a split combining sequence behind.
+    #[test]
+    fn a_cut_never_splits_a_grapheme_cluster() {
+        // "e" + combining acute: one grapheme, one column.
+        let combining = "cafe\u{301} au lait, and then some more text";
+        let cut = fit_width(combining, 6);
+        assert!(
+            !cut.ends_with('e'),
+            "cut after the base letter and dropped its accent: {cut:?}"
+        );
+        // An emoji with a skin-tone modifier is one grapheme and two columns.
+        let emoji = "\u{1F44D}\u{1F3FD} ".repeat(20);
+        let cut = fit_width(&emoji, 10);
+        assert!(
+            !cut.contains('\u{FFFD}'),
+            "a cut must not leave half a glyph behind: {cut:?}"
+        );
+        assert!(
+            unicode_width::UnicodeWidthStr::width(cut.as_str()) <= 10,
+            "and must still fit the budget: {cut:?}"
+        );
+        // Every remaining grapheme is whole — a skin-tone modifier is never orphaned from
+        // the hand it modifies.
+        assert!(
+            cut.trim_end_matches('…')
+                .trim_end()
+                .ends_with("\u{1F44D}\u{1F3FD}"),
+            "the last kept emoji must keep its modifier: {cut:?}"
+        );
+    }
+
+    /// A budget too small for text *and* a mark still produces something readable.
+    #[test]
+    fn a_tiny_budget_still_returns_something() {
+        assert_eq!(fit_width("abcdef", 0), "");
+        let one = fit_width("abcdef", 1);
+        assert!(
+            unicode_width::UnicodeWidthStr::width(one.as_str()) <= 1,
+            "a one-column budget must not produce a wider row: {one:?}"
+        );
+    }
+
+    /// The ASCII repertoire's mark is `...` — **three** cells against `…`'s one — so a
+    /// caller that reserved one and wrote three came back two columns wide. That is not
+    /// hypothetical: `format_path` lost the footer's `g jump to live` hint to exactly
+    /// this at M220, and every card headline in the transcript pays the same toll if the
+    /// mark is assumed rather than measured.
+    #[test]
+    fn the_ascii_mark_costs_its_own_three_columns() {
+        use super::fit_width_with;
+        let cut = fit_width_with("abcdefghij", 6, "...");
+        assert_eq!(cut, "abc...");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(cut.as_str()), 6);
+        // The same budget with the one-column mark keeps two more characters, because
+        // it can afford them.
+        assert_eq!(fit_width_with("abcdefghij", 6, "…"), "abcde…");
+    }
+}
 
 /// Wrap one logical line into at most-`width`-wide rows without splitting words.
 ///

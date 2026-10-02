@@ -1821,7 +1821,7 @@ impl IdeApp {
         // happening.
         let goal_band = 34.0;
         let goal_top = y + 4.0;
-        y = match self.draw_goal_band(ui, summary, goal_top, goal_band, rect.width()) {
+        y = match self.draw_goal_band(ui, summary, rect, goal_top, goal_band) {
             Some(after) => after,
             None => goal_top,
         };
@@ -1898,13 +1898,23 @@ impl IdeApp {
         &mut self,
         ui: &mut egui::Ui,
         summary: &mut FrameSummary,
+        pane: egui::Rect,
         top: f32,
         height: f32,
-        width: f32,
     ) -> Option<f32> {
         let view = self.session.as_ref()?.agent().goal()?;
         let theme = self.theme;
-        let band = egui::Rect::from_min_size(egui::pos2(0.0, top), egui::vec2(width, height));
+        // The band's x comes from the **pane**, not from zero.
+        //
+        // It took only a width, and built the rect at `pos2(0.0, top)`, so with the sidebar
+        // open the band was laid out at the window's left edge: at 1440×900 the agent pane
+        // starts at x=920, which put a 520-wide goal strip across the activity bar, the file
+        // filter box and the first tree rows. `with_clip_rect` *replaces* the clip rather than
+        // intersecting it, so the pane's own clip did not save it. It only ever showed when a
+        // goal existed, which is why every frame test — none of which seeded one — passed.
+        let width = pane.width();
+        let band =
+            egui::Rect::from_min_size(egui::pos2(pane.left(), top), egui::vec2(width, height));
         let painter = ui.painter().with_clip_rect(band);
         painter.rect_filled(band, 4.0, theme.panel);
         painter.rect_stroke(

@@ -142,5 +142,11 @@ audit/evidence/*.log
 !audit/evidence/gate-m246.log
 !audit/evidence/gate-m247.log
 
+# M262/M263 (kept as one log because one battery covered both trees):
+# the search view could end the session; the goal band was painted at x=0;
+# truncation budgeted in characters where the screen budgets in columns.
+# 1872 tests / 76 binaries, 7 of 7 gates. See docs/milestones/M262-*.md.
+!audit/evidence/gate-m262.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

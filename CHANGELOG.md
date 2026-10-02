@@ -5,6 +5,24 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **`/search` no longer ends your session.** With the search panel open, *any* key quit the
+  terminal — `Esc` closed the search and exited in the same keystroke, and a stray letter exited
+  without closing anything. Every key the search view does not use now says so instead of
+  swallowing it, and `Ctrl+Q` still quits from inside it (M262).
+- **A permission prompt now outranks an open search.** With a tool waiting for permission and a
+  search open behind it, `n` moved the search viewport instead of denying the tool — on the one
+  screen where you decide whether work runs. The code had explained the correct order in a
+  comment for as long as the comment existed, and had it backwards (M262).
+- **The desktop IDE's goal banner no longer covers the file tree.** It was drawn at the window's
+  left edge rather than inside the agent panel, so it sat on top of the activity bar, the file
+  filter and the first rows of the tree. It only ever appeared while a goal was set (M263).
+- **Long text now fits the pane it is drawn in, whatever script it is in.** A card headline, the
+  `/tree` filter, the `/tasks` preview and the permission dialog's details were cut at 100
+  *characters*, which is twice that in columns for CJK and half a glyph for emoji — so they
+  overflowed the space they existed to fit and could be cut mid-character. They are now cut in
+  screen columns, on whole characters, and marked when cut. Output trimmed to fit the *model's*
+  context is unchanged: that budget is in characters on purpose (M263).
+
 - **Sidebar rows say when they have been cut.** A task description, a model name or a session name too long for the pane used to stop mid-word with no marker, which on screen is indistinguishable from the whole value. They now end in `…`, so a partial value reads as a partial one (M247).
 - **The desktop's subagent list is now verified rather than trusted.** A running, finished and failed subagent read differently, every row names the model it actually ran on and how many turns it took, and a subagent with no recorded model says so instead of leaving a blank (M246).
 - **The desktop session list says when each conversation ran.** The ordering was already newest-first; now each row carries its age, so a reader can check the ordering rather than take it. A session whose timestamp the filesystem could not supply says nothing rather than `0s` (M245).

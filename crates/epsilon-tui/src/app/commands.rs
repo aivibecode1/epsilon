@@ -41,6 +41,11 @@ use super::*;
 /// push every other row off screen. Whitespace-only text reads `(empty)` rather than
 /// nothing, so "this entry has no text" stays distinguishable from "this row is cut off".
 pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
+    /// The preview budget, in **screen columns**.
+    ///
+    /// It was 100 `char`s, which is two budgets for CJK and a half for emoji — the preview
+    /// overflowed the very column it existed to fit.
+    const PREVIEW_COLUMNS: usize = 100;
     match &e.kind {
         epsilon_contracts::session_entry::EntryKind::Message { message, .. } => {
             let txt: String = match message {
@@ -68,10 +73,7 @@ pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
                     .collect::<String>(),
                 _ => String::new(),
             };
-            let mut s: String = txt.chars().take(100).collect();
-            if txt.chars().count() > 100 {
-                s.push('…');
-            }
+            let s = crate::wrap::fit_width(&txt, PREVIEW_COLUMNS);
             if s.trim().is_empty() {
                 "(empty)".into()
             } else {
@@ -79,10 +81,7 @@ pub(super) fn timeline_snip(e: &epsilon_contracts::SessionEntry) -> String {
             }
         }
         epsilon_contracts::session_entry::EntryKind::Compaction { summary, .. } => {
-            let mut s: String = summary.chars().take(100).collect();
-            if summary.chars().count() > 100 {
-                s.push('…');
-            }
+            let s = crate::wrap::fit_width(summary, PREVIEW_COLUMNS);
             format!("[compaction] {s}")
         }
         epsilon_contracts::session_entry::EntryKind::TurnEnd { reason, .. } => {
@@ -1858,7 +1857,7 @@ impl App {
                             running += 1;
                         }
                         let head = s.output.lines().next().unwrap_or("").trim();
-                        let preview: String = head.chars().take(120).collect();
+                        let preview = crate::wrap::fit_width(head, 120);
                         // M56: name the model the child runs on, so a scout on
                         // a cheap model is distinguishable at a glance.
                         let on_model = s

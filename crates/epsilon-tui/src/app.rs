@@ -150,12 +150,7 @@ pub(super) fn summarize_detail(detail: &serde_json::Value) -> String {
         return text.to_string();
     }
     let s = detail.to_string();
-    if s.chars().count() <= 96 {
-        s
-    } else {
-        let head: String = s.chars().take(96).collect();
-        format!("{head}…")
-    }
+    crate::wrap::fit_width(&s, 96)
 }
 
 /// Terminal runtime state (crate-private; the bench module drives it through

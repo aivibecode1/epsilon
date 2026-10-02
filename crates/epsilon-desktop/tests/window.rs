@@ -1097,6 +1097,61 @@ fn the_window_shows_the_goal_it_is_working_toward() {
     );
 }
 
+/// **The goal band is painted inside the agent pane, not across the file tree.**
+///
+/// This is the M248 defect a third time, and it was invisible for a structural reason worth
+/// recording: the containment sweep in `app.rs` iterates **every** `row_rects` entry and
+/// would have caught this on sight — but its fixture seeded user rows and **no goal**, so
+/// `draw_goal_band` returned `None` and the band was never in `row_rects` to be caught. A
+/// green sweep over a fixture that cannot produce the thing you are worried about is not a
+/// green sweep.
+///
+/// The band was built at `pos2(0.0, top)` from a width alone, so with the sidebar open it
+/// landed at the window's left edge and covered the activity bar, the file filter and the
+/// first tree rows. `with_clip_rect` replaces the clip rather than intersecting it, so the
+/// pane's own clip did not contain it either.
+///
+/// Measured rather than asserted: the band's rectangle comes out of the frame, and the pane
+/// comes out of the layout, and this compares the two.
+#[test]
+fn the_goal_band_is_drawn_inside_the_agent_pane() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Create {
+                objective: "make the suite green".into(),
+                max_rounds: Some(7),
+            },
+        )
+        .expect("a goal is created");
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let pane = app.layout().agent;
+    let band = frame
+        .row_rects
+        .iter()
+        .find(|(region, _)| region == "goal")
+        .map(|(_, rect)| *rect)
+        .unwrap_or_else(|| {
+            panic!(
+                "the goal band must record where it was painted.\n{}",
+                frame.describe()
+            )
+        });
+
+    assert!(
+        band.left() >= pane.left() - 0.5
+            && band.right() <= pane.right() + 0.5
+            && band.top() >= pane.top() - 0.5
+            && band.bottom() <= pane.bottom() + 0.5,
+        "the goal band was painted at {band:?}, outside the agent pane {pane:?}.\n{}",
+        frame.describe()
+    );
+}
+
 /// A goal that is active but **not armed** says so, in words.
 ///
 /// Active-and-stopped looks exactly like finished from across a room, and the reader's only

@@ -1429,3 +1429,263 @@ rather than committed for exactly that reason.
 output tail; a passing gate round carries the ordinary prompt; the round is spent either way;
 and the terminal and the desktop window behave identically because there is one
 implementation.
+
+---
+
+# The round-262 review sweep (four parallel read-only reviews)
+
+Recorded at M262. **Four reviewers worked in parallel, each reading a different slice and none
+of them able to build**, because this machine has one build owner. Every row below is a
+**source trace**, not an observation, except where it says it was measured — and the reviewers
+were told to mark that difference themselves, which they did. A row in this section is a
+**claim to be measured before it is called a defect**, which is the same discipline M252
+applied to itself when it reported that no wgpu backend presents on this box.
+
+The section exists so the next round inherits a ranked queue instead of re-running four
+reviews. The order below is by what each costs a developer on their own machine.
+
+## Closed in this round
+
+### A27 — **every key pressed inside the search view ended the session**
+
+**CLOSED at M262, and it was the most severe thing found.** `handle_key` returns *true when
+the app should quit* (`app/keys.rs:419`) and `handle_term_event` hands that to the run loop
+(`:1713-1718`). `handle_search_key` returned `true` from **every arm** — written in the other
+vocabulary, where `true` means "handled". So `/search foo` followed by *any* key quit the
+harness: `Esc` closed the search **and** exited in one keystroke, and a stray letter exited
+without closing anything.
+
+Invisible to all four tests that cover search, because they call `search_own_transcript` /
+`search_step` / `search_close` directly and never press a key. **A view whose entire key
+surface is untested is how a return value written in the other convention survives.**
+
+Every arm now returns `false`, the catch-all says the key is not bound *in the search view*
+rather than swallowing it, and `app.exit` keeps its precedence over the branch — without
+which the fix would have traded "every key quits" for "you cannot quit".
+
+### A28 — the goal band was painted across the file tree
+
+**CLOSED at M262.** `draw_goal_band` took a **width** and built its rect at
+`egui::pos2(0.0, top)` (`desktop/src/app.rs:1907`), and `with_clip_rect` *replaces* the clip
+rather than intersecting it, so the pane's own clip did not contain it either. With the
+sidebar open at 1440×900 the agent pane starts at x=920, so a 520-wide goal strip landed on
+the activity bar, the file filter box and the first tree rows.
+
+It only ever drew when a goal existed — and **the containment sweep in `app.rs:2694` would
+have caught it on sight**, because it iterates every `row_rects` entry. Its fixture seeded
+user rows and no goal, so `draw_goal_band` returned `None` and the band was never in
+`row_rects` to be caught. **A green sweep over a fixture that cannot produce the thing you
+are worried about is not a green sweep.** The new test seeds a real goal through a real
+session.
+
+### A29 — truncation that budgets in characters where the screen budgets in columns
+
+**CLOSED at M262.** `state::truncate` — the one helper every card headline goes through —
+counted `char`s, as did the timeline preview, the approval dialog's detail summary, the tree
+filter echo, the label field and the `/tasks` preview. A hundred Japanese characters are two
+hundred columns, so each of those rows overflowed the pane the preview existed to fit, and
+`chars().take(n)` can cut a combining sequence in half.
+
+**For ASCII this is byte-identical to the old behaviour**, which is why 261 milestones of card
+tests never saw it: every fixture in the suite is ASCII, where one column is one character.
+That is the generalisation worth keeping — *a defect in the wrong unit is invisible to every
+fixture written in the other one.*
+
+One candidate was checked and **rejected**: `frame_dump.rs` measures overflow with
+`chars().count()`, but `render_rows` reads ratatui **buffer cells**, so one cell is one column
+and the instrument is already correct.
+
+### A30 — the ordering comment described a guard order the code did not have
+
+**CLOSED at M262.** `keys.rs` explains, correctly and at length, that the search branch is
+placed *after* the approval branch — *"a pending permission ask is a question about doing
+work, and a search is a question about reading; answering the first with `n` should deny the
+tool, not silently move the viewport."* The two guards were in the **opposite** order for as
+long as that paragraph existed.
+
+This is the second instance in this file of a rule `the_backward_jump_chord_arms_backward_not_forward`
+already states: **a comment about ordering is a promise, and only a test makes it one.**
+
+## Open — security, ranked by what it costs a developer on their own machine
+
+### A31 — `grep`, `find` and the `@` popup walk **out of the workspace** through a symlink or junction, with no prompt
+
+`tools/src/util.rs:252` uses `path.is_dir()`, which follows symlinks, and recurses at
+`:272-277`; `core/src/walk.rs:95,112` has the same shape and feeds `@` completion
+(`tui/src/at_files.rs:42-48`) and the desktop tree. `grep`'s root defaults to `ctx.cwd`
+(`tools/src/search.rs:126-129`), so `gate_subject` yields `("grep", "*")` and the default
+ruleset **allows** it (`safety/src/engine.rs:110`) — no `external_dir` ask is ever raised,
+because nothing outside the workspace was ever named. `is_secret_class_file`
+(`search.rs:20-36`) filters by relative name, so `link/token` passes.
+
+On Windows a **directory junction needs no privilege**, so this is not a Linux-only concern.
+The project's own review already names it at `audit/evidence/f09-path-policy-map.md:26,29`
+("do not follow discovered links/reparse directories implicitly") — **recorded but never
+implemented.**
+
+*Acceptance:* both walkers classify with a non-following `symlink_metadata`, skip or refuse a
+link directory, and **say in the result that traversal was partial** — the project's own
+"no silent truncation" rule.
+
+### A32 — repository prompt templates bypass the trust gate and are re-dispatched as harness commands
+
+`tui/src/app.rs:708-731` loads `<ws>/.agents/prompts` and `<ws>/.epsilon/prompts` with no
+`project_trusted` gate, called unconditionally at startup (`app/event.rs:66`), and the
+expanded body goes straight back through `parse_command` (`app.rs:821-827`). Every other
+project resource **is** gated (skills `runtime/src/lib.rs:3747`, extensions `:3775`,
+SYSTEM.md `:3897`, agents `:3910`), and `.epsilon/prompts` is even *declared*
+trust-requiring at `:594-596` — the declaration exists with no consumer.
+
+A repo shipping `.agents/prompts/setup.md` whose body is `/trust yes` self-answers the trust
+prompt `app.rs:755-808` exists to enforce. `.agents/prompts` is not in
+`trust_requiring_resources` at all.
+
+*Acceptance:* pass `launch.project_trusted` into the loader and drop both project roots when
+false, matching `skill_roots_trusted`; add `.agents/prompts` to the trust-requiring set.
+
+### A33 — `.env.` and `.env::$DATA` bypass both the `read "*.env"` ask and `is_sensitive`
+
+`references.rs:322-357` compares `file_name()` against a fixed list; `paths.rs:76-87` leaves
+a trailing dot and a `:` stream suffix as ordinary components; and `engine.rs:113-117`'s
+`^.*\.env$` / `^.*\.env\..*$` match neither. The result falls through to
+`Rule::new("read","*",Allow)`.
+
+The project's own acceptance table already names it at `f09-path-policy-map.md:90`. **The
+Windows spelling is inferred from documented Win32 behaviour, not executed** — the *parser*
+side is certain, the open-time behaviour needs a check on this box.
+
+*Acceptance:* one rejection in `paths.rs` for a final component with a trailing `.`/space or a
+`:`-stream suffix, before any policy evaluation or I/O — so it covers `is_sensitive`,
+`gate_subject` and the `@` expander at once.
+
+### A34 — extension and MCP children inherit every credential in the developer's environment
+
+`ext/src/host.rs:174-182` and `mcp/src/stdio.rs:29-39` spawn with no `scrub_secret_env`,
+while every other spawn path applies it (`shell.rs:528`, `sandbox.rs:445`,
+`jobobject.rs:280`, `goal_gate.rs:287`, the LSP path `runtime/src/lib.rs:72-73`). The two
+that miss it are the two that run **third-party binaries**. If `epsilon-mcp` cannot reach
+`epsilon-safety`, inject the scrubber as a parameter the way `lsp/src/service.rs:38,105-107`
+already does — an in-repo precedent.
+
+### A35 — tool cards, and the whole desktop window, bypass display stripping
+
+`state.rs:1397-1426` runs `display_safe` on `text`/`full`/`md` but **not on the card** — and
+`card.rs:762-764`'s `sanitize` is tabs and CR only. Tool output (`state.rs:788-790`) and
+model-supplied arguments (`:733-745`) live there. The guard test at `app/tests.rs:4867` pushes
+`push_external_text`, which carries no card, so it cannot see this.
+
+**`epsilon-desktop` has no `text_safety` at all** — grep across the crate returns nothing —
+and its approval row renders `request.pattern` verbatim (`app.rs:2064-2068`), which
+`core/src/exec.rs:148-152` defines as `cmd.split_whitespace().next()`. So the window asks
+*"allow bash Remove-Item ?"* for `Remove-Item -Recurse C:\Users\me`: **the capability string
+shown is not the command that runs.** The terminal gets this right by reading
+`detail["command"]`.
+
+*Acceptance:* one helper, applied at the point each surface builds its text, with the strip
+recorded rather than silent (M260's rule).
+
+### A36 — `goal` gates run model-authored shell under capability `goal`, never `bash`
+
+`tools/src/goal.rs:387-389` takes the gate commands from **tool arguments the model wrote**,
+and `goal_gate.rs:222` runs them through `shell_argv`. `gate_subject("goal", …)` yields
+`("goal","*")` (`core/src/exec.rs:112-153`), so `Rule::new("bash","*",Ask)`
+(`safety/src/engine.rs:123`) is never consulted: one "allow once" and any number of arbitrary
+shell commands run, with a dialog showing the args JSON capped at 96 characters.
+
+The **sandbox axis is handled honestly** and is not part of this row: the runner shares
+`bash`'s sandbox (`tools/src/lib.rs:177-186`) and fails closed without one.
+
+*Acceptance:* route each gate through `exec::run_local`, or emit a `PermissionRequest` per
+gate with capability `bash`.
+
+### A37 — `.epsilon/trust.json` is repository-writable and pre-seeds the trust hash
+
+`runtime/src/lib.rs:169-191` reads the previous hash from `<ws>/.epsilon/trust.json`; equal
+hash means `Unchanged`, and `Unchanged` skips the prompt (`:4547`). A repo shipping both
+`config.toml` and a matching `trust.json` is trusted on open, and a project rules layer can
+then turn the default `Ask` into `Allow` (`safety/src/engine.rs:83-98`).
+
+This is **the project's stated TOFU design**, not a violation of ADR-012 — the finding is that
+the trust record lives inside the directory it gates. Move it to the per-path store the TUI
+already has (`tui/src/trust_store.rs:55-72`), or treat a checked-in `trust.json` as *never
+trusted*.
+
+## Open — the desktop window
+
+### A38 — the largest parity gaps between the terminal and the window
+
+| Gap | Evidence | Cost |
+|---|---|---|
+| **No slash commands at all.** `send_draft` → `session.submit` → `user_message`; nothing parses a command. | `desktop/src/app.rs:2108-2129`, `session.rs:819` | Typing `/compact` sends the literal string **to the model**. The terminal has ~40 verbs (`tui/src/picker.rs:737-822`); the window's table has 8. |
+| **Tool output never reaches the live transcript.** `ToolExecutionUpdate` falls into `_ => {}`. The *resume* path does show results. | `desktop/src/session.rs:497` vs `:257-268` | No `bash` stdout is ever visible, and **the same session shows two different transcripts before and after a session switch**. |
+| **The window cannot declare a gate, a round cap, or complete/blocked.** `GoalOp` has 7 variants; the window builds 4. | `contracts/src/goal.rs:310-346` vs `app.rs:251-254` | The band's `"{n} gate(s)"` always reads `0` from this window. M240–M257 has no desktop equivalent. |
+| **No context, cost or token figures.** `Agent::session_state` is never called, though `layout.rs:133` promises "workspace, model, context, cost". | `desktop/src/app.rs:924,1645` | A reader cannot decide when to compact. |
+| **No model picker, no compaction, no conversation search, no theme switch** without a relaunch. | `desktop/src/app.rs:1635-1647`, `session.rs:497` | Each is a one-line argument from a capability the terminal already has. |
+
+### A39 — three desktop UI defects a frame would have caught
+
+1. **A submit refusal sticks for the rest of the session.** `app.rs:2116` sets `self.refusal`;
+   nothing ever clears it, and `session.rs:813-818` refuses every submit while a turn is in
+   flight. The bar reads *“a run is already in flight”* next to `idle` for the rest of the
+   session.
+2. **Assistant prose never wraps.** `app.rs:1721,1727,1736,1742` draw `ui.label(…)` and egui's
+   `Label` defaults to `wrap: false`; nothing calls `.wrap()` anywhere in the crate. **Every
+   paragraph in the window's primary pane is one clipped line.** `markup.rs:116`'s doc calls
+   the helper "wrapping as a single paragraph" — a hypothesis the code does not implement.
+3. **The same permission ask is printed twice** — once as a transcript row
+   (`session.rs:457-466`) and once as the answerable prompt (`app.rs:2063-2066`). The row has
+   no answer attached and is not clickable; `tests/window.rs:925` asserts `contains("allow
+   bash")`, which the *prompt* satisfies, so the test cannot see the duplicate.
+
+### A40 — `display_path` is built, tested, and never painted
+
+`app.rs:1409-1412` formats `"workspace  {path}"` into `summary.rows`; the pane's painter draws
+only the header, the filter, the tree and the count. Two tests assert on the row and on the
+function — and **the user never learns which directory the window is bound to.** This is the
+exact shape `AGENTS.md` calls the project's recurring one: reachable, green state-level tests,
+never rendered.
+
+## Open — the terminal
+
+### A41 — Esc orphans the composer draft on two of the three paths that stash it
+
+`stash_draft` is called at `keys.rs:1289` and `:1314`; `unstash_draft` has exactly **one**
+caller (`:1044`). Esc on the palette (`:908-913`) and Enter-on-a-model (`:1047-1064`) clear
+the buffer and leave the text in `app.stash` for nobody. The text is not destroyed, it is
+**orphaned** — it reappears from the next cycle, which looks like a glitch. The test named
+`ctrl_p_opens_palette_runs_command_and_restores_draft` walks only the path that works.
+
+### A42 — `guidance_mode` is modelled, handled, and drawn nowhere
+
+Set at `keys.rs:410`, read only at `:348`. `draw_dialog` (`panels.rs:751-847`) and
+`Hints::approval()` (`ui/footer.rs:237-248`) ignore it, so pressing `e` on a permission dialog
+leaves the screen reading `y allow once · a always · n deny · e deny + guidance` while `y`
+types a letter into the composer. **M261's finding, reintroduced one screen over** — and the
+fix is the same shape: render the mode where the keys are.
+
+### A43 — the timeline panel draws three glyphs outside the repertoire table
+
+`panels.rs:568` (`📁`), `:581` (`▾`), `:583` (`▸`) are string literals, where M219/A22 moved
+`●` and `★` into `Glyphs` for exactly this reason. On the ASCII repertoire the tree renders
+boxes for **the two glyphs that distinguish collapsed from expanded** — the information the
+panel exists to carry. `an_ascii_frame_draws_no_character_a_legacy_console_cannot` does not
+drive `draw_timeline`, and the two tree tests assert the Unicode glyphs.
+
+### A44 — PageUp on a short transcript changes the footer and nothing else
+
+`keys.rs:1502` adds 10 to `scroll_from_bottom` unclamped; `scroll::transcript_skip` returns 0
+whenever `total_rows <= visible` (`scroll.rs:26-31`); `hints()` still switches to
+`Hints::frozen` (`view.rs:347`) while `View::badge()` suppresses the badge that would explain
+it (`ui/footer.rs:73`). **A wrong indicator is worse than none.**
+
+## The method, recorded because it kept recurring
+
+Three of the four reviews found something inside the family this repository already names, and
+in every case the *tests were green*. The two structural reasons, which are worth more than
+the individual rows:
+
+- **A fixture written in ASCII cannot see a defect whose unit is columns.** Every truncation in
+  A29 was correct for the suite's own alphabet.
+- **A sweep over a fixture that cannot produce the thing you are worried about is not a sweep.**
+  The goal band (A28) sat inside `row_rects`, which the containment test iterates; the fixture
+  simply had no goal.
