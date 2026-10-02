@@ -53,8 +53,19 @@ and the gate that judged it.
    awaiting it in `drive` is a dead terminal.
 3. **`workspace_fingerprint` is computed and tested for stability, never acted on.** The skip on
    an unchanged workspace is the obvious next use; `GateReport::carried_over` is the field for it.
-4. **No gate has ever run confined in a test.** Every gate test runs with `Confinement::Off`,
-   because that is the only backend the harness sets up. The production branch is unexercised.
+4. ~~**No gate has ever run confined in a test.**~~ **CLOSED at M255.** Every gate test used
+   `GoalGateRunner::new(None)` — the unconfined path — so the branch that decides whether to
+   run unconfined had never executed. Four tests now cover it against
+   `epsilon_safety::best_available()`, which on this machine is the **real Windows Job Object
+   backend**: a gate runs *through* the backend, a failing gate reports identically there, an
+   unavailable backend **refuses rather than running unconfined**, and the backend's own
+   `capabilities()` declaration is pinned.
+   **That last one matters more than it looks.** `epsilon-cli`'s doctor prints
+   `capabilities()` verbatim. On Windows a job object bounds memory, process count and CPU and
+   kills the tree on timeout — it does **not** bound the filesystem, so `WorkspaceWrite` is a
+   mode label there, not an enforced boundary. `jobobject.rs` says so in a comment; it is now
+   a test, because a change that made Windows claim full enforcement would pass every gate
+   test and leave the doctor lying.
 5. **The `/goal edit gate` parser is not driven by a test** for `gate clear` versus `gate <cmd>.
 
 **A trap worth remembering:** a test beside the tool that exercised `goal_apply` rules **passed
