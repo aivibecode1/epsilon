@@ -348,6 +348,15 @@ pub struct IdeApp {
     /// palette is the one route to every file and every command from the keyboard, which is
     /// what every one of the four reference harnesses has and this one did not.
     palette: Option<Palette>,
+    /// A gate-checked goal round, from the task that ran the gates back to the draw path.
+    ///
+    /// The same shape and the same reason as the terminal's: a gate is a shell command, and
+    /// the one thing in a goal round allowed to take real time is the one thing that must
+    /// not happen on the thread that draws.
+    goal_round_tx: tokio::sync::mpsc::UnboundedSender<epsilon_runtime::GoalRound>,
+    goal_round_rx: tokio::sync::mpsc::UnboundedReceiver<epsilon_runtime::GoalRound>,
+    /// A round is being gate-checked, so do not spend another until it answers.
+    goal_round_pending: bool,
     /// Where each palette row was drawn last frame, with its index, so a click can be
     /// applied **before** the rows are drawn again.
     ///
@@ -441,6 +450,9 @@ impl IdeApp {
             review: None,
             tab_rects: Vec::new(),
             palette: None,
+            goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
+            goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
+            goal_round_pending: false,
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -471,6 +483,9 @@ impl IdeApp {
             review: None,
             tab_rects: Vec::new(),
             palette: None,
+            goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
+            goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
+            goal_round_pending: false,
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -543,7 +558,122 @@ impl IdeApp {
         if let Some(session) = self.session.as_ref() {
             session.drain(&mut self.transcript);
         }
+        self.drive_goal_round();
         self.refresh_changed_files();
+    }
+    /// Continue an armed goal once the agent has gone idle.
+    ///
+    /// **Off the paint thread, and that is the whole design.** A goal's gates are shell
+    /// commands — `cargo test` on a real project is thirty seconds — and awaiting that here
+    /// would freeze the window for the whole run, which is the exact failure this window has
+    /// already produced in five other ways. So the round is spawned and its answer arrives
+    /// on a channel the next frames drain.
+    ///
+    /// `pump` runs from both `paint` and `App::logic`, so this is called more than once per
+    /// frame; the pending flag is what stops a second round being spent.
+    fn drive_goal_round(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if self.goal_round_pending || session.running() {
+            return;
+        }
+        let Some(view) = session.agent().goal() else {
+            return;
+        };
+        if !view.is_continuable() {
+            return;
+        }
+        // Only a turn that actually ended may start a round. Without the `armed` check a
+        // window opened onto a paused goal would immediately spend a round on it.
+        if !view.armed {
+            return;
+        }
+        self.goal_round_pending = true;
+        let agent = Arc::clone(session.agent());
+        let runner = session.gate_runner().cloned();
+        let cwd = self.opts.workspace.clone();
+        let tx = self.goal_round_tx.clone();
+        // `tokio::spawn` **panics** outside a runtime. The product's window runs inside one
+        // (`run` builds a multi-thread runtime before the window opens), so this is not the
+        // product path — but a paint with no runtime is also a test, and a round driver that
+        // takes the window down rather than skipping a round is the wrong trade in both.
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            self.goal_round_pending = false;
+            return;
+        };
+        handle.spawn(async move {
+            let round = epsilon_runtime::begin_goal_round(&agent, runner.as_deref(), &cwd).await;
+            tx.send(round.unwrap_or(epsilon_runtime::GoalRound::Stop))
+                .ok();
+        });
+    }
+
+    /// Start a round the gate check has answered for.
+    ///
+    /// The other half of the spawn in [`Self::drive_goal_round`]. Split so the gate's
+    /// timing never reaches the draw path, and so a round starts from one place whether or
+    /// not gates are involved.
+    fn start_goal_round(&mut self, round: epsilon_runtime::GoalRound) -> bool {
+        self.goal_round_pending = false;
+        let (prompt, note) = match round {
+            epsilon_runtime::GoalRound::Stop => return false,
+            epsilon_runtime::GoalRound::Continue {
+                prompt,
+                gates_passed,
+            } => {
+                let note = if gates_passed > 0 {
+                    format!("goal continuing — {gates_passed} gate(s) passed")
+                } else {
+                    "goal continuing".to_string()
+                };
+                (prompt, note)
+            }
+            epsilon_runtime::GoalRound::GateFailed { prompt, reports } => {
+                // The gate's own sentence goes in front of the reader, and its output goes
+                // into the round. A reader who sees "continuing" and no reason would take
+                // it for progress.
+                let note = format!(
+                    "goal gate failed: {}",
+                    reports
+                        .first()
+                        .map(|r| r.sentence())
+                        .unwrap_or_else(|| "a gate did not pass".into())
+                );
+                (prompt, note)
+            }
+        };
+        self.transcript.push_notice(&note);
+        // The reader's own words for a harness-authored turn, the same echo the composer
+        // gives a typed one. Deliberately **not** `goal_apply`: a round is a turn, and the
+        // goal itself is changed only by the model through the `goal` tool.
+        self.transcript.push_user(&prompt);
+        // Submitted through the session so the transcript, the run and the bridge all see
+        // it exactly as they would a typed turn.
+        if let Some(session) = self.session.as_ref()
+            && let Err(reason) = session.submit(&prompt)
+        {
+            self.transcript
+                .push_notice(&format!("goal round could not start: {reason}"));
+            return false;
+        }
+        true
+    }
+
+    /// A gate-checked round, if one has arrived. Non-blocking, once per frame.
+    fn take_goal_round(&mut self) -> Option<epsilon_runtime::GoalRound> {
+        self.goal_round_rx.try_recv().ok()
+    }
+
+    /// The half of [`Self::start_goal_round`] a test can drive, without the spawn.
+    ///
+    /// Exists because the interesting half of a goal round is what the window **does with
+    /// an answer** — a gate failure has to become a notice a reader can see — and the answer
+    /// otherwise arrives on a channel from a task this crate does not control. A seam rather
+    /// than a `pub` on the whole method, so the production path keeps its guard.
+    #[doc(hidden)]
+    pub fn start_goal_round_for_test(&mut self, round: epsilon_runtime::GoalRound) -> bool {
+        self.start_goal_round(round)
     }
     /// Re-read what the agent just changed: the tree, and the open file if it is one.
     ///
@@ -610,6 +740,12 @@ impl IdeApp {
         // The palette reads Enter and Escape, so it goes before the composer — which takes
         // both unconditionally, to send and to abort.
         self.palette_keys(ui.ctx());
+        // A round whose gates were checked lands here rather than at the spawn: the check
+        // ran on its own task, so its answer arrives on a later frame and a slow gate costs
+        // seconds of a live window rather than seconds of a frozen one.
+        while let Some(round) = self.take_goal_round() {
+            self.start_goal_round(round);
+        }
         // ---- window chrome --------------------------------------------------
         let painter = ui.painter();
         if l.title.height() > 0.0 {
@@ -1508,6 +1644,20 @@ impl IdeApp {
                 y += 17.0;
             }
         }
+        // ---- goal banner ----------------------------------------------------
+        // **A goal the window cannot see is a goal the window cannot serve.** Until this,
+        // `epsilon-desktop` had no notion of a goal at all: a reader who set one in the
+        // terminal, or drove an unattended goal, watched the window behave exactly as if it
+        // did not exist — the same "nothing happened" shape this window has produced five
+        // separate ways. It sits above the transcript because that is where DSH puts its
+        // goal strip, and because a goal is the reason the conversation below it is
+        // happening.
+        let goal_band = 34.0;
+        let goal_top = y + 4.0;
+        y = match self.draw_goal_band(ui, summary, goal_top, goal_band, rect.width()) {
+            Some(after) => after,
+            None => goal_top,
+        };
         // ---- transcript -----------------------------------------------------
         let composer_top = rect.bottom() - COMPOSER_H;
         let body = egui::Rect::from_min_max(
@@ -1569,6 +1719,91 @@ impl IdeApp {
             summary.rows.push(("agent".into(), line.into()));
         }
     }
+    /// The goal strip: what the window is working toward, and how much of it is left.
+    ///
+    /// Returns the y the transcript may start at — the band's bottom — or `None` when there
+    /// is no goal to show, which is the common case and costs nothing.
+    ///
+    /// **Everything on it is a fact read from the goal, never a guess.** The rounds are the
+    /// only budget an unattended goal has (DSH's design, deliberate), so a reader who cannot
+    /// see them has no way of knowing whether to leave it running.
+    fn draw_goal_band(
+        &mut self,
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+        top: f32,
+        height: f32,
+        width: f32,
+    ) -> Option<f32> {
+        let view = self.session.as_ref()?.agent().goal()?;
+        let theme = self.theme;
+        let band = egui::Rect::from_min_size(egui::pos2(0.0, top), egui::vec2(width, height));
+        let painter = ui.painter().with_clip_rect(band);
+        painter.rect_filled(band, 4.0, theme.panel);
+        painter.rect_stroke(
+            band,
+            4.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        let goal = &view.goal;
+        let headline = format!(
+            "goal · {} · round {}/{}",
+            goal.status.as_str(),
+            goal.rounds_started,
+            goal.max_rounds
+        );
+        painter.text(
+            band.left_top() + egui::vec2(10.0, 15.0),
+            egui::Align2::LEFT_CENTER,
+            headline.clone(),
+            egui::FontId::proportional(12.0),
+            theme.title,
+        );
+        // The gates are the rule the goal is judged by, so their count is on the strip —
+        // and "no gates" is not the same claim as "a gate passed".
+        let gates = format!("{} gate(s)", goal.gates.len());
+        painter.text(
+            band.right_top() - egui::vec2(10.0, 15.0),
+            egui::Align2::RIGHT_CENTER,
+            gates.clone(),
+            egui::FontId::proportional(12.0),
+            theme.dim,
+        );
+        // The objective, shortened rather than clipped: a goal whose text stops at the pane
+        // edge with no marker is indistinguishable from a shorter goal.
+        let objective = fit(&goal.objective, (width - 24.0).max(40.0), 12.0);
+        painter.text(
+            band.left_top() + egui::vec2(10.0, 30.0),
+            egui::Align2::LEFT_CENTER,
+            objective.clone(),
+            egui::FontId::proportional(12.0),
+            theme.dim,
+        );
+        // Armed-but-stopped is worth its own words: a goal that is active and not continuing
+        // looks to the reader exactly like a goal that has finished.
+        let state = if view.armed {
+            "continuing automatically".to_string()
+        } else {
+            "not armed — it will not continue".to_string()
+        };
+        painter.text(
+            band.right_top() - egui::vec2(10.0, 30.0),
+            egui::Align2::RIGHT_CENTER,
+            state.clone(),
+            egui::FontId::proportional(11.0),
+            if view.armed { theme.dim } else { theme.warn },
+        );
+
+        summary.rows.push(("goal".into(), headline));
+        summary.rows.push(("goal".into(), objective));
+        summary.rows.push(("goal".into(), gates));
+        summary.rows.push(("goal".into(), state));
+        summary.row_rects.push(("goal".into(), band));
+        Some(band.bottom() + 4.0)
+    }
+
     /// Draw the transcript rows.
     ///
     /// Returns what the reader clicked: a permission answered with the mouse, or a change

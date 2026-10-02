@@ -172,20 +172,50 @@ from a script; the desktop needed a temporary source edit and a hand-written cap
 asymmetry is why this took five milestones to happen, and building the probe is the next
 thing that would actually move the needle on verification.
 
+## M258: the window had no goal at all
+
+`grep -i goal` over `crates/epsilon-desktop` returned **one hit**, and it was a doc comment:
+`layout.rs:143` promised *"the bottom bar: goal phase, pending approvals, key hints"* — never
+built. The terminal has had `/goal`, gates, rounds and gate-aware continuation since
+M240–M257; the window had none of it. Largest asymmetry left in the product.
+
+Now: a **goal band** above the transcript (phase, round budget, gate count, shortened
+objective, and `not armed — it will not continue` in words), plus a **round driver** that
+runs the shared `epsilon_runtime::begin_goal_round` **off the paint thread** and applies the
+answer from a channel. `IdeSession::start` switched to `build_runtime_and_gate_runner` so the
+runner shares the agent's sandbox rather than the window resolving a second one.
+
+Two things the tests caught:
+- **`tokio::spawn` panics outside a runtime.** The product's window has one; a headless
+  paint (and every test) does not. The driver now uses `Handle::try_current()` and gives the
+  round back rather than crashing the window.
+- **A freshly created goal is *armed*.** Arming happens on creation; it is **resume** that
+  disarms (`references/deepseek-harness-dsh-v0.2.0-rc.1/packages/goal/goal/src/types.ts:72`).
+  The first unarmed test asserted otherwise and would have passed on a build that never drew
+  the state line.
+
+Battery `m258`: **1,842 tests / 76 binaries, 0 failed**, attempt 1.
+
+**Next slice: there is still no way to create, pause or clear a goal from the window** — only
+to watch one. That wants the command table, not another hand-written palette entry.
+
 ## Next slice, in order
 
-1. **Build a desktop probe** — a `scripts/desktop-probe.py` that launches
+1. **A command table.** The palette reaches four things because that is all the window
+   offers. A real registry — **goal create/pause/clear** (M258 made the window *watch* a goal
+   but left no way to control one), model picker, sessions, diff review — is the next slice
+   and wants an id/label/handler table rather than more palette entries.
+2. **Drive the round driver end to end.** The tests drive the answer half and the band; no
+   test starts a round from an armed goal and watches it arrive.
+3. **Build a desktop probe** — a `scripts/desktop-probe.py` that launches
    `epsilon-desktop`, injects input and captures the window, the way `console-probe.py`
    does for the TUI. M252's measurement needed a temporary source edit and a hand-written
    capture; that is why it took five milestones. Nothing after tessellation is verifiable
-   without it, and it is the highest-value verification item in this crate.
-2. **A command table.** The palette reaches four things because that is all the window
-   offers. A real registry — model picker, sessions, diff review, sidebar — is the next
-   slice and wants an id/label/handler table rather than more palette entries.
-3. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
-4. **A filesystem watcher** for the tree, and `App::logic` draining so a run that finishes
+   without it (A25).
+4. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
+5. **A filesystem watcher** for the tree, and `App::logic` draining so a run that finishes
    in the background produces an `AgentEnd` while the window is hidden.
-5. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
+6. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
    the transcript and the editor only.
 6. **Arrow keys in the palette are implemented and untested.**
 

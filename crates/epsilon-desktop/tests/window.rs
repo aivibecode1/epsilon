@@ -1039,6 +1039,195 @@ fn a_second_submit_while_running_is_refused_rather_than_queued_silently() {
 ///
 /// The inverse of the test above, and the reason `IdeApp` has an agent-less constructor at
 /// all: the state has to be constructible to be testable.
+/// **The window shows the goal it is working toward.**
+///
+/// Until this milestone `epsilon-desktop` had no notion of a goal at all: a reader who set
+/// one, or drove an unattended goal, watched the window behave exactly as if it did not
+/// exist. That is the same "nothing happened" shape this window has produced five other ways,
+/// and it is the one a reader is least likely to forgive, because the work *is* happening —
+/// somewhere they cannot see.
+///
+/// The assertions are on what a reader needs to decide whether to leave it running: the
+/// phase, **the round budget** (an unattended goal's only budget), the gate count, and
+/// whether it will continue on its own.
+#[test]
+fn the_window_shows_the_goal_it_is_working_toward() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Create {
+                objective: "make the suite green".into(),
+                max_rounds: Some(7),
+            },
+        )
+        .expect("a goal is created");
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(vec![epsilon_contracts::goal::GoalGate::new("cargo test")]),
+            },
+        )
+        .expect("the gate is recorded");
+    agent.set_goal_armed(true);
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let goal = frame.region("goal");
+    assert!(
+        goal.iter().any(|t| t.contains("round 0/7")),
+        "an unattended goal's only budget must be on screen: {goal:?}.\n{}",
+        frame.describe()
+    );
+    assert!(
+        goal.iter().any(|t| t.contains("1 gate(s)")),
+        "the gates are the rule the goal is judged by: {goal:?}"
+    );
+    assert!(
+        goal.iter().any(|t| t.contains("continuing automatically")),
+        "and whether it will continue on its own: {goal:?}"
+    );
+    assert!(
+        goal.iter().any(|t| t.contains("make the suite green")),
+        "the objective itself: {goal:?}"
+    );
+}
+
+/// A goal that is active but **not armed** says so, in words.
+///
+/// Active-and-stopped looks exactly like finished from across a room, and the reader's only
+/// clue is that nothing seems to be happening — the state this window has produced in five
+/// other ways.
+///
+/// The state is reached by **disarming**, which is what resuming does: a goal that was armed
+/// when the process died comes back disarmed, so the model cannot auto-continue it until a
+/// human re-arms (DSH's design, `goal/src/types.ts:72`). A freshly created goal *is* armed,
+/// which the previous version of this test assumed otherwise and got wrong.
+#[test]
+fn an_unarmed_goal_says_it_will_not_continue() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Create {
+                objective: "anything".into(),
+                max_rounds: Some(3),
+            },
+        )
+        .expect("a goal is created");
+    agent.set_goal_armed(false);
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        frame.region("goal").iter().any(|t| t.contains("not armed")),
+        "an active goal that will not continue must say so.\n{}",
+        frame.describe()
+    );
+}
+
+/// With no goal there is no band, so the transcript gets the space back.
+#[test]
+fn no_goal_draws_no_goal_band() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        !frame.drew("goal"),
+        "a window with no goal must not reserve a band for one.\n{}",
+        frame.describe()
+    );
+}
+
+/// **A gate-checked round lands in the window, gate failure and all.**
+///
+/// The terminal has had this since M254; the window had no round driver at all, so a goal
+/// set in the terminal simply never continued here. A gate that fails has to become a
+/// notice the reader can see *and* the round text that carries its output — a round that
+/// says only "continuing" would be read as progress.
+#[test]
+fn a_gate_failure_reaches_the_window_and_the_round_beside_it() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let agent = Arc::clone(app.session().expect("this window has a session").agent());
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Create {
+                objective: "make the suite green".into(),
+                max_rounds: Some(4),
+            },
+        )
+        .expect("a goal is created");
+    agent
+        .goal_apply(
+            None,
+            epsilon_contracts::goal::GoalOp::Edit {
+                objective: None,
+                max_rounds: None,
+                gates: Some(vec![epsilon_contracts::goal::GoalGate::new(
+                    "cargo definitely-not-a-subcommand",
+                )]),
+            },
+        )
+        .expect("the gate is recorded");
+    agent.set_goal_armed(true);
+
+    // Exactly what the spawned gate check hands back when a gate fails.
+    let report = epsilon_tools::goal_gate::GateReport {
+        gate: epsilon_contracts::goal::GoalGate::new("cargo definitely-not-a-subcommand"),
+        passed: false,
+        exit_code: Some(101),
+        output_tail: "error: no such subcommand".into(),
+        carried_over: false,
+        unavailable: false,
+    };
+    let started = app.start_goal_round_for_test(epsilon_runtime::GoalRound::GateFailed {
+        prompt: "[Continuing toward your standing goal — a quality gate failed]".into(),
+        reports: vec![report],
+    });
+    assert!(started, "a gate failure must still start a round");
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let rows = frame.region("agent");
+    assert!(
+        rows.iter()
+            .any(|t| t.contains("cargo definitely-not-a-subcommand")),
+        "the gate's own sentence must reach the reader, not just the round: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|t| t.contains("quality gate failed")),
+        "and so must the round text that carries its output: {rows:?}\n{}",
+        frame.describe()
+    );
+}
+
+/// A window with no agent attached still draws — and still has no goal band.
+///
+/// The empty state is a state a user can genuinely reach, and a band that assumed a session
+/// would take the window down on it.
+#[test]
+fn an_agent_less_window_draws_without_a_goal_band() {
+    let ctx = egui::Context::default();
+    let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    assert!(
+        !frame.drew("goal"),
+        "no session means no goal, and the band must not appear anyway.\n{}",
+        frame.describe()
+    );
+    assert!(
+        frame.drew("agent"),
+        "and the window still draws.\n{}",
+        frame.describe()
+    );
+}
+
 #[test]
 fn a_window_with_no_agent_says_so_and_claims_no_numbers() {
     let mut app = IdeApp::without_agent(Options::for_workspace("/tmp/ws"));

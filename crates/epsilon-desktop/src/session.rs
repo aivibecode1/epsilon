@@ -625,6 +625,12 @@ fn one_line(v: &serde_json::Value) -> String {
 pub struct IdeSession {
     /// The one agent. Shared with the runtime, never rebuilt.
     agent: Arc<Agent>,
+    /// The goal-gate runner, sharing this agent's sandbox.
+    ///
+    /// Held so a goal round in the window is gated by the **same** confinement the agent's
+    /// own shell is. `None` where the platform resolved no backend, which makes a gated
+    /// goal uncompletable — the honest direction, and already what completion does with it.
+    gate_runner: Option<epsilon_runtime::GoalGateRunner>,
     /// The approvals channel. The terminal uses the same type.
     approvals: Arc<ChannelApprovalUi>,
     /// What the launch resolved to — the source of every number the status line shows.
@@ -683,30 +689,36 @@ impl IdeSession {
         launch: Launch,
     ) -> Result<Self, String> {
         let approvals = Arc::new(ChannelApprovalUi::new());
-        let agent = epsilon_runtime::build_runtime(epsilon_runtime::RunParams {
-            workspace: &launch.workspace,
-            stream_fn: launch.stream_fn.clone(),
-            approvals: approvals.clone(),
-            mcp_servers: &launch.mcp_servers,
-            session_file: epsilon_runtime::fresh_session_file(
-                epsilon_runtime::now_millis(),
-                &epsilon_contracts::new_id("ses"),
-                &launch.workspace,
-            ),
-            confinement: &launch.confinement,
-            lsp: launch.lsp,
-            model_id: &launch.model_id,
-            model_explicit: launch.model_explicit,
-            resume: &launch.resume,
-            project: &launch.project,
-            project_trusted: launch.project_trusted,
-            plan_mode: launch.plan_mode,
-        })
-        .await?;
+        // `build_runtime_and_gate_runner`, not `build_runtime`: a goal round has to be able to
+        // evaluate the goal's gates, and the runner shares the agent's sandbox. Resolving a
+        // second one here would be the thing `epsilon-tools`' module header rules out — two
+        // confinement answers in one session.
+        let (agent, gate_runner) =
+            epsilon_runtime::build_runtime_and_gate_runner(epsilon_runtime::RunParams {
+                workspace: &launch.workspace,
+                stream_fn: launch.stream_fn.clone(),
+                approvals: approvals.clone(),
+                mcp_servers: &launch.mcp_servers,
+                session_file: epsilon_runtime::fresh_session_file(
+                    epsilon_runtime::now_millis(),
+                    &epsilon_contracts::new_id("ses"),
+                    &launch.workspace,
+                ),
+                confinement: &launch.confinement,
+                lsp: launch.lsp,
+                model_id: &launch.model_id,
+                model_explicit: launch.model_explicit,
+                resume: &launch.resume,
+                project: &launch.project,
+                project_trusted: launch.project_trusted,
+                plan_mode: launch.plan_mode,
+            })
+            .await?;
 
         let (forwarder_tx, inbox) = std::sync::mpsc::channel();
         Ok(Self {
             agent,
+            gate_runner,
             approvals,
             launch,
             runtime,
@@ -720,6 +732,14 @@ impl IdeSession {
     /// The agent, for a caller that wants to run a turn.
     pub fn agent(&self) -> &Arc<Agent> {
         &self.agent
+    }
+
+    /// The goal-gate runner that shares this agent's sandbox, if the platform has one.
+    ///
+    /// Public because the window runs goal rounds; the alternative is for the window to
+    /// resolve its own sandbox, which is a second confinement answer in one session.
+    pub fn gate_runner(&self) -> Option<&epsilon_runtime::GoalGateRunner> {
+        self.gate_runner.as_ref()
     }
 
     /// What the launch resolved to.
