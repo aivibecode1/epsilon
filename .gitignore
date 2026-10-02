@@ -148,5 +148,13 @@ audit/evidence/*.log
 # 1872 tests / 76 binaries, 7 of 7 gates. See docs/milestones/M262-*.md.
 !audit/evidence/gate-m262.log
 
+# M264: /compact worked once; the desktop never showed what a tool printed.
+# 1876 tests / 76 binaries, 7 of 7 gates. Three logs because three attempts happened
+# and each one is evidence of something different -- the machine fault, the harness
+# kill, and the run that passed. Overwriting them would erase the first two.
+!audit/evidence/gate-m264final.log
+!audit/evidence/gate-m264-FAILED-LNK1104.log
+!audit/evidence/gate-m264r-interrupted.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

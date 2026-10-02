@@ -1592,7 +1592,10 @@ impl App {
                     .push_notice(format!("palette: {} \u{2192} {}", was.name(), next.name()));
             }
             crate::picker::Command::Compact => {
-                if self.compact_running {
+                if self
+                    .compact_running
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
                     self.ui
                         .push_notice("compact already running — wait for it to finish");
                     return false;
@@ -1602,16 +1605,31 @@ impl App {
                         "compact queued — will run after the current turn (loop also auto-compacts on pressure)",
                     );
                 } else {
-                    self.compact_running = true;
+                    use std::sync::atomic::Ordering;
+                    self.compact_running.store(true, Ordering::Relaxed);
                     self.ui.push_notice("compacting context…");
                     let a = Arc::clone(agent);
-                    // best-effort: clear spinner when the task finishes (even if it did nothing).
-                    // We don't have a direct callback from compact_now, so we spawn a fire-and-forget
-                    // that resets the flag after a short grace; the real compaction stream would
-                    // clear it if it existed. For now the spinner stays until the next successful /compact.
+                    let running = Arc::clone(&self.compact_running);
+                    let notices = self.notices_tx.clone();
+                    // **The task clears the flag when it finishes**, which is the entire
+                    // reason this field is an `Arc<AtomicBool>` and not a `bool`. It was set
+                    // here and never cleared, so the first `/compact` in a session was the
+                    // last one: every later press answered "compact already running — wait
+                    // for it to finish" for a task that finished long ago. That is the
+                    // worst shape of this defect — a refusal that is plausible, so nobody
+                    // suspects it, and it is permanent.
+                    //
+                    // The error used to go into `let _ =`. `compact_now` reports failure
+                    // through a generic notice that cannot be told apart from any other,
+                    // so on its own a failed compaction ends the spinner and says nothing
+                    // at all about why the context did not shrink. It is named here.
                     tokio::spawn(async move {
                         let mut produced = Vec::new();
-                        let _ = a.compact_now(&mut produced).await;
+                        let outcome = a.compact_now(&mut produced).await;
+                        running.store(false, Ordering::Relaxed);
+                        if let Err(e) = outcome {
+                            notices.send(format!("compaction failed: {e}")).ok();
+                        }
                     });
                 }
             }

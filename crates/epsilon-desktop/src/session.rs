@@ -58,6 +58,27 @@ const MAX_DIFF_LINES: usize = 12;
 /// view that grows without bound is a leak with a scrollbar.
 const MAX_ROWS: usize = 2_000;
 
+/// How many lines of a tool's output one row keeps.
+///
+/// `partial` is a **delta**, so a long `cargo build` arrives as hundreds of updates and the
+/// row would grow without bound — in a view that is itself capped at [`MAX_ROWS`] rows and
+/// cannot scroll to them all. The terminal keeps 40 lines for the same reason
+/// (`CARD_STREAM_TAIL_LINES`); one number, two frontends, rather than two that drift.
+const TOOL_OUTPUT_TAIL_LINES: usize = 40;
+
+/// Append `chunk` to `existing`, keeping only the last [`TOOL_OUTPUT_TAIL_LINES`] lines.
+///
+/// One function for the live path and the replay path, because the two answering this
+/// differently is what made a replayed session read differently from a live one.
+fn bounded_tail(existing: &str, chunk: &str, limit: usize) -> String {
+    let mut lines: Vec<&str> = existing.lines().collect();
+    lines.extend(chunk.lines().filter(|l| !l.trim().is_empty()));
+    if lines.len() > limit {
+        lines.drain(..lines.len() - limit);
+    }
+    lines.join("\n")
+}
+
 // ==========================================================================================
 // Transcript
 // ==========================================================================================
@@ -73,10 +94,29 @@ pub enum RowKind {
     Thinking,
     /// A tool call, running or finished.
     Tool {
+        /// The agent's id for this invocation.
+        ///
+        /// It is what streamed output is matched on, and the transcript matched *positionally*
+        /// before: "the last tool row that has not finished". That is wrong the moment two
+        /// tools run at once, which the FIFO approval channel permits — a `bash` waiting on a
+        /// permission ask is exactly when a second call arrives. The id was already in hand
+        /// (`ToolCall.id`, `ToolResultMessage.tool_call_id`); it simply was not kept.
+        id: String,
         /// The tool's name, as the agent declared it.
         name: String,
         /// `None` while running.
         failed: Option<bool>,
+        /// The tail of what the tool printed while it ran.
+        ///
+        /// The window used to show `▸ bash {"command": …}` and then `✓`, and never the output
+        /// between them — while the *resume* path showed results, so the same session showed
+        /// two different transcripts before and after a session switch. An IDE that cannot
+        /// show you what `cargo test` printed is not yet an IDE.
+        ///
+        /// A **bounded tail**, because `partial` is a delta and a runaway command would
+        /// otherwise pin its whole output in a row nobody can scroll (the terminal keeps 40
+        /// lines for the same reason, `CARD_STREAM_TAIL_LINES`).
+        output: String,
     },
     /// A permission ask. Present until it is answered.
     Approval {
@@ -125,8 +165,6 @@ pub struct Transcript {
     live_assistant: Option<usize>,
     /// Index of the reasoning row currently streaming, for the same reason.
     live_thinking: Option<usize>,
-    /// Index of the tool row for the call currently running.
-    live_tool: Option<usize>,
     /// Requests that have been answered, so `open_approvals` stops offering them.
     ///
     /// An id set rather than a row removal, and the reason is the pair of questions
@@ -218,14 +256,16 @@ impl Transcript {
                         match block {
                             ContentBlock::Thinking { text, .. } => thinking.push_str(text),
                             ContentBlock::Text { text } => answer.push_str(text),
-                            ContentBlock::ToolCall { name, .. } => {
+                            ContentBlock::ToolCall { id, name, .. } => {
                                 // The result row carries the outcome; this one only has to
                                 // say the call happened, or the transcript shows a tool
                                 // answering a question nobody recorded asking.
                                 t.push(
                                     RowKind::Tool {
+                                        id: id.to_string(),
                                         name: name.clone(),
                                         failed: None,
+                                        output: String::new(),
                                     },
                                     String::new(),
                                 );
@@ -250,21 +290,38 @@ impl Transcript {
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
-                    // Mark the **last** tool row with this outcome rather than adding a row
+                    // Mark the tool row this result belongs to rather than adding a row
                     // per result: the pair is what a reader reads, and two rows for one
                     // call makes the transcript longer without adding anything.
+                    //
+                    // Matched by **id**, with the old "last unresolved row" as the
+                    // fallback: a session file written before rows carried ids still
+                    // replays, and a file with two calls in flight cannot be matched
+                    // positionally at all.
                     let failed = r.is_error;
-                    if let Some(i) = t
+                    let wanted = r.tool_call_id.to_string();
+                    let found = t
                         .rows
                         .iter()
-                        .rposition(|row| matches!(row.kind, RowKind::Tool { failed: None, .. }))
+                        .rposition(
+                            |row| matches!(&row.kind, RowKind::Tool { id, .. } if *id == wanted),
+                        )
+                        .or_else(|| {
+                            t.rows.iter().rposition(|row| {
+                                matches!(row.kind, RowKind::Tool { failed: None, .. })
+                            })
+                        });
+                    if let Some(i) = found
+                        && let RowKind::Tool {
+                            failed: f, output, ..
+                        } = &mut t.rows[i].kind
                     {
-                        if let RowKind::Tool { failed: f, .. } = &mut t.rows[i].kind {
-                            *f = Some(failed);
-                        }
-                        if !text.trim().is_empty() {
-                            t.rows[i].text = text;
-                        }
+                        *f = Some(failed);
+                        // The result goes in `output`, beside the live path's streamed
+                        // tail — it used to overwrite `text`, which held the arguments,
+                        // so **a replayed session showed the result where a live one
+                        // showed the call**. Same conversation, two transcripts.
+                        *output = bounded_tail("", &text, TOOL_OUTPUT_TAIL_LINES);
                     }
                 }
                 Message::Custom(_) => {}
@@ -420,7 +477,9 @@ impl Transcript {
             }
 
             AgentEvent::ToolExecutionStart {
-                tool_name, args, ..
+                tool_call_id,
+                tool_name,
+                args,
             } => {
                 // **Snapshot before the tool runs.** `ToolExecutionStart` is emitted
                 // before execution, so reading now is genuinely "before" — reading after
@@ -429,18 +488,72 @@ impl Transcript {
                 self.watcher.begin(args, &self.workspace);
                 let row = Row {
                     kind: RowKind::Tool {
+                        id: tool_call_id.to_string(),
                         name: tool_name.clone(),
                         failed: None,
+                        output: String::new(),
                     },
                     // The arguments, not the result: what the agent is *about to do* is
                     // the thing a reader needs while it is doing it.
                     text: one_line(args),
                 };
-                self.live_tool = Some(self.push_row(row));
+                self.push_row(row);
             }
 
-            AgentEvent::ToolExecutionEnd { is_error, .. } => {
-                if let Some(i) = self.live_tool.take()
+            AgentEvent::ToolExecutionUpdate {
+                tool_call_id,
+                partial,
+                ..
+            } => {
+                // **What the tool printed, while it is printing it.**
+                //
+                // This event reached the `_ => {}` arm and was dropped, which is why the
+                // window showed `▸ bash {…}` and then `✓` with nothing in between — and why
+                // a three-minute `cargo test` looked like a three-minute freeze, the exact
+                // complaint that sent this project to the references in the first place.
+                //
+                // A long command that produces no intermediate events would still look
+                // frozen here, so this is the fix for the *shape* of that symptom rather
+                // than a claim that every tool streams. It is also what makes the window
+                // agree with the terminal, which has shown this since M63.
+                let text: String = partial
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if text.trim().is_empty() {
+                    return;
+                }
+                let wanted = tool_call_id.to_string();
+                if let Some(i) = self
+                    .rows
+                    .iter()
+                    .position(|row| matches!(&row.kind, RowKind::Tool { id, .. } if *id == wanted))
+                    && let RowKind::Tool { output, .. } = &mut self.rows[i].kind
+                {
+                    *output = bounded_tail(output, &text, TOOL_OUTPUT_TAIL_LINES);
+                }
+            }
+
+            AgentEvent::ToolExecutionEnd {
+                tool_call_id,
+                is_error,
+                ..
+            } => {
+                // By id, like the update above. It used to be `live_tool`, a **single**
+                // slot: two tools in flight — a `bash` parked on a permission ask is the
+                // ordinary case, not an exotic one — finished in the wrong order and the
+                // first result was marked onto the second row. The field is deleted along
+                // with its last reader, rather than left as a definition with no caller.
+                let wanted = tool_call_id.to_string();
+                if let Some(i) = self
+                    .rows
+                    .iter()
+                    .position(|row| matches!(&row.kind, RowKind::Tool { id, .. } if *id == wanted))
                     && let RowKind::Tool { failed, .. } = &mut self.rows[i].kind
                 {
                     *failed = Some(*is_error);
@@ -564,7 +677,6 @@ impl Transcript {
             // wrong and invisible.
             self.live_assistant = None;
             self.live_thinking = None;
-            self.live_tool = None;
         }
     }
 }
@@ -1013,8 +1125,10 @@ mod tests {
         assert_eq!(
             running.kind,
             RowKind::Tool {
+                id: "c1".into(),
                 name: "bash".into(),
-                failed: None
+                failed: None,
+                output: String::new(),
             }
         );
         assert!(
@@ -1032,9 +1146,140 @@ mod tests {
         assert_eq!(
             ended.kind,
             RowKind::Tool {
+                id: "c1".into(),
                 name: "bash".into(),
-                failed: Some(true)
+                failed: Some(true),
+                output: String::new(),
             }
+        );
+    }
+
+    /// **A tool's output reaches the row, and two tools in flight do not cross.**
+    ///
+    /// `ToolExecutionUpdate` reached the reducer's `_ => {}` arm and was dropped, so the
+    /// window showed `▸ bash {…}` and then `✓` and never a line of what the command
+    /// printed. For `cargo test` that is the difference between "it ran" and "it passed".
+    ///
+    /// Two calls, deliberately **interleaved**, because that is the case the old code could
+    /// not express: it tracked one running tool in a single slot, so the first result to
+    /// arrive was marked onto whichever row happened to be live. A `bash` parked on a
+    /// permission ask while a second call starts is ordinary, not exotic.
+    #[test]
+    fn streamed_tool_output_lands_on_the_row_that_produced_it() {
+        let mut t = transcript();
+        for (id, cmd) in [("c1", "cargo test"), ("c2", "ls -la")] {
+            t.apply(&AgentEvent::ToolExecutionStart {
+                tool_call_id: id.into(),
+                tool_name: "bash".into(),
+                args: serde_json::json!({ "command": cmd }),
+            });
+        }
+        // Interleaved: c1 speaks, c2 speaks, c1 speaks again.
+        for (id, chunk) in [
+            ("c1", "running 12 tests\ntest a ... ok"),
+            ("c2", "total 8\ndrwxr-xr-x  ."),
+            ("c1", "test result: ok. 12 passed"),
+        ] {
+            t.apply(&AgentEvent::ToolExecutionUpdate {
+                tool_call_id: id.into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::text(chunk)],
+                    details: serde_json::Value::Null,
+                },
+            });
+        }
+        t.apply(&AgentEvent::ToolExecutionEnd {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            is_error: false,
+        });
+        t.apply(&AgentEvent::ToolExecutionEnd {
+            tool_call_id: "c2".into(),
+            tool_name: "bash".into(),
+            is_error: true,
+        });
+
+        let rows = t.rows();
+        let first = match &rows[0].kind {
+            RowKind::Tool {
+                id,
+                name,
+                failed,
+                output,
+            } => (id, name, *failed, output),
+            other => panic!("a tool row, got {other:?}"),
+        };
+        let second = match &rows[1].kind {
+            RowKind::Tool {
+                id,
+                name,
+                failed,
+                output,
+            } => (id, name, *failed, output),
+            other => panic!("a tool row, got {other:?}"),
+        };
+
+        assert_eq!(first.0, "c1", "row order follows call order");
+        assert!(
+            first.3.contains("12 passed") && first.3.contains("test a ... ok"),
+            "c1 keeps its own output in order: {:?}",
+            first.3
+        );
+        assert!(
+            !first.3.contains("total 8"),
+            "c2's output must not land on c1's row: {:?}",
+            first.3
+        );
+        assert_eq!(second.0, "c2");
+        assert!(
+            second.3.contains("total 8") && !second.3.contains("12 passed"),
+            "c2 keeps its own output: {:?}",
+            second.3
+        );
+        // And the outcome still lands on the right row, which is what the single slot broke.
+        assert_eq!(first.2, Some(false), "c1 succeeded");
+        assert_eq!(second.2, Some(true), "c2 failed");
+    }
+
+    /// The tail is **bounded**, because `partial` is a delta and a runaway command would
+    /// otherwise pin its whole output in a row the pane cannot scroll.
+    #[test]
+    fn streamed_tool_output_keeps_a_bounded_tail() {
+        let mut t = transcript();
+        t.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "build" }),
+        });
+        for n in 0..(TOOL_OUTPUT_TAIL_LINES + 25) {
+            t.apply(&AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "c1".into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::text(format!(
+                        "line {n}"
+                    ))],
+                    details: serde_json::Value::Null,
+                },
+            });
+        }
+        let RowKind::Tool { output, .. } = &t.rows()[0].kind else {
+            panic!("a tool row");
+        };
+        assert_eq!(
+            output.lines().count(),
+            TOOL_OUTPUT_TAIL_LINES,
+            "kept {} lines, bound is {TOOL_OUTPUT_TAIL_LINES}",
+            output.lines().count()
+        );
+        assert!(
+            output.contains(&format!("line {}", TOOL_OUTPUT_TAIL_LINES + 24)),
+            "the newest line must survive: {output}"
+        );
+        assert!(
+            !output.contains("line 0\n"),
+            "the oldest must not: {output}"
         );
     }
 

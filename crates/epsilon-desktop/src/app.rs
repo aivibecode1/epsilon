@@ -2040,6 +2040,32 @@ impl IdeApp {
             }
             let text = format!("{marker}{body}");
             let painted = ui.colored_label(color, text.clone());
+            // **What the tool printed, under the call that printed it.**
+            //
+            // This is the difference between a window that runs tools and a window you can
+            // work in: `▸ bash cargo test` followed by `✓` tells you nothing about whether
+            // the suite passed, and the terminal has shown it since M63. Each line is its own
+            // widget because this is a log, not prose — wrapping it into the row above would
+            // turn `FAILURES:` into a sentence.
+            //
+            // Dimmed, so a wall of compiler output cannot out-shout the conversation it
+            // is part of, and drawn last so it lands under the row that produced it.
+            //
+            // **Each line is also recorded in `summary.rows`.** Painting without recording is
+            // how this feature would have shipped unverified: `FrameSummary::describe` is the
+            // only window anyone has into what the window shows, so a line the summary does
+            // not carry is a line no frame test can ever see. The first version drew
+            // correctly and the frame test still failed — not because the drawing was wrong,
+            // but because the instrument could not see it.
+            if let RowKind::Tool { output, .. } = &row.kind
+                && !output.trim().is_empty()
+            {
+                for line in output.lines() {
+                    let shown = format!("    {line}");
+                    ui.colored_label(theme.dim, shown.clone());
+                    summary.rows.push(("agent".into(), shown));
+                }
+            }
             // **A change row is a link.** The row under it says "open the file", and until
             // this existed there was nothing to open: a review instruction with no control
             // beside it is the "nothing happened" state reached by asking the agent to do

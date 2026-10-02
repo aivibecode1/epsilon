@@ -109,7 +109,7 @@ impl App {
             label_prompt_target: None,
             label_prompt_text: String::new(),
             label_prompt_cursor: 0,
-            compact_running: false,
+            compact_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stash: None,
             undo: crate::undo::UndoStack::new(),
             branch_cache: (

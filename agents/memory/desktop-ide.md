@@ -234,27 +234,41 @@ band never entered `row_rects`. A green sweep over a fixture that cannot produce
 are worried about is not a green sweep. The band also needed a *real session* to exist, which is
 why this lived entirely in `tests/window.rs` and not in the unit tests.
 
+## M264: the window shows what a tool printed
+
+`ToolExecutionUpdate` reached the reducer's `_ => {}` arm, so the window showed `▸ bash {…}`
+then `✓` and never a line between them — while the **replay** path showed results, so one
+session had two transcripts depending on whether you had just resumed it.
+
+Rows now carry the agent's `tool_call_id` (in hand and unkept), output is a 40-line tail, and
+`live_tool` — one slot for "the call currently running", which breaks the moment a second call
+starts — is **deleted with its last reader**.
+
+**The lesson is the instrument, not the code.** The output drew correctly on the first run and
+the frame test still failed, because the drawing never reached `FrameSummary.rows`. A line the
+summary does not carry is a line no frame test can see — *painting without recording is how a
+feature ships unverified*, and it is the sixth time this window has produced that shape.
+
 ## Next slice, in order
 
-0. **The window has never shown what a tool printed.** `ToolExecutionUpdate` falls into
-   `_ => {}` (`session.rs:497`), so `▸ bash {…}` is followed by `✓` and nothing in between —
-   **while the resume path does show results** (`:257-268`), so the same session shows two
-   different transcripts before and after a session switch. `RowKind::Tool` has no output field.
-   The terminal's pattern (M152): `partial` is a **delta**, so keep a bounded tail.
-1. **A command table.** The palette reaches four things because that is all the window
-   offers. A real registry — **goal create/pause/clear** (M258 made the window *watch* a goal
-   but left no way to control one), model picker, sessions, diff review — is the next slice
-   and wants an id/label/handler table rather than more palette entries.
-2. **Drive the round driver end to end.** The tests drive the answer half and the band; no
+0. **The window has no slash commands at all** (A38) — the largest gap left: `/compact` typed
+   in the window is sent to the model as literal text. `epsilon-desktop` already depends on
+   `epsilon-tui` (the palette, ADR-020), so `parse_command` is reachable with no new crate edge;
+   the design question is which behaviours are agent-level — shareable through
+   `epsilon-runtime` — and which are TUI-local and cannot be.
+1. **Measure the frame path before fixing it.** `Agent::goal()` deep-clones every session
+   entry twice per frame and the sessions pane re-summarises every session file on every paint.
+   The TUI's `refresh_goal` (`app/view.rs:413`) is the shape to copy — but **no desktop frame
+   cost has ever been measured in this repository**, so measure before sizing.
+2. **A command table.** The palette reaches four things because that is all the window
+   offers. A real registry — model picker, sessions, diff review — wants an id/label/handler
+   table rather than more palette entries.
+3. **Drive the round driver end to end.** The tests drive the answer half and the band; no
    test starts a round from an armed goal and watches it arrive.
-3. **Build a desktop probe** — a `scripts/desktop-probe.py` that launches
+4. **Build a desktop probe** — a `scripts/desktop-probe.py` that launches
    `epsilon-desktop`, injects input and captures the window, the way `console-probe.py`
-   does for the TUI. M252's measurement needed a temporary source edit and a hand-written
-   capture; that is why it took five milestones. Nothing after tessellation is verifiable
-   without it (A25).
-4. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
-5. **A filesystem watcher** for the tree, and `App::logic` draining so a run that finishes
-   in the background produces an `AgentEnd` while the window is hidden.
+   does for the TUI. Nothing after tessellation is verifiable without it (A25).
+5. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
 6. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
    the transcript and the editor only.
 7. **Arrow keys in the palette are implemented and untested.**

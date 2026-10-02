@@ -5,6 +5,16 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **`/compact` works more than once per session.** The "compaction in progress" flag was set
+  when the work started and never cleared, so a session could compact exactly once — every
+  later `/compact` said *compact already running — wait for it to finish* for a task that had
+  finished long ago. A failed compaction now says so, instead of ending the spinner and
+  leaving you to work out why the context did not shrink (M264).
+- **The desktop IDE shows what your tools printed.** A command's output was dropped on the way
+  to the window, so you saw `bash` start and then a tick — never the test results in between,
+  which for a test run is the entire point. Output now appears under the call that produced
+  it, and a resumed session reads the same as a live one. When two tools run at once — a
+  command waiting on a permission ask while another starts — each keeps its own output (M264).
 - **`/search` no longer ends your session.** With the search panel open, *any* key quit the
   terminal — `Esc` closed the search and exited in the same keystroke, and a stray letter exited
   without closing anything. Every key the search view does not use now says so instead of

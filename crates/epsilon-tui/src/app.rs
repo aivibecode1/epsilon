@@ -345,7 +345,14 @@ pub(crate) struct App {
     ///   flat rows are readable as "the path I am on" versus "a branch I left".
     timeline_entries: Vec<TimelineRow>,
     /// Plan 009: compact spinner — manual compaction in-flight.
-    compact_running: bool,
+    ///
+    /// Shared, because the work runs on a detached task that has no `&mut App` and
+    /// nobody else knows when it ends: it used to be a plain `bool`, set when the
+    /// task was spawned and **never cleared**, so a session could compact exactly
+    /// once and every later `/compact` refused with *"compact already running"*.
+    /// An `AtomicBool` in an `Arc` is the whole fix — the flag already means "a
+    /// compaction is in flight", and this is how a task says it is no longer.
+    compact_running: Arc<std::sync::atomic::AtomicBool>,
     /// M16c: draft stashed when a dialog opened; restored when it closes.
     stash: Option<(String, usize)>,
     /// Parity sweep: editor undo stack (Ctrl+Z), pi undo-stack.ts semantics.

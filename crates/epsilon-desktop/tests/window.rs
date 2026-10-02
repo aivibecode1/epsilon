@@ -394,6 +394,58 @@ fn an_unopened_editor_says_what_to_do() {
 /// Driven through the reducer rather than a live agent, because the scripted turn happens
 /// not to edit anything, and a test that needed a lucky script would stop testing the
 /// feature the day the script changed.
+/// **A tool's output is drawn under its row, not only stored on it.**
+///
+/// The unit test next door proves the reducer keeps the output; this proves the **window
+/// paints it**. They are different claims and this project has been bitten by the difference
+/// five times (M196: a search field drawn inside the model picker's renderer, fully tested,
+/// never on screen; M248: panes correct and their contents painted on top of each other).
+///
+/// `cargo test` printing `12 passed` and a window that shows only `▸ bash` is the gap
+/// between running tools and being able to work in the window they ran in.
+#[test]
+fn a_tools_output_is_painted_under_its_row() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    let mut t = epsilon_desktop::Transcript::new(ws.path());
+    t.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        args: serde_json::json!({ "command": "cargo test" }),
+    });
+    t.apply(&AgentEvent::ToolExecutionUpdate {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        partial: epsilon_contracts::tool::ToolPartial {
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "running 2 tests\ntest result: ok. 2 passed",
+            )],
+            details: serde_json::Value::Null,
+        },
+    });
+    t.apply(&AgentEvent::ToolExecutionEnd {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        is_error: false,
+    });
+    app.seed_transcript(t);
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let screen = frame.describe();
+    assert!(
+        screen.contains("cargo test"),
+        "the call itself must be on screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("2 passed"),
+        "**and what it printed** — the whole point:\n{screen}"
+    );
+}
+
+/// A change is reviewed with its path and its counts.
 #[test]
 fn a_change_is_reviewed_with_its_path_and_counts() {
     use epsilon_contracts::agent_event::AgentEvent;

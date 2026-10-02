@@ -1912,7 +1912,8 @@ async fn trust_gate_blocks_f2_favorite_cycling() {
 #[tokio::test]
 async fn compact_already_running_refused_and_second_compact_guards() {
     let (mut app, agent, _rx) = test_app();
-    app.compact_running = true;
+    app.compact_running
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(!type_and_enter(&mut app, &agent, "/compact"));
     let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
     assert!(
@@ -1921,6 +1922,66 @@ async fn compact_already_running_refused_and_second_compact_guards() {
     );
     // non-compact path unchanged: /timeline still works even while compact flag set
     // (compact only guards /compact).
+}
+
+/// **`/compact` works more than once per session.**
+///
+/// The flag was set when the work was spawned and **never cleared** — five mentions in the
+/// crate, one writer, one reader, no reset — so a session could compact exactly once and
+/// every later press answered *"compact already running — wait for it to finish"* for a task
+/// that had finished long ago. The comment above the spawn described that as intended
+/// behaviour, which is how a permanent refusal reads as a design decision.
+///
+/// Compaction is a core capability and the refusal is *plausible*: it names a real state,
+/// so nobody suspects it and there is no way to discover it is wrong. This is the
+/// wrong-but-plausible state `AGENTS.md` exists to forbid.
+///
+/// The wait is a bounded poll on the observable condition rather than a sleep-and-hope:
+/// the task is detached and there is no join handle to await, so "it finished" is exactly
+/// what the flag says.
+#[tokio::test]
+async fn a_session_can_compact_more_than_once() {
+    use std::sync::atomic::Ordering;
+
+    let (mut app, agent, _rx) = test_app();
+    assert!(!type_and_enter(&mut app, &agent, "/compact"));
+
+    // It is genuinely in flight at this point — otherwise the test below would pass
+    // against a build that never set the flag at all.
+    assert!(
+        app.compact_running.load(Ordering::Relaxed),
+        "the first /compact must start work, or this test proves nothing"
+    );
+
+    for _ in 0..500 {
+        if !app.compact_running.load(Ordering::Relaxed) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        !app.compact_running.load(Ordering::Relaxed),
+        "the flag must clear when the compaction finishes, or every later /compact is \
+         refused for ever"
+    );
+
+    let before = app.ui.lines().len();
+    assert!(!type_and_enter(&mut app, &agent, "/compact"));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        !texts.iter().any(|t| t.contains("already running")),
+        "a second /compact must be accepted, not refused as already running: {texts:?}"
+    );
+    assert!(
+        app.ui.lines()[before..]
+            .iter()
+            .any(|l| l.text.contains("compacting")),
+        "and it must actually start a second pass: {:?}",
+        app.ui.lines()[before..]
+            .iter()
+            .map(|l| &l.text)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

@@ -27,21 +27,33 @@ itself twice over (A27 was the most severe defect found in the round).
 
 ## Do these first, in this order
 
-1. **`/compact` can only ever run once per session.** `compact_running` is set at
-   `app/commands.rs:1605` and **never cleared** — five mentions in the crate, one writer, one
-   reader, no reset. The comment above it describes the bug as intended behaviour. Every later
-   `/compact` refuses with *"compact already running — wait for it to finish"*, for ever.
-   Compaction is a core capability and the message is plausible, which is what makes it nasty.
-   Fix: clear it when the task completes, and stop discarding `compact_now`'s error into `let _`.
-2. **The desktop window never shows what a tool printed.** `ToolExecutionUpdate` falls into
-   `_ => {}` (`desktop/src/session.rs:497`), so a reader sees `▸ bash {…}` then `✓` and never
-   the output — **while the resume path does show it** (`:257-268`), so the same session shows
-   two different transcripts before and after a session switch. `RowKind::Tool { name, failed }`
-   has no field for output; the terminal's pattern is the model: `partial` is a **delta**, keep a
-   bounded tail (M152).
-3. **Security rows A31–A37** if the round is going to security: the symlink/junction escape
+1. ~~**`/compact` can only ever run once per session.**~~ **CLOSED at M264.** The flag is
+   now an `Arc<AtomicBool>` the detached task clears, and `compact_now`'s error is named
+   instead of discarded. The detail worth carrying: the comment above the spawn *described the
+   defect as intended behaviour* ("the spinner stays until the next successful `/compact`"),
+   which is how a permanent refusal reads as a design decision.
+2. ~~**The desktop window never shows what a tool printed.**~~ **CLOSED at M264.** Rows carry
+   the agent's `tool_call_id`, `ToolExecutionUpdate` is handled, output is a 40-line tail for
+   the same reason the terminal keeps 40, `live_tool` is deleted, and the replay path writes
+   the same field the live one does — so a resumed session and a live session finally read the
+   same.
+3. **The desktop has no slash commands at all** (`A38`). Still the largest parity gap: typing
+   `/compact` in the window sends that literal string **to the model**. Worth knowing before
+   sizing it — **`epsilon-desktop` already depends on `epsilon-tui`** (for the theme palette,
+   ADR-020), so `epsilon_tui::picker::parse_command` is reachable with no new crate edge. The
+   real question is where command *behaviour* lives: architecture law says the desktop owns
+   pixels and changes `epsilon-runtime` when it needs behaviour the composition lacks. So a
+   command whose effect is agent-level (`/goal …`, `/compact`) can be shared, and one whose
+   effect is TUI-local (`/theme`, `/timeline`) cannot.
+4. **Security rows A31–A37** if the round is going to security: the symlink/junction escape
    (A31) is the highest and is **already specced by the project** at
    `audit/evidence/f09-path-policy-map.md:26,29` — recorded in 2026-09 and never implemented.
+5. **Desktop per-frame cost — measure before sizing it.** `Agent::goal()` deep-clones every
+   session entry **twice per frame** (`app.rs:1905`, `:725`), and the sessions pane re-summarises
+   every session file on every paint (the repo's own doc measures **202 ms at 500 sessions**).
+   The TUI already solved the first one — `refresh_goal` at `app/view.rs:413`, called from the
+   two places a goal changes. **No desktop frame cost has ever been measured in this
+   repository**, so the fix should follow a measurement rather than the number above.
 
 ## Two things the reviews found that are about the *method*, not the code
 
@@ -57,11 +69,16 @@ itself twice over (A27 was the most severe defect found in the round).
 - **`gate-until-pass.ps1` takes the BASE label on attempt 1**, not `<label>-r1`. Retrying with
   the same `-Label` I had already used for a manual `gate.ps1` run **truncated the failing
   log**, which is exactly the loss `AGENTS.md` warns about twice. Give the retry wrapper a
-  *fresh* base label.
+  **fresh base label** every time, and copy the failing log into `audit/evidence/` *before*
+  launching it.
 - **`Avira LNK1104` on a fresh test binary.** The documented remedy is fresh test-profile
   metadata (`CARGO_PROFILE_TEST_DEBUG=1`), which renames every test executable and therefore
-  forces a **full test-profile rebuild** — the test leg went from ~675 s to **2,402 s**. Worth
-  it once; worth knowing before you start one.
+  forces a **full test-profile rebuild** — the test leg went from ~675 s to 2,402 s once and
+  1,489 s another. Worth it once; worth knowing before you start one. It has now recurred on
+  **the same path** (`epsilon_core-4a8081d0361ce74c.exe`), so the pin is not transient.
+- **A long `cargo install`/battery can be killed by the harness's job runner**, not by a
+  failing test: `3221225786` mid-`test`. That is not a gate result, and its partial log is
+  evidence of something different from a failure — keep both.
 - **A `#[test]` left above a `#[tokio::test]`** compiles as neither: *"async functions cannot be
   used for tests"*. When changing a test's async-ness, the attribute above it is part of the edit.
 
