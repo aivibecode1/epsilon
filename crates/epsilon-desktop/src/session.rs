@@ -138,6 +138,25 @@ pub struct Transcript {
     /// the terminal reports lag rather than skipping it, and a window that silently loses
     /// tool output is worse than one that says it did.
     dropped: u64,
+    /// Bumped once per recorded change, and the workspace paths they touched.
+    ///
+    /// A frontend shows a *snapshot*: a file tree walked at launch and an editor holding
+    /// whatever the file said when it was opened. An agent that writes a file therefore
+    /// changes the world without changing the window, and the reader is left looking at a
+    /// repository that no longer exists — including a file the agent has just edited,
+    /// still showing the text it replaced. This is the signal that says "your view is
+    /// stale" without the frontend having to diff the workspace itself.
+    changes: Vec<String>,
+}
+
+impl Transcript {
+    /// Forget which paths have been reported, so the next caller sees only new ones.
+    ///
+    /// Taking rather than reading, so a frontend that does not act on a change cannot leave
+    /// a growing list behind it.
+    pub fn take_changed_paths(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.changes)
+    }
 }
 
 impl Transcript {
@@ -253,6 +272,7 @@ impl Transcript {
     /// transcript row should carry in full — the summary already says how big it was, and
     /// the editor pane has the file itself.
     pub fn push_change(&mut self, change: &crate::diff::Change) {
+        self.changes.push(change.path.clone());
         self.push(RowKind::Changed, change.summary());
         let changed: Vec<&crate::diff::DiffLine> = change
             .lines

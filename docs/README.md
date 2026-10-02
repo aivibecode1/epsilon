@@ -100,6 +100,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M246 — the subagent states nobody checked](milestones/M246-the-subagent-states-nobody-checked.md)
 - [M247 — a row that does not fit now says so](milestones/M247-a-row-that-does-not-fit-now-says-so.md)
 - [M248 — the window shows the conversation](milestones/M248-the-window-shows-the-conversation.md)
+- [M249 — the window follows the agent, and the keyboard goes where you put it](milestones/M249-the-window-follows-the-agent.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

@@ -317,6 +317,44 @@ impl IdeApp {
         if let Some(session) = self.session.as_ref() {
             session.drain(&mut self.transcript);
         }
+        self.refresh_changed_files();
+    }
+    /// Re-read what the agent just changed: the tree, and the open file if it is one.
+    ///
+    /// **A window is a snapshot, and nothing told it the world had moved.** The tree was
+    /// walked once in `new` and the editor holds whatever the file said when it was opened,
+    /// so a file the agent has just written is absent from the tree and a file it has just
+    /// edited still shows the text the edit replaced. Both are the failure this repository
+    /// keeps refusing to ship: the change row appeared in the transcript and the panes did
+    /// not move.
+    ///
+    /// Only the open file is re-read, and only when its own path is among those changed, so
+    /// a file that cannot be read now really is gone rather than transiently unreadable.
+    /// A file that has gone is **closed and said out loud**, because keeping its last
+    /// contents on screen would be showing the reader something that is not there.
+    fn refresh_changed_files(&mut self) {
+        let changed = self.transcript.take_changed_paths();
+        if changed.is_empty() {
+            return;
+        }
+        self.tree = crate::workspace::FileTree::load(&self.opts.workspace);
+        // A filter that was showing a file the agent has just created should keep showing
+        // it, so the query survives; only the tree behind it is rebuilt.
+        let Some(open) = self.open.as_ref().map(|f| f.path.clone()) else {
+            return;
+        };
+        if !changed.contains(&open) {
+            return;
+        }
+        match crate::workspace::OpenFile::read(&self.opts.workspace, &open) {
+            Ok(file) => self.open = Some(file),
+            Err(reason) => {
+                self.transcript.push_notice(&format!(
+                    "{open} was changed and is now unreadable: {reason}"
+                ));
+                self.open = None;
+            }
+        }
     }
     /// Paint one frame and describe what it drew.
     ///
@@ -729,12 +767,16 @@ impl IdeApp {
             egui::vec2((rect.width() - 16.0).max(0.0), 24.0),
         );
         if search.width() > 60.0 {
-            ui.put(
+            let filter = ui.put(
                 search,
                 egui::TextEdit::singleline(&mut self.tree_query)
                     .hint_text("filter files")
                     .desired_width(search.width() - 8.0),
             );
+            // Recorded so a test can put the keyboard here. This is the window's second
+            // text input, and until the composer stopped stealing focus back there was
+            // no way to prove — or for a user to get — the keyboard landing here.
+            summary.hotspots.push(("file-filter".into(), filter.rect));
         }
         let body = egui::Rect::from_min_max(
             egui::pos2(rect.left() + 8.0, search.max.y + 6.0),
@@ -1328,8 +1370,22 @@ impl IdeApp {
         if sent || send_clicked {
             self.send_draft();
         }
+        // Where the keyboard is, which decides two things: whether the composer may take
+        // it, and what `Escape` means. Measured from egui's own focus state rather than
+        // tracked here, so it cannot disagree with the widget that holds it.
+        let focused_elsewhere = ui
+            .ctx()
+            .memory(|m| m.focused())
+            .is_some_and(|id| id != response.id);
         if escaped {
-            if running {
+            if focused_elsewhere {
+                // Escape brings the keyboard home instead of silently doing nothing.
+                // Before this, a reader who clicked into the file filter could not get
+                // back to the composer from the keyboard at all, and `Escape` — which
+                // does clear a draft, in the box they could no longer see — appeared
+                // broken.
+                response.request_focus();
+            } else if running {
                 if let Some(s) = self.session.as_ref() {
                     s.abort();
                 }
@@ -1337,17 +1393,18 @@ impl IdeApp {
                 self.draft.clear();
             }
         }
-        // **Take the keyboard.** Without this the window opens with nothing focused, every
-        // keystroke goes nowhere, and it looks exactly like a frozen application — which is
-        // the failure this repository has chased across four audits in the terminal
-        // frontend, and the end-to-end window test reproduced it here on its first run by
-        // synthesizing nine characters and watching none of them arrive.
+        // **Take the keyboard — unless something else already has it.** Without this the
+        // window opens with nothing focused, every keystroke goes nowhere, and it looks
+        // exactly like a frozen application, which is the failure this repository has
+        // chased across four audits in the terminal frontend and the end-to-end window
+        // test reproduced here on its first run.
         //
-        // Unconditional, because there is exactly one text input in this window and a
-        // composer that cannot be typed into is not a composer. When a second input
-        // arrives this becomes "unless something else has claimed focus", which is a
-        // one-line change and a comment here rather than a rewrite.
-        if !response.has_focus() {
+        // It used to be unconditional, on the stated ground that this window had exactly
+        // one text input. The file filter is the second one, so the exception the comment
+        // promised is the code above: a composer that steals the keyboard back from
+        // whichever control the reader is actually using is a composer nobody else can
+        // type into.
+        if !response.has_focus() && !focused_elsewhere {
             response.request_focus();
         }
         summary.rows.push(("composer".into(), hint.to_string()));
@@ -1909,6 +1966,139 @@ mod tests {
         }
     }
 
+    /// A transcript that has just recorded `paths` changing, for tests that need a window to
+    /// notice an agent edit without running one.
+    fn changed(dir: &std::path::Path, paths: &[(&str, bool)]) -> Transcript {
+        let mut t = Transcript::new(dir.to_path_buf());
+        for (path, created) in paths {
+            t.push_change(&crate::diff::Change {
+                path: (*path).to_string(),
+                lines: Vec::new(),
+                created: *created,
+                coarse: false,
+            });
+        }
+        t
+    }
+
+    /// A file the agent created reaches the tree.
+    ///
+    /// The window walked the workspace once, at launch, and nothing told it the world had
+    /// moved: a turn that writes three new files produced a transcript that said so, and a
+    /// tree that did not have them. The reader is looking for the file the agent just made and
+    /// it is not there — which is the same "nothing happened" state this crate keeps refusing
+    /// to ship, reached by asking the agent to do its job.
+    #[test]
+    fn a_file_the_agent_created_appears_in_the_tree() {
+        let (dir, _keep) = scratch_workspace("created");
+        let mut h = Harness::new(dir.clone());
+        std::fs::write(dir.join("gamma.rs"), "fn gamma() {}\n").expect("a new file");
+        h.app.seed_transcript(changed(&dir, &[("gamma.rs", true)]));
+        let f = h.paint();
+
+        let files = f
+            .region("workspace")
+            .iter()
+            .find(|r| r.contains("files"))
+            .copied()
+            .unwrap_or_default();
+        assert!(
+            files.contains("3 files"),
+            "the tree must include the file the agent just wrote, says {files:?}.\n{}",
+            f.describe()
+        );
+    }
+
+    /// A file the agent edited shows its **new** contents.
+    ///
+    /// The editor holds whatever the file said when it was opened. After an edit the reader
+    /// was looking at the text the edit replaced — the worst kind of stale, because it looks
+    /// current and is confidently wrong.
+    #[test]
+    fn an_edited_file_shows_its_new_contents_without_being_reopened() {
+        let (dir, _keep) = scratch_workspace("edited");
+        let mut h = Harness::new(dir.clone());
+        h.app.open_file("alpha.rs");
+        std::fs::write(dir.join("alpha.rs"), "fn alpha() { /* rewritten */ }\n").expect("write");
+        h.app.seed_transcript(changed(&dir, &[("alpha.rs", false)]));
+        let f = h.paint();
+
+        let editor = f.region("editor");
+        assert!(
+            editor.iter().any(|r| r.contains("rewritten")),
+            "the editor must show the text the agent wrote, not the text it replaced: \
+             {editor:?}.\n{}",
+            f.describe()
+        );
+    }
+
+    /// A file the agent deleted is closed and **said out loud**.
+    ///
+    /// Keeping its last contents on screen would be showing the reader something that is not
+    /// there. A missing file is not an error to swallow either — it is the ordinary result of
+    /// a refactor, and the window has to name it.
+    #[test]
+    fn a_deleted_file_is_closed_and_named_rather_than_left_on_screen() {
+        let (dir, _keep) = scratch_workspace("deleted");
+        let mut h = Harness::new(dir.clone());
+        h.app.open_file("beta.rs");
+        std::fs::remove_file(dir.join("beta.rs")).expect("remove");
+        h.app.seed_transcript(changed(&dir, &[("beta.rs", false)]));
+        let f = h.paint();
+
+        assert!(
+            !f.region("editor").iter().any(|r| r.contains("beta.rs")),
+            "a deleted file must not still be presented as open: {:?}.\n{}",
+            f.region("editor"),
+            f.describe()
+        );
+        assert!(
+            f.region("agent").iter().any(|r| r.contains("beta.rs")),
+            "and the reader must be told which file went, in words they can act on.\n{}",
+            f.describe()
+        );
+    }
+
+    /// The file filter takes the keyboard, and `Escape` brings it back.
+    ///
+    /// The composer requested focus unconditionally, on the stated ground that this window had
+    /// exactly one text input — and the file filter is the second one. So the filter could be
+    /// clicked, focused, and then had the keyboard pulled straight back out of it on the very
+    /// next frame: a control that takes focus and cannot be typed into. `Escape` was worse,
+    /// because it cleared a draft in a box the reader could no longer see, which reads as a
+    /// broken key rather than a focus change.
+    #[test]
+    fn the_file_filter_takes_the_keyboard_and_escape_brings_it_back() {
+        let (dir, _keep) = scratch_workspace("focus");
+        let mut h = Harness::new(dir);
+
+        let first = h.paint();
+        let filter = first
+            .hotspot("file-filter")
+            .expect("the filter records where it was drawn");
+
+        // Click it, then type. The text must land in the filter, not the draft.
+        h.click(filter.center());
+        h.type_text("alpha");
+        assert_eq!(
+            h.app.tree_query, "alpha",
+            "typing must reach the control the reader clicked"
+        );
+        assert!(
+            h.app.draft.is_empty(),
+            "the composer must not have taken the keyboard back: {:?}",
+            h.app.draft
+        );
+
+        // Escape hands the keyboard back, so the reader is never trapped.
+        h.press(egui::Key::Escape);
+        h.type_text("hello");
+        assert_eq!(
+            h.app.draft, "hello",
+            "after Escape the keys must go to the composer again"
+        );
+    }
+
     /// Non-ASCII text is cut on a character boundary, so the row never ends in the
     /// replacement character that a byte slice would leave behind.
     #[test]
@@ -1972,6 +2162,34 @@ mod tests {
                 .run_ui(self.input.clone(), |ui| out = self.app.paint(ui));
             full.textures_delta.clear();
             out
+        }
+        /// Type `text` one character per event, the way a keyboard delivers it.
+        fn type_text(&mut self, text: &str) {
+            let events: Vec<egui::Event> = text
+                .chars()
+                .map(|c| egui::Event::Text(c.to_string()))
+                .collect();
+            let mut input = self.input.clone();
+            input.events = events;
+            let mut full = self.ctx.run_ui(input, |ui| {
+                self.app.paint(ui);
+            });
+            full.textures_delta.clear();
+        }
+        /// Press and release one key.
+        fn press(&mut self, key: egui::Key) {
+            let mut input = self.input.clone();
+            input.events = vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+            let mut full = self.ctx.run_ui(input, |ui| {
+                self.app.paint(ui);
+            });
+            full.textures_delta.clear();
         }
         /// Put the pointer on `p`, press, then release on a later frame — and return the
         /// frame the release produced.

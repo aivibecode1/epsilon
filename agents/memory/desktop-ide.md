@@ -27,6 +27,36 @@ Also in M248: `approve_pending` had **no caller in the crate** — the window pa
 new test that painted a frame and *then* checked whether a gate was waiting — it passed
 alone and failed under load. Check-then-act, in the test.
 
+## M249: the window was a snapshot, and so was the keyboard
+
+Two more "it worked, in the pane that says it worked". `FileTree::load` ran once at launch
+and the editor held the file as it was at open, so a file the agent **created** was absent
+from the tree, one it **edited** showed the text the edit replaced, and one it **deleted**
+stayed on screen presenting itself as a file. `push_change` already recorded every changed
+path — the signal existed and had no consumer. It has one now (`take_changed_paths`), spent
+by `refresh_changed_files`, which re-walks the tree and re-reads **the open file only if its
+own path is among those changed** — which is what makes a vanished file trustworthy enough
+to close and announce.
+
+The composer called `request_focus()` every frame on the stated ground that this window had
+one text input. The file filter is the second one, so the filter took focus and had it
+stolen back on the next frame. The exception the old comment promised is now the code, and
+`Escape` brings the keyboard home — a reader can get back to the composer from the keyboard,
+which is the difference between a state and a trap.
+
+**Battery `m249-r2`: 1,808 tests / 74 binaries, 0 failed.** Attempt 1 failed on
+`check-line-endings`: the six Ponytail `SKILL.md` files M248 added had CRLF in the working
+copy. Git normalised the *commits* (blob hash == HEAD hash, all LF), so the damage was
+confined to the checkout — and it still took a gate to find it. **A passing battery
+validates the source it compiled; it says nothing about the markdown it also checked.**
+
+### Known open risk from M249, untested
+
+egui gives a clicked `Button` keyboard focus. The composer now yields to whatever holds
+focus, so **clicking a tab may leave the keyboard on that button.** Untested, and probably
+a defect. The likely fix is to give the filter a stable id like the composer's and yield
+only to text inputs.
+
 ## What exists now
 
 | Piece | Where | State |
@@ -75,15 +105,20 @@ the same lesson as ADR-012's `global_dir`.
 2. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
    window is hidden, so a run that finished in the background produces no `AgentEnd` on
    screen until the window is shown. That belongs in `logic`.
-3. **Reload the file tree when the agent edits files.** It is a startup snapshot: the tree
-   is walked once in `new`, so the files the agent has just written are not in it, and a
-   reader looking for a file the agent created does not find it. `Transcript::push_change`
-   is where the signal already exists.
-4. **The tasks and sessions panes are never measured for containment.** M248's
+1. **Check whether clicking a button steals the keyboard** — the untested risk M249 left
+   behind, and the most likely thing a user hits next.
+2. **Reload the tree on a filesystem event**, not only on the agent's own change events. An
+   edit made in another window still does not refresh it.
+3. **Diff review**, which the agent needs more than the user does: a tool call that edits a
+   file should show the change, in the pane, before the next tool runs.
+4. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
+   window is hidden, so a run that finished in the background produces no `AgentEnd` on
+   screen until the window is shown. That belongs in `logic`.
+5. **The tasks and sessions panes are never measured for containment.** M248's
    `row_rects` covers the transcript and the editor; these two share the isolation fix but
    a regression moving only them would not be caught.
-5. **A close button on tabs**, and keyboard focus that the composer does not take
-   unconditionally (M248 left both, with reasons).
+6. **A close button on tabs**, and a settings surface — `Preferences` is still constructed
+   once and never mutated, so `sidebar_width` and `sidebar_visible` are unreachable.
 
 ## egui lessons worth not re-learning
 
