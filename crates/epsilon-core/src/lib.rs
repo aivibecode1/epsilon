@@ -1957,7 +1957,14 @@ impl Agent {
         Arc::clone(self) as Arc<dyn epsilon_contracts::tool::TaskHost>
     }
 
-    fn clone_goal_host(self: &Arc<Self>) -> Arc<dyn epsilon_contracts::tool::GoalHost> {
+    /// The [`GoalHost`] view of this agent, for a `ToolContext`.
+    ///
+    /// **Public because composition needs it, not because a test wanted it.** The execution path
+    /// builds this itself (`exec.rs`), and a frontend that wants to invoke a goal tool outside a
+    /// turn — or a test that wants to drive the tool against a *real* goal rather than a snapshot
+    /// of one — needs the same adapter. A second implementation would be a second answer to
+    /// "where does a goal live", which is the thing that goes wrong when there are two.
+    pub fn clone_goal_host(self: &Arc<Self>) -> Arc<dyn epsilon_contracts::tool::GoalHost> {
         Arc::clone(self) as Arc<dyn epsilon_contracts::tool::GoalHost>
     }
 

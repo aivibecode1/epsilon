@@ -412,8 +412,20 @@ impl std::fmt::Display for GoalError {
             Self::Stale { expected, actual } => write!(
                 f,
                 "the goal moved: this was issued against revision {} of {}, and the session \
-                 holds revision {} — re-read it and try again",
-                expected.revision, expected.id, actual.revision
+                 holds revision {} of {}{} — re-read it and try again",
+                expected.revision,
+                expected.id,
+                actual.revision,
+                actual.id,
+                // The ids are printed even when they agree, and **especially** when they do
+                // not. A caller that named the wrong goal used to be told only the
+                // revision — the one half of the answer it already had — which reads as
+                // "nothing changed, try again" and sends it round the loop a second time.
+                if expected.id == actual.id {
+                    String::new()
+                } else {
+                    " (a different goal; `get_goal` names the current one)".to_string()
+                }
             ),
             Self::AlreadyCurrent { current } => write!(
                 f,

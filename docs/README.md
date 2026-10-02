@@ -108,6 +108,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M254 — a goal round consults the goal's gates](milestones/M254-a-goal-round-consults-its-gates.md)
 - [M255 — the branch that is the security argument, finally executed](milestones/M255-the-branch-that-is-the-security-argument.md)
 - [M256 — an unchanged workspace stops paying for the same failure](milestones/M256-an-unchanged-workspace-stops-paying.md)
+- [M257 — the gated-goal test that had never existed](milestones/M257-the-gated-goal-test-that-had-never-existed.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

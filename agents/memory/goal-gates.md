@@ -35,11 +35,18 @@ and the gate that judged it.
 > sandbox as `bash`). Item 2 is real and is now **A26** in `audit/03-defects.md`. Read the
 > rows below against the code, not against this note.
 
-1. ~~**No syntax to declare a gate.**~~ **FALSE as of M241.** `GoalOp::Edit` carries `gates`
-   and `/goal edit gate <cmd>` parses it. The remaining part of this item is still true and is
-   worth keeping: **the end-to-end test that drives `UpdateGoalTool` with a gated goal does
-   not exist**, and a test that passes against a build where the rule does not exist is
-   exactly the trap recorded below this list.
+1. ~~**The end-to-end test that drives `UpdateGoalTool` with a gated goal does not exist.**~~
+   **CLOSED at M257**, as `crates/epsilon-runtime/tests/goal_gated_completion.rs`. A real
+   `Agent` (real store, real `clone_goal_host()`) with a gate the *user* declared: a failing
+   gate refuses, names the command, and leaves the status un-recorded with the gate intact;
+   a passing gate records the completion and keeps the gate.
+   **It is in `epsilon-runtime`, not beside the tool**, because `epsilon-tools` does not
+   depend on `epsilon-llm` or `epsilon-session` and a composition test belongs in the
+   composition crate.
+   Two things it found: **`"g1"` was a `FakeHost` artefact** — a real `Agent` generates its
+   own goal id, so every gate test had been hardcoding a stand-in's id — and `GoalError::Stale`
+   now prints the actual goal id, because "issued against revision 2 of g1, holds revision 2"
+   reads as *nothing changed*, which is the least useful thing it could say.
 2. ~~**The round driver does not consult gates.**~~ **CLOSED at M254 (A26).**
    `epsilon_runtime::begin_goal_round` runs the gates and returns `GoalRound::GateFailed`
    carrying the failure as the continuation prompt; the terminal runs it on its own task and
