@@ -117,6 +117,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M263 — a band painted across the file tree, and a budget in the wrong unit](milestones/M263-the-wrong-unit-and-the-wrong-pane.md)
 - [M264 — `/compact` worked once, and the window never showed what a tool printed](milestones/M264-compact-and-tool-output.md)
 - [M265 — the workspace walk followed a link out of the workspace](milestones/M265-the-walk-followed-a-link-out-of-the-workspace.md)
+- [M266 — the desktop frame path had never been measured, and it is not what the review said](milestones/M266-the-desktop-frame-path-had-never-been-measured.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

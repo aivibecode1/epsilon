@@ -51,12 +51,15 @@ itself twice over (A27 was the most severe defect found in the round).
    `is_symlink()` does not report. Still open in that group: **A33** (`.env.` / `.env::$DATA`
    bypassing the ask) and **A34** (extension and MCP children inheriting the credential
    environment).
-5. **Desktop per-frame cost — measure before sizing it.** `Agent::goal()` deep-clones every
-   session entry **twice per frame** (`app.rs:1905`, `:725`), and the sessions pane re-summarises
-   every session file on every paint (the repo's own doc measures **202 ms at 500 sessions**).
-   The TUI already solved the first one — `refresh_goal` at `app/view.rs:413`, called from the
-   two places a goal changes. **No desktop frame cost has ever been measured in this
-   repository**, so the fix should follow a measurement rather than the number above.
+5. ~~**Desktop per-frame cost — measure before sizing it.**~~ **MEASURED at M266, and the
+   review's ranking was wrong.** The sessions pane it ranked first costs **+0.9 ms** for
+   fifty files; the transcript it ranked fifth costs **104 ms** at 800 rows. Cost tracks
+   **blocks**: 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
+   as six. So the transcript is O(rows) rather than O(visible), and the fix needs cached
+   per-row heights because egui's `show_rows` requires a uniform height. `markup::Cache`
+   landed the 20–30% that parsing was. Re-measure with
+   `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`
+   before sizing anything else here.
 
 ## Two things the reviews found that are about the *method*, not the code
 

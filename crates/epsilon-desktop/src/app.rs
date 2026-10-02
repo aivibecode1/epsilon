@@ -501,6 +501,19 @@ pub struct IdeApp {
     goal_round_rx: tokio::sync::mpsc::UnboundedReceiver<epsilon_runtime::GoalRound>,
     /// A round is being gate-checked, so do not spend another until it answers.
     goal_round_pending: bool,
+    /// Assistant markdown, parsed once per distinct text rather than once per frame.
+    ///
+    /// Measured at 800 assistant rows: **149.9 ms/frame** parsing the same unchanged text
+    /// 800 times, against 15.5 ms for the same rows as plain labels. The terminal solved
+    /// the same shape at M198 (`RenderCache`); this is the same rule where the crate had
+    /// lost it.
+    ///
+    /// `RefCell` rather than `&mut` because the transcript draws inside a `ScrollArea`
+    /// closure that borrows `self` — a `&mut self` field would be a self-referential
+    /// borrow, and a `Mutex` would be a lock taken once per assistant row for a single
+    /// thread's private cache. The borrow does not escape: [`Cache::blocks`] hands back an
+    /// `Rc`, not a reference into the map.
+    markdown: std::cell::RefCell<crate::markup::Cache>,
     /// Where each palette row was drawn last frame, with its index, so a click can be
     /// applied **before** the rows are drawn again.
     ///
@@ -597,6 +610,7 @@ impl IdeApp {
             goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
             goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
             goal_round_pending: false,
+            markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -630,6 +644,7 @@ impl IdeApp {
             goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
             goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
             goal_round_pending: false,
+            markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
@@ -1703,7 +1718,9 @@ impl IdeApp {
         text: &str,
     ) {
         let theme = self.theme;
-        let blocks = crate::markup::render(text);
+        // The borrow ends on this line — `blocks` is an `Rc`, not a reference into the map —
+        // so nothing is held while the blocks are drawn.
+        let blocks = self.markdown.borrow_mut().blocks(text);
         // A renderer that produced nothing for a non-empty answer would leave a gap in
         // the transcript, so fall back to the raw text rather than to nothing.
         if blocks.is_empty() {

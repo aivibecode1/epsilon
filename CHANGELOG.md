@@ -5,6 +5,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop IDE draws faster on a long conversation.** Assistant answers were re-parsed
+  from Markdown on every repaint, whether or not the text had changed; the same answer is now
+  parsed once. Measured on an 800-message conversation at 1440×900, a repaint went from 150 ms
+  to 104 ms. The window still redraws every message, so a very long conversation is still
+  slower than it should be — that is measured now and being worked on next (M266).
 - **A search can no longer walk out of your workspace.** If a repository contained a link to
   a directory elsewhere on your machine, `grep`, `find`, `ls`, `@`-completion and the desktop
   file tree all followed it — and printed what they found into the conversation and into the

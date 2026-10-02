@@ -161,5 +161,10 @@ audit/evidence/*.log
 # did not recur because the test profile was already under fresh metadata.
 !audit/evidence/gate-m265.log
 
+# M266: the desktop frame path had never been measured. 1882 tests / 77 binaries,
+# 7 of 7 gates, attempt 1. The measurement itself is in
+# crates/epsilon-desktop/tests/frame_cost.rs, not here.
+!audit/evidence/gate-m266.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

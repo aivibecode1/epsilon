@@ -1627,6 +1627,35 @@ trusted*.
 
 ## Open — the desktop window
 
+### MEASURED at M266: the performance ranking below was wrong, and the measurements replace it
+
+A parallel review ranked these by cost from the code plus the project's recorded estimates.
+Painting through the real `paint` at 1440×900 (offscreen egui, `tests/frame_cost.rs`) says
+otherwise:
+
+| what | reviewed as | **measured** |
+|---|---|---|
+| sessions pane, 50 files on disk | **#1** — 202 ms at 500 sessions, per `discover.rs:296-298` | **+0.9 ms** |
+| transcript, 800 assistant rows | #5 | **104.4 ms** (149.9 before `markup::Cache`) |
+
+The estimate was extrapolated, not measured, and the extrapolation was wrong by two orders of
+magnitude at this size. **The cost tracks blocks**, not parses and not rows: the same 800 rows
+cost 13.2 ms as plain labels, 31.2 ms as one markdown block each, and 104.4 ms as six.
+
+So the real defect is the one that was last, and its fix is named:
+
+> **The transcript is O(rows), not O(visible rows).** It builds a text widget for every block
+> of every row, on screen or not. The file tree two functions away already virtualizes
+> (`workspace.rs` uses `show_rows`); the transcript cannot, because egui's `show_rows` requires
+> a uniform row height and a transcript's rows are not uniform. **The fix needs cached
+> per-row heights**, and the number to size it against is 104.4 ms at 800 rows / 0.9 ms empty.
+
+**Closed in the same milestone:** `markup::Cache` (20–30%, keyed by the source text).
+
+**Still real, and now known to be small** — left alone deliberately, which is the finding:
+`Agent::goal()` deep-clones every session entry twice per frame (`app.rs:1905`, `:725`), and
+the sessions pane re-summarises every file on every paint.
+
 ### A38 — the largest parity gaps between the terminal and the window
 
 | Gap | Evidence | Cost |

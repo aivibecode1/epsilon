@@ -173,6 +173,76 @@ struct Pending {
     text: String,
 }
 
+/// Assistant markdown, parsed once per **distinct text**, instead of once per frame.
+///
+/// # The number that made this
+///
+/// Measured at 1440×900 on this machine, painting through the real `paint`:
+///
+/// | transcript rows | ms/frame |
+/// |---|---|
+/// | 50 assistant | 11.5 |
+/// | 200 assistant | 41.3 |
+/// | 800 assistant | **149.9** |
+///
+/// and the same counts with **user** rows instead of assistant ones cost 2.1 / 5.6 / 15.5 ms —
+/// so a markdown row costs roughly ten times a plain one, and the whole gap is [`render`]
+/// running again for text that has not changed since the last frame. At the transcript's own
+/// `MAX_ROWS` of 2,000 the window would paint at about three frames a second.
+///
+/// The sessions pane, which the same review ranked *first*, measured **+1.8 ms** for fifty
+/// session files — and the project's recorded estimate for five hundred sessions is 202 ms.
+/// **Measure before sizing:** the thing that was measured to be expensive was not the one
+/// that was expensive.
+///
+/// # Why the key is the text
+///
+/// An id-keyed cache needs every site that rewrites a row's text to invalidate it, and one
+/// that forgets is a transcript showing yesterday's answer. Keying by the exact source string
+/// cannot go stale: the key changes precisely when the content does. Hashing a few hundred
+/// bytes costs nanoseconds; parsing it costs about 185 µs.
+#[derive(Debug, Default)]
+pub struct Cache {
+    blocks: std::collections::HashMap<String, std::rc::Rc<Vec<Block>>>,
+    hits: u64,
+    misses: u64,
+}
+
+/// Entries kept before the cache empties itself.
+///
+/// Bounded because this is a **cache**, not a store: the transcript is the record and the
+/// session file has the bytes. A long session should not grow the window's memory without
+/// limit, and clearing wholesale is right here — a long-lived LRU would cost more than the
+/// parses it saves at this size.
+const CACHE_MAX: usize = 512;
+
+impl Cache {
+    /// The blocks for `markdown`, parsing only when the text is new to this cache.
+    ///
+    /// Returns a cheap handle rather than a borrow: the caller draws while it holds it, and
+    /// borrowing would pin the map for the length of the frame.
+    pub fn blocks(&mut self, markdown: &str) -> std::rc::Rc<Vec<Block>> {
+        if let Some(hit) = self.blocks.get(markdown) {
+            self.hits += 1;
+            return std::rc::Rc::clone(hit);
+        }
+        self.misses += 1;
+        let parsed = std::rc::Rc::new(render(markdown));
+        if self.blocks.len() >= CACHE_MAX {
+            self.blocks.clear();
+        }
+        self.blocks
+            .insert(markdown.to_string(), std::rc::Rc::clone(&parsed));
+        parsed
+    }
+
+    /// `(hits, misses)`, so a test can assert the cache is doing something rather than
+    /// trusting that it is.
+    pub fn counts(&self) -> (u64, u64) {
+        (self.hits, self.misses)
+    }
+}
+
 /// Render assistant markdown into blocks.
 ///
 /// Constructs this does not model are dropped rather than guessed at: HTML is not
@@ -709,6 +779,63 @@ mod tests {
         assert!(
             joined.contains("one") && joined.contains("two"),
             "{joined:?}"
+        );
+    }
+
+    /// **The cache parses each distinct text once**, and answers with the same blocks.
+    ///
+    /// The half that matters is the *count*: a cache that stopped being consulted would
+    /// still return correct blocks, every frame assertion in this crate would still pass,
+    /// and the window would be back to re-parsing the whole transcript 60 times a second.
+    /// A correctness test cannot see that, so the miss count is the assertion.
+    #[test]
+    fn the_cache_parses_once_per_distinct_text() {
+        let mut cache = Cache::default();
+        let first = cache.blocks("# Title\n\nbody");
+        let again = cache.blocks("# Title\n\nbody");
+        let (hits, misses) = cache.counts();
+        assert_eq!(misses, 1, "the same text must not be parsed twice");
+        assert_eq!(hits, 1, "the second call must be a hit");
+        assert_eq!(*first, *again, "a hit must answer the same blocks");
+    }
+
+    /// Different text is a different answer, and the obvious way to get this wrong is to key
+    /// on something cheaper than the content — a length, a row index — so two answers of the
+    /// same length share a slot and the second shows the first's markdown.
+    #[test]
+    fn a_different_text_of_the_same_length_is_not_served_from_the_first() {
+        let mut cache = Cache::default();
+        let bold = cache.blocks("**one**");
+        let plain = cache.blocks("_two_");
+        let text_of = |b: &crate::markup::Block| match b {
+            crate::markup::Block::Paragraph(runs) => runs
+                .iter()
+                .map(|r| r.text.as_str())
+                .collect::<Vec<_>>()
+                .join(""),
+            other => format!("{other:?}"),
+        };
+        assert_eq!(text_of(&bold[0]), "one", "the first answer is its own text");
+        assert_eq!(
+            text_of(&plain[0]),
+            "two",
+            "and the second must not inherit the first's styling"
+        );
+        assert_eq!(cache.counts(), (0, 2), "both texts are new");
+    }
+
+    /// The cache is bounded, because it is a cache and not a second copy of the transcript.
+    #[test]
+    fn the_cache_is_bounded_and_still_correct_when_it_empties() {
+        let mut cache = Cache::default();
+        for i in 0..(CACHE_MAX + 10) {
+            cache.blocks(&format!("line {i}"));
+        }
+        let again = cache.blocks("line 0");
+        assert_eq!(
+            *again,
+            *render("line 0"),
+            "emptying the cache must not change the answer"
         );
     }
 }
