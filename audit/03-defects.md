@@ -1382,3 +1382,43 @@ which launches the window, injects input and captures a PNG, so that the observa
 command rather than a temporary source edit. Until that exists, every claim about this
 window's appearance is a hypothesis, and the ones in `docs/milestones/M24*.md` should be
 read that way.
+
+### A26 - the goal round driver never consults the gates it can declare
+
+**Status: OPEN. Found 2026-10-06 by reading, after checking three stale claims first.**
+
+`/goal edit gate <command>` **exists** (`epsilon-tui/src/app/commands.rs:819-832`, sending
+`GoalOp::Edit { gates }`, which the contract carries at `goal.rs:324-331`), and the gate runner
+**is** wired in production (`epsilon-tools/src/lib.rs:163-166`, built from the same sandbox as
+`bash` so there is one resolution). Two older notes said otherwise and were wrong; they are
+corrected here rather than left to mislead the next reader.
+
+The defect is upstream of all of it. `Agent::goal_begin_round` (`epsilon-core/src/lib.rs:1479`)
+takes the round, persists it, and returns `goal_round_prompt(&goal)` - the same
+"continue toward the objective" text every round. It never looks at `goal.gates`.
+
+Hermes runs gates at the turn boundary and makes a failing gate's bounded output **the
+continuation prompt** (`references/hermes-agent-2026.9.14/hermes_cli/goals.py:97-111`,
+`:1293-1345`), explicitly so an unattended loop cannot spin on a red suite. Epsilon can
+declare a gate, runs it before recording completion, and refuses completion without evidence
+- but between rounds it tells the agent nothing about what is still failing. A goal with
+`cargo test` as its gate spends its round budget re-reading the same prompt.
+
+**What it costs to fix, measured.** `GoalGateRunner::run` is `async` (it spawns a process),
+and `continue_goal` is sync inside the TUI's frame loop (`app/event.rs:197-203`). The gate
+list lives on `Agent`; the runner lives in `epsilon-tools`, which depends on `epsilon-core`,
+so the round driver cannot reach it from core. `epsilon-runtime` depends on both and is the
+right home, but the TUI has no runner to hand it, because the sandbox is resolved inside
+`build_runtime` and its return value is an `Agent`. So the smallest honest fix is
+`build_runtime` handing back the runner it already built - which touches its six call sites -
+plus a delivered-result channel so the frame loop can start the round when the gates finish.
+
+**Why it is not done here.** Writing the function without a caller is the defect class this
+repository tracks most carefully ("faithful port, no production caller"), and doing it
+half-wired would be worse than not starting. An earlier attempt at the function was reverted
+rather than committed for exactly that reason.
+
+**Acceptance criteria.** A gate-backed goal's failing round carries the gate's exit code and
+output tail; a passing gate round carries the ordinary prompt; the round is spent either way;
+and the terminal and the desktop window behave identically because there is one
+implementation.

@@ -249,6 +249,25 @@ impl IdeApp {
             return;
         }
         let entries = self.palette_entries(&query);
+        // **A click on a row opens it**, resolved against last frame's rectangles — the same
+        // before-draw discipline the tab strip uses, and the same reason. Without this the
+        // palette could only be used by typing, which is a worse editor than the file tree
+        // it was built to replace: a reader who saw the file in the list and reached for it
+        // with the mouse would get a box that does nothing.
+        let (any_click, at) = ctx.input(|i| (i.pointer.any_click(), i.pointer.interact_pos()));
+        if any_click
+            && let Some(at) = at
+            && let Some((index, _)) = self
+                .palette_rects
+                .iter()
+                .find(|(_, r)| r.contains(at))
+                .copied()
+            && let Some(entry) = entries.get(index)
+        {
+            self.run_palette_action(entry.action.clone());
+            self.palette = None;
+            return;
+        }
         if let Some(p) = self.palette.as_mut() {
             if step != 0 {
                 let last = entries.len().saturating_sub(1) as i32;
@@ -329,6 +348,13 @@ pub struct IdeApp {
     /// palette is the one route to every file and every command from the keyboard, which is
     /// what every one of the four reference harnesses has and this one did not.
     palette: Option<Palette>,
+    /// Where each palette row was drawn last frame, with its index, so a click can be
+    /// applied **before** the rows are drawn again.
+    ///
+    /// The same discipline as [`IdeApp::tab_rects`], and for the same reason: egui only
+    /// knows a widget was pressed once it has been drawn, so a row list that reacts to its
+    /// own answer opens the file one frame after the highlight moves to it.
+    palette_rects: Vec<(usize, egui::Rect)>,
     /// Open files, oldest first; the last is what the editor shows.
     tabs: Vec<String>,
     /// Which view the sidebar is showing, chosen from the activity bar.
@@ -415,6 +441,7 @@ impl IdeApp {
             review: None,
             tab_rects: Vec::new(),
             palette: None,
+            palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout,
@@ -444,6 +471,7 @@ impl IdeApp {
             review: None,
             tab_rects: Vec::new(),
             palette: None,
+            palette_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             layout: IdeLayout::new(
@@ -667,6 +695,7 @@ impl IdeApp {
         let Some(palette) = self.palette.as_ref() else {
             return;
         };
+        self.palette_rects.clear();
         let query = palette.query.clone();
         let selected = palette.selected;
         let entries = self.palette_entries(&query);
@@ -740,6 +769,7 @@ impl IdeApp {
             );
             summary.rows.push(("palette".into(), entry.label.clone()));
             summary.row_rects.push(("palette".into(), row));
+            self.palette_rects.push((index, row));
             y += 22.0;
         }
         if entries.len() > PALETTE_LIMIT {
@@ -2801,6 +2831,83 @@ mod tests {
             "a full window must tessellate to real geometry; it produced {vertices} vertices \
              across {} shape(s)",
             full.shapes.len()
+        );
+    }
+
+    /// A palette row can be **clicked**, not only typed at and confirmed.
+    ///
+    /// A palette whose rows can only be reached by typing is a worse editor than the file tree
+    /// it was built to replace: a reader who sees the file in the list and reaches for it with
+    /// the mouse gets a box that does nothing, which is the "the window ignored me" state this
+    /// window has now produced three separate ways.
+    #[test]
+    fn clicking_a_palette_row_opens_it() {
+        let (dir, _keep) = scratch_workspace("palette-click");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let open = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+
+        // The row must be somewhere a pointer can reach: its rectangle is recorded, not just
+        // its text.
+        let row = open
+            .row_rects
+            .iter()
+            .find(|(region, _)| region == "palette")
+            .map(|(_, r)| *r)
+            .expect("palette rows record where they were drawn");
+
+        let after = h.click(row.center());
+        assert!(
+            h.app.open.is_some(),
+            "clicking a file row must open that file.\n{}",
+            after.describe()
+        );
+        assert!(
+            h.app.palette.is_none(),
+            "and the palette must close, the same as pressing Enter"
+        );
+    }
+
+    /// The row that was clicked is the row that opens — not the first, and not the selected one.
+    ///
+    /// One row would satisfy "clicking a row opens it". Three, with the click on the last, is
+    /// the claim.
+    #[test]
+    fn clicking_a_later_row_opens_that_row_and_not_the_first() {
+        let (dir, _keep) = scratch_workspace("palette-click3");
+        let mut h = Harness::new(dir.clone());
+        // A third file, so "the last row" is genuinely not the first.
+        std::fs::write(dir.join("gamma.rs"), "fn gamma() {}\n").expect("a third file");
+        h.app.tree = crate::workspace::FileTree::load(&dir);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        h.type_text("rs");
+
+        let open = h.paint();
+        let rows: Vec<egui::Rect> = open
+            .row_rects
+            .iter()
+            .filter(|(region, _)| region == "palette")
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(rows.len() >= 3, "expected several rows, got {}", rows.len());
+
+        let last = rows[rows.len() - 1];
+        let after = h.click(last.center());
+        assert!(
+            h.app.open.is_some(),
+            "clicking a row must open something.\n{}",
+            after.describe()
+        );
+        assert_ne!(
+            h.app.open.as_ref().map(|f| f.path.as_str()),
+            Some("alpha.rs"),
+            "the first row opened: the click landed on the wrong rectangle"
+        );
+        assert!(
+            after.region("editor").iter().any(|t| t.contains("·")),
+            "and the editor must now be showing the file that was clicked.\n{}",
+            after.describe()
         );
     }
 
