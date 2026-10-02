@@ -96,6 +96,14 @@ pub struct TranscriptLine {
     pub kind: LineKind,
     /// Display text (already summarized/truncated where appropriate).
     pub text: String,
+    /// Display-steering characters removed from this line before it was shown.
+    ///
+    /// **Recorded rather than silently applied.** Stripping a bidi override makes the line
+    /// safe and also makes it no longer the whole story, and a reader who is told
+    /// "2 hidden characters" can decide that the text was not what it claimed — which is
+    /// the entire point of a harness that shows you commands before you approve them.
+    /// Zero for almost every line.
+    pub hidden: crate::text_safety::Stripped,
     /// Untruncated original for expandable rows (tool outputs; M13 card polish).
     pub full: Option<String>,
     /// Render as a fenced-code block row (dim + gutter).
@@ -416,6 +424,9 @@ impl TranscriptLine {
             code,
             md,
             card: None,
+            // Filled in by `push_line`, which is the only way a line enters the
+            // transcript and therefore the only place stripping can be forgotten.
+            hidden: crate::text_safety::Stripped::default(),
         }
     }
 
@@ -897,6 +908,17 @@ impl UiState {
         self.push_line(TranscriptLine::plain(LineKind::System, text));
     }
 
+    /// A row holding text the agent did not write, exactly as it arrived.
+    ///
+    /// **The seam the sanitiser is tested through.** `push_notice` and `push_local_input`
+    /// are both *harness-authored* text — ours, in a literal, in a test — so neither can
+    /// carry a hostile character in practice. Tool output, file contents and model text
+    /// arrive by the event route, and a test that proves stripping works has to be able to
+    /// put arbitrary text in through a public door.
+    pub fn push_external_text(&mut self, text: &str) {
+        self.push_line(TranscriptLine::plain(LineKind::ToolResultOk, text));
+    }
+
     /// Drop all transcript rows (`/clear`); usage counters survive.
     pub fn clear_lines(&mut self) {
         self.lines.clear();
@@ -1365,7 +1387,42 @@ impl UiState {
 
     /// Single mutation point for transcript appends. Ids come from the line itself
     /// (unique by construction, M16a); kept as a choke point for future hooks.
-    fn push_line(&mut self, line: TranscriptLine) {
+    ///
+    /// **And it is where display-steering characters are removed**, which is the first of
+    /// those hooks. `self.lines.push` appears exactly once in this file, so a line cannot
+    /// enter the transcript any other way — including by replaying a session from disk, which
+    /// is the path where hostile text is most likely to arrive. See
+    /// [`crate::text_safety`] for why a bidi override in a command line is not a rendering
+    /// bug but an approval prompt that lies.
+    fn push_line(&mut self, mut line: TranscriptLine) {
+        let mut removed = crate::text_safety::Stripped::default();
+        let (text, hit) = crate::text_safety::display_safe(&line.text);
+        if hit.any() {
+            removed.bidi += hit.bidi;
+            removed.control += hit.control;
+            line.text = text.into_owned();
+        }
+        if let Some(full) = line.full.take() {
+            let (safe_full, hit) = crate::text_safety::display_safe(&full);
+            if hit.any() {
+                removed.bidi += hit.bidi;
+                removed.control += hit.control;
+                line.full = Some(safe_full.into_owned());
+            } else {
+                line.full = Some(full);
+            }
+        }
+        if let Some(md) = line.md.take() {
+            let (safe_md, hit) = crate::text_safety::display_safe(&md);
+            if hit.any() {
+                removed.bidi += hit.bidi;
+                removed.control += hit.control;
+                line.md = Some(safe_md.into_owned());
+            } else {
+                line.md = Some(md);
+            }
+        }
+        line.hidden = removed;
         self.lines.push(line);
     }
 }

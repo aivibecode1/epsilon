@@ -4264,6 +4264,7 @@ fn a_prompt_jump_lands_on_a_user_turn_and_reports_the_ends() {
         code: false,
         md: None,
         card: None,
+        hidden: Default::default(),
     };
     // 0 user, 1 assistant, 2 tool, 3 tool, 4 user, 5 assistant, 6 user
     let lines = vec![
@@ -4740,5 +4741,80 @@ fn a_page_key_moves_by_the_window_the_list_actually_drew() {
         "the frames really were different sizes ({}, {} bytes)",
         tall_text.len(),
         short_text.len()
+    );
+}
+
+/// **A command cannot be displayed as something it is not.**
+///
+/// This harness shows a reader the line it is about to run and then asks whether to run
+/// it. A bidirectional override is eleven characters that reverse the *visual* order of
+/// everything after them, so `ls< U+202E > -R /` can be read as one command and be
+/// another. That is not a rendering artefact — it is the approval prompt lying, and it
+/// costs nothing to close.
+///
+/// The assertion is on the line as the transcript stores it, which is what every renderer
+/// reads: the override is gone, the rest of the command is untouched, and the count is
+/// recorded so the reader can be *told* rather than left to assume the text was whole.
+#[test]
+fn a_bidirectional_override_never_reaches_the_screen() {
+    let (mut app, ..) = test_app();
+    let hostile = "ls\u{202E} -R /tmp";
+    app.ui.push_external_text(hostile);
+
+    let line = app.ui.lines().last().expect("a line was pushed");
+    assert!(
+        !line.text.contains('\u{202E}'),
+        "the override reached the transcript: {:?}",
+        line.text
+    );
+    assert_eq!(
+        line.text, "ls -R /tmp",
+        "and the command is unchanged otherwise"
+    );
+    assert_eq!(
+        line.hidden.bidi, 1,
+        "and the reader is told one was removed"
+    );
+}
+
+/// Ordinary tool output is untouched, and costs no allocation.
+///
+/// A transcript of two thousand rows must not allocate two thousand `String`s per frame to
+/// learn that nothing needed removing — so the common path borrows, and the test asserts
+/// the borrow rather than trusting it.
+#[test]
+fn ordinary_text_is_stored_exactly_and_the_common_path_borrows() {
+    let (mut app, ..) = test_app();
+    let plain = "total 42\ndrwxr-xr-x  root  bin";
+    app.ui.push_external_text(plain);
+    let line = app.ui.lines().last().expect("a line was pushed");
+    assert_eq!(line.text, plain);
+    assert_eq!(
+        line.hidden.total(),
+        0,
+        "nothing was removed from ordinary text"
+    );
+
+    let (text, stripped) = crate::text_safety::display_safe(plain);
+    assert!(
+        matches!(text, std::borrow::Cow::Borrowed(_)),
+        "a line with nothing to strip must not allocate"
+    );
+    assert!(!stripped.any());
+}
+
+/// A line that is **entirely** display-steering characters still leaves a usable row.
+///
+/// The empty case is the one that bites: a card whose body was nothing but overrides
+/// would otherwise render as a blank row, and a blank row reads as "nothing happened".
+#[test]
+fn a_line_of_only_overrides_still_records_that_something_was_there() {
+    let (mut app, ..) = test_app();
+    app.ui.push_external_text("\u{202E}\u{202E}");
+    let line = app.ui.lines().last().expect("a line was pushed");
+    assert_eq!(line.text, "", "nothing displayable is left");
+    assert_eq!(
+        line.hidden.bidi, 2,
+        "and the reader is told two characters were removed, rather than seeing a blank row"
     );
 }

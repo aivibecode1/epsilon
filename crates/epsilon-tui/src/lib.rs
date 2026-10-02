@@ -28,6 +28,9 @@ pub mod scroll;
 /// Finding text in the visible transcript. See the module docs for what replaced.
 pub mod search;
 pub mod state;
+/// Making text from tools, files and models safe to *show*. See the module docs for why a
+/// bidirectional override in a command line is an approval prompt that lies.
+pub mod text_safety;
 pub mod trust_store;
 pub mod ui;
 pub mod undo;

@@ -18,35 +18,37 @@ Verified by two independent reads. `DESIGN.md:81-86` states the host owns events
 permissions, queue mutation, Markdown, clipboard, persistence **and the event loop**; the
 library owns painting and local geometry.
 
-**Take, in order:**
+**Take, in order — but read "what we already have" below first. Items 1, 2 and 5 turned out
+to be implemented or superseded when checked, and porting them would have been duplication.**
 
-1. **Role-based golden frames.** `src/testing.rs` is *shipped in `src/`*, not a test
-   helper, and records **the role each run was painted with, not hex**
-   (`testing.rs:3-4`) — "a token value change does not rewrite every snapshot, but painting
-   `Muted` where `Danger` belongs does." Plus a 9-profile × `[40, 80, 120]`-column matrix
-   (`testing.rs:97-99`), and `render(w, h, paint) -> Buffer` for a one-call offscreen frame.
-   This is our rule *"assert on the rendered frame, not on state"* turned into a one-liner.
-2. **`rule_violations(frame)`** (`testing.rs:264-301`) — machine-checked invariants over the
-   rendered buffer: at most two full-width hairlines, banned glyphs, ASCII-mode purity,
-   **colour depth the profile can actually show**. It ships with a control for the control
-   (`the_rules_catch_what_they_name`) — the repo's own "a control that passes is a control
-   you have not yet proven works."
+1. ~~**Role-based golden frames.**~~ **We have this.** `crates/epsilon-tui/src/app/golden.rs`
+   drives the real `draw` through a `TestBackend` and asserts on the assembled screen. We
+   differ deliberately: those tests assert on **structure, not pixel-exact text**, because a
+   golden test pinning every character gets rewritten on every copy change without being
+   read. Their lesson applies to us too.
+2. **Design rules machine-checked over the rendered frame.** Not adopted; our golden tests
+   already assert frame structure at every size.
 3. **An automated version of our M196 defect.** `every_paint_impl_has_a_gallery_entry`
-   (`tests/paint_bounds.rs:274-312`) greps every `Paint` impl and fails if no test drives
-   it: *"A component added without a gallery entry would slip past it: fail instead."* Ours
-   was a feature drawn inside another feature's renderer, fully tested, never rendered.
+   greps every `Paint` impl and fails if no test drives it. **Still worth adopting** — ours
+   has no such guard, and M196 was a feature drawn inside another feature's renderer, fully
+   tested, never rendered.
 4. **`FrameBudget`** (`src/components/motion.rs:489-534`) — every animated component
    *requests when it next needs a frame*; `next_frame_in() -> Option<Duration>` where
    **`None` means sleep until an event**. Idle costs zero redraws. This is the cleanest
    answer to the unreproduced TUI freeze: `None` vs `Some(166ms)` is exactly the knob that
    separates "slow" from "lost input". **Purely inferred that we need it — our redraw
-   cadence has never been measured.**
-5. **`ApprovalState::unarmed()` / `.arm()`** (`approval.rs:1015-1054`) — *"a key that
-   arrives before the card was drawn should not count."* **Check whether we have this.**
-6. **`src/text.rs` (152 tested lines)** — `display_safe` strips bidi overrides, which
-   ratatui 0.30 otherwise passes through: *"`rm -rf ~/x` can display as something else."*
-   Plus grapheme-safe `truncate`, word-aware `truncate_words`, and the ellipsis-budget rule
-   ("spend three cells where there are four").
+   cadence has never been measured. Measure before adopting.**
+5. ~~**`ApprovalState::unarmed()` / `.arm()`**~~ **We have this, and stricter.**
+   `handle_approval_key` compares the **specific ask id** against `approval_painted_id`
+   and refuses otherwise — not merely "has this dialog been drawn once", but "is the
+   dialog on screen the same ask these keys may decide". A FIFO channel parks parallel tool
+   calls, so this matters.
+6. **`src/text.rs` (152 tested lines)** — **the one clear gap, and M260 closed half of it.**
+   `display_safe` strips bidi overrides, which ratatui 0.30 passes through. We had **zero**
+   occurrences of `202E`/`2066`/`bidi`/`display_safe` in the workspace. **Not yet closed:**
+   the approval *dialog* renders from `pending_ask`, not from a transcript line, so it does
+   not pass through `push_line` and is not stripped — and that is the worst place for it.
+   Still open: grapheme-safe truncation (we use `.chars().take(n)` at four sites).
 7. **`grounds_differ(a, b)`** (`theme.rs:385-387`) — one predicate that makes panel
    elevation degrade from a fill to an edge wherever the fill is invisible.
 
