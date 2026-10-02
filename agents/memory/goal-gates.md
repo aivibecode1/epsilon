@@ -40,14 +40,17 @@ and the gate that judged it.
    worth keeping: **the end-to-end test that drives `UpdateGoalTool` with a gated goal does
    not exist**, and a test that passes against a build where the rule does not exist is
    exactly the trap recorded below this list.
-2. **The round driver does not consult gates.** They gate *completion*, not *continuation*.
-   Hermes uses a failing gate's output as the *continuation prompt*
-   (`goals.py:97-111`, `:1293-1345`), which is a real improvement but changes what a round
-   costs. **Measured cost, checked rather than guessed:** `GoalGateRunner::run` is async and
-   `continue_goal` is sync inside the TUI's frame loop; core cannot reach the runner (tools
-   depends on core); the TUI has none because the sandbox is resolved inside `build_runtime`,
-   whose six call sites would have to change. Tracked as **A26** with those measurements, and
-   deliberately **not** half-wired.
+2. ~~**The round driver does not consult gates.**~~ **CLOSED at M254 (A26).**
+   `epsilon_runtime::begin_goal_round` runs the gates and returns `GoalRound::GateFailed`
+   carrying the failure as the continuation prompt; the terminal runs it on its own task and
+   starts the round when it answers. **The cost estimate was wrong and high**: it said six
+   call sites, and it was zero — `build_runtime` delegates to a new
+   `build_runtime_and_gate_runner`, and `epsilon-tools` hands back the runner the registry
+   was just given, so there is still exactly one sandbox. `epsilon-tools` stayed a
+   **dev-dependency** of the terminal; the type crosses as `epsilon_runtime::GoalGateRunner`.
+   **A gate failure still costs a round** — that is what stops a red suite being retried for
+   free — and the gate runs off the frame loop, because `cargo test` is thirty seconds and
+   awaiting it in `drive` is a dead terminal.
 3. **`workspace_fingerprint` is computed and tested for stability, never acted on.** The skip on
    an unchanged workspace is the obvious next use; `GateReport::carried_over` is the field for it.
 4. **No gate has ever run confined in a test.** Every gate test runs with `Confinement::Off`,

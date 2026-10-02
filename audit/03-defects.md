@@ -1385,7 +1385,14 @@ read that way.
 
 ### A26 - the goal round driver never consults the gates it can declare
 
-**Status: OPEN. Found 2026-10-06 by reading, after checking three stale claims first.**
+**Status: CLOSED at M254.** Found 2026-10-06 by reading, after checking three stale claims first;
+fixed the next round. egin_goal_round in `epsilon-runtime` now runs the goal's gates before a
+round is sent and returns `GoalRound::GateFailed` carrying the failure as the continuation
+prompt; the terminal's round driver runs it on its own task and starts the round when it answers.
+The cost estimate below was **wrong, high**: it said six call sites, and it was zero -
+`build_runtime` now delegates to a new `build_runtime_and_gate_runner` and the tools crate hands
+back the runner the registry was just given. Six tests drive the real function with a real runner
+against real commands; evidence `audit/evidence/gate-m254.log`.**
 
 `/goal edit gate <command>` **exists** (`epsilon-tui/src/app/commands.rs:819-832`, sending
 `GoalOp::Edit { gates }`, which the contract carries at `goal.rs:324-331`), and the gate runner

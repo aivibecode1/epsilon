@@ -31,6 +31,7 @@ use super::*;
 pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTerminal) -> i32 {
     let TuiConfig {
         agent,
+        gate_runner,
         approvals,
         initial_task,
         model_id,
@@ -46,7 +47,11 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     let (fetched_tx, mut fetched_rx) =
         tokio::sync::mpsc::unbounded_channel::<(String, Result<Vec<String>, String>)>();
     let (oauth_tx, mut oauth_rx) = tokio::sync::mpsc::unbounded_channel::<OauthUiEvent>();
+    let (goal_round_tx, goal_round_rx) =
+        tokio::sync::mpsc::unbounded_channel::<epsilon_runtime::GoalRound>();
     let mut app = App::new(model_id, fetched_tx, notices_tx, oauth_tx);
+    app.gate_runner = gate_runner;
+    app.set_goal_round_channel(goal_round_tx, goal_round_rx);
     // D8: the palette was resolved by the CLI; `App::new` detected the rest.
     if let Some(mode) = theme_mode {
         app.theme.set_palette(mode);
@@ -197,6 +202,17 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
         if goal_turn_ended {
             goal_turn_ended = false;
             if app.continue_goal(&agent) {
+                dirty = true;
+                goal_dirty = true;
+            }
+        }
+
+        // A round whose gates were checked arrives here rather than at the line above,
+        // because the check ran on its own task. Drained every frame, so a gate that took
+        // thirty seconds costs thirty seconds of nothing happening and not thirty seconds of
+        // a dead terminal.
+        while let Some(round) = app.take_goal_round() {
+            if app.start_gate_round(&agent, round) {
                 dirty = true;
                 goal_dirty = true;
             }

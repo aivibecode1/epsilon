@@ -989,6 +989,34 @@ impl App {
             }
             return false;
         }
+        // **A goal with gates is checked before its round is sent**, because a round that
+        // re-reads "continue toward the objective" while the suite is red is the loop
+        // Hermes' design exists to prevent. The check runs on its own task because a gate is
+        // a shell command — thirty seconds of `cargo test` must not be thirty seconds of
+        // dead terminal — and the round starts when it answers, in `start_gate_round`.
+        if view.goal.gates.iter().any(|g| g.is_runnable()) && self.gate_runner.is_some() {
+            if self.goal_round_pending {
+                return false;
+            }
+            self.goal_round_pending = true;
+            let agent = Arc::clone(agent);
+            let runner = self.gate_runner.clone();
+            let cwd = self.workspace_root.clone();
+            let tx = self.goal_round_tx.clone();
+            let notices = self.notices_tx.clone();
+            tokio::spawn(async move {
+                let round = epsilon_runtime::begin_goal_round(&agent, runner.as_deref(), &cwd)
+                    .await
+                    .unwrap_or(epsilon_runtime::GoalRound::Stop);
+                if let epsilon_runtime::GoalRound::GateFailed { reports, .. } = &round {
+                    for r in reports {
+                        notices.send(r.sentence()).ok();
+                    }
+                }
+                tx.send(round).ok();
+            });
+            return false;
+        }
         let Ok(Some(prompt)) = agent.goal_begin_round() else {
             return false;
         };
@@ -998,6 +1026,47 @@ impl App {
             view.goal.max_rounds
         ));
         self.note_goal_budget(view.goal.rounds_started + 1, view.goal.max_rounds);
+        self.ui.push_local_input(&prompt);
+        let msg = epsilon_core::references::user_message(&self.workspace_root, &prompt);
+        self.spawn_run(Arc::clone(agent), msg);
+        true
+    }
+
+    /// Start a round a gate check has just answered for.
+    ///
+    /// The other half of the spawn in [`Self::continue_goal`]. Kept separate so the gate's
+    /// own timing never reaches the frame loop, and so a round still starts from exactly one
+    /// place whether or not gates are involved.
+    pub(super) fn start_gate_round(
+        &mut self,
+        agent: &Arc<Agent>,
+        round: epsilon_runtime::GoalRound,
+    ) -> bool {
+        self.goal_round_pending = false;
+        let Some(view) = agent.goal() else {
+            return false;
+        };
+        let (prompt, gates_passed) = match round {
+            epsilon_runtime::GoalRound::Continue {
+                prompt,
+                gates_passed,
+            } => (prompt, gates_passed),
+            epsilon_runtime::GoalRound::GateFailed { prompt, .. } => (prompt, 0),
+            epsilon_runtime::GoalRound::Stop => return false,
+        };
+        let note = if gates_passed > 0 {
+            format!(
+                "goal round {}/{} — {gates_passed} gate(s) passed",
+                view.goal.rounds_started, view.goal.max_rounds
+            )
+        } else {
+            format!(
+                "goal round {}/{} — continuing",
+                view.goal.rounds_started, view.goal.max_rounds
+            )
+        };
+        self.ui.push_notice(note);
+        self.note_goal_budget(view.goal.rounds_started, view.goal.max_rounds);
         self.ui.push_local_input(&prompt);
         let msg = epsilon_core::references::user_message(&self.workspace_root, &prompt);
         self.spawn_run(Arc::clone(agent), msg);

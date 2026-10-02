@@ -1314,6 +1314,151 @@ pub fn latest_session_file(dir: &Path) -> Option<PathBuf> {
     latest_session_file_in(dir, None)
 }
 
+/// The goal-gate runner, named so a frontend never has to.
+///
+/// `epsilon-tools` is a **dev-dependency** of the terminal frontend, not a dependency, and
+/// promoting it would put a tool crate underneath a frontend for one type. So the type
+/// crosses the boundary through here — the crate that already owns the one sandbox a gate is
+/// allowed to run in, and the crate both frontends already depend on to compose.
+pub type GoalGateRunner = Arc<epsilon_tools::goal_gate::GoalGateRunner>;
+
+/// What an automatic goal round should send, once the gates have had their say.
+///
+/// **Why this lives here and not in `epsilon-core`.** Starting a round is `Agent`'s job and
+/// stays there. *Running a gate* is a shell command and belongs to `epsilon-tools`, which
+/// depends on core — so core cannot name a gate runner without a cycle, and the trait that
+/// would avoid one would be an interface invented for a single implementor. This crate is
+/// already where a workspace, a configuration and a runtime become a running agent, and it
+/// depends on both. One implementation, and the terminal and the desktop window get the same
+/// behaviour instead of each writing their own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoalRound {
+    /// Nothing to send: no goal, not continuable, or the round cap is reached.
+    Stop,
+    /// The ordinary round prompt, because the goal declares no gate or every gate passed.
+    Continue {
+        /// The text to send as the next user turn.
+        prompt: String,
+        /// How many gates passed, for a notice worth showing. Zero when the goal has none.
+        gates_passed: usize,
+    },
+    /// A gate failed, and its output is what the round sends.
+    GateFailed {
+        /// The continuation prompt, built from the failure.
+        prompt: String,
+        /// The gates that failed, for a notice worth showing.
+        reports: Vec<epsilon_tools::goal_gate::GateReport>,
+    },
+}
+
+/// Start the next automatic goal round, with the goal's gates consulted first.
+///
+/// **The gap this closes.** `Agent::goal_begin_round` sends the same prompt every round —
+/// "continue toward the objective" — so a goal that declared `cargo test` as its gate was
+/// told to get on with it while the suite was red. Hermes runs the gates at the turn
+/// boundary and makes a failing gate's bounded output *the continuation prompt*
+/// (`references/hermes-agent-2026.9.14/hermes_cli/goals.py:97-111`, `:1293-1345`), which is
+/// why its loop does not spin: each round arrives carrying the evidence for what is still
+/// wrong.
+///
+/// **The round is spent either way**, which is the accounting that matters. A gate failure
+/// costs a round exactly as a turn does, so a red suite cannot be retried for free — and
+/// that is why the round is taken *before* the gates run, matching Hermes' own note that a
+/// quality gate consumes "the same turn budget".
+///
+/// A `None` runner means this platform resolved no sandbox. That is not silently ignored:
+/// a gated goal then gets the ordinary prompt and says so in `gates_passed` terms of zero,
+/// while completion — which is where a gate is load-bearing — is already refusing.
+pub async fn begin_goal_round(
+    agent: &epsilon_core::Agent,
+    runner: Option<&epsilon_tools::goal_gate::GoalGateRunner>,
+    cwd: &Path,
+) -> Result<GoalRound, epsilon_contracts::goal::GoalError> {
+    let Some(prompt) = agent.goal_begin_round()? else {
+        return Ok(GoalRound::Stop);
+    };
+    let Some(view) = agent.goal() else {
+        return Ok(GoalRound::Continue {
+            prompt,
+            gates_passed: 0,
+        });
+    };
+    let gates: Vec<_> = view
+        .goal
+        .gates
+        .iter()
+        .filter(|g| g.is_runnable())
+        .cloned()
+        .collect();
+    let (Some(runner), false) = (runner, gates.is_empty()) else {
+        return Ok(GoalRound::Continue {
+            prompt,
+            gates_passed: 0,
+        });
+    };
+    let mut reports = Vec::new();
+    for gate in &gates {
+        let report = runner.run(gate, cwd).await;
+        if !report.passed {
+            reports.push(report);
+        }
+    }
+    if reports.is_empty() {
+        return Ok(GoalRound::Continue {
+            prompt,
+            gates_passed: gates.len(),
+        });
+    }
+    Ok(GoalRound::GateFailed {
+        prompt: gate_continuation_prompt(
+            &view.goal.objective,
+            &reports,
+            view.goal.rounds_started,
+            view.goal.max_rounds,
+        ),
+        reports,
+    })
+}
+
+/// The prompt a failing gate produces.
+///
+/// Modelled on Hermes' (`goals.py:97-111`), including the two sentences that make it more
+/// than a paste of a test failure:
+///
+/// * *"then re-run it to confirm"* — a round that fixes the cause without proving the gate
+///   passes has not finished, and the next round would find that out the slow way.
+/// * *"If the gate itself is wrong or cannot pass, say so clearly and stop."* A goal whose
+///   gate can never pass has to be able to end without being declared done; without that the
+///   only exits are a human or the round cap, and both are worse than a model saying so.
+fn gate_continuation_prompt(
+    objective: &str,
+    reports: &[epsilon_tools::goal_gate::GateReport],
+    round: u32,
+    max_rounds: u32,
+) -> String {
+    let mut out = format!(
+        "[Continuing toward your standing goal — a quality gate failed]\nGoal: {objective}\n\n\
+         Round {round}/{max_rounds}. The gate below must pass before this goal can be \
+         declared done, and it just failed:\n"
+    );
+    for report in reports {
+        out.push_str(&format!("\n$ {}\n", report.gate.command));
+        if let Some(code) = report.exit_code {
+            out.push_str(&format!("Exit code: {code}\n"));
+        }
+        let tail = report.output_tail.trim();
+        if !tail.is_empty() {
+            out.push_str(&format!("Output (tail):\n{tail}\n"));
+        }
+    }
+    out.push_str(
+        "\nFix the underlying problem so this gate passes, then re-run it to confirm. \
+         Do not declare the goal complete while any gate fails. If the gate itself is wrong \
+         or cannot pass, say so clearly and stop.",
+    );
+    out
+}
+
 /// The session file a **new** launch writes: `.epsilon/sessions/--<cwd>--/<ISO>_<token>.jsonl`.
 ///
 /// pi names one file per session and resolves it on create
@@ -3555,8 +3700,22 @@ pub struct RunParams<'a> {
 /// A `String`, not a typed error: every failure here is a user-facing sentence already
 /// (a session that will not open, a migration that failed, an absent store), and the
 /// message is the thing the caller has to show.
-pub async fn build_runtime(
-    RunParams {
+pub async fn build_runtime(params: RunParams<'_>) -> Result<Arc<Agent>, String> {
+    Ok(build_runtime_and_gate_runner(params).await?.0)
+}
+
+/// [`build_runtime`], **and** the goal-gate runner that shares the agent's sandbox.
+///
+/// Additive rather than a change of return type: six call sites across the CLI, the
+/// terminal and the desktop window already take an `Arc<Agent>`, and none of them needs a
+/// runner. Only a frontend that drives a goal round does, and it should ask for it here
+/// rather than resolve a second sandbox — which is the one thing the tools crate's module
+/// header rules out, because two resolutions mean a transcript can name one confinement for
+/// a tool call and another for the gate that judged it.
+pub async fn build_runtime_and_gate_runner(
+    params: RunParams<'_>,
+) -> Result<(Arc<Agent>, Option<GoalGateRunner>), String> {
+    let RunParams {
         workspace,
         stream_fn,
         approvals,
@@ -3570,12 +3729,12 @@ pub async fn build_runtime(
         project,
         project_trusted,
         plan_mode,
-    }: RunParams<'_>,
-) -> Result<Arc<Agent>, String> {
+    } = params;
     // M79/M215: the product path opts into language-server diagnostics, and since M215 the
     // frontend both decides (`--lsp`) and builds the service; the tool crate receives only the
     // handle, which is why it no longer links `epsilon-lsp` at all.
-    let mut registry = epsilon_tools::builtin_registry_with(confinement, diagnostics_for(lsp));
+    let (mut registry, gate_runner) =
+        epsilon_tools::builtin_registry_and_gate_runner(confinement, diagnostics_for(lsp));
     let mut all_mcp: Vec<McpServerConfig> = mcp_servers.to_vec();
     all_mcp.extend(project.mcp_servers.iter().cloned());
     for cfg in &all_mcp {
@@ -3833,7 +3992,7 @@ pub async fn build_runtime(
             }
         }
     }
-    Ok(agent)
+    Ok((agent, gate_runner))
 }
 
 /// Which file a launch opens, and whether that makes it a resumed launch.

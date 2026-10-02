@@ -31,6 +31,11 @@ epsilon-safety = { path = "../epsilon-safety" }
 # M57: session discovery for the `/sessions` browser (`epsilon_session::list_sessions`).
 # Downward edge only: session sits beside core, below the frontends.
 epsilon-session = { path = "../epsilon-session" }
+# M253: the round driver evaluates a goal's gates, and `build_runtime` owns the one sandbox
+# they may run in. Both facts live in the composition crate, so asking it is cheaper than
+# resolving a second sandbox here — which the tools crate forbids, for the same reason the
+# desktop frontend asks the same crate to compose its agent.
+epsilon-runtime = { path = "../epsilon-runtime" }
 serde_json = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -59,6 +64,10 @@ tempfile = { workspace = true }
 # `epsilon_core::exec::run_local`, never by naming a tool crate. This edge exists so
 # the test can supply the same tool the product would.
 epsilon-tools = { path = "../epsilon-tools" }
+# M253: the round driver evaluates a goal's gates, and `build_runtime` owns the one
+# sandbox they may run in. Both facts live in the composition crate, so asking it is
+# cheaper than resolving a second sandbox here -- which the tools crate forbids.
+epsilon-runtime = { path = "../epsilon-runtime" }
 
 [lints]
 workspace = true

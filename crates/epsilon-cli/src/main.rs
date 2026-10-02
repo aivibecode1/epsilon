@@ -24,7 +24,10 @@ use epsilon_safety::{ApprovalUi, ChannelApprovalUi};
 // ADR-021: composition is a library crate now, so the desktop IDE can build the same agent
 // this binary does. `Resume` came with it, because a frontend cannot ask for a session
 // without also saying which one it meant.
-use epsilon_runtime::{Resume, RunParams, build_runtime, lease_wait_millis, lease_wait_summary};
+use epsilon_runtime::{
+    Resume, RunParams, build_runtime, build_runtime_and_gate_runner, lease_wait_millis,
+    lease_wait_summary,
+};
 
 /// M52 guard: if this crate is built with `real` while `epsilon-core` is not,
 /// `Agent::try_hot_swap_to_real` silently degrades to "restart epsilon".
@@ -1560,8 +1563,11 @@ async fn tui_mode(
     theme_mode: Option<epsilon_tui::ThemeMode>,
 ) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
-    // Composition happens here; the TUI crate stays a pure frontend.
-    let agent = build_runtime(RunParams {
+    // Composition happens here; the TUI crate stays a pure frontend. The gate runner comes
+    // back from the same call because it shares the agent's sandbox, and the terminal's
+    // goal round driver needs it (M253) - resolving a second one here is what the tools
+    // crate's header forbids.
+    let composed = build_runtime_and_gate_runner(RunParams {
         workspace: &shared.workspace,
         stream_fn: Arc::clone(&shared.stream_fn),
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
@@ -1581,8 +1587,8 @@ async fn tui_mode(
         plan_mode: shared.plan_mode,
     })
     .await;
-    match agent {
-        Ok(agent) => {
+    match composed {
+        Ok((agent, gate_runner)) => {
             // A18: the lease wait is drawn on the console before the alternate screen exists, and
             // the alternate screen erases it — so a launch that waited says so in the transcript,
             // where it survives. Built here rather than in `shared` because `shared` is assembled
@@ -1593,6 +1599,7 @@ async fn tui_mode(
             }
             epsilon_tui::run(epsilon_tui::TuiConfig {
                 agent,
+                gate_runner,
                 approvals,
                 initial_task,
                 model_id: shared.model_id.clone(),

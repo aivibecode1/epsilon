@@ -37,6 +37,13 @@ pub type LiveFetcher = Arc<
 pub struct TuiConfig {
     /// The composed session runtime.
     pub agent: Arc<Agent>,
+    /// The goal-gate runner that shares the agent's sandbox.
+    ///
+    /// Handed in rather than resolved here, and that is the security property rather than a
+    /// convenience: a gate run outside the session's confinement is a command the agent's
+    /// own `bash` is refused. `None` when the platform resolved no sandbox, in which case a
+    /// gated goal cannot be evaluated and completion already refuses for it.
+    pub gate_runner: Option<epsilon_runtime::GoalGateRunner>,
     /// Where the gate parks asks; must be the same instance inside the agent's gate.
     pub approvals: Arc<ChannelApprovalUi>,
     /// Task submitted automatically once the UI is live.
@@ -231,6 +238,22 @@ pub(crate) struct App {
     live_fetched: std::collections::BTreeSet<String>,
     fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
     notices_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// The gate runner the CLI composed with the agent's sandbox. See [`TuiConfig::gate_runner`].
+    gate_runner: Option<epsilon_runtime::GoalGateRunner>,
+    /// A gate-checked goal round, from the task that ran the gates back to the frame loop.
+    ///
+    /// **Why not awaited in place.** `drive` is async and could await it, but a gate is a
+    /// shell command — `cargo test` on a real project is thirty seconds — and awaiting that
+    /// in the frame loop is an unresponsive terminal for the whole run. The gate is the one
+    /// thing in a goal round that is allowed to take real time, so it is the one thing that
+    /// does not happen on the frame's thread.
+    goal_round_tx: tokio::sync::mpsc::UnboundedSender<epsilon_runtime::GoalRound>,
+    goal_round_rx: tokio::sync::mpsc::UnboundedReceiver<epsilon_runtime::GoalRound>,
+    /// A round is being gate-checked, so do not start another until it answers.
+    ///
+    /// Without this the loop would fire a second gate run on the very next turn end, and two
+    /// rounds would be spent for one continuation.
+    goal_round_pending: bool,
     /// M30: steer queue length, mirrored on each key event when running so
     /// draw_status can render a count badge without needing the agent ref.
     steer_queue_len: usize,
@@ -540,6 +563,25 @@ fn repair_lines(agent: &Agent) -> Vec<String> {
 }
 
 impl App {
+    /// Hand the round-driver its delivery channel.
+    ///
+    /// Split out from `new` for the same reason the OAuth channel is: `new` takes channels
+    /// it sends on, and a channel created inside `new` would have nowhere for the frame
+    /// loop to read from.
+    pub(crate) fn set_goal_round_channel(
+        &mut self,
+        tx: tokio::sync::mpsc::UnboundedSender<epsilon_runtime::GoalRound>,
+        rx: tokio::sync::mpsc::UnboundedReceiver<epsilon_runtime::GoalRound>,
+    ) {
+        self.goal_round_tx = tx;
+        self.goal_round_rx = rx;
+    }
+
+    /// A gate-checked round, if one has arrived. Non-blocking, once per frame.
+    pub(crate) fn take_goal_round(&mut self) -> Option<epsilon_runtime::GoalRound> {
+        self.goal_round_rx.try_recv().ok()
+    }
+
     /// Invalidate the picker row cache (call whenever filter/recents/live change).
     fn invalidate_picker(&mut self) {
         self.picker_rows = None;

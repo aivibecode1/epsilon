@@ -1575,6 +1575,7 @@ dependencies = [
  "epsilon-contracts",
  "epsilon-core",
  "epsilon-llm",
+ "epsilon-runtime",
  "epsilon-safety",
  "epsilon-session",
  "epsilon-tools",

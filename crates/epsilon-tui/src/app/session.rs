@@ -68,6 +68,13 @@ impl App {
             fetched_tx,
             notices_tx,
             oauth_tx,
+            // Replaced by `set_goal_round_channel` before the first frame. A channel built
+            // here would have no reader: the receiver belongs to `drive`, which is the only
+            // place that drains it.
+            goal_round_tx: tokio::sync::mpsc::unbounded_channel().0,
+            goal_round_rx: tokio::sync::mpsc::unbounded_channel().1,
+            gate_runner: None,
+            goal_round_pending: false,
             oauth_code_tx: None,
             run_started_at: None,
             spinner_phase: 0,

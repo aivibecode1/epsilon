@@ -119,6 +119,26 @@ pub fn register_builtins_with(
     confinement: &Confinement,
     diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
 ) {
+    let _ = register_builtins_and_gate_runner(registry, confinement, diagnostics);
+}
+
+/// Register every built-in, and hand back the gate runner built from the same sandbox.
+///
+/// **Same sandbox, not an equivalent one.** A frontend that wants to evaluate a goal's
+/// gates between rounds needs a runner, and the tempting shortcut is to resolve its own
+/// from the same `Confinement`. That is the shortcut the module header forbids: one
+/// resolution means a transcript cannot name one backend for a tool call and another for
+/// the gate that decided whether it succeeded. So the runner the registry was just given
+/// comes back out, and there is only ever one.
+///
+/// Returns `None` when the platform has no sandbox at all. That is not a degraded gate: it
+/// is the same `None` the goal tool already holds, and it makes completion refuse rather
+/// than record itself unevidenced.
+pub fn register_builtins_and_gate_runner(
+    registry: &mut ToolRegistry,
+    confinement: &Confinement,
+    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
+) -> Option<Arc<crate::goal_gate::GoalGateRunner>> {
     let sandbox = resolve_sandbox(confinement);
     registry.register(Arc::new(ReadTool::new()));
     let write = WriteTool::new();
@@ -165,6 +185,9 @@ pub fn register_builtins_with(
     ));
     registry.register(Arc::new(update_goal));
     registry.register(Arc::new(TaskTool::new()));
+    // The runner goes back to the caller with the same sandbox it was just built with, so
+    // a frontend can ask "are this goal's gates satisfied?" without resolving a second one.
+    Some(Arc::new(crate::goal_gate::GoalGateRunner::new(sandbox)))
 }
 
 /// A fresh registry containing exactly the built-ins.
@@ -183,4 +206,18 @@ pub fn builtin_registry_with(
     let mut r = ToolRegistry::new();
     register_builtins_with(&mut r, confinement, diagnostics);
     r
+}
+
+/// The product registry, **and** the gate runner that shares its sandbox.
+///
+/// The one callers want: a frontend driving a goal needs both the agent's tools and a way
+/// to evaluate that goal's gates, and resolving the sandbox twice to get the second one is
+/// how a transcript ends up naming two confinement backends.
+pub fn builtin_registry_and_gate_runner(
+    confinement: &Confinement,
+    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
+) -> (ToolRegistry, Option<Arc<crate::goal_gate::GoalGateRunner>>) {
+    let mut r = ToolRegistry::new();
+    let runner = register_builtins_and_gate_runner(&mut r, confinement, diagnostics);
+    (r, runner)
 }
