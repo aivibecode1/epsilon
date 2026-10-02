@@ -247,6 +247,24 @@ impl Hints {
         }
     }
 
+    /// The approval footer for an ask that **cannot be approved as shown**.
+    ///
+    /// The approve keys are withdrawn in `handle_approval_key` when the request carries
+    /// display-steering characters, and a footer that still advertised them would be the
+    /// defect this repository tracks by name: a key the window does not act on, printed as
+    /// though it would. Every `y` in this build once led somewhere; it must be the same
+    /// everywhere or the footer is decoration.
+    pub fn approval_deny_only() -> Self {
+        Self {
+            mode: Some("approval — cannot approve as shown".into()),
+            keys: vec![
+                ("n".into(), "deny".into()),
+                ("e".into(), "deny + guidance".into()),
+            ],
+            ..Self::default()
+        }
+    }
+
     /// The chord that sends, plus the mode word. The mode is not decoration:
     /// `esc stop` in the footer of an idle session is a lie the reader only
     /// discovers by pressing it.

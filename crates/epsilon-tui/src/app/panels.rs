@@ -769,6 +769,12 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
     let inner = panel.open(f);
     let theme = &app.theme;
 
+    // The permission dialog is the worst place in this product for a command to be
+    // displayed as something it is not: it is the one screen where a reader decides
+    // whether work runs, and the text they decide on comes from the **agent**, not from the
+    // user. So both fields are sanitised, the dialog says when it did, and
+    // `handle_approval_key` refuses the approve keys for an ask that needed it. See
+    // `crate::text_safety`.
     let body: Vec<Line<'static>> = match app.pending_ask.as_ref() {
         Some(ask) => {
             let req = &ask.request;
@@ -786,22 +792,48 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
             // happen. For a shell call that is the command, not a JSON object
             // with the command buried in it — see [`summarize_detail`].
             let detail = summarize_detail(&req.detail);
-            vec![
-                field("cap", req.capability.clone()),
-                field("what", detail),
-                Line::from(vec![
+            let (cap, cap_hit) = crate::text_safety::display_safe(&req.capability);
+            let (what, what_hit) = crate::text_safety::display_safe(&detail);
+            let mut lines = vec![
+                field("cap", cap.into_owned()),
+                field("what", what.into_owned()),
+            ];
+            if cap_hit.any() || what_hit.any() {
+                // Named, never silent. A permission prompt that quietly dropped a
+                // character is worse than one that says so, because the reader has no
+                // other way to learn the text was not what it claimed.
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "this request carries {} display-steering character(s), removed for display",
+                        cap_hit.total() + what_hit.total()
+                    ),
+                    theme.danger(),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "it cannot be approved as shown",
+                    theme.danger(),
+                )));
+                lines.push(Line::from(vec![
+                    Span::styled("n", theme.danger()),
+                    Span::styled(" deny", theme.dim()),
+                    Span::styled("      e", theme.danger()),
+                    Span::styled(" deny + guidance", theme.dim()),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
                     Span::styled("y", theme.success()),
                     Span::styled(" allow once", theme.dim()),
                     Span::styled("   a", theme.success()),
                     Span::styled(" always (session)", theme.dim()),
-                ]),
-                Line::from(vec![
+                ]));
+                lines.push(Line::from(vec![
                     Span::styled("n", theme.danger()),
                     Span::styled(" deny", theme.dim()),
                     Span::styled("         e", theme.danger()),
                     Span::styled(" deny + guidance", theme.dim()),
-                ]),
-            ]
+                ]));
+            }
+            lines
         }
         // Reached only when the ask was taken between the draw call and here,
         // which the caller's `is_some` check makes a one-frame race.

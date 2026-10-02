@@ -349,7 +349,18 @@ impl App {
             total_rows: self.geometry.total,
         };
         let mut hints = if self.pending_ask.is_some() {
-            Hints::approval()
+            // Deny-only when the request carries display-steering characters: the approve
+            // keys are refused in `handle_approval_key`, and a footer that still printed
+            // them would be a key the window does not act on, advertised as though it would.
+            let honest = self
+                .pending_ask
+                .as_ref()
+                .is_some_and(crate::app::ask_display_is_honest);
+            if honest {
+                Hints::approval()
+            } else {
+                Hints::approval_deny_only()
+            }
         } else if self.overlay_open() {
             // Overlays own the keyboard; the footer points at their own keys
             // rather than advertising send/stop, which would not work. The

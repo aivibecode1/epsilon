@@ -366,6 +366,30 @@ pub(crate) fn handle_approval_key(app: &mut App, key: KeyEvent) -> bool {
         }
         return false;
     }
+    // **An ask whose text could not be shown faithfully cannot be allowed.**
+    //
+    // The permission dialog is the one screen where a reader decides whether work runs, and
+    // a bidirectional override makes the command display as something it is not. Removing
+    // the character makes the dialog honest about most of the text and still leaves the
+    // reader approving something they did not fully see — so the approve keys are refused
+    // and only deny is offered, which is the direction that cannot run the wrong thing.
+    // Refusing is not a wedge: `n` always works, and the dialog names the reason.
+    let hidden = match app.pending_ask.as_ref() {
+        Some(ask) if !super::ask_display_is_honest(ask) => {
+            let (_, cap_hit) = crate::text_safety::display_safe(&ask.request.capability);
+            let (_, what_hit) =
+                crate::text_safety::display_safe(&super::summarize_detail(&ask.request.detail));
+            cap_hit.total() + what_hit.total()
+        }
+        _ => 0,
+    };
+    if hidden > 0 && matches!(key.code, KeyCode::Char('y' | 'Y' | 'a' | 'A')) {
+        app.ui.push_notice(format!(
+            "refused: this request carries {hidden} display-steering character(s) and cannot \
+             be approved as shown. Deny it, or change the request."
+        ));
+        return false;
+    }
     match key.code {
         KeyCode::Char('y' | 'Y') => {
             if let Some(ask) = app.pending_ask.take() {

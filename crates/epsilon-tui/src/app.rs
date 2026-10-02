@@ -123,7 +123,20 @@ fn now_ms() -> u64 {
 /// with none of them falls back to the JSON. Nothing is invented for a missing
 /// field, and the fallback is the raw object rather than a paraphrase, because
 /// the value of this line is that it is the request.
-fn summarize_detail(detail: &serde_json::Value) -> String {
+/// How many display-steering characters this ask carries, across both fields the dialog
+/// shows.
+///
+/// **One predicate, two callers**: the footer decides which keys to advertise, and the key
+/// handler decides which to honour. Two computations of the same question is how the
+/// footer ends up promising `y` while the handler refuses it — which is the defect this
+/// repository tracks by name, arriving from the direction of a security fix.
+pub(crate) fn ask_display_is_honest(ask: &PendingAsk) -> bool {
+    let (_, cap_hit) = crate::text_safety::display_safe(&ask.request.capability);
+    let (_, what_hit) = crate::text_safety::display_safe(&summarize_detail(&ask.request.detail));
+    cap_hit.total() + what_hit.total() == 0
+}
+
+pub(super) fn summarize_detail(detail: &serde_json::Value) -> String {
     /// Fields that answer "what will this do", most specific first.
     const NAMED: [&str; 5] = ["command", "path", "file", "query", "url"];
     if let Some(object) = detail.as_object() {

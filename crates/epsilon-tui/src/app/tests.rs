@@ -166,15 +166,41 @@ async fn park_ask(
     approvals: &ChannelApprovalUi,
     id: &str,
 ) -> tokio::task::JoinHandle<PermissionDecision> {
+    park_ask_detail(
+        app,
+        approvals,
+        id,
+        "bash",
+        "rm -rf build",
+        serde_json::json!({ "command": "rm -rf build" }),
+    )
+    .await
+}
+
+/// The same, with the request's own text supplied.
+///
+/// Separate from [`park_ask`] because the property under test is *what the request says*:
+/// an ask whose text carries a bidi override must be handled differently from one that does
+/// not, and a fixture that hardcodes the command cannot express the difference.
+async fn park_ask_detail(
+    app: &mut App,
+    approvals: &ChannelApprovalUi,
+    id: &str,
+    capability: &str,
+    pattern: &str,
+    detail: serde_json::Value,
+) -> tokio::task::JoinHandle<PermissionDecision> {
     let requester = approvals.clone();
     let id = id.to_string();
+    let capability = capability.to_string();
+    let pattern = pattern.to_string();
     let response = tokio::spawn(async move {
         requester
             .ask(PermissionRequest {
                 request_id: id,
-                capability: "bash".into(),
-                pattern: "rm -rf build".into(),
-                detail: serde_json::json!({ "command": "rm -rf build" }),
+                capability,
+                pattern,
+                detail,
             })
             .await
     });
@@ -4816,5 +4842,140 @@ fn a_line_of_only_overrides_still_records_that_something_was_there() {
     assert_eq!(
         line.hidden.bidi, 2,
         "and the reader is told two characters were removed, rather than seeing a blank row"
+    );
+}
+
+/// **An ask whose command cannot be shown faithfully cannot be approved.**
+///
+/// M260 sanitised the transcript, and recorded that the permission dialog was the open
+/// half: it renders the *agent's* own `capability` and `detail`, and it is the one screen
+/// where a reader decides whether work runs. A `U+202E` in the command makes the dialog
+/// display something the command is not, so pressing `y` there would be approving text
+/// nobody saw.
+///
+/// The ask therefore stays parked and the key is refused in words. `n` still works, which is
+/// the direction that cannot run the wrong thing — refusing is not a wedge.
+#[tokio::test]
+async fn an_ask_carrying_a_bidi_override_cannot_be_approved() {
+    let (mut app, agent, _receivers) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let _response = park_ask_detail(
+        &mut app,
+        &approvals,
+        "g1",
+        "bash",
+        "ls\u{202E} -R /",
+        serde_json::json!({ "command": "ls\u{202E} -R /" }),
+    )
+    .await;
+
+    // A frame first: `y` is refused unless the dialog has been painted, so the guard under
+    // test is the *display* one and not the visibility one.
+    render_rows(&mut app, 100, 40);
+    assert!(!handle_key(
+        &mut app,
+        &agent,
+        KeyEvent::from(KeyCode::Char('y'))
+    ));
+
+    assert!(
+        app.pending_ask.is_some(),
+        "the ask must still be parked: an approval was applied to text nobody could read"
+    );
+    let notices = render_rows(&mut app, 100, 40).join("\n");
+    assert!(
+        notices.contains("display-steering"),
+        "and the refusal must say why:\n{notices}"
+    );
+}
+
+/// Deny still works on such an ask — the refusal is on *approval*, not on the dialog.
+#[tokio::test]
+async fn an_ask_carrying_a_bidi_override_can_still_be_denied() {
+    let (mut app, agent, _receivers) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let response = park_ask_detail(
+        &mut app,
+        &approvals,
+        "g1",
+        "bash",
+        "ls\u{202E} -R /",
+        serde_json::json!({ "command": "ls\u{202E} -R /" }),
+    )
+    .await;
+    render_rows(&mut app, 100, 40);
+
+    handle_key(&mut app, &agent, KeyEvent::from(KeyCode::Char('n')));
+    assert!(
+        app.pending_ask.is_none(),
+        "deny must always work; refusing to approve must not wedge the run"
+    );
+    assert!(matches!(response.await, Ok(PermissionDecision::Deny)));
+}
+
+/// The dialog **says** that it removed something, and withdraws the approve keys.
+///
+/// Two halves, and the second is what makes the first meaningful: a prompt that quietly
+/// dropped a character would look correct, and a reader has no other way to learn the text
+/// was not what it claimed.
+#[tokio::test]
+async fn the_dialog_names_what_it_removed_and_withdraws_the_approve_keys() {
+    let (mut app, _agent, _receivers) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let _response = park_ask_detail(
+        &mut app,
+        &approvals,
+        "g1",
+        "bash",
+        "ls\u{202E} -R /",
+        serde_json::json!({ "command": "ls\u{202E} -R /" }),
+    )
+    .await;
+    let frame = render_rows(&mut app, 100, 40).join("\n");
+
+    assert!(
+        !frame.contains('\u{202E}'),
+        "the override must not reach the screen:\n{frame}"
+    );
+    assert!(
+        frame.contains("display-steering"),
+        "and the dialog must name it:\n{frame}"
+    );
+    assert!(
+        !frame.contains("allow once"),
+        "a request that cannot be shown faithfully must not offer to allow it:\n{frame}"
+    );
+    assert!(
+        frame.contains("deny"),
+        "while still offering the direction that cannot run the wrong thing:\n{frame}"
+    );
+    // **The footer must agree with the handler.** It printed `y allow once` while the key
+    // path refused `y` -- a key the window does not act on, advertised as though it would,
+    // which is the defect this repository tracks by name. It arrived from the direction of
+    // a security fix, which is the part worth remembering.
+    assert!(
+        frame.contains("cannot approve as shown"),
+        "and the footer must say why the decision surface is smaller:\n{frame}"
+    );
+}
+
+/// An ordinary ask is unaffected: same keys, same prompt.
+///
+/// The stripping must not cost a reader the normal decision surface, and a guard that fired
+/// on every ask would be useless.
+#[tokio::test]
+async fn an_ordinary_ask_still_offers_the_usual_keys() {
+    let (mut app, _agent, _receivers) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let _response = park_ask(&mut app, &approvals, "g1").await;
+    let frame = render_rows(&mut app, 100, 40).join("\n");
+
+    assert!(
+        frame.contains("allow once"),
+        "an ordinary ask must be approvable:\n{frame}"
+    );
+    assert!(
+        !frame.contains("display-steering"),
+        "and must not claim anything was removed:\n{frame}"
     );
 }
