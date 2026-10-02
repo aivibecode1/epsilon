@@ -161,14 +161,182 @@ fn a_gate_round_trips_through_the_session_log() {
 #[test]
 fn the_workspace_fingerprint_is_stable_and_short() {
     let dir = tempfile::tempdir().expect("a workspace");
-    let a = workspace_fingerprint(dir.path());
-    let b = workspace_fingerprint(dir.path());
-    assert_eq!(a, b, "an unchanged workspace must not look moved");
+    // A temp directory is not a repository, so there is no fingerprint — and that is the
+    // assertion, not an incidental: a `String` version returned a *constant* here, which for
+    // carry-over would have meant "never run a gate again".
     assert_eq!(
-        a.len(),
-        16,
-        "a hex digest, not a path or a stack trace: {a}"
+        workspace_fingerprint(dir.path()),
+        None,
+        "a directory that is not a repository must report no fingerprint rather than one \
+         that never changes"
     );
+}
+
+/// Inside a repository, an unchanged workspace has a stable fingerprint and a changed one
+/// does not.
+///
+/// The carry-over decision is only as good as this function, and a fingerprint that could not
+/// tell a moved tree from a still one would skip every gate for ever.
+#[test]
+fn inside_a_repository_the_fingerprint_moves_when_the_tree_does() {
+    let dir = tempfile::tempdir().expect("a workspace");
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .expect("git runs")
+    };
+    if !git(&["init", "-q"]).status.success() {
+        eprintln!("git is unavailable; the in-repository fingerprint is untested here");
+        return;
+    }
+    let _ = git(&["config", "user.email", "gate@example.test"]);
+    let _ = git(&["config", "user.name", "gate test"]);
+    std::fs::write(dir.path().join("a.txt"), "one\n").expect("a file");
+    let _ = git(&["add", "-A"]);
+    let _ = git(&["commit", "-qm", "first"]);
+    // A fresh repository with no commit has no HEAD, so there is no fingerprint yet.
+    let first = workspace_fingerprint(dir.path()).expect("a committed tree has a fingerprint");
+    let again = workspace_fingerprint(dir.path()).expect("still a fingerprint");
+    assert_eq!(first, again, "an unchanged workspace must not look moved");
+    assert_eq!(first.len(), 16, "a hex digest, not a path: {first}");
+
+    std::fs::write(dir.path().join("b.txt"), "two\n").expect("a second file");
+    let moved = workspace_fingerprint(dir.path()).expect("still a fingerprint");
+    assert_ne!(
+        first, moved,
+        "a workspace that gained a file must not look like the one that did not"
+    );
+}
+
+/// **An unchanged workspace replays its failure instead of re-running it.**
+///
+/// `GateReport::carried_over` was `false` at every construction site in the crate — the field
+/// and the sentence that explains it existed, and nothing produced either. Hermes skips
+/// re-running a gate whose workspace has not moved since the same failure
+/// (`goals.py:371-391`, `:1306-1320`), because `cargo test` on a real project is thirty
+/// seconds and an unattended loop that re-runs an unchanged red suite burns a minute of CPU
+/// to learn the identical thing.
+///
+/// The gate here is deliberately one that takes *measurable* time — a command that always
+/// fails — so a carried-over report is distinguishable from a re-run by more than a flag.
+#[tokio::test]
+async fn an_unchanged_workspace_replays_the_failure_instead_of_re_running_it() {
+    let dir = tempdir_with_repo().expect("a workspace that is a git repository");
+    let gate = GoalGate::new(FAILING_MARKER);
+    let runner = GoalGateRunner::new(None);
+
+    let first = runner.run(&gate, dir.path()).await;
+    assert!(!first.passed, "the gate fails, so the premise holds");
+    assert!(!first.carried_over, "the first run cannot be a replay");
+    assert!(
+        first.output_tail.contains(FAILING_MARKER),
+        "precondition: the first run really ran: {}",
+        first.output_tail
+    );
+
+    let second = runner.run(&gate, dir.path()).await;
+    assert!(!second.passed);
+    assert!(
+        second.carried_over,
+        "an unchanged workspace must replay: {}",
+        second.sentence()
+    );
+    assert_eq!(
+        second.output_tail, first.output_tail,
+        "a replay has to be the same evidence, or it is not a replay"
+    );
+    assert!(
+        second.sentence().contains("not re-run"),
+        "and it must say why it did not run, or a reader sees a stale answer as a fresh one: {}",
+        second.sentence()
+    );
+}
+
+/// A workspace that **moved** re-runs, because the failure may be fixed or gone.
+#[tokio::test]
+async fn a_workspace_that_moved_re_runs_the_gate() {
+    let dir = tempdir_with_repo().expect("a workspace that is a git repository");
+    let gate = GoalGate::new(FAILING_MARKER);
+    let runner = GoalGateRunner::new(None);
+
+    assert!(!runner.run(&gate, dir.path()).await.carried_over);
+    assert!(
+        runner.run(&gate, dir.path()).await.carried_over,
+        "precondition: the second run is a replay"
+    );
+
+    std::fs::write(dir.path().join("moved.txt"), "something changed\n").expect("a file");
+    let after = runner.run(&gate, dir.path()).await;
+    assert!(
+        !after.carried_over,
+        "a tree that moved must be re-gated: {}",
+        after.sentence()
+    );
+}
+
+/// Outside a repository there is **no fingerprint**, so the gate always runs.
+///
+/// This is the case that made the return type `Option`. As a `String` it returned a constant
+/// outside git, which is the safe direction for "should I re-run?" and the *unsafe* one for
+/// "may I skip?": a constant means never check again.
+#[tokio::test]
+async fn outside_a_repository_the_gate_always_runs() {
+    let dir = tempfile::tempdir().expect("not a repository");
+    let gate = GoalGate::new(FAILING_MARKER);
+    let runner = GoalGateRunner::new(None);
+    for _ in 0..2 {
+        let report = runner.run(&gate, dir.path()).await;
+        assert!(
+            !report.carried_over,
+            "a workspace with no fingerprint must never be treated as unchanged: {}",
+            report.sentence()
+        );
+    }
+}
+
+/// A gate that **passed** is re-run even on an unchanged workspace.
+///
+/// Only failures are carried. The thing that made a gate pass can be undone by a file the
+/// fingerprint does not see — a deleted dependency, a changed environment, an upstream
+/// service — and a replayed pass would report "done" about a workspace nobody has checked.
+#[tokio::test]
+async fn a_passing_gate_is_never_carried_over() {
+    let dir = tempdir_with_repo().expect("a workspace that is a git repository");
+    let gate = GoalGate::new("cargo --version");
+    let runner = GoalGateRunner::new(None);
+    assert!(runner.run(&gate, dir.path()).await.passed);
+    let second = runner.run(&gate, dir.path()).await;
+    assert!(second.passed);
+    assert!(
+        !second.carried_over,
+        "a pass is evidence about now, not about an unchanged tree"
+    );
+}
+
+/// A command that fails and says so, so a replay can be told from a re-run.
+const FAILING_MARKER: &str = "echo gate-marker && exit 3";
+
+/// A temp directory that is a git repository with one commit, so it has a fingerprint.
+fn tempdir_with_repo() -> Option<tempfile::TempDir> {
+    let dir = tempfile::tempdir().expect("a workspace");
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+    };
+    if !git(&["init", "-q"]).is_ok_and(|o| o.status.success()) {
+        eprintln!("git is unavailable; carry-over over a real repository is untested here");
+        return None;
+    }
+    let _ = git(&["config", "user.email", "gate@example.test"]);
+    let _ = git(&["config", "user.name", "gate test"]);
+    std::fs::write(dir.path().join("seed.txt"), "seed\n").expect("a file");
+    let _ = git(&["add", "-A"]);
+    let _ = git(&["commit", "-qm", "seed"]);
+    Some(dir)
 }
 
 /// The real backend, if this machine has one.

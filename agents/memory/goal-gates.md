@@ -51,8 +51,20 @@ and the gate that judged it.
    **A gate failure still costs a round** — that is what stops a red suite being retried for
    free — and the gate runs off the frame loop, because `cargo test` is thirty seconds and
    awaiting it in `drive` is a dead terminal.
-3. **`workspace_fingerprint` is computed and tested for stability, never acted on.** The skip on
-   an unchanged workspace is the obvious next use; `GateReport::carried_over` is the field for it.
+3. ~~**`workspace_fingerprint` is computed and tested for stability, never acted on.**~~
+   **CLOSED at M256.** `GoalGateRunner` now remembers each gate's last **failure** with the
+   fingerprint it failed at, and replays it instead of re-running. Three rules the naive
+   version gets wrong:
+   * **Only failures are carried.** A pass is always re-run — what made it pass can be undone
+     by something the fingerprint cannot see.
+   * **No fingerprint means no carry-over.** `workspace_fingerprint` therefore returns
+     `Option<String>`. Outside a repository the old `String` version returned a **constant**,
+     which is safe for "should this re-run?" and dangerous for "may this be skipped?" — a
+     constant means never check again.
+   * **A clone starts with an empty cache**, so one runner cannot vouch for another's memory.
+   In-memory by choice: a restart re-runs everything, which is the safe direction.
+   **The timing claim is reasoned, not measured** — the tests use millisecond commands, because
+   a test that burns thirty seconds to prove a skip is one nobody runs.
 4. ~~**No gate has ever run confined in a test.**~~ **CLOSED at M255.** Every gate test used
    `GoalGateRunner::new(None)` — the unconfined path — so the branch that decides whether to
    run unconfined had never executed. Four tests now cover it against

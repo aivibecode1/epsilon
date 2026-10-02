@@ -91,11 +91,22 @@ impl GateReport {
 }
 
 /// Runs a goal's gates under one sandbox.
-#[derive(Clone)]
 pub struct GoalGateRunner {
     /// The backend, or `None` when the session runs unconfined by explicit choice.
     sandbox: Option<Arc<dyn Sandbox>>,
     policy: ConfinementPolicy,
+    /// The last **failure** per gate command, with the fingerprint it failed at.
+    ///
+    /// Hermes skips re-running a gate whose workspace has not moved since the same failure
+    /// (`goals.py:371-391`, `:1306-1320`) — because `cargo test` on a real project is
+    /// thirty seconds, and an unattended loop that re-runs an unchanged red suite burns a
+    /// minute of CPU to learn the identical thing. `GateReport::carried_over` is the field
+    /// that says so, and it had no producer until now.
+    ///
+    /// In-memory, not durable: this is a per-process optimisation, and the report it
+    /// replays is the honest one — the same failure, from this session, with the same output.
+    /// A restart re-runs everything, which is the safe direction.
+    last_failure: std::sync::Mutex<std::collections::HashMap<String, (String, GateReport)>>,
 }
 
 impl std::fmt::Debug for GoalGateRunner {
@@ -106,6 +117,22 @@ impl std::fmt::Debug for GoalGateRunner {
                 &self.sandbox.as_ref().map(|s| s.name().to_string()),
             )
             .finish()
+    }
+}
+
+impl Clone for GoalGateRunner {
+    /// A clone starts with an **empty** carry-over cache, deliberately.
+    ///
+    /// Copying the cache would let one runner vouch for another runner's memory — a clone
+    /// sharing a sandbox but pointed at a different workspace would then answer "the tree
+    /// has not moved" from a fingerprint taken somewhere else. Starting empty costs one extra
+    /// gate run and can never produce a wrong "unchanged".
+    fn clone(&self) -> Self {
+        Self {
+            sandbox: self.sandbox.clone(),
+            policy: self.policy.clone(),
+            last_failure: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
     }
 }
 
@@ -124,11 +151,42 @@ impl GoalGateRunner {
         Self {
             sandbox,
             policy: ConfinementPolicy::default(),
+            last_failure: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
     /// Run one gate in `cwd` and report what happened.
+    ///
+    /// **An unchanged workspace replays its last failure instead of re-running it.** Only
+    /// failures are carried: a gate that *passed* must be re-run, because the thing that
+    /// made it pass may have been undone. And only when there is a real fingerprint — see
+    /// [`workspace_fingerprint`], where a `None` is the difference between "nothing moved"
+    /// and "we cannot tell", and only the second is safe to skip on.
     pub async fn run(&self, gate: &GoalGate, cwd: &Path) -> GateReport {
+        let fingerprint = workspace_fingerprint(cwd);
+        if let Some(fp) = fingerprint.as_ref()
+            && let Ok(cache) = self.last_failure.lock()
+            && let Some((prev, report)) = cache.get(gate.command.as_str())
+            && prev == fp
+        {
+            return GateReport {
+                carried_over: true,
+                ..report.clone()
+            };
+        }
+        let report = self.run_now(gate, cwd).await;
+        if let Ok(mut cache) = self.last_failure.lock() {
+            if report.passed {
+                cache.remove(gate.command.as_str());
+            } else if let Some(fp) = fingerprint {
+                cache.insert(gate.command.clone(), (fp, report.clone()));
+            }
+        }
+        report
+    }
+
+    /// Actually run the gate, with no memory of last time.
+    async fn run_now(&self, gate: &GoalGate, cwd: &Path) -> GateReport {
         if !gate.is_runnable() {
             return GateReport {
                 gate: gate.clone(),
@@ -290,14 +348,24 @@ fn tail(text: &str, limit: usize) -> String {
 /// **Not a security primitive and not meant to be one** — it detects change, it does not
 /// authenticate. A `DefaultHasher` over `git rev-parse HEAD` and `git status --porcelain`
 /// answers "did the tree move" without adding a dependency for a value nobody ever stores.
-pub fn workspace_fingerprint(workspace: &Path) -> String {
+///
+/// **`None` means there is no fingerprint, and that is not the same as "nothing changed".**
+/// Outside a repository — or before the first commit — both `git` calls produce nothing, so
+/// a `String` version of this returned a *constant*. That is fine for the original use (decide
+/// whether to re-run a gate, where a constant says "always run", the safe direction) and
+/// catastrophic for carry-over, where a constant means **never run again**. So the absence is
+/// carried rather than flattened: no fingerprint, no carry-over, gate runs.
+pub fn workspace_fingerprint(workspace: &Path) -> Option<String> {
     let head = run_capture(workspace, &["git", "rev-parse", "HEAD"]);
+    if head.is_empty() {
+        return None;
+    }
     let status = run_capture(workspace, &["git", "status", "--porcelain"]);
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     head.hash(&mut h);
     status.hash(&mut h);
-    format!("{:016x}", h.finish())
+    Some(format!("{:016x}", h.finish()))
 }
 
 /// Run `program` and return its trimmed stdout, or an empty string.
@@ -364,13 +432,20 @@ mod tests {
         assert!(cut.ends_with('é'));
     }
 
-    /// No git, no repository, a detached head: every one must still produce a fingerprint,
-    /// because a fingerprint that cannot be computed must not stop a goal.
+    /// No git, no repository, no HEAD: there is **no fingerprint**, and that is not a failure.
+    ///
+    /// The test used to assert a 16-character digest here, which is what the `String` version
+    /// produced outside a repository — a *constant*. That is the safe direction for "should this
+    /// re-run?" and the dangerous one for "may this be skipped?", so the absence is now carried
+    /// rather than flattened into a value that looks like an answer.
     #[test]
-    fn the_fingerprint_works_without_git() {
+    fn the_fingerprint_is_absent_without_a_repository() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let fingerprint = workspace_fingerprint(dir.path());
-        assert_eq!(fingerprint.len(), 16, "a hex digest: {fingerprint:?}");
+        assert_eq!(
+            workspace_fingerprint(dir.path()),
+            None,
+            "a directory that is not a repository must report no fingerprint"
+        );
     }
 
     #[test]
