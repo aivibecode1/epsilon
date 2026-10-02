@@ -51,6 +51,21 @@ failing test becomes close to useless, so **drop the two variables for the round
 debugs a failure**. `gate.ps1` now writes the knobs into the gate log when they are set,
 because a log that does not record them describes a run that did not happen.
 
+**Half the cache was incremental compilation, and nobody had measured it.**
+
+Measured 2026-10-08 (M255): with the debug knobs off, the tree was **12.6 GB** — of which
+**7.3 GB was `debug/incremental`**. Deleting it took the tree to **5.4 GB** and free space to
+**25.7 GB**, and costs only a slower rebuild of whatever changes next; dependency artifacts
+are untouched.
+
+```sh
+rm -rf "$TEMP/epsilon-target/debug/incremental"   # ~7 GB back, no rebuild of deps
+export CARGO_INCREMENTAL=0                        # stop it regrowing, slower incremental builds
+```
+
+Worth knowing before a big `cargo install`: a release install adds **~0.9 GB** on top
+(`cargo clean --release` reclaims it exactly).
+
 `D:/eps-target` held 21 GB of build output and **has been deleted**. It is not coming back.
 
 ## How this went wrong twice, and what to actually check
