@@ -149,10 +149,16 @@ pub fn run(opts: Options) -> Result<(), String> {
         ..Default::default()
     };
 
+    // **Not prefixed here.** `main` adds "could not open the Epsilon window" to whatever
+    // comes back, so phrasing it here as well produced, on the one machine where this has
+    // been run end to end, "could not open the Epsilon window: could not open the Epsilon
+    // window: WGPU error: Parent device is lost" — the message a reader meets at exactly
+    // the moment they need it most, doubled. This function is public, so its error is still
+    // self-describing; it just is not dressed twice.
     eframe::run_native(
         "Epsilon",
         native_options,
         Box::new(move |cc| Ok(Box::new(IdeApp::new(opts, session, notices, &cc.egui_ctx)))),
     )
-    .map_err(|e| format!("could not open the Epsilon window: {e}"))
+    .map_err(|e| e.to_string())
 }

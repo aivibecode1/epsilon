@@ -1345,3 +1345,40 @@ rather than memory.
 
 **Acceptance criteria:** every milestone in `docs/milestones/` has a row; the table has one
 shape; `scripts/check-links.py` passes.
+
+### A25 - the desktop window cannot be seen on the machine it is developed on
+
+**Status: OPEN, and not fixable in code. Measured 2026-10-03.**
+
+Run for real, `epsilon-desktop` opens a correctly sized window with a correct title and
+shows **nothing**: the content area is blank white. `App::ui` runs every frame with
+`content_rect=[[0,0]-[1280,768]]`. Filling the entire window with **solid red** also
+produces white, so the break is in presentation, not in the draw path.
+
+| `WGPU_BACKEND` | outcome |
+|---|---|
+| unset | runs, blank white |
+| `dx12` | exits 2, `WGPU error: Parent device is lost` |
+| `vulkan`, `gl` | runs, blank white |
+
+The host is a 2018 HP laptop (Intel UHD 620 + AMD R7 M340, drivers from 2018/2019) on
+Windows 10. **No wgpu backend presents on it.** Nothing in Epsilon causes this and nothing
+in Epsilon can fix it.
+
+**Why it is a defect row anyway.** Every desktop test is an offscreen `Context` test, and
+all 102 of them pass while the window shows nothing. They are not wrong - they assert the
+draw path, which is correct - but the consequence is that **no test in this repository has
+ever seen this application**. Five consecutive milestones (M246-M251) carried the line
+"never rendered through wgpu" without anyone running it, and when it was finally run the
+answer was not "some visual defect" but "the product cannot be observed at all on the
+machine that builds it".
+
+**What was done.** M252 adds `a_frame_tessellates_into_geometry_a_renderer_could_draw`,
+which tessellates the frame the way the renderer does and fails if the draw path produced
+nothing drawable. That is the last observable point before the GPU.
+
+**Acceptance criteria.** A `scripts/desktop-probe.py` beside `scripts/console-probe.py`,
+which launches the window, injects input and captures a PNG, so that the observation is a
+command rather than a temporary source edit. Until that exists, every claim about this
+window's appearance is a hypothesis, and the ones in `docs/milestones/M24*.md` should be
+read that way.

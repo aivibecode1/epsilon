@@ -2761,6 +2761,49 @@ mod tests {
         );
     }
 
+    /// A frame becomes **real geometry**, not just text in a summary.
+    ///
+    /// Everything else in this file asserts on `FrameSummary`, which is a test instrument: it
+    /// records what the draw path *said*. This is the one test that goes one step further and
+    /// tessellates the frame's shapes the way the renderer does, so it fails if the draw path
+    /// produced nothing drawable at all.
+    ///
+    /// It exists because of a measurement, not a worry. Run on this machine for real, the
+    /// window **opened and painted and showed nothing**: a full-window red rectangle never
+    /// reached the screen, because this laptop's GPU device is lost and no wgpu backend can
+    /// present. So on this machine the tessellation step is the **last** point where a defect
+    /// is visible to a test, and everything after it — the GPU — is not ours to check.
+    ///
+    /// The number is a floor, not a target: an empty window tessellates to almost nothing, and
+    /// this window's chrome, tree, editor and transcript do not.
+    #[test]
+    fn a_frame_tessellates_into_geometry_a_renderer_could_draw() {
+        let (dir, _keep) = scratch_workspace("tessellate");
+        let mut h = Harness::new(dir);
+        let full = h.full_frame();
+        assert!(
+            !full.shapes.is_empty(),
+            "the draw path produced no shapes at all"
+        );
+
+        let meshes = h.ctx.tessellate(full.shapes.clone(), 1.0);
+        let vertices: usize = meshes
+            .iter()
+            .map(|p| match &p.primitive {
+                egui::epaint::Primitive::Mesh(m) => m.vertices.len(),
+                // Text is uploaded as a texture callback rather than tessellated, which
+                // is exactly why vertex count alone could not be the only measure.
+                egui::epaint::Primitive::Callback(_) => 0,
+            })
+            .sum();
+        assert!(
+            vertices > 1000,
+            "a full window must tessellate to real geometry; it produced {vertices} vertices \
+             across {} shape(s)",
+            full.shapes.len()
+        );
+    }
+
     /// Non-ASCII text is cut on a character boundary, so the row never ends in the
     /// replacement character that a byte slice would leave behind.
     #[test]
@@ -2856,6 +2899,16 @@ mod tests {
             let mut full = self.ctx.run_ui(input, |ui| out = self.app.paint(ui));
             full.textures_delta.clear();
             out
+        }
+        /// One painted frame, keeping everything the renderer would have been handed.
+        fn full_frame(&mut self) -> egui::FullOutput {
+            let mut input = self.input.clone();
+            input.events = Vec::new();
+            let mut full = self.ctx.run_ui(input, |ui| {
+                self.app.paint(ui);
+            });
+            full.textures_delta.clear();
+            full
         }
         /// Put the pointer on `p`, press, then release on a later frame — and return the
         /// frame the release produced.

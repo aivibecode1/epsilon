@@ -143,25 +143,51 @@ If the desktop needs behaviour the composition does not offer, it changes
 `epsilon-runtime` — it does not write its own copy. That is what ADR-021 is for, and it is
 the same lesson as ADR-012's `global_dir`.
 
+## Measured 2026-10-03 (M252): the window cannot be seen on this machine
+
+Ran the real binary and screenshotted it. **The window opens and the content area is blank
+white.** `App::ui` runs every frame with `content_rect=[[0,0]-[1280,768]]`. Filling the
+whole window with **solid red** also shows white, so the break is in presentation.
+
+| `WGPU_BACKEND` | outcome |
+|---|---|
+| unset | runs, blank white |
+| `dx12` | exits 2 — `WGPU error: Parent device is lost` |
+| `vulkan` / `gl` | runs, blank white |
+
+This box is a 2018 HP laptop, UHD 620 + R7 M340, 2018/2019 drivers. **No wgpu backend
+presents here.** Not our drawing code; nothing in Epsilon to fix.
+
+**What it changes.** Every one of the 102 desktop tests is an offscreen test and all pass
+while the window shows nothing — they assert the draw path, which is correct. The limit is
+precise: **nothing after tessellation is ours to check**, and until M252 nothing before it
+was checked either, only recorded. `a_frame_tessellates_into_geometry_a_renderer_could_draw`
+now covers the last point before the GPU.
+
+Evidence, with both screenshots:
+[`audit/evidence/desktop-window-measurement-2026-10-03.md`](../../audit/evidence/desktop-window-measurement-2026-10-03.md).
+
+**The desktop half still has no `console-probe.py`.** The TUI can be driven and captured
+from a script; the desktop needed a temporary source edit and a hand-written capture. That
+asymmetry is why this took five milestones to happen, and building the probe is the next
+thing that would actually move the needle on verification.
+
 ## Next slice, in order
 
-1. **Diff review**, which the agent needs more than the user does: a tool call that edits a
-   file should show the change, in the pane, before the next tool runs.
-2. **`App::logic` instead of `ui` for draining.** eframe skips the whole `ui` pass while the
-   window is hidden, so a run that finished in the background produces no `AgentEnd` on
-   screen until the window is shown. That belongs in `logic`.
-1. **Watch the desktop on a real screen.** Five milestones have now said "every claim is an
-   offscreen-`Context` measurement"; the palette is the largest surface that has never been
-   seen at all. The way to settle it is `cargo run -p epsilon-desktop` on this box with a
-   real workspace, and looking — the TUI already has `scripts/console-probe.py` for its half.
-2. **A command table.** The palette can reach four things because that is all the window
+1. **Build a desktop probe** — a `scripts/desktop-probe.py` that launches
+   `epsilon-desktop`, injects input and captures the window, the way `console-probe.py`
+   does for the TUI. M252's measurement needed a temporary source edit and a hand-written
+   capture; that is why it took five milestones. Nothing after tessellation is verifiable
+   without it, and it is the highest-value verification item in this crate.
+2. **A command table.** The palette reaches four things because that is all the window
    offers. A real registry — model picker, sessions, diff review, sidebar — is the next
    slice and wants an id/label/handler table rather than more palette entries.
-3. **Arrow keys in the palette are implemented and untested.**
-4. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
-5. **A filesystem watcher** for the tree, and `App::logic` draining so a background run's
-   `AgentEnd` reaches the screen while the window is hidden.
-6. **The tasks and sessions panes are never measured for containment.**
+3. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
+4. **A filesystem watcher** for the tree, and `App::logic` draining so a run that finishes
+   in the background produces an `AgentEnd` while the window is hidden.
+5. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
+   the transcript and the editor only.
+6. **Arrow keys in the palette are implemented and untested.**
 
 ## egui lessons worth not re-learning
 

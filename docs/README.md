@@ -103,6 +103,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M249 — the window follows the agent, and the keyboard goes where you put it](milestones/M249-the-window-follows-the-agent.md)
 - [M250 — the review the window was pointing at](milestones/M250-the-review-the-window-was-pointing-at.md)
 - [M251 — a keyboard route to everything](milestones/M251-a-keyboard-route-to-everything.md)
+- [M252 — the window was opened, and looked at](milestones/M252-the-window-was-opened-and-looked-at.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)
