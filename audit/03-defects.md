@@ -1665,7 +1665,7 @@ trusted*.
 
 ## Open — the desktop window
 
-### MEASURED at M266: the performance ranking below was wrong, and the measurements replace it
+### MEASURED at M266 and M275: the performance ranking below was wrong, and so was the obvious fix
 
 A parallel review ranked these by cost from the code plus the project's recorded estimates.
 Painting through the real `paint` at 1440×900 (offscreen egui, `tests/frame_cost.rs`) says
@@ -1679,6 +1679,17 @@ otherwise:
 The estimate was extrapolated, not measured, and the extrapolation was wrong by two orders of
 magnitude at this size. **The cost tracks blocks**, not parses and not rows: the same 800 rows
 cost 13.2 ms as plain labels, 31.2 ms as one markdown block each, and 104.4 ms as six.
+
+**M275 priced the two candidate fixes against each other**, which is what this row needed and did not have:
+
+| phase | ms/frame at 800 rows | owner |
+|---|---|---|
+| `markup::render` | 33-56 ms **raw; the app caches it since M266, so it is not paid** | ours |
+| `plain_of` (one `String` per block) | 1.3 ms | ours |
+| `markup::job` (one `LayoutJob` per block) | 3.6 ms | ours |
+| **`ui.label(WidgetText::from(job))` - text layout and shaping** | **99.5 ms, 95% of the frame** | **egui's** |
+
+> **Caching the built jobs would buy 4.7%.** The cheap, plausible-looking afternoon's work would have made the frame faster and taught nothing. The only thing that addresses the rest is **not building the widgets for rows that are off screen**.
 
 So the real defect is the one that was last, and its fix is named:
 

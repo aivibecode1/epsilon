@@ -126,6 +126,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M272 — the window could be asked to approve a command it could not show](milestones/M272-unapprovable-ask.md)
 - [M273 — the guard test that could not see the thing it was guarding](milestones/M273-card-stripping.md)
 - [M274 — three panels drew unstripped text, and the frame cannot see why](milestones/M274-panels-stripping.md)
+- [M275 — a measurement that stopped a large change aimed at the wrong phase](milestones/M275-phase-breakdown.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

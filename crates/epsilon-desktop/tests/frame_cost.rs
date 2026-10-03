@@ -207,6 +207,100 @@ fn what_a_frame_costs() {
     ms_per_frame("800 rows, 50 sessions on disk", &ctx, &mut app, 20);
 }
 
+/// **Where the transcript's 104 ms actually goes.**
+///
+/// `what_a_frame_costs` established that cost tracks *blocks* — the same 800 rows cost 13 ms as
+/// plain labels, 32 ms with one markdown block each, 104 ms with six. That says the expensive
+/// thing is per-block, and says nothing about *which* per-block step. Three candidates, and the
+/// fix is different for each:
+///
+/// * `markup::render` — already cached since M266, so this should be ~0;
+/// * `markup::job` + the summary's `plain_of` — **our** work, per block, per frame;
+/// * `ui.label(WidgetText::from(job))` — **egui's** text layout and shaping, per block, per frame.
+///
+/// Only the third is addressed by virtualising the transcript. If the second dominates, the
+/// cheap fix is to cache the built job instead. **So this is the measurement that picks
+/// between two different fixes**, and guessing would have cost a large change aimed at the
+/// wrong phase.
+///
+/// Timed outside the frame, over the same 800 rich answers, so nothing here depends on what
+/// egui does.
+#[test]
+#[ignore = "a timing measurement on one machine; run it when the draw path changes"]
+fn where_the_transcript_milliseconds_go() {
+    const ROWS: usize = 800;
+    /// The whole-frame figure from `what_a_frame_costs` for this fixture, so the remainder
+    /// below is computed rather than guessed. If that test's numbers move, this one is wrong.
+    const FRAME_MS: f64 = 104.4;
+    let blocks_per_row: Vec<epsilon_desktop::markup::Block> = epsilon_desktop::markup::render(RICH);
+
+    let t = Instant::now();
+    for _ in 0..ROWS {
+        std::hint::black_box(epsilon_desktop::markup::render(RICH));
+    }
+    let parse = t.elapsed().as_secs_f64() * 1000.0;
+
+    // `plain_of` is the summary's text: one `String` per block, per frame.
+    let runs: Vec<&epsilon_desktop::markup::Run> = blocks_per_row
+        .iter()
+        .filter_map(|b| match b {
+            epsilon_desktop::markup::Block::Paragraph(r)
+            | epsilon_desktop::markup::Block::Heading { runs: r, .. }
+            | epsilon_desktop::markup::Block::Quote(r) => Some(r.iter()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let _ = runs;
+    let t = Instant::now();
+    for _ in 0..ROWS {
+        for b in &blocks_per_row {
+            if let epsilon_desktop::markup::Block::Paragraph(r) = b {
+                std::hint::black_box(r.iter().map(|x| x.text.as_str()).collect::<String>());
+            }
+        }
+    }
+    let plain = t.elapsed().as_secs_f64() * 1000.0;
+
+    let t = Instant::now();
+    for _ in 0..ROWS {
+        for b in &blocks_per_row {
+            if let epsilon_desktop::markup::Block::Paragraph(r) = b {
+                std::hint::black_box(epsilon_desktop::markup::job(
+                    r,
+                    egui::Color32::WHITE,
+                    egui::Color32::GRAY,
+                ));
+            }
+        }
+    }
+    let job = t.elapsed().as_secs_f64() * 1000.0;
+
+    // The app caches `render`, so it pays only the two phases below.
+    let paid = plain + job;
+    let egui = (FRAME_MS - paid).max(0.0);
+
+    println!("TRANSCRIPT PHASE BREAKDOWN — {ROWS} rich rows, per frame");
+    println!("  markup::render  (RAW — the app caches it since M266) {parse:>8.3} ms");
+    println!("  plain_of         (one String per block, per frame)    {plain:>8.3} ms  <- paid");
+    println!("  markup::job      (one LayoutJob per block, per frame){job:>8.3} ms  <- paid");
+    println!("  OUR WORK       {paid:>8.3} ms  of the frame");
+    println!(
+        "  EGUI'S OWN    {egui:>8.3} ms  ({:.0}% of it): text layout and shaping, per block, \
+         every frame",
+        (egui / FRAME_MS) * 100.0
+    );
+    println!(
+        "\n  **Caching the jobs would buy {:.1}% -- which is why this measurement exists.** The \
+         fix is\n  virtualization, and nothing cheaper addresses it.",
+        (paid / FRAME_MS) * 100.0
+    );
+    println!(
+        "  (`markup::render` swings between runs on a debug build and is NOT paid: the app \
+         caches it\n   since M266. Only the two `paid` figures matter.)"
+    );
+}
+
 /// What `Agent::goal()` costs with a **real store behind it**.
 ///
 /// `what_a_frame_costs` above seeds the window's *view* model, and that is a hole in the

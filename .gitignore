@@ -205,5 +205,9 @@ audit/evidence/*.log
 # surfaces). Also records that a frame cannot see U+202E at all on this ratatui.
 !audit/evidence/gate-m274.log
 
+# M275: a measurement that priced the two candidate fixes against each other, and priced the
+# cheap one out (4.7%). No product code changed.
+!audit/evidence/gate-m275.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

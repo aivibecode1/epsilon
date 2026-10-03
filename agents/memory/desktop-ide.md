@@ -342,14 +342,14 @@ was right to: a 96-column terminal row and a 520-point pane are different measur
    `text_safety`'s premise ("ratatui passes it through") is weaker than its doc claims. The
    strip is still right; the reason is *we do not depend on that being true*. **Assert
    display-safety on text, not on pixels.**
-2. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
-   **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
-   as six — so the transcript builds a text widget for every block of every row, on screen or
-   not. The fix needs **cached per-row heights**, because egui's `show_rows` requires a
-   uniform height and a transcript's rows are not uniform. (`markup::Cache` already took the
-   20–30% that parsing was, and `Agent::goal()` is cached — it was 30 ms at 400 stored
-   messages, twice per frame, under the store lock.) Re-measure first:
-   `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`.
+2. **Virtualize the transcript — and M275 has priced the alternatives, so start here.**
+   Of the **104 ms/frame** at 800 rows, **our own work is 4.9 ms** (one `String` and one
+   `LayoutJob` per block) and **egui's own text layout and shaping is 99.5 ms, 95%**. So
+   **caching the jobs would buy 4.7% — do not do it.** The only thing that moves the number is
+   not building widgets for off-screen rows, which needs **cached per-row heights** because
+   `show_rows` requires a uniform height and transcript rows are not uniform.
+   Re-measure first: `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`
+   (`what_a_frame_costs` for the frame, `where_the_transcript_milliseconds_go` for the phases).
 3. **One table for the palette and the typed verb.** With `commands.rs` in place, a palette
    entry and a typed `/word` should come from one registry rather than two.
 4. **Build a desktop probe** — `scripts/desktop-probe.py` beside `console-probe.py`. Nothing
