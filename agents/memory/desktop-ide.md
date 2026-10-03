@@ -331,13 +331,17 @@ was right to: a 96-column terminal row and a 520-point pane are different measur
 
 0. ~~**The window has no slash commands at all.**~~ **DONE at M267/M268**. **`/new` is the
    remaining verb** — it needs a new-session-file action, which is a feature not a line.
-1. ~~**Strip display-steering characters from the window's permission prompt.**~~ **DONE at
-   M272**, and **the terminal's tool cards were done at M273** (they bypassed the strip
-   entirely, and the two guard tests beside that hole push `push_external_text`, which
-   carries **no card** — *a test that cannot fail on the defect it names is not evidence*).
-   **What is left of A35:** the terminal's `@`-popup, model-picker and session-browser rows
-   render names, paths and live provider ids unsanitised, and the desktop strips nothing but
-   the permission line.
+1. ~~**Strip display-steering characters everywhere.**~~ **DONE across M272–M274** — the
+   window's permission prompt, the terminal's tool cards, and the `@`-popup / session browser
+   / model picker. **What is left:** the desktop strips nothing but its permission line — tool
+   output, file contents and model prose there still render as written.
+
+   **The lesson from M274, which generalises past display safety:** a frame-level test for
+   `U+202E` **cannot fail**, because `row_text` reads ratatui's *cell symbols* and the character
+   never becomes one — the negative control passed with the strip stubbed to a no-op. So
+   `text_safety`'s premise ("ratatui passes it through") is weaker than its doc claims. The
+   strip is still right; the reason is *we do not depend on that being true*. **Assert
+   display-safety on text, not on pixels.**
 2. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
    **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
    as six — so the transcript builds a text widget for every block of every row, on screen or

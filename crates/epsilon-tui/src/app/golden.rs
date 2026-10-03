@@ -2457,6 +2457,94 @@ fn filler(n: usize) -> String {
 /// The frame-level half of the architecture M152 recorded as a contradiction.
 ///
 /// `only_a_finished_card_carries_a_duration` (`state.rs`) already proves `elapsed_ms()` is
+/// **A panel row never carries a display-steering character into its text.**
+///
+/// The `@` popup shows workspace paths, the session browser shows a conversation's **title**,
+/// and the model picker's stage 2 shows ids from a **live listing** — text from a third-party
+/// endpoint, which is the only place in the picker where the bytes are not ours. All three were
+/// drawn as written.
+///
+/// The distinction that decides the fix is M261's: the permission dialog **refuses** an ask
+/// carrying one, because there a reader is making a decision; these panels only *display*, and
+/// what they hand back comes from the row's own field rather than the drawn string. So the
+/// right response is to remove the character, not to refuse the row.
+#[test]
+fn a_panel_row_is_stripped_before_it_is_drawn() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+
+    // A live listing id with an override after the first word, so the strip is visible in the
+    // row's *text* and not only in the absence of a character.
+    app.picker_open = true;
+    app.picker_provider = Some("faux".into());
+    app.live_cache = vec![(
+        "faux".to_string(),
+        vec!["claude\u{202E}-3-opus".to_string()],
+    )];
+
+    let rows = render_rows(&mut app, 100, 30);
+    let joined = rows.join("\n");
+    // **The row survives the strip** — asserted first, because a row that vanished would
+    // satisfy a "no override" assertion for entirely the wrong reason. That mistake is what
+    // the first version of this test made.
+    assert!(joined.contains("claude"), "the row must render.\n{joined}");
+    assert!(
+        !joined.contains('\u{202E}'),
+        "an override reached a live model listing.\n{joined}"
+    );
+}
+
+/// **The frame cannot see a display-steering character at all, and that is why this strip is
+/// asserted on text rather than on pixels.**
+///
+/// The test above was first written as a control — `safe_to_show` stubbed to a no-op — and it
+/// **still passed**. That is not a weak control, it is an instrument that cannot see the thing:
+/// `row_text` reads ratatui's **cell symbols**, and `U+202E` never becomes one. The buffer
+/// does not carry it, so the terminal does not receive it, and no frame assertion can tell a
+/// stripped row from an unstripped one.
+///
+/// Two consequences, both worth having written down:
+///
+/// * **A pass here is weak evidence**, which is why the assertion is on the *text* of the row
+///   and why the helper also has a direct test. M269's lesson in a new place: an instrument
+///   that cannot see a defect makes both fixing and *disproving* one impossible.
+/// * **`text_safety`'s own premise is weaker than its doc claims.** The module doc says
+///   ratatui "passes it through"; on this ratatui version it evidently does not, at least for
+///   the buffer. The strip is still right — defence in depth, and a different backend, width
+///   or a future ratatui need not behave the same — but the *reason* to keep it is not "the
+///   bytes reach the screen", it is "we do not depend on that being true".
+///
+/// This test therefore **documents the limit** rather than proving the fix.
+#[test]
+fn a_frame_cannot_see_a_display_steering_character() {
+    use ratatui::widgets::Paragraph;
+
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    let (buffer, _rows) = render_buffer(&mut app, 60, 8);
+    // Draw a hostile string straight through ratatui, with nothing of ours in between.
+    let backend = ratatui::backend::TestBackend::new(60, 8);
+    let mut terminal = ratatui::Terminal::new(backend).expect("a terminal");
+    terminal
+        .draw(|f| {
+            f.render_widget(Paragraph::new("claude\u{202E}-3-opus"), f.area());
+        })
+        .expect("a draw");
+    let drawn: String = (0..8)
+        .map(|y| super::tests_support::row_text(terminal.backend().buffer(), y, 60))
+        .collect();
+    assert!(
+        !drawn.contains('\u{202E}'),
+        "if this ever starts failing, ratatui began passing the character through and every \
+         frame-level assertion about it becomes meaningful again -- revisit this note.\n{drawn}"
+    );
+    assert!(
+        drawn.contains("claude"),
+        "and the surrounding text must still be drawn, or the check is vacuous.\n{drawn}"
+    );
+    let _ = buffer;
+}
+
 /// `None` while a call is pending. That is a fact about state, and it says nothing about what
 /// the reader sees. What is unproven is the pair this milestone claims: the **header** carries a
 /// live figure for a running call, and the **card row** carries none.

@@ -5,6 +5,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **File paths, session titles and live model names can no longer rearrange themselves on
+  screen.** The characters that reverse display order were already removed from the
+  conversation and the permission prompt, but not from the `@` file list, the session browser
+  or the model picker's provider listings — where a name can come from a third-party endpoint.
+  All three are cleaned now (M274).
 - **Tool output in the terminal can no longer rearrange itself on screen.** The agent's messages
   were cleaned of characters that reverse display order, but the cards showing what a tool
   printed — a command's output, a file's contents, a diff — were not, and the tests beside them

@@ -19,6 +19,32 @@
 
 use super::*;
 
+/// Text a row may draw, stripped of anything that steers the display.
+///
+/// # Why these panels strip rather than refuse
+///
+/// The permission dialog **refuses** to be answered when a request carries display-steering
+/// characters (M261), because a reader there is making a decision and a cleaned line still
+/// means agreeing to something they did not fully see.
+///
+/// Every panel that calls this is the other case: **display only**. The `@` popup shows a path
+/// and inserting it opens that path; the session browser shows a title and resuming uses the
+/// path beside it; the model picker shows a label and the applied model comes from the row's
+/// own field. None of them decides anything from the string it draws, so removing the override
+/// is the whole correct response — refusing would break a legitimate row over bytes that were
+/// never going to be executed.
+///
+/// # Why the count is not reported
+///
+/// It is, everywhere it matters: `TranscriptLine::hidden` carries it, and a card's strip is
+/// folded into it. **An overlay has nowhere to put it** — no field, no footer, no line — and
+/// inventing one for a value that cannot cause harm is the kind of noise this repository keeps
+/// arguing against. The honest statement is that this is a limitation, not a design.
+fn safe_to_show(text: &str) -> String {
+    let (safe, _) = crate::text_safety::display_safe(text);
+    safe.into_owned()
+}
+
 /// `/models` overlay: filter-driven list with provider grouping hints and an auth
 /// column. The active model floats to the top (picker::build_rows).
 pub(super) fn draw_picker(f: &mut Frame<'_>, app: &mut App, outer: Rect) {
@@ -179,8 +205,11 @@ pub(super) fn draw_session_browser(f: &mut Frame<'_>, app: &mut App, outer: Rect
         lines.push(overlay::list_row(
             &app.theme,
             selected,
-            &format!("{marker}{}", row.title),
-            Some(row.meta.as_str()),
+            // A session's title is a **user's own words** — the first message of that
+            // conversation — read from a file on disk, so a session shared or imported from
+            // elsewhere can put anything in it. See `safe_to_show`.
+            &safe_to_show(&format!("{marker}{}", row.title)),
+            Some(safe_to_show(row.meta.as_str()).as_str()),
             inner.width as usize,
         ));
     }
@@ -270,8 +299,10 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         lines.push(overlay::list_row(
             &app.theme,
             selected,
-            &format!("{marker}{auth} {star} {}", row.label),
-            Some(row.id.as_str()),
+            // A **live** model's label and id come from a third-party endpoint, so they are
+            // remote text in a row the reader chooses by reading. See `safe_to_show`.
+            &safe_to_show(&format!("{marker}{auth} {star} {}", row.label)),
+            Some(safe_to_show(row.id.as_str()).as_str()),
             inner.width as usize,
         ));
     }
@@ -500,7 +531,9 @@ pub(super) fn draw_at_file(f: &mut Frame<'_>, app: &App, transcript_area: ratatu
             crate::ui::overlay::list_row(
                 theme,
                 start + index == app.at_index,
-                &shown,
+                // A workspace path can carry a display-steering character, and this is the
+                // one place a reader chooses a file by **reading it**. See `safe_to_show`.
+                &safe_to_show(&shown),
                 None,
                 inner.width as usize,
             )
@@ -1051,4 +1084,27 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         ],
     ));
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod safe_to_show_tests {
+    use super::safe_to_show;
+
+    /// **The strip itself, asserted on text rather than on pixels.**
+    ///
+    /// It has to be here, not only on a frame: `a_frame_cannot_see_a_display_steering_character`
+    /// records that ratatui's buffer does not carry `U+202E`, so a frame assertion passes
+    /// whether or not the strip ran. This test is what actually fails when it is removed —
+    /// verified, with `safe_to_show` stubbed to a no-op it fails on
+    /// `left: "claude\u{202e}-3-opus"`.
+    #[test]
+    fn an_override_never_survives_into_a_row() {
+        assert_eq!(safe_to_show("claude\u{202E}-3-opus"), "claude-3-opus");
+        assert_eq!(safe_to_show("src/\u{2066}secrets.rs"), "src/secrets.rs");
+        // Ordinary text is untouched, and an ordinary row must never be altered for this.
+        assert_eq!(
+            safe_to_show("cargo test -p epsilon-tui"),
+            "cargo test -p epsilon-tui"
+        );
+    }
 }

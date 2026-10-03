@@ -201,5 +201,9 @@ audit/evidence/*.log
 # pushed no card at all (A35, terminal half).
 !audit/evidence/gate-m273.log
 
+# M274: the @-popup, session browser and model picker drew unstripped text (A35, last
+# surfaces). Also records that a frame cannot see U+202E at all on this ratatui.
+!audit/evidence/gate-m274.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

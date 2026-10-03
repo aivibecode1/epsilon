@@ -1614,9 +1614,24 @@ the hole. **A test that cannot fail on the defect it names is not evidence.**
 and the window now strips the ask, says how many characters it removed, **does not draw `Allow`
 at all**, and keeps `Refuse` — the rule the terminal has enforced since M261. The
 *wrong-command* half was A48, closed at M271.
-- **The `@`-popup, model-picker and session-browser rows** (`panels.rs:487-508`, `179-185`,
-  `270-276`) render names, paths and *live provider ids* unsanitised. The permission dialog and
-  the transcript are covered; these three are not.
+
+**The remaining surfaces, closed at M274.** The `@`-popup, the session browser and the model
+picker's stage 2 all strip now, through one `safe_to_show` helper. **Strip rather than refuse**,
+because M261's distinction decides it: the permission dialog refuses because there a reader is
+*deciding*; these three only display and hand back the row's own field, so refusing would
+break a legitimate row over bytes that were never going to be executed.
+
+> **The instrument could not see this class at all, and that is half the finding.** The frame
+> test's negative control **passed** with the strip stubbed to a complete no-op: `row_text`
+> reads ratatui's **cell symbols**, and `U+202E` never becomes one. So `text_safety`'s premise —
+> that ratatui "passes it through" — is **weaker than its doc has claimed since M260**. The
+> strip is still right; the reason to keep it is *we do not depend on that being true*, not
+> *the bytes reach the screen*. The load-bearing assertions moved onto text.
+
+**Still open:**
+
+- **The desktop strips nothing but the permission line** — tool output, file contents and model
+  prose still render as written.
 - **The desktop strips nothing but the permission line** — tool output, file contents and model
   prose still render as written.
 *Acceptance:* one helper, applied at the point each surface builds its text, with the strip
