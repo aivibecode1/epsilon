@@ -3588,9 +3588,36 @@ mod lsp_policy_tests {
     }
 }
 
+pub mod text_safety;
+
 // ==========================================================================================
 // How a request reads
 // ==========================================================================================
+
+/// Whether a permission ask can be shown **and therefore approved**.
+///
+/// Stripping display-steering characters makes a line honest about *what it does*; this
+/// answers the harder question, which is whether it can be agreed to at all.
+///
+/// The terminal's rule (M261) and the reason it is stricter than cleaning: on a transcript
+/// row, stripping is enough — it is a report. On the screen a reader **approves** with,
+/// stripping leaves a reader agreeing to something they did not fully see. So the terminal
+/// refuses `y`/`a` on such an ask, leaves it parked, and keeps `n` working, because the
+/// direction that cannot run the wrong thing must always be available.
+///
+/// **Refusing is not a wedge**, and that is the whole design. The window had no such check
+/// at all until M272, which is how a `U+202E` in a command reached an approval screen in one
+/// frontend and not the other.
+///
+/// One predicate, two callers: the dialog decides what to *advertise*, and the key handler
+/// decides what to *honour*. Two computations of one question is how a footer ends up
+/// promising a key the handler refuses — the defect this repository tracks by name, which
+/// arrived once already, from the direction of a security fix.
+pub fn ask_is_display_honest(request: &epsilon_contracts::agent_event::PermissionRequest) -> bool {
+    let (_, cap_hit) = text_safety::display_safe(&request.capability);
+    let (_, what_hit) = text_safety::display_safe(&summarize_request(&request.detail));
+    cap_hit.total() + what_hit.total() == 0
+}
 
 /// The one-line answer to "what is this about to do", for a permission dialog.
 ///

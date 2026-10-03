@@ -5,6 +5,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop IDE can no longer be talked into approving a command it cannot show.** Text
+  that reverses its own display order (a `U+202E`) is removed from the approval prompt, the
+  window says how many characters it removed and that the request cannot be approved as shown,
+  and the Allow button is not offered — only Refuse, because refusing is not a dead end. The
+  terminal has refused such requests since earlier; the window had no check at all, so the same
+  text was safe in one and not the other (M272).
 - **The desktop IDE's approval prompt now shows the command, not its first word.** It was
   rendering the same shortened string the security rules match on, so a permission to run
   `Remove-Item -Recurse C:\Users\me` read `Remove-Item` — with nothing marking it as shortened.

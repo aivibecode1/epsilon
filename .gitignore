@@ -193,5 +193,9 @@ audit/evidence/*.log
 # (A48). The rule moved to epsilon_runtime::summarize_request; the budget stayed per-frontend.
 !audit/evidence/gate-m271.log
 
+# M272: the desktop could be asked to approve a command carrying a bidi override (A35, desktop
+# half). text_safety moved to epsilon_runtime with the terminal re-exporting it.
+!audit/evidence/gate-m272.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

@@ -127,6 +127,12 @@ immunity along with the 4 GB.
 
 ## The PowerShell trap
 
+**CRLF, three times now (M269, M272, and once before).** `WriteAllLines` and any cmdlet that
+uses `Environment.NewLine` writes CRLF, and this repository is LF. The symptom is always the
+same: `check-line-endings` fails on one file, the fix is one line, and the cost is a whole
+battery leg. Use the edit tool, or `[System.IO.File]::WriteAllText` with `\n` content and an
+explicit UTF-8-no-BOM encoding.
+
 `bash` on this machine is WSL: different `$HOME`, different `PATH`, no Windows `cargo`. It exits
 127 in zero seconds and the log still says `GATE FAIL`, which reads like five failed gates instead
 of one missing PATH entry. **Run `pwsh -File scripts/gate.ps1 <label>` here.** `scripts/gate.sh` is

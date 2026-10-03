@@ -1584,18 +1584,33 @@ already does — an in-repo precedent.
 
 ### A35 — tool cards, and the whole desktop window, bypass display stripping
 
-`state.rs:1397-1426` runs `display_safe` on `text`/`full`/`md` but **not on the card** — and
+**PARTLY CLOSED at M272** — the desktop's **permission** screen, which is the half that decides
+things. The rest is open and listed at the end of this row.
+
+**Closed in M271+M272.** `text_safety` moved from `epsilon-tui` to `epsilon_runtime::text_safety`
+(the terminal re-exports it, so its ten call sites did not churn and there is still one
+implementation), `ask_is_display_honest` is now shared, and the window strips the ask, says how
+many characters it removed, **does not draw `Allow` at all**, and keeps `Refuse` — the same rule
+the terminal has enforced since M261. The wrong-*command* half of the desktop finding was A48
+(closed at M271).
+
+**Still open:**
+
+- **`state.rs:1397-1426` runs `display_safe` on `text`/`full`/`md` but not on the card** — and
 `card.rs:762-764`'s `sanitize` is tabs and CR only. Tool output (`state.rs:788-790`) and
 model-supplied arguments (`:733-745`) live there. The guard test at `app/tests.rs:4867` pushes
 `push_external_text`, which carries no card, so it cannot see this.
 
-**`epsilon-desktop` has no `text_safety` at all** — grep across the crate returns nothing —
-and its approval row renders `request.pattern` verbatim (`app.rs:2064-2068`), which
-`core/src/exec.rs:148-152` defines as `cmd.split_whitespace().next()`. So the window asks
-*"allow bash Remove-Item ?"* for `Remove-Item -Recurse C:\Users\me`: **the capability string
-shown is not the command that runs.** The terminal gets this right by reading
-`detail["command"]`.
-
+~~**`epsilon-desktop` has no `text_safety` at all** — ~~ **CLOSED at M272**: the module moved to
+`epsilon_runtime::text_safety` (the terminal re-exports it), `ask_is_display_honest` is shared,
+and the window now strips the ask, says how many characters it removed, **does not draw `Allow`
+at all**, and keeps `Refuse` — the rule the terminal has enforced since M261. The
+*wrong-command* half was A48, closed at M271.
+- **The `@`-popup, model-picker and session-browser rows** (`panels.rs:487-508`, `179-185`,
+  `270-276`) render names, paths and *live provider ids* unsanitised. The permission dialog and
+  the transcript are covered; these three are not.
+- **The desktop strips nothing but the permission line** — tool output, file contents and model
+  prose still render as written.
 *Acceptance:* one helper, applied at the point each surface builds its text, with the strip
 recorded rather than silent (M260's rule).
 

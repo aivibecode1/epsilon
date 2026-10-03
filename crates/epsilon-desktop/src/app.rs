@@ -1967,6 +1967,56 @@ impl IdeApp {
         summary.row_rects.push(("agent".into(), response.rect));
     }
 
+    /// The one line this window draws for a pending ask, and whether it can be approved at all.
+    ///
+    /// Extracted from the draw path for one reason: **an ask carrying a display-steering
+    /// character cannot be produced by the product's own tools**, so no end-to-end frame test can
+    /// reach the branch that matters. A pure function can be, and the rule is the part worth
+    /// pinning — the terminal has refused to approve such an ask since M261 and this window had no
+    /// check at all until M272, so the same bytes were safe in one frontend and not the other.
+    ///
+    /// Three things are decided here, and each was a separate defect:
+    ///
+    /// 1. **The request, not the pattern.** `ask.pattern` is the first whitespace token — the
+    ///    thing a *rule* matches on — so it asked `allow bash echo ?` for a longer command
+    ///    (M271).
+    /// 2. **Stripped**, because this screen is where the decision is made. A `U+202E` reverses the
+    ///    visual order of everything after it, so a command can be *displayed* as one thing and
+    ///    *be* another.
+    /// 3. **Says so, rather than cleaning and moving on.** On a transcript row a cleaned line is
+    ///    fine — it is a report. On the screen a reader approves with, a cleaned line still means
+    ///    agreeing to something not fully seen, so the terminal takes the keys away and this
+    ///    window takes the button. **Refusing is not a wedge**: the caller still draws `Refuse`.
+    ///
+    /// The budget is this window's own. The *rule* — which field answers the question, and whether
+    /// the ask can be shown — lives in `epsilon-runtime` because it is the same in both windows;
+    /// the width is not, because a 96-column terminal row and a 520-point pane are different
+    /// measurements and sharing one would be wrong in at least one of them (M271).
+    pub(crate) fn ask_line(
+        ask: &epsilon_contracts::agent_event::PermissionRequest,
+        budget: f32,
+    ) -> (String, bool) {
+        let request = epsilon_runtime::summarize_request(&ask.detail);
+        let (safe_what, what_hit) = epsilon_runtime::text_safety::display_safe(&request);
+        let honest = epsilon_runtime::ask_is_display_honest(ask);
+        let what = fit(&safe_what, budget, 12.0);
+        let text = if honest {
+            format!(
+                "allow {} {}?   [enter] allow   [esc] refuse",
+                ask.capability, what
+            )
+        } else {
+            format!(
+                "allow {} {}?   this request carries {} display-steering character(s), \
+             it cannot be approved as shown   [esc] refuse",
+                ask.capability,
+                what,
+                what_hit.total().max(1)
+            )
+        };
+        (text, honest)
+    }
+
     /// The agent panel: status, transcript, approvals, composer.
     ///
     /// Split into three regions inside one pane, and the split is decided here rather
@@ -2305,25 +2355,7 @@ impl IdeApp {
         // changes the available width.
         let ask_budget = (ui.available_width() - 240.0).max(120.0);
         for ask in pending {
-            // **The request, not the pattern.** `ask.pattern` is the first whitespace token
-            // of the subject — the thing a *rule* matches on — so it asked
-            // `allow bash echo ?` for a longer command. A permission screen whose text is not
-            // the text that will run is worse than no permission screen, and the terminal has
-            // been showing `detail["command"]` all along (M271).
-            let text = format!(
-                "allow {} {}?   [enter] allow   [esc] refuse",
-                ask.capability,
-                // **Fitted here, not shared.** The *rule* for which field answers the
-                // question lives in `epsilon_runtime::summarize_request` because it is the
-                // same in both windows; the *budget* is not -- a 96-column terminal row and a
-                // 520-point pane are different measurements, and sharing one would be wrong in
-                // at least one of them. `fit` is this window's own, already used by the panes.
-                fit(
-                    &epsilon_runtime::summarize_request(&ask.detail),
-                    ask_budget,
-                    12.0,
-                )
-            );
+            let (text, honest) = Self::ask_line(&ask, ask_budget);
             ui.colored_label(theme.warn, text.clone());
             summary.rows.push(("agent".into(), text));
             summary.row_rects.push(("agent".into(), ui.min_rect()));
@@ -2332,10 +2364,11 @@ impl IdeApp {
             // unblock it is the window's worst state, so the buttons are not a
             // convenience.
             ui.horizontal(|ui| {
-                if ui
-                    .button("Allow")
-                    .on_hover_text("Run this now. Enter does the same.")
-                    .clicked()
+                if honest
+                    && ui
+                        .button("Allow")
+                        .on_hover_text("Run this now. Enter does the same.")
+                        .clicked()
                 {
                     decided = Some((ask.request_id.clone(), PermissionDecision::AllowOnce));
                 }
@@ -2623,6 +2656,74 @@ pub fn approve_pending(session: &IdeSession, ctx: &egui::Context) -> Option<(Str
 mod tests {
     use super::*;
     use crate::layout::{MEDIUM, NARROW};
+
+    /// **A command carrying a display-steering character cannot be approved from this window.**
+    ///
+    /// `U+202E` (RIGHT-TO-LEFT OVERRIDE) reverses the visual order of everything after it, so
+    /// a command can be *displayed* as one thing and *be* another. The terminal has refused
+    /// `y`/`a` on such an ask since M261, leaving it parked with `n` still working — **refusing
+    /// is not a wedge**, because the direction that cannot run the wrong thing must always be
+    /// available. This window had no check at all, so the same bytes were safe in one frontend
+    /// and not the other.
+    ///
+    /// **A unit test, and the reason is a finding rather than a preference.** `ChannelApprovalUi`
+    /// has no way to *park* an ask — only the agent can produce one, and the agent runs whatever
+    /// the model wrote, which the offline provider does not put a `U+202E` in. Two attempts to
+    /// reach this through a painted frame both failed the same way: the prompt is drawn from
+    /// `pending_approvals()`, so a seeded transcript row has nothing to draw against (M270 hit
+    /// exactly that trap). So the rule is pinned where it is written. What is lost is the
+    /// *drawn* assertion; what is kept is the part that decides whether `Allow` exists.
+    #[test]
+    fn a_command_with_a_bidi_override_cannot_be_approved_in_the_window() {
+        use epsilon_contracts::agent_event::PermissionRequest;
+
+        let hostile = PermissionRequest {
+            request_id: "ask-hostile".into(),
+            capability: "bash".into(),
+            pattern: "ls".into(),
+            detail: serde_json::json!({ "command": "ls\u{202E} -R /" }),
+        };
+        let (text, honest) = IdeApp::ask_line(&hostile, 400.0);
+
+        assert!(
+            !text.contains('\u{202E}'),
+            "the override must never reach the screen it is trying to lie on: {text}"
+        );
+        assert!(
+            !honest,
+            "an ask carrying display-steering characters cannot be approved: {text}"
+        );
+        assert!(
+            text.contains("cannot be approved as shown"),
+            "and the window must say so, not merely clean the line and let it be approved: {text}"
+        );
+        assert!(
+            text.contains("[esc] refuse"),
+            "refusing must stay available on the line itself: refusing is not a wedge: {text}"
+        );
+    }
+
+    /// An ordinary ask is untouched — **a guard that fired on every ask would be worse than
+    /// none**, since the button would simply always be missing.
+    #[test]
+    fn an_ordinary_command_is_still_approvable_and_shows_whole() {
+        use epsilon_contracts::agent_event::PermissionRequest;
+
+        let ordinary = PermissionRequest {
+            request_id: "ask-fine".into(),
+            capability: "bash".into(),
+            pattern: "echo".into(),
+            detail: serde_json::json!({ "command": "echo epsilon-ready" }),
+        };
+        let (text, honest) = IdeApp::ask_line(&ordinary, 400.0);
+        assert!(honest, "an ordinary command must remain approvable: {text}");
+        assert!(text.contains("allow"), "{text}");
+        assert!(
+            text.contains("epsilon-ready"),
+            "and shows the whole command: {text}"
+        );
+    }
+
     /// Paint a frame at `w` x `h` with no window, and describe it.
     ///
     /// egui renders into an off-screen context, so this is a measurement of the real

@@ -302,13 +302,40 @@ reaches its approval screen unstripped. The terminal *refuses to approve* an ask
 display-steering characters (M261); the window has no such check. That is the desktop half of
 A35 and it is the next security slice.
 
+## M271+M272: the two rules the window had its own copy of
+
+A48 (the prompt showed the first word, not the command) and A35 (no stripping at all) were
+**the same defect**: `epsilon-desktop` and `epsilon-tui` each held a private copy of a rule, so
+they disagreed. Both are now in `epsilon_runtime` — `summarize_request`, `text_safety`,
+`ask_is_display_honest` — and the terminal re-exports `text_safety` so its ten call sites did
+not churn.
+
+**What is shared is the rule; what is not is the budget.** M271's `a_detail_object_prints_the_
+field_that_decides_the_question` failed the moment the whole truncation function moved, and it
+was right to: a 96-column terminal row and a 520-point pane are different measurements.
+**A shared constant is not automatically a shared rule.**
+
+**Two traps, both worth remembering:**
+
+- **`ChannelApprovalUi` has no way to park an ask.** Only the agent produces one, and the agent
+  runs what the model wrote — so *no frame test can produce a hostile command*. The prompt is
+  drawn from `pending_approvals()`, not the transcript, so seeding a row proves nothing (M270 hit
+  this too). The rule is a pure function (`IdeApp::ask_line`) tested where it is written; the
+  milestone says plainly that no frame-level proof exists.
+- **`no_source_file_lost_a_test_since_head` diffs `git diff HEAD`, so a NEW file's tests are
+  invisible to it.** Moving `text_safety` tripped the guard until the file was `git add`ed. The
+  gate was right; the fix was to let it see the file, **not** to add the names to an exception
+  list.
+
 ## Next slice, in order
 
-0. ~~**The window has no slash commands at all.**~~ **DONE at M267**, and the goal half **DONE
-   at M268**. **`/new` is the remaining verb** the terminal has and this window does not — it
-   needs a new-session-file action, which is a feature rather than a line.
-1. **Strip display-steering characters from the window's permission prompt** (A35, desktop
-   half), and refuse the ask the way the terminal does rather than merely cleaning the text.
+0. ~~**The window has no slash commands at all.**~~ **DONE at M267/M268**. **`/new` is the
+   remaining verb** — it needs a new-session-file action, which is a feature not a line.
+1. ~~**Strip display-steering characters from the window's permission prompt.**~~ **DONE at
+   M272.** **What is left of A35 is the rest of it**: the terminal's `@`-popup, model-picker
+   and session-browser rows are unsanitised, tool cards bypass the stripping entirely
+   (`state.rs` sanitises `text`/`full`/`md` but not `card`), and the desktop strips nothing but
+   the permission line.
 2. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
    **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
    as six — so the transcript builds a text widget for every block of every row, on screen or

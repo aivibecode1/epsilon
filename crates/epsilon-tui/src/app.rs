@@ -131,9 +131,11 @@ fn now_ms() -> u64 {
 /// footer ends up promising `y` while the handler refuses it — which is the defect this
 /// repository tracks by name, arriving from the direction of a security fix.
 pub(crate) fn ask_display_is_honest(ask: &PendingAsk) -> bool {
-    let (_, cap_hit) = crate::text_safety::display_safe(&ask.request.capability);
-    let (_, what_hit) = crate::text_safety::display_safe(&summarize_detail(&ask.request.detail));
-    cap_hit.total() + what_hit.total() == 0
+    // **One predicate, and it lives in `epsilon-runtime`** (M272) so the desktop window asks
+    // the same question. It used to be computed here from this crate's own stripping, which
+    // the window had no copy of — the same shape as A48 and `goal_command`, and the reason the
+    // two frontends disagreed.
+    epsilon_runtime::ask_is_display_honest(&ask.request)
 }
 
 pub(super) fn summarize_detail(detail: &serde_json::Value) -> String {
