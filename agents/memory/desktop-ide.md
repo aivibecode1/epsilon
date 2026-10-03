@@ -284,12 +284,32 @@ is the whole argument**, because an objective is a sentence. That test failed an
 **Two general rules from it:** a confident reading of code is not a decision record, and a
 behaviour-locking test next to the code it locks is worth more than the comment above it.
 
+## M271: the permission prompt was not the command
+
+`PermissionRequest::pattern` is the **first whitespace token** — right for matching, wrong for
+asking. The window rendered it verbatim, so a reader approved `Remove-Item -Recurse
+C:\Users\me` as `Remove-Item`, with nothing marking it partial. The rule now lives in
+`epsilon_runtime::summarize_request` and the terminal delegates to it.
+
+**The budget stayed per-frontend, and a test forced that decision**: moving the whole function
+broke `a_detail_object_prints_the_field_that_decides_the_question`, which asserts truncation
+with an ellipsis. A 96-column terminal row and a 520-point pane are different measurements.
+**A shared constant is not automatically a shared rule** — split this one and that test keeps
+passing.
+
+**Still open and worse:** the window has no `text_safety` at all, so a `U+202E` in a command
+reaches its approval screen unstripped. The terminal *refuses to approve* an ask carrying
+display-steering characters (M261); the window has no such check. That is the desktop half of
+A35 and it is the next security slice.
+
 ## Next slice, in order
 
-0. ~~**The window has no slash commands at all.**~~ **DONE at M267**, and the goal half of it
-   **DONE at M268**. **`/new` is the remaining verb** the terminal has and this window does
-   not — it needs a new-session-file action, which is a feature rather than a line.
-1. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
+0. ~~**The window has no slash commands at all.**~~ **DONE at M267**, and the goal half **DONE
+   at M268**. **`/new` is the remaining verb** the terminal has and this window does not — it
+   needs a new-session-file action, which is a feature rather than a line.
+1. **Strip display-steering characters from the window's permission prompt** (A35, desktop
+   half), and refuse the ask the way the terminal does rather than merely cleaning the text.
+2. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
    **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4
    as six — so the transcript builds a text widget for every block of every row, on screen or
    not. The fix needs **cached per-row heights**, because egui's `show_rows` requires a
@@ -297,14 +317,14 @@ behaviour-locking test next to the code it locks is worth more than the comment 
    20–30% that parsing was, and `Agent::goal()` is cached — it was 30 ms at 400 stored
    messages, twice per frame, under the store lock.) Re-measure first:
    `cargo test -p epsilon-desktop --test frame_cost -- --ignored --nocapture`.
-2. **One table for the palette and the typed verb.** With `commands.rs` in place, a palette
+3. **One table for the palette and the typed verb.** With `commands.rs` in place, a palette
    entry and a typed `/word` should come from one registry rather than two.
-3. **Build a desktop probe** — `scripts/desktop-probe.py` beside `console-probe.py`. Nothing
+4. **Build a desktop probe** — `scripts/desktop-probe.py` beside `console-probe.py`. Nothing
    after tessellation is verifiable without it (A25).
-4. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
-5. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
+5. **Reviewed state for changes** (OpenCode): "what is left to look at" is unanswerable.
+6. **The tasks and sessions panes are never measured for containment**; `row_rects` covers
    the transcript and the editor only.
-6. **Arrow keys in the palette are implemented and untested.**
+7. **Arrow keys in the palette are implemented and untested.**
 
 **The full parity and defect list is not here**: it is rows A27–A45 of
 [`audit/03-defects.md`](../../audit/03-defects.md), written by four parallel read-only reviews

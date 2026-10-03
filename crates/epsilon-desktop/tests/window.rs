@@ -1742,11 +1742,24 @@ fn a_pending_permission_ask_is_drawn_once() {
         "a pending ask is answered from one place, not a bare row plus a prompt.\n{}",
         frame.describe()
     );
-    // **What the ask says is the other half**, and it is a real finding rather than a
-    // duplicate: the prompt reads `allow bash echo ?`, because `request.pattern` is the first
-    // whitespace token of the command (`core/src/exec.rs`). A reader approving
-    // `Remove-Item -Recurse C:\Users\me` is shown `Remove-Item`. Recorded as A48; this test
-    // pins the current behaviour so the change to fix it is a deliberate one.
+    // **What the ask says is the other half, and it was the real defect.** The prompt used to
+    // read `allow bash echo ?`, because `request.pattern` is the **first whitespace token** of
+    // the command — the thing a *rule* matches on. A reader asked to approve
+    // `Remove-Item -Recurse C:\Users\me` was shown `Remove-Item`, with no ellipsis and nothing
+    // marking it as partial: **the string on the permission screen was not the string that
+    // would run.** Both frontends now read the request's own `command` field through
+    // `epsilon_runtime::summarize_request` (A48, M271).
+    //
+    // The scripted turn runs `echo epsilon-ready`, so the **second word** is the proof: the
+    // old behaviour renders `pattern` = `echo` and could never show it.
+    assert!(
+        frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("epsilon-ready")),
+        "the prompt must carry the whole command, not its first word.\n{}",
+        frame.describe()
+    );
     assert!(
         frame
             .region("agent")

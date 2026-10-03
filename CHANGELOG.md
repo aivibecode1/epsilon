@@ -5,6 +5,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop IDE's approval prompt now shows the command, not its first word.** It was
+  rendering the same shortened string the security rules match on, so a permission to run
+  `Remove-Item -Recurse C:\Users\me` read `Remove-Item` — with nothing marking it as shortened.
+  Both windows now read the request itself (M271).
 - **Pressing Enter in the desktop IDE now says why nothing happened.** Press it while a turn is
   running and you got silence — no change, no message, nothing to tell a refused send from a
   dropped key. It now says a turn is already in flight and what to do about it (M270).

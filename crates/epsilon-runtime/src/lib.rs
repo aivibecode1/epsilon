@@ -3589,6 +3589,49 @@ mod lsp_policy_tests {
 }
 
 // ==========================================================================================
+// How a request reads
+// ==========================================================================================
+
+/// The one-line answer to "what is this about to do", for a permission dialog.
+///
+/// # Why this is not a `Pattern`
+///
+/// `PermissionRequest::pattern` is the **first whitespace token** of the subject
+/// (`epsilon-core/src/exec.rs`): it is what a *rule* matches on, so `Remove-Item` is a pattern
+/// for `Remove-Item -Recurse C:\Users\me`.
+///
+/// That is correct for matching and **wrong for asking**. The desktop rendered it verbatim, so
+/// the permission screen read `allow bash echo ?` for a longer command — **the string on the
+/// screen is not the string that will run**, with no ellipsis and nothing marking it partial.
+/// The terminal avoided this by reading `detail["command"]`; the window had no copy of that
+/// rule, so the two frontends disagreed about what the reader was being asked to approve.
+///
+/// Hence one function, here, where [`goal_command`] also lives: rules that belong to a
+/// frontend are rules one frontend has.
+///
+/// # Why a preference order rather than a schema
+///
+/// The dialog has a single row for "what is about to happen", and the answer is almost always
+/// one field of the JSON. Printing the object costs the row and buries the answer —
+/// `{"command":"rm -rf build"}` spends twelve columns on punctuation before the part that
+/// decides the question. The first field present wins; an object with none of them falls back
+/// to the JSON, because the value of this line is that it *is* the request.
+pub fn summarize_request(detail: &serde_json::Value) -> String {
+    const NAMED: [&str; 5] = ["command", "path", "file", "query", "url"];
+    if let Some(object) = detail.as_object() {
+        for key in NAMED {
+            if let Some(value) = object.get(key).and_then(|v| v.as_str()) {
+                return value.to_string();
+            }
+        }
+    }
+    if let Some(text) = detail.as_str() {
+        return text.to_string();
+    }
+    detail.to_string()
+}
+
+// ==========================================================================================
 // The `/goal` command, parsed once for both frontends
 // ==========================================================================================
 
@@ -3745,6 +3788,51 @@ fn parse_goal_edit(tail: &str) -> GoalCommand {
         }
     };
     GoalCommand::Apply(op)
+}
+
+#[cfg(test)]
+mod summarize_request_tests {
+    use super::summarize_request;
+
+    /// The field that answers the question wins, most specific first.
+    ///
+    /// This is the whole point of the move (M271): the window used to render
+    /// `PermissionRequest::pattern` — the first whitespace token — so `Remove-Item -Recurse
+    /// C:\Users\me` was approved as `Remove-Item`.
+    #[test]
+    fn the_command_field_answers_the_question_and_the_whole_thing_is_the_answer() {
+        let long = r"Remove-Item -Recurse C:\Users\someone\Documents";
+        assert_eq!(
+            summarize_request(&serde_json::json!({ "command": long })),
+            long,
+            "not the first word, and not the JSON around it"
+        );
+    }
+
+    /// An object with none of the known fields falls back to **the object**, not a guess.
+    #[test]
+    fn an_unknown_shape_falls_back_to_the_request_itself() {
+        let other = summarize_request(&serde_json::json!({ "count": 3 }));
+        assert!(other.contains("count"), "{other}");
+        assert_eq!(
+            summarize_request(&serde_json::json!("plain text")),
+            "plain text"
+        );
+    }
+
+    /// Order matters: `command` beats `path` beats the rest, so a request carrying both
+    /// answers with the one that decides what will happen.
+    #[test]
+    fn the_preference_order_is_stable() {
+        assert_eq!(
+            summarize_request(&serde_json::json!({ "path": "src/lib.rs", "offset": 40 })),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            summarize_request(&serde_json::json!({ "query": "openai" })),
+            "openai"
+        );
+    }
 }
 
 #[cfg(test)]

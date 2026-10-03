@@ -137,20 +137,18 @@ pub(crate) fn ask_display_is_honest(ask: &PendingAsk) -> bool {
 }
 
 pub(super) fn summarize_detail(detail: &serde_json::Value) -> String {
-    /// Fields that answer "what will this do", most specific first.
-    const NAMED: [&str; 5] = ["command", "path", "file", "query", "url"];
-    if let Some(object) = detail.as_object() {
-        for key in NAMED {
-            if let Some(value) = object.get(key).and_then(|v| v.as_str()) {
-                return value.to_string();
-            }
-        }
-    }
-    if let Some(text) = detail.as_str() {
-        return text.to_string();
-    }
-    let s = detail.to_string();
-    crate::wrap::fit_width(&s, 96)
+    // **One implementation for the rule, one for the fitting.** This used to hold both, and the
+    // desktop window — which has no copy — rendered `request.pattern` on its permission screen
+    // instead. `pattern` is the first whitespace token, so the window asked about
+    // `Remove-Item` while the shell was about to be handed
+    // `Remove-Item -Recurse C:\Users\me` (M271).
+    //
+    // The rule — *which field answers the question* — is now
+    // `epsilon_runtime::summarize_request`, because that is the same in both windows. The
+    // **budget is not**: a 96-column terminal row and a 520-point window pane are different
+    // measurements, and a shared one would be wrong in at least one of them. So the terminal
+    // fits here, and the desktop fits in points at its own draw site.
+    crate::wrap::fit_width(&epsilon_runtime::summarize_request(detail), 96)
 }
 
 /// Terminal runtime state (crate-private; the bench module drives it through

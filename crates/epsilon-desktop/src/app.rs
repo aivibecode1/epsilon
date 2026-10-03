@@ -2301,10 +2301,28 @@ impl IdeApp {
         // message has produced no rows at all. A reader in that state must still be told
         // the run is blocked on *them*.
         let mut decided = None;
+        // Read **before** the first widget of this frame, because a widget's own rect is what
+        // changes the available width.
+        let ask_budget = (ui.available_width() - 240.0).max(120.0);
         for ask in pending {
+            // **The request, not the pattern.** `ask.pattern` is the first whitespace token
+            // of the subject — the thing a *rule* matches on — so it asked
+            // `allow bash echo ?` for a longer command. A permission screen whose text is not
+            // the text that will run is worse than no permission screen, and the terminal has
+            // been showing `detail["command"]` all along (M271).
             let text = format!(
-                "allow {} {} ?   [enter] allow   [esc] refuse",
-                ask.capability, ask.pattern
+                "allow {} {}?   [enter] allow   [esc] refuse",
+                ask.capability,
+                // **Fitted here, not shared.** The *rule* for which field answers the
+                // question lives in `epsilon_runtime::summarize_request` because it is the
+                // same in both windows; the *budget* is not -- a 96-column terminal row and a
+                // 520-point pane are different measurements, and sharing one would be wrong in
+                // at least one of them. `fit` is this window's own, already used by the panes.
+                fit(
+                    &epsilon_runtime::summarize_request(&ask.detail),
+                    ask_budget,
+                    12.0,
+                )
             );
             ui.colored_label(theme.warn, text.clone());
             summary.rows.push(("agent".into(), text));

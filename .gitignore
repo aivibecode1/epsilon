@@ -189,5 +189,9 @@ audit/evidence/*.log
 # 1900 tests / 77 binaries, 7 of 7 gates, attempt 1.
 !audit/evidence/gate-m270.log
 
+# M271: the desktop permission prompt showed the first whitespace token, not the command
+# (A48). The rule moved to epsilon_runtime::summarize_request; the budget stayed per-frontend.
+!audit/evidence/gate-m271.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

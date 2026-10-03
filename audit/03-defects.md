@@ -1795,27 +1795,22 @@ seam, and a notice (rather than silence) is the honest behaviour.
    **What the same frame did confirm** is A48 below: the ask reads `bash echo`, not the
    command.
 
-### A48 — the window's approval prompt shows the **first word** of the command, not the command
+### A48 — **CLOSED at M271.** the window's approval prompt showed the **first word** of the command, not the command
 
-Confirmed by measurement at M270, on a real frame: the prompt reads
+Confirmed by measurement at M270 on a real frame: the prompt read `allow bash echo ?` for
+`echo epsilon-ready`, because `request.pattern` is `cmd.split_whitespace().next()` and the
+window rendered it verbatim. **The string on the permission screen was not the string that would
+run** — no ellipsis, nothing marking it partial.
 
-```
-allow bash echo ?   [enter] allow   [esc] refuse`
-```
+**Fixed** by moving the rule to `epsilon_runtime::summarize_request`, which reads the request's
+own `command` field, with the terminal delegating to it. **The budget was deliberately left
+per-frontend** — a 96-column terminal row and a 520-point pane are different measurements, and
+a shared one would be wrong in at least one of them; the terminal's existing truncation test
+failed the moment the whole function moved, which is what forced the split.
 
-for a `bash` call whose command was longer than one word. `request.pattern` is
-`cmd.split_whitespace().next()` (`epsilon-core/src/exec.rs`), and the window renders that
-string verbatim — so a reader asked to approve `Remove-Item -Recurse C:\Users\me` is shown
-`Remove-Item`, with **no ellipsis and nothing marking it as partial**.
-
-This is the security half of the desktop row in A35, and it is worse than the review stated
-there: the review said "the approval row renders `request.pattern` verbatim", which is right,
-but the consequence — **the string on the permission screen is not the string that will run** —
-is the part that belongs on this row. The terminal avoids it by rendering `detail["command"]`
-(`epsilon-tui/src/app.rs` `summarize_detail`).
-
-*Acceptance:* the window asks with the same text the terminal asks with, or with an explicit
-marker that it is shortened. The fixture above is already a regression guard.
+Verified by a negative control: with `summarize_request` swapped back for `ask.pattern`, the
+frame test fails.
+[milestone](../docs/milestones/M271-permission-prompt.md)
 
 ### A40 — `display_path` is built, tested, and never painted
 
