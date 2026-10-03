@@ -5,6 +5,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Tool output in the terminal can no longer rearrange itself on screen.** The agent's messages
+  were cleaned of characters that reverse display order, but the cards showing what a tool
+  printed — a command's output, a file's contents, a diff — were not, and the tests beside them
+  exercised a path with no card on it at all. Those are cleaned now, and the count is reported
+  rather than silently dropped, so you can tell when text has been altered (M273).
 - **The desktop IDE can no longer be talked into approving a command it cannot show.** Text
   that reverses its own display order (a `U+202E`) is removed from the approval prompt, the
   window says how many characters it removed and that the request cannot be approved as shown,

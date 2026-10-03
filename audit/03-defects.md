@@ -1596,10 +1596,18 @@ the terminal has enforced since M261. The wrong-*command* half of the desktop fi
 
 **Still open:**
 
-- **`state.rs:1397-1426` runs `display_safe` on `text`/`full`/`md` but not on the card** — and
-`card.rs:762-764`'s `sanitize` is tabs and CR only. Tool output (`state.rs:788-790`) and
-model-supplied arguments (`:733-745`) live there. The guard test at `app/tests.rs:4867` pushes
-`push_external_text`, which carries no card, so it cannot see this.
+~~**`state.rs:1397-1426` runs `display_safe` on `text`/`full`/`md` but not on the card** — and
+`card.rs:762-764`'s `sanitize` is tabs and CR only. Tool output and model-written arguments
+reached the screen verbatim. **CLOSED at M273**: `Card::sanitize()` strips every text-bearing
+field (all three `CardBody` variants, `args`, `head`) and returns the count, which the three
+sites that set a body fold into `TranscriptLine::hidden` — so the reader is told, per M260.
+The streaming tail was the site a two-site fix would have missed, and it is the *running* card.
+Negative control verified.
+
+**And the test that could not see it**, which is the more useful half: the two guard tests
+above this one push `push_external_text`, which **carries no card at all**, so they assert
+about a field the sanitising code never touched and have been green through every version of
+the hole. **A test that cannot fail on the defect it names is not evidence.**
 
 ~~**`epsilon-desktop` has no `text_safety` at all** — ~~ **CLOSED at M272**: the module moved to
 `epsilon_runtime::text_safety` (the terminal re-exports it), `ask_is_display_honest` is shared,

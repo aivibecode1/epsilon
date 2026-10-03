@@ -332,9 +332,11 @@ was right to: a 96-column terminal row and a 520-point pane are different measur
 0. ~~**The window has no slash commands at all.**~~ **DONE at M267/M268**. **`/new` is the
    remaining verb** — it needs a new-session-file action, which is a feature not a line.
 1. ~~**Strip display-steering characters from the window's permission prompt.**~~ **DONE at
-   M272.** **What is left of A35 is the rest of it**: the terminal's `@`-popup, model-picker
-   and session-browser rows are unsanitised, tool cards bypass the stripping entirely
-   (`state.rs` sanitises `text`/`full`/`md` but not `card`), and the desktop strips nothing but
+   M272**, and **the terminal's tool cards were done at M273** (they bypassed the strip
+   entirely, and the two guard tests beside that hole push `push_external_text`, which
+   carries **no card** — *a test that cannot fail on the defect it names is not evidence*).
+   **What is left of A35:** the terminal's `@`-popup, model-picker and session-browser rows
+   render names, paths and live provider ids unsanitised, and the desktop strips nothing but
    the permission line.
 2. **Virtualize the transcript.** M266 measured the frame path for the first time. Cost tracks
    **blocks** — 800 rows cost 13.2 ms as plain labels, 31.2 as one markdown block each, 104.4

@@ -124,6 +124,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M270 — Enter did nothing, and two predicted defects were not real](milestones/M270-silent-enter.md)
 - [M271 — the permission prompt was not the command](milestones/M271-permission-prompt.md)
 - [M272 — the window could be asked to approve a command it could not show](milestones/M272-unapprovable-ask.md)
+- [M273 — the guard test that could not see the thing it was guarding](milestones/M273-card-stripping.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

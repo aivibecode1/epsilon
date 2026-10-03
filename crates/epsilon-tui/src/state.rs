@@ -194,6 +194,63 @@ pub struct Card {
 }
 
 impl Card {
+    /// Strip display-steering characters from **everything this card draws**, and report
+    /// how many went.
+    ///
+    /// # Why a method rather than three call sites
+    ///
+    /// A card's text enters at three places — the pending [`CardBody::Prompt`], the settled
+    /// [`CardBody::Text`] or [`CardBody::Diff`], and the streaming tail — plus `args` and
+    /// `head` at construction. Stripping at any subset of those leaves the others reaching the
+    /// screen with a `U+202E` in them, which is precisely how this arrived: `push_line`
+    /// sanitised `text`, `full` and `md` and **never looked at the card at all**, so tool
+    /// output and model-written arguments were drawn verbatim while the guard test beside it
+    /// passed — that test pushes `push_external_text`, which carries no card, so it could not
+    /// see the gap it was written to cover.
+    ///
+    /// One method, called wherever a body is set, is the smallest thing that cannot be
+    /// half-forgotten. The returned count is folded into the line's `hidden`, so the reader is
+    /// **told** rather than left to assume the text was whole — M260's rule, and the reason a
+    /// silent strip is the same failure wearing a security hat.
+    pub fn sanitize(&mut self) -> crate::text_safety::Stripped {
+        use crate::text_safety::display_safe;
+        let mut removed = crate::text_safety::Stripped::default();
+        let mut take = |hit: crate::text_safety::Stripped| {
+            removed.bidi += hit.bidi;
+            removed.control += hit.control;
+        };
+
+        match &mut self.body {
+            CardBody::Prompt(t) => {
+                let (safe, hit) = display_safe(t);
+                take(hit);
+                *t = safe.into_owned();
+            }
+            CardBody::Text(t) => {
+                let (safe, hit) = display_safe(t);
+                take(hit);
+                *t = safe.into_owned();
+            }
+            CardBody::Diff(d) => {
+                for line in &mut d.lines {
+                    let (safe, hit) = display_safe(&line.text);
+                    take(hit);
+                    line.text = safe.into_owned();
+                }
+            }
+        }
+        // The model's own arguments and the headline derived from them: same bytes, same
+        // screen, and `head` is what the collapsed row shows when nothing is expanded.
+        let args = self.args.to_string();
+        let (safe_args, hit) = display_safe(&args);
+        take(hit);
+        self.args = serde_json::from_str(&safe_args).unwrap_or_else(|_| self.args.clone());
+        let (safe_head, hit) = display_safe(&self.head);
+        take(hit);
+        self.head = safe_head.into_owned();
+        removed
+    }
+
     /// The time the card displays, or `None` while the call is still running.
     ///
     /// Only a **finished** card carries a number, and it is `ended - started`. The
@@ -730,17 +787,23 @@ impl UiState {
         now: u64,
     ) {
         let detail = summarize_args(args);
+        let mut card = Card {
+            name: name.to_string(),
+            status: CardStatus::Pending,
+            tool_call_id: tool_call_id.to_string(),
+            started_at_ms: now,
+            ended_at_ms: None,
+            body: CardBody::Prompt(detail),
+            args: args.clone(),
+            head: crate::renderers::call_head(name, args, self.glyphs.ellipsis),
+        };
+        // Stripped here rather than at draw time: the card outlives many frames and the draw
+        // path is cached, so sanitising per paint would either cost twice or miss the cached
+        // row entirely. The count goes on the line below, which is how the reader is told.
+        let hidden = card.sanitize();
         self.push_line(TranscriptLine {
-            card: Some(Card {
-                name: name.to_string(),
-                status: CardStatus::Pending,
-                tool_call_id: tool_call_id.to_string(),
-                started_at_ms: now,
-                ended_at_ms: None,
-                body: CardBody::Prompt(detail),
-                args: args.clone(),
-                head: crate::renderers::call_head(name, args, self.glyphs.ellipsis),
-            }),
+            card: Some(card),
+            hidden,
             ..TranscriptLine::plain(LineKind::ToolCall, format!("{name} {args}"))
         });
     }
@@ -839,6 +902,12 @@ impl UiState {
                 if !args.is_null() {
                     card.args = args.clone();
                 }
+                // The result body is **tool output and file content**, arriving after the card
+                // was built, so this is the site the pending-call strip cannot cover. Folded
+                // into the line's count so the reader is told what left the screen.
+                let removed = card.sanitize();
+                line.hidden.bidi += removed.bidi;
+                line.hidden.control += removed.control;
             }
             line.kind = if t.is_error {
                 LineKind::ToolResultErr
@@ -1288,6 +1357,13 @@ impl UiState {
                     }
                     if !tail.is_empty() {
                         card.body = CardBody::Text(tail.join("\n"));
+                        // The third and last site that sets a body. A streamed chunk is tool
+                        // output arriving mid-run, so it carries the same bytes as the settled
+                        // result and needs the same strip; without this the *running* card
+                        // showed them and the settled one did not.
+                        let removed = card.sanitize();
+                        line.hidden.bidi += removed.bidi;
+                        line.hidden.control += removed.control;
                     }
                 }
             }

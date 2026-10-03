@@ -197,5 +197,9 @@ audit/evidence/*.log
 # half). text_safety moved to epsilon_runtime with the terminal re-exporting it.
 !audit/evidence/gate-m272.log
 
+# M273: tool cards bypassed display stripping entirely, and the guard test beside them
+# pushed no card at all (A35, terminal half).
+!audit/evidence/gate-m273.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

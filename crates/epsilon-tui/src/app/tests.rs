@@ -5094,6 +5094,101 @@ fn ordinary_text_is_stored_exactly_and_the_common_path_borrows() {
     assert!(!stripped.any());
 }
 
+/// **Tool cards strip display-steering characters too.**
+///
+/// `push_line` sanitised `text`, `full` and `md` and **never looked at the card**, so tool
+/// output and model-written arguments were drawn verbatim — and the two tests above, which
+/// push `push_external_text`, carry **no card at all**, so they could never see the gap they
+/// sit next to. A test that cannot fail on the defect it names is not evidence.
+///
+/// Three sites set a card body; two are checked, because the third needs a running tool.
+/// A `U+202E` in the **command the model wrote** is stripped when the call opens, and the same
+/// character arriving as **tool output** is stripped when the result settles.
+#[test]
+fn a_card_is_stripped_where_its_text_enters() {
+    use epsilon_contracts::agent_event::AgentEvent;
+    use epsilon_contracts::message::{AssistantMessage, Message, StopReason, Usage};
+
+    let (mut app, ..) = test_app();
+
+    // **A card exists because an assistant message asked for a tool** — the first attempt
+    // used `ToolExecutionStart` and found no card, which is the same mistake in a new place:
+    // driving the reducer with an event that does not reach the code under test.
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "msg-hostile".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::ToolCall {
+                id: "c-hostile".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": "ls\u{202E} -R /tmp" }),
+            }],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    let pending = app
+        .ui
+        .lines()
+        .iter()
+        .find_map(|l| l.card.as_ref())
+        .expect("the call opened a card");
+    let crate::state::CardBody::Prompt(shown) = &pending.body else {
+        panic!("a pending call's body is a prompt, got {:?}", pending.body);
+    };
+    assert!(
+        !shown.contains('\u{202E}'),
+        "the model's own command reached the card verbatim: {shown:?}"
+    );
+    assert!(
+        shown.contains("-R /tmp"),
+        "and the strip must not eat the text around it: {shown:?}"
+    );
+
+    // The result: **output the tool produced**, arriving after the card was built — which is
+    // why stripping at the call site alone was not enough.
+    app.ui.apply(&AgentEvent::ToolExecutionUpdate {
+        tool_call_id: "c-hostile".into(),
+        tool_name: "bash".into(),
+        partial: epsilon_contracts::tool::ToolPartial {
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "streaming\nls\u{202E} -R /tmp",
+            )],
+            details: serde_json::Value::Null,
+        },
+    });
+    let streamed = app
+        .ui
+        .lines()
+        .iter()
+        .rev()
+        .find_map(|l| l.card.as_ref())
+        .expect("the card is still there");
+    let crate::state::CardBody::Text(body) = &streamed.body else {
+        panic!("a streamed body is text, got {:?}", streamed.body);
+    };
+    assert!(
+        !body.contains('\u{202E}'),
+        "streamed tool output reached the card verbatim: {body:?}"
+    );
+
+    // **The reader is told.** A silent strip is the same failure wearing a security hat
+    // (M260's rule), so the count has to land on the line the card is drawn in.
+    let line = app
+        .ui
+        .lines()
+        .iter()
+        .find(|l| l.card.is_some())
+        .expect("the card's line");
+    assert!(
+        line.hidden.total() > 0,
+        "a strip nothing reports is a strip the reader cannot account for"
+    );
+}
+
 /// A line that is **entirely** display-steering characters still leaves a usable row.
 ///
 /// The empty case is the one that bites: a card whose body was nothing but overrides
