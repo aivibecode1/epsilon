@@ -1745,10 +1745,23 @@ how A45's test gap happened in the first place. `tests/window.rs::wire_with_runt
 seam, and a notice (rather than silence) is the honest behaviour.
 [milestone](../docs/milestones/M267-window-commands.md)
 
-1. **A submit refusal sticks for the rest of the session.** `app.rs:2116` sets `self.refusal`;
-   nothing ever clears it, and `session.rs:813-818` refuses every submit while a turn is in
-   flight. The bar reads *“a run is already in flight”* next to `idle` for the rest of the
-   session.
+1. ~~**A submit refusal sticks for the rest of the session.**~~ **RESOLVED at M270, but not
+   the way the row described it.** `self.refusal` was never cleared — which the row read as a
+   *stale* message. It was not stale, because the field was **unreachable in the first place**,
+   so no stale message had ever been drawn. The real defect is one line earlier and is the
+   opposite complaint:
+
+   > **Enter while a turn was running did nothing and said nothing at all.**
+
+   `send_draft` checked `session.running()` and returned `None`. `IdeSession::submit` checked the
+   **same condition** one line later and returns exactly the right sentence, which the window
+   stores in `self.refusal` for the status bar. The guard ran first, so **the branch that
+   produces the message was never reached**: two checks of one question, the second one dead.
+
+   Fixed at the guard, which now answers the question it was already asking, and `pump` clears
+   the refusal once the window is idle — because a refusal describes a condition, and
+   conditions end. `pressing_enter_while_a_turn_runs_explains_itself` is the control-verified
+   proof.
 2. ~~**Assistant prose never wraps.**~~ **REJECTED at M269 — measured, and false.** `app.rs`
    draws `ui.label(egui::WidgetText::from(job))` and nothing calls `.wrap()`. **Measured: a
    12-sentence paragraph occupies 135 px and a 2-sentence one 30 px — and the numbers are
@@ -1762,10 +1775,47 @@ seam, and a notice (rather than silence) is the honest behaviour.
    the frame could answer at all. **That missing recording is why the false finding survived a
    careful reading**, and it is the generalisable half: an instrument that cannot see a thing
    makes both fixing and *disproving* a defect impossible.
-3. **The same permission ask is printed twice** — once as a transcript row
-   (`session.rs:457-466`) and once as the answerable prompt (`app.rs:2063-2066`). The row has
-   no answer attached and is not clickable; `tests/window.rs:925` asserts `contains("allow
-   bash")`, which the *prompt* satisfies, so the test cannot see the duplicate.
+3. ~~**The same permission ask is printed twice** — once as a transcript row
+   (`session.rs:457-466`) and once as the answerable prompt (`app.rs:2063-2066`).~~
+   **REJECTED at M270 — measured, and false.** Driving a *real* run until it parks on a gate,
+   the agent region is:
+
+   ```
+   "Agent", "provider: faux (offline scripted)", "› say hello",
+   "allow bash echo ?   [enter] allow   [esc] refuse"
+   ```
+
+   **One** mention. `PermissionRequested` folds into a transcript row in the reducer, but it
+   does not reach the window's transcript on this path, so there is no second copy to draw.
+   The claim's own evidence said so too — "`tests/window.rs:925` asserts `contains("allow
+   bash")`, which the *prompt* satisfies, so the test cannot see the duplicate" — which is
+   equally true of a duplicate that does not exist. `a_pending_permission_ask_is_drawn_once`
+   now pins the real behaviour with a fixture that actually parks on a gate.
+
+   **What the same frame did confirm** is A48 below: the ask reads `bash echo`, not the
+   command.
+
+### A48 — the window's approval prompt shows the **first word** of the command, not the command
+
+Confirmed by measurement at M270, on a real frame: the prompt reads
+
+```
+allow bash echo ?   [enter] allow   [esc] refuse`
+```
+
+for a `bash` call whose command was longer than one word. `request.pattern` is
+`cmd.split_whitespace().next()` (`epsilon-core/src/exec.rs`), and the window renders that
+string verbatim — so a reader asked to approve `Remove-Item -Recurse C:\Users\me` is shown
+`Remove-Item`, with **no ellipsis and nothing marking it as partial**.
+
+This is the security half of the desktop row in A35, and it is worse than the review stated
+there: the review said "the approval row renders `request.pattern` verbatim", which is right,
+but the consequence — **the string on the permission screen is not the string that will run** —
+is the part that belongs on this row. The terminal avoids it by rendering `detail["command"]`
+(`epsilon-tui/src/app.rs` `summarize_detail`).
+
+*Acceptance:* the window asks with the same text the terminal asks with, or with an explicit
+marker that it is shortened. The fixture above is already a regression guard.
 
 ### A40 — `display_path` is built, tested, and never painted
 

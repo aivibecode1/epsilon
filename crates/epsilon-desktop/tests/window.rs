@@ -1683,6 +1683,127 @@ fn a_long_paragraph_is_not_clipped_to_one_line() {
     );
 }
 
+/// **A pending permission ask is drawn once, not twice.**
+///
+/// `PermissionRequested` folds into a `RowKind::Approval` transcript row (`session.rs`), and
+/// the panel **also** draws the pending asks from the approvals channel (`app.rs`) as
+/// `allow … [enter] allow [esc] refuse` with the buttons beside it. So the reader met the same
+/// question twice: once as a bare row with no answer attached and nothing clickable, then
+/// again as the prompt they could actually answer.
+///
+/// The channel is the authority on *what can be acted on* — the panel's own comment says so —
+/// so the transcript row is the redundant copy **while the ask is pending**. It is not
+/// redundant afterwards: once answered, the channel drops it and the row is the record of what
+/// was asked and what was decided.
+#[test]
+fn a_pending_permission_ask_is_drawn_once() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    // **A real run that parks on a gate**, not a seeded row. The first version of this test
+    // seeded a `PermissionRequested` straight into the transcript, so the approvals *channel*
+    // was empty and there was nothing to duplicate — it passed against the very defect it was
+    // written for. The duplicate only exists when the event folded into a row **and** the ask
+    // is also waiting on the channel, which is what a real run produces.
+    //
+    // The leading paint matters and is not decoration: it is the frame that gives the composer
+    // its focus, without which the keystrokes go nowhere.
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut frame = None;
+    while Instant::now() < deadline {
+        // Check, then paint — the ordering the gate tests above had to learn.
+        if session.pending_approvals().is_empty() {
+            paint_once(&ctx, &mut app, 1440.0, 900.0);
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        frame = Some(paint_once(&ctx, &mut app, 1440.0, 900.0));
+        break;
+    }
+    let frame = frame.unwrap_or_else(|| {
+        panic!(
+            "the run never parked on a gate.\n{}",
+            paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+        )
+    });
+
+    let mentions = frame
+        .region("agent")
+        .iter()
+        .filter(|t| t.contains("bash"))
+        .count();
+    assert_eq!(
+        mentions,
+        1,
+        "a pending ask is answered from one place, not a bare row plus a prompt.\n{}",
+        frame.describe()
+    );
+    // **What the ask says is the other half**, and it is a real finding rather than a
+    // duplicate: the prompt reads `allow bash echo ?`, because `request.pattern` is the first
+    // whitespace token of the command (`core/src/exec.rs`). A reader approving
+    // `Remove-Item -Recurse C:\Users\me` is shown `Remove-Item`. Recorded as A48; this test
+    // pins the current behaviour so the change to fix it is a deliberate one.
+    assert!(
+        frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("[enter] allow")),
+        "and the copy that survives must be the one with the answers on it.\n{}",
+        frame.describe()
+    );
+}
+
+/// **Pressing Enter while a turn is running says why nothing happened.**
+///
+/// The project's standing invariant is that *"nothing happened" must never be a state the UI
+/// can be in*. Here it was: `send_draft` returned early when a run was in flight, and the
+/// composer's Enter did nothing at all — no notice, no status line, no change.
+///
+/// The sentence was already written. `IdeSession::submit` returns exactly the right thing
+/// (*"a run is already in flight — wait for it, or press Esc to stop it"*) and the window keeps
+/// it in `self.refusal` for the status bar — but `send_draft` checks the same condition **one
+/// line earlier** and returns before `submit` is ever called, so that branch is unreachable
+/// and the sentence never reaches a reader.
+///
+/// The existing `a_second_submit_while_running_is_refused_rather_than_queued_silently` cannot
+/// see this: it calls `session.submit` directly rather than the path a reader takes, and it
+/// writes `if let Err(reason) = …`, so it passes whether or not the refusal ever happens.
+#[test]
+fn pressing_enter_while_a_turn_runs_explains_itself() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    app.set_draft("do something");
+    assert!(app.send_draft().is_some(), "the first prompt is accepted");
+
+    // Let the turn actually start, which is the state a reader is in when they press Enter
+    // again — and which a test that never waits is not in.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !session.running() && Instant::now() < deadline {
+        paint_once(&ctx, &mut app, 1440.0, 900.0);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(session.running(), "the fixture must be in a real run");
+
+    app.set_draft("and this");
+    assert!(
+        app.send_draft().is_none(),
+        "a second turn must not start while one is in flight"
+    );
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let screen = frame.describe();
+    assert!(
+        screen.contains("already in flight") || screen.contains("wait for it"),
+        "Enter did nothing and said nothing, which is the state this repository forbids.\n{screen}"
+    );
+}
+
 /// With no goal there is no band, so the transcript gets the space back.
 #[test]
 fn no_goal_draws_no_goal_band() {

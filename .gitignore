@@ -185,5 +185,9 @@ audit/evidence/*.log
 !audit/evidence/gate-m269final.log
 !audit/evidence/gate-m269-FAILED-fmt.log
 
+# M270: Enter mid-turn was silent; two predicted desktop defects measured false.
+# 1900 tests / 77 binaries, 7 of 7 gates, attempt 1.
+!audit/evidence/gate-m270.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

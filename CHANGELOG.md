@@ -5,6 +5,9 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **Pressing Enter in the desktop IDE now says why nothing happened.** Press it while a turn is
+  running and you got silence — no change, no message, nothing to tell a refused send from a
+  dropped key. It now says a turn is already in flight and what to do about it (M270).
 - **The desktop IDE's conversation is now measured.** Long answers were always wrapping
   correctly — that turned out to be a misdiagnosis — but the window recorded *what* it drew and
   never *where*, so the conversation pane sat outside every layout check the IDE has. It is

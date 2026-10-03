@@ -121,6 +121,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M267 — the window had no slash commands, and the goal round channel was two channels](milestones/M267-window-commands.md)
 - [M268 — one `/goal`, two frontends](milestones/M268-one-goal-command.md)
 - [M269 — the window's primary content was invisible to every measurement](milestones/M269-prose-was-already-wrapping.md)
+- [M270 — Enter did nothing, and two predicted defects were not real](milestones/M270-silent-enter.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

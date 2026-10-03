@@ -782,6 +782,13 @@ impl IdeApp {
     /// call finds it empty. Making it conditional on *how* the frame was reached would
     /// leave two paths that can disagree about what is on screen.
     fn pump(&mut self) {
+        // A refusal describes a condition — "a run is already in flight" — and conditions
+        // end. Nothing cleared `self.refusal` but a later successful submit, so the status bar
+        // could sit beside `idle` claiming a turn was running. It clears when the window is no
+        // longer running, which is exactly when it stops being true.
+        if self.refusal.is_some() && !self.session.as_ref().map(|s| s.running()).unwrap_or(false) {
+            self.refusal = None;
+        }
         // Through the `Arc`, and that is the whole reason `drain` takes `&self`: anything
         // else holding this session — a shortcut, a second window, a test — must not be
         // able to stop the frame from updating.
@@ -2341,6 +2348,20 @@ impl IdeApp {
     /// already in flight.
     pub fn send_draft(&mut self) -> Option<String> {
         if self.session.as_ref().map(|s| s.running()).unwrap_or(false) {
+            // **Say why, rather than returning nothing.** This is the invariant the whole
+            // project is named for: "nothing happened" must never be a state the UI can be in.
+            // A reader who presses Enter mid-turn and watches the composer stay put has no way
+            // to tell a refused send from a dropped key.
+            //
+            // The sentence is `IdeSession::submit`'s, written long ago and stored in
+            // `self.refusal` for the status bar — but this guard runs **one line earlier** and
+            // returned before `submit` could ever be reached, so the branch that produces the
+            // message was unreachable and the message never reached a reader. The guard and the
+            // refusal asked the same question twice; now the guard answers it.
+            self.refusal =
+                Some("a run is already in flight — wait for it, or press Esc to stop it".into());
+            self.transcript
+                .push_notice("a run is already in flight — wait for it, or press Esc to stop it");
             return None;
         }
         let text = self.draft.trim().to_string();
