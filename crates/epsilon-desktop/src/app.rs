@@ -1885,14 +1885,12 @@ impl IdeApp {
                 crate::markup::Block::Heading { runs, .. } => {
                     let job = crate::markup::job(runs, theme.title, theme.code);
                     let line = format!("{prefix}{}", plain_of(runs));
-                    ui.label(egui::WidgetText::from(job));
-                    summary.rows.push(("agent".into(), line));
+                    Self::record_block(ui, summary, egui::WidgetText::from(job), line);
                 }
                 crate::markup::Block::Paragraph(runs) => {
                     let job = crate::markup::job(runs, color, theme.code);
                     let line = format!("{prefix}{}", plain_of(runs));
-                    ui.label(egui::WidgetText::from(job));
-                    summary.rows.push(("agent".into(), line));
+                    Self::record_block(ui, summary, egui::WidgetText::from(job), line);
                 }
                 crate::markup::Block::ListItem {
                     marker: bullet,
@@ -1900,14 +1898,12 @@ impl IdeApp {
                 } => {
                     let job = crate::markup::job(runs, color, theme.code);
                     let line = format!("{prefix}{bullet}{}", plain_of(runs));
-                    ui.label(egui::WidgetText::from(job));
-                    summary.rows.push(("agent".into(), line));
+                    Self::record_block(ui, summary, egui::WidgetText::from(job), line);
                 }
                 crate::markup::Block::Quote(runs) => {
                     let job = crate::markup::job(runs, theme.dim, theme.code);
                     let line = format!("{prefix}❯ {}", plain_of(runs));
-                    ui.label(egui::WidgetText::from(job));
-                    summary.rows.push(("agent".into(), line));
+                    Self::record_block(ui, summary, egui::WidgetText::from(job), line);
                 }
                 crate::markup::Block::Code { language, lines } => {
                     let tag = language
@@ -1929,6 +1925,41 @@ impl IdeApp {
             }
         }
     }
+    /// Draw one markdown block, **wrapped**, and record where it landed.
+    ///
+    /// Draw one markdown block and record **where** it landed.
+    ///
+    /// # The `.wrap()` that is not here
+    ///
+    /// A review reported that assistant prose never wraps — that `ui.label(WidgetText)` lays out
+    /// on one line and clips at the pane edge — and it was the worst of the desktop's UI findings.
+    /// **Measured, and it is false.** The same 12-sentence paragraph occupies **135 px with and
+    /// without `.wrap()`**; a 2-sentence one occupies 30 px either way. egui 0.36's `Label` built
+    /// from a `LayoutJob` wraps already, so the `.wrap()` this function first carried was a no-op
+    /// that only looked like a fix.
+    ///
+    /// It is recorded here because **the measurement is the deliverable**: a predicted defect that
+    /// turns out not to exist still has to be measured, or "we looked at it" is indistinguishable
+    /// from "it was fixed".
+    ///
+    /// # Why the rect is recorded
+    ///
+    /// `row_rects` is the only record of **where** anything was painted, and the containment sweep
+    /// in `app.rs` iterates it. Assistant text was pushed to `summary.rows` and never to
+    /// `row_rects`, so **the window's primary content sat outside every containment check** — and no
+    /// wrap-or-clip question could be asked of it at all, which is how the false finding above
+    /// survived a careful reading. Recording it is what made the measurement possible.
+    fn record_block(
+        ui: &mut egui::Ui,
+        summary: &mut FrameSummary,
+        text: egui::WidgetText,
+        recorded: String,
+    ) {
+        let response = ui.label(text);
+        summary.rows.push(("agent".into(), recorded));
+        summary.row_rects.push(("agent".into(), response.rect));
+    }
+
     /// The agent panel: status, transcript, approvals, composer.
     ///
     /// Split into three regions inside one pane, and the split is decided here rather

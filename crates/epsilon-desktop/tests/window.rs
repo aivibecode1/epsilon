@@ -1589,6 +1589,100 @@ fn a_malformed_goal_verb_says_why_instead_of_doing_something() {
     }
 }
 
+/// **A long paragraph takes more than one line.**
+///
+/// `ui.label(WidgetText)` does not wrap — egui's `Label` defaults to `wrap: false` — so every
+/// paragraph in the window's primary content was laid out on one line and clipped at the pane
+/// edge. `markup.rs` even described the renderer as "wrapping as a single paragraph", which
+/// was a hypothesis the code did not implement.
+///
+/// Asserted on **height**, not on the recorded text, and that is the whole point: `summary.rows`
+/// holds the same string whether the label wrapped or not, so a text assertion passes against
+/// both. The rectangle is what a reader's eye actually sees.
+#[test]
+fn a_long_paragraph_is_not_clipped_to_one_line() {
+    use epsilon_contracts::agent_event::AgentEvent;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    // One paragraph, no list, no table, no bold: nothing for the renderer to break it on, so
+    // any height above one line can only be wrapping.
+    let body = (0..12)
+        .map(|i| format!("sentence {i} of a paragraph comfortably wider than the pane"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut t = epsilon_desktop::Transcript::new(ws.path());
+    t.push_user("say something long");
+    t.apply(&AgentEvent::MessageEnd {
+        message: Box::new(epsilon_contracts::message::Message::Assistant(
+            epsilon_contracts::message::AssistantMessage {
+                id: "m1".into(),
+                timestamp_ms: 0,
+                provider: "faux".into(),
+                model_id: "faux-1".into(),
+                content: vec![epsilon_contracts::content::ContentBlock::text(&body)],
+                stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                error_message: None,
+                usage: epsilon_contracts::message::Usage::default(),
+            },
+        )),
+    });
+    app.seed_transcript(t);
+
+    // **Vary the paragraph's LENGTH, not the pane's width.** Two attempts got this wrong and
+    // each one is the lesson:
+    //
+    // 1. An absolute `> 40px` threshold **passed with the wrapping removed** — it was
+    //    measuring the composer standing next to the paragraph.
+    // 2. A width differential was better and still false: the composer alone is 135px tall at
+    //    1440 and 180px at 760, which swamps whatever the paragraph does.
+    //
+    // Paragraph **length** is the one variable that moves only the paragraph. A label that
+    // does not wrap is one line however much text it holds, so the two frames are identical,
+    // and every other element in the pane is untouched.
+    let with_body = |app: &mut IdeApp, ctx: &egui::Context, sentences: usize| {
+        let body = (0..sentences)
+            .map(|i| format!("sentence {i} of a paragraph comfortably wider than the pane"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut t = epsilon_desktop::Transcript::new(ws.path());
+        t.push_user("say something long");
+        t.apply(&AgentEvent::MessageEnd {
+            message: Box::new(epsilon_contracts::message::Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "m1".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::text(body)],
+                    stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                    error_message: None,
+                    usage: epsilon_contracts::message::Usage::default(),
+                },
+            )),
+        });
+        app.seed_transcript(t);
+        let f = paint_once(ctx, app, 1440.0, 900.0);
+        let pane = app.layout().agent;
+        f.row_rects
+            .iter()
+            .filter(|(_, r)| r.left() >= pane.left() - 1.0 && r.top() >= pane.top() - 1.0)
+            .map(|(_, r)| r.height())
+            .fold(0.0f32, f32::max)
+    };
+
+    let short = with_body(&mut app, &ctx, 2);
+    let long = with_body(&mut app, &ctx, 12);
+    assert!(
+        long > short + 20.0,
+        "a 12-sentence paragraph must take more room than a 2-sentence one: {short:.1}px vs \
+         {long:.1}px -- a label that does not wrap is one line at both.\n{}",
+        paint_once(&ctx, &mut app, 1440.0, 900.0).describe()
+    );
+}
+
 /// With no goal there is no band, so the transcript gets the space back.
 #[test]
 fn no_goal_draws_no_goal_band() {

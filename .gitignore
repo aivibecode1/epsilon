@@ -179,5 +179,11 @@ audit/evidence/*.log
 # 1897 tests / 77 binaries, 7 of 7 gates, attempt 1.
 !audit/evidence/gate-m268.log
 
+# M269: the window's primary content was invisible to every measurement -- a review
+# predicted assistant prose never wrapped; measured, it does. 1898 tests / 77 binaries,
+# 7 of 7 gates. The two attempts that failed are kept: both failed on fmt --check alone.
+!audit/evidence/gate-m269final.log
+!audit/evidence/gate-m269-FAILED-fmt.log
+
 # Agent goal state written by the pi harness. Working state, not source.
 .pi/

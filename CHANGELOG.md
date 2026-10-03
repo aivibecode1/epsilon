@@ -5,6 +5,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+- **The desktop IDE's conversation is now measured.** Long answers were always wrapping
+  correctly — that turned out to be a misdiagnosis — but the window recorded *what* it drew and
+  never *where*, so the conversation pane sat outside every layout check the IDE has. It is
+  inside them now, and a test pins that a long answer takes the room it should (M269).
 - **`/goal` now works in full in the desktop IDE.** Declaring the gate a goal is judged by —
   `/goal edit gate cargo test` — editing its round cap, marking it complete or blocked, and
   `/goal help` all work in the window now, and a declared gate shows up on the goal band. The

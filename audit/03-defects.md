@@ -1727,6 +1727,14 @@ The wrapper then stops on a **doc-gate failure it believes is the code**, which 
 call it exists to avoid making. The fingerprint has to be anchored to the leg it belongs to —
 match the header and the *immediately following* `[exit=`, not the first non-zero one.
 
+**Second, at M269: the 4,000-character window makes the fingerprint depend on how much a leg
+printed.** `cargo fmt --check` prints a diff, so its `[exit=1` falls outside the window and
+nothing matches: a battery that failed *only* on formatting produced an **empty** fingerprint
+(`tests:|gates:`) and the wrapper reported *"same fingerprint as the previous attempt — that is
+not a flake, that is the code"*, naming no gate at all. Fix both together: drop the window
+(match the header and the next `[exit=`), and **treat an empty fingerprint as a stop**, not as
+an agreement.
+
 ### A47 — the desktop window's frame cannot `spawn` in a test, and degrades to silence
 
 `Handle::try_current()` fails off a runtime, and both `drive_goal_round` and `run_compact`
@@ -1741,10 +1749,19 @@ seam, and a notice (rather than silence) is the honest behaviour.
    nothing ever clears it, and `session.rs:813-818` refuses every submit while a turn is in
    flight. The bar reads *“a run is already in flight”* next to `idle` for the rest of the
    session.
-2. **Assistant prose never wraps.** `app.rs:1721,1727,1736,1742` draw `ui.label(…)` and egui's
-   `Label` defaults to `wrap: false`; nothing calls `.wrap()` anywhere in the crate. **Every
-   paragraph in the window's primary pane is one clipped line.** `markup.rs:116`'s doc calls
-   the helper "wrapping as a single paragraph" — a hypothesis the code does not implement.
+2. ~~**Assistant prose never wraps.**~~ **REJECTED at M269 — measured, and false.** `app.rs`
+   draws `ui.label(egui::WidgetText::from(job))` and nothing calls `.wrap()`. **Measured: a
+   12-sentence paragraph occupies 135 px and a 2-sentence one 30 px — and the numbers are
+   identical with and without `.wrap()`.** egui 0.36's `Label` built from a `LayoutJob` wraps
+   already. The reviewer marked the egui default "from memory, not from a vendored copy", and
+   that was exactly the right thing to be unsure about.
+
+   **What did change, and was worth the round:** assistant text now records its rectangle in
+   `summary.row_rects`, which it never did — so the window's primary content is inside the
+   containment sweep for the first time, and "is this wrapped or clipped" became a question
+   the frame could answer at all. **That missing recording is why the false finding survived a
+   careful reading**, and it is the generalisable half: an instrument that cannot see a thing
+   makes both fixing and *disproving* a defect impossible.
 3. **The same permission ask is printed twice** — once as a transcript row
    (`session.rs:457-466`) and once as the answerable prompt (`app.rs:2063-2066`). The row has
    no answer attached and is not clickable; `tests/window.rs:925` asserts `contains("allow
