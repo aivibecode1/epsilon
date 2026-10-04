@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04 (M299)
 
 ## Current task
 
@@ -38,6 +38,18 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 12:10 → | 7. **M277–M291** — the hardening run | Fifteen milestones landed against a fixed tree, each with a battery: rollback made reachable, manifests corrected, two command lies closed, the screen-reader tree built, the transcript virtualised, layout agency, the registry move, the backup-ordering fix. Recorded user-visibly in [`../CHANGELOG.md`](../CHANGELOG.md); the reasoning is in **Roadmap** and **Known-broken** below. |
 | 07:20 (10-04) | 8. Four read-only investigations | Done — the session lease, subagent permissions, the `.pre-epsilon` backup ordering, and whether the transcript is actually virtualised. **Two roadmap items were wrong as written and one premise was false**; all three are corrected below rather than acted on blindly. |
 | 07:35–08:15 (10-04) | 9. **M290 finished, M291 landed** | M290's files were on disk from an **interrupted** battery and unverified; they are now verified and the desktop reads the registry from `epsilon-contracts`. M291 fixes the backup ordering defect with the RED control run first. |
+| 11:45–12:35 (10-04) | 10. **M298 — a reachable data-loss hole in `/restore`** | Found by reading, not by a failing test: reverting an agent-**created** file called `remove_file` with **no content check at all**, so a user who edited that file and asked to undo the creation lost their edit. Fixed at the guard and at the cause (creations are now amended with a post-image), RED first, **both negative controls run separately**, ADR-026. |
+| 13:00–14:20 (10-04) | 11. **M299 — the owner's report, and four defects behind it** | "The output of the model is not shown" and switching models "keeps reverting to another". Traced to four separate causes, **two of them in the tests rather than the product** — and one of the four only exists on a machine a person has actually used. |
+
+> **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
+> file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
+> changed and skipped the rebuild: `Finished in 0.47s`, with the *previous* build's test binaries
+> still on disk. Two tests failed against source that was already correct. I checked the bytes
+> before touching the logic — grep confirmed both edits present, and a byte scan confirmed no CRLF —
+> and a `touch` plus rebuild turned both green. **A red test is evidence about the binary that
+> produced it, not about the source**, and a file restored from a backup is the case where those
+> two part company. This is the same family as the m290 finding that a check which cannot see a
+> thing reads as a check that found nothing.
 
 > **Two writers, one workspace.** This objective is being worked by two agents at once in this
 > repository, which is why `epsilon-runtime/src/lib.rs` and `epsilon-ext/src/host.rs` changed at
@@ -106,8 +118,23 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M294):**
-[`../audit/evidence/gate-m297-2026-10-04.txt`](../audit/evidence/gate-m297-2026-10-04.txt).
+**Green full-workspace battery, latest measured 2026-10-04 (M299):**
+[`../audit/evidence/gate-m299-2026-10-04.txt`](../audit/evidence/gate-m299-2026-10-04.txt).
+Ten legs, all `[exit=0]`; `test` 456 s, `clippy` 88 s. **2,032 passed / 0 failed / 7 ignored
+across 78 binaries**, summed from that one log's `test result: ok` lines.
+
+Three attempts reached it, and each failed on something worth keeping:
+
+| Attempt | Failed | What it was |
+|---|---|---|
+| `m299` | clippy, then 2 ConPTY tests | **A real defect, in the tests.** With no provider flag the launch auto-detects, so on a machine holding a provider key those two had quietly become live-network tests and failed against a real 401. Fixed by pinning `--provider faux` |
+| `m299r` | 2 TUI recents tests | **A second real defect, also in the tests.** Both assert `recents.first()` against a shared global config, and **failed on unmodified code** (proved by stashing). Fixed at the source: the mirror no longer re-reads a machine-wide file |
+| `m299r2` | — | **GATE PASS on attempt 3.** |
+
+**The second row is the one to remember.** Two tests were failing for a reason that had nothing to
+do with any change under test, and the only reason it surfaced at all is that this machine has a
+real config file with a real model in it. **A suite that only ever runs on a clean machine cannot
+see a dependency on machine state.**
 
 | Gate | Result |
 |---|---|
@@ -118,7 +145,7 @@ configuration:**
 | `check-control-bytes` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS — zero warnings |
-| `cargo test --workspace` | **PASS — 2,022 passed, 0 failed, 7 ignored, 78 binaries** |
+| `cargo test --workspace` | **PASS — 2,032 passed, 0 failed, 7 ignored, 78 binaries** |
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
 
@@ -229,25 +256,43 @@ against the same bar and merge into the list above.
    lines drawn → 53 named nodes" and **no test in the tree does** — the bounding tests use
    200/400 one-line *user* rows. That claim is either pinned with the fixture it names or
    dropped; it is not true as it stands.
-2. **Subagent permission derivation.** A session-remembered `always allow bash` **does** leak
-   into every subagent, and the leak has no inheritance decision anywhere: `build_task_child`
-   hands the child `Arc::clone(&self.gate)` (`epsilon-core/src/lib.rs:3447`), and
-   `SessionMemory` is itself shared. **The roadmap's "six lines" was wrong** — opencode's
-   filter is three lines because it hands the child a whole ruleset, while epsilon's
-   `Authorization { decision, asked }` cannot distinguish an allow *from memory* from an allow
-   the engine's own rules produced. So the derivation has to live in `epsilon-safety` and needs
-   a defaulted method on `PermissionGate` (`crates/epsilon-core/src/gate.rs:51`), which is a
-   behaviour-level change and needs an ADR. opencode's rule, quoted at
-   `references/opencode-1.18.34/packages/opencode/src/agent/subagent-permissions.ts:21-23`, is
-   to inherit **denies only**.
+2. **Subagent permission derivation.** **CONFIRMED live on a production path (re-measured
+   2026-10-04), not merely a roadmap worry.** A session-remembered `always allow` **does** leak
+   into every subagent: `build_task_child` (`crates/epsilon-core/src/lib.rs:3394`, child at
+   `:3455`) hands the child `Arc::clone(&self.gate)` (`:3447`), and **both** `SessionMemory` and
+   the ruleset live *inside* that gate (`epsilon-safety/src/gate.rs:47,52,54`). The decision is
+   written at `gate.rs:118` (`AlwaysSession`) and read back at `gate.rs:93-102`; the parent's `a`
+   keypress is `epsilon-tui/src/app/keys.rs:437`. The whole chain is production:
+   `epsilon-runtime:4702` registers `TaskTool` → `epsilon-runtime:4785` builds the `RulesetGate`
+   → `exec.rs:795` injects the task host → `lib.rs:4200` → `delegate_task:3969` → the child, whose
+   own calls hit `exec.rs:452`.
+   **The roadmap's "six lines" was wrong** — opencode's filter is three lines because it hands
+   the child a whole ruleset, while epsilon's `Authorization { decision, asked }` **cannot tell
+   an allow *from memory* from an allow the engine's own rules produced**: both return
+   `AllowOnce, asked: false` (`gate.rs:99` vs `:108`). So the derivation lives on the
+   `PermissionGate` trait as a **defaulted** method (`gate.rs:51`) — `fn child_gate(&self) ->
+   Option<Arc<dyn PermissionGate>> { None }`, `None` meaning "share self" — overridden once on
+   `RulesetGate` to rebuild with the same engine and a **fresh** memory. Denies ride in the
+   shared engine; remembered allows do not. Needs an ADR.
+   **opencode's rule, quoted at `references/opencode-1.18.34/…/subagent-permissions.ts:21-25`,
+   is "denies only"** — with a caveat this file had wrong: it keeps `external_directory` rules
+   *regardless of action*, and it **adds** synthetic `todowrite`/`task` denies rather than only
+   filtering. The RED test belongs in `crates/epsilon-safety/tests/loop_with_rules.rs`, the only
+   crate that can write it; today it would record **one** bash ask where it must record two.
 3. **Hide denied tools from the model's tool list.** **Not implemented, and the premise is
-   false**: the permission engine exposes `evaluate(capability, subject) -> Action` and nothing
-   set-shaped, so there is no denied set to read — the only accessor is an *allow* set
-   (`session_allows`). Building it is one new engine method plus **two** call sites (the request
-   payload at `lib.rs:3149` and the stable prompt tier at `lib.rs:3061-3069`, which is
-   fingerprinted at `lib.rs:3126`), and it must tell the model in prose that the tool is refused
-   — hiding it alone answers "Tool 'bash' not found", which is strictly worse than a policy
-   refusal. **Items 2 and 3 need the same trait edit; doing them together is one ADR.**
+   half false** (re-measured 2026-10-04 by an independent read-only pass). The engine exposes
+   `with_defaults`/`layered`/`evaluate` (`epsilon-safety/src/engine.rs:69,76,83`) and **no
+   set-shaped accessor** — so the "there is no denied set to read" half stands. But **no new
+   engine method is needed either**: `evaluate` is already `pub` and `RulesetGate` owns the
+   engine (`gate.rs:52`), so the defaulted method belongs on the `PermissionGate` trait
+   (`crates/epsilon-core/src/gate.rs:51`) and reuses `evaluate`. `session_allows`
+   (`gate.rs:73`) is an **allow** set with **zero production callers**, so it is not the
+   accessor this needs. Two call sites, both in `stream_one_turn`: the stable prompt tier
+   (`lib.rs:3061-3069`, fingerprinted at `:3126` — so filtering changes `stable_hash` by
+   design) and the request payload (`lib.rs:3149`). Filtering reuses the existing precedent
+   `ToolRegistry::subset` (`registry.rs:59`). **It must tell the model in prose that the tool
+   is refused** — hiding it alone answers "Tool 'bash' not found", which is strictly worse than
+   a policy refusal. **Items 2 and 3 need the same trait edit; doing them together is one ADR.**
 4. ~~**The `.pre-epsilon` backup ordering defect.**~~ **LANDED (M291), and it was worse than
    "the backup may be unopenable"** — it *was* unopenable, always, on that path. `append`
    stamped the lazy header before `persist_migration` took the copy, and the handle is
@@ -298,11 +343,32 @@ against the same bar and merge into the list above.
    measuring that egui 0.36's `Style` has **no** zoom field, so `egui::Style` has to be scaled on
    the `Context` or a row stays 15.0 points at 200%. Reduced motion is **vacuously** satisfied:
    the window does not animate, so a toggle would control nothing.
-   **Left, and it is the honest remainder:** no screen reader has ever been run against this
-   window on this machine; nodes attach flat to the window root with no landmark roles; a
-   `Changed` row's click target emits no node; `layout.rs`'s `TITLE_H`/`STATUS_H` are unscaled;
-   and the ADR's own "a test pins 800 rich rows → 44 lines drawn → 53 named nodes" has **no
-   test behind it**.
+   **Left, and it is the honest remainder** (re-measured against source 2026-10-04; two of the
+   four items below turned out to be **wrong as written**, and the corrections are in the section
+   above):
+   - **No screen reader has ever been run against this window**, on this machine or any other.
+     Everything else here stops at "egui emitted the node into the platform tree".
+   - **No landmark roles**, and the code comment explaining why (`app.rs:141-148`) is **half
+     wrong in the honest direction**: it is true that `WidgetInfo` has no role field and
+     `WidgetType` has no landmark, but `Context::accesskit_node_builder` is **public**
+     (`egui-0.36.2/src/context.rs:3684`) and `accesskit::Node::set_role` is public, so
+     `Role::Main`/`Navigation`/`Complementary`/`Region` **are** assignable. The fix is a `role`
+     parameter on `name_region` plus one call placed **after** its `widget_info`, since
+     `fill_accesskit_node_from_widget_info` rewrites the role on the same pass.
+   - **Two unnamed `role=Unknown` nodes' worth of site** — one per file-tree row
+     (`workspace.rs:344`), one per `Changed` transcript row (`app.rs:4507`). One `name_node`
+     each. (Detail above.)
+   - **`layout.rs`'s `TITLE_H` (36) and `STATUS_H` (24) are unscaled** while the text in those
+     bands *is* scaled (`app.rs:2431` `15.0 * scale`, `:2500` `12.0 * scale`), and the baselines
+     are unscaled literals (`app.rs:2428`, `:2497`). `paint_text` sets no clip rect
+     (`app.rs:1228`), so at 200% a 30-point line overflows its band onto the body. **Predicted
+     from the arithmetic, not seen in a rendered frame** — and `AGENTS.md` §13 requires the
+     frame. Also unscaled and in the same class: `SIDEBAR_TOGGLE_W` (24) and
+     `SIDEBAR_TOGGLE_INSET` (22) at `app.rs:663,665`. `TAB_H`, `COMPOSER_H`, `HEADER_H` and the
+     `workspace.rs` rows are all scaled at the use site and are **not** affected.
+   - **The ADR's own "a test pins 800 rich rows → 44 lines drawn → 53 named nodes" still has no
+     test behind it** — the bounding tests use 200/400 one-line user rows. Either pinned with the
+     fixture it names or dropped; it is not true as it stands.
 9. **Four parallel command registries.** `Command` (38 variants), `COMMAND_HEADS` + `ALIAS_HEADS`
    (42), `SLASH_ITEMS` (43 rows at M290), `palette_entries()` (7) and `keybindings::DEFAULTS` (23) in the TUI —
    plus the desktop's own `app.rs:234` table, which is a separate namespace entirely. Only two
@@ -546,9 +612,39 @@ Next, in order:
    **`TextInput` with an empty label** — a bare field a screen reader could say nothing about,
    because `WidgetInfo::text_edit` fills value and hint and never `label`. Both fixed, and
    `the_accessibility_names_read_correctly_and_the_filter_is_named` now pins the **wording**, not
-   just the presence. Still open from the dump: an unnamed node with `role=Unknown`, and each
-   transcript row announcing its text three times (a named `Label` plus two `TextRun` selection
-   runs carrying the same string).
+   just the presence.
+
+   **Both remaining dump findings were re-checked against the source on 2026-10-04 by an
+   independent read-only pass, and one of them was already settled — so this list was wrong, not
+   merely open.**
+
+   - ~~"each transcript row announcing its text three times"~~ **NOT A DEFECT, and already pinned
+     as one.** `app.rs:7717-7722` asserts that exactly **one** node per row carries a *name* and
+     that every unnamed node holding that text is a `Role::TextRun` — egui's own per-galley
+     selection run (`accesskit_text.rs:96-98`), a **child** of the label, which existed before
+     the row was ever named. The assertion is not vacuous: `selectable_labels` defaults to true
+     (`egui-0.36.2/src/style.rs:1489`) and nothing in the crate turns it off. Naming those runs
+     too is what would make a reader hear the row twice.
+   - **The unnamed `role=Unknown` node is real, and the mechanism is now pinned to egui's
+     source rather than inferred.** egui allocates an AccessKit node for every *focusable*
+     widget and fills it with `fill_accesskit_node_common`, which sets disabled, bounds and
+     actions but **no role** (`egui-0.36.2/src/context.rs:1292-1297`, `response.rs:908-924`); the
+     node starts as `Default::default()` (`context.rs:605`) and `Unknown` is
+     `#[default]` (`accesskit-0.24.1/src/lib.rs:63`). `Sense::click()` is focusable
+     (`egui-0.36.2/src/sense.rs:60`). **Exactly two sites in the crate hit that path and never
+     name the result:** one per drawn file-tree row (`workspace.rs:344`) and one per drawn
+     `RowKind::Changed` row (`app.rs:4507`, which returns the response for the click filter and
+     never calls `name_node`). One `name_node` each is the whole fix. **Which of the two produced
+     the dumped node is not proven** — the dump carries no parent links and no bounds, and the
+     window it was taken in had one file and no `Changed` row, which is a *fit* and not a proof.
+     No test in the crate mentions `Role::Unknown` at all, which is how it survived.
+
+   **And one claim this section made about itself was wrong.** It said the rows still carry no
+   nodes because "ordinary rows are `painter.text` with nothing registered" — they are not:
+   ordinary rows go through `Self::row_label` and are named (`app.rs:3814-3818`). The
+   `RowKind::Changed` restriction still exists (`app.rs:4502`), but for a different reason, and
+   the citation here had drifted by 1,200 lines. **A defect list is a claim about a tree, and this
+   one had not been re-read since the tree moved.**
 
    **What is still missing is a reader.** Every accessibility claim in ADR-022 stops at "egui
    emitted the node into the platform tree". A real screen reader on this machine is the one
@@ -797,6 +893,155 @@ things a newcomer could not decode were vocabulary, and one of them — `Ponytai
 
 ## Known-broken
 
+### The owner's report of 2026-10-04: "the model's output is not shown", traced to source
+
+**Reported verbatim:** a session where `> HELLO` ran a `bash` tool, printed
+`* permission allowed` and `* Run complete.`, and **never displayed the assistant's text**; and
+where switching to a specific model "keeps reverting to another".
+
+**What was actually measured, on this machine, in a real console.** Two `epsilon-cli` ConPTY
+tests that had been passing now fail **reproducibly and in isolation** (not a flake):
+`a_typed_line_is_submitted_and_the_run_is_visible` and `typing_still_works_while_a_turn_is_streaming`
+(`crates/epsilon-cli/tests/terminal.rs:540`, `:491`). The captured screen is the evidence:
+
+```
+idle          ctx 1%*/1.0M · ↑0 ↓0 · R0 W0 CH n/a · $0+ · DeepSeek V4.1 Flash
+• provider: real (direct HTTP) · model: deepseek-flash · key stored (epsilon auth login)
+▎ ❯ say hi
+• history not saved: write C:\Users\Hp\.config\epsilon\history: Access is denied. (os error 5)
+• error: HTTP 401 (Auth): {"error":{"message":"Authentication Fails, Your api key: ****6a81 is
+• invalid ...","code":"invalid_request_error"}}
+```
+
+Three separate facts, and only the first is the one that was reported:
+
+1. **There is no model output because there was no model.** The stored DeepSeek key is rejected
+   with **HTTP 401**. Nothing was generated, so nothing can be displayed. The report "the output of
+   the model is not shown" is **true, and the cause is upstream of the renderer** — this is not a
+   TUI drawing defect and the assistant-text path is not broken: `cargo run -p epsilon-cli -- --demo`
+   renders `assistant> I'll inspect the two files, then write the fix.` through the same
+   `state.rs:1185` `MessageEnd` handler. **Rendering was measured working today, with the
+   offending code path, before any conclusion was drawn.**
+2. **`Run complete.` is not this product's output — it is the offline demo script's line.**
+   `crates/epsilon-runtime/src/lib.rs:5700` is literally `FauxStep::say("Run complete.")`, the
+   second step of `default_steps()`. The owner's paste shows the faux demo, not a real run, and
+   the faux script has exactly two steps: one `bash` echo and that one sentence. **So "no model
+   output" and "Run complete." are the same fact** — the fallback script has no other text to
+   show. Reading that line as a harness status message is what made this look like a rendering bug.
+3. **The fallback to faux is silent, and that is the real defect.** `use_real` is decided at
+   `epsilon-runtime/src/lib.rs:5869`: under `ProviderChoice::Auto` it is
+   `auto_real(&candidate_model).is_some()`, and `auto_real` (`:5845`) returns `None` when no key
+   is usable. The 401 happens **later**, per request. So a stale key takes the real path, the
+   provider rejects it, and the window shows an error — but there is **no notice anywhere saying
+   the configured model was never reached**, which is exactly the "keeps reverting to another"
+   symptom: the model in the status bar is the one that was saved, and the one that answered is
+   the faux script. `AGENTS.md` §2.7 and §8 both forbid this: a control the user set that does not
+   act, failing without saying so.
+4. **A second, separate defect the same screen shows.** `history not saved: … Access is denied.
+   (os error 5)` — the history file is unwritable on this machine, and the TUI reports it honestly
+   rather than failing silently. Recorded because it is *correct* behaviour and still needs
+   fixing: a reader who cannot get prompt history has no way back to a previous prompt.
+5. **The model picker's "recent" list was a property of a shared machine-wide file (M299), and
+   only running the suite on a machine a person has actually used finds it.** Two TUI tests
+   (`slash_model_direct_applies_instantly` at `tests.rs:1331`,
+   `f2_cycles_favorites_and_guides_when_empty` at `:2294`) assert `recents.first()`, and both
+   failed here — **on unmodified code**, proved by stashing the change and re-running. Two
+   causes, both real:
+   - M29 deliberately **re-read the global config** after pushing, so `App::recents` was
+     whatever any other process had written. The reporter had once chosen `deepseek-flash`, so
+     that id sat at the front of a file every test in the suite shares.
+   - The whole block was gated on the write **succeeding**, and this session's
+     `%USERPROFILE%\.config\epsilon` is not writable — which is also why the user's own screen
+     showed `history not saved: … Access is denied. (os error 5)`. An unwritable config left the
+     picker showing the old model while the status bar already showed the new one.
+   The mirror now moves from the value the switch just applied, in both cases. **A test whose
+   subject is "the in-memory mirror" and which asserts on a global file is not testing what its
+   comment claims**, and both comments here claimed the opposite while doing exactly that.
+
+6. **The trailing `*` is not a dirty-model marker.** `ctx 1%*/1.0M` — the `*` belongs to the
+   **context gauge**, and `ui/metrics.rs:265` draws it when `context_estimated`: *"the figure is a
+   heuristic estimate whenever the usage anchor is missing"*. It is easy to misread as marking a
+   model that did not stick. It is correct as drawn; nothing needs fixing here, and the first
+   reading of that status bar was wrong. `deepseek-flash` also renders as `DeepSeek V4.1 Flash`
+   **correctly** — that is the catalog label for that id
+   (`epsilon-llm/src/catalog/catalog_data.rs:719-721`), not an alias or a fuzzy match.
+
+1. **A `/model` switch now survives `epsilon -c` (M299), and the cause was not the resume
+   rule.** The owner's report was "when switching to specific model it keeps reverting to
+   another". `resumed_model_to_use` prefers **session > config** on a resume
+   (`epsilon-runtime/src/lib.rs:4978`, `:5254-5272`), which is correct and tested — an explicit
+   `--model` wins, and a remembered session model is a reasonable default. The defect was on the
+   **write** side: `context_settings` reads a session's model from a `ModelChange` entry
+   (`epsilon-session/src/store.rs:1976`), and **nothing in production ever appended one** — the
+   only writer in the workspace was inside `#[cfg(test)]` (`runtime:5498`). So a session could
+   only ever report *the model its last assistant message ran on*, which is exactly what the user
+   had just replaced. `apply_model` wrote `config.toml` and nothing else, and its notice said
+   "saved to …", so both halves of the switch looked like they had worked.
+   **Measured on the reporter's own machine before the fix:** `config.toml` held
+   `id = "deepseek-flash"` while `.epsilon/sessions/tui.jsonl`'s last assistant entry held
+   `"model_id":"deepseek/deepseek-chat-v3.1"` — which is what `epsilon -c` then adopted.
+   `App::record_model_change` now appends the entry to the agent's attached store. It returns
+   `Ok(())` when no store is attached (a bare `--tui` launch is normal, not a fault) and a
+   **notice**, not a refusal, when the append fails: the switch has already been applied and
+   visible, so refusing would undo a choice the user can see took effect.
+   **Negative control run**, and it is the clearest evidence in this file: with the recording
+   removed, the test fails printing `left: Some(("deepseek", "deepseek/deepseek-chat-v3.1"))`
+   against `right: Some(("deepseek", "deepseek-flash"))` — the old model on the left, the
+   user's choice on the right, which is the bug stated in one line.
+
+3. **The assistant's answer and a harness notice drew the same pixel (M299) — the real defect
+   behind "no model output".** An independent read-only pass traced the whole chain and found
+   **every hop present**: `MessageEnd` is emitted (`epsilon-core/src/lib.rs:3325`) and handled
+   (`epsilon-tui/src/state.rs:1185`), the variant name matches on both sides, and the row is
+   built at `state.rs:1200`. **The answer was on the screen.** It drew the **same gutter
+   character** as a status line — `theme.rs:323` `bullet: "*"` and `theme.rs:325` `assistant: "*"`
+   were the same character — and the only remaining difference is colour. A truecolor terminal
+   draws a band that separates them; a **plain conhost or PowerShell** does not
+   (`has_surfaces()` is `mode == ColorMode::Truecolor`, and `Ansi16` is the default when
+   `COLORTERM`/`WT_SESSION` are unset). So on the reporter's machine the model's only sentence
+   looked exactly like `* permission allowed`, which is why the report reads "there is no prose"
+   rather than "two roles look alike". WCAG 2.2 SC 1.4.1: meaning may not be carried by shape or
+   colour alone.
+   **The guard test that should have caught it asserted the collision instead.**
+   `every_role_is_distinguishable_without_colour` (`ui/transcript.rs:268`) *named* the past
+   collision in a comment — *"the call and the notice are the pair that used to share `*`"* — and
+   then pinned both roles to `"*"` at `:291` and `:296`, with no `assert_ne!` for that pair.
+   **A named past collision is a claim that it cannot recur; asserting equality is the opposite of
+   that claim.** The glyph is now `"` (CP437-safe, unused by every other ASCII role), and the
+   missing assertion is added.
+   **Long-standing, not a regression** — `git blame` puts it in `17cddb7`, *the commit whose stated
+   purpose was separating NO_COLOR roles*. It survived because a banded terminal hides it, and
+   every frame test here runs with one pinned.
+   **The frame was rendered and read**, at 80×24 and 100×30 in the bandless configuration: the
+   answer draws `"` and the notices draw `*`. Negative control run on both halves — restoring the
+   collision fails the frame test printing both rows (`"* Run complete."` / `"* permission allowed"`)
+   and fails the role test.
+
+4. **An auth failure now says the model was never reached (M299).** This is the *other* case behind
+   "the output of the model is not shown" — a different report with the same words.
+   `epsilon_core::looks_like_auth_failure` classifies the
+   provider body (six spellings, tested including the reporter's verbatim 401) and the TUI adds
+   one line under the error: *"the configured model was never reached — no reply was generated.
+   Run `/login <provider>` …"*. **The negative test matters more than the positive one**: a
+   **429** must **not** print that line, because a rate limit is also a failure and sending a
+   reader to re-check a key that is fine is worse than saying nothing.
+
+   **Two ConPTY tests in `crates/epsilon-cli/tests/terminal.rs` were failing on this machine**
+   (`a_typed_line_is_submitted_and_the_run_is_visible` at `:540`,
+   `typing_still_works_while_a_turn_is_streaming` at `:491`) — reproducibly, in isolation, not as a
+   load flake. **FIXED, and the cause was in the tests**: with no provider flag the launch
+   auto-detects (`auto_real` returns `Some` as soon as *any* key exists,
+   `epsilon-runtime/src/lib.rs:5845`), so on a machine with a stored key these quietly became
+   **live-network tests** and failed against a real 401. They now pin `--provider faux`, which
+   makes them hermetic and makes their own precondition true by construction. All 8 pass.
+
+   **A lesson worth keeping from this whole thread: the two reports had the same words and two
+   different causes.** "The output of the model is not shown" was (a) a rejected key, (b) an
+   offline fallback whose only sentence is the demo script's `Run complete.`, and (c) on a plain
+   terminal, an answer that rendered as a status line. **Only the third was a rendering defect,
+   and the one that would have been found first — by opening the window — is the only one the
+   suite could not see.**
+
 - ~~**The transcript's rows still carry no accessibility nodes.**~~ **LANDED (M286), and the
   premise was wrong.** Every drawn row is an `egui::Label`, and egui had *already* been emitting
   a `Role::Label` node per row carrying the row's text as its **value** — what was missing was the
@@ -907,12 +1152,32 @@ things a newcomer could not decode were vocabulary, and one of them — `Ponytai
   unreachable from any surface — a fifth independent confirmation.
 - **`crates/epsilon-session/src/repair.rs` is DSH-derived, not Hermes-derived** (its own header
   says so). Recorded because the Hermes reference page had to draw that line explicitly.
-- **`/restore` on an agent-*created* file has no content check.** A creation entry carries
-  `existed: false` and no pre-image, so restoring removes the file unconditionally — a user who
-  edits an agent-created file and then restores it loses that edit. Pre-existing (M100/M104
-  scope), but `/restore` is what makes it reachable. The preview says `DELETE` in capitals and
-  waits for `yes`, which is the honest mitigation available without a further schema change.
-  Recorded in ADR-023's "Still open" rather than presented as fixed.
+- ~~**`/restore` on an agent-*created* file has no content check.**~~ **FIXED (M298,
+  ADR-026) — and the recorded mitigation was the wrong half of the answer.** A creation entry
+  carries `existed: false` and no pre-image, so `restore` took the deletion branch — which had
+  **no guard at all**, not a weaker one. A user who edited an agent-created file and then
+  `/restore`d it lost the edit, after a preview that said `DELETE` and waited for `yes`: accurate
+  about the outcome, silent about whose work was in the file. "The preview is the honest
+  mitigation" was me deciding a warning was enough; the preview is generated from the entry and
+  **cannot see the user's later edit**, which is the only fact that mattered.
+  The second finding is what made it fixable: `amend_with_post_image` skipped any entry whose
+  `blob` was `None`, documented as "nothing was captured to amend" — true of a *skipped capture*,
+  false of a *creation*, which is the other way to have no blob. So creations were never amended,
+  and the deletion guard had nothing to compare against even once it was called. One condition
+  (`&& newest.existed`) and one call. No schema change, no migration.
+  **Negative controls run on both halves separately**: removing only the guard call fails the new
+  test with `must not be deleted: 0`; restoring only the skip condition fails the two
+  untouched-creation tests, which is the point of having them — a guard that refuses everything
+  is not a safe guard.
 - **Headless notice ordering is unproven.** The `rpc`/`print`/`serve` modes collect composition
   notices and print them in vector order, which preserves emission order by construction — but no
   test asserts it, because proving it needs a subprocess. Believed, not measured.
+- **An extension's `before_tool_call` block does not reach subagent tool calls.** Found by an
+  independent read-only pass on 2026-10-04, while checking a different question. The child agent
+  is built with `NoopToolHooks`/`NoopTurnHooks` (`crates/epsilon-core/src/lib.rs:690-691`) and
+  `build_task_child` never calls `set_tool_hooks`, while production installs the extension hooks
+  on the parent (`epsilon-runtime/src/lib.rs:4800`). So an ADR-019 hook that exists to vet or
+  block a tool call is silently absent for every call a subagent makes — **the same shape as the
+  permission leak above, through a different door**: a control the operator installed that does
+  not act on a real path. Recorded here rather than folded into that fix, because the two need
+  different changes and one ADR each.

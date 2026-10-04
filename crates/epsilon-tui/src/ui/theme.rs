@@ -322,7 +322,13 @@ pub const ASCII: Glyphs = Glyphs {
     vertical: "|",
     bullet: "*",
     cursor_bar: ">",
-    assistant: "*",
+    // Distinct from `bullet` on purpose, and this is the second time this collision
+    // has been introduced: the owner's 2026-10-04 report ("the output of the model is
+    // not shown") was an assistant answer and a harness notice drawing the **same
+    // pixels**, so the reply read as a status line. `"` is CP437-safe and unused by
+    // every other ASCII role here. WCAG 2.2 SC 1.4.1: meaning may not be carried by
+    // shape or colour alone, and a shared gutter is exactly that.
+    assistant: "\"",
     thinking: "=",
     prompt: ">",
     tool_call: "\\",

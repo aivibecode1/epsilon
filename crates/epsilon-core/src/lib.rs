@@ -324,6 +324,81 @@ pub fn retry_notice_text(n: &epsilon_llm::RetryNotice) -> String {
     )
 }
 
+/// Does this provider error mean **the request was rejected before the model saw it**?
+///
+/// # Why this classifier exists
+///
+/// On 2026-10-04 the owner reported "the output of the model is not shown". The renderer was
+/// fine: the stored key was rejected with **HTTP 401**, nothing was generated, and the window
+/// showed a provider error — but nothing anywhere said *which* model had been configured, or
+/// that it had never been reached. `Run complete.` in that session was the **offline demo
+/// script's** own line (`epsilon-runtime`'s `default_steps`), so the answer on screen came from
+/// a model the user never chose.
+///
+/// The question this answers is therefore not "is it fatal" but "did anything generate a
+/// reply", because that is what decides whether the transcript needs an answer at all. It is
+/// deliberately narrow: a rate limit and a truncated tool call are failures too, and claiming
+/// those never reached the model would be a lie a reader could not act on.
+///
+/// Public because the TUI needs it to word its own message: the classifier is a fact about
+/// provider errors, and a front end that had to re-derive it would get a second answer.
+pub fn looks_like_auth_failure(msg: &str) -> bool {
+    const NEEDLES: [&str; 6] = [
+        "401",
+        "unauthorized",
+        "authentication",
+        "invalid api key",
+        "invalid_api_key",
+        "authentication_error",
+    ];
+    let m = msg.to_ascii_lowercase();
+    NEEDLES.iter().any(|needle| m.contains(needle))
+}
+
+#[cfg(test)]
+mod auth_classifier_tests {
+    use super::looks_like_auth_failure;
+
+    #[test]
+    fn the_reported_failure_is_recognised() {
+        // The body verbatim off the reporter's screen, 2026-10-04.
+        assert!(looks_like_auth_failure(
+            "HTTP 401 (Auth): {\"error\":{\"message\":\"Authentication Fails, Your api key: \
+             ****6a81 is invalid\",\"type\":\"authentication_error\",\
+             \"code\":\"invalid_request_error\"}}"
+        ));
+    }
+
+    #[test]
+    fn the_other_spellings_are_recognised_too() {
+        for m in [
+            "401 Unauthorized",
+            "Authentication failed",
+            "invalid api key",
+            "invalid_api_key",
+            "authentication_error",
+        ] {
+            assert!(looks_like_auth_failure(m), "not recognised: {m}");
+        }
+    }
+
+    #[test]
+    fn unrelated_failures_are_not_mistaken_for_auth() {
+        // A false positive here would claim "your model was never reached" about a run that
+        // did reach it, which is worse than saying nothing: the reader would go re-check a key
+        // that is fine.
+        for m in [
+            "429 rate limit exceeded, retry after 20s",
+            "500 internal server error",
+            "connection reset by peer",
+            "context window exceeded",
+            "the model returned an empty response",
+        ] {
+            assert!(!looks_like_auth_failure(m), "wrongly classified: {m}");
+        }
+    }
+}
+
 /// Does this provider error mean "your prompt did not fit"?
 ///
 /// The message we classify is the provider's body verbatim, so the classifier has

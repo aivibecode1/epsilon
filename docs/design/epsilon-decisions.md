@@ -1867,12 +1867,18 @@ checkpoint has only the "before" side; a second diff implementation would answer
 byte count and the checkpoint identity already answer honestly. *Weakening the guard to a
 timestamp* — the reason M104 chose content over metadata is recorded beside it and still holds.
 
-**Still open, and not pretended otherwise.** `restore` on an `existed: false` entry removes the
+**Still open, and not pretended otherwise.** ~~`restore` on an `existed: false` entry removes the
 file with no content check, because a creation has no pre-image to hash. So a user who edits an
 agent-created file and then restores it loses their edit. The preview says `DELETE` in capitals and
-waits for `yes`, which is the honest mitigation available without a further schema change.
+waits for `yes`, which is the honest mitigation available without a further schema change.~~
+**CLOSED by ADR-026.** The premise was half right and the conclusion wrong: a creation has no
+**pre**-image, but it does have a **post**-image, and `amend_with_post_image` was skipping exactly
+the entries that needed one — it refused any entry whose `blob` was `None`, and a creation is the
+other way to have a `blob` of `None`. So the guard had nothing to compare against, and the deletion
+path never called the guard anyway.
 
 ---
+
 
 ## ADR-024: A command the product parses is a command the product offers; a key hint is looked up, never written
 
@@ -2015,3 +2021,56 @@ the command palette and **not** in `/hotkeys`, because both need a `Command` var
 terminal's `picker.rs`, which the shared `REGISTRY` does not yet exist to host. `Ctrl`+`B` also means
 transcript page-up **in the terminal** — a different application's namespace, and a known cost of the
 registry still being unbuilt.
+
+## ADR-026: The deletion path is the most destructive thing the checkpoint store does, so it is guarded too
+
+**Status: accepted; implemented (M298).**
+
+**Context.** ADR-023 closed the half of the revert path that writes a pre-image back and left the
+other half explicitly open: `restore` on an `existed: false` entry — reverting a **creation** —
+called `remove_file` with no content check at all (`crates/epsilon-tools/src/checkpoint.rs`). The
+stated mitigation was the `DELETE` preview and the typed `yes`.
+
+That mitigation does not hold up under reading. It is a warning about the *outcome*, not about
+*whose work* is in the file, and the case that matters needs no unusual timing: the agent creates
+`src/new.rs`, the user types their own work into it, they ask to undo the creation, and `/restore`
+deletes their work after a preview that was accurate about everything it said. `AGENTS.md` §6
+requires a refusal path to leave the file untouched; this path had no refusal to leave.
+
+The second finding is the one that made it fixable rather than merely reportable.
+`amend_with_post_image` skipped any entry whose `blob` was `None`, documented as *"nothing was
+captured to amend"*. That is true of a **skipped capture** (too large, unreadable) and false of a
+**creation**. A creation has no pre-image to repeat *because there is no pre-image*, but the write
+that follows leaves one, and that is exactly what the guard needs. So the two entries the code
+treated alike are the two that need opposite handling, and the deletion guard had nothing to
+compare against even once it was called.
+
+**Decision.**
+
+1. **The deletion path runs the same guard as the write path.** `restore`'s `existed: false` branch
+   calls `check_unchanged` before `remove_file`. One question, asked in the one place where the
+   answer can be acted on.
+2. **A creation gets a post-image.** `amend_with_post_image` skips on `blob.is_none() && existed`
+   rather than `blob.is_none()` alone, so a creation is amended and a genuinely skipped capture is
+   not. `existed` is already on every entry; no new field, no schema change, no migration.
+3. **The two entries now refuse for different stated reasons.** A creation with a post-image that no
+   longer matches says the file changed since the harness wrote it. A creation with neither (a ledger
+   written before this ADR) refuses rather than deleting, and its advice says *"delete it by hand"* —
+   telling a reader to "delete it" when the file is the thing in question would be nonsense.
+
+**Consequences.** `/restore` still reverts an untouched creation, which is the case the command
+exists for; `an_untouched_created_file_is_still_removed_by_restore` exists so that a guard which
+refuses everything cannot pass as a safe guard. Two tests were fixtures that lied about the product
+— they recorded a creation and wrote the file without the amendment every real `write` performs, a
+shape the product stopped producing at M277. They now mirror it, which is the M277c lesson applied a
+second time.
+
+**Alternatives rejected.** *Weaken the warning instead* — a louder `DELETE` does not change what the
+command does. *Add a confirmation dialog* — the typed `yes` is already the confirmation, and the
+problem is not that the reader was not asked. *Trust the preview* — the preview cannot see the
+user's later edit either; it is generated from the entry, not the file. *Hash the creation into a
+blob* — it would have to be a blob of bytes that did not exist, which is a second concept doing the
+work `post_image` already does.
+
+---
+

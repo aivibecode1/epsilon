@@ -59,6 +59,106 @@ fn busy_app() -> App {
     app
 }
 
+/// **On a plain terminal the model's answer and a harness notice are not the same row.**
+///
+/// This is the owner's 2026-10-04 report — *"the output of the model is not shown"* — and the
+/// defect behind it was not a missing event or a renderer that dropped a row. The answer **was**
+/// on the screen; it drew the **same gutter character** as a status line, so it read as one. On a
+/// banded truecolor terminal a colour band separates them, which is why it survived for a month
+/// and why the report was filed as "nothing is rendered" rather than "two roles look alike".
+///
+/// Asserted on the rendered **rows**, and on the band's absence, because that is the only
+/// configuration where the distinction has to come from the glyph. The control below re-runs the
+/// same comparison with a band, which is what proves this failure is the glyph and not the
+/// harness: that half passes either way.
+#[test]
+fn the_answer_is_not_a_notice_when_there_is_no_band() {
+    let mut app = bench_app(UiState::new());
+    // Ansi16 + ASCII is what `detect()` returns in a plain Windows console without
+    // COLORTERM or WT_SESSION, and it is the one mode with no band to carry the role.
+    app.theme = Theme::new(ThemeColorMode::Ansi16, crate::ui::theme::ASCII);
+    assert!(
+        !app.theme.has_surfaces(),
+        "this test is about the bandless case; a band would carry the distinction instead"
+    );
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "msg-gutters".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::text(
+                        "Run complete.",
+                    )],
+                    stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+    app.ui.push_notice("permission allowed");
+
+    let rows = render_rows(&mut app, 80, 24);
+    let answer = rows
+        .iter()
+        .position(|r| r.contains("Run complete."))
+        .unwrap_or_else(|| panic!("the answer never reached the screen: {rows:#?}"));
+    let notice = rows
+        .iter()
+        .position(|r| r.contains("permission allowed"))
+        .unwrap_or_else(|| panic!("the notice never reached the screen: {rows:#?}"));
+    assert_ne!(
+        rows[answer].chars().next(),
+        rows[notice].chars().next(),
+        "the model's answer and a harness notice are the same pixels without colour: \
+         {:?} / {:?}",
+        rows[answer],
+        rows[notice]
+    );
+
+    // The control. A banded terminal separated these before the fix and still does, so this
+    // half cannot be what failed — which is what makes the assertion above a claim about the
+    // glyph rather than about the harness.
+    let mut banded = bench_app(UiState::new());
+    pin_theme(&mut banded, ThemeColorMode::Truecolor);
+    assert!(banded.theme.has_surfaces());
+    banded
+        .ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "msg-gutters".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::text(
+                        "Run complete.",
+                    )],
+                    stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+    banded.ui.push_notice("permission allowed");
+    let rows = render_rows(&mut banded, 80, 24);
+    let answer = rows
+        .iter()
+        .position(|r| r.contains("Run complete."))
+        .expect("the answer is drawn");
+    let notice = rows
+        .iter()
+        .position(|r| r.contains("permission allowed"))
+        .expect("the notice is drawn");
+    assert_ne!(
+        rows[answer].chars().next(),
+        rows[notice].chars().next(),
+        "a banded terminal separates these today, and must keep to"
+    );
+}
+
 /// The gutter glyph appears **once** per row, on every row kind.
 ///
 /// This is the M198 defect, stated as a property rather than as three corrected

@@ -288,7 +288,7 @@ mod tests {
         // pair that used to share `*`, and the answer and the reasoning trace are
         // the pair that used to share a blank gutter.
         assert_eq!(gutters[0].1, ">"); // user
-        assert_eq!(gutters[1].1, "*"); // assistant prose: the band's fallback
+        assert_eq!(gutters[1].1, "\""); // assistant prose: the band's fallback
         assert_eq!(gutters[2].1, "="); // thinking: the band's fallback
         assert_eq!(gutters[3].1, "\\"); // tool call
         assert_eq!(gutters[4].1, "+"); // ok
@@ -300,6 +300,17 @@ mod tests {
         assert_ne!(
             gutters[1].1, gutters[2].1,
             "the answer and the reasoning trace must not be the same pixels"
+        );
+        // **And the pair this test used to assert was equal.** It named the collision
+        // ("the pair that used to share `*`") and then pinned both roles to `"*"` —
+        // so the one assertion in a test called *every role is distinguishable*
+        // that would have caught the 2026-10-04 report was written backwards. A named
+        // past collision is a claim that it cannot recur, and asserting equality is
+        // the opposite of that claim.
+        assert_ne!(
+            gutters[1].1, gutters[6].1,
+            "the model's answer and a harness notice must not be the same pixels: \
+             a reader cannot tell a reply from a status line without colour"
         );
     }
 

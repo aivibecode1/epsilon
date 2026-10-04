@@ -5538,6 +5538,58 @@ async fn the_dialog_names_what_it_removed_and_withdraws_the_approve_keys() {
     );
 }
 
+/// **A `/model` switch survives `epsilon -c`.** This is the owner-reported defect of
+/// 2026-10-04: "when switching to specific model it keeps reverting to another".
+///
+/// # Why the assertion is on the session, not on the notice
+///
+/// `apply_model` already printed `model switched to … — saved to …` and already wrote
+/// `config.toml`, and both looked correct — which is why the bug survived. The revert happens
+/// **later and elsewhere**: `epsilon_runtime::resumed_model_to_use` prefers the *session's*
+/// model over the config on a resume, and the session could only report a model from an
+/// assistant message, because **nothing in production ever appended a `ModelChange` entry**.
+/// So on resume the launch adopted the model the previous run had used — the exact thing the
+/// user had just replaced.
+///
+/// The assertion therefore reads what the resume path actually reads
+/// (`SessionStore::context_settings`), rather than what the switch reported about itself. A test
+/// on the notice would pass against the broken build; this one cannot.
+#[tokio::test]
+async fn a_model_switch_is_recorded_where_a_resume_will_find_it() {
+    let (mut app, agent, _receivers) = test_app();
+    let tmp = tempfile::tempdir().expect("a temporary workspace");
+    let store = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(tmp.path().join("s.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&store));
+
+    // The session already knows a model — the one the previous run used. This is the
+    // precondition that makes the test real: without it, an empty session would answer
+    // "no model" for a reason that has nothing to do with the switch.
+    {
+        let mut st = store.lock().unwrap();
+        st.append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+            provider: "deepseek".into(),
+            model_id: "deepseek/deepseek-chat-v3.1".into(),
+        })
+        .unwrap();
+    }
+
+    app.apply_model(&agent, "deepseek-flash".to_string());
+
+    let settings = store
+        .lock()
+        .unwrap()
+        .context_settings()
+        .expect("the session is readable");
+    assert_eq!(
+        settings.model,
+        Some(("deepseek".to_string(), "deepseek-flash".to_string())),
+        "a resume reads the session's model first, so the switch has to be recorded there \
+         or it is outranked by whatever the previous run used"
+    );
+}
+
 /// An ordinary ask is unaffected: same keys, same prompt.
 ///
 /// The stripping must not cost a reader the normal decision surface, and a guard that fired

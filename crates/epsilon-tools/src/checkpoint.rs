@@ -447,6 +447,16 @@ impl CheckpointStore {
     /// produce: the user asks to undo a large file's edit, and loses the file.
     /// So a missing blob on a file that existed is an error the caller must see,
     /// never a silent removal.
+    ///
+    /// # The deletion path is guarded too
+    ///
+    /// An `existed: false` entry also has `blob: None`, and its revert **removes** the file —
+    /// the most destructive thing this store does. It runs the same [`check_unchanged`] the
+    /// write path runs, against the post-image that `amend_with_post_image` writes for
+    /// creations (a creation has no pre-image, but it does have a post-image). Without it, a
+    /// user who edited an agent-created file and then asked to undo the creation lost their
+    /// edit — after a preview that said only `DELETE`, which is true of the outcome and silent
+    /// about whose work it was.
     pub fn restore(&self, workspace: &Path, entry: &Entry) -> Result<u64, String> {
         let target = workspace.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
         let Some(blob) = &entry.blob else {
@@ -462,6 +472,11 @@ impl CheckpointStore {
                 ));
             }
             if target.exists() {
+                // Deleting is the most destructive thing this store does, so it is guarded by
+                // the same question the write path asks: is the file still exactly what this
+                // harness left here? A creation has no pre-image, but it does have a post-image
+                // once the write has landed, and that is the one that can be compared.
+                check_unchanged(&target, entry)?;
                 std::fs::remove_file(&target).map_err(|e| format!("remove: {e}"))?;
             }
             return Ok(0);
@@ -510,10 +525,13 @@ impl CheckpointStore {
         let Some(newest) = self.latest_for(&relative) else {
             return Recorded::Skipped("nothing to amend".into());
         };
-        // `blob: None` on the newest entry means the capture itself was skipped, so there are
-        // no bytes to compare a restore against and no guard to satisfy. Re-recording one would
-        // make a refused restore look like a satisfied one.
-        if newest.blob.is_none() {
+        // `blob: None` on the newest entry means the capture was skipped — unless the file did
+        // not exist, which is also `blob: None` and is **not** a skipped capture. A creation has
+        // no pre-image to repeat because there is no pre-image, but the bytes this harness is
+        // leaving behind are exactly what the guard needs in order to tell "the user edited
+        // this since" from "nothing has touched it". Skipping creations here is what left the
+        // deletion path in `restore` with nothing to check against.
+        if newest.blob.is_none() && newest.existed {
             return Recorded::Skipped("nothing was captured to amend".into());
         }
         let Ok(bytes) = std::fs::read(path) else {
@@ -645,9 +663,16 @@ fn check_unchanged(target: &Path, entry: &Entry) -> Result<(), String> {
          force it.",
             entry.path,
         )),
+        // A creation carries neither a digest nor a blob — there was no pre-image to hash.
+        // Written before `post_image` was amended onto creations, that leaves nothing at
+        // all to compare against, and "we cannot tell whether this is still the file" is
+        // the only safe answer. The advice differs from the arms above because reverting a
+        // creation is a **deletion**: telling a reader to "delete it" when the file is the
+        // thing in question would be nonsense.
         (None, None, None) => Err(format!(
-            "cannot restore {}: the entry carries no digest and no blob, so there is \
-         nothing to check the file against",
+            "cannot restore {}: this checkpoint records no content to check the file \
+         against, so deleting it could throw away work done since. The file is untouched \
+         — read it first, and delete it by hand if you really want it gone.",
             entry.path,
         )),
     }
@@ -827,6 +852,13 @@ mod tests {
         assert_eq!(store.record(dir.path(), &file, "write"), Recorded::Created);
 
         std::fs::write(&file, "created by the model\n").unwrap();
+        // The amendment every real `write` performs after its bytes land
+        // (`files.rs`). A creation carries no pre-image, but it does get a post-image, and
+        // that is the only thing the deletion guard can compare against.
+        assert_eq!(
+            store.amend_with_post_image(dir.path(), &file, "write"),
+            Recorded::Amended
+        );
         let entry = store.latest_for("src/new.rs").expect("an entry");
         assert!(!entry.existed);
         assert_eq!(store.restore(dir.path(), &entry).unwrap(), 0);
@@ -932,8 +964,10 @@ mod tests {
         let file = dir.path().join("src/fresh.rs");
         let store = CheckpointStore::open(dir.path());
         assert_eq!(store.record(dir.path(), &file, "write"), Recorded::Created);
-        let entry = store.latest_for("src/fresh.rs").expect("entry recorded");
         std::fs::write(&file, "created by the agent").unwrap();
+        // As every real write does, record what was left behind — the guard's subject.
+        let _ = store.amend_with_post_image(dir.path(), &file, "write");
+        let entry = store.latest_for("src/fresh.rs").expect("entry recorded");
 
         assert_eq!(store.restore(dir.path(), &entry).expect("restores"), 0);
         assert!(

@@ -126,10 +126,12 @@ async fn a_file_the_agent_created_is_removed_by_restore() {
     );
 
     // 0 bytes means "the revert was a deletion", which is the only other shape a
-    // restore has. There is no digest to compare on this shape — the file did not
-    // exist when the entry was taken, so there is no pre-image to hash — which is why
-    // `/restore` previews a deletion and waits for a typed `yes` rather than acting on
-    // the name alone.
+    // restore has. There is no pre-image to compare on this shape — the file did not
+    // exist when the entry was taken — which is why `/restore` previews a deletion and
+    // waits for a typed `yes` rather than acting on the name alone. It is **not** a
+    // reason to act unguarded: the post-image the `write` tool amends onto the entry is
+    // what the deletion guard compares, which is the subject of
+    // `a_created_file_the_user_edited_is_not_deleted_by_restore` below.
     assert_eq!(
         store.restore(root, &entry).expect("the revert is allowed"),
         0
@@ -223,6 +225,97 @@ async fn a_file_changed_since_the_capture_is_refused_and_left_alone() {
         std::fs::read_to_string(root.join("src/lib.rs")).unwrap(),
         "the user's later work\n",
         "the refusal must leave the file exactly as it was"
+    );
+}
+
+/// **A file the agent created is not deleted out from under an edit the user made to it.**
+///
+/// # The defect this pins
+///
+/// A creation entry carries `blob: None` and no digest — the file did not exist, so there
+/// is nothing to hash. That sent `restore` down the deletion branch, and the deletion
+/// branch had **no guard at all**: `check_unchanged` is only reached on the blob path.
+/// Worse, the post-image that would have made the guard possible was never written for a
+/// creation, because `amend_with_post_image` skips any entry whose `blob` is `None`.
+///
+/// So the failure this prevents is the worst one a revert path can produce, and it needs
+/// no unusual timing: the agent creates `src/new.rs`, the user types their own work into
+/// it, they ask to undo the creation, and `/restore` deletes the file — the user's work
+/// with it — after a preview that said only `DELETE`, which is true of the outcome and
+/// silent about whose work it is.
+///
+/// The edited-file half of this guard already worked
+/// (`a_file_changed_since_the_capture_is_refused_and_left_alone`), which is what makes
+/// this a defect rather than a design choice: the same question has two answers
+/// depending on whether the file existed when the agent touched it.
+#[tokio::test]
+async fn a_created_file_the_user_edited_is_not_deleted_by_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    let ctx = ctx_for(root);
+    run(
+        &WriteTool::new(),
+        &ctx,
+        serde_json::json!({ "path": "src/new.rs", "content": "// written by the model\n" }),
+    )
+    .await
+    .expect("the write lands");
+
+    // Then the user writes their own work into the file the agent created.
+    std::fs::write(root.join("src/new.rs"), "// mine, and not yours\n").unwrap();
+
+    let store = CheckpointStore::open(root);
+    let entry = store
+        .resolve(root, "src/new.rs")
+        .expect("the creation's checkpoint resolves");
+
+    let why = store
+        .restore(root, &entry)
+        .expect_err("a file edited since its creation must not be deleted");
+    assert!(
+        why.contains("src/new.rs"),
+        "the refusal names the file: {why}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/new.rs")).unwrap(),
+        "// mine, and not yours\n",
+        "the user's own work must survive a refused revert, untouched"
+    );
+}
+
+/// The other half of the guard above, and the reason the two are one property: a creation
+/// the user has **not** touched is still revertible. A guard that refuses everything is
+/// not a safe guard, it is a broken one with good manners — this is the case
+/// `/restore` exists for, so it must keep working.
+#[tokio::test]
+async fn an_untouched_created_file_is_still_removed_by_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    let ctx = ctx_for(root);
+    run(
+        &WriteTool::new(),
+        &ctx,
+        serde_json::json!({ "path": "src/new.rs", "content": "// written by the model\n" }),
+    )
+    .await
+    .expect("the write lands");
+
+    let store = CheckpointStore::open(root);
+    let entry = store
+        .resolve(root, "src/new.rs")
+        .expect("the creation's checkpoint resolves");
+    assert_eq!(
+        store
+            .restore(root, &entry)
+            .expect("an untouched creation reverts"),
+        0,
+        "0 bytes means the revert was a deletion"
+    );
+    assert!(
+        !root.join("src/new.rs").exists(),
+        "reverting a creation removes the file"
     );
 }
 

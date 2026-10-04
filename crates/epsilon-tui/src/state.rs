@@ -1217,6 +1217,21 @@ impl UiState {
                             format!("error: {err} — the reply above is partial")
                         };
                         self.push_line(TranscriptLine::plain(LineKind::System, label));
+                        // An auth rejection is the one failure a reader cannot diagnose from
+                        // the sentence above it. The provider's body says "invalid api key",
+                        // and a reader has no way to tell that the model named in their status
+                        // bar was never reached at all — which is exactly the confusion behind
+                        // the owner's 2026-10-04 report that "the output of the model is not
+                        // shown". Saying it here costs one line and answers the question the
+                        // error raises.
+                        if epsilon_core::looks_like_auth_failure(err) {
+                            self.push_line(TranscriptLine::plain(
+                                LineKind::System,
+                                "the configured model was never reached — no reply was \
+                                 generated. Run `/login <provider>` or set the provider's \
+                                 API key, then send this again",
+                            ));
+                        }
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
@@ -1973,6 +1988,74 @@ mod tests {
         assert!(
             !st.usage_by_model().contains_key("new-model"),
             "nothing may be attributed to a model that produced no turn"
+        );
+    }
+
+    /// An auth rejection says the model was never reached, in the reader's terms.
+    ///
+    /// The owner reported "the output of the model is not shown" on 2026-10-04. The screen carried
+    /// the provider's `invalid api key` and nothing else, so a reader could not tell that the model
+    /// in their status bar had produced **no reply at all** — the failure they saw and the question
+    /// they had are about different things, and only the second one is actionable.
+    ///
+    /// The negative is the point as much as the positive: a **rate limit** is also a failure and
+    /// must not claim the model was unreached, because that would send a reader to re-check a key
+    /// that is perfectly good.
+    #[test]
+    fn an_auth_failure_says_the_model_was_never_reached() {
+        let mut st = UiState::new();
+        let mut msg = assistant("", vec![], Usage::default());
+        msg.stop_reason = StopReason::Error;
+        msg.error_message = Some(
+            "HTTP 401 (Auth): {\"error\":{\"message\":\"Authentication Fails, Your api key: \
+         ****6a81 is invalid\",\"type\":\"authentication_error\"}}"
+                .into(),
+        );
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(msg)),
+        });
+        let joined = st
+            .lines()
+            .iter()
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            joined.contains("never reached"),
+            "the reader must be told the model produced nothing: {joined}"
+        );
+        assert!(
+            joined.contains("/login"),
+            "and be given the command that fixes it: {joined}"
+        );
+    }
+
+    /// The other half: an unrelated failure must **not** claim the model was never reached.
+    #[test]
+    fn a_non_auth_failure_does_not_claim_the_model_was_unreached() {
+        let mut st = UiState::new();
+        let mut msg = assistant("", vec![], Usage::default());
+        msg.stop_reason = StopReason::Error;
+        msg.error_message = Some("429 rate limit exceeded, retry after 20s".into());
+        st.apply(&AgentEvent::MessageEnd {
+            message: Box::new(Message::Assistant(msg)),
+        });
+        let joined = st
+            .lines()
+            .iter()
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            joined.contains("rate limit"),
+            "the provider's own words still reach the reader: {joined}"
+        );
+        assert!(
+            !joined.contains("never reached"),
+            "a rate limit is not an auth failure, and saying otherwise sends the reader to \
+         re-check a key that is fine: {joined}"
         );
     }
 

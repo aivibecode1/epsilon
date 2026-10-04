@@ -993,6 +993,40 @@ impl App {
         ));
     }
 
+    /// Append a `model_change` entry to the attached session, so a resume adopts this choice.
+    ///
+    /// **Why the session, and not only `config.toml`.** Both are durable, and they answer
+    /// different questions: the config file is what a *fresh* launch uses, while the session is
+    /// what a *resumed* launch prefers (`epsilon_runtime::resumed_model_to_use`, flag > session >
+    /// config). A `/model` switch that writes only the config is therefore silently outranked by
+    /// the model the session last ran on — the defect reported on 2026-10-04, where a switch to
+    /// `deepseek-flash` reverted to `deepseek/deepseek-chat-v3.1` on `epsilon -c`.
+    ///
+    /// The provider is the catalog's answer for this id rather than a guess. `context_settings`
+    /// keeps the pair verbatim, and a row the catalog does not know (a custom provider's model)
+    /// has no provider to record — the bare id is what pi writes for those, and the empty
+    /// provider is only ever read back as a label, never used to route.
+    fn record_model_change(&mut self, agent: &Arc<Agent>, id: &str) -> Result<(), String> {
+        let Some(store) = agent.session_store() else {
+            // No session file is a normal state (a bare `--tui` launch with no durable mirror),
+            // not a failure worth a notice: there is nothing to be inconsistent with.
+            return Ok(());
+        };
+        let provider = epsilon_llm::catalog::lookup_model(id)
+            .map(|m| m.provider.to_string())
+            .unwrap_or_default();
+        let mut guard = store
+            .lock()
+            .map_err(|_| "session store unavailable".to_string())?;
+        guard
+            .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                provider,
+                model_id: id.to_string(),
+            })
+            .map(|_| ())
+            .map_err(|e| format!("{e}"))
+    }
+
     /// Switch the session model, persist choice + recents, and tell the user.
     fn apply_model(&mut self, agent: &Arc<Agent>, id: String) {
         if id == self.model_id {
@@ -1006,6 +1040,26 @@ impl App {
         // codepoint cannot be rendered by a legacy console at all (M219).
         let auth_ready = epsilon_llm::catalog::credentials_ready(&id);
         agent.set_model_id(&id);
+        // Record the switch in the **session** as well as `config.toml` (M299).
+        //
+        // Without this, a `/model` choice does not survive `epsilon -c`, and the cause is not
+        // the resume precedence but a gap on the write side: `context_settings` reads a session's
+        // model from a `ModelChange` entry, and **nothing in production ever appended one** —
+        // so the only model a session could report was whatever its last assistant message ran
+        // on, which is precisely the thing the user just replaced. Measured on the reporter's
+        // machine: `config.toml` said `deepseek-flash`, the session's last assistant entry said
+        // `deepseek/deepseek-chat-v3.1`, and the launch took the session's.
+        //
+        // A failure here is a notice rather than a refusal: the switch itself has already
+        // happened (`set_model_id` above), so refusing would undo a choice the user made and
+        // could see applied. `AGENTS.md` §8's rule is no silent failures, not no failures.
+        match self.record_model_change(agent, &id) {
+            Ok(()) => {}
+            Err(why) => self.ui.push_notice(format!(
+                "model switched, but the session could not record it ({why}) — \
+                 resuming this session may return to its previous model"
+            )),
+        }
         // M32d: if we were on faux/offline and the new model is credentialed,
         // go live immediately so the next prompt hits the real API (pi parity).
         // Same hot-swap used by /login — apply_model is the other entry point
@@ -1031,16 +1085,25 @@ impl App {
                 self.ui.push_notice(msg);
             }
         }
-        if epsilon_core::config::push_recent_model(&id).is_ok() {
-            // M29: refresh from disk, then force this id to the front of the
-            // in-memory list regardless. Under parallel test load (or any
-            // concurrent writer) the re-read can lose our own push; the id we
-            // just applied is the truth about "most recent".
-            self.recents = epsilon_core::config::load_recent_models();
-            self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
-            self.recents.insert(0, id.clone());
-            self.invalidate_picker();
-        }
+        // Persisting to the shared config is best-effort; **the in-memory mirror is
+        // not**, and it moves either way.
+        //
+        // Two separate defects, both found on this machine on 2026-10-04 (M299). First, M29
+        // re-read the file after pushing, which makes the mirror a property of a
+        // machine-wide file: any other process — or another test in this suite — that has used
+        // a model puts it at the front, so the picker's first row depended on what unrelated
+        // callers did. Two TUI tests asserting `recents.first()` failed purely because a real
+        // user had once chosen `deepseek-flash`, and they failed on unmodified code too.
+        // Second, the whole block was gated on the write **succeeding**, so an unwritable
+        // config left the picker showing the previous model while the status bar already said
+        // otherwise — `AGENTS.md` §2.7, a control that does not act on the thing it names.
+        //
+        // The mirror is therefore built from the value this call just applied, which is the
+        // same answer without the dependency on anyone else.
+        let _ = epsilon_core::config::push_recent_model(&id);
+        self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
+        self.recents.insert(0, id.clone());
+        self.invalidate_picker();
     }
 
     /// Request the provider's live listing (M13 Ctrl+F; M20 auto-fetch on open).

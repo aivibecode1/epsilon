@@ -467,7 +467,14 @@ fn typing_still_works_while_a_turn_is_streaming() {
 
     let mut session = Session::start(
         &bin,
-        &["--script", &script_arg, "--stream-pace-ms", "30"],
+        &[
+            "--provider",
+            "faux",
+            "--script",
+            &script_arg,
+            "--stream-pace-ms",
+            "30",
+        ],
         ws.path(),
     );
     session.settle(SETTLE);
@@ -515,9 +522,18 @@ fn a_typed_line_is_submitted_and_the_run_is_visible() {
     // The whole loop through the real terminal: type, press Enter, and see the
     // harness acknowledge the turn. This is the path the owner reported as
     // freezing, and it is the one worth the most as a test.
+    //
+    // **`--provider faux` is load-bearing, and it was missing.** With no flag the
+    // launch auto-detects: `auto_real` returns `Some` as soon as *any* provider key
+    // is present (`epsilon-runtime/src/lib.rs:5845`), so on a developer machine with a
+    // stored key this test silently became a live-network test. Measured failing on
+    // 2026-10-04 against a real 401, with an error row where the assertions expected a
+    // run — and the test could not tell the difference, because a *refused* turn and a
+    // *successful* one differ only in which strings appear. Pinning the provider makes
+    // it hermetic and makes its own precondition true by construction.
     let Some(bin) = binary() else { return };
     let ws = workspace();
-    let mut session = Session::start(&bin, &[], ws.path());
+    let mut session = Session::start(&bin, &["--provider", "faux"], ws.path());
     session.settle(SETTLE);
 
     session.type_text("say hi");

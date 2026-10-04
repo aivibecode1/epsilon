@@ -2472,11 +2472,19 @@ mod tests {
     /// rather than a creation. The first version of this test did exactly that and the
     /// frame caught it.
     ///
-    /// **No amendment here, and deliberately.** A creation entry has `blob: None`, because
-    /// there were no bytes to capture, so there is nothing a post-image could amend — the
-    /// store says so and returns `Skipped`. Reverting a creation removes the file, which is
-    /// a different guard with a different question, and it is tested in
-    /// `crates/epsilon-tools/tests/checkpoint_restore.rs`.
+    /// **The amendment is here, and an earlier version of this comment said it must not be.**
+    ///
+    /// It said a creation entry has `blob: None`, "so there is nothing a post-image could
+    /// amend" — which was true of the *pre-image* and false of the point. A creation has no
+    /// bytes to capture because there was no file to capture them from, but the write that
+    /// follows leaves one, and that is exactly what the deletion guard compares against. With
+    /// the amendment omitted this fixture built an entry shape no real `write` produces, and
+    /// the frame test failed on a correctly-guarded store.
+    ///
+    /// This is the second time this file's fixtures have lied about the product in the same
+    /// way; the first is recorded in M277c. The pattern is worth naming: a fixture is a
+    /// claim about what the product writes, and the day the product changes, the fixture is
+    /// the thing that is wrong — not the guard it was written to avoid.
     fn created_by_the_agent(
         root: &std::path::Path,
         path: &str,
@@ -2484,18 +2492,24 @@ mod tests {
     ) -> std::path::PathBuf {
         let file = root.join(path);
         std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
-        epsilon_tools::checkpoint::CheckpointStore::open(root).record(root, &file, "write");
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(root);
+        store.record(root, &file, "write");
         std::fs::write(&file, content).unwrap();
+        // What `files.rs` does once the bytes have landed, on every write and every edit.
+        store.amend_with_post_image(root, &file, "write");
         file
     }
 
     /// A restore that succeeds, asserted on the frame and on the bytes.
     ///
     /// The shape asserted is the one a rollback exists for in this build: the agent
-    /// **created** a file, so reverting means removing it. It is also the shape with no
-    /// digest to compare — the file did not exist when the entry was taken — which is why
-    /// the frame has to say `DELETE` in capitals *before* the reader is asked to confirm,
-    /// and why the file is still there after the first press.
+    /// **created** a file, so reverting means removing it. The file did not exist when the
+    /// entry was taken, so there is no pre-image to compare — which is why the frame has to
+    /// say `DELETE` in capitals *before* the reader is asked to confirm, and why the file is
+    /// still there after the first press.
+    ///
+    /// The post-image is still what makes the deletion safe (see `created_by_the_agent`):
+    /// "no pre-image" is a reason to warn loudly, not a reason to act unguarded.
     ///
     /// Both terminal sizes are checked because the preview is a long sentence and a wide
     /// frame wraps it differently: a preview that reads at 100×30 and is cut at 80×24 is
@@ -2579,6 +2593,38 @@ mod tests {
         assert!(
             screen.contains("src/lib.rs"),
             "and names the file it would have overwritten: {screen}"
+        );
+    }
+
+    /// The same guard on the **deletion** path, asserted on the frame — the half ADR-026 closed.
+    ///
+    /// The refusal above covers an edited file whose pre-image is put back. This covers reverting a
+    /// **creation**, where the outcome is a deletion and the user's later edit is the whole file.
+    /// It is asserted on the frame for the same reason: the sentence is the only thing that tells a
+    /// reader their work is still there, and a store that printed it *after* deleting would pass a
+    /// test that only checked the words.
+    #[tokio::test]
+    async fn a_created_file_the_user_edited_is_refused_and_the_frame_says_why() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let created = created_by_the_agent(dir.path(), "src/new.rs", "// written by the model\n");
+        std::fs::write(&created, "// mine, and not yours\n").unwrap();
+
+        assert!(!type_and_enter(&mut app, &agent, "/restore src/new.rs yes"));
+        assert_eq!(
+            std::fs::read_to_string(&created).unwrap(),
+            "// mine, and not yours\n",
+            "a refused deletion must leave the user's own file exactly as it was"
+        );
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("changedafterthisharnesswroteit"),
+            "the frame says why it refused: {screen}"
+        );
+        assert!(
+            screen.contains("src/new.rs"),
+            "and names the file it would have deleted: {screen}"
         );
     }
 

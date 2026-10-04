@@ -7,6 +7,42 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **The model picker's "recent" list no longer depends on what other programs have written.**
+  The picker re-read a shared, machine-wide config file after every switch, so its first row
+  reflected whatever another process — or another test — had used most recently; and the whole
+  update was skipped when that file could not be written, leaving the picker showing the old model
+  while the status bar showed the new one. The in-memory list now follows the choice you just made
+  either way (M299).
+- **The model's answer no longer looks like a status line on a plain terminal.** The assistant row
+  and a harness notice drew the **same gutter character**, and the only thing telling them apart
+  was a colour band that a banded terminal draws and an ordinary console does not — so on a plain
+  console the model's reply rendered as `* something`, and a transcript could look like it had no
+  prose in it at all. The two roles now use different glyphs without colour. The test that was
+  supposed to prevent this **asserted the collision instead**: it named the pair in a comment and
+  then pinned both to the same character (M299).
+- **Switching models with `/model` now survives `epsilon -c`.** A switch was written to
+  `config.toml` and nowhere else, and a resumed session prefers the *session's* model over the
+  config — but no session could ever report one, because nothing in production recorded the
+  switch. So `epsilon -c` adopted whatever the previous run had used, and the notice said
+  "saved to …" throughout. Switches are now recorded in the session (M299).
+- **A rejected API key now says the model was never reached.** A 401 showed the provider's
+  `invalid api key` and nothing else, so a reader could not tell that the model named in their
+  status bar had produced no reply at all — which reads as "the harness dropped my answer". One
+  line now says so and names `/login`. A rate limit deliberately does not get that line, because
+  it would send a reader to re-check a key that is fine (M299).
+- **Two terminal tests no longer depend on this machine having a working provider key.** With no
+  provider flag the launcher auto-detects, so on a machine with a stored key they quietly became
+  live-network tests and failed against a real 401. They now pin `--provider faux` (M299).
+- **`/restore` no longer deletes a file you edited after the agent created it.** Reverting an
+  agent-**created** file removes it, and that path had no content check at all — so the agent
+  creates a file, you type your own work into it, you ask to undo the creation, and your work goes
+  with it. The preview said `DELETE` and waited for `yes`, which is accurate about the outcome and
+  silent about whose work was in the file. The deletion is now guarded by the same question the
+  write path asks: is the file still exactly what the harness left here (M298, ADR-026).
+- **A creation now records what the harness left behind.** Checkpoints amended only entries that
+  captured a pre-image, so a creation — which has no pre-image, because there was no file to
+  capture — was never amended, and the new guard had nothing to compare against. A ledger written
+  before this change refuses rather than deleting, and says how to finish the job by hand (M298).
 - **A stolen-from session lock no longer deletes its thief's lock.** The lock file carried only
   the holder's pid, so a process whose lock had been taken over could not tell its own file from
   the new holder's — and removed it on the way out. The thief's heartbeat then failed for ever,
