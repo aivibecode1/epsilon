@@ -4,7 +4,11 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M309)
+Last updated: 2026-10-04 (M311)
+
+> **Picking this up from someone else? Read [`HANDOFF.md`](HANDOFF.md) first**, then
+> [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left and
+> the evidence for each item. This file is the record; those two are the working guides.
 
 ## Current task
 
@@ -128,10 +132,11 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m309`](../audit/evidence/gate-m309-2026-10-04.txt),
-2026-10-04 — the final tree.** Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,043 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines. `check-links`: **774 relative links, 0 broken**. The eighth ignored test
+**Latest green battery: [`gate-m311final`](../audit/evidence/gate-m311final-2026-10-04.txt),
+2026-10-04 — the final tree. The objective was handed off at this point.**
+Ten legs, all `[exit=0]`, zero non-zero legs.
+**2,044 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **801 relative links, 0 broken**. The eighth ignored test
 is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter.
 Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
 `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
@@ -152,6 +157,42 @@ hand, which is the only reason a reader can find it at all.
 | M307 | The window's accessibility tree read through **Windows UI Automation**, from another process | [`gate-m307`](../audit/evidence/gate-m307-2026-10-04.txt) |
 | M308 | 19 verified-dead items deleted; five documents that contradicted the code corrected | [`gate-m308`](../audit/evidence/gate-m308-2026-10-04.txt) |
 | M309 | **An operator's `before_tool_call` hook never reached subagent tool calls** — the M300 shape through a second door | [`gate-m309`](../audit/evidence/gate-m309-2026-10-04.txt) |
+| M310 | The lease-takeover fix is **not the small change it looks like** — recorded rather than half-done | documentation only, covered by `gate-m311final` |
+| M311 | **Two `append` failures that were discarded or printed to a console a window does not have** | [`gate-m311final`](../audit/evidence/gate-m311final-2026-10-04.txt) (after a red [`gate-m311`](../audit/evidence/gate-m311-2026-10-04.txt) on clippy and a self-referential link) |
+
+### M311 — the two silent sites, fixed with machinery that already existed
+
+**This is the prerequisite M310 named, done.** M310 established that making `append` refuse would
+turn two discarded results into silent data loss, and that *"giving those two a way to report"* was
+the blocker. The way to report **already existed** and neither site used it:
+`Agent::emit(AgentEvent::Notice { .. })`, which every front end renders — the same channel
+`Agent::persist` uses, whose own doc records the argument: *"an error nobody prints is not a
+report"*.
+
+| Site | Was | Now |
+|---|---|---|
+| `record_model_change` | `let _ = guard.append(ModelChange)` | emits a notice naming the consequence — *"resuming this session may come back on its previous model"* |
+| `attach_child_session` (open) | `eprintln!("task …: cannot open …")` | emits a notice: *"runs in memory only and will not be resumable"* |
+| `attach_child_session` (`task_meta`) | `let _ = store.append(Custom { task_meta })` | emits a notice: *"this task will not be resumable after a restart"* |
+
+**The `eprintln!` is the same defect M…7 closed sixteen times one layer up**, in
+`epsilon-runtime`: a window has no console. It was missed because that fix stopped at the runtime
+boundary and this site is inside the core.
+
+**M303's own doc claimed *"the front end decides whether to say so"* — and no front end could**,
+because nothing told one. That sentence was the defect stated as a design, and it is now true
+instead of aspirational.
+
+**RED first, and the control prints the defect as an absence.** The fault is injected at the store's
+write path (`set_write_fault_for_tests`), the technique the F07 tests established, because the
+handle is already open and a read-only file still accepts writes through it. With the notice
+removed the test fails with **`Notices seen: []`**. The test also asserts the switch *still applied*,
+so it cannot pass against a build that refuses the switch — which is the wrong fix for the wrong
+reason.
+
+**That closes M310's blocker for `record_model_change`. `attach_child_session` was fixed the same
+way but has no test yet** — it is item 8 in the plan, and it is recorded as open rather than
+implied done.
 
 ### M309 — the hook that reached the agent and not the agents it spawns
 

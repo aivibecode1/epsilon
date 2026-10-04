@@ -847,15 +847,37 @@ impl Agent {
     /// switch does not have to reach through a lock. The provider comes from the catalog
     /// because `context_settings` keeps the pair verbatim, and a model the catalog does not know
     /// has no provider to record — pi writes the bare id for those.
+    ///
+    /// **A failure here is reported, not discarded (M311).** This line used to be
+    /// `let _ = guard.append(..)`, and M303's own doc said *"the front end decides whether to say
+    /// so"* — which no front end could do, because nothing told one. The switch has already been
+    /// applied and is visible in the status bar, so the fix is not to fail the switch: it is to
+    /// say what did not happen, which is the same shape as [`Self::persist`] two hundred lines
+    /// below and for the same reason — *an error nobody prints is not a report*. Every front end
+    /// already renders [`AgentEvent::Notice`] (`subscribe`), so this needs no new channel.
     fn record_model_change(&self, model_id: &str) {
         let Some(store) = self.store() else { return };
         let provider = epsilon_llm::catalog::lookup_model(model_id)
             .map(|m| m.provider.to_string())
             .unwrap_or_default();
-        if let Ok(mut guard) = store.lock() {
-            let _ = guard.append(epsilon_contracts::session_entry::EntryKind::ModelChange {
-                provider,
-                model_id: model_id.to_string(),
+        let outcome: Result<(), String> = match store.lock() {
+            Ok(mut guard) => guard
+                .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                    provider,
+                    model_id: model_id.to_string(),
+                })
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            // A poisoned lock is the same failure seen from the other side: the session's memory
+            // of this switch did not get written.
+            Err(_) => Err("the session store's lock is poisoned".to_string()),
+        };
+        if let Err(e) = outcome {
+            self.emit(AgentEvent::Notice {
+                text: format!(
+                    "model switched, but this session could not record it ({e}) — resuming this \
+                     session may come back on its previous model"
+                ),
             });
         }
     }
@@ -3649,10 +3671,30 @@ impl Agent {
             )
         };
         let file = dir.join(format!("{stem}-{task_id}.jsonl"));
-        let mut store = SessionStore::open_child_in(&file, &self.workspace_root, &parent_id?)
-            .map_err(|e| eprintln!("task '{task_id}': cannot open {}: {e}", file.display()))
-            .ok()?;
-        let _ = store.append(EntryKind::Custom {
+        // **Both failures on this path are reported, not printed (M311).** These were an
+        // `eprintln!` and a `let _ =`, which is the same defect twice: a window has no console,
+        // so `eprintln!` reaches nobody, and a discarded `append` reaches nobody by definition.
+        // The `RunParams::notices` sink that fixed sixteen `eprintln!` lines one layer up
+        // (`epsilon-runtime`) does not exist here — but an `AgentEvent::Notice` does, and every
+        // front end already renders those, so this needs no new plumbing.
+        // `parent_id` is `None` for a parent with no header; the original `parent_id?` returned
+        // early there, and clippy is right that it still reads better than an explicit `let else`
+        // — the two failure paths below report *after* this point, so nothing is lost by it.
+        let parent_id = parent_id?;
+        let mut store = match SessionStore::open_child_in(&file, &self.workspace_root, &parent_id) {
+            Ok(s) => s,
+            Err(e) => {
+                self.emit(AgentEvent::Notice {
+                    text: format!(
+                        "task '{task_id}': could not open its own session file ({}): {e} — this \
+                         subagent runs in memory only and will not be resumable",
+                        file.display()
+                    ),
+                });
+                return None;
+            }
+        };
+        if let Err(e) = store.append(EntryKind::Custom {
             custom_type: "task_meta".to_string(),
             data: Some(serde_json::json!({
                 "task_id": task_id,
@@ -3660,7 +3702,16 @@ impl Agent {
                 "subagent_type": subagent_type,
                 "model": model,
             })),
-        });
+        }) {
+            // The file exists and is attached, but it carries no `task_meta` — so a later
+            // `/tasks` resume would find a session it cannot rehydrate, silently.
+            self.emit(AgentEvent::Notice {
+                text: format!(
+                    "task '{task_id}': its session file was created but the resume record could \
+                     not be written ({e}) — this task will not be resumable after a restart"
+                ),
+            });
+        }
         child.attach_session_store(Arc::new(std::sync::Mutex::new(store)));
         Some(file)
     }

@@ -2963,3 +2963,64 @@ async fn jumping_the_tree_leaf_re_projects_the_visible_conversation() {
         visible[0]
     );
 }
+
+// ---------------------------------------------------------------------------
+// M311 — the same F07 rule, applied to two sites that had been left out.
+// ---------------------------------------------------------------------------
+
+/// **A model switch whose session record fails says so.**
+///
+/// `record_model_change` used to be `let _ = guard.append(ModelChange)`, and M303's own doc
+/// claimed *"the front end decides whether to say so"* — which no front end could do, because
+/// nothing told one. The consequence is the owner's 2026-10-04 report stated backwards: a switch
+/// that applies and is visible in the status bar, whose record did not land, comes back on its
+/// previous model at the next resume with no explanation.
+///
+/// **Why the `Notice` and not an `Err`.** `set_model_id` must not fail: the switch has already
+/// happened and refusing would undo a choice the reader can see take effect. The `Err` would also
+/// reach only callers that look at it, and the TUI discards `run()`'s result — the identical
+/// argument `persist` records for emitting a notice instead of returning alone.
+///
+/// The fault is injected at the store's write path for the same reason the F07 tests do it: the
+/// handle is already open, so a read-only file and a revoked directory permission both still
+/// accept writes through it.
+#[tokio::test]
+async fn a_model_switch_whose_session_record_fails_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        epsilon_session::SessionStore::open_in(dir.path().join("s.jsonl"), dir.path()).unwrap();
+    store.set_write_fault_for_tests(epsilon_session::FaultOp::Append, "disk full", 1, 1);
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(FauxProvider::new(Vec::new()))),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        std::env::temp_dir(),
+    );
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+    let mut rx = agent.subscribe();
+
+    agent.set_model_id("deepseek-v4-flash");
+
+    // The switch itself must have applied — otherwise this test would pass against a build that
+    // simply refused the switch, which is the wrong fix for the wrong reason.
+    assert_eq!(
+        agent.model_id(),
+        "deepseek-v4-flash",
+        "the switch must still apply: the notice reports what did not happen, it does not undo it"
+    );
+
+    let notices: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter_map(|ev| match &*ev {
+            epsilon_contracts::agent_event::AgentEvent::Notice { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("could not record") && n.contains("previous model")),
+        "a failed session record must be announced, and must say what the consequence is. \
+         Notices seen: {notices:?}"
+    );
+}

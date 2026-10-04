@@ -7,6 +7,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Fixed
 
+- **A model switch whose session record fails now says so.** It was discarded with `let _ =`, and
+  the code comment claimed "the front end decides whether to say so" — which no front end could,
+  because nothing told one. The switch still applies; the notice says the session could not remember
+  it, so resuming may come back on the previous model. The same fix covers a subagent whose session
+  file cannot be opened or whose resume record cannot be written: both were reported with
+  `eprintln!` or discarded, and a window has no console (M311).
 - **An extension's `before_tool_call` hook now reaches subagent tool calls.** It did not: a child
   agent is created with no-op hooks and `build_task_child` never replaced them, so a hook whose
   whole purpose is to veto or block a tool call blocked it for the top-level agent and let every
