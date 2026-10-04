@@ -81,12 +81,6 @@ impl BashTool {
         self
     }
 
-    /// Override the confinement policy (resource caps / wall limit defaults).
-    pub fn with_policy(mut self, policy: ConfinementPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
     /// Set the mode the session runs at. Every call may *narrow* below this freely; a call
     /// that asks to widen is refused here (see [`Self::resolve_mode`]).
     pub fn with_session_mode(mut self, mode: SandboxMode) -> Self {

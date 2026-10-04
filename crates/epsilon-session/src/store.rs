@@ -490,29 +490,6 @@ impl SessionStore {
         Self::open_with_parent(path, cwd, None, on_wait)
     }
 
-    /// [`SessionStore::open`], reporting each poll of the lease wait through
-    /// `on_wait(waited, remaining)`.
-    ///
-    /// M138: after M136 the wait became invisible. It is bounded and it ends, but
-    /// a blank terminal for 30 seconds is indistinguishable from a hang, and a
-    /// hang is the exact complaint this harness was taken over over. The frontend
-    /// owns the display; this only tells it the wait is real and progressing.
-    ///
-    /// The callback cannot change the outcome — see
-    /// [`SessionLease::acquire_with_progress`]. A frontend that wants a spinner
-    /// passes one; a caller that wants a quiet machine passes `|_, _| {}`.
-    pub fn open_with_progress(
-        path: impl AsRef<Path>,
-        on_wait: impl Fn(std::time::Duration, std::time::Duration),
-    ) -> Result<Self, StoreError> {
-        Self::open_with_parent(
-            path,
-            &std::env::current_dir().unwrap_or_default(),
-            None,
-            on_wait,
-        )
-    }
-
     /// [`SessionStore::open_in`] with the parent-session link a NEW file's header
     /// should record (M58: a delegated task's transcript is a session spawned by
     /// another session). An existing file keeps its header verbatim — a child is
@@ -692,12 +669,6 @@ impl SessionStore {
             remaining: times,
             seen: 0,
         });
-    }
-
-    /// Disarm every injected write failure ([`SessionStore::set_write_fault_for_tests`]).
-    #[doc(hidden)]
-    pub fn clear_write_fault_for_tests(&mut self) {
-        self.faults.clear();
     }
 
     /// How many [`SessionStore::append`] calls this store has seen, refused ones included

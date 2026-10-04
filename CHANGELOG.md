@@ -5,6 +5,30 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Fixed
+
+- **`docs/user/troubleshooting.md` told you to wait four seconds for a stale session lock. It is
+  six.** `DEAD_HOLDER_SETTLE` was widened at M293 and three user-facing documents kept the old
+  figure. Corrected in `troubleshooting.md`, `sessions.md` and `glossary.md`, with the reason the
+  window is three heartbeats rather than two (M308).
+- **`docs/START-HERE.md` promised the definition of "agent" in its first section and delivered it
+  eight sections later.** The definition is now where the promise is. `README.md` likewise used
+  `harness` and `workspace` — the two words its opening sentence depends on — without defining
+  either; both are now defined at first use and both have glossary entries (M308).
+- **`docs/design/epsilon-architecture.md` omitted `epsilon-runtime` and `epsilon-desktop` from its
+  dependency table and gave runtime composition to `epsilon-cli`** — contradicting an architecture
+  invariant, in step 4 of the reading order the guide prescribes (M308).
+
+### Removed
+
+- **19 verified-dead items, 137 lines.** Each was re-confirmed to have zero callers anywhere —
+  including tests — before deletion. Three items the audit also listed as dead are **kept**, and
+  the reasons are the point: `GOAL_DEFAULT_ROUNDS` red-bars the clippy gate if deleted alone
+  (its sibling import becomes unused), `register_builtins_with_skills` is kept by a recorded
+  maintainer decision, and `OAUTH_SYSTEM_IDENTITY` is the only record of an unwired pi-parity
+  behaviour. The audit's own header said "23 items, 175 lines"; it has 22 rows summing to 160,
+  so neither number could be acted on (M308).
+
 ### Product
 
 - **The window's accessibility tree is now known to reach the operating system.** Every

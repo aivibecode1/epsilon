@@ -354,11 +354,6 @@ pub fn load_disabled_skills() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Whether a skill is switched off.
-pub fn skill_is_disabled(name: &str) -> bool {
-    load_disabled_skills().iter().any(|n| n == name)
-}
-
 /// Switch a skill on or off, and report the NEW state.
 ///
 /// Mirrors [`toggle_favorite_model_in`] exactly -- read the file into a table,

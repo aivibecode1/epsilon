@@ -497,11 +497,6 @@ impl TranscriptLine {
         Self::new(kind, text, Some(full), false, None)
     }
 
-    /// Fenced-code line (markdown-lite rendering).
-    pub fn code_line(text: impl Into<String>) -> Self {
-        Self::new(LineKind::Assistant, text, None, true, None)
-    }
-
     /// Assistant message carrying raw markdown; expanded at render time.
     pub fn assistant_md(text: impl Into<String>) -> Self {
         let text = text.into();

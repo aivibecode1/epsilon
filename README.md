@@ -4,11 +4,12 @@
   <img src="assets/Logo.png" alt="Epsilon logo" width="720">
 </p>
 
-Epsilon is a coding-agent harness written in Rust: a native desktop IDE, a terminal
-UI, a headless mode, an HTTP/SSE server and a stdio RPC frontend over one agent
-core. It began as a port of [pi-agent](https://github.com/earendil-works/pi) and has
-since taken execution, permission and recovery ideas from DeepSeek Harness, Hermes
-Agent and opencode.
+Epsilon is a coding-agent **harness** — the program that runs an agent: it talks to a model,
+offers it tools, decides what it is allowed to do, and keeps the conversation — written in Rust,
+with a native desktop IDE, a terminal UI, a headless mode, an HTTP/SSE server and a stdio RPC
+frontend over one agent core. It began as a port of
+[pi-agent](https://github.com/earendil-works/pi) and has since taken execution, permission and
+recovery ideas from DeepSeek Harness, Hermes Agent and opencode.
 
 The port is **not complete**, and this file says where it stops rather than
 leaving that to be discovered.
@@ -26,8 +27,9 @@ leaving that to be discovered.
 
 ## What it does
 
-You point it at a workspace and describe a task. It reads files, edits them, runs
-commands, searches, delegates to subagents, and keeps a session you can resume.
+You point it at a **workspace** — the folder of code you want it to work in, which is also the
+boundary it may not read or write outside of — and describe a task. It reads files, edits them,
+runs commands, searches, delegates to subagents, and keeps a session you can resume.
 Every side-effecting action passes a permission gate first, and on Windows the
 commands it runs are confined by a Job Object, on Linux by bubblewrap where it is
 installed.
@@ -173,8 +175,19 @@ Two habits that save time here:
   the variable is optional, and it is the only test that can fail because
   the program never reached a terminal.
 
-Test counts, gate results and their limits are recorded per milestone in
-[docs/history.md](docs/history.md), not asserted here.
+Test counts, gate results and their limits are **not** asserted here. Where to find them, and how
+far each source reaches, measured 2026-10-04:
+
+| Source | What it carries | Reaches |
+|---|---|---|
+| [`docs/history.md`](docs/history.md) | one row per milestone: what shipped, acceptance criteria, and a `GATE PASS`/`FAIL` line on 46 of the 280 rows | **M0–M276** |
+| [`docs/README.md`](docs/README.md) | an annotated pointer list of the milestones a reader is most likely to want | **M0–M276** |
+| [`docs/STATUS.md`](docs/STATUS.md) | the living record: the current battery, its numbers, the knobs it ran under, and what is still broken | **current** |
+
+The first two stop at M276 because **M277 onward have no dev log at all** — `docs/history.md`
+records that decision rather than inventing rows. For anything after that, `STATUS.md` is the
+only one of the three that is current, which is why it is named last and why the reading guide
+points at it.
 
 ## Documentation
 

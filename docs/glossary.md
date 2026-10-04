@@ -12,6 +12,18 @@ Entries are grouped by theme. Within a group they are alphabetical.
 
 ## The agent loop
 
+**Harness** — the program that *runs* an agent, as distinct from the model inside it. A model
+can only produce text; the harness is what gives it tools, sends it the conversation, decides
+what it is allowed to do, and remembers what happened. Epsilon is a harness, and so is pi, and
+so is every other project in [`../CREDITS.md`](../CREDITS.md) — which is why that word is in
+this project's one-line description.
+
+**Workspace** — the folder of code you point the agent at, and at the same time **the boundary
+it may not leave**: reads, writes and the commands it runs are checked against this root, not
+merely rooted in it. A path that escapes is refused rather than joined. Set per launch; the
+session remembers which one it was. See [`user/permissions.md`](user/permissions.md) and the
+path policy in `epsilon-tools`.
+
 **Agent loop** — The cycle that makes an LLM useful: send the conversation to the
 model, stream back its reply, run any tool calls it asked for, append the results,
 and repeat until the model stops asking for tools. Epsilon's loop lives in

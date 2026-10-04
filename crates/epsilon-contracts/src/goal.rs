@@ -210,11 +210,6 @@ fn default_max_rounds() -> u32 {
 }
 
 impl GoalSnapshot {
-    /// Rounds still available under the cap.
-    pub fn rounds_remaining(&self) -> u32 {
-        self.max_rounds.saturating_sub(self.rounds_started)
-    }
-
     /// Whether the cap has been reached.
     pub fn exhausted(&self) -> bool {
         self.rounds_started >= self.max_rounds

@@ -583,21 +583,6 @@ pub fn snapshot_rows_with_kinds(
     cache.visible_rows_with_kinds(skip, visible)
 }
 
-/// [`snapshot_rows`] under an explicit render state: the shape a test needs to
-/// open one card and leave the others collapsed.
-pub fn snapshot_rows_in(
-    lines: &[TranscriptLine],
-    width: usize,
-    state: &RenderState<'_>,
-    skip: usize,
-    visible: usize,
-    theme: &Theme,
-) -> Vec<Line<'static>> {
-    let mut cache = RenderCache::new();
-    cache.reconcile(lines, width, state, theme, &HashSet::new());
-    cache.visible_rows(skip, visible)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

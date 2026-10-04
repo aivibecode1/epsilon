@@ -1097,28 +1097,6 @@ impl Theme {
         self.role(Role::text_dim, Emphasis::Plain)
     }
 
-    /// The border of the overlay that owns the keyboard.
-    pub fn border_active(&self) -> Style {
-        self.role(Role::border_focus, Emphasis::Focus)
-    }
-
-    /// Chrome that should be readable but not competing: titles, hints, borders.
-    pub fn muted(&self) -> Style {
-        self.role(Role::text_dim, Emphasis::Plain)
-    }
-
-    /// A selected row whose description text should stay quiet.
-    ///
-    /// Reversed like [Self::selected] so the two halves of one row highlight
-    /// as a single band instead of two different treatments.
-    pub fn selected_muted(&self) -> Style {
-        // Reversed in every mode: it is the quiet half of a row that is already
-        // reversed, and two different treatments inside one highlighted row read
-        // as a rendering fault rather than as emphasis.
-        self.role(Role::text_faint, Emphasis::Plain)
-            .add_modifier(Modifier::REVERSED)
-    }
-
     /// The accent used for authentication prompts.
     pub fn auth(&self) -> Style {
         self.role(Role::warn, Emphasis::Plain)

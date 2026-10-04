@@ -958,7 +958,7 @@ impl Agent {
 
     /// The discovered skills with their descriptions and paths.
     ///
-    /// `skill_names` is enough for a count badge, but pi's `get_commands` returns
+    /// A count badge only needs the skill names, but pi's `get_commands` returns
     /// `RpcSlashCommand` carrying a description and a `sourceInfo` path
     /// (`rpc-types.ts:130-141`), so a client building a command palette needs the whole
     /// row. Public because that is now a real caller rather than a future one.
@@ -968,11 +968,6 @@ impl Agent {
 
     fn skill_list(&self) -> Vec<crate::skills::Skill> {
         self.skills.lock().map(|s| s.clone()).unwrap_or_default()
-    }
-
-    /// Names of discovered skills (for `/skills` and diagnostics).
-    pub fn skill_names(&self) -> Vec<String> {
-        self.skill_list().into_iter().map(|s| s.name).collect()
     }
 
     /// Seed the transcript from a previous session (M12 `--resume`).
@@ -993,11 +988,6 @@ impl Agent {
         self.clear_usage_anchor();
         // ...and so is any run-scoped replacement built on top of it (CORE-02).
         self.bump_history_epoch();
-    }
-
-    /// Number of restored transcript entries (diagnostics after `restore_history`).
-    pub fn restored_len(&self) -> usize {
-        self.history.lock().map(|h| h.len()).unwrap_or(0)
     }
 
     /// Re-derive the model view from the store's *current* leaf and restore it into

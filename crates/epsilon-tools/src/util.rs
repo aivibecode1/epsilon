@@ -325,12 +325,8 @@ pub fn read_text_for_edit(path: &Path) -> Result<String, ToolFailure> {
     String::from_utf8(buf).map_err(|_| ToolFailure::msg("refused to edit: file is not valid UTF-8"))
 }
 
-/// Read a file's bytes, refusing probable binaries (NUL in the first 4 KiB).
-pub fn read_text_capped(path: &Path) -> Result<String, ToolFailure> {
-    read_text_capped_ex(path).map(|(text, _)| text)
-}
-
-/// As [`read_text_capped`], but also reports whether the file was longer than the byte cap.
+/// Read a file's bytes, refusing probable binaries (NUL in the first 4 KiB), and report
+/// whether the file was longer than the byte cap.
 ///
 /// The caller needs to know: a truncated read is a *partial view* and must be announced as
 /// one (`grep` names the files it could only search in part). The read tool no longer uses
@@ -732,11 +728,6 @@ impl LiveOutput {
                 details: serde_json::json!({ "streaming": true }),
             });
         })
-    }
-
-    /// Whatever has arrived so far (used by tests and by a final flush).
-    pub fn current_tail(&self) -> String {
-        self.tail.lock().map(|b| b.clone()).unwrap_or_default()
     }
 }
 

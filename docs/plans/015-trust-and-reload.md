@@ -160,7 +160,7 @@ If 013 used deferred wording (`trust deferred / reload deferred`), update to `"S
 Add in `crates/epsilon-tui/src/app.rs` `#[cfg(test)]`:
 
 - `trust_yes_persists_hash` — create temp `.epsilon/config.toml`, run `/trust yes`, assert `trust.json` now contains `config_sha256` matching `current_project_config_hash`.
-- `reload_refreshes_skills` — create temp skill root with a `SKILL.md`, attach agent with 0 skills, run `/reload`, assert `agent.skill_names()` now non-empty.
+- `reload_refreshes_skills` — create temp skill root with a `SKILL.md`, attach agent with 0 skills, run `/reload`, assert `agent.skills()` now non-empty.
 
 Use `tempfile::tempdir` pattern from `crates/epsilon-core/tests/*`.
 

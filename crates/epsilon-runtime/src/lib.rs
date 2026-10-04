@@ -348,17 +348,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Record `hash` as trusted in `<workspace>/.epsilon/trust.json` (the user
-/// accepted a changed project config — pi trust-manager's "trust" answer).
-pub fn accept_project_config_hash(workspace: &Path, hash: &str) -> Result<(), String> {
-    let path = workspace.join(TRUST_FILE_REL);
-    std::fs::write(
-        &path,
-        serde_json::json!({ "config_sha256": hash }).to_string(),
-    )
-    .map_err(|e| format!("could not write {}: {e}", path.display()))
-}
-
 /// path → trusted map (pi `TrustFile`: `true`/`false`; `null` removes the key).
 type TrustMap = BTreeMap<String, bool>;
 

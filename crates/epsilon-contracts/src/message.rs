@@ -184,17 +184,6 @@ impl Usage {
             cache_reported: self.cache_reported || other.cache_reported,
         }
     }
-
-    /// A usage whose provider reported no cache fields, whatever the token counts are.
-    ///
-    /// The honest constructor for a decoder that looked and found no cache keys.
-    /// Spelling it as a method rather than a struct literal means the flag and
-    /// the counts are set together, so a call site cannot mark tokens as
-    /// "measured" by accident.
-    pub fn without_cache(mut self) -> Usage {
-        self.cache_reported = false;
-        self
-    }
 }
 
 impl std::ops::Add for Usage {

@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M307)
+Last updated: 2026-10-04 (M308)
 
 ## Current task
 
@@ -128,13 +128,11 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m305final`](../audit/evidence/gate-m305final-2026-10-04.txt),
-2026-10-04 — the final tree, so this log describes the code as it stands rather than as it stood
-before the documentation was corrected.** Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,041 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines. `check-links`: **764 relative links, 0 broken**.
-**The eighth ignored test is `the_window_rasterises_to_an_image_that_is_not_blank`** — it needs a
-GPU adapter, and a test that fails for want of one is a test that gets deleted rather than read.
+**Latest green battery: [`gate-m308`](../audit/evidence/gate-m308-2026-10-04.txt),
+2026-10-04 — the final tree.** Ten legs, all `[exit=0]`, zero non-zero legs.
+**2,042 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **771 relative links, 0 broken**. The eighth ignored test
+is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter.
 Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
 `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
 set by the caller and so is not in the log's own header** — it is appended to the evidence file by
@@ -150,6 +148,111 @@ hand, which is the only reason a reader can find it at all.
 | M303 | A session model switch recorded in one front end only; the RPC paths got the same defect back. **Found on disk, unverified, and its first battery failed twice** | `gate-m303` (red) → `gate-m304` |
 | M304 | A **false claim in ADR-022 and here** that a test pinned numbers no build can produce; the title and status bars drawn with no width budget; two code comments stating the opposite of the truth | [`gate-m304final`](../audit/evidence/gate-m304final-2026-10-04.txt) |
 | M305 | **The first image of this window** — offscreen rasterisation, and a defect only looking could find | [`gate-m305r`](../audit/evidence/gate-m305r-2026-10-04.txt) (after a red [`gate-m305`](../audit/evidence/gate-m305-2026-10-04.txt) on clippy) |
+| M306 | Opening `/model` printed four lines about a provider nobody chose; cancelling `/login` threw away what it had kept | covered by `gate-m307` and `gate-m308` — same tree, no separate leg |
+| M307 | The window's accessibility tree read through **Windows UI Automation**, from another process | [`gate-m307`](../audit/evidence/gate-m307-2026-10-04.txt) |
+| M308 | 19 verified-dead items deleted; five documents that contradicted the code corrected | [`gate-m308`](../audit/evidence/gate-m308-2026-10-04.txt) |
+
+### M308 — the dead-code ledger re-verified, and five documents that contradicted the code
+
+**The ledger was wrong about itself before anything was deleted.** Class A
+(`audit/evidence/ponytail-deadcode-2026-10-04.md`) says *"23 items, 175 lines"*. The table has
+**22 rows** and their `Lines` column sums to **160**. Neither the count nor the total could be
+acted on, and both were quoted in this file. **A summary of an audit is not the audit** — that
+lesson is already written down twice here, and this is the third instance.
+
+A read-only pass re-verified all 22 with word-boundary greps over the whole workspace. **Every
+one still had zero callers** — the ledger's conclusions survived the tree moving — but three
+must not be deleted, which is the part that only a re-check could find:
+
+| Item | Why it stays |
+|---|---|
+| `GOAL_DEFAULT_ROUNDS` | Deleting it makes the `DEFAULT_MAX_GOAL_ROUNDS` import unused, and `clippy -D warnings` is a gate. **A bare deletion red-bars the build.** |
+| `register_builtins_with_skills` | **Deliberately kept, in writing.** `M97:80-84` and `M215:115-117` record the decision, `epsilon-tools/README.md:21` lists it as an entry point, and ADR-012's amendment cites it. Removing it is a doc/ADR decision, not a sweep. |
+| `OAUTH_SYSTEM_IDENTITY` | The sole record of an unwired pi-parity behaviour. Class B2's shape — *"the unreachable named path is the finding"* — not dead code. |
+
+**The other 19 are deleted** (137 ledger-lines). The traps the pass cleared by eye are the
+useful part of its method, because each is a way this could have gone wrong: `read_text_capped`
+vs the live `read_text_capped_ex`; `accept_project_config_hash` vs the live `_in` variant;
+`without_cache` vs the *test name* `without_cache_keys`; `frame_bytes` the function vs
+`frame_bytes` a local in a bedrock test; `muted` the method vs the reference design's `text.muted`
+vocabulary. **A substring match that is really a different identifier is how a deletion sweep
+breaks a build it was sure about.**
+
+#### Three documents that described a tree that had moved
+
+All four of the following were found by a read-only pass that followed `docs/START-HERE.md` as a
+newcomer would, and every one was verified against source before it was changed.
+
+1. **`docs/user/sessions.md` and `docs/glossary.md` said the lease window is 4 seconds. The code
+   says 6.** `crates/epsilon-session/src/lease.rs` holds `HEARTBEAT = 2s` and
+   `DEAD_HOLDER_SETTLE = 6s`, and **its own doc comment records that M293 widened it from 4 s** —
+   so this was a stale copy, not a typo. Two documents describing one constant is how a reader
+   ends up with a number the code does not use.
+2. **`docs/design/epsilon-architecture.md` contradicted a locked invariant.** Its dependency table
+   listed neither `epsilon-runtime` nor `epsilon-desktop`, and gave `epsilon-cli` the
+   responsibility for *"runtime composition"*. Composition happens in exactly one place and it is
+   not the CLI — that is `AGENTS.md` §2.2. It mattered because **this file is step 4 of the
+   reading order `START-HERE` prescribes**, so a newcomer met an architecture contradicting the
+   document they had been told to read first. Two rows added, derived from the manifests.
+3. **`docs/README.md` claimed its milestone list "is kept current from M83 forward" and named ten
+   log-less milestones.** Measured: **255 logs, highest M276, 22 milestones with no log.**
+   `M277` onward have neither a log nor a history row, which `history.md` explains. **This
+   paragraph has now been wrong twice, both times by claiming currency, in the file that is the
+   map** — and `check-links` cannot see any of it, because a stale sentence is not a broken link.
+
+#### Four more, and one the reviewer got wrong
+
+The same newcomer pass produced seven more claims. Four were real and are fixed; **one was the
+reviewer's own arithmetic, and it is worth recording because the discipline has to run in both
+directions.**
+
+**Real, and fixed:**
+
+- **`docs/user/troubleshooting.md:24`** was a **third** user-facing copy of the stale 4-second
+  lease figure, beyond the two the pass named. The first fix touched two files; the grep that
+  found the third is the only reason it is not still wrong.
+- **`docs/history.md`'s M211 row** ends *"which is why `DEAD_HOLDER_SETTLE` stays at 4 s"* — true
+  when written, and **nothing later supersedes it, because M277 onward have no history rows.** A
+  history row that makes a forward-looking claim needs a correction when the claim lapses, or the
+  file quietly becomes a description of a tree that moved. A pointer to the current figure is now
+  inline.
+- **ADR-003's title and Decision** said the provider layer *"adapts `genai 0.6.x`"*. **`genai`
+  appears nowhere in `Cargo.lock`** (`grep -c` → `0`). The superseding M17 amendment is in the
+  same file, ~40 lines below. It is one of the **three files** `START-HERE` tells a newcomer to
+  read first, so a reader who stops at the Decision has the wiring backwards. Marked superseded
+  at the heading, pointing at the amendment — the decision text itself is left unedited, because
+  rewriting an ADR is not what an ADR log is for.
+- **`README.md` never defined `harness` or `workspace`** — the two words its own first sentence
+  depends on. Both are now defined at first use, and both have glossary entries, where neither
+  had one.
+- **`docs/START-HERE.md:6` promised** the definition of *agent* *"is the first section"* and
+  delivered it at line 184. **The fix is to make the promise true rather than to weaken it** — the
+  definition is now in the sentence that promises it.
+- **`docs/START-HERE.md`'s `Milestone` entry** said *"every milestone has a row in `history.md`"*
+  and used `M292` as its example. Measured: rows run **M0–M276**, logs stop at **M276**, and an
+  `M292` example names a milestone with no record. Both corrected.
+
+**And one the reviewer got wrong.** It reported that `README.md`'s *"all ten gates — five
+repository checks, `fmt`, `clippy`, the test suite, the offline demo and the real-feature check"*
+is *"a nine-item list labelled ten"*. **It is ten**, and `gate.ps1` has exactly ten legs:
+`check-links`, `check-agents-lock`, `check-lint-tables`, `check-line-endings`,
+`check-control-bytes` (five), then `fmt`, `clippy`, `test`, `demo`, `real-check` (five). Nothing
+was changed, and the count was checked against the script rather than against the review.
+**A reviewer's finding is a claim about a tree, and this one was wrong about a file it had open.**
+
+#### And a defect I nearly recorded that is not one
+The fresh TUI frame dump shows the approval footer at 80×24 as
+`approval · y allow once · a always · n deny · e`, with `deny + guidance` cut off. I read that as
+the half-hint defect `footer.rs:308-314` names. **It is not.** That passage draws the distinction
+exactly: `pageup sc` is wrong because it advertises **a key that does not exist**, while dropping
+the action and keeping a real key is the *designed* degradation — *"the action can go without the
+key."* A bare `e` names a key that is really bound. **Degraded, and honest.** The test's `legal`
+set already encodes that, and it passes.
+
+What the frame did establish is worth keeping: the budget loop emits key and action together or
+neither (`footer.rs:400-412`), so the bare `e` came from `side_by_side` cutting at a character
+*after* the budget approved the pair. The guard is now asserted over both approval footers, which
+it never was — it was named for *"no footer row"* and exercised one state.
 
 ### M307 — the accessibility tree reaches the OS, and that layer had never been checked
 
@@ -405,6 +508,7 @@ The batteries from m299 onwards, and what each failure taught:
 | `m305r` | — | **GATE PASS** — 2,041 passed / 0 failed / 8 ignored across 78 binaries. The eighth ignored test is the rasteriser, which needs a GPU adapter a CI runner has none of |
 | `m305final` | — | **GATE PASS** — same numbers, re-run over the final tree after the documentation corrections |
 | `m307` | — | **GATE PASS** — 2,041 passed / 0 failed / 8 ignored across 78 binaries, `check-links` 764/0. The Rust tree is byte-identical to `m305final`; this run exists so one log covers a tree that also carries the new probe and its evidence |
+| `m308` | — | **GATE PASS** — **2,042 passed / 0 failed / 8 ignored**, 771 links, 0 broken. The one added test is the approval-footer guard. Clippy clean over 19 deletions, which is the leg that matters here: an orphaned import is exactly what a deletion sweep leaves behind |
 
 **The two rows worth remembering are the ones that were not my change.** Two tests were failing for
 a reason that had nothing to do with anything under test, and the only reason it surfaced at all is

@@ -3,8 +3,12 @@
 A reading guide for anyone meeting Epsilon for the first time — reviewer, contributor, or
 someone who just wants to know what this thing is.
 
-You do not need to know Rust. You do need to know what an **agent** is. That is the first
-section.
+You do not need to know Rust. You do need to know what an **agent** is, so here it is before
+anything else: **an agent is a program that carries out a goal you describe, by deciding what to
+do next and doing it** — reading a file, running a command, then looking at the result before
+choosing again. It is not a chatbot that only replies in text, and it is not a script that
+follows steps you wrote in advance. The full entry is in
+[the glossary](#5-glossary) if you want it later; everything below assumes this much.
 
 ---
 
@@ -169,10 +173,12 @@ allowed direction, so a crate cannot quietly use one it should not.
 so a conversation stays readable in any text editor and a damaged line costs one line rather
 than the file.
 
-**Milestone (`M###`)** — a numbered unit of work in this project's history. `M292` is the
-two-hundred-and-ninety-second. Every milestone has a row in [`history.md`](history.md); recent
-ones are also summarised in [`../CHANGELOG.md`](../CHANGELOG.md) and, while work is in flight,
-in [`STATUS.md`](STATUS.md).
+**Milestone (`M###`)** — a numbered unit of work in this project's history. `M276` is the
+two-hundred-and-seventy-sixth. **The numbering runs past where the records do, and the gap is
+worth knowing about before you go looking:** `history.md` has a row for every milestone up to
+**M276**, and the last dev log under `milestones/` is `M276` too — `M277` onward have no log and
+no history row, by a recorded decision rather than by omission. Work after that lives in
+[`STATUS.md`](STATUS.md) and in [`../CHANGELOG.md`](../CHANGELOG.md).
 
 **Ponytail** — a minimalism discipline this project applies before adding anything, by
 [DietrichGebert](https://github.com/DietrichGebert/ponytail) (MIT). It asks one question in

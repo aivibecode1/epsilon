@@ -89,6 +89,18 @@ resume-without-reinventing-the-loop.
 
 ## ADR-003: Provider layer wraps genai behind our own StreamFn trait
 
+> **SUPERSEDED by the M17 amendment below — read that before this.**
+>
+> The `StreamFn` seam this ADR introduces is still the design and still the reason the
+> amendment was cheap. **The `genai` transport underneath it is gone**: `genai` appears
+> nowhere in `Cargo.lock`, and `epsilon-llm` speaks each provider's native HTTP/SSE wire
+> directly. The title and the Decision below are the decision *as taken*, kept unedited
+> because that is what an ADR log is for — but a reader who stops at line 93 has the
+> wiring backwards, and this heading is one of the three files
+> [`../START-HERE.md`](../START-HERE.md) tells a newcomer to read first.
+>
+> Verified 2026-10-04: `grep -c '^name = "genai"' Cargo.lock` → `0`.
+
 **Decision.** `epsilon-llm` defines a `StreamFn` trait with pi's never-throws failure contract; the
 default implementation adapts `genai 0.6.x`; genai types never leak past this crate.
 
@@ -129,7 +141,9 @@ its README); if a needed capability (e.g., fine-grained thinking budgets) is mis
 hatch is a custom StreamFn for that provider - the seam exists precisely for this.
 
 **Amendment (M17, superseded by the pi port).** The escape hatch above became the whole
-design. genai's concrete failure modes were observed in practice and matched this ADR's
+design. **This amendment is what supersedes the ADR-003 heading and Decision above** — the
+transport they name is no longer in the workspace. genai's concrete failure modes were
+observed in practice and matched this ADR's
 risk call exactly: `AdapterKind::from_model` silently routed bare `kimi-*`/`glm-*`/
 `llama-*` ids to its Ollama adapter; it invented env-var spellings (`OPEN_ROUTER_API_KEY`);
 it carried no model metadata (forcing a models.dev dependency anyway). Epsilon now speaks

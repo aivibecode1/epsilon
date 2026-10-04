@@ -203,17 +203,6 @@ pub fn builtin_registry(confinement: &Confinement) -> ToolRegistry {
     r
 }
 
-/// The full built-in registry: confinement, plus diagnostics when the caller supplies a provider.
-/// This is what the product path uses.
-pub fn builtin_registry_with(
-    confinement: &Confinement,
-    diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
-) -> ToolRegistry {
-    let mut r = ToolRegistry::new();
-    register_builtins_with(&mut r, confinement, diagnostics);
-    r
-}
-
 /// The product registry, **and** the gate runner that shares its sandbox.
 ///
 /// The one callers want: a frontend driving a goal needs both the agent's tools and a way

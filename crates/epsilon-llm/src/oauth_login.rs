@@ -1111,15 +1111,6 @@ pub enum LoginSaved {
     },
 }
 
-/// Read a line from stdin, trimmed; `None` on EOF.
-pub fn read_line_from_stdin() -> Option<String> {
-    let mut line = String::new();
-    match std::io::stdin().read_line(&mut line) {
-        Ok(0) | Err(_) => None,
-        Ok(_) => Some(line.trim().to_string()),
-    }
-}
-
 /// Best-effort browser open (pi shells out to the platform opener too).
 /// Returns whether the spawn succeeded — a failure only changes the message,
 /// the URL is always printed.

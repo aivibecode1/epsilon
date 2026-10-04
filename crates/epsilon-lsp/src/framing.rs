@@ -165,13 +165,6 @@ where
     Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
-/// Build the frame bytes for tests and fixtures (the write path without a writer).
-pub fn frame_bytes(body: &[u8]) -> Vec<u8> {
-    let mut out = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
-    out.extend_from_slice(body);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
