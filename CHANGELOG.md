@@ -7,6 +7,14 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **A stolen-from session lock no longer deletes its thief's lock.** The lock file carried only
+  the holder's pid, so a process whose lock had been taken over could not tell its own file from
+  the new holder's — and removed it on the way out. The thief's heartbeat then failed for ever,
+  its errors discarded, and a third process saw no lock at all. Each acquisition now writes an
+  owner token, and a lease removes only the lock that is still its own (M294).
+- **A live session holder survives two missed heartbeats instead of one.** The window before
+  which a running process is mistaken for a dead one is now three heartbeats, not two (M294).
+
 - **A recovery copy can no longer be left half-written.** The `.pre-epsilon` copy is written to
   a scratch name and renamed, so an interrupted copy — a full disk, antivirus interference —
   can no longer leave a truncated file that the once-only rule then treats as the true original

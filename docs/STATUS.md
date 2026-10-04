@@ -106,8 +106,8 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M293):**
-[`../audit/evidence/gate-m296-2026-10-04.txt`](../audit/evidence/gate-m296-2026-10-04.txt).
+**Green full-workspace battery, latest measured 2026-10-04 (M294):**
+[`../audit/evidence/gate-m297-2026-10-04.txt`](../audit/evidence/gate-m297-2026-10-04.txt).
 
 | Gate | Result |
 |---|---|
@@ -118,7 +118,7 @@ configuration:**
 | `check-control-bytes` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS — zero warnings |
-| `cargo test --workspace` | **PASS — 2,020 passed, 0 failed, 7 ignored, 78 binaries** |
+| `cargo test --workspace` | **PASS — 2,022 passed, 0 failed, 7 ignored, 78 binaries** |
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
 
@@ -260,21 +260,29 @@ against the same bar and merge into the list above.
    **before** the header is stamped, which changes no other byte (the second call inside
    `persist_migration` is the once-only no-op) and moves the failure earlier.
 5. **A desktop probe** (`scripts/desktop-probe.py`), the desktop equivalent of `console-probe.py`.
-6. **Lease: a live holder can be stolen from, and the victim's `Drop` deletes the thief's
-   lock.** Both confirmed by reading `crates/epsilon-session/src/lease.rs`, with the arithmetic:
-   the steal predicate is *mtime unchanged across a poll **and** ≥ `DEAD_HOLDER_SETTLE` (4 s)*
-   against a 2 s heartbeat, so **two** consecutive missed ticks and the lock is gone while the
-   process is alive. Nothing detects it: the store's lease field is `_lease` and never read, and
-   `append` writes through an already-open handle. Worse, the lock file contains `pid=<n>` and
-   nothing else — no owner token — and `Drop` removes the path unconditionally, so a stolen-from
-   holder deletes its successor's lock, whose heartbeat then fails silently forever.
-   `SessionLease::refresh()` has **zero callers** and is dead code.
-   **Two cheap fixes, one that is not cheap:** widening the window (4 s → 6 s) and making `Drop`
-   ownership-checked are each a few lines; making `append` refuse once the lock is gone is a
-   behaviour change that needs an ADR. **Also: four doc comments in `lease.rs` state a live
-   holder is "never" stolen from, and the code cannot honour that.** The honest move is to
-   correct the sentences as well as the constant — an overclaiming comment is a defect a reader
-   will act on.
+6. ~~**Lease: a live holder can be stolen from, and the victim's `Drop` deletes the thief's
+   lock.**~~ **HALF LANDED (M294), and the half that landed is the ownership one.** Both were
+   confirmed by reading `crates/epsilon-session/src/lease.rs`; the arithmetic was 4 s against a
+   2 s heartbeat, so **two** consecutive missed ticks and the lock was gone while the process was
+   alive.
+   - **`Drop` no longer deletes a lock that is not its own.** The lock file carried `pid=` and
+     nothing else for its whole life, so a stolen-from holder could not recognise its own file;
+     it now carries a per-acquisition `owner=` token, and `Drop` removes the file only when that
+     token is still in it. This was the silent half: the victim's heartbeat stamps **by path**, so
+     it kept the thief's lock looking alive, then its drop deleted it, then the thief's heartbeat
+     failed for ever with its errors discarded, and a third process saw **no lock at all**.
+     Negative control run: reverting the guard fails the new test with the message it names.
+     *Residual, stated:* read-then-remove is not atomic; the window shrinks from "however long
+     the victim lives" to microseconds.
+   - **The window is now 6 s, three heartbeats**, so a live holder survives two missed ticks
+     rather than one. The cost is that a killed TUI recovers in ~6 s instead of ~4 s.
+   - **Still open, and it is the half that matters:** nothing detects the takeover. The store's
+     lease field is `_lease` and is never read, `append` writes through an already-open handle,
+     and `SessionLease::refresh()` has **zero callers** and is dead code. Making `append` refuse
+     once the lock is gone is a behaviour-level change and needs an ADR.
+   - **The four doc comments that said a live holder is "never" stolen from are corrected.** An
+     overclaiming comment is a defect a reader will act on: the code cannot honour "never", and
+     the mtime test cannot see a starved process, only a quiet one.
 7. **The desktop cannot see composition diagnostics.** Eleven `eprintln!` lines in
    `epsilon-runtime/src/lib.rs:4434…4679` are invisible in a window: the desktop captures only
    `launch.notices`, taken *before* composition (`crates/epsilon-desktop/src/lib.rs:134`). A

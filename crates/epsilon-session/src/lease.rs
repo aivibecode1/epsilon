@@ -6,7 +6,7 @@
 //!
 //! - acquire = create `<session>.lock` with `create_new(true)` (atomic on NTFS and POSIX);
 //! - the holder's pid is recorded;
-//! - the holder **heartbeats** the file (M61), so a live process is never mistaken
+//! - the holder **heartbeats** the file (M61), so a live process is not *readily* mistaken
 //!   for a crash leftover;
 //! - release = remove the file (Drop);
 //! - a lock whose mtime is older than [`STALE_AFTER`] is stealable — crash
@@ -59,7 +59,10 @@
 //! terminal window pays it on every launch, and the difference from a real freeze
 //! is not visible from outside the process.
 //!
-//! The fix keeps M136's property — a *live* holder is never stolen from — and
+//! The fix keeps M136's property — a *live* holder is not stolen from while it keeps
+//! stamping — and it tolerates a few missed heartbeats (M293 widened this window from 4 s
+//! to 6 s, because two missed ticks and a live holder was still stolen from; it is not a
+//! guarantee, it is a tolerance) — and
 //! removes the dead-holder case from the wait entirely. Two conditions, both of
 //! which must hold:
 //!
@@ -97,8 +100,9 @@ pub const STALE_AFTER: Duration = Duration::from_secs(30);
 pub const ACQUIRE_WAIT: Duration = STALE_AFTER;
 
 /// How often a live holder re-touches its lock file. Comfortably below
-/// [`STALE_AFTER`] so ordinary scheduling jitter can never make a working
-/// process look dead.
+/// [`STALE_AFTER`], and comfortably inside [`DEAD_HOLDER_SETTLE`] so ordinary scheduling
+/// jitter does not readily make a working process look dead. "Readily", not "never": the
+/// mtime test cannot see a starved process, only a quiet one.
 pub const HEARTBEAT: Duration = Duration::from_secs(2);
 
 /// How long a fresh lock must sit **unmoved** before it is treated as a dead
@@ -115,18 +119,27 @@ pub const HEARTBEAT: Duration = Duration::from_secs(2);
 /// prevent.
 ///
 /// The rule is not "the file did not change". It is **"the file did not change for
-/// longer than a live holder would have taken to change it."** Those are only the
-/// same statement when the window is at least one heartbeat, so the heartbeat was
-/// shortened instead: 2 s, with a 4 s settle window, is a comfortable factor of two
-/// over it.
+/// longer than a live holder would have taken to change it."** That makes the
+/// window a **tolerance for missed heartbeats**, and the old value was exactly two
+/// heartbeats wide — which reads like headroom and is not: **two consecutive missed
+/// ticks and the lock is stolen from a process that is still running**.
+///
+/// Measured by arithmetic, not observed starvation (M293): the holder re-stamps
+/// every [`HEARTBEAT`], the acquirer declares it dead once the stamp has not moved
+/// for this long, so a live holder is safe through **one** missed tick and not
+/// through two. On a loaded machine — where three `epsilon-session` lease tests have
+/// already been seen to go flaky under a 14-crate sweep — "two" is a real
+/// possibility, not a theoretical one. **Three heartbeats is the smallest window
+/// that tolerates two misses**, which is the margin the original text implied it
+/// already had.
 ///
 /// The cost is one `set_modified` on a ten-byte file every two seconds, which is
-/// nothing, and the benefit is that a killed TUI recovers in ~4 seconds instead of
+/// nothing, and the benefit is that a killed TUI recovers in ~6 seconds instead of
 /// 30. A user who closes a terminal window is not left staring at
-/// `waiting for this session to be released — 4s elapsed, ~26s left` with a live
+/// `waiting for this session to be released — 6s elapsed, ~24s left` with a live
 /// process underneath and no input accepted, which is what the 2026-09-28
 /// measurement recorded and what the reported typing-freeze looks like from outside.
-pub const DEAD_HOLDER_SETTLE: Duration = Duration::from_secs(4);
+pub const DEAD_HOLDER_SETTLE: Duration = Duration::from_secs(6);
 
 /// How often a waiting acquirer re-reads the lock while it waits out the stale
 /// window. Small enough that a holder which exits mid-wait is noticed at once,
@@ -193,10 +206,14 @@ pub enum LeaseOutcome {
     },
 }
 
-/// An acquired lease; heartbeats while held and removes the lock file on drop.
+/// An acquired lease; heartbeats while held and removes the lock file on drop —
+/// **if it is still this lease's lock file** (M293).
 #[derive(Debug)]
 pub struct SessionLease {
     path: PathBuf,
+    /// Identifies *this acquisition* in the lock file's text, so `Drop` can tell its
+    /// own lock from one that was taken from it.
+    owner: String,
     /// Signals the heartbeat thread to stop, waking it immediately.
     stop: Option<std::sync::mpsc::Sender<()>>,
     heartbeat: Option<std::thread::JoinHandle<()>>,
@@ -396,13 +413,15 @@ impl SessionLease {
             .open(&lock_path)
         {
             Ok(mut f) => {
-                let _ = writeln!(f, "pid={}", std::process::id());
+                let owner = new_owner_token();
+                let _ = writeln!(f, "pid={} owner={}", std::process::id(), owner);
                 let _ = f.flush();
                 drop(f);
                 Ok(LeaseOutcome::Acquired(Self::start_heartbeat(
                     lock_path,
                     stale_after,
                     heartbeat,
+                    owner,
                 )))
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(LeaseOutcome::Held {
@@ -416,7 +435,12 @@ impl SessionLease {
 
     /// Start (or take over) the lock at `lock_path` and begin heartbeating it.
     /// The FIRST touch happens immediately: a lease is never born stale.
-    fn start_heartbeat(lock_path: PathBuf, stale_after: Duration, heartbeat: Duration) -> Self {
+    fn start_heartbeat(
+        lock_path: PathBuf,
+        stale_after: Duration,
+        heartbeat: Duration,
+        owner: String,
+    ) -> Self {
         // Guard against a pathological configuration instead of spinning.
         let interval = heartbeat.max(Duration::from_millis(5)).min(stale_after / 2);
         let (tx, rx) = std::sync::mpsc::channel::<()>();
@@ -434,6 +458,7 @@ impl SessionLease {
             .ok();
         Self {
             path: lock_path,
+            owner,
             stop: Some(tx),
             heartbeat: handle,
         }
@@ -464,6 +489,28 @@ fn mtime_of(lock_path: &Path) -> Option<SystemTime> {
     std::fs::metadata(lock_path).ok()?.modified().ok()
 }
 
+/// A token identifying **one acquisition**, written into the lock file beside the pid.
+///
+/// **Per acquisition, not per process, and that is the reason it exists.** The lock file
+/// previously held `pid=<n>` and nothing else, for its whole life — neither the heartbeat
+/// nor `refresh` ever wrote to it, so two acquisitions in one process produced byte-identical
+/// files — and a holder therefore had no way to recognise its own lock in the one moment that
+/// mattered: dropping it. See [`SessionLease::lock_is_ours`].
+///
+/// Cheap and dependency-free: a process-local counter so two acquisitions in the same process
+/// differ, and the clock so two *processes* differ. It is a discriminator for "is this still my
+/// file", not a secret, and nothing authenticates on it.
+fn new_owner_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos:x}-{n:x}", std::process::id())
+}
+
 /// Re-stamp the lock's mtime. `set_modified` (std, 1.75+) needs a writable
 /// handle; opening with `.write(true)` rather than `.append(true)` is the M4
 /// lesson — an append-only handle cannot rewrite metadata-bearing state.
@@ -482,7 +529,34 @@ impl Drop for SessionLease {
         if let Some(handle) = self.heartbeat.take() {
             let _ = handle.join();
         }
-        let _ = std::fs::remove_file(&self.path);
+        // **Only if the lock is still ours (M293).** This used to remove the path
+        // unconditionally, and the path is not a claim: a holder whose lock was judged
+        // stale and taken by another process would delete *that* process's lock on the
+        // way out. The victim's heartbeat stamps by path, so it keeps the thief's file
+        // fresh; then the victim drops, removes it, and the thief's heartbeat fails
+        // forever with its errors discarded — so a third process sees no lock at all and
+        // takes the session with no wait at all. The lock file carried `pid=` and nothing
+        // else, so there was no way to tell the two apart; it carries a per-acquisition
+        // `owner=` token now.
+        //
+        // **A read-then-remove is not atomic**, and the honest statement is that it shrinks
+        // this window from "however long the victim lives" to microseconds. Closing it
+        // needs a rename-based or handle-based delete, which is larger than this fix and
+        // is left rather than smuggled in.
+        if self.lock_is_ours() {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+impl SessionLease {
+    /// Whether the lock file at our path still carries **this acquisition's** token.
+    ///
+    /// `false` is the answer for a lease that was stolen from, and also for one whose
+    /// lock file vanished or became unreadable — in both cases there is nothing here
+    /// that says we may delete a file we cannot identify.
+    fn lock_is_ours(&self) -> bool {
+        std::fs::read_to_string(&self.path).is_ok_and(|text| text.contains(&self.owner))
     }
 }
 
@@ -649,6 +723,71 @@ mod tests {
         // Nothing is re-touching it: give a would-be heartbeat time to misfire.
         std::thread::sleep(Duration::from_millis(80));
         assert!(!lock.exists(), "the heartbeat thread stops with its lease");
+    }
+
+    /// **A holder whose lock was taken from must not delete the new holder's lock.**
+    ///
+    /// The defect this pins is an ownership one, and it is entirely silent. `Drop` removed
+    /// the lock **path**, and a path is not a claim: once another process has judged this
+    /// holder's lock stale, removed it and created its own, this holder's drop deletes the
+    /// thief's file. Worse, this holder's heartbeat stamps **by path**, so it has been
+    /// keeping the thief's lock looking alive this whole time; after the delete, the
+    /// thief's heartbeat fails with `NotFound` forever and its errors are discarded — so a
+    /// third process sees no lock at all and takes the session with no wait. That is the
+    /// second-writer corruption the lease exists to prevent, reached through its own
+    /// cleanup.
+    ///
+    /// Deterministic and no sleeping: the thief is simulated by rewriting the file, which
+    /// is exactly the state the real steal leaves behind. It sits beside
+    /// `dropping_a_lease_stops_the_heartbeat_and_removes_the_lock`, which is the half this
+    /// qualifies.
+    #[test]
+    fn a_holder_whose_lock_was_replaced_does_not_delete_the_replacement() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let session = dir.path().join("s.jsonl");
+        std::fs::write(&session, "").expect("seed");
+        let held = match SessionLease::acquire_with(
+            &session,
+            Duration::from_secs(30),
+            Duration::from_millis(20),
+            Duration::ZERO,
+        )
+        .expect("acquire")
+        {
+            LeaseOutcome::Acquired(held) => held,
+            other => panic!("expected Acquired, got {other:?}"),
+        };
+        let lock = held.path().to_path_buf();
+
+        // The steal, reduced to its effect: the file at our path now names someone else.
+        std::fs::write(&lock, "pid=999999 owner=someone-else\n").expect("another holder took it");
+
+        drop(held);
+
+        assert!(
+            lock.exists(),
+            "the lease dropped a lock file that is no longer its own. The thief's heartbeat \
+             now fails for ever with its errors discarded, and a third process sees no lock \
+             at all."
+        );
+        assert_eq!(
+            std::fs::read_to_string(&lock).expect("read the replacement"),
+            "pid=999999 owner=someone-else\n",
+            "…and it is still the other holder's file, untouched"
+        );
+    }
+
+    /// Two acquisitions in one process must not produce byte-identical lock files, or
+    /// neither can recognise its own.
+    #[test]
+    fn two_acquisitions_carry_different_owner_tokens() {
+        let first = new_owner_token();
+        let second = new_owner_token();
+        assert_ne!(first, second, "an owner token must be per acquisition");
+        assert!(
+            first.starts_with(&std::process::id().to_string()),
+            "and it names the process, so a reader can tell two files apart: {first}"
+        );
     }
 
     #[test]
