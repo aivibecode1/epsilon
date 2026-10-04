@@ -754,6 +754,37 @@ against the same bar and merge into the list above.
      lease field is `_lease` and is never read, `append` writes through an already-open handle,
      and `SessionLease::refresh()` has **zero callers** and is dead code. Making `append` refuse
      once the lock is gone is a behaviour-level change and needs an ADR.
+
+     **Measured 2026-10-04 (M310), because the obvious version of that fix makes things worse.**
+     It looked like a small change — `SessionLease::lock_is_ours()` already exists
+     (`lease.rs:558`, private, used only by `Drop`) and is exactly the predicate. **It is not
+     safe on its own, for two measured reasons:**
+
+     1. **Two production call sites discard the result of `append`**, so a refusal would become a
+        *silent* drop rather than a refusal:
+        - `epsilon-core/src/lib.rs:856` — `record_model_change`, `let _ = guard.append(ModelChange)`
+        - `epsilon-core/src/lib.rs:3655` — `attach_child_session`, `let _ = store.append(Custom { task_meta })`
+        Both would swallow a `StoreError::Leased` exactly as they swallow a write fault today.
+        **Refusing without first giving those two a way to report would trade an interleaving
+        risk for data loss that nobody is told about** — worse than the defect, and a violation
+        of this file's own §6 rule.
+     2. **`lock_is_ours()` answers `false` for an unreadable file as well as a stolen one**
+        (`lease.rs:558` reads the file and returns `is_ok_and`). A false negative would refuse a
+        legitimate write and lose the message. Whichever way this is decided, the refusal has to
+        be loud, and the predicate has to distinguish "someone else owns this" from "I cannot
+        read it right now".
+
+     **So the order is: surface those two errors first, then make `append` refuse.** The repo has
+     already done this once and left the note — `epsilon-core/src/lib.rs:1667` records that the
+     old code there "discarded the result (`let _ = st.append(..)`), which is exactly the silent
+     \[failure\]". A third instance is the signal that the pattern, not the call site, is what
+     needs fixing.
+   - **A related silent site, found by the same sweep:** `epsilon-core/src/lib.rs:3653` reports a
+     task child's session-open failure with `eprintln!`. A window has no console, so a subagent
+     that could not get a durable session file says so to nobody — the same shape as the sixteen
+     composition `eprintln!` lines that were routed through `RunParams::notices` at M…7, one
+     function further down. **Not fixed: it needs a sink from a core function to the front end,
+     which is the same plumbing that fix already built and did not extend here.**
    - **The four doc comments that said a live holder is "never" stolen from are corrected.** An
      overclaiming comment is a defect a reader will act on: the code cannot honour "never", and
      the mtime test cannot see a starved process, only a quiet one.
