@@ -52,6 +52,46 @@ fn type_and_enter(app: &mut App, agent: &Arc<Agent>, text: &str) -> bool {
     handle_key(app, agent, key(KeyCode::Enter))
 }
 
+/// **The first character typed must reach the composer (M312).**
+///
+/// Found by driving the **real binary in a real console** — `scripts/console-probe.py`, which
+/// writes real `KEY_EVENT` records and reads the screen back. Typed `explain the layout module`
+/// and the composer showed `xplain the layout module`; typed `hello` and it showed `llo`; typed
+/// `x` and nothing appeared. Three runs, three losses, always the first character.
+///
+/// **This test is the half that decides where the defect is, and it is deliberately the cheap
+/// half.** If the product dropped the first key, the composer would be missing its first
+/// character here too — and then the fix belongs in `handle_key`. If the composer is complete
+/// here, the loss is between the console and the process, and "fixing" `handle_key` would have
+/// been fixing working code, which this repository has very nearly done before.
+#[tokio::test]
+async fn the_first_character_typed_reaches_the_composer() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    assert_eq!(app.input, "", "the fixture starts with an empty composer");
+
+    for (i, c) in "hello".chars().enumerate() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+        assert_eq!(
+            app.input,
+            "hello".chars().take(i + 1).collect::<String>(),
+            "after typing {} character(s), the composer holds the whole word — the first \
+             character must never be the one that goes missing",
+            i + 1
+        );
+    }
+    assert_eq!(app.input, "hello");
+
+    // **And after a submit**, because the console evidence did not distinguish "the first key of
+    // a session" from "the first key of any burst", and a test that only covers the first case
+    // would pass against a defect in the second.
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert_eq!(app.input, "", "the submit emptied it");
+    for c in "world".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    assert_eq!(app.input, "world", "a second burst is typed whole as well");
+}
+
 #[tokio::test]
 async fn search_command_now_searches_the_transcript_and_not_the_session_log() {
     // M157 replaced this test rather than deleting it, because the behaviour it pinned is

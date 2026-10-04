@@ -305,6 +305,43 @@ like* — voice, verbosity, punctuation, what it skips — is that reader's busi
 closest evidence obtainable without a person listening, and calling it anything more would be the
 kind of overstatement this file has spent four milestones correcting.
 
+### Driving the real binary found a bug that was not in the binary
+
+The most productive hour of this stretch was spent **using** the TUI rather than reading it:
+`scripts/console-probe.py` launches the real `epsilon` in a real console window, writes real
+`KEY_EVENT` records, and reads the screen back.
+
+The screen came back saying the TUI **swallows the first character you type**:
+
+| Typed | Composer showed |
+|---|---|
+| `explain the layout module` | `xplain the layout module` |
+| `hello` | `llo` |
+| `x` | nothing |
+
+Three runs, three losses, always the first character — the shape of a keyboard-first product that
+eats what you type.
+
+**It is the probe's artefact, and it took two checks to know that.**
+`the_first_character_typed_reaches_the_composer` (added to `crates/epsilon-tui` with this finding)
+drives the **real key path in process** and asserts the whole word after every keystroke, before a
+submit and after one: **passes**. And `typing_echoes_into_the_composer`
+(`crates/epsilon-cli/tests/terminal.rs:358`) already types `hello there` under a **real ConPTY** and
+asserts the phrase appears whole: **passes**. So the product keeps the first character and the probe
+loses it — the cause is its own timing, since keys written into a console input buffer before the
+TUI reaches raw mode are processed by the console, which echoes and consumes the first record while
+the rest wait for the application.
+
+**Both the finding and the verdict are recorded in the probe's own docstring**, because the next
+person to read `xplain` off a screen is otherwise one confident commit away from "fixing" working
+code — which this repository has very nearly done before, and did once at M198. The test stays: it
+is the cheapest thing that can say which side of the boundary a future regression is on.
+
+**What the same run did confirm, positively:** the real binary's header prints
+`running 13s · streaming…  ctx <1%/164k · Faux (offline scripted) • thinking off · offline` — the
+thinking level this milestone added, in a real frame — and the permission dialog for the faux
+script's `echo` renders with its guidance row and its keys.
+
 ### The reading guide, walked as a newcomer — and one claim that was simply false
 
 The definition of done asks for `docs/START-HERE.md` to be followed by someone who has never seen

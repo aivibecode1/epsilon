@@ -23,6 +23,20 @@ harness reads, and the program would render into the pipe instead of the screen.
 That mistake costs one confusing run — the first version of this file made it, and
 the screen read back a bare prompt while the frame appeared in the JSON.
 
+KNOWN ARTEFACT — the first character typed is lost, and it is this file's fault, not
+the product's.  Measured on 2026-10-05: typing "explain the layout module" put
+"xplain the layout module" in the composer, and typing "hello" put "llo" there.  The
+cause is the timing this probe exposes — keys are written into the console input
+buffer at a fixed `--at` time, and if the TUI has not reached raw mode by then the
+console processes the first record itself, echoes it, and consumes it; the rest wait
+for the application and arrive intact.  **Do not "fix" the TUI for this.** Two
+independent checks say the product keeps the first character: `typing_echoes_into_the_composer`
+(crates/epsilon-cli/tests/terminal.rs) types "hello there" under a real ConPTY and
+asserts the whole phrase appears, and `the_first_character_typed_reaches_the_composer`
+(crates/epsilon-tui) drives the real key path in process.  Give `--at` enough room
+for the startup notices to stop appearing, or read the transcript rather than the
+composer, when what matters is the rest of the line.
+
 Output is one JSON object on stdout.  Nothing is written to the repository.
 """
 
