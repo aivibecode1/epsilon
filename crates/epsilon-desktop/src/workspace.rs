@@ -538,7 +538,17 @@ pub fn draw_diff(
             .show_rows(ui, line_h, rows, |ui, range| {
                 for i in range {
                     let line = &change.lines[i];
-                    let row = ui.min_rect();
+                    // **Allocate the row, or every context line lands on the same y (M312).**
+                    // The same defect the editor had, found by rendering this pane and looking at
+                    // it: a four-line diff drew its context lines as one band of overlapping text.
+                    // `show_rows` decides which rows to call for; the closure has to give each
+                    // one space. `allocate_exact_size` advances by exactly the height asked for,
+                    // with no `item_spacing` after it (`egui-0.36.2/src/ui.rs:1146-1157`), so the
+                    // stride stays `line_h`.
+                    let (row, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), line_h),
+                        egui::Sense::hover(),
+                    );
                     let (marker, text, color) = match line {
                         crate::diff::DiffLine::Added(t) => ('+', t.as_str(), add),
                         crate::diff::DiffLine::Removed(t) => ('-', t.as_str(), remove),
@@ -624,7 +634,24 @@ pub fn draw_editor(
             .show_rows(ui, line_h, file.len(), |ui, range| {
                 for i in range {
                     let line = &file.lines[i];
-                    let row = ui.min_rect();
+                    // **Allocate the row, or every line lands on the same y (M312).**
+                    //
+                    // `show_rows` is virtualised: it decides *which* lines to call this closure
+                    // for, and the closure is expected to give each one space. egui's own example
+                    // does it with `ui.label(text)`. This loop painted with the painter and
+                    // allocated **nothing**, so the cursor never advanced and every visible line
+                    // was drawn at the same `row.center().y` — **a file opened as one squashed
+                    // band of overlapping glyphs**, which is what the rendered frame showed for a
+                    // five-line file.
+                    //
+                    // `allocate_exact_size` is the right call because it advances by exactly the
+                    // size given (`egui-0.36.2/src/ui.rs:1146-1157` → `allocate_response`), with
+                    // **no** `item_spacing` after it — so the stride stays `line_h` and the
+                    // virtualisation's arithmetic keeps matching what is drawn.
+                    let (row, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), line_h),
+                        egui::Sense::hover(),
+                    );
                     let number = format!("{:>5}", i + 1);
                     crate::app::paint_text(
                         ui.painter(),

@@ -6853,6 +6853,122 @@ mod tests {
         }
     }
 
+    /// **An open file draws its lines on separate lines (M312).**
+    ///
+    /// Found by **rendering the editor pane and looking at it**: a five-line file appeared as
+    /// **one squashed band of overlapping glyphs**. `ScrollArea::show_rows` is virtualised — it
+    /// decides which lines to call the closure for — and this loop painted every row with the
+    /// painter while allocating **nothing**, so the cursor never advanced and every visible line
+    /// landed on the same `y`.
+    ///
+    /// **Asserted on the rects, not the text**, and that is the whole point. `FrameSummary::rows`
+    /// recorded `    1 fn alpha() {` and every other line correctly, because every one of them
+    /// *was* drawn. The defect was entirely in *where*, and `row_rects` — which the loop already
+    /// filled in, with five identical rects — is the one record of *where* this crate keeps.
+    #[test]
+    fn each_line_of_an_open_file_gets_its_own_line() {
+        let (dir, _keep) = scratch_workspace("editor-rows");
+        std::fs::write(
+            dir.join("alpha.rs"),
+            "fn alpha() {\n    let one = 1;\n    let two = 2;\n    let three = 3;\n    \
+             let four = 4;\n}\n",
+        )
+        .expect("a file with six lines");
+        let mut h = Harness::new(dir);
+        h.app.open_file("alpha.rs");
+        let f = h.paint();
+
+        let rects: Vec<egui::Rect> = f
+            .row_rects
+            .iter()
+            .filter(|(region, _)| region == "editor")
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(
+            rects.len() >= 5,
+            "the editor drew {} row(s) for a six-line file:\n{}",
+            rects.len(),
+            f.describe()
+        );
+        for (i, pair) in rects.windows(2).enumerate() {
+            assert!(
+                pair[1].top() > pair[0].top(),
+                "line {} and line {} were drawn at the same height (y={:.1} and y={:.1}) — the \
+                 file is one band of overlapping text rather than lines.\n{}",
+                i + 1,
+                i + 2,
+                pair[0].top(),
+                pair[1].top(),
+                f.describe()
+            );
+        }
+    }
+
+    /// **A change under review draws its lines on separate lines (M312).**
+    ///
+    /// The editor's defect, in the pane beside it, found by rendering both and looking. A
+    /// four-line diff drew its two context lines as one band of overlapping text while the added
+    /// and removed lines — which are drawn with their own offsets — stayed apart, which is why the
+    /// frame looked *almost* right.
+    ///
+    /// Asserted on `row_rects` for the same reason as the editor's: the strings were all correct.
+    #[test]
+    fn a_change_under_review_draws_its_lines_on_separate_lines() {
+        let (dir, _keep) = scratch_workspace("review-rows");
+        let mut h = Harness::new(dir);
+        let mut t = Transcript::new(std::env::temp_dir());
+        t.push_user("tighten the guard");
+        t.push_change(&crate::diff::Change {
+            path: "src/lib.rs".into(),
+            lines: vec![
+                crate::diff::DiffLine::Context("pub fn check(state: &State) -> bool {".into()),
+                crate::diff::DiffLine::Context("    let guard = state.guard();".into()),
+                crate::diff::DiffLine::Removed("    assert!(matches!(guard))".into()),
+                crate::diff::DiffLine::Added(
+                    "    assert!(matches!(guard), \"the guard must hold\")".into(),
+                ),
+                crate::diff::DiffLine::Context("}".into()),
+            ],
+            created: false,
+            coarse: false,
+        });
+        h.app.seed_transcript(t);
+        let change = h
+            .app
+            .transcript
+            .diffs()
+            .first()
+            .cloned()
+            .expect("the seeded change");
+        h.app.review = Some(change);
+
+        let f = h.paint();
+        let rects: Vec<egui::Rect> = f
+            .row_rects
+            .iter()
+            .filter(|(region, _)| region == "editor")
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(
+            rects.len() >= 4,
+            "the review drew {} row(s) for a five-line diff:\n{}",
+            rects.len(),
+            f.describe()
+        );
+        for (i, pair) in rects.windows(2).enumerate() {
+            assert!(
+                pair[1].top() > pair[0].top(),
+                "diff line {} and {} were drawn at the same height (y={:.1} and y={:.1}) — the \
+                 review is a band of overlapping text.\n{}",
+                i + 1,
+                i + 2,
+                pair[0].top(),
+                pair[1].top(),
+                f.describe()
+            );
+        }
+    }
+
     /// Rasterise `h`'s next frame and write it as `name`. Returns 1 on success.
     ///
     /// **Not `Harness::full_frame`**, which clears `textures_delta` on purpose and takes the font
@@ -6963,6 +7079,49 @@ mod tests {
             let mut h = Harness::new(ws.clone());
             h.app.seed_transcript(Transcript::new(ws));
             written += save_frame(&mut h, &dir, "04-empty-transcript.png");
+        }
+
+        // 5. A file open in the editor. **The editor pane is the largest surface in this window
+        //    and the one no rendered frame has ever shown** — the tab strip has a test that
+        //    asserts the field, and every frame so far had only the editor's *empty* state on it.
+        {
+            let (ws, _keep) = scratch_workspace("frames-editor");
+            std::fs::write(
+                ws.join("alpha.rs"),
+                "fn alpha() {\n    // a comment long enough to need eliding in a narrow pane\n    \
+                 let total = compute_the_total(&items, &rates);\n    report(total)\n}\n",
+            )
+            .expect("a file with something in it");
+            let mut h = Harness::new(ws.clone());
+            h.app.open_file("alpha.rs");
+            written += save_frame(&mut h, &dir, "05-file-open.png");
+        }
+
+        // 6. A change under review. **The review is what the `changed` row opens**, and it is a
+        //    surface a reader reaches only after clicking through two other things.
+        {
+            let (ws, _keep) = scratch_workspace("frames-review");
+            let mut h = Harness::new(ws.clone());
+            let mut t = Transcript::new(ws);
+            t.push_user("tighten the guard in lib.rs");
+            t.push_change(&crate::diff::Change {
+                path: "src/lib.rs".into(),
+                lines: vec![
+                    crate::diff::DiffLine::Context("pub fn check(state: &State) -> bool {".into()),
+                    crate::diff::DiffLine::Removed("    assert!(matches!(guard))".into()),
+                    crate::diff::DiffLine::Added(
+                        "    assert!(matches!(guard), \"the guard must hold\")".into(),
+                    ),
+                    crate::diff::DiffLine::Context("}".into()),
+                ],
+                created: false,
+                coarse: false,
+            });
+            h.app.seed_transcript(t);
+            if let Some(change) = h.app.transcript.diffs().first().cloned() {
+                h.app.review = Some(change);
+            }
+            written += save_frame(&mut h, &dir, "06-change-review.png");
         }
 
         eprintln!(

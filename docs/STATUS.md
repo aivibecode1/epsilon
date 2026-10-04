@@ -347,6 +347,36 @@ band`.
 **A test that passes when the defect is present is worse than no test**, because it is a claim.
 That is now written where the recording is, next to the constant.
 
+### And then the editor pane: a file was unreadable, and 2,057 tests were green
+
+Adding two more states to that frame dump — **a file open, and a change under review** — found the
+worst defect of the session. Both panes are virtualised with `ScrollArea::show_rows`, which decides
+*which* rows to call the closure for and expects the closure to give each one space. Both closures
+**painted with the painter and allocated nothing**, so the cursor never advanced and every visible
+line landed on the same `y`:
+
+- the **editor** drew a five-line file as **one squashed band of overlapping glyphs** — the largest
+  surface in the window, unable to display a file at all;
+- the **change review** drew its context lines the same way, while the added and removed lines —
+  which carry their own offsets — stayed apart, so the frame looked *almost* right.
+
+egui's own `show_rows` example puts a `ui.label` inside the loop for exactly this reason
+(`egui-0.36.2/src/containers/scroll_area.rs:967-982`). The fix allocates each row with
+`allocate_exact_size`, which advances by exactly the height asked for and **adds no `item_spacing`**
+(`ui.rs:1146-1157`), so the stride stays `line_h` and the virtualisation's arithmetic keeps
+matching what is drawn.
+
+**Both are asserted on `FrameSummary::row_rects`, not on text**, because the text was never wrong:
+the frame summary listed every line of the file, correctly, in `rows`. **Negative control, run** —
+reverting the allocation fails both tests with *"line 1 and line 2 were drawn at the same height
+(y=100.0 and y=100.0)"*.
+
+**Four rendering defects, one rule, one afternoon.** Three of them share a single cause — a pane
+that paints with the painter while its content follows the `Ui` cursor, or a virtualised row that is
+painted and never allocated. **Every one of them was invisible to a suite of 2,057 passing tests**,
+because the suite asserts *which* strings were drawn and all of them were. The instrument that found
+them is the cheapest thing in the repository: render the window and look at it.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:

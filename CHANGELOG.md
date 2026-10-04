@@ -33,6 +33,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   says so. Found by rendering the window and looking at it: every test in that file asserts *which
   strings* were drawn, and these strings were drawn, just in the wrong place. Both fixes now have a
   negative control that fails with the defect named (M312).
+- **A file opened in the editor was unreadable, and a diff review was a band of overlapping text.**
+  Both panes use `ScrollArea::show_rows`, which decides which rows to draw and expects the draw
+  loop to give each one space; both painted with the painter and allocated nothing, so every line
+  landed on the same height — a five-line file appeared as one squashed band of glyphs. Each row is
+  now allocated, which advances the cursor by exactly the row height. Found by rendering these two
+  states and looking at them, and asserted on the frames' recorded row rectangles rather than on
+  their text, because the text was never wrong (M312).
 - **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
   registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
   window that already had a subagents pane, a session it can name, and a transcript it can empty.
