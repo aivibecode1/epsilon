@@ -63,7 +63,12 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     // Prompt templates are discovered once here rather than per submit: expansion runs on
     // every message, and walking two directories to find files that have not changed would
     // tax the one path that has to stay fast. `/reload` refreshes them.
-    app.discover_prompt_templates();
+    //
+    // **Moved below the `trust_review_pending` assignment, deliberately (A32).** This call
+    // consults that flag to decide whether project templates may load, and it used to run
+    // sixteen lines above where the flag is assigned — so the gate read a field that was
+    // still `false` for the only call that happens at startup. An ordering bug inside a
+    // security check survives review, because each line is correct on its own.
     // M16b: seed the recall ring from the persisted global history so Up works
     // across restarts.
     for entry in epsilon_core::config::load_prompt_history() {
@@ -79,6 +84,7 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     // Audit fix: the trigger is the typed flag from TuiConfig, not a substring
     // match on banner copy (rewording text must never disable a gate).
     app.trust_review_pending = trust_review_pending;
+    app.discover_prompt_templates();
     for line in startup_notices {
         app.ui.push_notice(line);
     }

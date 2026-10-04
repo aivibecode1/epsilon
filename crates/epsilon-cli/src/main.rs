@@ -42,7 +42,7 @@ const USAGE: &str = "usage: epsilon            interactive TUI (default)
   epsilon --import PI.jsonl   convert a pi session into an Epsilon session beside it
   epsilon auth list       stored provider keys (~/.config/epsilon/auth.json)
   epsilon auth login <provider> [key]   save an API key (prompted if key omitted)
-  epsilon auth login <provider> --oauth [--paste]   subscription login (anthropic|openrouter|xai)
+  epsilon auth login <provider> --oauth [--paste]   subscription login (anthropic|openrouter|xai|github-copilot)
   epsilon auth logout <provider>        remove the stored key
   flags: --model id · --provider faux|real · --script f · --mcp name=cmd[:a,b]
          --sandbox auto|read-only|off · --plan · -c/--continue | --resume f · --version
@@ -204,7 +204,7 @@ struct Args {
     light: bool,
 }
 
-// Session-restore selection (M12) moved to psilon-runtime with uild_runtime (ADR-021);
+// Session-restore selection (M12) moved to epsilon-runtime with build_runtime (ADR-021);
 // it is imported above.
 
 /// Model source: the offline faux provider (default) or a real direct-HTTP provider
@@ -1244,6 +1244,7 @@ fn live_fetcher() -> Option<epsilon_tui::LiveFetcher> {
 /// Editor-embedding frontend: NDJSON over stdio (ADR-011 rpc mode).
 async fn rpc_mode(shared: &SharedRun) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
+    let mut notices = Vec::new();
     let agent = match build_runtime(RunParams {
         workspace: &shared.workspace,
         stream_fn: Arc::clone(&shared.stream_fn),
@@ -1258,6 +1259,7 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        notices: &mut notices,
     })
     .await
     {
@@ -1267,6 +1269,12 @@ async fn rpc_mode(shared: &SharedRun) -> i32 {
             return 1;
         }
     };
+    // Composition's diagnostics are for the operator's log, and this mode has no window to
+    // put them on. Printed here rather than inside `build_runtime` because that function is
+    // shared with a frontend that does have a surface.
+    for line in &notices {
+        eprintln!("{line}");
+    }
     epsilon_cli::rpc_mode::run(agent, approvals).await
 }
 
@@ -1424,6 +1432,7 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         // Plan 003: unattended runs fail closed on asks (deny-with-guidance).
         Arc::new(epsilon_safety::AutoDeny)
     };
+    let mut notices = Vec::new();
     let agent = match build_runtime(RunParams {
         workspace: &shared.workspace,
         stream_fn: Arc::clone(&shared.stream_fn),
@@ -1438,6 +1447,7 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        notices: &mut notices,
     })
     .await
     {
@@ -1447,6 +1457,11 @@ async fn print_mode(shared: &SharedRun, yes: bool, task: String) -> i32 {
             return 1;
         }
     };
+    // Headless means a log, and these are the lines an operator greps for. They went to
+    // stderr from inside composition before; this is where they went and it has not moved.
+    for line in &notices {
+        eprintln!("{line}");
+    }
     match agent.run(user_message(&shared.workspace, task)).await {
         Ok(outcome) => {
             // Salvage rule (M62) applied to the CLI: a run that failed after the
@@ -1567,6 +1582,7 @@ async fn tui_mode(
     // back from the same call because it shares the agent's sandbox, and the terminal's
     // goal round driver needs it (M253) - resolving a second one here is what the tools
     // crate's header forbids.
+    let mut notices = Vec::new();
     let composed = build_runtime_and_gate_runner(RunParams {
         workspace: &shared.workspace,
         stream_fn: Arc::clone(&shared.stream_fn),
@@ -1585,6 +1601,7 @@ async fn tui_mode(
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        notices: &mut notices,
     })
     .await;
     match composed {
@@ -1594,6 +1611,9 @@ async fn tui_mode(
             // where it survives. Built here rather than in `shared` because `shared` is assembled
             // before the store is opened, which is when the wait happens.
             let mut startup_notices = shared.startup_notices.clone();
+            // Appended, not merged: `resolve_launch` filled the first half and composition
+            // ran after it, so this order is the order the launch happened in.
+            startup_notices.append(&mut notices);
             if let Some(waited) = lease_wait_summary(lease_wait_millis()) {
                 startup_notices.push(waited);
             }
@@ -1625,6 +1645,7 @@ async fn tui_mode(
 /// HTTP/SSE server exposing the runtime to remote frontends (M9b).
 async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16) -> i32 {
     let approvals = Arc::new(ChannelApprovalUi::new());
+    let mut notices = Vec::new();
     let agent = match build_runtime(RunParams {
         workspace: &shared.workspace,
         stream_fn: Arc::clone(&shared.stream_fn),
@@ -1639,6 +1660,7 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
         project: &shared.project,
         project_trusted: shared.project_trusted,
         plan_mode: shared.plan_mode,
+        notices: &mut notices,
     })
     .await
     {
@@ -1648,6 +1670,10 @@ async fn serve_mode(shared: &SharedRun, initial_task: Option<String>, port: u16)
             return 1;
         }
     };
+    // A server has no window either; its log is the only surface an operator will read.
+    for line in &notices {
+        eprintln!("{line}");
+    }
     if let Some(task) = initial_task {
         // Resolved here, not inside the task: `@` references read the workspace, and the
         // reference to `shared` cannot outlive the function.
@@ -1914,6 +1940,9 @@ action = "allow"
             project: &project,
             project_trusted: true,
             plan_mode: true,
+            // This test is about the plan-mode layer, not about the startup diagnostics;
+            // the sink is threaded through because composition has nowhere else to put them.
+            notices: &mut Vec::new(),
         })
         .await
         .unwrap();

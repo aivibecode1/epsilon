@@ -43,7 +43,7 @@ the *wire* renders, with `:` and `.` turned into `-`. Two copies of that string 
 GATE PASS, 2026-09-29 — battery **`m209`**, documentation final before it started, run with the
 disk knob below. Seven gates, exit 0 each on the retry.
 
-**The first attempt failed, and both failures were mine, in the same three characters.** mt
+**The first attempt failed, and both failures were mine, in the same three characters.** fmt
 --check and clippy (clippy::tabs_in_doc_comments) both rejected the TypeScript snippets I had
 pasted into the rustdoc **with their original tab indentation**. Three tabs, two gates, one cause —
 and the reason it is recorded rather than quietly fixed is that the failure is the *useful* kind: a

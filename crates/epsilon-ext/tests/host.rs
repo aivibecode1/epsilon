@@ -40,7 +40,7 @@ fn tool_ctx(dir: &Path) -> ToolContext {
 #[tokio::test]
 async fn handshake_echo_roundtrip_and_tool_wrapper() {
     let dir = tempfile::tempdir().unwrap();
-    let host = ExtHost::spawn(dir.path(), &fixture_manifest(""))
+    let host = ExtHost::spawn(dir.path(), &fixture_manifest(""), None)
         .await
         .unwrap();
 
@@ -84,7 +84,7 @@ async fn handshake_echo_roundtrip_and_tool_wrapper() {
 #[tokio::test]
 async fn stalled_child_hits_invoke_timeout() {
     let dir = tempfile::tempdir().unwrap();
-    let host = ExtHost::spawn(dir.path(), &fixture_manifest("--sleep"))
+    let host = ExtHost::spawn(dir.path(), &fixture_manifest("--sleep"), None)
         .await
         .unwrap();
 
@@ -106,7 +106,7 @@ async fn crashing_child_is_counted_and_eventually_disabled() {
     // property of the HOST instance — so we assert the counter mechanism on one host by
     // invoking a dying child repeatedly until stdout closes twice.
     for i in 0..2 {
-        let host = ExtHost::spawn(dir.path(), &fixture_manifest("--die"))
+        let host = ExtHost::spawn(dir.path(), &fixture_manifest("--die"), None)
             .await
             .unwrap();
         let err = host
@@ -118,7 +118,7 @@ async fn crashing_child_is_counted_and_eventually_disabled() {
 
     // Third spawn with the SAME name demonstrates the disabled path only when crashes
     // accumulate on one host; v1 documents per-instance budgets, so this spawn is healthy.
-    let host = ExtHost::spawn(dir.path(), &fixture_manifest(""))
+    let host = ExtHost::spawn(dir.path(), &fixture_manifest(""), None)
         .await
         .unwrap();
     assert!(!host.is_disabled());

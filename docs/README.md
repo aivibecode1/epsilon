@@ -9,6 +9,8 @@ claims are not proof that a capability works today.
 | File | What lives there | Read it when |
 |---|---|---|
 | [`../README.md`](../README.md) | the entry point: what Epsilon is, install, quick start | first |
+| [`START-HERE.md`](START-HERE.md) | **the reading guide for a newcomer**: a ten-minute tour, a reading order, a folder map, a glossary, one diagram of how the pieces connect. Arabic: [`START-HERE.ar.md`](START-HERE.ar.md) | you are new and want the shortest path in |
+| [`STATUS.md`](STATUS.md) | **what is true right now**: progress, decisions in flight, what was cut, what is broken | you want the current state, not the history |
 | [`user/`](user) | product guides: install, configuration, auth, permissions, sessions, [goals](user/goals.md), [extensions](user/extensions.md), [prompt templates](user/prompt-templates.md), troubleshooting | you are using or configuring Epsilon |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | user-visible changes, milestone by milestone, newest first | you want to know what changed |
 
@@ -19,11 +21,14 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 
 | Folder / file | What lives there | Read it when |
 |---|---|---|
-| [`../AGENTS.md`](../AGENTS.md) | the rules for anyone writing code here: gates, conventions, disk hygiene | before your first change |
+| [`../AGENTS.md`](../AGENTS.md) | **the rules for anyone writing code here** — locked, maintainer-owned, enforced by a SHA-256 check | before your first change |
+| [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md) | proposed changes to `AGENTS.md`, which no agent may make directly | you think a rule is wrong |
 | [`design/`](design) | **how and why**: the architecture tour, the ADR log, the skills design | you are changing behaviour |
+| [`../scripts/README.md`](../scripts/README.md) | the verification battery and every repository check: what each one fails on, and why it exists | you want to know what CI actually enforces |
+| [`references/`](references/README.md) | **the six reference harnesses**: one page each — what it is, who made it, its licence, what we took and what we skipped — plus [the TUI stack decision](references/TUI-DECISION.md) and a one-table summary | you want to know where an idea came from, or are proposing a terminal toolkit |
 | [`qa/`](qa) | design conversations turned into notes: why Rust, the brick methodology, the harness primer, TUI keymaps, OAuth client ids, provider extension points, the repository layout, **which code belongs to a frontend and which to the composition** | you need the convention behind a choice |
 | [`plans/README.md`](plans/README.md) | historical plans and their recorded statuses, not fresh authorization | you want to trace earlier scope |
-| [`../audit/`](../audit) | the dated assessment: usability review, defect ledger D1–D32, port plan, verification log, reference comparison, roadmap | you want to know what is broken or what to do next |
+| [`../audit/`](../audit) | the dated assessment: usability review, defect ledger (`A`- and `D`-numbered rows), port plan, verification log, reference comparison, roadmap | you want to know what is broken or what to do next |
 
 ## Historical record
 
@@ -34,7 +39,7 @@ curated open-work notes, evidence pointers and safe resumption steps, not produc
 | [`research/`](research) | source-level studies of the reference harnesses and the gap analyses (dated evidence, not current status) | you are deciding what to build next |
 | [`handoff/`](handoff) | archived handoff prompts from earlier milestones (historical, not active tasks) | you are tracing how a slice of work was delegated |
 | [`glossary.md`](glossary.md) | the vocabulary — harness, turn, tool call, compaction, lease, … | you hit an unfamiliar term |
-| `../references/` | the four reference harnesses' sources (not committed; research input) | you want to check a port against its origin |
+| [`../references/`](../references) | the six reference harnesses' sources, vendored read-only (not committed; research input) | you want to check a decision against its origin |
 
 ## Reading paths
 
@@ -57,10 +62,12 @@ would have needed fourteen steps copied into a second place.
 then the milestone log that introduces it.
 
 **Deciding what to build next?** [`../audit/03-defects.md`](../audit/03-defects.md) —
-every row now carries a status (OPEN / CLOSED / CLOSED with a named residual / FIXED pending
-verification), and the status is only as good as the milestone log it names —
+every row carries one of the four statuses the ledger itself defines (**Open**, **Open, partly
+fixed**, **Claimed-fixed but unverified**, **Fixed** — `audit/03-defects.md:7`), and the status
+is only as good as the milestone log it names —
 [`../audit/02-port-fidelity.md`](../audit/02-port-fidelity.md) and
 [`../audit/07-plan.md`](../audit/07-plan.md), then the relevant study in `research/`.
+**[`STATUS.md`](STATUS.md) is newer than this ledger** for anything after 2026-09-29.
 
 ## Current hardening work
 
@@ -127,6 +134,7 @@ first, newest at the top, and it is kept current from M83 forward.
 - [M273 — the guard test that could not see the thing it was guarding](milestones/M273-card-stripping.md)
 - [M274 — three panels drew unstripped text, and the frame cannot see why](milestones/M274-panels-stripping.md)
 - [M275 — a measurement that stopped a large change aimed at the wrong phase](milestones/M275-phase-breakdown.md)
+- [M276 — the things nobody was looking at: an ungated spawn, a `flush()` that was a no-op, and a screen that said nothing](milestones/M276-the-things-nobody-was-looking-at.md)
 - [M232 — a gate for the failure that lied about itself](milestones/M232-a-gate-for-the-failure-that-lied.md)
 - [M230 — a subagent's tokens reach the session's numbers](milestones/M230-a-subagent-s-tokens-reach-the-numbers.md)
 - [M229 — a subagent's tokens are stored, persisted, and shown nowhere](milestones/M229-a-subagent-s-tokens-are-shown-nowhere.md)

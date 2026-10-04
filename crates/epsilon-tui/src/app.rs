@@ -712,6 +712,24 @@ impl App {
     /// their skills live has learned where everything else project-scoped lives. Two
     /// directories rather than one because `.agents/` is the convention shared with other
     /// agent tools and `.epsilon/` is ours; a workspace may use either or both.
+    ///
+    /// # Why the project roots are gated (A32)
+    ///
+    /// **A template's body goes back through `parse_command`.** This is not a text
+    /// substitution ending at the model — `expand_template` runs *before* the command parse
+    /// in `submit_text`, so a repository shipping `.agents/prompts/setup.md` whose body is
+    /// `/trust yes` answers the trust prompt that exists to ask whether to run that
+    /// repository's code. `/trust` also records the config hash, so it is permanent.
+    ///
+    /// The gate was already declared: `.epsilon/prompts` has been listed in
+    /// [`TrustRequiringResource::Prompts`] since the enum was written, and nothing in
+    /// production read it. A declaration with no consumer is not a gate — this is the
+    /// "faithful port, no production caller" shape the ledger has now seen seven times,
+    /// where the port is the *declaration* rather than the implementation.
+    ///
+    /// `trust_review_pending` is the same signal the sibling `agents` reload path uses
+    /// (`commands.rs`), because it is what this frontend already carries: the composition
+    /// crate's `project_trusted` reaches the window, and this is its spelling here.
     pub(super) fn discover_prompt_templates(&mut self) -> usize {
         use epsilon_contracts::prompt_template as pt;
 
@@ -719,17 +737,23 @@ impl App {
         if let Some(dir) = epsilon_core::config::global_dir() {
             user = pt::load_from_dir(&dir.join("prompts"), pt::TemplateScope::User);
         }
-        let project = [
-            pt::load_from_dir(
-                &self.workspace_root.join(".agents").join("prompts"),
-                pt::TemplateScope::Project,
-            ),
-            pt::load_from_dir(
-                &self.workspace_root.join(".epsilon").join("prompts"),
-                pt::TemplateScope::Project,
-            ),
-        ]
-        .concat();
+        // Untrusted project: the user's own templates still load, so a personal `/deploy`
+        // keeps working while the repository's cannot answer a question about the repo.
+        let project = if self.trust_review_pending {
+            Vec::new()
+        } else {
+            [
+                pt::load_from_dir(
+                    &self.workspace_root.join(".agents").join("prompts"),
+                    pt::TemplateScope::Project,
+                ),
+                pt::load_from_dir(
+                    &self.workspace_root.join(".epsilon").join("prompts"),
+                    pt::TemplateScope::Project,
+                ),
+            ]
+            .concat()
+        };
 
         // Project wins on a name clash, so a repository can ship its own `review` without
         // the user editing their personal config. Explicit paths would go last; the CLI
@@ -1572,7 +1596,14 @@ fn draw(f: &mut Frame<'_>, app: &mut App) {
         hints: hint_values,
         draft: draft_rows,
         caret: (caret_row, caret_col),
-        composer_focused: !app.overlay_open(),
+        // **Guidance mode is the one overlay the composer is still typing into.**
+        //
+        // `overlay_open()` includes `pending_ask`, which is right for every other overlay —
+        // the picker and the palette own the keyboard — and wrong here. Pressing `e` hands
+        // the composer to the ask, and the caret then vanished: guidance mode was the only
+        // state in the application where you typed into a field with no cursor in it. A
+        // writer who cannot see where they are typing deletes the wrong thing.
+        composer_focused: app.guidance_mode || !app.overlay_open(),
         transcript_empty: app.transcript_is_empty(),
         // Session first, branch second: a session label is the thing a user can
         // act on, and the branch is context for it. Falls back to the branch alone.

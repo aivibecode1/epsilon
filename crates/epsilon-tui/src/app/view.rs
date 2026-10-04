@@ -348,7 +348,22 @@ impl App {
             rows_below: self.geometry.rows_below(),
             total_rows: self.geometry.total,
         };
-        let mut hints = if self.pending_ask.is_some() {
+        let mut hints = if self.guidance_mode {
+            // **Guidance mode gets its own hints (A42).**
+            //
+            // This branch used to fall through to `pending_ask.is_some()`, which printed
+            // `y allow once · a always · …` — while `y` and `a` type letters into the
+            // composer. The footer was not merely incomplete; it described the *wrong
+            // keyboard*, on the screen where a reader is deciding whether work runs.
+            Hints {
+                mode: Some("guidance".into()),
+                keys: vec![
+                    ("enter".into(), "deny with this".into()),
+                    ("esc".into(), "back to the ask".into()),
+                ],
+                ..Hints::default()
+            }
+        } else if self.pending_ask.is_some() {
             // Deny-only when the request carries display-steering characters: the approve
             // keys are refused in `handle_approval_key`, and a footer that still printed
             // them would be a key the window does not act on, advertised as though it would.

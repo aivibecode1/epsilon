@@ -6,7 +6,7 @@
 # works. `bash` here is WSL: it has its own `$HOME`, its own PATH, and no Windows
 # `cargo`, so gate.sh exits 127 before running a single gate — which reads in the
 # log like five broken gates rather than one missing PATH entry. (It has cost this
-# project more than one round; the story is in AGENTS.md, "Windows notes".)
+# project more than one round; the story is in AGENTS.md, "This machine".)
 # gate.sh stays for POSIX and CI, where bash is a real POSIX shell with cargo.
 #
 # Every attempt needs its OWN label: the log is truncated on start, so re-running
@@ -179,6 +179,10 @@ $gates = @(
     # see this class. `audit/history/` is excluded on purpose: it is superseded
     # and deliberately unrepaired (AGENTS.md).
     @{ Name = "check-links"; Exe = "python"; Args = @("scripts/check-links.py", "--quiet") },
+    # `AGENTS.md` is maintainer-owned and locked: an agent that may rewrite the rules is
+    # not governed by them. The lock is a SHA-256 in `AGENTS.md.sha256`, and this gate
+    # fails when the bytes move. A proposal goes in `docs/AGENTS-PROPOSALS.md` instead.
+    @{ Name = "check-agents-lock"; Exe = "python"; Args = @("scripts/check-agents-lock.py") },
     # Cargo does not merge a package `[lints]` table with `[workspace.lints]`: a
     # package table REPLACES it unless it says `workspace = true`, and cargo
     # rejects `workspace = true` outright when the same table carries overrides.
@@ -194,6 +198,12 @@ $gates = @(
     # reported as having no catch-all arm, which was a lie. This costs a second and
     # it names the file and the line.
     @{ Name = "check-line-endings"; Exe = "python"; Args = @("scripts/check-line-endings.py", "--quiet") },
+    # A C0 control byte inside a tracked text file is a corrupted *letter*, not
+    # content -- `e` -> 0x1B, `a` -> 0x07, `b` -> 0x08 is the shape this repo has
+    # shipped 15 times, twice inside `epsilon-runtime/src/text_safety.rs`, the module
+    # whose whole job is stripping those bytes. No other gate can see it: fmt and
+    # clippy read code, and a control byte in a comment is not code (ledger A49).
+    @{ Name = "check-control-bytes"; Exe = "python"; Args = @("scripts/check-control-bytes.py", "--quiet") },
     @{ Name = "fmt --check"; Exe = $cargo; Args = @("fmt", "--all", "--", "--check") },
     # `-D warnings`: the workspace denies its configured lints, but clippy's own
     # `-W clippy::all` findings exit 0 by default - which is how a warning got past

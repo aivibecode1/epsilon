@@ -26,7 +26,7 @@ fn fixture_config() -> McpServerConfig {
 #[tokio::test]
 async fn stdio_connector_discovers_and_calls_fixture_tools() {
     let mut registry = ToolRegistry::new();
-    let bridged = attach_stdio_server(&mut registry, &fixture_config())
+    let bridged = attach_stdio_server(&mut registry, &fixture_config(), None)
         .await
         .expect("bridge fixture server");
     assert_eq!(bridged, 1, "fixture exposes exactly one tool");
@@ -65,7 +65,7 @@ async fn stdio_connector_discovers_and_calls_fixture_tools() {
 
 #[tokio::test]
 async fn unknown_tool_surfaces_as_failure_not_panic() {
-    let connector = StdioConnector::spawn(&fixture_config())
+    let connector = StdioConnector::spawn(&fixture_config(), None)
         .await
         .expect("connect");
     let err = connector

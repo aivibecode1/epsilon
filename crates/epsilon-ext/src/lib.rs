@@ -16,7 +16,7 @@ mod host;
 pub mod manifest;
 mod tool;
 
-pub use host::{ExtError, ExtHost};
+pub use host::{ExtError, ExtHost, ScrubEnv};
 pub use manifest::{ExtManifest, ExtToolSpec};
 pub use tool::ExtTool;
 

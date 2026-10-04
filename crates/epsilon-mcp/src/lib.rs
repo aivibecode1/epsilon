@@ -12,7 +12,7 @@
 
 mod stdio;
 
-pub use stdio::{StdioConnector, attach_stdio_server};
+pub use stdio::{ScrubEnv, StdioConnector, attach_stdio_server};
 
 use async_trait::async_trait;
 use epsilon_contracts::tool::{

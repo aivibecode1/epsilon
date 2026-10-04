@@ -572,7 +572,7 @@ pub struct Agent {
     /// Run-scoped doom-loop counters; cleared when a run starts (see exec.rs).
     doom_streaks: Mutex<HashMap<String, usize>>,
     /// Declared workspace root; path arguments resolving outside it get gated under the
-    /// xternal_dir capability instead of their tool name.
+    /// external_dir capability instead of their tool name.
     pub(crate) workspace_root: std::path::PathBuf,
     /// Durable mirror of this agent's transcript; compaction entries land here and the
     /// provider context switches to the store's shadowed model view when attached.
@@ -2090,6 +2090,23 @@ impl Agent {
                     Err(e) => {
                         // Error path: same requeue discipline as abort/budget.
                         self.requeue_pending(&mut pending);
+                        // **The run is billed for whatever it spent before it failed.**
+                        //
+                        // `usage_total` accumulates on every `Done` inside
+                        // `stream_one_turn`, and `stream_one_turn` also updates
+                        // `session_usage_by_model` live — so on this arm the two totals
+                        // disagreed by exactly what the run had already cost, and RPC's
+                        // `get_session_stats` publishes both. A client that adds up the
+                        // per-model rows and compares them against the flat total got two
+                        // different answers for one session, on the sessions where the bill
+                        // actually mattered.
+                        //
+                        // Reachable only on a durable-write or poisoned-lock failure, which
+                        // is the F07 class: the turn before this one was answered, delivered,
+                        // and paid for.
+                        if let Ok(mut session) = self.session_usage.lock() {
+                            *session = session.combine(usage_total);
+                        }
                         return Err(e);
                     }
                 };

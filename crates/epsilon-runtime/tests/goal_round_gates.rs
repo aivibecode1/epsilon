@@ -91,7 +91,7 @@ async fn a_goal_with_no_gates_continues_unchanged() {
 #[tokio::test]
 async fn a_failing_gate_becomes_the_continuation_prompt() {
     let agent = gated_goal(&["cargo definitely-not-a-subcommand"]);
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let round = begin_goal_round(&agent, Some(&runner), Path::new("."))
         .await
         .unwrap();
@@ -128,7 +128,7 @@ async fn a_failing_gate_becomes_the_continuation_prompt() {
 #[tokio::test]
 async fn a_passing_gate_sends_the_ordinary_prompt() {
     let agent = gated_goal(&["cargo --version"]);
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let round = begin_goal_round(&agent, Some(&runner), Path::new("."))
         .await
         .unwrap();
@@ -152,7 +152,7 @@ async fn a_gate_failure_still_costs_a_round() {
     // The accounting that stops a red suite being retried for free. Hermes says it in as
     // many words: a quality gate consumes "the same turn budget".
     let agent = gated_goal(&["cargo definitely-not-a-subcommand"]);
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let before = agent.goal().unwrap().goal.rounds_started;
     begin_goal_round(&agent, Some(&runner), Path::new("."))
         .await

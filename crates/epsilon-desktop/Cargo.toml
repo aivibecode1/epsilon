@@ -44,9 +44,19 @@ epsilon-safety = { path = "../epsilon-safety" }
 epsilon-tools = { path = "../epsilon-tools" }
 # `McpServerConfig` is a `RunParams` field too.
 epsilon-mcp = { path = "../epsilon-mcp" }
-# The **palette only** (ADR-020): `epsilon_tui::Theme` resolves semantic roles to
-# colors and the desktop converts them. The desktop draws no terminals and depends
-# on no terminal behaviour; if that ever stops being true, the edge is one module.
+# The **palette, and the numbers** (ADR-020). `epsilon_tui::Theme` resolves semantic roles
+# to colors and the desktop converts them. `epsilon_tui::ui::metrics::Metrics` and
+# `epsilon_tui::ui::cost` are plain data with formatting methods, and the window reads the
+# same context/cache/cost figures the terminal header does rather than re-deriving them:
+# one number, two frontends, instead of two that drift. The desktop still draws no
+# terminals and depends on no terminal *behaviour* — everything it borrows is either a
+# colour role or a value. If that ever stops being true, the edge is one module.
+#
+# M290 paid one of those halves. The command registry was the module this comment
+# predicted: `src/commands.rs` used to read `parse_command` and `COMMAND_HEADS` through
+# `epsilon_tui::picker`, and now reads them from `epsilon_contracts::command` directly
+# (`crates/epsilon-contracts/src/command.rs`). What remains here is the palette and the
+# metrics — colour roles and numbers, not what a `/word` means.
 epsilon-tui = { path = "../epsilon-tui" }
 ratatui = { workspace = true }
 eframe = { workspace = true }

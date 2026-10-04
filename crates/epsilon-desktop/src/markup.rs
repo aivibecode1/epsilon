@@ -92,31 +92,52 @@ impl Span {
         }
     }
 
-    /// This run's `TextFormat`, for building a [`LayoutJob`].
+    /// This run's `TextFormat`, for building a [`LayoutJob`], at `scale`.
     ///
     /// egui 0.36's `RichText` has **private fields and no public concatenation**, so a
     /// block with mixed styling cannot be built by collecting `RichText`s. A
-    /// `LayoutJob` can, and `WidgetText: From<LayoutJob>` — which is what [`job`] is for.
-    pub fn format(&self, base: Color32, code: Color32) -> TextFormat {
+    /// `LayoutJob` can, and `WidgetText: From<LayoutJob>` — which is what [`job_at`] is for.
+    ///
+    /// `scale` is the window's text scale ([`crate::app::text_scale`]) and it multiplies
+    /// [`BODY_SIZE`] rather than replacing it, so at 1.0 this is exactly the size it was
+    /// before text scaling existed.
+    pub fn format(&self, base: Color32, code: Color32, scale: f32) -> TextFormat {
         let (font, color) = match self.style {
-            SpanStyle::Code => (egui::FontId::monospace(BODY_SIZE - 1.0), code),
-            _ => (egui::FontId::proportional(BODY_SIZE), base),
+            SpanStyle::Code => (egui::FontId::monospace((BODY_SIZE - 1.0) * scale), code),
+            _ => (egui::FontId::proportional(BODY_SIZE * scale), base),
         };
         TextFormat::simple(font, color)
     }
 }
 
-/// The transcript's body text size, in points.
+/// The transcript's body text size, in points, **before** the window's text scale.
+///
+/// A base rather than the drawn size: [`crate::app::text_scale`] multiplies it, and every
+/// call site passes the result on, so there is no way to draw a transcript block at the
+/// unscaled size by forgetting an argument.
 pub const BODY_SIZE: f32 = 13.0;
 
 /// Join `runs` into one drawable, wrapping as a single paragraph.
 ///
-/// This is the only way to draw mixed styling in egui 0.36, and it is why a block with
-/// bold in the middle of it wraps as *one* paragraph rather than as one label per span.
+/// **Unscaled, and kept that way on purpose.** This is the call
+/// [`tests::frame_cost.rs`]'s `where_the_transcript_milliseconds_go` makes, and that file is
+/// a measurement instrument, not a caller the product forgot: rewriting it to take a scale
+/// would be editing a test to fit an implementation. The draw path uses [`job_at`].
 pub fn job(runs: &[Run], base: Color32, code: Color32) -> egui::text::LayoutJob {
+    job_at(runs, base, code, 1.0)
+}
+
+/// [`job`], with the window's text scale applied to every run.
+///
+/// The transcript's body size is the one piece of text in this window that a `Painter` does
+/// not draw: it is shaped by egui into a [`egui::WidgetText`]. It still needs the scale,
+/// because a `LayoutJob` carries a [`TextFormat`] per run and that format carries a
+/// [`egui::FontId`] — the same hard-coded number the painter sites used to hold, one layer
+/// down.
+pub fn job_at(runs: &[Run], base: Color32, code: Color32, scale: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     for run in runs {
-        job.append(&run.text, 0.0, run.format(base, code));
+        job.append(&run.text, 0.0, run.format(base, code, scale));
     }
     job
 }

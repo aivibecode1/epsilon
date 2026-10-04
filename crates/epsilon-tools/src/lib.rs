@@ -119,7 +119,10 @@ pub fn register_builtins_with(
     confinement: &Confinement,
     diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
 ) {
-    let _ = register_builtins_and_gate_runner(registry, confinement, diagnostics);
+    // No approval channel here, so goal gates **refuse** rather than run unasked (A36).
+    // The alternative — leaving `approvals` unset and letting a model-authored shell
+    // command run — is the defect this signature makes impossible to express.
+    let _ = register_builtins_and_gate_runner(registry, confinement, diagnostics, None);
 }
 
 /// Register every built-in, and hand back the gate runner built from the same sandbox.
@@ -138,6 +141,7 @@ pub fn register_builtins_and_gate_runner(
     registry: &mut ToolRegistry,
     confinement: &Confinement,
     diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
+    approvals: Option<Arc<dyn epsilon_safety::ApprovalUi>>,
 ) -> Option<Arc<crate::goal_gate::GoalGateRunner>> {
     let sandbox = resolve_sandbox(confinement);
     registry.register(Arc::new(ReadTool::new()));
@@ -181,13 +185,15 @@ pub fn register_builtins_and_gate_runner(
     // disguise. One resolution, so a transcript cannot name one backend for a tool call and
     // another for the gate that decided whether it succeeded.
     let update_goal = goal::UpdateGoalTool::new().with_gate_runner(Arc::new(
-        crate::goal_gate::GoalGateRunner::new(sandbox.clone()),
+        crate::goal_gate::GoalGateRunner::new(sandbox.clone(), approvals.clone()),
     ));
     registry.register(Arc::new(update_goal));
     registry.register(Arc::new(TaskTool::new()));
     // The runner goes back to the caller with the same sandbox it was just built with, so
     // a frontend can ask "are this goal's gates satisfied?" without resolving a second one.
-    Some(Arc::new(crate::goal_gate::GoalGateRunner::new(sandbox)))
+    Some(Arc::new(crate::goal_gate::GoalGateRunner::new(
+        sandbox, approvals,
+    )))
 }
 
 /// A fresh registry containing exactly the built-ins.
@@ -216,8 +222,9 @@ pub fn builtin_registry_with(
 pub fn builtin_registry_and_gate_runner(
     confinement: &Confinement,
     diagnostics: Option<Arc<dyn DiagnosticsProvider>>,
+    approvals: Option<Arc<dyn epsilon_safety::ApprovalUi>>,
 ) -> (ToolRegistry, Option<Arc<crate::goal_gate::GoalGateRunner>>) {
     let mut r = ToolRegistry::new();
-    let runner = register_builtins_and_gate_runner(&mut r, confinement, diagnostics);
+    let runner = register_builtins_and_gate_runner(&mut r, confinement, diagnostics, approvals);
     (r, runner)
 }

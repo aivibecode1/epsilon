@@ -41,6 +41,15 @@ pub struct Resolution {
     /// this: a name-based check run against `path` alone lets a link with an
     /// innocent name decide for itself whether it is a secret.
     pub real: Option<PathBuf>,
+    /// The final component carried a spelling Windows resolves to a **different file**
+    /// (ledger A33): a trailing dot or space, or a `:` alternate-data-stream suffix.
+    ///
+    /// `Some` means the spelling cannot be judged by reading it, so the path is refused.
+    /// It is a separate field rather than a special value of [`Self::inside`] because
+    /// "you may not touch this" and "this is outside your workspace" are different
+    /// sentences, and a refusal that lies about which one it is teaches users that the
+    /// messages mean nothing.
+    pub deceptive: bool,
 }
 
 impl Resolution {
@@ -114,12 +123,39 @@ pub fn lexically_normalize(root: &Path, raw: &str) -> (PathBuf, bool) {
 /// "the directory is gone" into a confinement error and teach users that the message
 /// means nothing.
 pub fn resolve_for_access(root: &Path, raw: &str) -> Resolution {
+    // **A33: a spelling Windows resolves to a different file is refused before anything
+    // else looks at it.**
+    //
+    // `.env.`, `.env ` and `.env::$DATA` are not `.env`. On Windows they *open* `.env`:
+    // Win32 strips a trailing dot and a trailing space, and `::$DATA` is the unnamed
+    // alternate data stream. So a name-based policy — `is_sensitive`'s exact-name list,
+    // the `^.*\.env$` rule, the `@` expander — evaluated them, decided they were an
+    // ordinary file, and returned `Rule::new("read", "*", Allow)`. The whole defence for
+    // the model-facing tools is those rules, and every one of them was bypassable by
+    // adding a character to the end of the name.
+    //
+    // **Windows only, and that is the technically correct scope rather than a
+    // convenience.** On POSIX none of these are stripped: `.env.` is a genuinely
+    // different file, and refusing it would break a legitimate path. The rule exists
+    // because of what the *open* does, so it belongs where the stripping happens.
+    //
+    // Here, before policy evaluation and before any syscall, because that is the whole
+    // point: a choke point above every consumer rather than a fix in each of them.
+    if deceptive_name_reason(Path::new(raw)).is_some() {
+        return Resolution {
+            path: Path::new(raw).to_path_buf(),
+            inside: false,
+            real: None,
+            deceptive: true,
+        };
+    }
     let (path, lexically_inside) = lexically_normalize(root, raw);
     if !lexically_inside {
         return Resolution {
             path,
             inside: false,
             real: None,
+            deceptive: false,
         };
     }
     let real_root = match canonical(root) {
@@ -130,6 +166,7 @@ pub fn resolve_for_access(root: &Path, raw: &str) -> Resolution {
                 path,
                 inside: true,
                 real: None,
+                deceptive: false,
             };
         }
     };
@@ -142,6 +179,7 @@ pub fn resolve_for_access(root: &Path, raw: &str) -> Resolution {
                 path,
                 inside: false,
                 real: None,
+                deceptive: false,
             };
         }
     };
@@ -150,7 +188,35 @@ pub fn resolve_for_access(root: &Path, raw: &str) -> Resolution {
         path,
         inside,
         real: Some(real_path),
+        deceptive: false,
     }
+}
+
+/// What a final component's spelling resolves to on Windows, if it is not the name.
+///
+/// `Some` names the reason so a refusal can say it, and both the gate and the message read
+/// **this** function rather than each deciding: a check that lives in one place and a
+/// message that lives in another is the same class as two copies of a rule.
+///
+/// See the A33 block in [`resolve_for_access`] for why this exists and why it is Windows-only.
+pub fn deceptive_name_reason(raw: &Path) -> Option<&'static str> {
+    if !cfg!(windows) {
+        return None;
+    }
+    // A drive-relative path like `C:` has no file name; nothing to judge.
+    let name = raw.file_name()?.to_str()?;
+    if name.contains(':') {
+        // `::$DATA` is the *unnamed* stream — the spelling that reads exactly like the
+        // file. A named stream (`file:secret`) is also not the file, and is also refused.
+        return Some("an NTFS alternate data stream");
+    }
+    if name.ends_with('.') {
+        return Some("a trailing dot, which Windows strips before opening");
+    }
+    if name.ends_with(' ') {
+        return Some("a trailing space, which Windows strips before opening");
+    }
+    None
 }
 
 /// Whether `path` is a **link** rather than a real file or directory.
@@ -388,5 +454,83 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let r = resolve_for_access(&root, "../root/../etc/passwd");
         assert!(!r.inside, "{r:?}");
+    }
+
+    /// **A33: a spelling Windows resolves to a different file never reaches policy.**
+    ///
+    /// `.env.`, `.env ` and `.env::$DATA` are each a *different string* from `.env` and
+    /// each a *different file* on Windows: Win32 strips a trailing dot and a trailing
+    /// space, and `::$DATA` names the unnamed alternate data stream. So every name-based
+    /// check — `is_sensitive`'s exact list, the `^.*\.env$` rule, the `@` expander —
+    /// read them, decided "ordinary file", and fell through to `Rule::new("read", "*",
+    /// Allow)`. The whole defence for the model-facing tools is those rules, and each one
+    /// was bypassable by appending a character.
+    ///
+    /// **Control:** remove the `deceptive_name_reason` early return and every assertion
+    /// below inverts — the path resolves, `inside` is true, and the name compares unequal
+    /// to `.env` at every layer that mattered.
+    #[test]
+    fn a_name_windows_resolves_elsewhere_is_refused_before_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(".env"), "SECRET=hunter2").unwrap();
+
+        for spelling in [".env.", ".env ", ".env::$DATA", ".env:stream"] {
+            let r = resolve_for_access(&root, spelling);
+            assert!(
+                !r.inside,
+                "{spelling:?} must not resolve as an ordinary workspace file: {r:?}"
+            );
+            assert!(
+                r.deceptive,
+                "{spelling:?} must be refused for what it IS, so the message can say so"
+            );
+            assert!(
+                r.escaped_to().is_none(),
+                "{spelling:?} did not go anywhere -- refusing it as an escape would be a lie"
+            );
+            assert!(
+                deceptive_name_reason(Path::new(spelling)).is_some(),
+                "and the reason must be available to the refusal message"
+            );
+        }
+    }
+
+    /// The other direction, which is what stops the rule becoming a denial of service:
+    /// **an ordinary name is untouched.** Everything in this list is a file a developer
+    /// writes, and a boundary that refuses them trains users to work around the boundary.
+    #[test]
+    fn an_ordinary_name_is_not_touched_by_the_spelling_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        for name in [".env", ".envrc", "env.example", "a.env.bak", "main.rs"] {
+            std::fs::write(root.join(name), "x").unwrap();
+            let r = resolve_for_access(&root, name);
+            assert!(
+                r.inside,
+                "{name:?} is an ordinary file and must stay usable: {r:?}"
+            );
+            assert!(
+                !r.deceptive,
+                "{name:?} is not a spelling Windows resolves elsewhere"
+            );
+        }
+    }
+
+    /// Windows-only by construction, and worth pinning: on POSIX `.env.` is a **different
+    /// real file**, not an alias for `.env`, so refusing it there would break a legitimate
+    /// path for no security gain. The rule follows the behaviour of the open, not a habit.
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_keeps_the_dot_because_there_it_is_another_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(".env."), "x").unwrap();
+        let r = resolve_for_access(&root, ".env.");
+        assert!(r.inside, "{r:?}");
+        assert!(!r.deceptive);
     }
 }

@@ -509,6 +509,18 @@ impl HttpEventStream {
         u.output = get("outputTokens");
         u.cache_read = get("cacheReadInputTokens");
         u.cache_write = get("cacheWriteInputTokens");
+        // **The presence of the keys is the signal, not a non-zero count** (K1). Bedrock
+        // always speaks about caching when it speaks at all, so a usage block carrying
+        // `cacheReadInputTokens` is a provider that reports cache traffic — and the header
+        // printing `CH n/a` beside a live `R184k W12k` is the exact lie K1 was written to
+        // end, reintroduced for the one parser that was not in that fix.
+        //
+        // The two sibling parsers (Anthropic `:277-281`, the compat family `:334-349`)
+        // both set this. This one parsed the counts and forgot the flag, which is exactly
+        // how a per-parser boolean rots: there is no trait member for it, so each wire
+        // decides alone and only the ones someone thought about are right.
+        u.cache_reported = usage.get("cacheReadInputTokens").is_some()
+            || usage.get("cacheWriteInputTokens").is_some();
         u.total_tokens = usage
             .get("totalTokens")
             .and_then(|v| v.as_u64())
@@ -589,6 +601,24 @@ impl HttpEventStream {
         self.finish_reason.as_deref()
     }
 
+    /// Every key shape Mistral has used for cached prompt tokens (pi `getMistralCachedPromptTokens`).
+    ///
+    /// **One list, read twice.** The parse needs the first shape that carries a number;
+    /// `cache_reported` needs to know whether *any* of them was present at all. Those are two
+    /// different questions about one fact — whether this provider's usage block speaks about
+    /// caching — and they were answered by two hand-written reads until the flag was added and
+    /// immediately diverged from the parse sitting beside it.
+    const MISTRAL_CACHE_POINTERS: &[&str] = &[
+        "/prompt_tokens_details/cached_tokens",
+        "/prompt_tokens_details/cachedTokens",
+        "/promptTokensDetails/cachedTokens",
+        "/promptTokensDetails/cached_tokens",
+        "/prompt_token_details/cached_tokens",
+        "/prompt_token_details/cachedTokens",
+        "/promptTokenDetails/cachedTokens",
+        "/promptTokenDetails/cached_tokens",
+    ];
+
     /// Mistral cached-token usage (pi `getMistralCachedPromptTokens`): reads
     /// every key shape Mistral has used — `prompt_tokens_details.cached_tokens`
     /// (plus the camelCase twins `cachedTokens` / `promptTokensDetails` and
@@ -600,16 +630,7 @@ impl HttpEventStream {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let mut raw: u64 = 0;
-        for ptr in [
-            "/prompt_tokens_details/cached_tokens",
-            "/prompt_tokens_details/cachedTokens",
-            "/promptTokensDetails/cachedTokens",
-            "/promptTokensDetails/cached_tokens",
-            "/prompt_token_details/cached_tokens",
-            "/prompt_token_details/cachedTokens",
-            "/promptTokenDetails/cachedTokens",
-            "/promptTokenDetails/cached_tokens",
-        ] {
+        for ptr in Self::MISTRAL_CACHE_POINTERS.iter().copied() {
             if let Some(v) = usage.pointer(ptr).and_then(|v| v.as_u64()) {
                 raw = v;
                 break;
@@ -633,6 +654,14 @@ impl HttpEventStream {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         u.cache_read = cached;
+        // **Same rule as Anthropic and Bedrock (K1):** Mistral parsed eight spellings of
+        // "cached tokens" here, and then reported that it does not report caching at all —
+        // so a session with a working prompt cache printed `CH n/a` next to the tokens it
+        // had just moved. The flag says the provider *speaks about* caching, which is a
+        // property of its usage shape and not of whether this particular turn hit the cache.
+        u.cache_reported = Self::MISTRAL_CACHE_POINTERS
+            .iter()
+            .any(|p| usage.pointer(p).is_some());
         u.total_tokens = usage
             .get("total_tokens")
             .and_then(|v| v.as_u64())

@@ -24,7 +24,7 @@ async fn a_gate_that_passes_lets_the_completion_through() {
         eprintln!("cargo is not on PATH; skipping the runnable gate");
         return;
     }
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let report = runner
         .run(&GoalGate::new(ALWAYS_PASSES), Path::new("."))
         .await;
@@ -42,7 +42,7 @@ async fn a_failing_gate_names_the_command_and_its_output() {
         eprintln!("cargo is not on PATH; skipping the runnable gate");
         return;
     }
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let report = runner
         .run(
             &GoalGate::new("cargo definitely-not-a-subcommand"),
@@ -70,7 +70,7 @@ async fn a_gate_that_runs_too_long_fails_rather_than_waiting() {
         eprintln!("cargo is not on PATH; skipping the runnable gate");
         return;
     }
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let started = std::time::Instant::now();
     let gate = GoalGate {
         command: "cargo --version".into(),
@@ -93,7 +93,7 @@ fn a_gate_with_no_command_can_never_pass_and_says_so() {
         .enable_all()
         .build()
         .expect("a runtime");
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let report = runtime.block_on(runner.run(&GoalGate::new("  "), Path::new(".")));
     assert!(!report.passed);
     assert!(report.unavailable);
@@ -225,7 +225,7 @@ fn inside_a_repository_the_fingerprint_moves_when_the_tree_does() {
 async fn an_unchanged_workspace_replays_the_failure_instead_of_re_running_it() {
     let dir = tempdir_with_repo().expect("a workspace that is a git repository");
     let gate = GoalGate::new(FAILING_MARKER);
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
 
     let first = runner.run(&gate, dir.path()).await;
     assert!(!first.passed, "the gate fails, so the premise holds");
@@ -259,7 +259,7 @@ async fn an_unchanged_workspace_replays_the_failure_instead_of_re_running_it() {
 async fn a_workspace_that_moved_re_runs_the_gate() {
     let dir = tempdir_with_repo().expect("a workspace that is a git repository");
     let gate = GoalGate::new(FAILING_MARKER);
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
 
     assert!(!runner.run(&gate, dir.path()).await.carried_over);
     assert!(
@@ -285,7 +285,7 @@ async fn a_workspace_that_moved_re_runs_the_gate() {
 async fn outside_a_repository_the_gate_always_runs() {
     let dir = tempfile::tempdir().expect("not a repository");
     let gate = GoalGate::new(FAILING_MARKER);
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     for _ in 0..2 {
         let report = runner.run(&gate, dir.path()).await;
         assert!(
@@ -305,7 +305,7 @@ async fn outside_a_repository_the_gate_always_runs() {
 async fn a_passing_gate_is_never_carried_over() {
     let dir = tempdir_with_repo().expect("a workspace that is a git repository");
     let gate = GoalGate::new("cargo --version");
-    let runner = GoalGateRunner::new(None);
+    let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     assert!(runner.run(&gate, dir.path()).await.passed);
     let second = runner.run(&gate, dir.path()).await;
     assert!(second.passed);
@@ -351,7 +351,8 @@ fn real_backend() -> Option<std::sync::Arc<dyn epsilon_safety::Sandbox>> {
 
 /// **A gate actually runs through the confinement, and that branch now has coverage.**
 ///
-/// Every gate test in this file used `GoalGateRunner::new(None)` — the *unconfined* path —
+/// Every gate test in this file builds an *unconfined* runner — the path that hands the
+/// command straight to the host —
 /// so the branch that decides *whether* to run unconfined had never executed: the one that
 /// refuses when the backend is missing, and the one that hands the command to the backend
 /// instead of to the host.
@@ -370,7 +371,10 @@ async fn a_gate_runs_through_the_backend_when_the_platform_has_one() {
         return;
     };
     let dir = tempfile::tempdir().expect("a workspace");
-    let runner = GoalGateRunner::new(Some(sandbox));
+    let runner = GoalGateRunner::new(
+        Some(sandbox),
+        Some(std::sync::Arc::new(epsilon_safety::AutoApprove)),
+    );
     let report = runner
         .run(&GoalGate::new("cargo --version"), dir.path())
         .await;
@@ -399,7 +403,10 @@ async fn a_failing_confined_gate_names_the_command_and_its_exit_code() {
         return;
     };
     let dir = tempfile::tempdir().expect("a workspace");
-    let runner = GoalGateRunner::new(Some(sandbox));
+    let runner = GoalGateRunner::new(
+        Some(sandbox),
+        Some(std::sync::Arc::new(epsilon_safety::AutoApprove)),
+    );
     let report = runner
         .run(
             &GoalGate::new("cargo definitely-not-a-subcommand"),
@@ -424,7 +431,10 @@ async fn a_failing_confined_gate_names_the_command_and_its_exit_code() {
 /// command wearing a gate's name. Before this test the branch had no coverage at all.
 #[tokio::test]
 async fn an_unavailable_backend_refuses_rather_than_running_unconfined() {
-    let runner = GoalGateRunner::new(Some(std::sync::Arc::new(epsilon_safety::NullSandbox)));
+    let runner = GoalGateRunner::new(
+        Some(std::sync::Arc::new(epsilon_safety::NullSandbox)),
+        Some(std::sync::Arc::new(epsilon_safety::AutoApprove)),
+    );
     let dir = tempfile::tempdir().expect("a workspace");
     let report = runner.run(&GoalGate::new(ALWAYS_PASSES), dir.path()).await;
     assert!(

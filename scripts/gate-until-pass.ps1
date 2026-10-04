@@ -56,13 +56,46 @@ function Get-FailureFingerprint {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return "no-log:$([IO.Path]::GetFileName($Path))" }
     $text = Get-Content -Raw -LiteralPath $Path
+
     $names = [regex]::Matches($text, '(?m)^test ([^\s]+) \.\.\. FAILED') |
         ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-    $gates = [regex]::Matches($text, '(?m)^===== ([a-z-]+) =====\r?\n[\s\S]{0,4000}?^\[exit=([1-9])') |
-        ForEach-Object { "$($_.Groups[1].Value):$($_.Groups[2].Value)" } | Sort-Object -Unique
+
+    # **Each `[exit=` belongs to the leg above it, and nothing else.**
+    #
+    # The first form matched a header and then the first non-zero exit *anywhere in the
+    # next 4000 characters*, which named the wrong gate twice (ledger A46). A leg that
+    # passed prints `[exit=0`, so the regex walked past it and picked up the next leg's
+    # failure: `check-line-endings` failing was reported as `check-links:1`, and the
+    # wrapper then stopped on a documentation fault believing it was the code. Separately,
+    # a gate that printed more than 4000 characters (`fmt --check` prints a diff) matched
+    # *nothing*, and an empty fingerprint compared equal to another empty one, so "same
+    # fingerprint - that is not a flake" was reported for a battery that had named no gate.
+    #
+    # So: split on the headers, read the exit inside each segment, and never let a
+    # segment reach past its own boundary.
+    # `fmt --check` is one of the gate names, so the name is matched as "anything on the
+    # line" rather than as `[a-z-]+`. The final `===== GATE FAIL =====` line matches too,
+    # and is excluded by the same rule as a passing leg: no `[exit=` inside its segment.
+    $headers = [regex]::Matches($text, '(?m)^===== (.+?) =====\r?$')
+    $gates = @()
+    for ($i = 0; $i -lt $headers.Count; $i++) {
+        $start = $headers[$i].Index + $headers[$i].Length
+        $end = if ($i + 1 -lt $headers.Count) { $headers[$i + 1].Index } else { $text.Length }
+        $segment = $text.Substring($start, $end - $start)
+        $exit = [regex]::Match($segment, '(?m)^\[exit=(\d)')
+        if ($exit.Success -and $exit.Groups[1].Value -ne '0') {
+            $gates += "$($headers[$i].Groups[1].Value):$($exit.Groups[1].Value)"
+        }
+    }
+    $gates = $gates | Sort-Object -Unique
+
     $parts = @()
     $parts += "tests:$(($names -join ','))"
-    $parts += "gates:$(($gates -join ','))"
+    # `NONE` rather than an empty field: a log with no failing leg named is a truncated
+    # or malformed log, and the caller has to be able to tell that from "two attempts
+    # failed identically". An empty string compared equal to itself is how a battery
+    # with nothing to say reported agreement.
+    $parts += "gates:$(if ($gates) { $gates -join ',' } else { 'NONE' })"
     foreach ($marker in $environmental) {
         if ($text -match $marker) { $parts += "env:$marker" }
     }
@@ -99,6 +132,16 @@ while ($attempts -lt $MaxAttempts) {
 
     if ($fingerprint -eq $previous) {
         Write-Host "  same fingerprint as the previous attempt - that is not a flake, that is the code." -ForegroundColor Red
+        Write-Host "  stopping. Evidence: $log"
+        exit 1
+    }
+    # A battery that failed but named no failing leg has a truncated or malformed log.
+    # That is not agreement with the previous attempt and it is not a flake -- it is
+    # no evidence at all, and retrying on it burns the battery for nothing (A46).
+    # The fingerprint is built as `tests:<names>|gates:<names>|env:<markers>`, so an
+    # empty test list is the literal prefix `tests:|` and an empty gate list is `NONE`.
+    if ($fingerprint.StartsWith('tests:|') -and $fingerprint -like '*|gates:NONE|*') {
+        Write-Host "  the log names no failing gate and no failing test - it was truncated or the battery was killed." -ForegroundColor Red
         Write-Host "  stopping. Evidence: $log"
         exit 1
     }

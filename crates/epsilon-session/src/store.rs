@@ -1227,6 +1227,27 @@ impl SessionStore {
             return Err(e);
         }
         if self.header.is_none() {
+            // **The copy comes first, and the order is the whole point (M291).**
+            //
+            // This branch stamps a header onto a file that has none, and on a migrating file it
+            // then converts the file — and the conversion is what takes the `.pre-epsilon`
+            // copy. Taken after the stamp, the copy captured `original + header`: the handle is
+            // `O_APPEND` (`open_with_parent`), so on a file that already had entries the header
+            // line landed at EOF rather than at offset 0, and a header is legal only as the
+            // **first** line. The one artefact meant to be the way back from the conversion
+            // therefore opened as `Corrupt { SecondHeader }` — a recovery copy nothing could
+            // recover with. `a_backup_taken_from_append_is_a_file_this_build_can_open` is the
+            // test that failed on exactly that, byte for byte.
+            //
+            // Taking it here changes no other byte: `persist_migration` calls
+            // `keep_original_beside` again a few lines later, and that is a no-op because the
+            // copy is already there (the once-only rule inside `keep_original_beside`). It also
+            // moves the failure earlier — a copy that cannot be taken now fails *before* the
+            // header is stamped, so the session file is left exactly as it was found rather
+            // than carrying a header it has no conversion for.
+            if self.migrated {
+                keep_original_beside(&self.path).map_err(StoreError::Io)?;
+            }
             let cwd = std::env::current_dir().unwrap_or_default();
             self.write_header(&cwd, None)?;
             // A migrated file must be persisted before new appends land, or the
@@ -1246,7 +1267,23 @@ impl SessionStore {
         line.push('\n');
         let offset = self.file.seek(SeekFrom::End(0))?;
         self.file.write_all(line.as_bytes())?;
-        self.file.flush()?;
+        // **`flush()` on a `File` is a no-op**, which is the whole content of this line's
+        // predecessor: `std::fs::File` is unbuffered, so `Write::flush` has nothing to push —
+        // it is not "durability", it is a no-op that reads like durability. Everything
+        // `AGENTS.md` promises about a resumable session therefore rested on the OS page
+        // cache surviving a power cut, and it does not: an acknowledged user turn can be
+        // gone after a hard reset, and the repair path then silently drops the torn tail,
+        // which takes the rest of that turn with it.
+        //
+        // Hermes fsyncs for the same reason and says why in one line
+        // (`batch_runner.py:295`: "so a crash never loses an acknowledged prompt").
+        //
+        // `sync_data` rather than `sync_all` deliberately: it is `fdatasync`, which skips the
+        // inode metadata a fresh file would want and a growing append mostly does not. On
+        // Windows the two are the same call, and the cost is a few milliseconds per append --
+        // paid only when an entry is actually written, which is why it is here rather than in
+        // a flush the caller has to remember.
+        self.file.sync_data()?;
 
         self.index.push(EntryLocation {
             offset,

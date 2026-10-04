@@ -246,6 +246,32 @@ pub struct Glyphs {
     /// code page that every modern terminal happens to speak. M219 got this wrong in prose and the
     /// frame check caught it, which is the second time this table has been the thing that knows.
     pub dash: &'static str,
+    /// The folder marker on a labelled tree row (`📁`).
+    ///
+    /// **An astral-plane codepoint, and therefore the worst kind of literal.** Four UTF-8 bytes,
+    /// two columns, absent from CP437 — which on a legacy console is a row of boxes. `key` was
+    /// `🔑` for exactly this reason and became a table field at M219; this one was missed
+    /// because the CP437 frame test never drove the tree panel (A43).
+    pub folder: &'static str,
+    /// The fold marker on a collapsed branch (`▾`).
+    ///
+    /// **This is the one that matters.** Collapsed and expanded are different facts and the
+    /// reader is looking at this character to tell them apart, so a glyph that renders as a box
+    /// does not degrade the panel — it removes the only thing the panel carries. Neither is in
+    /// CP437.
+    pub fold_closed: &'static str,
+    /// The fold marker on an expanded branch (`▸`). See [`Self::fold_closed`].
+    pub fold_open: &'static str,
+    /// The shift modifier a hint row prints (`⇧`).
+    ///
+    /// **Not in CP437**, and it is the *only* place the `Shift+L` chord is advertised, so on a
+    /// legacy console the one undiscoverable binding is the one that boxes.
+    pub shift: &'static str,
+    /// The marker a blockquote opens with (`❯`).
+    ///
+    /// In **model output**, which is the densest region of the application. `prompt` is the same
+    /// shape and is in the table for the same reason (A43).
+    pub quote: &'static str,
     /// Spinner frames, advanced on a timer while work is in flight.
     pub spinner: &'static [&'static str],
 }
@@ -278,6 +304,11 @@ pub const UNICODE: Glyphs = Glyphs {
     up: "↑",
     down: "↓",
     dash: "—",
+    folder: "📁",
+    fold_closed: "▾",
+    fold_open: "▸",
+    shift: "⇧",
+    quote: "❯",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -309,6 +340,15 @@ pub const ASCII: Glyphs = Glyphs {
     up: "^",
     down: "v",
     dash: "--",
+    folder: "-",
+    // `+` and `-` rather than a pair of arrows: on a legacy code page the whole point of
+    // these two is that they DIFFER, and an arrow pair has no seven-bit spelling that
+    // survives (`^`/`v` would read as "move", which is a different verb this panel already
+    // binds). A bracket reads as a bracket, which is what a fold marker is.
+    fold_closed: "+",
+    fold_open: "-",
+    shift: "^",
+    quote: ">",
     spinner: &["|", "/", "-", "\\"],
 };
 
@@ -434,6 +474,11 @@ impl Glyphs {
         "ellipsis",
         "up",
         "down",
+        "folder",
+        "fold_closed",
+        "fold_open",
+        "shift",
+        "quote",
     ];
 
     /// Every single-glyph field of the table, listed independently of [`Self::ALL`] (M219).
@@ -469,6 +514,11 @@ impl Glyphs {
         "ellipsis",
         "up",
         "down",
+        "folder",
+        "fold_closed",
+        "fold_open",
+        "shift",
+        "quote",
     ];
 
     /// This table's glyphs by name, for a caller that has to check all of them.
@@ -501,6 +551,11 @@ impl Glyphs {
                 "ellipsis" => self.ellipsis,
                 "up" => self.up,
                 "down" => self.down,
+                "folder" => self.folder,
+                "fold_closed" => self.fold_closed,
+                "fold_open" => self.fold_open,
+                "shift" => self.shift,
+                "quote" => self.quote,
                 other => panic!("`{other}` is in `Glyphs::ALL` with no reader: a name there is a promise that a glyph is checked, and this is the arm that keeps it"),
             };
             (*name, glyph)

@@ -1,8 +1,16 @@
 # The skills in `.agents/skills/`
 
-Eight skills live here. Six of them were **deleted on 2026-09-28 and restored on
+Sixteen skills live here. Six of them were **deleted on 2026-09-28 and restored on
 2026-10-02** — this file records both decisions and the evidence behind them, so neither is
 "helpfully" reversed by an agent who has not read the reasoning.
+
+Three more were added on **2026-10-03** from the reference harnesses in `references/`, after a
+four-way read-only survey of the **258** `SKILL.md` files they contain. That survey's reasoning,
+including everything rejected and why, is in [§ Additions of 2026-10-03](#additions-of-2026-10-03).
+
+Five further skills were added on **2026-10-03** from that same survey: three adapted from the
+reference corpus, and two written from scratch because the survey judged that adapting their
+parents would have been worse. They are in the same section.
 
 ## What is here
 
@@ -16,6 +24,19 @@ Eight skills live here. Six of them were **deleted on 2026-09-28 and restored on
 | `ponytail-debt` | Harvest `ponytail:` comments into a deferral ledger | Same — with a caveat that matters here. |
 | `ponytail-gain` | A one-shot scoreboard of Ponytail's own benchmark medians | Same. Its output is about Ponytail, not about Epsilon. |
 | `ponytail-help` | A quick-reference card for the Ponytail modes | Same. |
+| **`agent-experience`** | How to write a model-facing tool definition so the model finds it and spends context well | **[DeepSeek Harness] Verbatim copy.** `AGENTS.md` says nothing about authoring tool schemas, and we have three surfaces that *are* tool schemas: `epsilon-tools`, `epsilon-mcp`, and the skill loader. |
+| **`one-three-one-rule`** | A decision-brief format: one-sentence problem, three genuinely different options, one pick | **[Hermes Agent] Verbatim copy.** ~70 lines of prose. `AGENTS.md` §14 lets engineering judgment override the file but gives no format for *surfacing* that judgment. |
+| **`rtl-aware-development`** | Text-direction correctness: logical CSS, mixed-script isolation, RTL scroll, title bars | **[opencode] Verbatim copy.** `AGENTS.md` §8 holds the product to WCAG 2.2 AA and names keyboard, contrast and focus — but says **nothing about direction**, and we already ship an Arabic reading guide. |
+| **`grill-me`** | Interrogate a plan in frontier rounds — ask everything answerable now, recompute, repeat | **[Hermes Agent] Adapted** from `grill-me`. The design-tree mechanic kept; every Hermes tool name replaced with this repo's. 83 lines. |
+| **`isolate-the-layer`** | A seven-step ladder that finds the failing layer before anyone changes code | **[Hermes Agent] Adapted** from `rest-graphql-debug`. Every `curl` and Python block deleted; retargeted at `epsilon-llm` and `epsilon-server`. |
+| **`ux-triage`** | Hostile persona, then a mandatory pragmatism filter into RED / YELLOW / WHITE / GREEN | **[Hermes Agent] Adapted** from `adversarial-ux-test`. Browser tour, screenshots and ticket creation removed — none of them are available here. |
+| **`evidence-guardrails`** | Evidence-id discipline for any report someone will act on | **Written here**, distilling the guardrail block of Hermes' `oss-forensics`. 59 lines. |
+| **`two-stage-review`** | Spec compliance strictly before code quality, and never the author's own self-review | **Written here**, distilling the ordering in Hermes' `subagent-driven-development`. 68 lines. |
+
+The three verbatim copies have a `PROVENANCE.md` beside them recording the upstream path, the
+licence, what was changed (nothing, in all three), and **when an agent should reach for it**.
+The three adaptations have one too, recording what was stripped and why. The two written
+here have none, because they are our own text — see below.
 
 ## Why they were deleted the first time — and why that was, and was not, right
 
@@ -80,6 +101,64 @@ Installed from `https://github.com/DietrichGebert/ponytail` into
 `.agents/skills/ponytail*/SKILL.md`, which is a directory DSH scans at project scope. Only
 `SKILL.md` is vendored; the upstream repository's `benchmarks/`, `scripts/`, `hooks/` and
 `examples/` are not, and no skill here needs them to run.
+
+## Additions of 2026-10-03
+
+The six reference harnesses vendor **258 `SKILL.md` files**: DeepSeek Harness 27, Hermes 209,
+opencode 4, pi 17, OpenTUI 1. Four read-only investigators read them under one standard —
+**instructions only, actually relevant to a Rust harness, earns its place rather than restating
+`AGENTS.md`, no conflict, licence-compatible** — and three files were installed.
+
+**Most of that corpus is a Python/web agent ecosystem's toolbox, not a Rust harness's.** The
+Hermes set alone spans 23 domains including blockchain, gaming, smart-home, email and finance, and
+the majority instruct the agent to install and run third-party CLIs (`npx`, `pip install`,
+`git clone`, `curl | bash`) or to call vendor APIs. That alone disqualifies them.
+
+### Three rejected outright, recorded so they are not re-litigated
+
+| Skill | Why not |
+|---|---|
+| `1password` | **Conflict.** Writes `OP_SERVICE_ACCOUNT_TOKEN` into a plaintext `.env`. `AGENTS.md` §6: secrets belong in the OS credential store, never plaintext on disk. |
+| `setup-wizard-generator` | **Conflict.** Its `write_env` helper persists secrets to a plaintext `.env`. Same rule. |
+| `pr-lens` | **Conflict.** An unpinned `npx` CLI with an opt-in path that **publishes the diff to a third-party host**. `AGENTS.md` §11 forbids pushing or publishing; §6 forbids that supply-chain posture. |
+
+Also rejected as irrelevant rather than harmful: DSH's Cordis composition skills (we compose
+through Cargo crates and `epsilon-runtime`), Hermes' MCP-server-authoring skills (we *consume* MCP;
+`crates/epsilon-mcp` has zero OAuth, so `mcp-oauth-remote-gateway`'s 17 pitfalls describe a
+subsystem we do not have), and Hermes' 36 mlops skills (we consume models through a provider
+protocol; we do not train, fine-tune or serve them).
+
+### Recommended on 2026-10-03 — and now installed
+
+Recorded here so the next session does not re-derive them. The survey recommended five; a
+later pass installed them, three by adaptation and two written from scratch.
+
+- **`grill-me`** (Hermes) — stress-test a plan by frontier rounds: ask every question whose answer
+  is *not* blocked by another open question, recompute the frontier, repeat. Its Hermes tool
+  names are stripped, and the repository rule — a fact discoverable locally is looked up,
+  never asked — is promoted from a pitfall to step 2 of the procedure. `AGENTS.md` §12 covers
+  briefing a subagent, not interrogating a plan before writing it.
+- **`rest-graphql-debug`** (Hermes) → **`isolate-the-layer`** — a seven-step "isolate the
+  layer, then fix" ladder plus the gotcha that a GraphQL response can be `200` with an
+  `errors` array. Every `curl` and Python block is deleted, and the ladder now names
+  `crates/epsilon-llm` and `crates/epsilon-server`. The gotcha is restated as a rule — *a
+  successful exchange can carry a failure in its payload* — and tied to the two places this
+  repository has that shape: the never-fails provider stream, where an error arrives as a
+  `StopReason`, and message-text retry classification, where an unrecognised error is
+  deliberately never retried.
+- **`adversarial-ux-test`** (Hermes) → **`ux-triage`** — persona, then a mandatory pragmatism filter
+  into RED/YELLOW/WHITE/GREEN, and the click-count heuristic. Browser, screenshot and ticket
+  machinery removed, because none of them are available here.
+- **Evidence-ID guardrails** (from Hermes `oss-forensics`) and **two-stage review ordering** (from
+  Hermes `subagent-driven-development`) — the investigator's judgement was that these are worth
+  ~30–50 lines **of our own text** rather than a 426-line forensics framework and a 352-line
+  Python-flavoured workflow, because they are strict additions to `AGENTS.md` §5's evidence
+  discipline. Writing them ourselves also avoids the `THIRD_PARTY_NOTICES` cost that adapting the
+  parents would carry.
+
+All five use one body shape — normative checklist, **Avoid / Prefer** block, **Test Matrix**,
+**When NOT to use it** — because that shape is what makes a rule into a procedure. Each stays
+under ~90 lines so it can be loaded whole.
 
 ## Note on `ratatui-tui`
 

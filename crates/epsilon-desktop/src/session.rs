@@ -747,6 +747,16 @@ pub struct IdeSession {
     approvals: Arc<ChannelApprovalUi>,
     /// What the launch resolved to — the source of every number the status line shows.
     launch: Launch,
+    /// What composition said while it was building this agent, in the order it said it.
+    ///
+    /// **A window has no stderr.** These lines were `eprintln!` inside
+    /// `build_runtime_and_gate_runner`, so a skill that failed to load, an extension that
+    /// was skipped, a session that migrated or repaired itself and a migration that failed
+    /// all reached a terminal and nobody else — the silent failure `AGENTS.md` §2.7 rules
+    /// out. They ride with the session because the session is what composition produced,
+    /// and [`IdeApp::new`](crate::app::IdeApp::new) is the only place with a surface to
+    /// put them on.
+    notices: Vec<String>,
     /// The tokio runtime the agent runs on. Owned, because `run` needs it alive for as
     /// long as the window is, and because a second runtime would mean a second thread
     /// pool the agent and the UI do not share.
@@ -801,6 +811,10 @@ impl IdeSession {
         launch: Launch,
     ) -> Result<Self, String> {
         let approvals = Arc::new(ChannelApprovalUi::new());
+        // Where composition's startup diagnostics go. Collected into a local rather than
+        // printed: see the field's doc — a window has no stderr, and the only reader of
+        // these lines is this session's own notice strip.
+        let mut notices = Vec::new();
         // `build_runtime_and_gate_runner`, not `build_runtime`: a goal round has to be able to
         // evaluate the goal's gates, and the runner shares the agent's sandbox. Resolving a
         // second one here would be the thing `epsilon-tools`' module header rules out — two
@@ -824,6 +838,7 @@ impl IdeSession {
                 project: &launch.project,
                 project_trusted: launch.project_trusted,
                 plan_mode: launch.plan_mode,
+                notices: &mut notices,
             })
             .await?;
 
@@ -833,6 +848,7 @@ impl IdeSession {
             gate_runner,
             approvals,
             launch,
+            notices,
             runtime,
             forwarder_tx,
             inbox: std::sync::Mutex::new(inbox),
@@ -857,6 +873,15 @@ impl IdeSession {
     /// What the launch resolved to.
     pub fn launch(&self) -> &Launch {
         &self.launch
+    }
+
+    /// The startup diagnostics composition emitted while building this agent, in order.
+    ///
+    /// Public because the window is the only thing that can show them: they used to be
+    /// `eprintln!`, which a terminal has and this window does not. Returned in emission
+    /// order because that order is the launch the reader is being told about.
+    pub fn notices(&self) -> &[String] {
+        &self.notices
     }
 
     /// The approvals channel, so a pane can resolve a parked ask by id.
@@ -1440,5 +1465,81 @@ mod tests {
         });
         let text = &t.rows()[0].text;
         assert!(!text.contains('\n') && !text.contains('\r'), "{text:?}");
+    }
+
+    /// **A notice emitted while the agent was composed is held by the session.**
+    ///
+    /// This is the minimum claim the fix has to make: composition writes its startup
+    /// diagnostics somewhere a window can read. Before it, every one of those lines was an
+    /// `eprintln!` and the window had no stderr, so a skill that failed to load or a
+    /// session that repaired itself reached nobody who could act on it.
+    ///
+    /// **The trigger is a resumed session** because it announces itself unconditionally —
+    /// no project trust, no skill on disk, nothing about the developer's home directory.
+    ///
+    /// **Negative control.** With the emissions left as `eprintln!`, `notices()` is empty
+    /// and this fails; it cannot pass for the wrong reason because `resolve_launch` runs
+    /// *before* composition and is asserted not to be the source of this line.
+    #[test]
+    fn a_composition_notice_reaches_the_stored_notices() {
+        use epsilon_runtime::{LaunchRequest, ProviderChoice, Resume};
+
+        let ws = tempfile::tempdir().expect("a workspace");
+        let prior = ws.path().join("prior.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(&prior, ws.path()).expect("the prior session");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: assistant("something said last time"),
+                api_request_sha256: None,
+            })
+            .expect("the message lands in the log");
+        drop(store);
+
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a test runtime"),
+        );
+        let launch = epsilon_runtime::resolve_launch(&LaunchRequest {
+            workspace: ws.path().to_path_buf(),
+            provider: ProviderChoice::Faux,
+            resume: Resume::Path(prior.clone()),
+            ..LaunchRequest::for_workspace(ws.path())
+        })
+        .expect("a faux launch always resolves");
+        assert!(
+            !launch
+                .notices
+                .iter()
+                .any(|n| n.contains("resumed 1 entries")),
+            "the resume happens inside composition, not inside `resolve_launch`; if this fails \
+             the assertion below is reading the wrong vector"
+        );
+
+        let session = runtime
+            .block_on(IdeSession::start(Arc::clone(&runtime), launch))
+            .expect("composing an agent over a stored session");
+
+        let notices = session.notices();
+        assert!(
+            notices.iter().any(|n| n.contains("resumed 1 entries")),
+            "composition announced the restore and the session has to be holding it, because \
+             the window is the only surface that can show it. Got: {notices:?}"
+        );
+        // And the order the reader gets is the order composition emitted in, which is the
+        // order the vector was appended to — not sorted, not grouped by subsystem.
+        let first_resume = notices
+            .iter()
+            .position(|n| n.contains("resumed 1 entries"))
+            .expect("the restore line");
+        assert!(
+            notices[..first_resume]
+                .iter()
+                .all(|n| !n.contains("resumed 1 entries")),
+            "the restore is announced exactly once, in one place: {notices:?}"
+        );
     }
 }

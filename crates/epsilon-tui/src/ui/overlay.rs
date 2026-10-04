@@ -23,6 +23,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
+use crate::ui::layout::display_width;
 use crate::ui::theme::{Glyphs, Theme};
 
 /// Where a panel sits and how it is titled.
@@ -214,8 +215,6 @@ pub fn list_row(
     meta: Option<&str>,
     width: usize,
 ) -> Line<'static> {
-    use crate::ui::layout::display_width;
-
     let bar = if selected {
         theme.glyphs.cursor_bar
     } else {
@@ -291,13 +290,62 @@ pub fn up_down(up: &str, down: &str) -> String {
 }
 /// A line of key hints at the bottom of a panel, drawn inside the frame.
 pub fn hint_row(theme: &Theme, hints: &[(&str, &str)]) -> Line<'static> {
+    hint_row_in(theme, hints, usize::MAX)
+}
+
+/// [`hint_row`] with a width budget.
+///
+/// **Why this exists.** A hint row has no natural limit — it is a list, and a list grows —
+/// so the panel that passed the most hints got the one that wrapped. The tree panel passed
+/// seven (~74 columns) into a 60-column inner width at an 80-column terminal, so at every
+/// width below about 95 columns the hint row wrapped onto a second line and **stole a row
+/// from the list it was describing**. A footer that costs you a visible entry is worse than
+/// a shorter footer.
+///
+/// Hints are dropped **last-to-first** so the ones that survive are the ones the caller
+/// listed first, and the count of what was dropped is drawn — because a silently shortened
+/// hint row is this repository's recurring failure: the reader sees `move · jump · f` and
+/// concludes those are the only keys, which is exactly the discoverability failure the hint
+/// row exists to prevent.
+pub fn hint_row_in(theme: &Theme, hints: &[(&str, &str)], width: usize) -> Line<'static> {
+    /// Columns one hint costs beyond its own text: the ` · ` separator, or a
+    /// trailing `+N` when hints were dropped.
+    const SEPARATOR: usize = 3;
+    const DROPPED: &str = "+";
+
+    // Measure first, so what is dropped is decided by the budget and not by what has
+    // already been pushed.
+    let cost = |(key, what): &(&str, &str)| display_width(key) + 1 + display_width(what);
+    let mut kept = hints.len();
+    while kept > 0 {
+        let mut used: usize =
+            hints[..kept].iter().map(cost).sum::<usize>() + SEPARATOR * kept.saturating_sub(1);
+        if kept < hints.len() {
+            // `+12` plus its separator.
+            used += SEPARATOR + DROPPED.len() + 2;
+        }
+        if used <= width {
+            break;
+        }
+        kept -= 1;
+    }
+
     let mut spans = Vec::new();
-    for (index, (key, what)) in hints.iter().enumerate() {
+    for (index, (key, what)) in hints[..kept].iter().enumerate() {
         if index > 0 {
             spans.push(Span::styled(" · ", theme.faint()));
         }
         spans.push(Span::styled((*key).to_string(), theme.dim_strong()));
         spans.push(Span::styled(format!(" {what}"), theme.faint()));
+    }
+    if kept < hints.len() {
+        if kept > 0 {
+            spans.push(Span::styled(" · ", theme.faint()));
+        }
+        spans.push(Span::styled(
+            format!("{DROPPED}{}", hints.len() - kept),
+            theme.faint(),
+        ));
     }
     Line::from(spans)
 }

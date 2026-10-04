@@ -15,6 +15,12 @@ use tokio::process::Command;
 
 use crate::{Connector, McpServerConfig, McpToolInfo};
 
+/// An environment scrubber for a spawned MCP server: the harness's rule, injected.
+///
+/// `epsilon-safety` owns the rule; this crate must not depend on it, so the harness passes
+/// its own `Arc<dyn Fn(&mut Command)>` down. See [`StdioConnector::spawn`] for why.
+pub type ScrubEnv = std::sync::Arc<dyn Fn(&mut Command) + Send + Sync>;
+
 /// Connector speaking MCP over a spawned child process' stdin/stdout.
 ///
 /// The child is killed when the connector drops (rmcp kill-on-drop); call
@@ -25,7 +31,14 @@ pub struct StdioConnector {
 
 impl StdioConnector {
     /// Spawn `command args…` and complete the MCP initialize handshake.
-    pub async fn spawn(cfg: &McpServerConfig) -> Result<Self, String> {
+    ///
+    /// `scrub_env` is the harness's credential filter, injected rather than reached for:
+    /// `epsilon-mcp` does not depend on `epsilon-safety`, which is the arrangement
+    /// `epsilon-lsp` already uses. **An MCP server is a third-party binary whose command line
+    /// comes from a config file**, and this was one of only two spawn paths in the workspace
+    /// that handed it the developer's entire environment — every `API_KEY`, every `*_TOKEN`
+    /// (ledger A34). The other was `epsilon-ext`'s.
+    pub async fn spawn(cfg: &McpServerConfig, scrub_env: Option<ScrubEnv>) -> Result<Self, String> {
         let mut cmd = Command::new(&cfg.command);
         cmd.args(&cfg.args);
         // An MCP server is a stdio peer, not a terminal program. Leaving stdin unset
@@ -35,6 +48,11 @@ impl StdioConnector {
         // parent's handle, so say so explicitly. Same rule as
         // `epsilon_tools::shell::ChildStdio`.
         cmd.stdin(std::process::Stdio::piped());
+        // Before the spawn and before the handshake, which is the last chance: once a
+        // child is running, its environment is already a fact.
+        if let Some(scrub) = &scrub_env {
+            scrub(&mut cmd);
+        }
         let transport =
             TokioChildProcess::new(cmd).map_err(|e| format!("spawn {}: {e}", cfg.command))?;
 
@@ -126,10 +144,13 @@ impl Connector for StdioConnector {
 }
 
 /// Convenience: spawn a stdio connector and bridge its tools into `registry`.
+///
+/// `scrub_env` is forwarded to [`StdioConnector::spawn`]; see [`ScrubEnv`].
 pub async fn attach_stdio_server(
     registry: &mut epsilon_core::ToolRegistry,
     cfg: &McpServerConfig,
+    scrub_env: Option<ScrubEnv>,
 ) -> Result<usize, String> {
-    let connector: Arc<dyn Connector> = Arc::new(StdioConnector::spawn(cfg).await?);
+    let connector: Arc<dyn Connector> = Arc::new(StdioConnector::spawn(cfg, scrub_env).await?);
     crate::bridge(registry, &cfg.name, connector).await
 }

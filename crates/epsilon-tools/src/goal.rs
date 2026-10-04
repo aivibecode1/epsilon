@@ -604,8 +604,12 @@ mod tests {
         let host: Arc<dyn GoalHost> = Arc::new(FakeHost::with_gates(vec![GoalGate::new(
             "cargo definitely-not-a-subcommand",
         )]));
-        let tool = UpdateGoalTool::new()
-            .with_gate_runner(Arc::new(crate::goal_gate::GoalGateRunner::new(None)));
+        let tool = UpdateGoalTool::new().with_gate_runner(Arc::new(
+            crate::goal_gate::GoalGateRunner::new(
+                None,
+                Some(std::sync::Arc::new(epsilon_safety::AutoApprove)),
+            ),
+        ));
         let err = call(
             &tool,
             serde_json::json!({"action": "complete", "goal_id": "g1", "revision": 2}),
@@ -636,8 +640,12 @@ mod tests {
     async fn a_declared_gate_that_passes_lets_the_completion_through() {
         let host: Arc<dyn GoalHost> =
             Arc::new(FakeHost::with_gates(vec![GoalGate::new("cargo --version")]));
-        let tool = UpdateGoalTool::new()
-            .with_gate_runner(Arc::new(crate::goal_gate::GoalGateRunner::new(None)));
+        let tool = UpdateGoalTool::new().with_gate_runner(Arc::new(
+            crate::goal_gate::GoalGateRunner::new(
+                None,
+                Some(std::sync::Arc::new(epsilon_safety::AutoApprove)),
+            ),
+        ));
         let out = call(
             &tool,
             serde_json::json!({"action": "complete", "goal_id": "g1", "revision": 2}),

@@ -8,6 +8,7 @@
 //! `packages/agent/src/harness/session/types.ts`; divergences are documented per item.
 
 pub mod agent_event;
+pub mod command;
 pub mod content;
 pub mod diagnostics;
 pub mod goal;

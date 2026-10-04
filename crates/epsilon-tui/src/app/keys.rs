@@ -376,10 +376,29 @@ pub(crate) fn handle_approval_key(app: &mut App, key: KeyEvent) -> bool {
                 app.guidance_mode = false;
                 app.input.clear();
                 app.cursor_chars = 0;
+                // **The draft comes back.** Guidance mode borrows the composer; without this
+                // the text the user was part-way through writing is simply gone, with no undo
+                // entry and nothing on screen — the "silent no-op" this repository keeps
+                // arguing against, with data loss attached (A41).
+                app.unstash_draft();
             }
             KeyCode::Backspace => app.backspace(),
             KeyCode::Char(c) => app.insert_char(c),
-            _ => {}
+            // **Every other editing key used to vanish.**
+            //
+            // This arm was `_ => {}`, and guidance mode is a *text field* — so Left, Right,
+            // Home, End, Delete, and all of Ctrl+A/E/W/U/K/Y/Z did nothing, silently, on the
+            // screen where a tool call is blocked. A reader cannot tell a key that is not
+            // bound from a key this program lost, and this is the screen where they are least
+            // inclined to keep trying. G10's notice, which exists for exactly this, was
+            // unreachable from here: it lives at the end of `handle_key`, and this function
+            // returns before control ever reaches it.
+            other => {
+                app.notice(format!(
+                    "{other} is not bound while writing guidance — \
+                     enter sends it, esc goes back to the ask"
+                ));
+            }
         }
         return false;
     }
@@ -424,11 +443,32 @@ pub(crate) fn handle_approval_key(app: &mut App, key: KeyEvent) -> bool {
             }
         }
         KeyCode::Char('e' | 'E') => {
+            // **Stash, do not clear.** Guidance mode borrows the composer for its own text,
+            // and `clear()` destroyed whatever the user had half-written — no undo entry,
+            // nothing on screen, and no way back except retyping. `stash_draft` is the
+            // existing mechanism for exactly this borrow (a dialog taking the editor over),
+            // so the fix is the one helper this file already uses elsewhere, not a second
+            // way of holding a draft (A41).
+            app.stash_draft();
             app.guidance_mode = true;
             app.input.clear();
             app.cursor_chars = 0;
         }
-        _ => {}
+        // **G10, on the screen where it matters most.** This arm was `_ => {}`, so Enter,
+        // Tab, Space, the arrows, Home/End and Delete did nothing at all while a permission
+        // ask was on screen — and G10's notice lives at the end of `handle_key`, which this
+        // function returns before ever reaching. The permission dialog is the highest-stakes
+        // screen in the application: a reader waiting to decide whether work runs is the
+        // person least likely to keep pressing keys they believe are broken.
+        //
+        // The message names the keys that *are* bound, because "not bound here" is only
+        // useful next to the alternative.
+        other => {
+            app.notice(format!(
+                "{other} is not bound on a permission ask — \
+                 y allows once, a always, n denies, e denies with guidance"
+            ));
+        }
     }
     false
 }
@@ -935,7 +975,7 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 app.cursor_chars = 0;
             }
             KeyCode::Enter => {
-                let entries = crate::picker::filter_palette(&app.input);
+                let entries = crate::picker::filter_palette(&app.input, &app.keybindings);
                 if let Some(entry) = entries.get(app.picker_index) {
                     let command = entry.command.clone();
                     app.palette_open = false;
@@ -948,14 +988,14 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 }
             }
             KeyCode::Up => {
-                let total = crate::picker::filter_palette(&app.input).len();
+                let total = crate::picker::filter_palette(&app.input, &app.keybindings).len();
                 app.picker_index = app
                     .picker_index
                     .saturating_sub(1)
                     .min(total.saturating_sub(1));
             }
             KeyCode::Down => {
-                let total = crate::picker::filter_palette(&app.input).len();
+                let total = crate::picker::filter_palette(&app.input, &app.keybindings).len();
                 if total > 0 {
                     app.picker_index = (app.picker_index + 1).min(total - 1);
                 }

@@ -5,7 +5,7 @@ mode, flag, environment variable and file path, and is kept in one place in the 
 (`crates/epsilon-cli/src/main.rs`, the `HELP` constant). **Its scope is modes, flags,
 environment and file paths — not slash commands**, which would be a second list to keep in step
 with the palette; the commands live in the TUI's own `/help` and its completion palette, both
-driven by `SLASH_ITEMS` (`crates/epsilon-tui/src/picker.rs`). So a command appearing in one and
+driven by `SLASH_ITEMS` (`crates/epsilon-contracts/src/command.rs`). So a command appearing in one and
 not the other is by design rather than a gap. When these guides and the binary
 disagree, inspect the implementation and the known audit findings — the help text is not a
 specification. The two drifts this paragraph used to warn about are fixed: the `--plan` line
@@ -20,6 +20,8 @@ nothing in the workspace reads it.
 | [`permissions.md`](permissions.md) | understand permission rules, sandbox modes, `--plan`, headless behavior |
 | [sessions.md](sessions.md) | resume, fork, export, recover damaged transcripts, leases |
 | [`goals.md`](goals.md) | park one long-running objective, watch it, stop it, understand what it costs |
+| [`extensions.md`](extensions.md) | write or install a helper process that sees or answers tool calls |
+| [`prompt-templates.md`](prompt-templates.md) | reuse a saved prompt, and find out which ones you have |
 | [`troubleshooting.md`](troubleshooting.md) | diagnose a run that fails, hangs, or refuses |
 
 What lives where:

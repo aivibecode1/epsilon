@@ -145,7 +145,20 @@ pub fn run(opts: Options) -> Result<(), String> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([720.0, 480.0])
+            // **Above `MEDIUM` (860), deliberately.**
+            //
+            // The sidebar can now be resized, folded with `Ctrl+B`, and remembered across
+            // launches — and at the old 720×480 minimum it was none of those things at the only
+            // size a window cannot be dragged away from: below 860 the layout folds the sidebar
+            // for narrowness, so a reader who sized it, collapsed it, or restored it would be
+            // shown a window that silently disagreed with their own choice, and could not drag it
+            // back. A minimum that contradicts a control is not a minimum, it is a bug waiting to
+            // be resized into.
+            //
+            // The layout's own degradation thresholds are untouched: a user can still shrink the
+            // window below this with a different window manager or a display change, and the
+            // tiers still fall away in order. This only says where the guarantee *starts*.
+            .with_min_inner_size([900.0, 560.0])
             .with_title(title),
         ..Default::default()
     };

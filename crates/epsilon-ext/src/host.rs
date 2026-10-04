@@ -31,6 +31,18 @@ const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 /// finish reading. Hitting this is a protocol violation, not a slow extension.
 const MAX_INVOKE_BYTES: usize = 16 * 1024 * 1024;
 
+/// An environment scrubber for a spawned extension: the harness's rule, injected so the
+/// subprocess policy lives in one place.
+///
+/// `epsilon-safety` owns the rule and this crate is a leaf that must not depend on it — the
+/// same arrangement `epsilon-lsp` uses (`client::ScrubEnv`). Passing it as an `Option` is
+/// deliberate rather than lazy: it keeps the leaf honest about who decides, and `None` is a
+/// legitimate answer for a test. **The guard that keeps it from rotting is a test, not this
+/// comment**: `runtime` walks every `Command::new` in the workspace and fails on one that
+/// spawns without a scrubber, because an extension is a *third-party binary* and this was one
+/// of only two spawn paths that handed it the developer's whole environment (ledger A34).
+pub type ScrubEnv = std::sync::Arc<dyn Fn(&mut tokio::process::Command) + Send + Sync>;
+
 /// Errors surfaced by the host. All are values — a crashing extension must degrade the
 /// extension, never the harness.
 ///
@@ -169,15 +181,34 @@ impl Drop for ReaderTask {
 
 impl ExtHost {
     /// Spawn + handshake. Fails fast if the binary is missing or hello never arrives.
-    pub async fn spawn(dir: &Path, manifest: &ExtManifest) -> Result<Arc<Self>, ExtError> {
+    ///
+    /// `scrub_env` is the harness's credential filter, **injected** rather than reached for:
+    /// `epsilon-ext` is a leaf crate and must not depend on `epsilon-safety`, which is the
+    /// same arrangement `epsilon-lsp` uses (`client::ScrubEnv`). See [`ScrubEnv`] for why
+    /// this parameter exists at all — an extension is a **third-party binary**, and this was
+    /// one of the two spawn paths that handed it the developer's whole environment
+    /// (ledger A34).
+    pub async fn spawn(
+        dir: &Path,
+        manifest: &ExtManifest,
+        scrub_env: Option<ScrubEnv>,
+    ) -> Result<Arc<Self>, ExtError> {
         let bin = manifest.resolved_bin(dir);
-        let mut child = tokio::process::Command::new(&bin)
+        let mut command = tokio::process::Command::new(&bin);
+        command
             .args(&manifest.args)
             .current_dir(dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        // Before the spawn, and before anything this process will read back: an
+        // extension is code from outside the harness, and `API_KEY` in its environment is
+        // a credential handed to it by name.
+        if let Some(scrub) = &scrub_env {
+            scrub(&mut command);
+        }
+        let mut child = command
             .spawn()
             .map_err(|e| ExtError::Crashed(format!("spawn {}: {e}", bin.display())))?;
 

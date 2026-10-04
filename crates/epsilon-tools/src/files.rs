@@ -362,6 +362,12 @@ impl Tool for WriteTool {
                 let existed = path.exists();
                 std::fs::write(&path, &content)
                     .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
+                // Now that the bytes have landed, record what we left behind. Without this the
+                // pre-image is the only hash on the entry, so the restore guard compares the
+                // file against the state *before* this write and refuses every time — which is
+                // what made `/restore` unusable for edits rather than merely untested.
+                crate::checkpoint::CheckpointStore::open(&workspace)
+                    .amend_with_post_image(&workspace, &path, "write");
                 crate::read_log::record_write(&ctx.observation_scope, &path);
                 let mut text = format!(
                     "{} {} ({} bytes)",
@@ -549,6 +555,11 @@ impl Tool for EditTool {
                             let diff = crate::util::unified_diff(&raw, &updated);
                             std::fs::write(&path, &updated)
                                 .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
+                            // Same reason as the `write` tool: the entry's only hash so far is
+                            // the pre-image, and the restore guard has to be able to tell this
+                            // harness's edit from the user's own.
+                            crate::checkpoint::CheckpointStore::open(&workspace)
+                                .amend_with_post_image(&workspace, &path, "edit");
                             crate::read_log::record_edit(&ctx.observation_scope, &path);
                             let mut details = serde_json::json!({});
                             if !diff.is_empty() {
@@ -683,6 +694,9 @@ impl Tool for EditTool {
                 let diff = crate::util::unified_diff(&raw, &updated);
                 std::fs::write(&path, &updated)
                     .map_err(|e| ToolFailure::msg(format!("write failed: {e}")))?;
+                // Third of the three write sites: the batch path. Same reason as the other two.
+                crate::checkpoint::CheckpointStore::open(&workspace)
+                    .amend_with_post_image(&workspace, &path, "edit");
                 crate::read_log::record_edit(&ctx.observation_scope, &path);
                 let mut details = serde_json::json!({});
                 if !diff.is_empty() {

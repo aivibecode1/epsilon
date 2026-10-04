@@ -1102,6 +1102,147 @@ fn the_window_names_the_provider_the_launch_chose() {
     );
 }
 
+/// **The window says what the session has cost and how full its context is — on the frame.**
+///
+/// Audit row A38: `layout.rs:133` promises the bar reads "workspace, model, context, cost",
+/// and the first two were on screen while the other two were nowhere in the product's IDE. A
+/// reader who cannot see the context occupancy cannot decide when to compact, which is the
+/// whole reason the number exists.
+///
+/// **A frame test and not a state test.** `app.metrics()` exists and a test that read it
+/// would pass against a window that computed the numbers correctly and drew nothing — which
+/// is the exact shape this repository has been bitten by twice (M196: a search field with
+/// passing state tests, never on screen). So this asserts on `FrameSummary::region("figures")`,
+/// which only a painted row reaches.
+///
+/// **Why a whole turn runs first.** The cost figure is `None` until a provider has billed
+/// something, and that is the honest empty state — the terminal header prints no cost before
+/// a turn either. So the assertion has to be made against a session that has run, which is
+/// the state a reader is actually reading the number in.
+///
+/// **Negative control.** With the `painter.text` call for the figures removed, the region is
+/// empty and the first assertion fails on `parts.len() == 0`. With `refresh_metrics` removed
+/// from `pump`, the cached figures stay at whatever `IdeApp::new` seeded them — no cost, no
+/// token totals — and the assertion on the third fragment fails with `["ctx …", "↑0 ↓0"]`.
+/// With `read_metrics` returning `Metrics::idle()` unconditionally, the first fragment is
+/// `ctx ?` and the `contains('%')` assertion fails, because there is no window to be a share
+/// of.
+#[test]
+fn the_window_draws_the_context_and_cost_figures_on_its_title_bar() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    let session = app.session().expect("this window has a session").clone();
+
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+    paint_with(&ctx, &mut app, 1440.0, 900.0, type_and_enter("say hello"));
+
+    // The scripted turn calls `bash`, so it parks on a gate; answer it the way the reader
+    // would and wait for the turn to finish, which is the only state in which there is a
+    // bill to show.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut asked = false;
+    while Instant::now() < deadline {
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        if frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("allow bash"))
+        {
+            asked = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(asked, "the scripted turn never parked on a gate");
+
+    let ask = session
+        .pending_approvals()
+        .into_iter()
+        .next()
+        .expect("an ask is waiting");
+    assert!(
+        session.resolve(&ask.request_id, PermissionDecision::AllowOnce),
+        "answering a waiting ask must succeed"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut finished = false;
+    while Instant::now() < deadline {
+        let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+        if frame
+            .region("agent")
+            .iter()
+            .any(|t| t.contains("epsilon-ready") || t.contains("Run complete"))
+        {
+            finished = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(finished, "an allowed turn produced no answer within 20s");
+
+    let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
+    let figures = frame.region("figures").join(" ");
+    let parts: Vec<&str> = figures.split("  ·  ").collect();
+
+    assert_eq!(
+        parts.len(),
+        3,
+        "context, tokens and cost are all three on the bar.\n{}",
+        frame.describe()
+    );
+    assert!(
+        parts[0].starts_with("ctx ") && parts[0].contains('%'),
+        "the first figure is the context as a share of the model's window, in the terminal's \
+         own spelling — a reader has to be able to tell when to compact.\n{}",
+        frame.describe()
+    );
+    assert!(
+        parts[1].contains('\u{2191}') && parts[1].contains('\u{2193}'),
+        "the second is the token totals, in and out.\n{}",
+        frame.describe()
+    );
+    assert!(
+        parts[2].starts_with('$'),
+        "the third is what the session has cost. A session that has run and shows no cost is \
+         the A38 defect again, one turn later.\n{}",
+        frame.describe()
+    );
+}
+
+/// **The window and the wire cannot disagree about the context figure.**
+///
+/// The claim in `read_metrics` is that reading `Agent::estimated_context_tokens` gives this
+/// window the same number `Agent::session_state` serves to RPC and `GET /state`, without
+/// paying that payload's per-request cost on the paint thread. This is where that claim is
+/// checked, against the real payload rather than against the comment — a doc comment is a
+/// record of what somebody once believed.
+///
+/// **Negative control.** With `context_used` built from anything other than
+/// `estimated_context_tokens` — a last-prompt size, a `chars / 4` guess — the two differ on
+/// any session past its first turn, and the equality fails.
+#[test]
+fn the_window_agrees_with_the_wire_about_the_context() {
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+    paint_once(&ctx, &mut app, 1440.0, 900.0);
+
+    let session = app.session().expect("this window has a session").clone();
+    let agent = session.agent().clone();
+    let wire = agent.session_state();
+    let drawn = app
+        .metrics()
+        .expect("a window with an agent has figures")
+        .context_used;
+
+    assert_eq!(
+        drawn,
+        Some(wire.estimated_context_tokens as u64),
+        "the gauge this window draws must be the number the compaction trigger decides on, \
+         which is the number the wire serves."
+    );
+}
+
 /// A turn that cannot start is refused at the point of the press, not silently dropped.
 ///
 /// The loop is single-flight; a second submit against a running turn returns
@@ -1495,11 +1636,33 @@ fn compact_from_the_typed_line_compacts_and_reports() {
     );
 }
 
-/// The refusal table and the parser have not drifted apart.
+/// The refusal table and the parser have not drifted apart — and, unlike the two lists, the
+/// window is asked.
 ///
 /// `refused_heads` is derived **from** the parser rather than hand-written — the same
 /// discipline M171/M172 applied to the terminal's own sweep, for the same reason: a
 /// hand-written list is a gap waiting for a new command to land in.
+///
+/// **What the list comparison could not see, and the control that proves it.** Everything
+/// above is a comparison of two *lists*, and a name added to `SUPPORTED` with no arm to run
+/// it lands in **neither** — `refused_heads` subtracts `SUPPORTED`, so the two halves agree
+/// and the test goes green. Adding `"tree"` to `SUPPORTED` with nothing behind it left this
+/// exact test passing; that is the recorded control, and it is why the second half exists.
+///
+/// So the second half asks the window instead of the lists: every head `refused_heads`
+/// returns is **driven** through `try_command` and must come back `Refused` naming the word
+/// the reader typed, and every head the window declares supported is driven back and must
+/// **run**. The declaration and the implementation are then three statements of one fact —
+/// `SUPPORTED`, `refused_heads`, and what the window actually does — and two of them cannot
+/// drift apart without this failing.
+///
+/// **No agent and no frame, deliberately.** `try_command` *is* the decision, and that is
+/// what is being claimed, so the fixture is the cheapest one that can answer it:
+/// `without_agent` makes `/compact` a no-op inside a window that still answers `Ran`, and
+/// `/goal` answer "there is no agent attached" rather than spawning a round. Driving every
+/// head costs no turn, no permission gate and no clock. The refusal *reaching the screen* is
+/// a separate claim and is asserted where it belongs, by
+/// `a_command_the_window_lacks_is_refused_and_never_sent_to_the_model`.
 #[test]
 fn every_command_head_the_window_lacks_is_refused_by_name() {
     let refused = epsilon_desktop::commands::refused_heads();
@@ -1518,6 +1681,45 @@ fn every_command_head_the_window_lacks_is_refused_by_name() {
             !refused.contains(head),
             "/{head} is supported but also refused: {refused:?}"
         );
+    }
+
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let mut app = IdeApp::without_agent(Options::for_workspace(ws.path()));
+
+    for head in &refused {
+        // Both spellings, because the parser hands back different variants for a bare head
+        // and one with an argument (`/model` opens the picker, `/model gpt` sets the model).
+        // A guard that only drove the bare form would pass over half the grammar.
+        for typed in [format!("/{head}"), format!("/{head} x")] {
+            match app.try_command(&typed) {
+                Outcome::Refused(sentence) => assert!(
+                    sentence.contains(&format!("/{head} ")),
+                    "`{typed}` is in refused_heads(), so it must be refused by name, and it \
+                     was refused as {sentence:?}, which does not name the command the reader \
+                     typed. The trailing space is what separates /skill from /skills — a \
+                     substring check without it would pass a refusal naming the wrong one."
+                ),
+                other => panic!(
+                    "`{typed}` is in refused_heads(), so the window must refuse it rather than \
+                     run or send it, got {other:?}"
+                ),
+            }
+        }
+    }
+
+    for head in epsilon_desktop::commands::SUPPORTED {
+        for typed in [format!("/{head}"), format!("/{head} x")] {
+            let outcome = app.try_command(&typed);
+            assert!(
+                matches!(outcome, Outcome::Ran(_)),
+                "/{head} is declared in SUPPORTED, so `{typed}` must run in this window, got \
+                 {outcome:?}. A declaration with no arm behind it is refused by the reader's \
+                 own hand while the product says the window has it — the drift this half \
+                 exists to catch."
+            );
+        }
     }
 }
 

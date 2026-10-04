@@ -562,6 +562,12 @@ per supply-chain policy (ADR-016).
 *(Amended M79: twelve crates — `epsilon-lsp` joined. The heading is kept as written; the amendment at the
 end of this ADR records why.)*
 
+*(Amended M290: **fourteen** crates — `epsilon-runtime` (M233) and `epsilon-desktop` (M233) joined,
+and the heading is now two milestones stale again. The count in the heading is deliberately not
+edited, because a historical decision record that keeps being rewritten is no longer a record: the
+current count is in [`../../README.md`](../../README.md) and in `AGENTS.md` §3, and this line is
+the pointer to them.)*
+
 **Decision.** epsilon-{contracts,llm,session,core,tools,safety,ext,mcp,lsp,tui,server,cli};
 
 *Amendment (M79):* `epsilon-lsp` joins as the twelfth member (see the ADR-014 amendment below).
@@ -893,9 +899,23 @@ either embeds a web browser or means writing a renderer from scratch.
 **The constraint that decides it: a real desktop application, not a web application.**
 That rules out Electron, and rules out Tauri-with-an-HTML-frontend, and rules out DSH's
 own route — its "desktop" is an Electron shell that spawns a Node child running the *same*
-web profile and points a `BrowserWindow` at it over HTTP
-(`references/deepseek-harness-dsh-v0.2.0-rc.1/apps/desktop/src/main.ts:408,421`). That is a
-browser. We are taking DSH's *workflow*, not its *carrier*.
+web profile and points a `BrowserWindow` at it over HTTP. We are taking DSH's *workflow*, not
+its *carrier*.
+
+> **Citation corrected 2026-10-03.** This paragraph originally cited
+> `references/deepseek-harness-dsh-v0.2.0-rc.1/apps/desktop/src/main.ts:408,421`. That version
+> is **not vendored** — `references/` holds only `deepseek-harness-dsh-v0.2.1-alpha.1` — so a
+> reader could not open the line. The claim is unchanged; the evidence now points at the tree
+> that is actually here:
+> `references/deepseek-harness-dsh-v0.2.1-alpha.1/apps/desktop/src/host-process.ts:189`
+> (the shell spawns a Node child running the Desktop Host),
+> `apps/desktop-host/src/index.ts:103-104` (that child serves on `http://127.0.0.1:<port>` and
+> reports the URL over IPC), `apps/desktop/src/main.ts:450-452` (the shell keeps it as
+> `hostUrl`), and `apps/desktop/src/main.ts:399,431,662-677` (the window loads a
+> `dsh-app://app/` privileged scheme whose requests are forwarded over HTTP to the child's
+> loopback URL). DSH states the arrangement itself at `docs/architecture.md:53-55`. Note it is
+> slightly *more* elaborate than "points a `BrowserWindow` at it over HTTP": the window loads a
+> custom scheme and forwards requests. It is still a browser window over a local web profile.
 
 **Decision: `egui` + `eframe` 0.36.2, rendering natively through winit + wgpu.**
 
@@ -1577,3 +1597,421 @@ each alters what a user sees.
 - **ADR-D03 (rejected during design): adopt DSH surface-shadowing data structure literally.**
   Our compaction-entry-with-shadow-ranges achieves the same model-view rewrite over pi's simpler
   entry format; literal port would fork the session format for no user-visible gain.
+
+---
+
+## ADR-022: The desktop's accessibility is egui `WidgetInfo` over painter-drawn panes, and the limit is stated rather than discovered later
+
+**Status: accepted; implementation not started.**
+
+**The problem.** ADR-020 chose egui because it "ships AccessKit in its default features so the
+app is actually reachable by a screen reader". That claim is true of the *toolkit* and false of
+*this crate*: `crates/epsilon-desktop` declares no accessibility dependency of its own, and its
+transcript, diff, editor, goal band, title bar, status bar and palette rows are drawn with
+`egui::Painter::text` on raw rectangles. **A painter call emits no accessibility node.** The
+transcript — the single most important thing in the window — is invisible to a screen reader,
+and no amount of toolkit capability fixes that from the outside.
+
+**What egui actually offers, measured in its own source.** `Response::widget_info`
+(`egui-0.36.2/src/response.rs:869`) takes a closure returning `WidgetInfo`, and egui emits that
+into the AccessKit tree for whichever platform adapter is running. `WidgetInfo`
+(`egui-0.36.2/src/data/output.rs:563-592`) is:
+
+```
+typ: WidgetType, enabled: bool, label: Option<String>,
+current_text_value, prev_text_value, selected, value,
+text_selection: Option<Range<CharIndex>>, hint_text: Option<String>
+```
+
+**The limit, stated up front so it is not discovered in a conformance audit.** There is **no
+role, no description, and no relations field**. egui 0.36 exposes *name, value and state* — not
+the full ARIA/AccessKit role tree. So the desktop can honestly reach **accessible name, value,
+state and keyboard operation**, which is what most of WCAG needs, and it **cannot** express
+landmark roles or `aria-describedby`-style relations through this API alone. Recording that here
+means the next person does not re-derive it, and means "WCAG 2.2 AA" is not quietly claimed in
+full.
+
+**Decision.** Attach `widget_info` to the interact response of every region a user can see or
+reach, using the smallest truthful `WidgetInfo` the region supports, and make the whole thing
+**testable**: egui renders into an off-screen `egui::Context`, and its `Harness` test API queries
+the same tree a screen reader consumes — so an accessibility claim can be asserted in a unit
+test rather than believed. This follows the discipline ADR-020 already adopted for frames.
+
+**Contrast floors, from the primary source.** WCAG 2.2 SC 1.4.11 (Non-text Contrast) requires
+**3:1** for the visual information needed to identify UI components **and their states**, against
+adjacent colours, and in combination with 2.4.7 Focus Visible the focus indicator itself must
+have sufficient contrast against the adjacent background. The Understanding document is explicit
+that 3:1 is a threshold that **must not be rounded** — 2.999:1 does not pass.
+Source: <https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html>.
+
+That has two consequences the current palette does not yet meet. `IdeTheme::SURFACE_FLOOR` is
+**1.12:1** (`crates/epsilon-desktop/src/theme.rs:67`), and it governs `border_focus`,
+`selection`, `selection_focus`, `panel` and the surface bands (`:266-274`). That number is not
+careless — `theme.rs:248` argues it, and the argument is sound for its own case: *"a band is a
+background, and a background is read as a boundary, not as text. 4% of luminance is where a fill
+stops being the page."* A fill that merely tints a region does not need 3:1.
+
+The gap is the case that reasoning does not cover, and it is the one 1.4.11 singles out. Where
+the selection fill **or the focus border is the only thing identifying which row is selected or
+focused**, it is not a background — it is the state indicator, and 1.4.11 requires 3:1 against
+adjacent colours. Today neither `selection_focus` nor `border_focus` is ever compared **against
+its own unfocused sibling**; the tests at `theme.rs:429-457` check each against the page
+background at the band's floor, which cannot distinguish "is this row selected?" from "is this
+row painted?".
+
+**What this ADR does not decide.** Whether the desktop should also convert painter-drawn regions
+to real widgets. That is the larger question and the more expensive one; `widget_info` over the
+painter path is the smallest change that puts name, value and state in front of a screen reader
+at all. It is the right first slice and it is not the last.
+
+**How we will know.** Per `AGENTS.md` §8, the desktop is held to WCAG 2.2 AA. That claim is only
+true if a test asserts it. A conformance claim with no test behind it is the exact failure mode
+this repository has already paid for twice.
+
+### Amendment, 2026-10-03 — implemented, and the tree is readable from a test
+
+**The hedge above is no longer needed, and it was wrong to leave it there.** `Context::enable_accesskit()`
+(`egui-0.36.2/src/context.rs:3701`) turns on the per-pass state that `Context::end_pass` turns into
+`FullOutput::platform_output.accesskit_update` — the literal `accesskit::TreeUpdate` the platform
+adapter forwards to the OS — and `Context::run_ui` returns it. `egui::accesskit` is re-exported
+(`lib.rs:434`), so reading the tree in a test needs **no new dependency**. **An accessibility claim
+in this crate can therefore be asserted, not asserted-by-proxy.**
+
+One helper, `name_region` (`app.rs`), covers five regions through `Ui::interact` with a literal
+id salt and `Sense::empty()` (so it cannot steal input from the scroll area or the editor), then
+`widget_info`: the **transcript** (`Agent transcript · N entries`), the **editor** (read-only, with
+the path and line count, or the change under review), and the **file tree**, **subagents** and
+**sessions** panes with the counts they already had. Counts are read from the same values the
+pane drew with; the transcript counts *entries*, not "messages", because a `RowKind` carries tool
+calls and diffs too.
+
+Two verifications, both measured:
+
+- **Negative control.** With `widget_info` commented out and nothing else changed, **121 passed and
+  8 failed** — exactly the eight new tests. Restored: 129 passed, 0 failed.
+- **Nothing is drawn.** In the same control run, `FullOutput::shapes` was **47 entries both ways,
+  byte-for-byte identical**. This is metadata, not repainting.
+
+**Still not claimed, and said so in the code as well as here:**
+
+- **The transcript's rows have no nodes.** The region is named and counted; a screen reader cannot
+  read the *conversation*. That needs real widgets or per-row names, and it remains the largest
+  open gap in this ADR.
+- No landmark roles, no descriptions, no relations — not expressible through `WidgetInfo` in
+  egui 0.36. `WidgetType::Panel` maps to AccessKit `Role::Pane`, which is a container role and not
+  an ARIA landmark.
+- The nodes attach **flat** to the window root, because the pane `Ui`s carry no node of their
+  own. Truthful, but not a pane hierarchy.
+- **No screen reader was run.** The claim is "egui emitted the node into the platform tree", not
+  "a screen reader announced it".
+
+### Second amendment, 2026-10-03 — two corrections to the first, and a second mechanism
+
+**Correction 1: two of the "painter-only" regions were not painter-only.** The first amendment
+listed the **composer** and the **activity bar** among the regions that emit nothing. They were
+wrong: both are real egui widgets, and egui had already put nodes in the tree for them —
+*unnamed*.
+
+- `WidgetInfo::text_edit` (`egui-0.36.2/src/data/output.rs:697`) fills `current_text_value` and
+  `hint_text` and **never `label`**. The composer node existed as a `MultilineTextInput` with a
+  value, a placeholder, and nothing to call it.
+- `Button::ui` publishes `WidgetInfo::selected(Button, enabled, selected, text)` where `text` is
+  the **glyph** (`widgets/button.rs:391`), so the three activity-bar buttons were named `◧`, `⑂`,
+  `☰`. Separately: `on_hover_text` never reaches a screen reader at all — egui 0.36 contains no
+  `set_description` or `set_tooltip` call anywhere, although `accesskit::Node` has both.
+
+**Correction 2: naming a node egui already built needs a different call.**
+`Response::widget_info` **writes** the node from the `WidgetInfo` handed to it, and on a frame
+where the widget was clicked or edited it also pushes an `OutputEvent` (`response.rs:869-894`,
+the `output_event` branch). Using it on the composer would queue a second, value-less copy of
+every keystroke onto a queue the app had already received one of.
+
+So there are now **two** accessibility mechanisms in this crate, deliberately:
+
+| Helper | For | Mechanism |
+|---|---|---|
+| `name_region` | regions we paint ourselves | `Ui::interact(..., Sense::empty())` + `Response::widget_info` |
+| `name_node` | nodes egui already built | `ctx.accesskit_node_builder(id, |n| n.set_label(..))` |
+
+`name_node` writes **one field** and leaves role, value, placeholder and `toggled` exactly as
+egui set them, which is what makes it safe next to `Button::selected`.
+
+**Regions now named:** transcript, editor, file tree, subagents, sessions (the original five),
+plus **title bar** (workspace, model and figures, character-for-character what it drew), **status
+bar** (no agent attached / idle / running), **activity-bar strip** and its three buttons
+(`files`, `subagents`, `sessions`), **palette rows** (salted by identity, not by index, so a node
+does not renumber as the query is typed), **goal band** (status, round, gate count, armed — and
+deliberately *not* the objective text, which is unbounded reader text), and the **composer**
+(renamed, not doubled). Tabs were left alone: they are already `egui::Button`s, so egui names them.
+
+**Evidence.** Six new tests through the real `paint` and the AccessKit tree, each asserting the
+label **changes with the state it reports** (figures appear and disappear; `no agent attached` →
+`idle`; `files` → `subagents`; `not armed` → `armed`; an absent goal publishes **no node at
+all**), plus no-double-node controls for the composer and the palette's search box. Negative
+control: all five new `name_region` calls and both `name_node` calls commented out and nothing
+else changed → **130 passed, 6 failed**, the six being exactly the new tests, with five dead-code
+warnings proving the removal was total. `FullOutput::shapes` identical in both builds.
+
+**Still open.** The palette's overlay rectangle, its "N more" note, its empty state and its hint
+line are unnamed. No landmark roles, descriptions or relations. The nodes attach flat. No screen
+reader has been run.
+
+### Third amendment, 2026-10-04 — transcript rows are named, and the premise was wrong
+
+**The gap was not what it said.** The second amendment says "the transcript's rows have no nodes."
+They did. Every drawn transcript row is an `egui::Label`, and `Label::ui` already calls
+`response.widget_info(...)` (`egui-0.36.2/src/widgets/label.rs:282`) — so every visible row had
+been putting a `Role::Label` node into the tree carrying the row's whole laid-out text as its
+**value**, with `label = None`. What was missing was the **name**, not the node. A screen reader
+could reach each row and get its text as a value; it could not say what kind of row it was.
+
+**`Response::widget_info` cannot name a row at all.** `WidgetType::Label` maps to `Role::Label`
+(`response.rs:936`), and on that role egui writes a `WidgetInfo`'s `label` into **`Node::value`,
+not `Node::label`** (`response.rs:962-964`). Using it would overwrite the row's text *and still
+leave the accessible name empty*. So the rows use **`name_node`** — the helper that writes the
+one missing field and leaves role and value as egui built them. That matters beyond tidiness:
+`selectable_labels` is on by default, so transcript labels are click- and drag-sensitive, and
+`widget_info` would queue a duplicate `OutputEvent` on every such frame.
+
+**Labels are `Transcript row · {kind} · {excerpt}`** — kind first because egui attaches these
+flat to the window root, so a node arriving out of context has nothing else saying which region it
+is in; excerpt capped at 80 characters, whitespace-folded, from the **sanitised** text the row
+already draws. A six-block answer gives six distinguishable names rather than six identical ones.
+The **empty state** and a pending **permission ask** are named too.
+
+**Off-screen rows stay unnamed structurally, not by convention.** The measuring pass takes
+`Label::layout_in_ui`, which registers no node at all, and every off-screen row only ever runs in
+the measurement probe. A test pins this: 800 rich rows → **44 lines drawn → 53 named nodes**,
+not 1600. That is the evidence that this did not re-create the cost virtualisation removed — and
+it is in a test, not in a comment.
+
+**On the cost, stated carefully because the measurement could not settle it.** `frame_cost.rs`
+reported 3.927 ms → 4.004 ms at 800 rows, but the *same* build swung between 2.64 and 4.02 across
+runs, so that pair proves nothing alone. Two paired measurements settle it: back-to-back on the
+mandated benchmark (3.493 control vs 4.023 named), and an interleaved four-round A/B with
+AccessKit **on** — named 3.55 / 4.41 / 4.08 / 4.03 against control 4.08 / 3.74 / 4.26 / 4.34.
+**Fully overlapping: the naming is below the noise floor.** The interleaved probe had to be built
+because `frame_cost.rs`'s `paint_once` never calls `enable_accesskit()`, so **that benchmark
+cannot see node-building at all** — a real gap in our instrument, recorded rather than papered over.
+
+**Still open after this.** Nodes attach flat; there are no landmark roles, descriptions or
+relations. A `Changed` row's click target has **no node at all** — its `Sense::click()` is not
+focusable, so egui's node-creation guard skips it; giving "open the file" a role needs a
+`WidgetInfo` there and was judged out of scope rather than half-done. egui's per-galley
+`Role::TextRun` selection run stays unnamed deliberately — its content *is* its value, and naming
+it would double-announce; a test pins that it remains one node. And **no screen reader has been
+run** at any point in this ADR.
+
+---
+
+## ADR-023: `/restore` — the rollback half of a checkpoint store is a command, and the guard compares against what the harness left behind
+
+**Status: accepted; implemented (M277).**
+
+**Context.** `CheckpointStore::record` runs before every `write` and `edit`
+(`crates/epsilon-tools/src/files.rs:356`, `:539`), so every mutation leaves a pre-image on disk.
+`CheckpointStore::restore` (`crates/epsilon-tools/src/checkpoint.rs`) had **no production caller** —
+every call site was inside that file's own `#[cfg(test)] mod tests`. The store grew a durable
+revert record that no tool, slash command or panel could reach: the defect class `AGENTS.md` §5
+names by its own name.
+
+**Decision.**
+
+1. **`/restore <path>` is a terminal slash command.** Parsing in `picker.rs` (`Command::Restore`,
+   `COMMAND_HEADS`, `SLASH_ITEMS`), execution in `app/commands.rs::run_restore_file`. The desktop
+   refuses it **by name** rather than ignoring it, so a window does not tell a reader the command
+   does not exist.
+2. **Two presses.** The first states what would happen and changes nothing; the second repeats the
+   path and ends in `yes`. `AGENTS.md` §6 requires a confirmation before an overwrite, and a
+   restore is an overwrite. The confirming line lands directly under the plan it confirms, in the
+   transcript.
+3. **The store is reached through `epsilon-runtime`** — `describe_checkpoint` (preview) and
+   `restore_checkpoint` (apply) — never through `epsilon-tools`. `crates/epsilon-tui/Cargo.toml`
+   states a rule worth keeping: *"the shipped TUI reaches the shell through
+   `epsilon_core::exec::run_local`, never by naming a tool crate."* Adding a production
+   `epsilon-tools` edge for one command would have inverted it. This follows the `/goal`
+   precedent (ADR-021): a rule both front ends share lives in the composition crate.
+4. **Path resolution belongs to the store** (`CheckpointStore::resolve`). The ledger has one
+   spelling of a path; a front end that re-derived it would answer "no checkpoint" for a file that
+   has one — which is a lie, not a missing feature.
+
+**5. The restore guard compares against the POST-image, and this is the part that took a
+rewrite.** `Entry::digest` holds the **pre**-image, because `record` runs before the write — which
+is correct, since a checkpoint taken afterwards captures the damage. But M104's guard then
+required the file to *still* hash to that pre-image, and once the write landed it never did. **The
+guard was unsatisfiable on the only flow that produces checkpoints: reverting an edit refused one
+hundred percent of the time.** Nobody noticed because, in M104's own words, *"No UI reaches this
+yet, which is why it is a fix rather than an incident."* Wiring `/restore` up is what made it
+observable, which is the argument for shipping the command rather than deleting the write path.
+
+The fix is **not** to weaken the guard. `Entry` gains `post_image` — the hash of what the harness
+itself left on disk — written by `CheckpointStore::amend_with_post_image` as an **append** after
+the write lands. The ledger is append-only on purpose, so an amendment is a new entry repeating
+the same `blob`, `bytes` and `existed`, differing only in carrying the post-image; because
+`latest_for` reads newest-first and `resolve` goes through it, the amendment is what a `/restore`
+finds. The guard now asks the one question that is answerable: *is the file still exactly what
+this harness left here?*
+
+**Consequences.** `/restore` reverts an agent-**created** file (removing it) and an **edit**
+(putting the pre-image back). It refuses, leaving the file untouched, when the file has moved since
+the harness wrote it — the user's own later work. Three refusal sentences now exist where there
+was one, because "the user edited it" and "this entry never recorded what we left behind" are
+different facts with different advice, and merging them is how a refusal becomes a mystery.
+
+**Alternatives rejected.** *Delete the write path instead* (the roadmap's other option) — loses
+the pre-image, so nothing is recoverable after a wrong edit. *Expose `CheckpointStore` to the TUI*
+— breaks a written manifest rule for one command. *A confirmation overlay* — a new `App` state
+field and a second input mode for a two-word grammar that reads better in the transcript, next to
+the plan it confirms. *A rendered diff* — the crate's diff renderer needs both sides as text and a
+checkpoint has only the "before" side; a second diff implementation would answer a question the
+byte count and the checkpoint identity already answer honestly. *Weakening the guard to a
+timestamp* — the reason M104 chose content over metadata is recorded beside it and still holds.
+
+**Still open, and not pretended otherwise.** `restore` on an `existed: false` entry removes the
+file with no content check, because a creation has no pre-image to hash. So a user who edits an
+agent-created file and then restores it loses their edit. The preview says `DELETE` in capitals and
+waits for `yes`, which is the honest mitigation available without a further schema change.
+
+---
+
+## ADR-024: A command the product parses is a command the product offers; a key hint is looked up, never written
+
+**Status: accepted; implemented in the part that is user-visible (M279).**
+
+**Context.** The command surface is five hand-maintained tables that nothing reconciles:
+`enum Command`, `COMMAND_HEADS` + `ALIAS_HEADS`, `SLASH_ITEMS`, `palette_entries()`, and
+`keybindings::DEFAULTS`, plus a sixth in the desktop — its own `SUPPORTED` list and a 38-arm
+`head_of`. Two drift checks existed and both were about `parse_command`. Two lies shipped through
+the gaps.
+
+**Decision 1 — `/help` and autocomplete must offer every canonical head.**
+`SLASH_ITEMS` is what `/help` prints and what the `/` autocomplete suggests. Six heads parsed,
+were listed in `COMMAND_HEADS`, and appeared in neither: `theme`, `expand`, `templates`, `branch`,
+`exit`, `scoped_models`. A person could type `/theme` and have it work, and had no way to learn it
+existed. `ALIAS_HEADS` settles the canonical question — it holds the *alternative* spellings, so
+`branch` and `exit` are canonical while `timeline`, `quit` and `q` are their aliases — and all six
+are now offered, guarded by `every_offered_command_is_reachable_from_slash_items`, which was
+written first and **failed on `/theme`** before anything was added.
+
+**This changes a wire, and that is why it is written down.** `SLASH_ITEMS` feeds the RPC
+`get_commands` reply (`crates/epsilon-cli/src/rpc_mode.rs`), which is a wire type under
+`AGENTS.md` §2.8. **The reply grows by six entries.** The check there only asserts that every TUI
+command *appears* in the list, so it goes green over the change — a test that runs in one direction
+cannot see a wire getting wider. Widening it is correct: a client enumerating commands was
+enumerating an incomplete set. A client that asserts an exact count would break, and the right
+fix for such a client is to stop asserting a count of a surface meant to grow.
+
+**Decision 2 — a palette key hint is resolved from the binding table, not typed.**
+`PaletteEntry` carried `binding: Option<&'static str>` with hand-written literals. One of them was
+**`"/login"` in the key column** — a slash command advertised where a reader looks for a chord, for
+an action that has no key at all; pressing it did nothing. The next advertised `"Ctrl+M"`, which is
+not the spelling `key_label` prints, so a rebind would have left it stale regardless.
+`KeybindingsManager::key_text` already existed and already stated the doctrine:
+*"a rebound key changes its own hint, and a binding that does not resolve produces no hint at all
+rather than a dead one."* `PaletteEntry` now carries `key_id`, and `binding` is produced by that
+call, so the only values that can reach the key column are chords the handler accepts.
+
+**The guard that let it through, and its replacement.**
+`a_palette_entry_that_advertises_a_key_advertises_the_bound_one` asserted `normalized != "x"` — a
+blacklist of one value, which passed against one bad literal out of seven. It is replaced by
+`a_palette_key_hint_is_resolved_from_the_binding_table_not_typed`, which holds three properties: an
+entry with no `key_id` shows no key; an entry with a `key_id` shows exactly what the table
+resolves; and no hint begins with `/`. **Negative control run** — reinstating the historical
+`"/login"` hint fails that test, naming the entry and the reason.
+
+**Consequences.** `/help`, the `/` autocomplete and the RPC command list are all six entries wider.
+The palette no longer shows a key for "Connect provider", because there is not one.
+
+**What this ADR does not do.** It does **not** move the registry into `epsilon-contracts`. The
+larger unification — one `REGISTRY` table with per-frontend capability declared as data,
+replacing `COMMAND_HEADS`, `ALIAS_HEADS`, `SLASH_ITEMS`, `DEFAULTS`, `SUPPORTED` and `head_of` — is
+designed and recorded in [`docs/STATUS.md`](../STATUS.md) and is **not implemented**. This ADR
+fixes the two lies that are user-visible today, without the 350-line move that carries the most
+risk. The invariant in `AGENTS.md` §2.4 stands; this is a step toward it, not its completion.
+
+**Amendment, M290 — the host module landed; the table is still four tables.**
+`crates/epsilon-contracts/src/command.rs` now holds `SlashItem`, `SLASH_ITEMS`, `Command`,
+`COMMAND_HEADS`, `ALIAS_HEADS` and `parse_command`, and `epsilon-tui/src/picker.rs` re-exports all
+six, so **no call site in the workspace changed**. `epsilon-desktop/src/commands.rs` reads the
+registry from `epsilon_contracts::command` directly rather than through `epsilon_tui::picker`, which
+is the edge that crate's own manifest predicted (*"If that ever stops being true, the edge is one
+module"*). The desktop's remaining `epsilon-tui` dependency is the *palette* and the *numbers*
+(`ThemeMode`, `ui::theme`, `ui::metrics`) — colour roles and values, not command behaviour.
+
+So the paragraph above is now narrower and more precise: the **command half** moved to the crate
+below both front ends, and the **rows are still four hand-maintained tables** (`COMMAND_HEADS`,
+`ALIAS_HEADS`, `SLASH_ITEMS`, `keybindings::DEFAULTS`) that merely live in one crate. One flat
+`REGISTRY` of `Action` rows is still unbuilt and nothing in the product depends on it.
+
+Two decisions carried across the move rather than re-made:
+
+1. **`parse_command` stays a hand-written `match`.** Rewriting it as a table lookup deletes ~80
+   lines and needs four arities spelled out (`/model` bare opens the picker, `/model x` sets an id,
+   `/models` is both, and a bare `/login` is valid and means "ask me"), plus `scoped-models` and
+   `scoped_models`. That is a behaviour change dressed as a refactor (`AGENTS.md` §5), so the arms
+   moved verbatim.
+2. **The guard is repaired, not relaxed.** `no_source_file_lost_a_test_since_head` reported the
+   move as *four deleted tests*, because `git diff HEAD` cannot see a file git has never heard of —
+   the third recorded instance of *"a check that cannot see a thing is indistinguishable from a
+   check that found nothing"*. It now reads `git ls-files --others --exclude-standard -- crates/`
+   and counts those files' tests as added. **A moved test is not a deleted test, and the guard now
+   says so.**
+
+---
+
+## ADR-025: The sidebar is a control, so the window's minimum size must be able to show it
+
+**Status: accepted; implemented (M289).**
+
+**Context.** `Preferences { sidebar_width, sidebar_visible }` existed in
+`crates/epsilon-desktop/src/layout.rs` with a documented clamp range, and was **dead state**: set to
+`default()` once in `IdeApp::new` and `without_agent`, and never mutated. No drag handle, no
+collapse control, no persistence — so the objective's "resizable and collapsible panes, remembered
+state" was met by a struct rather than by a product.
+
+**Decision.**
+
+1. **A resize handle on the sidebar's right edge**, 6 points wide — exactly `GUTTER`, so it can
+   never reach into a pane — using egui's own idiom (`Sense::drag()` plus `Response::drag_delta`,
+   which is what `egui::containers::Resize` does). `Sense::drag()` rather than the bare
+   `Sense::DRAG`, because that one word carries `FOCUSABLE`, and egui builds an AccessKit node for
+   every focusable widget — which is what gives the control's accessible name somewhere to live.
+2. **`Ctrl`+`B` folds and unfolds it** — the chord VS Code, Sublime Text and Atom already bind to
+   this — plus `←`/`→` in 16-point steps. The keyboard route is not a convenience: a 6-point target
+   is under WCAG 2.2 SC 2.5.8's 24 by a factor of four, and arrow keys are how a screen-reader
+   toolkit resizes a splitter. The handle's width gap is documented in `layout.rs`, not hidden.
+3. **The control lives in the title bar**, because a control that vanishes with the thing it
+   controls cannot put it back. The status bar prints the keys, and **only while they work on that
+   frame** — nothing while the palette is open, no arrows once the sidebar has folded. That is
+   `AGENTS.md` §2.7 in its smallest form: a hint for a key that does nothing is worse than no hint.
+4. **Persistence is one small JSON file per workspace**, two keys and no secret. Corrupt,
+   unreadable, truncated, wrong-typed or missing-a-key all fall back to the defaults and **never
+   fail the launch**; a width stored out of range is clamped on the way in.
+
+**The per-workspace keying was measured, not chosen.** One global `desktop.json` shipped first,
+then met a hostile file written into the real config directory: **nine tests went red**, because
+the integration tests resolve the config directory themselves and inherited whatever the person
+running them had resized. That is a test that is a coin flip, which is worse than no test. Re-keying
+per workspace, and bounding the last two helpers, brought it to zero with the poison files still
+on disk. Per-workspace is also the better answer: a monorepo's file tree wants a wide sidebar and a
+dotfiles repo's does not.
+
+**And the minimum window size, which is what made the rest honest.** `lib.rs` set
+`with_min_inner_size([720, 480])` — **below `MEDIUM` (860)**, so at the only size a window cannot
+be dragged away from, the layout folds the sidebar for narrowness. A reader who had sized it,
+collapsed it or restored it would be shown a window silently disagreeing with their own choice, and
+could not drag it back. **A minimum that contradicts a control is not a minimum; it is a bug waiting
+to be resized into.** It is now `900×560`, and the layout's degradation thresholds are untouched —
+a window can still be shrunk below this by a display change or a window manager, and the tiers
+still fall away in order. This only says where the guarantee *starts*.
+
+**A defect the tests found.** `paint` carved the layout *before* reading keys, so `Ctrl`+`B` was
+answered one frame late: the frame that saw the key still drew the sidebar. The carve now happens
+after every key handler, which is also what `pane_keys` needs, since a splitter drag resolves
+against last frame's rects. I did not reason that out beforehand — the keyboard test failed on it.
+
+**Consequences, stated plainly.** The new bindings are read in `app.rs` alone: they are **not** in
+the command palette and **not** in `/hotkeys`, because both need a `Command` variant in the
+terminal's `picker.rs`, which the shared `REGISTRY` does not yet exist to host. `Ctrl`+`B` also means
+transcript page-up **in the terminal** — a different application's namespace, and a known cost of the
+registry still being unbuilt.

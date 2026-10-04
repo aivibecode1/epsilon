@@ -1,6 +1,6 @@
 //! Text that is safe to *show*.
 //!
-//! **This module moved here from psilon-tui (M272)**, beside [crate::summarize_request]
+//! **This module moved here from epsilon-tui (M272)**, beside [crate::summarize_request]
 //! and [crate::goal_command]. It is a pure function over text with no terminal and no
 //! app state in it, and the desktop window has the same need the terminal had: a
 //! command carrying a display-steering character must not reach an approval screen

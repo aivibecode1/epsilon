@@ -1364,6 +1364,68 @@ fn an_existing_backup_is_never_replaced_by_a_second_conversion() {
     );
 }
 
+/// **The copy left by an `append`-triggered conversion is a file this build can open.**
+///
+/// That is a different claim from "a copy was left", and it is the one that matters: a
+/// recovery copy nothing can recover *with* is not a recovery copy.
+///
+/// The defect was an ordering one. `append` stamps a header lazily on a headerless file,
+/// and on a **migrating** file it did that *before* calling `persist_migration` — which is
+/// where the copy is taken. The session handle is `O_APPEND`
+/// (`store.rs:570-574`), so on a file that already had entries the header line landed at
+/// EOF rather than at offset 0, and the `.pre-epsilon` copy captured `original + header`.
+/// A header is legal only as the **first** line (`store.rs:889-895`), so the one artefact
+/// meant to be the way back opened as `Corrupt { diagnosis: SecondHeader }`.
+///
+/// The production path through here is a **resume**: `Agent::live_resume`
+/// (`epsilon-core/src/lib.rs:972-994`) opens and repairs without calling
+/// `persist_migration`, so the first append is what takes the copy. The runtime launch path
+/// calls it at startup and was never affected — which is why this sat unfixed behind a green
+/// suite: the reachable path is the one the tests did not walk.
+#[test]
+fn a_backup_taken_from_append_is_a_file_this_build_can_open() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let lines = raw_message_lines(&dir, "s.jsonl", &["one", "two"]);
+    let path = dir.path().join("s.jsonl");
+    let original = format!("{}\n{}\n", lines[0], lines[1]);
+    std::fs::write(&path, &original).expect("seed a headerless v1 session");
+
+    let mut store = SessionStore::open(&path).expect("open the headerless file");
+    assert!(
+        store.migrated(),
+        "a headerless file is legacy, so the first append converts it"
+    );
+    store
+        .append(EntryKind::Message {
+            message: user_msg("three"),
+            api_request_sha256: None,
+        })
+        .expect("the first append converts the file");
+    drop(store); // release the write lease before reading again (M61)
+
+    let backup = pre_epsilon_of(&path);
+    assert_eq!(
+        std::fs::read(&backup).expect("the conversion must leave a copy beside the file"),
+        original.as_bytes(),
+        "the copy is the file as it was, not the file with a header stamped onto the end of it. \
+         A header is legal only as the first line, so a copy carrying one cannot be opened — \
+         and this copy is the only way back from the conversion."
+    );
+    assert_ne!(
+        std::fs::read_to_string(&path).expect("the converted file"),
+        original,
+        "…and the file itself really was converted, so the assertion above is not degenerate"
+    );
+
+    // The point of the copy: it opens, and it opens with the conversation still in it.
+    let copy = SessionStore::open(&backup).expect("the way back must be openable");
+    assert_eq!(
+        copy.len(),
+        2,
+        "…and it still holds what the original held, rather than opening as damage"
+    );
+}
+
 /// A file that needs no migration leaves no copy behind.
 ///
 /// The copy exists because conversion destroys a foreign file's only readable copy. A current

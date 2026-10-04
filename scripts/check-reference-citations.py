@@ -18,7 +18,15 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REFS = os.path.join(REPO, "references")
 
-# references/pi-0.84.2/packages/<pkg>/<path>.ts:12-34,56  or  :68 or :401
+# references/pi-<version>/packages/<pkg>/<path>.ts:12-34,56  or  :68 or :401
+#
+# The version segment is matched as `pi-<anything-version-shaped>` rather than pinned to one
+# release. It used to be pinned to `pi-0.84.2`, and `references/` now holds `pi-1.0.0` — so
+# every citation in the tree matched **nothing**, and this check reported success while
+# checking zero files. A verifier that silently checks nothing is worse than no verifier,
+# because it reads as coverage. `pi-[\w.\-]+` follows the same shape the
+# `references/<dir>` gatherer below already used.
+#
 # NOTE: the extension alternation must be ordered longest-first, or `package.json`
 # matches as `package.js` and the `:2-4` line range is silently left behind. The
 # trailing lookahead keeps `foo.json` from being re-matched as `foo.js` + "on".
@@ -27,7 +35,7 @@ REFS = os.path.join(REPO, "references")
 # the nonsense path `src/{a.ts`, which then reads as "file not found". The
 # subagent who found this gap was right that the earlier count under-reported.
 CITE = re.compile(
-    r"references/pi-0\.84\.2/"
+    r"references/pi-[\w.\-]+/"
     r"(?P<path>[\w./\-]*\{[^{}]*\}[\w./\-]*"  # brace group, whole
     r"|[\w./\-]+\.(?:tsx|ts|json|js|md))"  # plain file
     r"(?![A-Za-z])"

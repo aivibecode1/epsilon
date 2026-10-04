@@ -148,8 +148,10 @@ every original line, while the model sees the compacted projection. Audit intact
 context small.
 
 **Turn lease** — An advisory lock file letting the CLI, TUI, and server share one
-session file safely. A crashed process's leftovers can be taken over after 30
-seconds. Cross-process coordination pattern from Hermes.
+session file safely. A live holder re-stamps it every 2 seconds; a holder whose stamp
+stops moving for **4 seconds** is taken as dead and its lock may be taken over. The
+older 30-second figure is the fallback for a lock that cannot be read at all.
+Cross-process coordination pattern from Hermes.
 
 **Crash repair** — On load, dangling tool calls become synthetic error results and
 failure-stopped turns get explicit markers. Idempotent: repairing twice changes

@@ -425,7 +425,7 @@ pub(super) fn draw_transcript(
 pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
     use crate::ui::overlay::{self, Panel, Width};
 
-    let entries = crate::picker::filter_palette(&app.input);
+    let entries = crate::picker::filter_palette(&app.input, &app.keybindings);
     let width = Width::Fixed(64).resolve(outer);
     let height = 14u16.min(outer.height.saturating_sub(2)).max(4);
     let panel = Panel {
@@ -453,11 +453,14 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         )));
     }
     for (index, entry) in entries.iter().enumerate().skip(start).take(capacity) {
+        // `as_deref()` on a borrow, because the entry is behind `&` from `entries.iter()`
+        // and the hint is now an owned `String` rather than a `&'static str`.
+        let binding = entry.binding.as_deref().map(|b| format!("[{b}]"));
         lines.push(overlay::list_row(
             &app.theme,
             index == app.picker_index,
             &entry.title,
-            entry.binding.map(|b| format!("[{b}]")).as_deref(),
+            binding.as_deref(),
             inner.width as usize,
         ));
     }
@@ -598,24 +601,31 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
         // picker does not show is a label the user cannot find, which makes the
         // feature worse than useless -- they would re-create it.
         let labelled = match row.label.as_deref() {
-            Some(l) => format!(" \u{1f4c1} {l}"),
+            Some(l) => format!(" {} {l}", app.theme.glyphs.folder),
             None => String::new(),
         };
         // A folded row says so. Without a marker the subtree simply vanishes
         // and the reader cannot tell "collapsed" from "never had children" --
         // which is the same silent-loss problem the off-lane marker addresses.
         // Two DIFFERENT glyphs, because the two states are different facts:
-        // `\u{25be}` (collapsed) means "children are hidden, press Ctrl+Right",
-        // `\u{25b8}` (expanded) means "children are shown, press Ctrl+Left".
-        // The same glyph for both would make a collapsed branch
-        // indistinguishable from an expanded one -- the reader would have to
-        // press the key to find out, which is the guessing this repo avoids.
+        // closed means "children are hidden, press Ctrl+Right", open means
+        // "children are shown, press Ctrl+Left". The same glyph for both would
+        // make a collapsed branch indistinguishable from an expanded one -- the
+        // reader would have to press the key to find out, which is the
+        // guessing this repo avoids.
+        //
+        // **From the repertoire table (A43).** These were literals, so on the ASCII set --
+        // which is the *default* on Windows without a UTF-8 host, i.e. most of the people
+        // who filed the ASCII reports -- both rendered as boxes. The fold feature's entire
+        // purpose is carried by the difference between these two characters, and that
+        // difference is exactly what a box destroys. The CP437 frame test never drove this
+        // panel, which is why the M219 sweep missed them.
         let fold_mark = if app.folded.contains(&row.id) {
-            " \u{25be}"
+            format!(" {}", app.theme.glyphs.fold_closed)
         } else if super::commands::has_children(row, &app.timeline_all) {
-            " \u{25b8}"
+            format!(" {}", app.theme.glyphs.fold_open)
         } else {
-            ""
+            String::new()
         };
         let raw = format!(
             "{}{}#{seq} [{tag}]{fold_mark}{labelled} {snippet}",
@@ -630,12 +640,22 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
             labelled = labelled,
             snippet = row.snippet,
         );
-        let display = if raw.len() > budget {
-            let w = budget.saturating_sub(3);
-            format!("{}...", &raw[..w.min(raw.len())])
-        } else {
-            raw
-        };
+        // **Truncated in COLUMNS, by the one helper that knows a column is not a byte.**
+        //
+        // This was `if raw.len() > budget { &raw[..budget - 3] }` -- and that panics. `budget`
+        // is columns and `raw[..n]` is bytes, so the slice index is wrong by however much the
+        // prefix and the snippet are non-ASCII. The prefix guarantees the skew: `📁` is four
+        // bytes, `▾`/`▸` three. Snippets are produced up to 100 columns wide
+        // (`PREVIEW_COLUMNS`), so at an 80-column terminal this branch is the **normal** path,
+        // not an edge case, and any em dash, curly quote or emoji within three bytes of the
+        // cut ends the process with `byte index N is not a char boundary`.
+        //
+        // The CJK test that does exist passed by arithmetic luck: its prefix is exactly 11
+        // bytes and the cut lands 60 bytes in, which is exactly 20 three-byte characters.
+        // A boundary, by coincidence. It exercised truncation and missed the panic, which is
+        // the project's own "a control that passes is a control you have not proven" lesson
+        // landing in a new place.
+        let display = crate::state::truncate_public(&raw, budget, app.theme.glyphs.ellipsis);
         lines.push(overlay::list_row(
             &app.theme,
             i == app.timeline_index,
@@ -677,14 +697,19 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
     lines.push(Line::from(""));
     // The position counter and the key hints share the footer line: a `hint_row`
     // carries the hints, and the counter stays where the reader looks for it.
-    let mut footer = vec![Span::styled(
-        format!("{}/{}", app.timeline_index + 1, total),
-        app.theme.dim(),
-    )];
+    let counter = format!("{}/{}", app.timeline_index + 1, total);
+    let mut footer = vec![Span::styled(counter.clone(), app.theme.dim())];
     footer.push(Span::styled(" · ", app.theme.faint()));
     let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
+    let shift_l = format!("{}L", app.theme.glyphs.shift);
+    // **Budgeted against this panel's own width.** Seven hints are about 74 columns and the
+    // inner width is 60 at an 80-column terminal, so the row wrapped and took a line from the
+    // list above it. The counter's own width comes out of the same budget, because it is on
+    // the same line — which is the whole reason the hint row and the counter share a footer.
+    let budget =
+        (inner.width as usize).saturating_sub(crate::ui::layout::display_width(&counter) + 3);
     footer.extend(
-        overlay::hint_row(
+        overlay::hint_row_in(
             &app.theme,
             // M196: the tree's own keys, all of which exist. A hint row that
             // lists fewer keys than the panel binds is the same defect as an
@@ -695,10 +720,14 @@ pub(super) fn draw_timeline(f: &mut Frame<'_>, app: &App, outer: Rect) {
                 ("enter", "jump"),
                 ("f", "filter"),
                 ("/", "search"),
-                ("⇧L", "label"),
+                // From the repertoire table: `⇧` is not in CP437, and this is the ONLY
+                // place the Shift+L chord is advertised, so on a legacy console the one
+                // undiscoverable binding was the one that rendered as a box (A43).
+                (&shift_l, "label"),
                 ("k", "fork"),
                 ("esc", "close"),
             ],
+            budget,
         )
         .spans,
     );
@@ -834,7 +863,32 @@ pub(super) fn draw_dialog(f: &mut Frame<'_>, app: &App, outer: Rect) {
                 field("cap", cap.into_owned()),
                 field("what", what.into_owned()),
             ];
-            if cap_hit.any() || what_hit.any() {
+            // **The mode replaces the answer keys; it does not join them (A42).**
+            //
+            // `guidance_mode` was set at `keys.rs` and read nowhere, so this block kept
+            // advertising `y allow once` while `y` typed a letter into the composer — the
+            // screen said one thing and the keyboard did another. That is M261's finding
+            // reintroduced one screen over, and the fix is M261's: render the state where
+            // the reader is deciding.
+            //
+            // **Replaced, not appended.** Printing the guidance line *underneath* the keys
+            // would still leave the screen advertising two different keyboards at once,
+            // which is the same lie with an extra sentence. And the guidance line has to
+            // say what guidance is, because `e` moves the keyboard somewhere with no prompt
+            // of its own — a reader who pressed it has no evidence they are anywhere but
+            // the ask.
+            if app.guidance_mode {
+                lines.push(Line::from(Span::styled(
+                    "guidance — the keyboard is here now",
+                    theme.warn(),
+                )));
+                lines.push(Line::from(vec![
+                    Span::styled("enter", theme.danger()),
+                    Span::styled(" deny with this", theme.dim()),
+                    Span::styled("        esc", theme.danger()),
+                    Span::styled(" back to the ask", theme.dim()),
+                ]));
+            } else if cap_hit.any() || what_hit.any() {
                 // Named, never silent. A permission prompt that quietly dropped a
                 // character is worse than one that says so, because the reader has no
                 // other way to learn the text was not what it claimed.

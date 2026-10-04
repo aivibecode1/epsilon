@@ -66,6 +66,30 @@ pub const TEXT_FLOOR: f32 = 3.0;
 /// being the page: about 4% of relative luminance.
 pub const SURFACE_FLOOR: f32 = 1.12;
 
+/// Minimum contrast for a colour that **identifies a state** — focus, selection.
+///
+/// # Why this is a third floor, and why it is the one 1.4.11 is actually about
+///
+/// WCAG 2.2 SC 1.4.11 (Non-text Contrast, Level AA) requires a contrast ratio of at least
+/// **3:1** for the visual information needed to identify user interface components **and
+/// states**, against adjacent colours. Source:
+/// <https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html>.
+///
+/// The Understanding document is explicit that 3:1 is a threshold and **must not be
+/// rounded** — a computed 2.999:1 does not pass — and that the requirement covers the
+/// information identifying a **state**, which is the part [`SURFACE_FLOOR`] is not about.
+///
+/// [`SURFACE_FLOOR`] exists because a card or a band that merely tints the page is a
+/// *background*, and forcing it to 3:1 would make every surface in the window shout. That
+/// reasoning is sound and unchanged. But a focus ring and a selection fill are not
+/// backgrounds: they are the **only** thing saying "this row is the one you are on". At
+/// 1.12:1 a person with moderately low vision cannot tell a focused row from an unfocused
+/// one at all, and neither can a person looking quickly.
+///
+/// These are the two roles compared **against each other** rather than against the page,
+/// and that is the check this floor exists to make possible.
+pub const STATE_FLOOR: f32 = 3.0;
+
 /// Mix `c` away from `bg` until it reaches `min_ratio` contrast against it.
 ///
 /// The step is toward white on a dark background and toward black on a light one, in
@@ -264,14 +288,24 @@ impl IdeTheme {
         self.code = separate(self.code, bg, TEXT_FLOOR);
         self.code_block = separate(self.code_block, bg, TEXT_FLOOR);
         self.border = separate(self.border, bg, SURFACE_FLOOR);
-        self.border_focus = separate(self.border_focus, bg, SURFACE_FLOOR);
+        // **State, not a band.** These two are the only thing identifying the focused and
+        // the selected row, so WCAG 1.4.11 holds them to 3:1 — see [`STATE_FLOOR`].
+        self.border_focus = separate(self.border_focus, bg, STATE_FLOOR);
         self.panel = separate(self.panel, bg, SURFACE_FLOOR);
         self.selection = separate(self.selection, bg, SURFACE_FLOOR);
-        self.selection_focus = separate(self.selection_focus, bg, SURFACE_FLOOR);
+        self.selection_focus = separate(self.selection_focus, bg, STATE_FLOOR);
         self.surface_user = separate(self.surface_user, bg, SURFACE_FLOOR);
         self.surface_pending = separate(self.surface_pending, bg, SURFACE_FLOOR);
         self.surface_ok = separate(self.surface_ok, bg, SURFACE_FLOOR);
         self.surface_err = separate(self.surface_err, bg, SURFACE_FLOOR);
+        // Second pass, and the one the tests could previously not make: a focused row's
+        // **adjacent colour is the unfocused row it sits in**, not the page. Holding
+        // `selection_focus` 3:1 from the page says nothing about whether it can be told
+        // from `selection`, and that comparison is the one a person makes when they look
+        // for where they are. Checking only the first is how both roles sat at 1.12:1
+        // while every contrast test passed.
+        self.border_focus = separate(self.border_focus, self.border, STATE_FLOOR);
+        self.selection_focus = separate(self.selection_focus, self.selection, STATE_FLOOR);
         self
     }
 
@@ -457,6 +491,33 @@ mod tests {
                      background {:?} — below the {SURFACE_FLOOR}:1 band floor, so it is the \
                      page with a different name",
                     t.background
+                );
+            }
+
+            // **The comparison that was missing.** Every contrast test above measures a
+            // role against the *page*. But when a row is focused, the colour next to its
+            // focus ring is the unfocused row it sits in — so "can you tell the focused row
+            // from the unfocused one" is a question about the pair, and it had no test.
+            //
+            // It passed every check that existed while both roles sat at 1.12:1 against the
+            // background, which is the whole shape of the defect: the checks were true and
+            // the thing they were meant to protect was still broken.
+            let state_pairs: [(&str, egui::Color32, egui::Color32); 2] = [
+                (
+                    "selection_focus vs selection",
+                    t.selection_focus,
+                    t.selection,
+                ),
+                ("border_focus vs border", t.border_focus, t.border),
+            ];
+            for (name, focused, unfocused) in state_pairs {
+                let ratio = IdeTheme::ratio(focused, unfocused);
+                assert!(
+                    ratio >= STATE_FLOOR,
+                    "{palette:?} {name}: the focused colour ({focused:?}) sits at \
+                     {ratio:.2}:1 against its unfocused sibling ({unfocused:?}) — below the \
+                     {STATE_FLOOR}:1 WCAG 1.4.11 state floor, so a focused row cannot be \
+                     told from an unfocused one"
                 );
             }
         }

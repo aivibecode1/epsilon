@@ -1379,9 +1379,25 @@ impl App {
                 }
                 roots.push(self.workspace_root.join(".agents").join("skills"));
                 roots.push(self.workspace_root.join(".epsilon").join("skills"));
-                let skills = epsilon_core::skills::discover(&roots);
-                let n = skills.len();
-                agent.set_skills(skills);
+                // `discover_with_notices`, not `discover`: the wrapper throws away everything
+                // discovery could not do, and `/reload` is the one command whose whole promise
+                // is "read what is on disk now". An unreadable root, a `SKILL.md` that will not
+                // parse, a skill shadowed by a later root — each produced a count and no reason,
+                // which is the silent failure `AGENTS.md` §2.7 forbids and §8 names again. The
+                // composition path already routes the same lines into the startup notices the
+                // terminal reads, so this call site was the last place a skill could fail to
+                // load with nobody told.
+                let found = epsilon_core::skills::discover_with_notices(&roots);
+                let n = found.skills.len();
+                agent.set_skills(found.skills);
+                // The transcript, like every other reply in this file (`run_command`'s own doc:
+                // synchronous so they render on the very next frame, leaving the notices channel
+                // for async events). Discovery's lines are already formatted as whole sentences
+                // naming the root and the reason, so they are pushed verbatim rather than
+                // re-worded into a second vocabulary — this is forwarding, not authoring.
+                for notice in &found.notices {
+                    self.ui.push_notice(notice.clone());
+                }
                 // Templates reload with the skills: both are markdown in the same two
                 // directories, and a user who edits one and types `/reload` expects both.
                 let t = self.discover_prompt_templates();
@@ -1391,7 +1407,17 @@ impl App {
                 // M50: agent defs reload alongside skills (same roots pattern —
                 // global always, project pair gated by the trust bit pi's
                 // agentScope maps onto: trust_review_pending means untrusted).
-                let agents = epsilon_core::agents::discover_agents(
+                //
+                // `discover_agents_with_notices`, not the wrapper, for the same reason as the
+                // skill call above: the comment that used to sit here said this needed a
+                // `Discovered`-shaped return in `epsilon-core`, and that is what landed
+                // (`agents::Discovered`, a sibling of `skills::Discovered`). A `.md` that will
+                // not parse, or an agents root nobody can read, used to produce a count and no
+                // reason here — the same silent failure the skill path had already fixed one
+                // line of code above. Forwarded verbatim through `push_notice` for the same
+                // reason: `run_command`'s own doc reserves the async notices channel for async
+                // events, so the transcript is where a person reads this, above the count.
+                let found = epsilon_core::agents::discover_agents_with_notices(
                     &{
                         let mut r = Vec::new();
                         if let Some(dir) = epsilon_core::config::global_dir() {
@@ -1405,8 +1431,11 @@ impl App {
                     ],
                     !self.trust_review_pending,
                 );
-                let an = agents.len();
-                agent.set_agents(agents);
+                for notice in &found.notices {
+                    self.ui.push_notice(notice.clone());
+                }
+                let an = found.agents.len();
+                agent.set_agents(found.agents);
                 // G6: re-read keybindings.json so a remap takes effect without restart (pi reload()).
                 let kb_before = self.keybindings.effective();
                 self.keybindings.reload();
@@ -1565,6 +1594,9 @@ impl App {
             crate::picker::Command::Editor => {
                 self.request_external_editor();
             }
+            crate::picker::Command::Restore(argument) => {
+                self.run_restore_file(agent, argument);
+            }
             // A variant that reached the catch-all without an arm of its own.
             //
             // `run_command` sends everything it does not route by name to *this*
@@ -1593,6 +1625,95 @@ impl App {
             }
         }
         false
+    }
+
+    /// `/restore <path>` — put a file back to the bytes captured before the agent's last
+    /// write or edit.
+    ///
+    /// ## Two presses, and the reason for the second one
+    ///
+    /// The first press names the file, the checkpoint and what will happen, and changes
+    /// nothing. A restore overwrites bytes, `AGENTS.md` §6 requires a confirmation
+    /// before an overwrite, and "one keystroke replaces a file with an older version of
+    /// itself" is the shape this repository treats as a defect rather than a feature.
+    /// The confirming press repeats the path and ends in `yes`, which a tab-completion
+    /// or a muscle-memory Enter cannot produce — and it lands directly under the preview
+    /// it confirms, in the transcript, so the reader decides against the text they just
+    /// read rather than against a recollection of it.
+    ///
+    /// No diff is drawn, and this is a deliberate ceiling: the crate's diff renderer
+    /// ([`crate::state::parse_diff`]) renders a unified or split diff of an `edit` tool
+    /// result, so it needs both sides as text, and `/restore` has only the "before" side.
+    /// Synthesising the other one means inventing a second diff implementation to answer
+    /// a question the byte counts and the checkpoint identity already answer honestly.
+    /// (`ponytail:` the ceiling is "the preview says what will change, not how"; the
+    /// upgrade trigger is a request for the old-vs-new text side by side.)
+    ///
+    /// ## The refusal has to leave the file alone
+    ///
+    /// `CheckpointStore::restore` refuses when the bytes on disk are not the bytes that
+    /// were captured, and this does not work around it. `epsilon_runtime::restore_checkpoint`
+    /// passes that refusal through unchanged — it is the one sentence telling a reader their
+    /// own edit is still there — and this pushes it verbatim behind the `restore:` marker.
+    /// A reader whose later work would have been discarded is told so instead of being
+    /// shown a success; a restore that silently overwrites is worse than no restore at all.
+    ///
+    /// ## Why it lives here, and why it names no store type
+    ///
+    /// This executor is the dispatcher's catch-all by design (`run_command`'s own doc: a
+    /// new variant lands here so the compiler insists its arm exist), and a workspace revert
+    /// belongs to none of the named groups — `/export` and `/import` move the *session*
+    /// across a trust boundary, and this moves nothing but the harness's own record of its
+    /// own edit.
+    ///
+    /// The store itself is reached through `epsilon_runtime::describe_checkpoint` and
+    /// `epsilon_runtime::restore_checkpoint`, not through `epsilon-tools`: this crate's
+    /// manifest states a rule worth keeping — *"the shipped TUI reaches the shell through
+    /// `epsilon_core::exec::run_local`, never by naming a tool crate"* — and naming one for
+    /// a single command would break it to save an import.
+    ///
+    /// `ponytail:` the ceiling is "one synchronous executor, guarded on the agent being
+    /// idle"; the upgrade trigger is a front end that needs to restore from outside the key
+    /// handler, which would want the per-path mutation queue `with_file_mutation_queue`
+    /// holds and a sync handler cannot take.
+    fn run_restore_file(&mut self, agent: &Arc<Agent>, argument: String) {
+        let tail = argument.trim();
+        if tail.is_empty() {
+            self.ui.push_notice(
+                "usage: /restore <path> — preview the checkpoint for a file, then \
+                 `/restore <path> yes` to put it back",
+            );
+            return;
+        }
+        // A run in flight owns the workspace's files, and this is a synchronous key
+        // handler: `with_file_mutation_queue` is a `tokio::Mutex`, so there is no way
+        // to take the per-path gate from here. Refusing is the same guard `/import`,
+        // `/resume` and `/new` use, and it is an honest answer instead of a race.
+        if self.ui.running() || agent.is_running() {
+            self.ui.push_notice(
+                "restore: busy — wait for the current run to finish, then /restore again",
+            );
+            return;
+        }
+        // The trailing `yes` is the confirmation, and it has to be the LAST word: a file
+        // called `yes` is a file, and `rsplit_once` on whitespace keeps that true,
+        // because a path with no space in it never splits.
+        let (path, confirmed) = match tail.rsplit_once(char::is_whitespace) {
+            Some((p, word)) if word.eq_ignore_ascii_case("yes") => (p.trim(), true),
+            _ => (tail, false),
+        };
+        // Two functions, not one with a flag: the sentence that lets a reader decide
+        // whether to overwrite has to be obtainable **without** overwriting. Asking for
+        // the plan must not carry the power to act on it.
+        let answer = if confirmed {
+            epsilon_runtime::restore_checkpoint(&self.workspace_root, path)
+        } else {
+            epsilon_runtime::describe_checkpoint(&self.workspace_root, path)
+        };
+        match answer {
+            Ok(sentence) => self.ui.push_notice(format!("restore: {sentence}")),
+            Err(why) => self.ui.push_notice(format!("restore: {why}")),
+        }
     }
 
     /// `/timeline` and `/tree` are the same picker, opened by the same code.
@@ -2257,5 +2378,491 @@ impl App {
             }
         }
         false
+    }
+}
+
+/// Frame-level coverage for `/restore`.
+///
+/// Every assertion here is against **the drawn frame**, through the production draw path
+/// (`render_rows` calls the same `draw` the event loop calls), and not against
+/// `app.ui.lines()`. A restore that printed a sentence nobody can see is the same defect
+/// this whole change exists to close — a rollback nobody can reach — wearing a different
+/// hat. The state assertions that matter (the file is untouched, the file is gone) are
+/// alongside, because they are about bytes and the frame is about words.
+#[cfg(test)]
+mod tests {
+    use super::super::keys::handle_key;
+    use super::super::tests_support::{render_rows, test_app};
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    /// Type `text` one key at a time and press Enter — the real key path.
+    ///
+    /// Written out rather than imported: `app::tests` has an identical helper, but it is
+    /// private to that module, and duplicating six lines beats making a private test
+    /// helper part of the crate's surface.
+    fn type_and_enter(app: &mut App, agent: &Arc<Agent>, text: &str) -> bool {
+        for c in text.chars() {
+            handle_key(app, agent, key(KeyCode::Char(c)));
+        }
+        handle_key(app, agent, key(KeyCode::Enter))
+    }
+
+    /// The whole screen as one string a reader's eye could follow.
+    ///
+    /// A notice wraps to the terminal's width and every transcript row carries a gutter
+    /// glyph, so a test that looks for a sentence otherwise looks for the column it
+    /// happened to wrap at — and a needle that matches at 100×30 misses at 80×24. Each
+    /// row's leading gutter goes and the whitespace is squashed, which leaves the
+    /// assertion about the words rather than about the renderer's arithmetic.
+    ///
+    /// Only the **leading** gutter goes. `·` is left alone because it separates fields
+    /// inside a row (`idle?/1.0M·↑0↓0`), and stripping it everywhere would invent word
+    /// boundaries that are not on screen.
+    fn frame(app: &mut App, width: u16, height: u16) -> String {
+        render_rows(app, width, height)
+            .iter()
+            .map(|row| row.trim_start_matches(|c: char| c.is_whitespace() || "*│┃".contains(c)))
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    /// A workspace whose ledger holds one entry for `path`, recorded exactly the way
+    /// `files.rs` records one around a real write.
+    ///
+    /// **Two steps, and the second one is not optional.** The tool records the pre-image,
+    /// writes, and *then* calls `amend_with_post_image` so the entry also carries what the
+    /// harness left behind. A fixture that stops after `record` produces a capture the
+    /// product no longer creates, and the restore guard answers it with its coarser
+    /// refusal — "this checkpoint does not record what the harness left behind" — which is
+    /// true of the fixture and false of the product. That is exactly the sort of thing a
+    /// fixture is supposed to prevent rather than introduce.
+    fn checkpointed(root: &std::path::Path, path: &str, content: &str) -> std::path::PathBuf {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
+        std::fs::write(&file, content).unwrap();
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(root);
+        // Pre-image: the state a revert returns to. Captured before the tool moves bytes,
+        // which is why `files.rs` records first and writes second.
+        store.record(root, &file, "write");
+        // Post-image: what the harness then left on disk. The restore guard asks whether
+        // the file still matches *this*, so without it an untouched edit is
+        // indistinguishable from a user-edited one.
+        store.amend_with_post_image(root, &file, "write");
+        file
+    }
+
+    /// The same, for a file the **agent created**: `record` runs first, while the file
+    /// does not exist yet, which is the whole difference between the two entries.
+    ///
+    /// The order is the point and it is easy to get backwards in a fixture. `record`
+    /// captures what is there *before* the tool writes, so a helper that writes first
+    /// and records after produces an entry that says the file already existed — and the
+    /// preview it earns ("would put back N bytes") is then a sentence about an edit
+    /// rather than a creation. The first version of this test did exactly that and the
+    /// frame caught it.
+    ///
+    /// **No amendment here, and deliberately.** A creation entry has `blob: None`, because
+    /// there were no bytes to capture, so there is nothing a post-image could amend — the
+    /// store says so and returns `Skipped`. Reverting a creation removes the file, which is
+    /// a different guard with a different question, and it is tested in
+    /// `crates/epsilon-tools/tests/checkpoint_restore.rs`.
+    fn created_by_the_agent(
+        root: &std::path::Path,
+        path: &str,
+        content: &str,
+    ) -> std::path::PathBuf {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().expect("the file has a directory")).unwrap();
+        epsilon_tools::checkpoint::CheckpointStore::open(root).record(root, &file, "write");
+        std::fs::write(&file, content).unwrap();
+        file
+    }
+
+    /// A restore that succeeds, asserted on the frame and on the bytes.
+    ///
+    /// The shape asserted is the one a rollback exists for in this build: the agent
+    /// **created** a file, so reverting means removing it. It is also the shape with no
+    /// digest to compare — the file did not exist when the entry was taken — which is why
+    /// the frame has to say `DELETE` in capitals *before* the reader is asked to confirm,
+    /// and why the file is still there after the first press.
+    ///
+    /// Both terminal sizes are checked because the preview is a long sentence and a wide
+    /// frame wraps it differently: a preview that reads at 100×30 and is cut at 80×24 is
+    /// a preview half the people using this will not see.
+    #[tokio::test]
+    async fn a_confirmed_restore_reverts_the_file_and_the_frame_says_so() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let created = created_by_the_agent(dir.path(), "src/new.rs", "// written by the model\n");
+
+        // First press: the plan. Nothing on disk may change here.
+        assert!(!type_and_enter(&mut app, &agent, "/restore src/new.rs"));
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains("nothinghaschangedyet"),
+                "the frame must say nothing has changed yet, at {w}x{h}: {screen}"
+            );
+            assert!(
+                screen.contains("DELETE"),
+                "the irreversible outcome is named in capitals at {w}x{h}: {screen}"
+            );
+            assert!(
+                screen.contains("/restoresrc/new.rsyes"),
+                "and the exact keys that apply it, at {w}x{h}: {screen}"
+            );
+        }
+        assert!(
+            created.exists(),
+            "the preview must not have touched the file"
+        );
+
+        // Second press: the confirmation, and only now the change.
+        assert!(!type_and_enter(&mut app, &agent, "/restore src/new.rs yes"));
+        assert!(
+            !created.exists(),
+            "the confirmed revert removes the file the agent created"
+        );
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("restored0bytestosrc/new.rs"),
+            "the frame reports what happened: {screen}"
+        );
+    }
+
+    /// A restore refused because the file moved says so, and the file survives it.
+    ///
+    /// This is the security rule `AGENTS.md` §6 names and M104 guards: reverting over a
+    /// file somebody edited since the capture destroys their work. The refusal sentence is
+    /// the only thing telling a reader their edit is still there, so it is asserted on the
+    /// frame *and* the file's contents are asserted afterwards — a refusal that printed
+    /// the right words after having already overwritten would pass the first test alone.
+    ///
+    /// **The wording moved, and the property did not.** This asserted `changed since it was
+    /// captured`, which was true of M104's original guard and stopped being true once the
+    /// entry also carried the harness's own post-image (ADR-023): a capture now knows which
+    /// moment the file stopped matching, so it can say "changed after this harness wrote
+    /// it" instead of the indistinguishable "changed since it was captured". The property
+    /// being pinned is that a moved file refuses and survives — the sentence is only how a
+    /// reader learns it.
+    #[tokio::test]
+    async fn a_restore_refused_because_the_file_changed_leaves_it_and_says_why() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let file = checkpointed(dir.path(), "src/lib.rs", "as the agent saw it\n");
+        std::fs::write(&file, "the user's later work\n").unwrap();
+
+        assert!(!type_and_enter(&mut app, &agent, "/restore src/lib.rs yes"));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "the user's later work\n",
+            "a refusal must leave the file exactly as it was"
+        );
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("changedafterthisharnesswroteit"),
+            "the frame says why it refused: {screen}"
+        );
+        assert!(
+            screen.contains("src/lib.rs"),
+            "and names the file it would have overwritten: {screen}"
+        );
+    }
+
+    /// An argument that names nothing says so — it does not print a success.
+    ///
+    /// The control for the two tests above: with the same store, the same frame and the
+    /// same command, a name the ledger does not hold must produce a refusal that names
+    /// what was asked for and what *is* recoverable. Without it, "restored 0 bytes" would
+    /// pass a test that only ever saw a refusal on the happy path.
+    #[tokio::test]
+    async fn a_restore_naming_nothing_says_so_on_the_frame() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let file = checkpointed(dir.path(), "src/lib.rs", "as the agent saw it\n");
+
+        assert!(!type_and_enter(
+            &mut app,
+            &agent,
+            "/restore src/parser.rs yes"
+        ));
+        assert!(
+            file.exists(),
+            "an argument that names nothing must not touch anything"
+        );
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("nocheckpointfor'src/parser.rs'"),
+            "the frame quotes what was asked for: {screen}"
+        );
+        assert!(
+            screen.contains("src/lib.rs"),
+            "and names the file that does have a checkpoint: {screen}"
+        );
+        assert!(
+            !screen.contains("restored"),
+            "and it must not claim a restore happened: {screen}"
+        );
+    }
+
+    /// A bare `/restore` prints its grammar and changes nothing.
+    ///
+    /// The repo's own rule for an argument-taking command: say what the shape is rather
+    /// than assuming one. Assuming here would mean restoring *some* file, which is the
+    /// silent-no-op shape in its worst form.
+    #[tokio::test]
+    async fn a_bare_restore_prints_usage_and_changes_nothing() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let file = checkpointed(dir.path(), "src/lib.rs", "as the agent saw it\n");
+        let before = std::fs::read(&file).unwrap();
+
+        assert!(!type_and_enter(&mut app, &agent, "/restore"));
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        let screen = frame(&mut app, 80, 24);
+        assert!(
+            screen.contains("usage:/restore<path>"),
+            "the frame carries the usage line: {screen}"
+        );
+    }
+
+    /// `frame` drops every whitespace character, so a needle built from a path that happens
+    /// to contain a space could never match. Same rule as [`frame`], applied once here so
+    /// the assertions below are about the words and not about the renderer.
+    fn squeezed(text: &str) -> String {
+        text.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// Write one well-formed `SKILL.md` under a root — the shape the rules accept.
+    fn write_skill(root: &std::path::Path, dir: &str, description: &str) {
+        let d = root.join(dir);
+        std::fs::create_dir_all(&d).expect("the skill directory");
+        std::fs::write(
+            d.join("SKILL.md"),
+            format!("---\nname: {dir}\ndescription: {description}\n---\nbody of {dir}\n"),
+        )
+        .expect("the SKILL.md");
+    }
+
+    /// **The defect: `/reload` reported a count and never said why it was short.**
+    ///
+    /// `epsilon_core::skills::discover` threw the diagnostics away, so a skills root that
+    /// could not be read produced "reload: 0 skill(s) loaded" and a user who had typed a
+    /// skill had nothing to act on. `discover_with_notices` names the root and the reason,
+    /// and this asserts that line reaches **the frame** — not a field on `App`.
+    ///
+    /// The root is made unreadable by **being a file**, which is the portable way to make
+    /// `read_dir` fail for a reason other than absence: a permission error needs an ACL and
+    /// a dangling link needs a privilege, and a test that needs either is a test that
+    /// quietly asserts nothing on the machine that happens to permit it. The same trick is
+    /// what `crates/epsilon-core/src/skills.rs` uses for its own version of this.
+    ///
+    /// The count assertion is the second half of the sentence: the skills that *could* be
+    /// read still load, so adding the diagnostics did not turn a reload into a refusal.
+    #[tokio::test]
+    async fn a_skill_root_reload_cannot_read_is_named_on_the_frame() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+
+        // The good root, so "0 skills" cannot be mistaken for "discovery did nothing".
+        write_skill(
+            &dir.path().join(".epsilon").join("skills"),
+            "commit-craft",
+            "Craft commits.",
+        );
+        // The bad one: `.agents/skills` is a regular file, so `read_dir` refuses it.
+        let agents_root = dir.path().join(".agents");
+        std::fs::create_dir_all(&agents_root).expect("the .agents directory");
+        let unreadable = agents_root.join("skills");
+        std::fs::write(&unreadable, "a file where a skills root should be\n").unwrap();
+
+        assert!(!type_and_enter(&mut app, &agent, "/reload"));
+
+        // The whole sentence up to the reason, so a notice that named the root but no reason
+        // does not satisfy this.
+        let lead = squeezed(&format!(
+            "skills: cannot read root {}: ",
+            unreadable.display()
+        ));
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains(&lead),
+                "the frame must name the root it could not read AND leave room for the \
+                 reason, at {w}x{h}: {screen}"
+            );
+        }
+
+        // The reason. `/reload` always ends with its own summary line, so whatever sits
+        // between the lead and that word is what discovery said caused the failure.
+        let screen = frame(&mut app, 100, 30);
+        let after = &screen[screen.find(&lead).expect("asserted above") + lead.len()..];
+        let reason = after.split("reload:").next().unwrap_or_default();
+        assert!(
+            reason.len() >= 3,
+            "a notice naming a root and no reason is the defect again: {screen}"
+        );
+
+        assert!(
+            screen.contains("reload:1skill(s)"),
+            "the skills that could be read still load: {screen}"
+        );
+    }
+
+    /// **The sibling of the skill test above, and the arm that was left unwitnessed.**
+    ///
+    /// `/reload` forwards `discover_agents_with_notices`'s lines through `push_notice`, and the
+    /// control that proved it — deleting that loop — left every test in this crate green,
+    /// because the skill half had a test and the agent half had none. So this is that test:
+    /// same shape, same portable unreadable root, same two-frame assertion, and the second
+    /// half the loop could plausibly have broken — the defs that *could* be read still load, so
+    /// adding the diagnostics did not turn a reload into a refusal.
+    ///
+    /// The trust bit is pinned rather than assumed: `/reload` reads the project agent roots
+    /// only when `trust_review_pending` is clear, and a root that was never read produces no
+    /// notice at all — so a fixture that left it set would make this pass for the wrong reason.
+    #[tokio::test]
+    async fn an_agents_root_reload_cannot_read_is_named_on_the_frame() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        app.trust_review_pending = false;
+
+        // The good root, so "0 agents" cannot be mistaken for "discovery did nothing".
+        let good = dir.path().join(".epsilon").join("agents");
+        std::fs::create_dir_all(&good).expect("the .epsilon/agents directory");
+        std::fs::write(
+            good.join("scout.md"),
+            "---\nname: scout\ndescription: Reads the tree and reports.\n---\nbody of scout\n",
+        )
+        .expect("the agent def");
+        // The bad one: `.agents/agents` is a regular file, so `read_dir` refuses it — the same
+        // portable trick as the skill root above, needing neither an ACL nor a privilege.
+        let unreadable = dir.path().join(".agents").join("agents");
+        std::fs::create_dir_all(dir.path().join(".agents")).expect("the .agents directory");
+        std::fs::write(&unreadable, "a file where an agents root should be\n").unwrap();
+
+        assert!(!type_and_enter(&mut app, &agent, "/reload"));
+
+        // The whole sentence up to the reason, so a notice that named the root but no reason
+        // does not satisfy this.
+        let lead = squeezed(&format!(
+            "agents: cannot read root {}: ",
+            unreadable.display()
+        ));
+        for (w, h) in [(80u16, 24u16), (100u16, 30u16)] {
+            let screen = frame(&mut app, w, h);
+            assert!(
+                screen.contains(&lead),
+                "the frame must name the root it could not read AND leave room for the \
+                 reason, at {w}x{h}: {screen}"
+            );
+        }
+
+        // The reason. `/reload` always ends with its own summary line, so whatever sits
+        // between the lead and that word is what discovery said caused the failure.
+        let screen = frame(&mut app, 100, 30);
+        let after = &screen[screen.find(&lead).expect("asserted above") + lead.len()..];
+        let reason = after.split("reload:").next().unwrap_or_default();
+        assert!(
+            reason.len() >= 3,
+            "a notice naming a root and no reason is the defect again: {screen}"
+        );
+
+        assert!(
+            agents_loaded_on_frame(&screen).is_some_and(|n| n >= 1),
+            "the agent defs that could be read still load: {screen}"
+        );
+    }
+
+    /// The `+ N agent(s) loaded` half of `/reload`'s summary, read off the frame.
+    ///
+    /// **Parsed rather than written as a literal.** `/reload` also scans the *global* agents
+    /// root (`~/.config/epsilon/agents`), so a person with a personal def would make a literal
+    /// `1` fail — a test about the machine rather than about the product, which is why the
+    /// sibling skill test reads its count back off the agent. There is no public
+    /// `Agent::agents` here, so this reads the number the reader is actually shown.
+    fn agents_loaded_on_frame(screen: &str) -> Option<usize> {
+        let after = screen.split_once("skill(s)+")?.1;
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        if !after[digits.len()..].starts_with("agent(s)") {
+            return None;
+        }
+        digits.parse().ok()
+    }
+
+    /// **The regression guard: a healthy workspace must pay nothing for the new channel.**
+    ///
+    /// Fixing the silence is only worth it if the listing still works *and* stays quiet —
+    /// a notice per launch is a channel people learn to stop reading, which is the failure
+    /// `discover_with_notices`' own doc spends a paragraph avoiding. So this drives the two
+    /// commands a user drives and asserts both halves on the frame: `/reload` still counts
+    /// what it loaded, and `/skills` still lists each one by name **and description**.
+    ///
+    /// The count is read back off the agent rather than written as a literal, because
+    /// `/reload` also scans a *global* skills root (`~/.config/epsilon/skills`). Hard-coding
+    /// `2` would make this test fail on any machine whose user has a personal skill, which
+    /// is a test about the machine and not about the product.
+    #[tokio::test]
+    async fn a_clean_reload_still_lists_the_skills_and_says_nothing_about_them() {
+        let (mut app, agent, (_f, _n)) = test_app();
+        let dir = tempfile::tempdir().expect("a temporary workspace");
+        app.workspace_root = dir.path().to_path_buf();
+        let root = dir.path().join(".epsilon").join("skills");
+        write_skill(&root, "commit-craft", "Craft commits.");
+        write_skill(&root, "review-diff", "Review a diff.");
+
+        assert!(!type_and_enter(&mut app, &agent, "/reload"));
+        assert!(!type_and_enter(&mut app, &agent, "/skills"));
+
+        let held = agent.skills();
+        for (name, description) in [
+            ("commit-craft", "Craft commits."),
+            ("review-diff", "Review a diff."),
+        ] {
+            let row = squeezed(&format!("{name} — {description}"));
+            let found = held
+                .iter()
+                .any(|s| s.name == name && s.description == description);
+            assert!(
+                found,
+                "{name} must reach the agent, or the listing this guards was broken: {held:?}"
+            );
+            let screen = frame(&mut app, 100, 30);
+            assert!(
+                screen.contains(&row),
+                "the frame must still list {name} with its description: {screen}"
+            );
+        }
+
+        let screen = frame(&mut app, 100, 30);
+        assert!(
+            screen.contains(&squeezed(&format!("reload:{}skill(s)", held.len()))),
+            "the summary count is the number of skills actually held: {screen}"
+        );
+        assert!(
+            !screen.contains("skills:cannotreadroot"),
+            "two well-formed skills and nothing to report — a notice here is a tax: {screen}"
+        );
+        assert!(
+            !screen.contains("skills:ignoring"),
+            "nothing was rejected, so nothing should say one was: {screen}"
+        );
     }
 }

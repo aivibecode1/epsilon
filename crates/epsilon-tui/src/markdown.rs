@@ -244,7 +244,14 @@ pub fn md_to_lines_in(text: &str, theme: &Theme, terminal_width: usize) -> Vec<L
                 style_stack.pop();
             }
             Event::Start(Tag::BlockQuote(_)) => {
-                spans.push(Span::styled("❯ ".to_string(), theme.system()));
+                // **From the repertoire table, not a literal (A43).** `❯` is not in
+                // CP437, and this is *model* output — the densest region of the whole
+                // application, and the one place a model's own text is rendered
+                // verbatim. A box here reads as a defect in the model's answer.
+                spans.push(Span::styled(
+                    format!("{} ", theme.glyphs.quote),
+                    theme.system(),
+                ));
             }
             Event::Start(Tag::List(_)) => {
                 list_depth += 1;

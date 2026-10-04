@@ -52,7 +52,7 @@ async fn spawn_listening(
 ) -> std::sync::Arc<ExtHost> {
     match tokio::time::timeout(
         MANIFEST_TIMEOUT,
-        ExtHost::spawn(dir, &listening_fixture(mode, events)),
+        ExtHost::spawn(dir, &listening_fixture(mode, events), None),
     )
     .await
     {
@@ -65,7 +65,7 @@ async fn spawn_listening(
 /// Spawn bounded: a child that misbehaves during the handshake must fail, not hang.
 async fn spawn(dir: &std::path::Path, mode: &str) -> Result<std::sync::Arc<ExtHost>, ExtError> {
     let manifest = fixture(mode);
-    match tokio::time::timeout(MANIFEST_TIMEOUT, ExtHost::spawn(dir, &manifest)).await {
+    match tokio::time::timeout(MANIFEST_TIMEOUT, ExtHost::spawn(dir, &manifest, None)).await {
         Ok(r) => r,
         Err(_) => panic!(
             "spawn({mode}) did not settle within {MANIFEST_TIMEOUT:?}; the host's own handshake \
@@ -566,7 +566,7 @@ async fn a_missing_binary_fails_to_spawn() {
         tools: vec![],
     };
 
-    let err = match ExtHost::spawn(dir.path(), &manifest).await {
+    let err = match ExtHost::spawn(dir.path(), &manifest, None).await {
         Ok(_) => panic!("a missing binary cannot spawn"),
         Err(e) => e,
     };
@@ -742,7 +742,7 @@ async fn spawn_with_events(dir: &std::path::Path, events: Vec<String>) -> std::s
         events,
         tools: vec![],
     };
-    match tokio::time::timeout(MANIFEST_TIMEOUT, ExtHost::spawn(dir, &manifest)).await {
+    match tokio::time::timeout(MANIFEST_TIMEOUT, ExtHost::spawn(dir, &manifest, None)).await {
         Ok(Ok(h)) => h,
         Ok(Err(e)) => panic!("spawn failed: {e}"),
         Err(_) => panic!("spawn did not return within {MANIFEST_TIMEOUT:?}"),

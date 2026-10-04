@@ -19,7 +19,7 @@ exercise it — they now exercise the shared function, which is the point.
 
 ## Why this was worth a slice of its own
 
-This is A12's failure ([udit/03-defects.md](../../audit/03-defects.md)) caught one step earlier. A12's measured finding was
+This is A12's failure ([audit/03-defects.md](../../audit/03-defects.md)) caught one step earlier. A12's measured finding was
 `global_dir()` written **byte-for-byte twice** in two crates that cannot see each other, and this
 repository's D-class is exactly that shape: two copies of one rule drift, and neither copy can
 notice. The cheapest moment to fix a duplication is before the second copy exists — after it, the

@@ -83,7 +83,10 @@ async fn complete(
     goal_id: &str,
     revision: u64,
 ) -> Result<epsilon_contracts::tool::ToolOutput, ToolFailure> {
-    let tool = UpdateGoalTool::new().with_gate_runner(Arc::new(GoalGateRunner::new(None)));
+    let tool = UpdateGoalTool::new().with_gate_runner(Arc::new(GoalGateRunner::new(
+        None,
+        Some(std::sync::Arc::new(epsilon_safety::AutoApprove)),
+    )));
     let ctx = ToolContext {
         session_id: "t".into(),
         observation_scope: Arc::new(()),

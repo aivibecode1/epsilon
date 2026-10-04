@@ -8,6 +8,11 @@ acceptance criteria, and the decision-log index.
 
 ## Milestone timeline
 
+Milestones below are shipped work with a commit and a dev log. Work that has **not** been
+committed — including the documentation and `AGENTS.md` v2 rewrite of 2026-10-03 — is recorded
+in [`STATUS.md`](STATUS.md), not here, because this file's contract is "what shipped, with
+evidence".
+
 | Milestone | Scope |
 |---|---|
 | M0 | Docs baseline, git, build-order ADR |
@@ -347,12 +352,29 @@ runner was the one deliberate deferral, with rationale in ADR-005.
 | M274 | **Three panels drew unstripped text, and the frame cannot see why.** The `@`-popup drew workspace paths, the session browser drew a conversation's **title** (its first user message, read from a file), and the model picker's stage 2 drew ids from a **live listing** — the only place in the crate where the bytes come from a third party. All three now strip. Strip rather than refuse, because M261's distinction decides it: the permission dialog refuses an ask carrying an override because there a reader is *deciding*, while these three only **display** and hand back the row's own field — so refusing would break a legitimate row over bytes never going to be executed. **The finding is about the instrument, not the code:** the frame test's negative control **passed** with `safe_to_show` stubbed to a complete no-op. `row_text` reads ratatui's **cell symbols** and `U+202E` never becomes one — `a_frame_cannot_see_a_display_steering_character` draws a hostile string through ratatui with nothing of ours between and finds it is not in the buffer. So `text_safety`'s premise ("ratatui passes it through") is **weaker than its doc claims**; the strip is still right, but the reason to keep it is *we do not depend on that being true*, not *the bytes reach the screen*. The load-bearing assertions moved onto text, and the helper's test is the one that bites. |
 
 | M275 | **A measurement that stopped a large change aimed at the wrong phase.** No product code changed. M266 had established the desktop transcript costs **104 ms/frame** at 800 rows and that the cost tracks *blocks* — but not *which* per-block step, and the fix differs completely: `markup::render` is ours and already cached, `markup::job` + `plain_of` are ours and cacheable cheaply, and `ui.label(WidgetText::from(job))` is **egui's** text layout and shaping, which only not-drawing-the-widget fixes. Timed the two we own: **our work is 4.9 ms of 104.4; egui's is 99.5 ms, 95% of the frame.** So **caching the built jobs would buy 4.7%** — a plausible-looking afternoon's work that would have made the frame faster and taught nothing. Without this the two likely moves were exactly those two, one of them a large change into a variable-height scroll area entered without knowing the cheap alternative was worthless. The measurement picked the second and priced the first out — the same discipline as M269's false finding and M274's blind instrument, applied to performance. `markup::render`'s raw figure swings 33–56 ms between runs and is printed only to answer the obvious question; it is labelled **not paid**, because the app caches it and quoting it as a cost would be wrong. |
+| M276 | **The things nobody was looking at.** A security sweep of the four reference harnesses plus five independent read-only reviews produced nine defects, three of them reachable by *opening a repository you did not write*. **A project config's `[[mcp_servers]]` spawned arbitrary binaries at startup, ungated** — the one declaration that escaped the `project_trusted` rule, and first sight of a config is already `Trusted` so there was no prompt to get past (A50). **Repository prompt templates loaded ungated and re-dispatched as harness commands**, so a repo could answer its own trust prompt; `TrustRequiringResource::Prompts` had existed since the day it was written with no production reader, and `.agents/prompts` was not in the detector at all (A32). **`SessionStore::append` called `File::flush()`, which is a no-op** — no append was ever fsync'd, so everything the README promises about a resumable session rested on the page cache surviving a power cut. **`/tree` sliced a `String` on a byte index computed from a column budget** and panicked on any non-ASCII row; at 80 columns that branch is the *normal* path. **The permission dialog silently swallowed every key it did not bind**, guidance mode swallowed the editor vocabulary, `guidance_mode` was drawn nowhere (A42), and `e` destroyed the composer draft. **Five glyphs were literals instead of repertoire entries** (A43) — and ASCII is the *default* on Windows, so the two glyphs that distinguish collapsed from expanded rendered as boxes for most of the people filing the reports. **Fifteen C0 control bytes in tracked files**, a letter replaced by the C0 character of its own C escape name, two of them inside `text_safety` — the module that strips them (A49, now a gate). Plus `cache_reported` missing for Bedrock and Mistral, `session_usage()` losing a failed run's tokens, and A46's fingerprint naming the wrong gate. | **Verification:** battery `m276i` — 8 of 9 gates PASS (`check-links` 629 links 0 broken, `check-lint-tables`, `check-line-endings`, `check-control-bytes` 932 files 0 bytes, `fmt --check`, `clippy` zero warnings, `demo`, `real-check`). The `test` leg **could not run**: Avira quarantined freshly linked test executables mid-build (`LNK1104`, then `os error 5` never executed), and the documented `CARGO_PROFILE_TEST_DEBUG=1` remedy did not clear it. Suite run **per crate** against the same bytes instead: **1,503 tests passed, 0 failed, 14/14 crates**. Two failures were found that way and fixed — the tree-panel test asserted on `▾`/`▸` *literals*, which was A43 itself. `audit/evidence/gate-m276i.log` is a `GATE FAIL` and the per-crate numbers are a measurement, not a pass. |
 
 > **M179–M247 are missing from this table.** The timeline above ends where it ends rather
 > than where it should — the rows were lost with the M148–M159 corruption recorded in
 > `audit/03-defects.md`. `docs/milestones/` and `docs/README.md` carry the full run. M248 is
 > appended at the point the gap became visible rather than stitched in above it, so the gap
 > stays visible.
+
+> **M277–M291 have no rows here either, and that is a second kind of gap.** This file's
+> contract is "what shipped, with evidence" — a row means a milestone has a commit *and* a
+> dev log. M277 onward were written as one continuous hardening run against a fixed tree:
+> each has a dated entry in [`STATUS.md`](STATUS.md) and a user-visible one in
+> [`../CHANGELOG.md`](../CHANGELOG.md), but **no per-milestone dev log was written**, so
+> writing rows here would assert evidence that does not exist. What they were is in short:
+> M277 made checkpoint rollback reachable (`/restore`), M278 paid six manifest debts the
+> Ponytail audit found, M279 closed two user-visible command lies, M280–M283 took the
+> screen-reader tree from absent to eleven named regions and repaired the WCAG 1.4.11
+> contrast floor, M284–M287 derived the desktop's command capability, virtualised the
+> transcript (127.9 ms → 2.2 ms at 800 rows), named every drawn row and repaired two naming
+> bugs the dump exposed, M288–M289 fixed the frame-cost instrument and gave the window a
+> real sidebar control, M290 moved the command registry to `epsilon-contracts`, and M291
+> fixed the backup ordering defect. **Recorded rather than invented, which is the choice
+> this file exists to make.**
 
 ## Decision-log index
 

@@ -77,6 +77,15 @@ rmcp = { version = "=3.1.4", default-features = false, features = ["base64", "ma
 portable-pty = "=0.9.0"
 vt100 = "=0.15.2"
 
+# ADR-016: `epsilon-server`'s tests drive the real `axum` router, so they need to
+# name `axum`'s own body and service-extension helpers. Both were pinned exact in
+# the crate manifest, which is the one place ADR-016 does not allow a pin. They are
+# dev-dependencies of that crate and nowhere else — no shipping crate links them.
+# `tower`'s `util` feature carries `ServiceExt::oneshot`, which only those tests use,
+# so it is declared on the crate entry below, like every other per-crate extra here.
+http-body-util = "=0.1.5"
+tower = "=0.5.3"
+
 # Windows Job Object confinement (M10, ADR-005). Already in the tree via crossterm;
 # pinned exact per supply-chain policy.
 winapi = { version = "=0.3.9", features = ["jobapi2", "processthreadsapi", "handleapi", "winnt", "impl-default"] }

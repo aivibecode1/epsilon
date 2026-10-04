@@ -5,6 +5,135 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Product
+
+- **The window's recovery copy was a file nothing could recover with.** Resuming an older
+  session stamped a header onto it *before* taking the `.pre-epsilon` backup, and because the
+  session handle appends, the header landed at the end of the copy. A header is only legal as
+  the first line, so the one artefact meant to be the way back from a conversion opened as
+  corruption. The copy is now taken first, so it is byte-for-byte the file as it was (M291).
+- **A native window no longer reads the command registry through a terminal crate.** What a
+  `/word` means moved down to `epsilon-contracts`, which both front ends already depend on, and
+  `epsilon-tui` re-exports it so no call site changed. The remaining desktop dependency on the
+  terminal crate is the palette and the metrics — colour roles and numbers (M290, ADR-024).
+
+- **Transcript rows are now read aloud, not just found.** Every row carried its text as its
+  *value* with no *name*, so a screen reader could reach a row and not say what kind of row it
+  was. Rows are named now — `Transcript row · {kind} · {excerpt}` — and off-screen rows stay
+  unnamed by construction rather than by convention: 800 rich rows produce **53 named nodes**,
+  not 1600 (M286).
+- **Reading the screen-reader tree found two bugs no test was looking for.** The file-tree pane
+  announced `Workspace files · 1 files`, and the tree's filter was a text field with **no name at
+  all** — a bare box a screen reader could say nothing about. Both fixed, and a test now pins the
+  *wording*, not just that a node exists (M287).
+- **`/models gpt` works.** It is the obvious thing to type, it is declared an alias of `/model`,
+  and it answered "unknown command" (M286).
+- **Typing `/branch` no longer gets refused as `/timeline`.** The window now answers with the
+  command you actually typed (M284).
+- **A long conversation no longer costs what a short one used to.** The transcript is
+  virtualised: **127.9 ms → 2.2 ms** per frame at 800 rows, and the cost is now *flat* in row
+  count, because the frame is O(rows on screen) rather than O(rows) (M285).
+- **The desktop IDE's command list is derived, not restated.** It kept its own copy of what the
+  window can run, plus a 38-arm match re-listing every command the terminal knows — three lists
+  that had to agree and were checked by none. The hand-written list is gone; the window's
+  capability now reads from the shared command table, and the commands it cannot run are
+  derived as the difference. **Refusing by name is unchanged and still deliberate**: the window
+  runs three commands, and that is a decision, not a gap (M284, ADR-024).
+- **A refusal now names the command you actually typed.** Typing `/branch` was answered with a
+  refusal about `/timeline`; the canonical and the readable spelling had drifted apart. The
+  guard test drove the canonical head, so it could not see it (M284).
+- **A broken agent-definitions root is now reported, at startup and on `/reload`.** Discovery
+  dropped unreadable roots and unparseable files on the floor, so definitions that did not load
+  said nothing. Skills already reported this; agent definitions now do the same, on the same
+  channel (M284).
+- **A screen reader can now find every part of the window.** Eleven regions publish an accessible
+  name — the transcript, editor, file tree, subagents, sessions, title bar, status bar, activity
+  bar and its buttons, palette rows, goal band and the composer. Two of them turned out to be
+  real controls egui had already put in the tree *unnamed*, so they were renamed rather than
+  duplicated; the rest are our own. Nothing is repainted — the painted output is byte-identical
+  with and without the names (M282–M283, ADR-022).
+- **The desktop IDE can be driven from the keyboard.** `F6` and `Shift+F6` move a visible focus
+  ring between the sidebar, the editor and the agent panel; the arrow keys walk the file tree and
+  `Enter` opens what is under the cursor; `Escape` returns you to the composer. `F6` rather than
+  `Tab` on purpose: `Tab` still indents in the composer, which a code editor needs (M281).
+- **A skill you withheld from the model is now actually withheld.** `disable-model-invocation`
+  was compared against the literal string `"true"`, so the ordinary YAML spellings — `yes`, `on` —
+  parsed as *false* and the skill stayed model-invocable. The owner's own opt-out did nothing,
+  silently, on the one field whose job is to stop the model using it (M281).
+- **A focused row can be told from an unfocused one.** WCAG asks for 3:1 on the information
+  identifying a control *and its states*; the selection highlight measured 1.52:1 against the row
+  behind it, and no test noticed, because every contrast test compared a colour with the page
+  rather than with the row it sits in (M279, ADR-024).
+- **Six commands the terminal accepted but never told you about.** `/theme`, `/expand`,
+  `/templates`, `/branch`, `/exit` and `/scoped_models` all parsed and all ran — and appeared in
+  neither `/help` nor the `/` autocomplete, so the only way to find them was to guess (M279).
+- **The command palette no longer advertises a key that does not exist.** One entry showed
+  `/login` in the column where a shortcut is shown — a slash command, for an action with no key at
+  all — beside another that spelled its shortcut differently from the rest of the UI and would
+  have gone stale the moment anyone rebound it. Shortcut hints are looked up in the keybinding
+  table now (M279).
+- **The desktop IDE now shows what happened while it was starting.** Sixteen messages the
+  composition step emitted only to a console — a skill that would not load, an extension that was
+  skipped, a session file that repaired itself — went nowhere, because a window has no stderr.
+  They reach the window now (M277).
+- **`/restore` exists, and reverting an edit works.** Epsilon recorded a checkpoint before every
+  write and edit and could do nothing with them. `/restore <path>` previews, applies only on
+  `/restore <path> yes`, and refuses — leaving the file untouched — when the file has moved since
+  the harness wrote it. The guard had been comparing the file against the *pre*-image, so it could
+  never be satisfied once a write landed; it now compares against what the harness left behind,
+  which is the question a person actually needs answered (M277, ADR-023).
+
+### Documentation and project reference
+  composition step emitted only to a console — a skill that would not load, an extension that was
+  skipped, a session file that repaired itself, a system-prompt override, a migration warning —
+  went nowhere, because the window captures its notices *before* composition runs and has no
+  stderr to print to afterwards. A skill silently not loading is the kind of thing a person can act
+  on and had no way to learn about. They now travel through one ordered sink to the terminal's
+  startup notices, to stderr in the headless modes exactly where they always went, and to the
+  window's existing notice strip (M277).
+
+### Documentation and project reference
+
+- **There is now a reading guide for anyone meeting Epsilon for the first time.**
+  [`docs/START-HERE.md`](docs/START-HERE.md) gives a ten-minute tour, a suggested reading order,
+  a folder map with "who cares about this", a glossary of every term used, and one diagram of how
+  the pieces connect — with a "if you read only three files, read these" for the impatient. An
+  Arabic version is at [`docs/START-HERE.ar.md`](docs/START-HERE.ar.md). A newcomer can now tell
+  what the product is, how to read it, and where to start without reading the source.
+- **`AGENTS.md` is rewritten and locked.** The previous file was 670 lines and had drifted: it
+  dated itself 2026-09-28 and stopped at M208 while the project is at M276, it described a
+  defect (`fork_branch_at`) that was closed five milestones ago, and it called itself a
+  seven-gate battery that is really ten. Every statement was re-checked against the repository
+  and the file rewritten to 292 lines. It is now maintainer-owned and locked by SHA-256
+  (`AGENTS.md.sha256`, enforced by `scripts/check-agents-lock.py` in the battery and in CI), so
+  an agent that could rewrite the rules it is held to no longer can. Changes to it go through
+  [`docs/AGENTS-PROPOSALS.md`](docs/AGENTS-PROPOSALS.md).
+- **The six reference harnesses are now written down, and credited.** One page each under
+  [`docs/references/`](docs/references/README.md) — what each project is, who made it, its
+  licence taken from its own LICENSE, what Epsilon took, adapted and skipped, and where that
+  lives in the tree — with a one-table summary. [`CREDITS.md`](CREDITS.md) carries the formal
+  acknowledgement, including the two agent skills this project's working method comes from.
+- **The TUI stack decision is now recorded rather than implicit**
+  ([`docs/references/TUI-DECISION.md`](docs/references/TUI-DECISION.md)): Ratatui stays. The
+  reasoning, the evidence, and the three ideas taken from the two options not chosen.
+- **Every crate has a README** saying what it owns, what it does not, how it connects, where its
+  entry points are, and how to run and test it.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) added; the root README now points at the reading guide and
+  carries correct versions and licences for all six references.
+
+### Fixes
+
+- **The full verification battery can now complete on this machine**, and there is a green one:
+  ten gates, **1,922 tests passed, 0 failed, 7 ignored** across 77 test binaries. The blocker was
+  never the code — a security-software block bound to one exact test-executable filename — and
+  fresh test-profile metadata clears it. Evidence:
+  `audit/evidence/gate-base-2026-10-03.txt`.
+- **`AGENTS.md` claims that were no longer true, corrected** in the rewrite: `fork_branch_at` has
+  five production callers, and `set_tool_hooks`/`set_turn_hooks` are wired through
+  `epsilon-runtime`.
+- **Two citations that pointed at a tree nobody can open**: ADR-020's reference to a DeepSeek
+  Harness version not vendored here, now re-cited against the version that is.
+
 - **File paths, session titles and live model names can no longer rearrange themselves on
   screen.** The characters that reverse display order were already removed from the
   conversation and the permission prompt, but not from the `@` file list, the session browser
@@ -128,14 +257,14 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 - **A client can see the session's goal.** get_state and GET /state serve one shared payload,
   and it now carries the goal — objective, phase, rounds against the cap, any blocker, and whether
   the harness is armed to continue it by itself. That last field is the one that matters: a goal
-  survives a restart and the permission to keep working on it does not, so ctive alone would
+  survives a restart and the permission to keep working on it does not, so active alone would
   describe a goal that has stopped (M206).
 
 - **Epsilon tells you when a session already has history it is not showing you.** A plain launch
   opens the session file and appends to it, but starts with an empty conversation — so a returning
   user gets a first-run screen while the header reports a few percent of the context already in
   use. Both are true, and together they read as a bug. One line now says how many entries the file
-  holds and how to open with them (psilon -c, or /resume <file>) (M205).
+  holds and how to open with them (epsilon -c, or /resume <file>) (M205).
 
 - **A goal's round budget warns before it runs out.** 10% of the cap, then 4%, then 2%, then the
   last round — each said once, with the two commands that do something about it. Rounds are the

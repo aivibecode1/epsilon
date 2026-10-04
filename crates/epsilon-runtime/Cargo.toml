@@ -30,7 +30,6 @@ serde = { workspace = true }
 # `ExtensionToolHooks` implements `ToolHooks`, which is `#[async_trait]`. Every
 # other crate that implements a contracts trait declares this the same way.
 async-trait = { workspace = true }
-futures-util = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "fs", "process"] }
 

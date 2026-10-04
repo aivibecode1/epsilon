@@ -158,6 +158,161 @@ async fn approval_preempts_palette_and_picker_without_changing_filter() {
     }
 }
 
+/// **A tree row wider than its panel is cut in COLUMNS, and drawing it did not panic.**
+///
+/// The truncation was `&raw[..budget - 3]` where `budget` is **columns** and the slice is
+/// **bytes**. The prefix guarantees the skew — `📁` is four bytes, the fold marks three —
+/// and snippets are produced up to 100 columns wide, so at an 80-column terminal this
+/// branch is the *normal* path rather than an edge case. Any em dash, curly quote or CJK
+/// glyph within three bytes of the cut ended the process with
+/// `byte index N is not a char boundary`.
+///
+/// **The control is the panic itself.** Restoring `&raw[..w]` makes this test fail with
+/// `byte index … is not a char boundary` rather than with an assertion message, which is
+/// the strongest kind of RED available for a crash: there is no build on which the old
+/// line survives this fixture.
+///
+/// The CJK coverage that already existed (the filter-field test below) exercises
+/// `fit_width`, not this row, and its cut landed on a boundary by arithmetic luck.
+#[test]
+fn a_tree_row_of_wide_glyphs_is_cut_on_the_frame_instead_of_panicking() {
+    use crate::app::TimelineRow;
+
+    let (mut app, _agent, _rx) = test_app();
+    app.timeline_open = true;
+    app.timeline_all = vec![TimelineRow {
+        seq: 0,
+        id: "a".into(),
+        kind: "user".into(),
+        // Em dashes and CJK both: the em dash is three bytes and the CJK is nine, so a
+        // byte-indexed cut lands inside one of them at almost every width.
+        snippet: format!(
+            "{}——{}",
+            "目的赶到目标".repeat(20),
+            "— refactor ".repeat(20)
+        ),
+        depth: 0,
+        on_active: true,
+        parent: None,
+        label: Some("ラベル".into()),
+    }];
+    app.timeline_entries = app.timeline_all.clone();
+    app.timeline_index = 0;
+    app.folded.insert("a".into());
+
+    // 80 columns: the panel's inner width makes truncation the normal path, which is the
+    // width at which this used to crash.
+    let rows = render_rows(&mut app, 80, 24);
+    let screen: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        screen.contains('#'),
+        "the row is on screen, cut rather than dropped: {screen}"
+    );
+    // Nothing may be wider than the terminal it was drawn into. Measured in
+    // **columns** with the crate's own function, because the defect being guarded is a
+    // byte/column confusion — `str::len()` would repeat that confusion here, and the
+    // assertion would pass on exactly the build it exists to catch.
+    for row in &rows {
+        let width = crate::ui::layout::display_width(row);
+        assert!(
+            width <= 80,
+            "a row may not exceed the terminal it is drawn into: {width} columns in {row:?}"
+        );
+    }
+}
+
+/// **The permission dialog is the highest-stakes screen, and it was the one that said
+/// nothing.**
+///
+/// `handle_approval_key` ended in `_ => {}`. Enter, Tab, Space, the arrows, Home/End,
+/// Delete and Backspace all did nothing and printed nothing — and G10's notice, which
+/// exists for precisely this, lives at the end of `handle_key`, which that function
+/// returns before ever reaching. A reader waiting to decide whether work runs is the
+/// person least likely to keep pressing keys they believe are broken.
+///
+/// **Control:** with the arm restored to `_ => {}`, `notice_rx.try_recv()` is `Err` and
+/// this test fails on the `.expect`.
+#[tokio::test]
+async fn an_unbound_key_on_a_permission_ask_says_so_and_names_the_ones_that_work() {
+    let (mut app, agent, (_ftx_rx, mut notice_rx)) = test_app();
+    let approvals = ChannelApprovalUi::new();
+    let response = park_ask(&mut app, &approvals, "unbound-on-ask").await;
+    // Paint once so the dialog is the one the key is pressed against.
+    let _ = render_rows(&mut app, 80, 24);
+
+    let quit = handle_key(&mut app, &agent, key(KeyCode::Tab));
+
+    assert!(!quit, "an unbound key on a dialog must not quit the app");
+    assert!(
+        app.pending_ask.is_some(),
+        "and it must not have answered the ask either — the reader is still deciding"
+    );
+    let said = notice_rx.try_recv().expect(
+        "a key the dialog does not act on must still produce feedback; silence here is \
+         indistinguishable from a frozen program",
+    );
+    assert!(
+        said.contains("not bound"),
+        "the notice must say the key is unbound: {said:?}"
+    );
+    assert!(
+        said.contains('y') && said.contains('n'),
+        "\"not bound\" is only useful next to the alternative, so the notice names the keys \
+         that work: {said:?}"
+    );
+    drop(response);
+}
+
+/// **Guidance mode has to say where the keyboard went, and give the draft back.**
+///
+/// Two defects, one test, because they are one mistake: the mode was entered by a key
+/// that *destroyed* the composer's draft with no undo entry, and nothing on screen said
+/// the keyboard had moved. A reader who pressed `e` was typing into a field with no
+/// prompt, no mode word, and — because `overlay_open()` includes `pending_ask` — no caret.
+///
+/// `e`/`esc` are the pair, so asserting that `esc` returns the draft proves the stash
+/// happened without testing a private field.
+#[tokio::test]
+async fn guidance_mode_is_drawn_where_the_keys_are_and_returns_the_draft() {
+    let (mut app, agent, (_ftx_rx, _notice_rx)) = test_app();
+    app.input = "half a sentence".into();
+    app.cursor_chars = app.input.chars().count();
+    let approvals = ChannelApprovalUi::new();
+    let response = park_ask(&mut app, &approvals, "guidance-draw").await;
+    let _ = render_rows(&mut app, 100, 30);
+
+    handle_key(&mut app, &agent, key(KeyCode::Char('e')));
+    assert!(app.guidance_mode, "e enters guidance mode");
+    let rows = render_rows(&mut app, 100, 30);
+    let screen: String = rows
+        .iter()
+        .map(|r| r.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        screen.contains("guidance"),
+        "the dialog must say the keyboard is somewhere else — a reader cannot otherwise \
+         know why y stopped approving:\n{screen}"
+    );
+    assert!(
+        !screen.contains("allow once"),
+        "and it must stop advertising the approve keys, which now type letters:\n{screen}"
+    );
+
+    // Esc leaves guidance mode, and the draft the borrow took comes back with it.
+    handle_key(&mut app, &agent, key(KeyCode::Esc));
+    assert!(!app.guidance_mode);
+    assert_eq!(
+        app.input, "half a sentence",
+        "the draft must survive guidance mode: a borrow is not a delete"
+    );
+    drop(response);
+}
+
 /// Park one ask on the shared queue and hand it to the app, exactly like the
 /// run loop does; the response future stays live so a test can assert which
 /// decision the parked ask received (or that it never received one).
@@ -1317,7 +1472,8 @@ async fn a_bound_key_does_not_produce_a_not_bound_notice() {
 
 #[tokio::test]
 async fn every_palette_entry_names_a_command_that_parses() {
-    for entry in crate::picker::palette_entries() {
+    let (app, _agent, _rx) = test_app();
+    for entry in crate::picker::palette_entries(&app.keybindings) {
         assert!(
             crate::picker::parse_command(&entry.command).is_some(),
             "palette entry {:?} carries {:?}, which the parser cannot read — \
@@ -1372,22 +1528,50 @@ fn the_catch_alls_other_arm_tells_the_user_instead_of_failing_silently() {
     );
 }
 
-/// The advertised key hint must be the chord that is actually bound.
+/// The advertised key hint must be **resolved from the binding table**, never written by hand.
 ///
-/// The same entry advertised a bare `x`, which is the binding the editor
-/// deliberately removed because it made the letter untypable. A hint is only
-/// useful if pressing it does what the hint says.
+/// # What this replaces, and why the old one was not enough
+///
+/// The previous test asserted `normalized != "x"` — a blacklist of one value. It passed on a
+/// palette that advertised `Some("/login")` in the **key** column: a slash command shown where
+/// a reader looks for a chord, for an action that has no key at all. One bad literal out of
+/// seven, and the guard could only see the one it had been told about.
+///
+/// # What the shape now makes impossible
+///
+/// `PaletteEntry` carries `key_id`, and `binding` is produced by
+/// [`KeybindingsManager::key_text`]. So the only values that can reach the key column are
+/// chords the key handler will accept, in the spelling `key_label` prints. A rebind changes
+/// the hint; an action with no binding shows none. This test holds all three properties.
 #[tokio::test]
-async fn a_palette_entry_that_advertises_a_key_advertises_the_bound_one() {
-    for entry in crate::picker::palette_entries() {
-        if let Some(key) = entry.binding {
-            let normalized = key.trim_start_matches("Ctrl+").to_lowercase();
-            assert!(
-                normalized != "x",
-                "entry {:?} advertises a bare `x`; the real chord is ctrl+x and a \
-                 bare x is the binding that was removed to keep the letter typable",
+async fn a_palette_key_hint_is_resolved_from_the_binding_table_not_typed() {
+    let (app, _agent, _rx) = test_app();
+    for entry in crate::picker::palette_entries(&app.keybindings) {
+        match (entry.key_id, entry.binding.as_deref()) {
+            (None, None) => {}
+            (None, Some(shown)) => panic!(
+                "entry {:?} advertises the key {shown:?} but names no binding id — a hint \
+                 with nothing behind it is how \"/login\" came to sit in the key column",
                 entry.title
-            );
+            ),
+            (Some(id), None) => panic!(
+                "entry {:?} names the binding {id:?} but shows no key",
+                entry.title
+            ),
+            (Some(id), Some(shown)) => {
+                assert_eq!(
+                    Some(shown),
+                    app.keybindings.key_text(id).as_deref(),
+                    "entry {:?} shows {shown:?} for {id:?}, which is not what the binding \
+                     table resolves — the hint is supposed to be looked up, not written",
+                    entry.title
+                );
+                assert!(
+                    !shown.starts_with('/'),
+                    "a slash command is not a chord: entry {:?} advertises {shown:?} as a key",
+                    entry.title
+                );
+            }
         }
     }
 }
@@ -4266,14 +4450,49 @@ fn the_tree_panel_draws_its_filter_search_field_and_fold_glyphs() {
         screen.contains("the good bit"),
         "a label is drawn on its row: {screen}"
     );
+    // **Asserted against the repertoire, not against the characters (A43).**
+    //
+    // These two assertions named `\u{25be}` and `\u{25b8}` as literals, which is the
+    // defect itself: the panel drew those characters as string literals, so on the ASCII
+    // set — **the default on a Windows box without a UTF-8 host** — the fold markers
+    // rendered as boxes, and a test asserting the literal passed on a console that showed
+    // neither. The property worth pinning is "the two states get two *different* glyphs,
+    // and both come from the table", and that is what this now says.
+    let (closed, open) = (app.theme.glyphs.fold_closed, app.theme.glyphs.fold_open);
+    assert_ne!(
+        closed, open,
+        "collapsed and expanded are different facts and must not share a glyph"
+    );
+    // **Per row, not per screen.** The folded row and the open row are the two facts, and
+    // the whole-screen form would pass on a build that drew neither — which is what
+    // happened when these assertions named the characters instead of the table.
+    let row_of = |needle: &str| {
+        rows.iter()
+            .find(|r| r.contains(needle))
+            .unwrap_or_else(|| panic!("the row naming {needle:?} must be on screen: {screen}"))
+    };
+    let folded_row = row_of("the parent");
+    let open_row = row_of("an open branch");
     assert!(
-        screen.contains('\u{25be}'),
-        "a collapsed row carries the collapsed glyph: {screen}"
+        folded_row.contains(closed),
+        "a collapsed row carries the collapsed glyph {closed:?}: {folded_row:?}"
     );
     assert!(
-        screen.contains('\u{25b8}'),
-        "and an expanded one carries the OTHER glyph -- the same glyph for both \
-         states would make them indistinguishable: {screen}"
+        open_row.contains(open),
+        "an expanded one carries the OTHER glyph {open:?}: {open_row:?}"
+    );
+    assert_ne!(
+        folded_row, open_row,
+        "the two states must be distinguishable on the screen, not merely in the table"
+    );
+    // And the ASCII repertoire must actually differ, which is the half the literals
+    // could not express at all: `▾`/`▸` render as **boxes** there, and those boxes are
+    // the whole content of the fold feature.
+    assert_ne!(
+        crate::ui::theme::ASCII.fold_closed,
+        crate::ui::theme::ASCII.fold_open,
+        "the seven-bit repertoire has to carry the same distinction or the panel is \
+         unreadable on the console most people are using"
     );
 }
 

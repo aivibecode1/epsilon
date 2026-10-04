@@ -107,6 +107,24 @@ pub struct GoalGateRunner {
     /// replays is the honest one — the same failure, from this session, with the same output.
     /// A restart re-runs everything, which is the safe direction.
     last_failure: std::sync::Mutex<std::collections::HashMap<String, (String, GateReport)>>,
+    /// Who authorizes a gate before it runs (ledger A36).
+    ///
+    /// **Why this exists.** A goal's gates are shell commands the **model wrote** — they
+    /// arrive in the `gates:` argument of an `update_goal` tool call. They were run under
+    /// the tool name `goal`, and `gate_subject("goal", …)` yields the capability `goal`,
+    /// which no rule in the default ruleset mentions. So `Rule::new("bash", "*", Ask)` was
+    /// never consulted: one "allow once" on some unrelated bash call, and any number of
+    /// arbitrary shell commands, with a dialog the user had never been shown.
+    ///
+    /// The sandbox axis was always honest — a gate shares `bash`'s sandbox and fails closed
+    /// without one — so this was an **authorization** bypass rather than a sandbox escape.
+    /// What was missing is the question, and the answer is to ask the one question the
+    /// user has actually agreed to answer before.
+    ///
+    /// `None` is not "ask nothing and run anyway": it **refuses**, because a runner with
+    /// no approver cannot ask, and a command the model wrote that nobody was asked about is
+    /// precisely the hole. The sandbox is a containment boundary; this is the consent one.
+    approvals: Option<std::sync::Arc<dyn epsilon_safety::ApprovalUi>>,
 }
 
 impl std::fmt::Debug for GoalGateRunner {
@@ -132,6 +150,7 @@ impl Clone for GoalGateRunner {
             sandbox: self.sandbox.clone(),
             policy: self.policy.clone(),
             last_failure: std::sync::Mutex::new(std::collections::HashMap::new()),
+            approvals: self.approvals.clone(),
         }
     }
 }
@@ -147,11 +166,15 @@ impl GoalGateRunner {
     /// The case that *does* refuse is `Some(sandbox)` where the backend is unavailable:
     /// there the user asked to be confined and the machine cannot do it, and failing
     /// closed is the whole point.
-    pub fn new(sandbox: Option<Arc<dyn Sandbox>>) -> Self {
+    pub fn new(
+        sandbox: Option<Arc<dyn Sandbox>>,
+        approvals: Option<Arc<dyn epsilon_safety::ApprovalUi>>,
+    ) -> Self {
         Self {
             sandbox,
             policy: ConfinementPolicy::default(),
             last_failure: std::sync::Mutex::new(std::collections::HashMap::new()),
+            approvals,
         }
     }
 
@@ -195,6 +218,55 @@ impl GoalGateRunner {
                 output_tail: "the gate has no command, so it can never pass".into(),
                 carried_over: false,
                 unavailable: true,
+            };
+        }
+
+        // **A36: the gate is shell, and it is asked as shell.** This sits above the
+        // unconfined branch on purpose: a session with `--no-sandbox` still owes the user
+        // the question, because confinement is containment and this is consent.
+        let Some(approvals) = self.approvals.as_ref() else {
+            return GateReport {
+                gate: gate.clone(),
+                passed: false,
+                exit_code: None,
+                output_tail: "no approval channel is wired to this goal runner, so a command the \
+                     model wrote cannot be authorized. Refusing rather than running it."
+                    .into(),
+                carried_over: false,
+                unavailable: true,
+            };
+        };
+        let decision = approvals
+            .ask(epsilon_contracts::agent_event::PermissionRequest {
+                request_id: format!("goal-gate-{}", gate.command),
+                // **Capability `bash`, deliberately.** The whole defect was that this ran
+                // under the tool's own name, which no rule matches, so `Rule::new("bash",
+                // "*", Ask)` was never reached. Naming it `bash` puts the gate back under
+                // the rule the user already agreed to — and under any project `[[rules]]`
+                // layer they wrote for shell.
+                capability: "bash".into(),
+                // The command's first word, matching what `gate_subject` produces for a
+                // bash ask, so a user's saved `bash` grants behave the same way here.
+                pattern: gate
+                    .command
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("*")
+                    .to_string(),
+                detail: serde_json::json!({ "goal_gate": gate.command }),
+            })
+            .await;
+        if decision.is_denial() {
+            return GateReport {
+                gate: gate.clone(),
+                passed: false,
+                exit_code: None,
+                output_tail: match decision.guidance() {
+                    Some(g) => format!("the gate was refused: {g}"),
+                    None => "the gate was refused".into(),
+                },
+                carried_over: false,
+                unavailable: false,
             };
         }
 
@@ -450,7 +522,8 @@ mod tests {
 
     #[test]
     fn an_empty_gate_cannot_ever_pass() {
-        let runner = GoalGateRunner::new(None);
+        let runner =
+            GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
         let gate = GoalGate::new("   ");
         let report = block_on(runner.run(&gate, std::path::Path::new(".")));
         assert!(!report.passed);
@@ -477,7 +550,8 @@ mod tests {
         {
             return; // cargo is not on PATH here; there is nothing to say about the result
         }
-        let runner = GoalGateRunner::new(None);
+        let runner =
+            GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
         let report = block_on(runner.run(&GoalGate::new("cargo --version"), Path::new(".")));
         assert!(report.passed, "{}", report.sentence());
         assert!(!report.unavailable);

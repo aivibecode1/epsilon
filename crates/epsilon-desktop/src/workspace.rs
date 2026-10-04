@@ -127,6 +127,14 @@ impl FileTree {
             row.expanded = !row.expanded;
         }
     }
+
+    /// Whether `path` names a directory row.
+    ///
+    /// For the keyboard path, which has to tell "open this file" from "expand this folder"
+    /// **the same way a click does** — a second rule for it would be two editors.
+    pub fn is_dir(&self, path: &str) -> bool {
+        self.rows.iter().any(|r| r.is_dir && r.path == path)
+    }
 }
 
 /// Open or close every directory in `rows`.
@@ -253,19 +261,48 @@ pub fn hotspot_id(path: &str) -> String {
     format!("tree:{path}")
 }
 
+/// Which row the tree is marking, and as what.
+///
+/// One argument rather than two because they are one answer: "this row, in this
+/// state". Split, a caller has to keep the two in step, and a tree drawing two
+/// marks with no rule about which wins is a rule nobody can state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TreeMark<'a> {
+    /// The file open in the editor.
+    pub selected: Option<&'a str>,
+    /// The row the keyboard is on, when the tree has pane focus.
+    pub cursor: Option<&'a str>,
+}
+
 /// Draw the tree into `rect`, reporting what was clicked.
 ///
 /// Virtualized: `show_rows` draws only the visible span, which is the difference between a
 /// tree that opens instantly and one that spends its first second building widgets for
 /// files nobody asked for. Every row's rectangle is pushed into `hotspots` as it is drawn.
+///
+/// `mark.cursor` is painted the way the selected row is painted. A cursor that moved with
+/// the arrow keys and left nothing behind would be a cursor nobody could see, and "which
+/// row will Enter open" is a question a reader answers by looking. Its rectangle is
+/// recorded as `tree-cursor:<path>` for the same reason the tab strip records its own —
+/// an assertion that cannot find the thing has measured nothing.
+///
+/// `summary` rather than a bare `&mut Vec<(String, Rect)>` of hotspots, because a painter
+/// text size has to be recorded from the same place the text is painted — see
+/// [`crate::app::paint_text`] — and the frame already carries that record.
+///
+/// **One argument over the clippy budget.** Seven were here before text scaling; the
+/// eighth is `scale`, and reading it off the `Ui` instead would give the row height, the
+/// indent and the font three chances to answer differently.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_tree(
     ui: &mut egui::Ui,
     theme: &IdeTheme,
     rect: egui::Rect,
     tree: &FileTree,
     query: &str,
-    selected: Option<&str>,
-    hotspots: &mut Vec<(String, egui::Rect)>,
+    mark: TreeMark<'_>,
+    summary: &mut crate::app::FrameSummary,
+    scale: f32,
 ) -> Option<TreeClick> {
     let visible = tree.visible(query);
     let mut clicked: Option<TreeClick> = None;
@@ -284,16 +321,16 @@ pub fn draw_tree(
             egui::ScrollArea::vertical()
                 .id_salt("epsilon-file-tree")
                 .auto_shrink([false, true])
-                .show_rows(ui, 18.0, visible.len(), |ui, range| {
+                .show_rows(ui, 18.0 * scale, visible.len(), |ui, range| {
                     let range = range.clone();
                     for row in visible[range.clone()].iter() {
-                        let indent = 10.0 + row.depth as f32 * 12.0;
+                        let indent = (10.0 + row.depth as f32 * 12.0) * scale;
                         let marker = match (row.is_dir, row.expanded) {
                             (true, true) => "▾ ",
                             (true, false) => "▸ ",
                             _ => "  ",
                         };
-                        let is_selected = selected == Some(row.path.as_str());
+                        let is_selected = mark.selected == Some(row.path.as_str());
                         let color = if row.is_dir {
                             theme.title
                         } else if is_selected {
@@ -305,18 +342,30 @@ pub fn draw_tree(
                         // both the screen rectangle and the click handling, and the two
                         // cannot drift apart.
                         let (row_rect, response) = ui.allocate_exact_size(
-                            egui::vec2(rect.width(), 17.0),
+                            egui::vec2(rect.width(), 17.0 * scale),
                             egui::Sense::click(),
                         );
                         let painter = ui.painter();
                         if is_selected {
                             painter.rect_filled(row_rect, 0.0, theme.selection_focus);
                         }
-                        painter.text(
-                            row_rect.left_top() + egui::vec2(indent, 13.0),
+                        // The keyboard's row. `selection_focus` is the role for exactly
+                        // this state and the theme already holds it 3:1 from `selection`
+                        // (`STATE_FLOOR`), so the marker is legible without a new colour.
+                        if mark.cursor == Some(row.path.as_str()) {
+                            painter.rect_filled(row_rect, 0.0, theme.selection_focus);
+                            summary
+                                .hotspots
+                                .push((format!("tree-cursor:{}", row.path), row_rect));
+                        }
+                        crate::app::paint_text(
+                            painter,
+                            summary,
+                            "tree",
+                            row_rect.left_top() + egui::vec2(indent, 13.0 * scale),
                             egui::Align2::LEFT_CENTER,
                             format!("{marker}{}", row.name),
-                            egui::FontId::proportional(13.0),
+                            egui::FontId::proportional(13.0 * scale),
                             color,
                         );
                         if response.clicked() {
@@ -327,7 +376,7 @@ pub fn draw_tree(
                                 TreeClick::File(path)
                             });
                         }
-                        hotspots.push((hotspot_id(&row.path), row_rect));
+                        summary.hotspots.push((hotspot_id(&row.path), row_rect));
                     }
                 });
         },
@@ -356,6 +405,7 @@ pub fn draw_diff(
     rect: egui::Rect,
     change: &crate::diff::Change,
     mut summary: Option<&mut crate::app::FrameSummary>,
+    scale: f32,
 ) {
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 4.0, theme.background);
@@ -378,18 +428,28 @@ pub fn draw_diff(
             "changed"
         }
     );
-    painter.text(
-        rect.left_top() + egui::vec2(12.0, 16.0),
+    // The heading's own line and the body's top offset are text geometry: at 200% the
+    // header is a taller header, and the body starts below it rather than through it.
+    let mut sink = crate::app::FrameSummary::default();
+    crate::app::paint_text(
+        &painter,
+        if summary.is_some() {
+            summary.as_deref_mut().expect("checked")
+        } else {
+            &mut sink
+        },
+        "editor",
+        rect.left_top() + egui::vec2(12.0, 16.0 * scale),
         egui::Align2::LEFT_CENTER,
         heading.clone(),
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(12.0 * scale),
         theme.dim,
     );
     if let Some(s) = summary.as_deref_mut() {
         s.rows.push(("editor".into(), heading));
     }
     let body = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), rect.top() + 30.0),
+        egui::pos2(rect.left(), rect.top() + 30.0 * scale),
         egui::pos2(rect.right(), rect.bottom()),
     );
     if body.height() <= 8.0 {
@@ -400,8 +460,11 @@ pub fn draw_diff(
     // are already separated by the contrast floor, and `theme.rs` already asserts they are
     // not the same colour.
     let (add, remove, context) = (theme.success, theme.danger, theme.dim);
-    let line_h = 16.0;
-    let gutter = 52.0;
+    // The row height is the line height of a 12-point monospace face, so it is the text's
+    // geometry and moves with it: `show_rows` wants one height for every row, and that
+    // height has to be the height the text actually occupies.
+    let line_h = 16.0 * scale;
+    let gutter = 52.0 * scale;
     let rows = change.lines.len();
     ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
         egui::ScrollArea::vertical()
@@ -417,11 +480,18 @@ pub fn draw_diff(
                         crate::diff::DiffLine::Context(t) => (' ', t.as_str(), context),
                     };
                     let painted = format!("{marker}{text}");
-                    ui.painter().text(
+                    crate::app::paint_text(
+                        ui.painter(),
+                        if summary.is_some() {
+                            summary.as_deref_mut().expect("checked")
+                        } else {
+                            &mut sink
+                        },
+                        "editor",
                         egui::pos2(row.left() + gutter, row.center().y),
                         egui::Align2::LEFT_CENTER,
                         &painted,
-                        egui::FontId::monospace(12.0),
+                        egui::FontId::monospace(12.0 * scale),
                         color,
                     );
                     if let Some(s) = summary.as_deref_mut() {
@@ -440,6 +510,7 @@ pub fn draw_editor(
     rect: egui::Rect,
     file: &OpenFile,
     mut summary: Option<&mut crate::app::FrameSummary>,
+    scale: f32,
 ) {
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 4.0, theme.background);
@@ -449,22 +520,30 @@ pub fn draw_editor(
         egui::Stroke::new(1.0, theme.border),
         egui::StrokeKind::Inside,
     );
-    painter.text(
-        rect.left_top() + egui::vec2(12.0, 16.0),
+    let mut sink = crate::app::FrameSummary::default();
+    crate::app::paint_text(
+        &painter,
+        if summary.is_some() {
+            summary.as_deref_mut().expect("checked")
+        } else {
+            &mut sink
+        },
+        "editor",
+        rect.left_top() + egui::vec2(12.0, 16.0 * scale),
         egui::Align2::LEFT_CENTER,
         format!("{}  ·  {} lines  ·  read-only", file.path, file.len()),
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(12.0 * scale),
         theme.dim,
     );
     let body = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), rect.top() + 30.0),
+        egui::pos2(rect.left(), rect.top() + 30.0 * scale),
         egui::pos2(rect.right(), rect.bottom()),
     );
-    if body.height() <= 8.0 || file.lines.is_empty() {
+    if body.height() <= 8.0 * scale || file.lines.is_empty() {
         return;
     }
-    let gutter = 52.0;
-    let line_h = 16.0;
+    let gutter = 52.0 * scale;
+    let line_h = 16.0 * scale;
     // **From the top, and scrollable.** This showed `lines[len - visible..]` — the tail of
     // the file, with no scrollbar and no way to reach line 1, so opening a 900-line source
     // file showed its last forty lines and called it an editor. Every file begins at line
@@ -482,18 +561,32 @@ pub fn draw_editor(
                     let line = &file.lines[i];
                     let row = ui.min_rect();
                     let number = format!("{:>5}", i + 1);
-                    ui.painter().text(
-                        egui::pos2(row.left() + 8.0, row.center().y),
+                    crate::app::paint_text(
+                        ui.painter(),
+                        if summary.is_some() {
+                            summary.as_deref_mut().expect("checked")
+                        } else {
+                            &mut sink
+                        },
+                        "editor",
+                        egui::pos2(row.left() + 8.0 * scale, row.center().y),
                         egui::Align2::LEFT_CENTER,
                         &number,
-                        egui::FontId::monospace(12.0),
+                        egui::FontId::monospace(12.0 * scale),
                         theme.gutter(),
                     );
-                    ui.painter().text(
+                    crate::app::paint_text(
+                        ui.painter(),
+                        if summary.is_some() {
+                            summary.as_deref_mut().expect("checked")
+                        } else {
+                            &mut sink
+                        },
+                        "editor",
                         egui::pos2(row.left() + gutter, row.center().y),
                         egui::Align2::LEFT_CENTER,
                         line,
-                        egui::FontId::monospace(12.0),
+                        egui::FontId::monospace(12.0 * scale),
                         theme.text,
                     );
                     if let Some(s) = summary.as_deref_mut() {

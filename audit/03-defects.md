@@ -382,7 +382,7 @@ that M202's investigation exposed. Milestone:
 |---|---|---|
 | — | **A session written before M194 could not be opened at all.** `Usage::cache_reported` was added without a serde default, and `Usage` is inside every assistant message, so the whole file was refused and `epsilon` would not start in a workspace that had one. | **Fixed** — `#[serde(default)]`, the refusal now quotes the decoder (`missing field \`cache_reported\``) and names the file. Negative control in [`audit/evidence/m202-negative-control.md`](evidence/m202-negative-control.md). |
 | **A16** | **One session file per session; the fixed `tui.jsonl` is a divergence from pi.** | Three launches append three conversations to one lane, `--continue` hands the model all three as one context, and the header names only the first. | **COMPLETE at M221.** A launch writes `.epsilon/sessions/--<cwd>--/<ISO>_<token>.jsonl` via `time::session_file_for` (M209/M210/M217); every reader resolves through `list_sessions_for_cwd`/`latest_session_for_cwd`, which also read the flat root so **nothing is migrated**; `--continue` lost its missing cwd filter; and `/new` now starts a *file* through the one switch path, with `reset_leaf` — the one-file-many-conversations primitive — deleted. [milestone](../docs/milestones/M221-new-starts-a-new-file.md), `audit/evidence/gate-m221.log`. **Left open by this model:** nothing prunes old session files. |
-| **A17** | **A plain launch never says that a session exists.** `--resume` seeds history and a plain launch does not, so a user who quits and relaunches sees the first-run screen and no hint that `-c` (or `/resume`) would bring the conversation back. The header reports `ctx 4%` beside it `not` hidden history, verified at `main.rs:1924` ` which makes an empty screen look like a contradiction. | — **CLOSED at M222**, in two steps and two bugs. M214 shipped the substance — App::note_prior_history, wired from the event loop at vent.rs:84, saying how many earlier sessions this workspace holds and naming the command that opens one. It was then *wrong* in the way only a layout change can make it wrong: it listed the directory the launch's own file sits in, which since M217 is sessions/--<cwd>--/, so it counted this workspace's own sessions and **none of the pre-M217 files in the flat root** that psilon -c opens too — a notice that contradicts the command it names, on exactly the machines that had sessions to lose. M222 counts list_sessions_for_cwd(root, cwd), the same union -c resolves, with the root derived from the per-cwd directory's name. It was untested throughout because 	est_app_with_store planted the session outside any sessions tree; the fixture now opens a store where a launch does. [milestone](../docs/milestones/M222-notice-and-continue-agree.md), udit/evidence/gate-m222.log. |
+| **A17** | **A plain launch never says that a session exists.** `--resume` seeds history and a plain launch does not, so a user who quits and relaunches sees the first-run screen and no hint that `-c` (or `/resume`) would bring the conversation back. The header reports `ctx 4%` beside it `not` hidden history, verified at `main.rs:1924` ` which makes an empty screen look like a contradiction. | — **CLOSED at M222**, in two steps and two bugs. M214 shipped the substance — App::note_prior_history, wired from the event loop at event.rs:84, saying how many earlier sessions this workspace holds and naming the command that opens one. It was then *wrong* in the way only a layout change can make it wrong: it listed the directory the launch's own file sits in, which since M217 is sessions/--<cwd>--/, so it counted this workspace's own sessions and **none of the pre-M217 files in the flat root** that epsilon -c opens too — a notice that contradicts the command it names, on exactly the machines that had sessions to lose. M222 counts list_sessions_for_cwd(root, cwd), the same union -c resolves, with the root derived from the per-cwd directory's name. It was untested throughout because 	est_app_with_store planted the session outside any sessions tree; the fixture now opens a store where a launch does. [milestone](../docs/milestones/M222-notice-and-continue-agree.md), audit/evidence/gate-m222.log. |
 | **A21** | **Two `epsilon-ext` host-protocol tests are load-sensitive.** | A battery can fail on a slice that did not touch the crate, and the honest response is to record it rather than re-run until green. | First battery `m218`: `a_child_that_never_stops_sending_lines_is_cut_off_by_volume` (expected `Protocol`, got `Timeout`) and `a_request_after_the_reader_stops_is_refused_even_though_the_child_is_alive` (no return within 2 s). **STILL OPEN, cause not established** — and M227 narrowed it rather than closing it. The two failures share one cause: both spend the reader's byte budget with `--flood 200000 100`, i.e. **200,000 lines**, and when the budget is not spent inside the ten-second invoke deadline the clock wins, the reader stays alive, and the second test's fast refusal never happens. So M227 changed the fixture to `--flood 2000 12000` (same ~24 MB, 2,000 lines), removing a test's dependence on per-line throughput — **and then tried to reproduce with the old form three times: serialised with 6 CPU burners, with 10, and the whole 29-test binary at default parallelism with 10. It passed every time.** Plain CPU saturation is therefore *not* the trigger, and the next attempt has to be a battery in which this binary is the failing one rather than a `cargo test -p epsilon-ext` loop, which passes because nothing else is competing. [milestone](../docs/milestones/M227-two-load-sensitive-tests.md), `audit/evidence/gate-m218-FAILED-ext-load.log`, `audit/evidence/gate-m227.log`. |
 | **A22** | **Two model-picker markers were literals CP437 does not carry.** `●` (active row) and `★` (favourite) were written where the glyph table should decide, and neither is in code page 437. | The repertoire fix (M219) made the repertoire a *default* and moved the two unrenderable characters into the table, but every drawn character was still unchecked. | **CLOSED at M220**, and the closure is the interesting part: the fix was not a sweep but a *check* — `an_ascii_frame_draws_no_character_a_legacy_console_cannot` paints twelve frames in the ASCII repertoire and fails on anything outside CP437, and its first run named **94 rows**. Five glyphs moved (`dot`, `star`, `ellipsis`, `up`/`down`, `dash`); the two markers are now `*` and `+`. [milestone](../docs/milestones/M220-every-drawn-character.md), `audit/evidence/gate-m220.log`. |
 | **A23** | **Harness prose still carries an em dash, and an em dash is not in CP437.** | On a legacy console a box appears inside a notice, even though every structural character became CP437-safe at M220. | **RECLASSIFIED at M228: the sweep it called for would have been a downgrade.** Measured: **133 lines** in `crates/epsilon-tui/src` carry an em dash inside a string literal — the row said "~200", which counted comments, and 13 of the 133 are test fixtures — and the reference harness uses them too, **103 occurrences across 21 files** of `references/pi-0.85.1`. So the em dash is this family's prose convention, not a legacy artefact, and replacing it with `--` would degrade what every modern terminal shows in order to tidy a minority console. The ASCII promise M219/M220 established is about **structural** characters (borders, markers, arrows, truncation) precisely because prose is not structure. **The real fix, not done:** map unsupported punctuation at *draw* time, in one place where the repertoire is known — `Glyphs` already substitutes `dash`, `ellipsis`, `up`/`down`, and the M220 frame check is the hook for it. [milestone](../docs/milestones/M220-every-drawn-character.md) |
@@ -1386,7 +1386,7 @@ read that way.
 ### A26 - the goal round driver never consults the gates it can declare
 
 **Status: CLOSED at M254.** Found 2026-10-06 by reading, after checking three stale claims first;
-fixed the next round. egin_goal_round in `epsilon-runtime` now runs the goal's gates before a
+fixed the next round. begin_goal_round in `epsilon-runtime` now runs the goal's gates before a
 round is sent and returns `GoalRound::GateFailed` carrying the failure as the continuation
 prompt; the terminal's round driver runs it on its own task and starts the round when it answers.
 The cost estimate below was **wrong, high**: it said six call sites, and it was zero -
@@ -1913,3 +1913,131 @@ the individual rows:
 - **A sweep over a fixture that cannot produce the thing you are worried about is not a sweep.**
   The goal band (A28) sat inside `row_rects`, which the containment test iterates; the fixture
   simply had no goal.
+
+---
+
+# M276 reconciliation — a security sweep, five reviews, and nine defects
+
+**This section supersedes A32, A42, A43 and A46, and adds two rows.** The rows above stay
+because the reasoning that found them is still worth reading; where this section disagrees,
+this section wins.
+
+| Row | Was | Now |
+|---|---|---|
+| **A32** — repository prompt templates bypass the trust gate and re-dispatch as commands | Open | **CLOSED at M276** |
+| **A42** — `guidance_mode` is modelled, handled, and drawn nowhere | Open | **CLOSED at M276**, plus two extensions the row did not carry |
+| **A43** — the timeline panel draws three glyphs outside the repertoire table | Open | **CLOSED at M276** with **five** glyphs, not three |
+| **A46** — `gate-until-pass.ps1` names the wrong gate in its failure fingerprint | Open | **CLOSED at M276** |
+| **A47** — the desktop frame cannot `spawn` in a test and degrades to silence | Open | still open; recorded here so the sweep's reach is honest |
+| **A40** — `display_path` is built, tested, and never painted | Open | still open; the review found the matching hole in the test that credits it |
+| **A38** — desktop parity gaps | Partly closed | still open; the context/cost row is the largest of them |
+
+## A50 — `[[mcp_servers]]` from an untrusted project spawns arbitrary binaries (NEW, critical)
+
+`runtime/src/lib.rs`, in `build_runtime_and_gate_runner`, before M276:
+
+```rust
+let mut all_mcp: Vec<McpServerConfig> = mcp_servers.to_vec();
+all_mcp.extend(project.mcp_servers.iter().cloned());   // ← not gated
+```
+
+Every other project-declared resource was gated on `project_trusted`: skills through
+`skill_roots_trusted`, extensions through `extension_roots_trusted`, and the sibling
+`extension_dirs` block **with a comment saying an untrusted config must not smuggle code in
+through its own declarations**. MCP was the one declaration that escaped, because it is a list
+of *servers* rather than a list of *roots*.
+
+`McpServerConfig::command` is a bare `String` parsed from the repo's TOML and spawned by
+`attach_stdio_server` — before a model turn, before a permission ask, outside the sandbox. And
+**first sight of a project config is already `Trusted`** (`lib.rs:179-186`, `:4962-4966`), so
+A37 below is not a precondition but an amplifier: there was never a prompt to get past.
+
+*Closed by M276* with `mcp_servers_trusted`, a pure function beside its two siblings.
+Control: without the gate, the untrusted list contains the project's `command`.
+
+## A32 — CLOSED at M276, and the row understated it
+
+Two things the row did not carry:
+
+1. **The call ran sixteen lines above the assignment of the flag it consults.** An ordering bug
+   inside a security check survives review because every line is correct on its own.
+2. **`.agents/prompts` was never in the detector at all** — only `.epsilon/prompts` — so the
+   cross-harness spelling this repository's own `.agents/skills` follows shipped templates that
+   no trust detector named.
+
+`TrustRequiringResource::Prompts` has been in the enum since it was written and **nothing in
+`src/` read it**: the "faithful port, no production caller" shape, where the port *is* the
+declaration.
+
+*Closed by M276.* The loader consults `trust_review_pending`, the same signal the sibling
+`agents` reload path uses, and the detector now names `.agents/prompts`.
+
+## A42 — CLOSED at M276, with two extensions
+
+**The caret.** `overlay_open()` includes `pending_ask`, which is right for the picker and the
+palette and wrong here — so guidance mode was the only state in the application where you typed
+into a field with **no cursor drawn in it**.
+
+**The key swallowing was worse than the row.** `handle_approval_key` ended in `_ => {}` — Enter,
+Tab, Space, arrows, Home/End, Delete all did nothing and printed nothing — and guidance mode, a
+*text field*, bound only `Enter`/`Esc`/`Backspace`/`Char`, so the whole editing vocabulary was
+dead on the screen where a tool call is blocked. G10's notice lives at the end of `handle_key`,
+which that function returns before reaching.
+
+**And a third defect the row did not carry:** pressing `e` **destroyed the composer's draft**,
+with no undo entry and no notice. It now `stash_draft`s, and `esc` unstashes.
+
+## A43 — CLOSED at M276 with five glyphs, not three
+
+Beyond the row's three: `⇧L` in the hint row — **the only place the `Shift+L` chord is
+advertised** — and the blockquote `❯`, which is in **model output**.
+
+The row understated the consequence. **ASCII is the *default* on a Windows box without a UTF-8
+host** (`theme.rs:429-433`), so `▾`/`▸` rendered as boxes for most of the people filing the
+ASCII reports — and those two glyphs are the *entire* difference between collapsed and
+expanded. A box does not degrade the panel; it removes the only thing the panel carries.
+
+The CP437 frame test never drove `draw_timeline`, which is why the M219 sweep missed them.
+Still open: that frame test does not cover the panel.
+
+## A46 — CLOSED at M276
+
+The fingerprint matched a gate *header* and then the first non-zero `[exit=` **within 4000
+characters**, so a leg that passed had its exit attributed to the next leg
+(`check-line-endings` failing reported as `check-links:1`), and a leg that printed more than
+4000 characters — `fmt --check` prints a diff — matched *nothing*, producing an empty fingerprint
+that compared equal to another empty one.
+
+Now: split on the headers, read the exit inside each segment, never let a segment reach past its
+own boundary, and **treat an empty fingerprint as a stop rather than as agreement**.
+
+## A49 — NEW: fifteen C0 control bytes in tracked files, two of them in the module that strips them
+
+A letter replaced by the C0 character of its own C escape name: `e`→`0x1B`, `a`→`0x07`,
+`b`→`0x08`, `f`→`0x0C`. Fifteen bytes across eleven files — `text_safety.rs`, `main.rs`,
+`core/lib.rs`, `runtime/lib.rs`, `CHANGELOG.md`, this ledger, three docs.
+
+**Two were inside `epsilon_runtime::text_safety`**, whose entire job is stripping exactly these
+characters. No gate can see it: `fmt` reprints text, `clippy` lints code, a control byte in a
+doc comment is not code, and `check-line-endings` looks for CRLF.
+
+*Closed by M276* with `scripts/check-control-bytes.py`, in both batteries and in AGENTS.md. It
+found a sixteenth instance (a form feed for `f`) on its **first run**. Control verified.
+
+## Found by the sweep, recorded rather than fixed
+
+- **The `.pre-epsilon` backup may be unopenable by this build.** `append` calls `write_header`
+  on a headerless v1 file *before* snapshotting it, and the handle is `O_APPEND`, so the header
+  lands at EOF; `keep_original_beside` then copies that file. Reopening the backup hits
+  `SecondHeader` and refuses. Inferred from the ordering and the open mode; the experiment is in
+  the M276 handoff.
+- **The lease can be stolen from a *live* holder after two missed heartbeats** (~4 s against a
+  2 s interval, factor of two). The victim's `Drop` then deletes the thief's lock.
+- **Denied tools are still advertised to the model.** A model that cannot see `bash` does not
+  burn turns proposing it; one filter function (opencode's `visibleTools`) buys that.
+- **A session-remembered `always allow bash` leaks into every subagent**; opencode's rule is to
+  inherit *denies only*.
+- **Desktop:** selected rows are the least legible text in the window (~2.8:1 dark, under the
+  crate's own 3.0 floor); the file tree's `visible()` is O(n²·depth) per frame and every
+  `frame_cost` fixture is an empty tempdir; the palette can highlight **zero** rows after a
+  narrowing query and Enter then does nothing (the TUI invariant, failing).

@@ -1,10 +1,35 @@
-//! Pure model-picker logic: row construction and slash-command parsing.
+//! Model-picker rows and the slash autocomplete that ranks them.
+//!
+//! **The command half of the registry is not written here any more.** `Command`,
+//! `SlashItem`, `SLASH_ITEMS`, `COMMAND_HEADS`, `ALIAS_HEADS` and `parse_command` moved
+//! down to `epsilon-contracts` (`crates/epsilon-contracts/src/command.rs`), which is the
+//! only crate below both front ends. The `pub use` below is what keeps that move invisible:
+//! `epsilon_tui::picker::Command` and `epsilon_tui::picker::parse_command` still resolve,
+//! so **no call site in this workspace changed**.
+//!
+//! It was this crate's own edge that made the move worth making.
+//! `crates/epsilon-desktop/src/commands.rs:79` reads `parse_command` and
+//! `COMMAND_HEADS` from here — a native IDE importing a terminal crate to learn what a
+//! `/word` means, in the crate whose manifest says it "draws no terminals and depends on
+//! no terminal behaviour". The registry is data both front ends need, and `AGENTS.md` §2.4
+//! says it is declared once. It was declared once, in the wrong crate.
+//!
+//! **What stays is the picker half, and it stays for one reason:** it needs
+//! `epsilon_llm::catalog`, and `epsilon-contracts` has zero internal dependencies
+//! (`AGENTS.md` §2). `slash_items` and `suggest_slash` stay for the same reason — they are
+//! fuzzy ranking over `SLASH_ITEMS` and the ranking needs `crate::fuzzy`.
 //!
 //! Rendering lives in `app.rs`; everything testable without a terminal lives here.
 //! Rows come from the bundled catalog (`epsilon_llm::catalog`) plus persisted
 //! recents, session-fetched live listings, and a synthetic "custom id" row whenever
 //! the filter text is not an exact known id — pi's escape hatch plus opencode's
 //! favorites/recents convention, minus the parts that need a credential store.
+
+// The re-export that makes the move a no-op for every caller. `epsilon-tui` already
+// depended on `epsilon-contracts` directly, so this adds no Cargo edge anywhere.
+pub use epsilon_contracts::command::{
+    ALIAS_HEADS, COMMAND_HEADS, Command, SLASH_ITEMS, SlashItem, parse_command,
+};
 
 use epsilon_llm::catalog;
 use epsilon_llm::custom::CustomProvider;
@@ -252,171 +277,6 @@ pub fn build_rows_with(
 
 // ---- M17b: slash autocomplete with descriptions + selection (pi pattern) --------
 
-/// One slash-autocomplete candidate (pi's `AutocompleteItem` + `SlashCommand`):
-/// value to insert, display label, and an optional description/argument hint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlashItem {
-    /// Text inserted when the item is chosen (e.g. `/models`).
-    pub value: &'static str,
-    /// Optional description rendered dim beside the label.
-    pub description: &'static str,
-}
-
-/// All known slash commands with descriptions (pi's command registry shape;
-/// descriptions follow pi/opencode conventions).
-pub const SLASH_ITEMS: &[SlashItem] = &[
-    SlashItem {
-        value: "/models",
-        description: "switch model (picker)",
-    },
-    SlashItem {
-        value: "/model ",
-        description: "set model by id, e.g. /model kimi-k2.6",
-    },
-    SlashItem {
-        value: "/think ",
-        description: "thinking effort: off..max (Ctrl+T cycles)",
-    },
-    SlashItem {
-        value: "/compact",
-        description: "summarize older context to reclaim token window",
-    },
-    SlashItem {
-        value: "/timeline",
-        description: "browse session branches by seq/lane/snippet, Enter jumps",
-    },
-    SlashItem {
-        value: "/tasks",
-        description: "subagent tasks: state, turns, ids, cost (Esc stops them with the run)",
-    },
-    SlashItem {
-        // The description names the bare form first because that is the one a user types to
-        // find out what is going on; the verbs are one `/goal help` away.
-        value: "/goal ",
-        description: "one long-running objective: `/goal <what to achieve>`, bare to show it",
-    },
-    SlashItem {
-        value: "/fork",
-        description: "copy current session JSONL to a new branch file",
-    },
-    SlashItem {
-        value: "/skills",
-        description: "list discovered skills",
-    },
-    SlashItem {
-        // M196: the toggle, and the description says the exact shape because
-        // "toggle a skill" alone does not tell a user whether it takes
-        // `/skill commit off` or `/skill off commit`.
-        value: "/skill ",
-        description: "switch a skill on or off — `/skill <name> on|off`",
-    },
-    SlashItem {
-        value: "/search ",
-        description: "search this session's history",
-    },
-    SlashItem {
-        value: "/clear",
-        description: "clear transcript (totals kept)",
-    },
-    SlashItem {
-        value: "/help",
-        description: "command reference",
-    },
-    SlashItem {
-        value: "/login ",
-        description: "set API key for a provider (paste inside TUI)",
-    },
-    SlashItem {
-        value: "/connect ",
-        description: "connect a provider — alias for /login",
-    },
-    SlashItem {
-        value: "/auth ",
-        description: "provider auth — alias for /login",
-    },
-    SlashItem {
-        value: "/logout ",
-        description: "remove stored key for a provider",
-    },
-    SlashItem {
-        value: "/quit",
-        description: "exit the session",
-    },
-    // --- pi parity: additional builtins (G1) ---
-    SlashItem {
-        value: "/new",
-        description: "start a new session",
-    },
-    SlashItem {
-        value: "/resume ",
-        description: "resume a session file by path (bare /resume opens the browser)",
-    },
-    SlashItem {
-        value: "/sessions",
-        description: "browse session files in this workspace and resume one",
-    },
-    SlashItem {
-        value: "/editor",
-        description: "compose this draft in $EDITOR (Alt+E)",
-    },
-    SlashItem {
-        value: "/session",
-        description: "show session info and stats",
-    },
-    SlashItem {
-        value: "/tree",
-        description: "navigate session tree (switch branches)",
-    },
-    SlashItem {
-        value: "/clone",
-        description: "duplicate the current session at current position",
-    },
-    SlashItem {
-        value: "/trust ",
-        description: "save project trust decision for future sessions",
-    },
-    SlashItem {
-        value: "/reload",
-        description: "reload skills, prompts, and config without restarting",
-    },
-    SlashItem {
-        value: "/export ",
-        description: "export session (HTML default, or specify path: .html/.json)",
-    },
-    SlashItem {
-        value: "/import ",
-        description: "import and resume a session from a JSONL file",
-    },
-    SlashItem {
-        value: "/share",
-        description: "share session as a secret GitHub gist",
-    },
-    SlashItem {
-        value: "/copy",
-        description: "copy last agent message to clipboard",
-    },
-    SlashItem {
-        value: "/name ",
-        description: "set session display name",
-    },
-    SlashItem {
-        value: "/changelog",
-        description: "show changelog entries",
-    },
-    SlashItem {
-        value: "/hotkeys",
-        description: "show all keyboard shortcuts",
-    },
-    SlashItem {
-        value: "/settings",
-        description: "open settings menu",
-    },
-    SlashItem {
-        value: "/scoped-models",
-        description: "enable/disable models for Ctrl+P cycling",
-    },
-];
-
 /// Candidates that fuzzy-match the typed `/prefix` (input has no space yet),
 /// sorted by match quality — pi's `fuzzyFilter` over `AutocompleteItem.name`.
 pub fn slash_items(input: &str) -> Vec<&'static SlashItem> {
@@ -463,363 +323,6 @@ pub fn suggest_slash(word: &str) -> Option<&'static SlashItem> {
         }
     }
     best.map(|(_, it)| it)
-}
-
-/// A parsed editor command.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command {
-    /// Open the model picker.
-    Models,
-    /// Set the model id directly (everything after `/model `).
-    Model(String),
-    /// Set thinking effort (level after `/think `; bare `/think` shows current).
-    Think(Option<String>),
-    /// Compact the session context (manual trigger of the same compaction loop).
-    Compact,
-    /// Switch the TUI palette at runtime (`/theme` toggles; `/theme light|dark` sets).
-    ///
-    /// This existed as a possibility for a long time and as a command for none of it:
-    /// `ThemeMode::flipped()` carried the doc comment "for the runtime toggle" and
-    /// `Theme::set_palette` was public, but the only production caller applied the palette
-    /// once at startup from `EPSILON_THEME` or `[tui] theme`. A user who guessed wrong had to
-    /// edit a config file and restart to find out.
-    Theme(Option<String>),
-    /// List the active branch entries (timeline / branch inspection).
-    Timeline,
-    /// Fork the session at the current leaf into a new session file.
-    Fork,
-    /// Show the command reference.
-    Help,
-    /// Clear the transcript pane.
-    Clear,
-    /// Expand or collapse tool output (`/expand`; same action as Ctrl+X).
-    ///
-    /// Added so the palette entry can name a real command. It used to carry a
-    /// `\u{1}expand` pseudo-command that `parse_command` cannot read — it requires a
-    /// leading `/` — so choosing it closed the palette, cleared the composer, and ran
-    /// nothing, with no notice. A menu entry that silently does nothing is worse than
-    /// a missing one: it tells the user the feature exists.
-    Expand,
-    /// List discovered skills.
-    Skills,
-    /// `/skill <name> off` / `/skill <name> on` — switch one skill off or on.
-    ///
-    /// A slash command rather than a chord, for the reason `/settings` and
-    /// `/templates` are commands: it needs a NAME, and a name does not fit on a
-    /// key. The name is checked against what is actually discovered, so a typo
-    /// says so rather than writing a setting for a skill that does not exist.
-    Skill(String),
-    /// List installed prompt templates with their descriptions and argument hints.
-    Templates,
-    /// Search the session log (`/search <query>`); empty tail opens with guidance.
-    Search(String),
-    /// Store a provider API key (`/login <provider> [key]`; empty key prompts).
-    Login {
-        /// Provider id as declared in the catalog (`anthropic`, `openai`, …).
-        provider: String,
-        /// Raw key text (empty → prompt, masked).
-        key: String,
-    },
-    /// Remove a stored provider key (`/logout <provider>`).
-    Logout(String),
-    /// Start a new session (clear transcript; session file continues; use /fork for a branch file).
-    New,
-    /// Resume a different session (path hint; live switch is deferred to restart).
-    Resume(String),
-    /// Open the draft in `$EDITOR` (M59; `Alt+E` / `Ctrl+O` do the same).
-    Editor,
-    /// Browse the workspace's session files and resume one (M57).
-    Sessions,
-    /// Show session info and stats.
-    Session,
-    /// List delegated subagent tasks (state, turns, ids, cost) — M54, cost at M230.
-    Tasks,
-    /// Navigate session tree (alias for timeline).
-    Tree,
-    /// Set, show, or manage the session's one long-running goal.
-    ///
-    /// `/goal <objective>` creates and arms one; `/goal` alone shows it; the verbs are
-    /// `edit`, `pause`, `resume`, `complete`, `blocked`, `clear`. The whole argument text is
-    /// handed to the command rather than parsed here, because an objective is a sentence and
-    /// splitting it in the parser is how a goal ends up reading "make the doc" — the same
-    /// reason `/name` and `/search` take their tails whole.
-    Goal(Option<String>),
-    /// Duplicate the current session at current position.
-    Clone,
-    /// Trust decision for project config.
-    Trust(Option<String>),
-    /// Reload skills, prompts, and config.
-    Reload,
-    /// Export session (tail may contain format/path hint).
-    Export(Option<String>),
-    /// Import a session JSONL (path in tail).
-    Import(String),
-    /// Share session as a gist.
-    Share,
-    /// Copy last agent message to clipboard.
-    Copy,
-    /// Set session display name.
-    Name(Option<String>),
-    /// Show changelog.
-    Changelog,
-    /// Show keyboard shortcuts.
-    Hotkeys,
-    /// Open settings menu.
-    Settings,
-    /// Enable/disable models for picker cycling.
-    ScopedModels,
-    /// Exit the session.
-    Quit,
-    /// A `/word` we do not know — surfaced as an error, never sent to the model.
-    Unknown(String),
-}
-
-/// Every command head [`parse_command`] understands, one entry per command.
-///
-/// M171's sweep over all 30 commands kept its own hand-written list, which meant a new
-/// command added to [`parse_command`] without updating the test was a silent gap - the
-/// exact failure this list exists to remove. Keeping the list here, next to the match it
-/// describes, is only half the answer: `every_head_in_command_heads_is_parsed` and
-/// `the_parser_does_not_know_a_command_the_list_does_not` together check both directions,
-/// so neither an unlisted new command nor a stale entry can survive.
-///
-/// Aliases (`models` for `model`) are deliberately absent - one entry per command, and the
-/// parser resolves the alias to the same variant.
-pub const COMMAND_HEADS: &[&str] = &[
-    "model",
-    "think",
-    "compact",
-    "theme",
-    "branch",
-    "tree",
-    "goal",
-    "fork",
-    "clone",
-    "new",
-    "resume",
-    "sessions",
-    "editor",
-    "session",
-    "trust",
-    "reload",
-    "export",
-    "import",
-    "share",
-    "copy",
-    "name",
-    "changelog",
-    "tasks",
-    "hotkeys",
-    "settings",
-    "scoped_models",
-    "clear",
-    // M194: the palette's "Toggle tool output expand" entry shipped a `\u{1}expand`
-    // pseudo-command this parser cannot read, so choosing it ran nothing. Naming a
-    // real command is what makes the entry work — and listing it here is what the
-    // reverse-drift check compares against the parser.
-    "expand",
-    "skills",
-    // M196: the toggle half. Listed because the reverse-drift check compares
-    // SLASH_ITEMS against the parser, and a command the palette does not offer
-    // is a command a user has to guess the name of.
-    "skill",
-    "templates",
-    "search",
-    "logout",
-    "exit",
-    // M172: the reverse-drift check found these two on its first run. M167 counted
-    // *variants* rather than parser tokens, so it missed seven heads the parser accepts -
-    // and so did M171's hand-written list, which is exactly the gap this check exists for.
-    "help",
-    "login",
-];
-
-/// Tokens the parser accepts as spellings of a listed command rather than as commands of
-/// their own. Kept beside the list so the reverse drift check has somewhere to put them.
-///
-/// The sweep drives one head per [`Command`] variant, so an alias is covered through the
-/// command it aliases - `/timeline` is swept by `/branch`, which reaches the same arm.
-/// `?` is not listed: it is the only head with a non-word character, and the reverse check
-/// filters those out rather than reporting them.
-pub const ALIAS_HEADS: &[&str] = &[
-    "models",   // model
-    "timeline", // branch
-    "auth",     // login
-    "connect",  // login
-    "quit",     // exit
-    "q",        // exit
-];
-
-/// Parse submitted input that starts with `/`; `None` means ordinary prompt text.
-///
-/// Slash input is ALWAYS a command attempt (pi/opencode convention): unknown words
-/// come back as [`Command::Unknown`] so the UI can correct the user instead of
-/// silently prompting the model with literal `/typo`.
-/// Forward drift: every head the list claims must actually parse to a command.
-#[test]
-fn every_head_in_command_heads_is_parsed() {
-    for head in COMMAND_HEADS {
-        assert!(
-            parse_command(&format!("/{head}")).is_some(),
-            "`/{head}` is listed in COMMAND_HEADS but parse_command returned None"
-        );
-    }
-}
-
-/// Reverse drift: the parser must not accept a command the list does not drive.
-///
-/// This is the direction a hand-written list cannot catch, and the one that matters: a
-/// command added to the `match` and forgotten in the sweep would be executed by no test,
-/// which is precisely how the M168 defect survived sixteen commands' worth of coverage
-/// census. Reading the parser's own arms means the check cannot lag behind the code.
-///
-/// This is a source-shaped assertion and honestly labelled as one - it reads the quoted
-/// tokens of `parse_command`'s body out of this file. It is the price of `Command` not
-/// being `Debug` and therefore not comparable. The alternative is a second hand-written
-/// list, which is the bug this milestone removes.
-#[test]
-fn the_parser_does_not_know_a_command_the_list_does_not() {
-    // Line-based, not byte-based: this repository is checked out with CRLF, so searching
-    // for a `"\n}\n"` byte pattern finds nothing and fails in a way that looks like a
-    // parser bug. `lines()` strips the terminator and is immune to either ending.
-    let lines: Vec<&str> = include_str!("picker.rs").lines().collect();
-    let start = lines
-        .iter()
-        .position(|l| l.starts_with("pub fn parse_command("))
-        .expect("parse_command is defined in this file");
-    let end = lines[start..]
-        .iter()
-        .position(|l| l.trim_end() == "}")
-        .map(|i| start + i)
-        .expect("parse_command has a closing brace on a line of its own");
-
-    let mut found: Vec<&str> = Vec::new();
-    for line in &lines[start..end] {
-        let line = line.trim_start();
-        if !line.starts_with('"') {
-            continue;
-        }
-        for piece in line.split('"').skip(1).step_by(2) {
-            let is_head = !piece.is_empty()
-                && piece
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '_' || c == ':');
-            if is_head && found.last() != Some(&piece) {
-                found.push(piece);
-            }
-        }
-    }
-
-    let unlisted: Vec<&&str> = found
-        .iter()
-        .filter(|h| !COMMAND_HEADS.contains(*h) && !ALIAS_HEADS.contains(*h))
-        .collect();
-    assert!(
-        unlisted.is_empty(),
-        "the parser accepts {unlisted:?} but no test drives them; add each to COMMAND_HEADS \
-         (or to ALIAS_HEADS if it is only another spelling of a listed command) so the \
-         all-commands sweep reaches it"
-    );
-}
-
-/// Parse submitted input that starts with `/`; `None` means ordinary prompt text.
-///
-/// Slash input is ALWAYS a command attempt (pi/opencode convention): unknown words
-/// come back as [`Command::Unknown`] so the UI can correct the user instead of
-/// silently prompting the model with literal `/typo`.
-pub fn parse_command(input: &str) -> Option<Command> {
-    let trimmed = input.trim();
-    let rest = trimmed.strip_prefix('/')?;
-    let (head, tail) = match rest.split_once(' ') {
-        Some((h, t)) => (h, t.trim()),
-        None => (rest, ""),
-    };
-    match head.to_ascii_lowercase().as_str() {
-        "models" | "model" if tail.is_empty() => Some(Command::Models),
-        "model" => Some(Command::Model(tail.to_string())),
-        "think" => Some(Command::Think(if tail.is_empty() {
-            None
-        } else {
-            Some(tail.to_string())
-        })),
-        "compact" => Some(Command::Compact),
-        "theme" => Some(Command::Theme(if tail.is_empty() {
-            None
-        } else {
-            Some(tail.to_string())
-        })),
-        "timeline" | "branch" => Some(Command::Timeline),
-        "tree" => Some(Command::Tree),
-        "goal" => Some(Command::Goal(if tail.is_empty() {
-            None
-        } else {
-            Some(tail.to_string())
-        })),
-        "fork" => Some(Command::Fork),
-        "clone" => Some(Command::Clone),
-        "new" => Some(Command::New),
-        "resume" => Some(Command::Resume(tail.to_string())),
-        "sessions" => Some(Command::Sessions),
-        "editor" => Some(Command::Editor),
-        "session" => Some(Command::Session),
-        "trust" => Some(Command::Trust(if tail.is_empty() {
-            None
-        } else {
-            Some(tail.to_string())
-        })),
-        "reload" => Some(Command::Reload),
-        "export" => Some(Command::Export(if tail.is_empty() {
-            None
-        } else {
-            Some(tail.to_string())
-        })),
-        "import" => Some(Command::Import(tail.to_string())),
-        "share" => Some(Command::Share),
-        "copy" => Some(Command::Copy),
-        "name" => Some(Command::Name(if tail.is_empty() {
-            None
-        } else {
-            Some(tail.to_string())
-        })),
-        "changelog" => Some(Command::Changelog),
-        "tasks" => Some(Command::Tasks),
-        "hotkeys" => Some(Command::Hotkeys),
-        "settings" => Some(Command::Settings),
-        "scoped-models" | "scoped_models" => Some(Command::ScopedModels),
-        "help" | "?" => Some(Command::Help),
-        "clear" => Some(Command::Clear),
-        "expand" => Some(Command::Expand),
-        "skills" => Some(Command::Skills),
-        "skill" => Some(Command::Skill(tail.to_string())),
-        "templates" => Some(Command::Templates),
-        "search" => Some(Command::Search(tail.to_string())),
-        "login" | "auth" | "connect" => {
-            // `/login <provider> [key]` — key may be pasted; when omitted the
-            // TUI prompts with a masked overlay (opencode DialogPrompt parity).
-            let tail = tail.trim();
-            if tail.is_empty() {
-                // Bare `/login` without a provider is recoverable: let the UI
-                // guide the user rather than treating it as Unknown.
-                Some(Command::Login {
-                    provider: String::new(),
-                    key: String::new(),
-                })
-            } else if let Some((prov, key)) = tail.split_once(' ') {
-                Some(Command::Login {
-                    provider: prov.trim().to_string(),
-                    key: key.trim().to_string(),
-                })
-            } else {
-                Some(Command::Login {
-                    provider: tail.to_string(),
-                    key: String::new(),
-                })
-            }
-        }
-        "logout" => Some(Command::Logout(tail.to_string())),
-        "quit" | "q" | "exit" => Some(Command::Quit),
-        other => Some(Command::Unknown(other.to_string())),
-    }
 }
 
 // ---- M16c: two-stage picker (opencode dialog-provider → dialog-model) -----------
@@ -1015,41 +518,65 @@ pub struct PaletteEntry {
     pub title: String,
     /// Command executed when selected (slash-style parse input).
     pub command: String,
-    /// Key hint shown on the right (e.g. "Ctrl+M").
-    pub binding: Option<&'static str>,
+    /// Keybinding this action runs, resolved through [`KeybindingsManager::key_text`].
+    ///
+    /// Held as data rather than used directly so a hint can only ever be a chord the
+    /// key handler will actually accept. This column used to be `Option<&'static str>`
+    /// holding hand-typed literals, which is how one of them came to be `"/login"` — a
+    /// **slash command advertised as a keyboard shortcut** — beside `"Ctrl+M"`, which is
+    /// not the spelling `key_label` prints.
+    pub key_id: Option<&'static str>,
+    /// The chord shown on the right, or `None` when the action has no binding.
+    ///
+    /// Resolved, never written: see [`Self::key_id`].
+    pub binding: Option<String>,
 }
 
 /// All palette commands (slash commands + direct actions), in display order.
-pub fn palette_entries() -> Vec<PaletteEntry> {
+///
+/// `kb` is read for every hint, so a user who rebinds a key sees the new chord here and
+/// an entry whose action has no binding shows none — which is the only honest thing to
+/// print, and what [`KeybindingsManager::key_text`] already promises when it returns
+/// `None`.
+pub fn palette_entries(kb: &crate::keybindings::KeybindingsManager) -> Vec<PaletteEntry> {
     vec![
         PaletteEntry {
             title: "Models — switch model".into(),
             command: "/models".into(),
-            binding: Some("Ctrl+M"),
+            key_id: Some("app.model.select"),
+            binding: None,
         },
         PaletteEntry {
             title: "Connect provider — set API key (paste, masked)".into(),
             command: "/login ".into(),
-            binding: Some("/login"),
+            // **No binding, and now it says so.** This used to advertise `Some("/login")`
+            // in the key column: a slash command in the place a reader looks for a chord,
+            // for an action that has no key at all. Pressing it did nothing.
+            key_id: None,
+            binding: None,
         },
         PaletteEntry {
             title: "Skills — list discovered skills".into(),
             command: "/skills".into(),
+            key_id: None,
             binding: None,
         },
         PaletteEntry {
             title: "Clear transcript".into(),
             command: "/clear".into(),
+            key_id: None,
             binding: None,
         },
         PaletteEntry {
             title: "Help — command reference".into(),
             command: "/help".into(),
+            key_id: None,
             binding: None,
         },
         PaletteEntry {
             title: "Quit session".into(),
             command: "/quit".into(),
+            key_id: None,
             binding: None,
         },
         PaletteEntry {
@@ -1061,18 +588,28 @@ pub fn palette_entries() -> Vec<PaletteEntry> {
             // The chord is `ctrl+x`, not a bare `x`. A bare `x` is the binding the
             // editor deliberately removed because it made the letter untypable, and
             // the palette was advertising it anyway.
-            binding: Some("ctrl+x"),
+            key_id: Some("app.tools.expand"),
+            binding: None,
         },
     ]
+    .into_iter()
+    .map(|mut e| {
+        e.binding = e.key_id.and_then(|id| kb.key_text(id));
+        e
+    })
+    .collect()
 }
 
 /// Fuzzy-filtered palette entries; empty query returns everything.
-pub fn filter_palette(query: &str) -> Vec<PaletteEntry> {
+pub fn filter_palette(
+    query: &str,
+    kb: &crate::keybindings::KeybindingsManager,
+) -> Vec<PaletteEntry> {
     let q = query.trim();
     if q.is_empty() {
-        return palette_entries();
+        return palette_entries(kb);
     }
-    let mut scored: Vec<(i64, PaletteEntry)> = palette_entries()
+    let mut scored: Vec<(i64, PaletteEntry)> = palette_entries(kb)
         .into_iter()
         .filter_map(|e| {
             let m = fuzzy::fuzzy_match(q, &e.title);
@@ -1580,70 +1117,6 @@ mod tests {
     }
 
     #[test]
-    fn commands_parse_with_optional_args_and_case() {
-        assert_eq!(parse_command("/models"), Some(Command::Models));
-        assert_eq!(
-            parse_command("/model"),
-            Some(Command::Models),
-            "bare /model opens the picker"
-        );
-        assert_eq!(parse_command(" /MODELS "), Some(Command::Models));
-        assert_eq!(
-            parse_command("/model deepseek-chat"),
-            Some(Command::Model("deepseek-chat".into()))
-        );
-        assert_eq!(
-            parse_command("/MODEL kimi-k2"),
-            Some(Command::Model("kimi-k2".into()))
-        );
-        assert_eq!(parse_command("/help"), Some(Command::Help));
-        assert_eq!(parse_command("/?"), Some(Command::Help));
-        assert_eq!(parse_command("/clear"), Some(Command::Clear));
-        assert_eq!(parse_command("/skills"), Some(Command::Skills));
-        assert_eq!(parse_command("/quit"), Some(Command::Quit));
-        assert_eq!(parse_command("/q"), Some(Command::Quit));
-        // pi parity builtins (G1): every builtin must parse, not fall to Unknown
-        assert_eq!(parse_command("/new"), Some(Command::New));
-        assert_eq!(
-            parse_command("/resume /tmp/s.json"),
-            Some(Command::Resume("/tmp/s.json".into()))
-        );
-        assert_eq!(parse_command("/session"), Some(Command::Session));
-        assert_eq!(parse_command("/tree"), Some(Command::Tree));
-        assert_eq!(parse_command("/clone"), Some(Command::Clone));
-        assert_eq!(
-            parse_command("/trust yes"),
-            Some(Command::Trust(Some("yes".into())))
-        );
-        assert_eq!(parse_command("/trust"), Some(Command::Trust(None)));
-        assert_eq!(parse_command("/reload"), Some(Command::Reload));
-        assert_eq!(
-            parse_command("/export ./out.html"),
-            Some(Command::Export(Some("./out.html".into())))
-        );
-        assert_eq!(
-            parse_command("/import ./in.jsonl"),
-            Some(Command::Import("./in.jsonl".into()))
-        );
-        assert_eq!(parse_command("/share"), Some(Command::Share));
-        assert_eq!(parse_command("/copy"), Some(Command::Copy));
-        assert_eq!(
-            parse_command("/name my-session"),
-            Some(Command::Name(Some("my-session".into())))
-        );
-        assert_eq!(parse_command("/changelog"), Some(Command::Changelog));
-        assert_eq!(parse_command("/hotkeys"), Some(Command::Hotkeys));
-        assert_eq!(parse_command("/settings"), Some(Command::Settings));
-        assert_eq!(parse_command("/scoped-models"), Some(Command::ScopedModels));
-        assert_eq!(
-            parse_command("/bogus"),
-            Some(Command::Unknown("bogus".into())),
-            "unknown slash words error out — never sent to the model"
-        );
-        assert_eq!(parse_command("fix the bug"), None);
-    }
-
-    #[test]
     fn slash_items_uses_fuzzy_not_only_prefix() {
         // pi parity: slash autocomplete uses fuzzyFilter over command names, not starts_with
         assert!(
@@ -1674,39 +1147,4 @@ mod tests {
         assert!(suggest_slash("").is_none());
         assert!(suggest_slash("zzzzz-nope-zzz").is_none());
     }
-}
-
-/// `/skill <name> on|off` parses, and a bare `/skill` does not guess.
-///
-/// M196: a setting with no writer is the repo's own documented defect class
-/// (`EntryKind::Label` had one for most of a milestone). The parse test is
-/// here rather than at the handler because the failure mode being avoided is
-/// SILENT: a `/skill commit` that parsed as "disable" would switch a skill
-/// off because the user forgot a word.
-#[test]
-fn a_skill_toggle_takes_a_name_and_an_explicit_on_or_off() {
-    assert_eq!(
-        parse_command("/skill commit off"),
-        Some(Command::Skill("commit off".to_string())),
-        "the whole tail is carried, so the handler can split it"
-    );
-    assert_eq!(
-        parse_command("/skill commit on"),
-        Some(Command::Skill("commit on".to_string()))
-    );
-    // A bare `/skill` is NOT a toggle. It carries an empty tail, and the
-    // handler prints usage -- it does not default to "off".
-    match parse_command("/skill") {
-        Some(Command::Skill(tail)) => assert!(
-            tail.trim().is_empty(),
-            "a bare /skill carries nothing, so nothing can be assumed: {tail:?}"
-        ),
-        other => panic!("expected a Skill command, got {other:?}"),
-    }
-    // `/skills` (plural, the listing) is a DIFFERENT command and stays one.
-    assert_eq!(
-        parse_command("/skills"),
-        Some(Command::Skills),
-        "the listing is not the toggle"
-    );
 }

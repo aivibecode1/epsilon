@@ -27,6 +27,16 @@
 //! Two rules that keep this from becoming a disk leak: blobs are written once per distinct content,
 //! and the store is capped ([`CheckpointStore::DEFAULT_MAX_BYTES`]) with the oldest *unreferenced*
 //! blobs evicted first — eviction reports what it removed rather than silently dropping history.
+//!
+//! ## Who reverts
+//!
+//! [`CheckpointStore::restore`] had no production caller for its whole life: the write half was
+//! wired into `files.rs` and the read half existed only in this file's tests, so the store
+//! accumulated a durable revert record nobody could reach. The rollback half is now the terminal's
+//! `/restore` (`crates/epsilon-tui/src/app/commands.rs`), which resolves the path through
+//! [`CheckpointStore::resolve`] and refuses anything whose bytes on disk are not the bytes that
+//! were captured. Adding another caller means going through `resolve`, not `latest_for` — the
+//! spelling of a ledger key is this file's business, not a front end's.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -64,12 +74,39 @@ pub struct Entry {
     /// work, and a snapshot that cannot tell whether that happened is not a
     /// preimage — it is a loaded gun pointed at the user's last hour.
     ///
+    /// **This is the PRE-image.** Once a mutation has happened, the file no longer
+    /// hashes to it, so this field alone answers "has anything touched this since?"
+    /// with a constant yes. [`Self::post_image`] carries what the harness itself left
+    /// behind, and it is that one the guard asks about.
+    ///
     /// `None` for entries written before this field existed, and for entries
     /// whose capture was skipped. A restore refuses on `None` rather than
     /// assuming, because the assumption it would have to make is the dangerous
     /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// Hash of the bytes the harness **left on disk** after this entry's mutation.
+    ///
+    /// # Why this field exists
+    ///
+    /// `record` runs *before* the write, because a checkpoint that is taken afterwards
+    /// captures the damage. So `digest` is the pre-image by construction, and once the write
+    /// lands the file no longer hashes to it — which meant the guard in [`Self::restore`]
+    /// could never pass for any mutation that actually changed a file. Reverting an **edit**
+    /// refused one hundred percent of the time, and the reason nobody noticed is recorded in
+    /// M104's own commit: *"No UI reaches this yet, which is why it is a fix rather than an
+    /// incident."* Wiring `/restore` up is what made it observable.
+    ///
+    /// The answerable question is not "is the file still what it was before I touched it?" —
+    /// it is **"is the file still exactly what this harness left here?"** A post-image answers
+    /// that: unchanged means the user has not edited since, so restoring destroys nothing;
+    /// changed means they have, so it refuses and leaves their work in place.
+    ///
+    /// Written by [`Self::amend_with_post_image`] as an **append**, never by rewriting the
+    /// entry, because the ledger is append-only and a mutation of it would be the one thing
+    /// that could lose a revert record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_image: Option<String>,
 }
 
 /// What a `record` call did.
@@ -86,6 +123,11 @@ pub enum Recorded {
     Created,
     /// Nothing was captured, with the reason.
     Skipped(String),
+    /// A post-image amendment was appended for an already-recorded entry.
+    ///
+    /// Distinct from [`Self::Stored`] because nothing new was captured: the blob already
+    /// existed, and the only thing this records is what the harness left on disk afterwards.
+    Amended,
 }
 
 /// The store: a directory of blobs plus its ledger.
@@ -170,6 +212,7 @@ impl CheckpointStore {
                 // No content to have a digest of: reverting means removing the
                 // file, and there is nothing to compare against.
                 digest: None,
+                post_image: None,
             };
             if let Err(e) = self.append(&entry) {
                 return Recorded::Skipped(e);
@@ -199,6 +242,7 @@ impl CheckpointStore {
                 skipped: Some(reason.clone()),
                 // Nothing captured, so nothing to compare a restore against.
                 digest: None,
+                post_image: None,
             };
             // The skip is the outcome here, so an append failure is the same
             // answer with a worse reason.
@@ -237,6 +281,10 @@ impl CheckpointStore {
             // identified by what was stored; carrying it on the entry is what
             // lets `restore` ask whether the file has moved since.
             digest: Some(blob.clone()),
+            // Filled in by `amend_with_post_image` once the write has landed. Until
+            // then there is nothing to record, and the restore guard falls back to
+            // refusing rather than to assuming.
+            post_image: None,
         };
         if let Err(e) = self.append(&entry) {
             // The bytes are on disk but the ledger does not point at them, so the
@@ -286,6 +334,86 @@ impl CheckpointStore {
     /// The entry that reverting `path` would apply: the newest one for that path.
     pub fn latest_for(&self, path: &str) -> Option<Entry> {
         self.entries().into_iter().rev().find(|e| e.path == path)
+    }
+
+    /// The entry `argument` names: the newest checkpoint recorded for that path.
+    ///
+    /// `argument` is what a reader typed after `/restore`, so it may be
+    /// workspace-relative (`src/lib.rs`), absolute inside the workspace, or spelled
+    /// with either separator. Resolving it HERE rather than in each front end is the
+    /// point: [`Self::record`] writes exactly one spelling into the ledger —
+    /// workspace-relative and `/`-separated (`Entry::path`) — and a caller that
+    /// guesses a second one looks up a key that was never written and reports "no
+    /// checkpoint" for a file that has one. That answer is a lie, and a reader who
+    /// believes it stops trusting the ones that are true.
+    ///
+    /// The escape check is not decoration. [`Self::restore`] rejoins
+    /// `Entry::path` onto the workspace, so a `..` that survived normalisation here
+    /// would let a typed argument name a file outside the tree this store owns — and
+    /// `lexically_normalize` is the same function the write and edit tools already
+    /// resolve their paths through, so there is one spelling of "inside" rather than
+    /// a second answer to the same question.
+    ///
+    /// The refusal is a sentence and not `None`: every caller has to print
+    /// something, and "outside the workspace" and "nothing recorded for this file"
+    /// are different facts with different advice. [`Self::no_checkpoint_for`] names
+    /// what *is* recoverable, because a reader who typed one wrong path usually has
+    /// the right one in mind.
+    pub fn resolve(&self, workspace: &Path, argument: &str) -> Result<Entry, String> {
+        let raw = argument.trim();
+        if raw.is_empty() {
+            return Err("no file named — say which one to put back, e.g. src/lib.rs".to_string());
+        }
+        let (absolute, inside) = crate::util::lexically_normalize(workspace, raw);
+        let outside = || {
+            format!(
+                "'{raw}' is outside the workspace — a checkpoint exists only for a file this \
+                 harness changed here"
+            )
+        };
+        if !inside {
+            return Err(outside());
+        }
+        // The ledger is keyed by the workspace-relative form, so recover it by
+        // removing the workspace rather than by re-deriving it: two derivations of
+        // one key is how the two stop agreeing.
+        let Ok(relative) = absolute.strip_prefix(workspace) else {
+            return Err(outside());
+        };
+        self.latest_for(&relative.to_string_lossy().replace('\\', "/"))
+            .ok_or_else(|| self.no_checkpoint_for(raw))
+    }
+
+    /// Why `raw` has nothing to restore, naming the files that do.
+    fn no_checkpoint_for(&self, raw: &str) -> String {
+        let available = self.paths();
+        if available.is_empty() {
+            return format!(
+                "no checkpoint for '{raw}' — nothing in this workspace has one; one is \
+                 recorded before every write and edit, so only files the harness changed have \
+                 a revert"
+            );
+        }
+        // A transcript is the wrong place for a hundred rows, and an answer truncated
+        // to nothing is the same as no answer. The count says how many there are, so
+        // a truncated list is visibly a sample.
+        const SHOWN: usize = 5;
+        let shown: Vec<&str> = available
+            .iter()
+            .take(SHOWN)
+            .map(|e| e.path.as_str())
+            .collect();
+        let more = available.len().saturating_sub(shown.len());
+        format!(
+            "no checkpoint for '{raw}' — {} file(s) have one: {}{}",
+            available.len(),
+            shown.join(", "),
+            if more == 0 {
+                String::new()
+            } else {
+                format!(" · and {more} more")
+            }
+        )
     }
 
     /// Every path this store has a checkpoint for, newest first, with the newest entry each.
@@ -349,6 +477,63 @@ impl CheckpointStore {
         }
         std::fs::write(&target, &bytes).map_err(|e| format!("write: {e}"))?;
         Ok(bytes.len() as u64)
+    }
+
+    /// Record what this harness **left on disk** for `path`, once the mutation has landed.
+    ///
+    /// # Why an append and not an edit
+    ///
+    /// The ledger is append-only on purpose: it is the only durable record of what could be
+    /// reverted, so a write that could lose or reorder one is the single worst thing this store
+    /// could do. The amendment is therefore a **new entry** that repeats the fields a restore
+    /// needs — the same `blob`, the same `bytes`, the same `existed` — and differs only in
+    /// carrying [`Entry::post_image`].
+    ///
+    /// # Why the newest entry for a path is then the amendment
+    ///
+    /// [`Self::latest_for`] reads newest-first, and [`Self::resolve`] resolves through it, so the
+    /// amendment is what a `/restore` finds — which is what we want: the same pre-image bytes,
+    /// paired with a guard that can actually be satisfied.
+    ///
+    /// # When it does not apply
+    ///
+    /// Nothing to amend (the mutation never recorded a checkpoint, or the newest entry is for a
+    /// different path) and a file that cannot be read are both **`Ok(())`**. This runs after a
+    /// write the caller has already performed, so it must never become the reason a write is
+    /// reported as failed; the cost of not recording is that a later restore refuses, which is
+    /// the safe direction.
+    pub fn amend_with_post_image(&self, workspace: &Path, path: &Path, tool: &str) -> Recorded {
+        let relative = match path.strip_prefix(workspace) {
+            Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+            Err(_) => return Recorded::Skipped("outside the workspace".into()),
+        };
+        let Some(newest) = self.latest_for(&relative) else {
+            return Recorded::Skipped("nothing to amend".into());
+        };
+        // `blob: None` on the newest entry means the capture itself was skipped, so there are
+        // no bytes to compare a restore against and no guard to satisfy. Re-recording one would
+        // make a refused restore look like a satisfied one.
+        if newest.blob.is_none() {
+            return Recorded::Skipped("nothing was captured to amend".into());
+        }
+        let Ok(bytes) = std::fs::read(path) else {
+            return Recorded::Skipped("could not read the file back".into());
+        };
+        match self.append(&Entry {
+            seq: newest.seq + 1,
+            at: newest.at,
+            path: relative,
+            blob: newest.blob.clone(),
+            bytes: newest.bytes,
+            tool: tool.into(),
+            existed: newest.existed,
+            skipped: None,
+            digest: newest.digest.clone(),
+            post_image: Some(blob_name(&bytes)),
+        }) {
+            Ok(()) => Recorded::Amended,
+            Err(e) => Recorded::Skipped(e),
+        }
     }
 
     /// Total bytes of blobs on disk.
@@ -420,37 +605,52 @@ fn check_unchanged(target: &Path, entry: &Entry) -> Result<(), String> {
         return Ok(());
     }
     let current = std::fs::read(target).map_err(|e| format!("read before restore: {e}"))?;
-    let Some(expected) = entry.digest.as_deref() else {
-        // An entry from before digests existed. Its content is in the blob, so
-        // comparing that against the file answers the same question.
-        let Some(blob) = entry.blob.as_deref() else {
-            return Err(format!(
-                "cannot restore {}: the entry carries no digest and no blob, so there is \
-             nothing to check the file against",
-                entry.path
-            ));
-        };
-        let recorded = std::fs::read(target.parent().unwrap_or(target).join("").join(blob));
-        let _ = recorded;
-        return Err(format!(
+    let now = blob_name(&current);
+    // **Four cases, and each one says something true.** A single "changed or not" test could not:
+    // "the user edited it" and "this entry never recorded what we left behind" are different
+    // facts with different advice, and merging them is how a refusal becomes a mystery.
+    match (
+        entry.post_image.as_deref(),
+        entry.digest.as_deref(),
+        entry.blob.as_deref(),
+    ) {
+        // The answerable question, and the one that makes `/restore` usable at all.
+        (Some(post), _, _) if post == now => Ok(()),
+        (Some(_), _, _) => Err(format!(
+            "cannot restore {}: the file changed after this harness wrote it \
+         ({} bytes now). Reverting would discard that work — read the file first, \
+         and delete it if you really want the older content back.",
+            entry.path,
+            current.len(),
+        )),
+        // The pre-image still on disk: nothing has touched it since the capture.
+        (None, Some(digest), _) if digest == now => Ok(()),
+        // A capture with no post-image — written before this field existed, or by a build
+        // that never amended. Comparing against the pre-image is the older, coarser rule,
+        // and it refuses anything the harness itself changed. That is the safe direction
+        // and it is why `post_image` exists; saying so is more useful than implying the
+        // user edited anything.
+        (None, Some(_), _) => Err(format!(
+            "cannot restore {}: this checkpoint does not record what the harness left \
+         behind, so a later edit cannot be told from your own. The file is untouched — \
+         read it first, and delete it if you really want the older content back.",
+            entry.path,
+        )),
+        // An entry from before digests existed. Its content is in the blob, so the old
+        // code would happily write it; "we cannot tell whether this is still the file" is
+        // a different answer from "yes", and only one of them is safe.
+        (None, None, Some(_)) => Err(format!(
             "cannot restore {}: this checkpoint predates content verification, so \
          overwriting the file cannot be shown to be safe. Remove the file first to \
          force it.",
-            entry.path
-        ));
-    };
-    let now = blob_name(&current);
-    if now != expected {
-        return Err(format!(
-            "cannot restore {}: the file changed since it was captured \
-         ({} bytes now, {} then). Reverting would discard that work — read the file \
-         first, and delete it if you really want the older content back.",
             entry.path,
-            current.len(),
-            entry.bytes
-        ));
+        )),
+        (None, None, None) => Err(format!(
+            "cannot restore {}: the entry carries no digest and no blob, so there is \
+         nothing to check the file against",
+            entry.path,
+        )),
     }
-    Ok(())
 }
 
 /// Blob name for `bytes`: 32 hex characters derived from the content.
@@ -523,17 +723,59 @@ mod tests {
         std::fs::write(&file, "as the agent saw it\n").unwrap();
         let store = CheckpointStore::open(dir.path());
         let _ = store.record(dir.path(), &file, "write");
+        // Then the write lands, and the store learns what the harness left behind. This is
+        // the sequence every `write`/`edit` now performs; without it there is nothing to
+        // tell "the user edited afterwards" from "the harness's own change", and this
+        // test would be exercising a shape the product no longer produces.
+        std::fs::write(&file, "as the agent left it\n").unwrap();
+        assert_eq!(
+            store.amend_with_post_image(dir.path(), &file, "write"),
+            Recorded::Amended
+        );
         let entry = store.latest_for("src/lib.rs").expect("an entry");
 
         std::fs::write(&file, "the user's later work\n").unwrap();
         let err = store
             .restore(dir.path(), &entry)
             .expect_err("a changed file must not be overwritten");
-        assert!(err.contains("changed since it was captured"), "{err}");
+        assert!(err.contains("changed after this harness wrote it"), "{err}");
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             "the user's later work\n",
             "the refusal must leave the file exactly as it was"
+        );
+    }
+
+    #[test]
+    fn a_capture_with_no_post_image_refuses_rather_than_assuming() {
+        // The coarser rule, kept honest. A capture written by a build that never amended
+        // carries only a pre-image, and the pre-image cannot answer "did the user edit
+        // this?" — it can only say "the file differs from before the harness touched it",
+        // which is true of every edit the harness itself made. So it refuses, and it says
+        // *that* is why, rather than implying the user did something.
+        let dir = ws();
+        let file = dir.path().join("src/lib.rs");
+        std::fs::write(&file, "as the agent saw it\n").unwrap();
+        let store = CheckpointStore::open(dir.path());
+        let _ = store.record(dir.path(), &file, "write");
+        let entry = store.latest_for("src/lib.rs").expect("an entry");
+        assert!(
+            entry.post_image.is_none(),
+            "record alone records no post-image"
+        );
+
+        std::fs::write(&file, "whatever is here now\n").unwrap();
+        let err = store
+            .restore(dir.path(), &entry)
+            .expect_err("a capture with no post-image cannot be shown to be safe");
+        assert!(
+            err.contains("does not record what the harness left behind"),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "whatever is here now\n",
+            "the refusal leaves the file alone"
         );
     }
 

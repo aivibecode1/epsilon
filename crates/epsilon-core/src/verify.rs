@@ -1,5 +1,5 @@
-//! Verification evidence (port plan item 5; Hermes `agent/verification_evidence.py:731`,
-//! `verification_stop.py:233`).
+//! Verification evidence (port plan item 5; Hermes `agent/verification_evidence.py:99`,
+//! `verification_stop.py:158`).
 //!
 //! `crates/epsilon-core/assets/agent-contract.md` tells the model to run the project's checks
 //! after editing. Nothing recorded whether it did, so a run could edit four files, claim success

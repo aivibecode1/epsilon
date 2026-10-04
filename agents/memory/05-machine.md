@@ -125,6 +125,37 @@ So: set the knob the first time a session hits the fault, keep it for the rest o
 and do not `cargo clean` between rounds unless the disk forces it — cleaning throws away the
 immunity along with the 4 GB.
 
+**M276: the knob stopped being enough, and the fallback is to run the suite per crate.** On
+2026-10-09 the pin returned on the original path *and* on the renamed binary, so the remedy
+above no longer holds — Avira is now catching fresh test executables regardless of name. The
+full-workspace `test` leg failed five consecutive batteries; **every crate passes
+individually**, which is what establishes it as the link burst rather than the code:
+
+| what | result |
+|---|---|
+| `cargo test --workspace` | `LNK1104: cannot open file …` — zero tests run |
+| same, where the binary survived linking | `Access is denied. (os error 5)`, never executed |
+| `cargo test -p <crate>`, fourteen times | **1,503 passed, 0 failed** |
+
+So when this happens: **run the suite one crate at a time**, sum the `test result: ok. N passed`
+lines, and report the battery as a FAIL with the per-crate number beside it. A battery that did
+not run is not a pass, and the per-crate sweep is a different measurement — say which is which.
+
+### `LNK1318: Unexpected PDB error; LIMIT (12)` — a third fault, same neighbourhood
+
+Seen 2026-10-09 on the `epsilon-desktop` link, where the egui/wgpu graph is large enough to
+matter. The MSVC PDB server wedges and the linker gives up. The fix is entirely in the build
+tree:
+
+```sh
+taskkill /F /IM mspdbsrv.exe                       # stop the wedged server
+del "%TEMP%\epsilon-build\epsilon-target\debug\deps\*.pdb"   # 421 files, ~2 s
+```
+
+It is the same *kind* of problem as the Avira pin — stale build state in a directory nothing
+reads by hand — and it appears after a long session with many profile changes. Worth trying
+before concluding a build failure is real.
+
 ## The PowerShell trap
 
 **CRLF, three times now (M269, M272, and once before).** `WriteAllLines` and any cmdlet that

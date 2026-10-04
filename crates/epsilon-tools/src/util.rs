@@ -149,6 +149,18 @@ pub fn resolve_or_refuse(
     let r = resolve_for_access(cwd, raw);
     if r.inside {
         Ok(r.path)
+    } else if r.deceptive {
+        // **A refusal must name the truth (A33).** `.env.` is not outside the workspace,
+        // and "resolves outside the workspace" on a name the user can see is a sentence
+        // they will not believe — which is the same failure `escaped_to()` was introduced
+        // to fix, one level up. This one has its own reason because it has its own cause.
+        Err(ToolFailure::msg(format!(
+            "Refused: '{raw}' is not the file it looks like. A name with {} \
+             opens a different file on Windows, so it cannot be judged by reading it. \
+             Name the file exactly.",
+            epsilon_core::paths::deceptive_name_reason(std::path::Path::new(raw))
+                .unwrap_or("a spelling Windows resolves elsewhere")
+        )))
     } else {
         Err(escaped_workspace(raw, r.escaped_to()))
     }
