@@ -45,6 +45,19 @@ fn run_agent(
     gate: Arc<RulesetGate>,
     workspace: &std::path::Path,
 ) -> arctest::Spawned {
+    run_agent_with_hooks(steps, gate, workspace, None)
+}
+
+/// [`run_agent`], with tool hooks installed on the **parent** before the run starts.
+///
+/// The hooks have to be installed inside this function because it builds the agent and then
+/// spawns it in one breath — there is no moment in between for a caller to reach it.
+fn run_agent_with_hooks(
+    steps: Vec<FauxStep>,
+    gate: Arc<RulesetGate>,
+    workspace: &std::path::Path,
+    tool_hooks: Option<Arc<dyn epsilon_contracts::tool::ToolHooks>>,
+) -> arctest::Spawned {
     let provider = SlowProvider::new(FauxProvider::new(steps), 50);
     let registry = Arc::new(epsilon_tools::builtin_registry(
         &epsilon_tools::Confinement::Auto,
@@ -59,6 +72,9 @@ fn run_agent(
         gate,
         workspace.to_path_buf(),
     );
+    if let Some(hooks) = tool_hooks {
+        agent.set_tool_hooks(hooks);
+    }
     // `exec.rs:782-799` builds the one `ToolContext` the loop uses, and it already carries
     // `task_host: Some(agent.clone_task_host())` — so a `task` call here does fan out to a real
     // child Agent. This comment exists because the scenario below has failed twice for reasons
@@ -67,6 +83,23 @@ fn run_agent(
     // assertion is what caught both.
     let handle = tokio::spawn(async move { agent.run(user("go")).await });
     arctest::Spawned(handle)
+}
+
+/// Records every tool call a hook sees, by name.
+#[derive(Default)]
+struct RecordingToolHooks {
+    seen: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl epsilon_contracts::tool::ToolHooks for RecordingToolHooks {
+    async fn before_tool_call(
+        &self,
+        ctx: epsilon_contracts::tool::BeforeToolCallContext,
+    ) -> Result<epsilon_contracts::tool::BeforeToolCallResult, String> {
+        self.seen.lock().unwrap().push(ctx.tool_name.clone());
+        Ok(epsilon_contracts::tool::BeforeToolCallResult::default())
+    }
 }
 
 // tiny wrapper so the spawned future type stays nameable
@@ -322,6 +355,128 @@ async fn an_always_session_allow_does_not_reach_a_task_child() {
          session's 'always allow' leaked into the subagent"
     );
 }
+/// **A tool hook installed on the parent must see the child's tool calls too.**
+///
+/// This is the M300 shape through a second door, and it was found by reading rather than by a
+/// failing test. `PermissionGate` grew a `child_gate()` seam so a subagent derives its own
+/// authorization instead of inheriting a session's remembered allows. **The hooks got no such
+/// treatment:** `build_task_child` (`epsilon-core/src/lib.rs`) copies the model, the thinking
+/// level, the skills, the system overlay, the agent defs, the task depth and the agent brief to
+/// the child — and never calls `set_tool_hooks`, so the child keeps the `NoopToolHooks` that
+/// `Agent::new` starts with.
+///
+/// **What that costs is a control the operator installed that does not act.** ADR-019's
+/// `before_tool_call` exists to *vet or block* a tool call, and the extension host installs it on
+/// the parent at `epsilon-runtime/src/lib.rs:1318`. A hook that blocks `bash` blocks it for the
+/// top-level agent and lets every subagent run it, silently — which is the sentence this
+/// repository keeps having to write: a control that does not do what it names.
+///
+/// **Asserted on the count, and the count is the evidence.** The script is
+/// `bash` → `task` → `bash` → `say`, so the parent makes one bash call and the child makes the
+/// other. One observation means the hook never reached the child. The precondition below keeps
+/// that honest: a fixture where the child never ran would also score one, and would be reporting
+/// the fixture — which is exactly how the sibling permission test was fooled twice.
+#[tokio::test]
+async fn a_tool_hook_on_the_parent_sees_the_childs_calls_too() {
+    let dir = tempfile::tempdir().unwrap();
+    // This test is about the hooks, not the gate, so everything is allowed. **The queue has to
+    // be long enough for every ask, including the `task` call's own** — `RecordingUi` denies
+    // once its answers run out, and the first version of this test queued one, which denied the
+    // fan-out and made the hook see the parent's two calls instead of the child's. `task` asks.
+    let ui = Arc::new(RecordingUi {
+        answers: Mutex::new(vec![
+            PermissionDecision::AlwaysSession,
+            PermissionDecision::AllowOnce,
+            PermissionDecision::AllowOnce,
+            PermissionDecision::AllowOnce,
+        ]),
+        seen: Mutex::new(vec![]),
+    });
+    let gate = Arc::new(RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>));
+
+    let steps = vec![
+        FauxStep::call(
+            "tc_parent",
+            "bash",
+            serde_json::json!({"command": "echo parent"}),
+        ),
+        FauxStep::call(
+            "tc_task",
+            "task",
+            serde_json::json!({
+                "description": "probe the hook in the child",
+                "prompt": "run echo child"
+            }),
+        ),
+        FauxStep::call(
+            "tc_child",
+            "bash",
+            serde_json::json!({"command": "echo child"}),
+        ),
+        FauxStep::say("delegated"),
+    ];
+
+    let hooks = Arc::new(RecordingToolHooks::default());
+    let outcome = run_agent_with_hooks(
+        steps,
+        gate,
+        dir.path(),
+        Some(hooks.clone() as Arc<dyn epsilon_contracts::tool::ToolHooks>),
+    )
+    .join()
+    .await;
+
+    // **Precondition: the child actually ran, and it is not enough to see a bash.** A fixture
+    // where the `task` never forked would let the *parent* make both bash calls, score two
+    // observations, and pass this test while proving nothing — which is precisely how the
+    // sibling permission test was fooled twice. So a successful `task` result is required
+    // separately: that is the only evidence the fan-out happened at all.
+    let task_ran = outcome
+        .produced
+        .iter()
+        .any(|m| matches!(m, Message::ToolResult(t) if t.tool_name == "task" && !t.is_error));
+    assert!(
+        task_ran,
+        "the scenario must reach a successful `task` fan-out, or the two bash calls could both \
+         be the parent's and this test would pass while measuring nothing. produced: {:?}",
+        outcome
+            .produced
+            .iter()
+            .map(|m| match m {
+                Message::ToolResult(t) => format!("tool:{}:{}", t.tool_name, t.is_error),
+                Message::Assistant(a) => format!("assistant:{}", a.text()),
+                _ => "other".into(),
+            })
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        outcome.produced.iter().any(|m| matches!(
+            m,
+            Message::ToolResult(t) if t.tool_name == "bash" && !t.is_error
+        )),
+        "the scenario must reach a bash call; produced: {:?}",
+        outcome
+            .produced
+            .iter()
+            .map(|m| match m {
+                Message::ToolResult(t) => format!("tool:{}:{}", t.tool_name, t.is_error),
+                Message::Assistant(a) => format!("assistant:{}", a.text()),
+                _ => "other".into(),
+            })
+            .collect::<Vec<_>>()
+    );
+
+    let seen = hooks.seen.lock().unwrap().clone();
+    let bash_seen = seen.iter().filter(|n| n.as_str() == "bash").count();
+    assert_eq!(
+        bash_seen, 2,
+        "the hook must observe BOTH bash calls — the parent's and the subagent's. It saw \
+         {bash_seen} of 2, so a `before_tool_call` hook the operator installed reached the \
+         top-level agent and not the child: a control that does not act on a real path. \
+         All calls seen: {seen:?}"
+    );
+}
+
 #[tokio::test]
 async fn env_read_ask_flow_end_to_end() {
     let dir = tempfile::tempdir().unwrap();

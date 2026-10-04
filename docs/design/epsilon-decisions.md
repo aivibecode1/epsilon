@@ -2243,5 +2243,46 @@ is in the test rather than assumed. Separately, the first version of the overrid
 the inherent `impl RulesetGate` block instead of the trait impl: it compiled, carried a full doc
 comment, and was **never called**.
 
+### Amendment, 2026-10-04 (M309) — the same door, and the hook that never reached the child
+
+**This ADR derived the gate. It did not touch the hooks, and that was the same defect one field
+over.** `build_task_child` copies the model, thinking level, skills, system overlay, agent defs,
+task depth and agent brief to the child, and calls `child_gate()` for authorization — and never
+called `set_tool_hooks`. Every agent starts on `NoopToolHooks`
+(`epsilon-core/src/lib.rs:765`), so an extension's ADR-019 `before_tool_call`, installed on the
+parent at `epsilon-runtime/src/lib.rs:1318`, reached **no subagent at all**.
+
+What that costs is not theoretical: a hook whose whole purpose is to *vet or block* a tool call
+blocked it for the top-level agent and let every child run it, silently. `AGENTS.md` §2.7 again.
+
+**The decision, and the one place it differs from the gate.** The child now receives the parent's
+hooks **by `Arc`, inherited rather than derived**:
+
+```rust
+child.set_tool_hooks(self.tool_hooks());
+child.set_turn_hooks(self.turn_hooks());
+```
+
+**Inherited where the gate is derived, and the asymmetry is deliberate.** The gate needed a fresh
+memory because a *session's remembered allow* is a decision about **one conversation** — sharing it
+let a user's single `a` keypress authorize `bash` for every future subagent. A hook is not a
+decision about a conversation: it is **operator policy**, the extension's own veto, and policy that
+applies to the agent but not to the agents it spawns *is* the defect. There is nothing in a hook to
+un-remember, so nothing needs deriving. Both accessors clone an `Arc`, so the cost is two refcounts
+per delegated task.
+
+**Evidence, RED first.** `a_tool_hook_on_the_parent_sees_the_childs_calls_too`
+(`epsilon-safety/tests/loop_with_rules.rs`) scripts `bash` → `task` → `bash` → `say`, installs a
+recording `ToolHooks` on the parent, and counts. Before the fix it printed
+**`left: 1, right: 2`** with `All calls seen: ["bash", "task"]` — the parent's own two calls, and
+the child's bash absent. After: `2`.
+
+**And the fixture fooled it once too, in a way worth recording.** The first version queued a single
+`AlwaysSession` answer, so `RecordingUi` denied the **`task` call itself** once the queue emptied —
+the fan-out never happened and the test saw the parent's two bash calls. **`task` asks.** The
+precondition now requires a successful `task` result *separately* from a bash result, because "a
+bash happened" is satisfied by the parent alone, which is precisely how the sibling test in the
+same file was fooled twice.
+
 ---
 

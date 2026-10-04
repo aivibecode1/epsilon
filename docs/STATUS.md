@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M308)
+Last updated: 2026-10-04 (M309)
 
 ## Current task
 
@@ -128,10 +128,10 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m308`](../audit/evidence/gate-m308-2026-10-04.txt),
+**Latest green battery: [`gate-m309`](../audit/evidence/gate-m309-2026-10-04.txt),
 2026-10-04 — the final tree.** Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,042 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines. `check-links`: **771 relative links, 0 broken**. The eighth ignored test
+**2,043 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **774 relative links, 0 broken**. The eighth ignored test
 is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter.
 Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
 `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
@@ -151,6 +151,37 @@ hand, which is the only reason a reader can find it at all.
 | M306 | Opening `/model` printed four lines about a provider nobody chose; cancelling `/login` threw away what it had kept | covered by `gate-m307` and `gate-m308` — same tree, no separate leg |
 | M307 | The window's accessibility tree read through **Windows UI Automation**, from another process | [`gate-m307`](../audit/evidence/gate-m307-2026-10-04.txt) |
 | M308 | 19 verified-dead items deleted; five documents that contradicted the code corrected | [`gate-m308`](../audit/evidence/gate-m308-2026-10-04.txt) |
+| M309 | **An operator's `before_tool_call` hook never reached subagent tool calls** — the M300 shape through a second door | [`gate-m309`](../audit/evidence/gate-m309-2026-10-04.txt) |
+
+### M309 — the hook that reached the agent and not the agents it spawns
+
+**Read, not failed into.** The entry sat in Known-broken with a full citation chain and no test,
+which is the state this repository has learned to distrust: a defect list is a claim about a tree,
+and this one was accurate, so the work was to turn it into a failing test and then fix it.
+
+`build_task_child` copies the model, thinking level, skills, system overlay, agent defs, task
+depth and the agent brief to the child, and asks `child_gate()` for authorization — the M300 seam.
+**It never called `set_tool_hooks`.** Every `Agent` starts on `NoopToolHooks`, so an extension's
+ADR-019 `before_tool_call`, installed on the parent at `epsilon-runtime/src/lib.rs:1318`, reached
+**no subagent at all**. A hook whose entire purpose is to *vet or block* a tool call blocked it for
+the top-level agent and let every child run it, silently.
+
+**RED first, and the number is the defect:** a recording `ToolHooks` on the parent, scripted
+`bash` → `task` → `bash` → `say`, counted **`left: 1, right: 2`** with
+`All calls seen: ["bash", "task"]` — the parent's own two calls, the child's bash absent. After
+the fix, `2`.
+
+**Inherited by `Arc`, where the gate is derived, and the asymmetry is the decision** — recorded in
+full in [ADR-027's M309 amendment](design/epsilon-decisions.md). In one line: a remembered allow is
+a decision about one conversation and had to be un-shared; a hook is operator policy, and policy
+that applies to the agent but not to the agents it spawns *is* the defect.
+
+**The fixture fooled it once, exactly as the sibling test was fooled twice.** The first version
+queued one `AlwaysSession` answer, so the recording UI denied the **`task` call itself** once the
+queue emptied — the fan-out never happened, and the test saw the parent's two bash calls and
+passed. **`task` asks.** The precondition now requires a successful `task` result *separately*
+from a bash result, because "a bash happened" is satisfied by the parent alone. **That is the third
+time in this file's history that a subagent test passed without spawning a subagent.**
 
 ### M308 — the dead-code ledger re-verified, and five documents that contradicted the code
 
@@ -509,6 +540,7 @@ The batteries from m299 onwards, and what each failure taught:
 | `m305final` | — | **GATE PASS** — same numbers, re-run over the final tree after the documentation corrections |
 | `m307` | — | **GATE PASS** — 2,041 passed / 0 failed / 8 ignored across 78 binaries, `check-links` 764/0. The Rust tree is byte-identical to `m305final`; this run exists so one log covers a tree that also carries the new probe and its evidence |
 | `m308` | — | **GATE PASS** — **2,042 passed / 0 failed / 8 ignored**, 771 links, 0 broken. The one added test is the approval-footer guard. Clippy clean over 19 deletions, which is the leg that matters here: an orphaned import is exactly what a deletion sweep leaves behind |
+| `m309` | — | **GATE PASS on attempt 1** — **2,043 passed / 0 failed / 8 ignored**, 774 links, 0 broken. The one added test is the subagent hook scenario, which was RED before the fix (`left: 1, right: 2`) |
 
 **The two rows worth remembering are the ones that were not my change.** Two tests were failing for
 a reason that had nothing to do with anything under test, and the only reason it surfaced at all is
@@ -1714,12 +1746,27 @@ Three separate facts, and only the first is the one that was reported:
 - **Headless notice ordering is unproven.** The `rpc`/`print`/`serve` modes collect composition
   notices and print them in vector order, which preserves emission order by construction — but no
   test asserts it, because proving it needs a subprocess. Believed, not measured.
-- **An extension's `before_tool_call` block does not reach subagent tool calls.** Found by an
-  independent read-only pass on 2026-10-04, while checking a different question. The child agent
-  is built with `NoopToolHooks`/`NoopTurnHooks` (`crates/epsilon-core/src/lib.rs:690-691`) and
-  `build_task_child` never calls `set_tool_hooks`, while production installs the extension hooks
-  on the parent (`epsilon-runtime/src/lib.rs:4800`). So an ADR-019 hook that exists to vet or
-  block a tool call is silently absent for every call a subagent makes — **the same shape as the
-  permission leak above, through a different door**: a control the operator installed that does
-  not act on a real path. Recorded here rather than folded into that fix, because the two need
-  different changes and one ADR each.
+- ~~**An extension's `before_tool_call` block does not reach subagent tool calls.**~~ **FIXED
+  (M309).** Found by an independent read-only pass on 2026-10-04, while checking a different
+  question. The child agent was built with `NoopToolHooks`/`NoopTurnHooks` and
+  `build_task_child` never called `set_tool_hooks`, while production installed the extension hooks
+  on the parent — so an ADR-019 hook that exists to vet or block a tool call was silently absent
+  for every call a subagent made. **The same shape as the permission leak above, through a
+  different door.**
+
+  **RED first, and it printed the defect as a number:** a recording `ToolHooks` on the parent,
+  scripted `bash` → `task` → `bash` → `say`, counted **`left: 1, right: 2`** with
+  `All calls seen: ["bash", "task"]` — the parent's own two calls, and the child's bash absent.
+  After the fix, `2`. The child now receives both hook sets by `Arc`.
+
+  **Inherited rather than derived, where the gate is derived, and that asymmetry is the decision.**
+  A session's remembered allow is a decision about **one conversation**, which is why the gate
+  derives a fresh memory; a hook is **operator policy** — an extension's veto — and policy that
+  applies to the agent but not to the agents it spawns *is* the defect. There is nothing in a hook
+  to un-remember. ADR-027 carries the amendment.
+
+  **The fixture fooled it once, in the same way the sibling test was fooled twice.** The first
+  version queued a single `AlwaysSession` answer, so the recording UI denied the **`task` call
+  itself** once the queue emptied: the fan-out never happened and the test saw the parent's two
+  bash calls and passed. **`task` asks.** The precondition now requires a successful `task` result
+  *separately* from a bash result, because "a bash happened" is satisfied by the parent alone.

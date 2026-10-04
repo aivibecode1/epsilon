@@ -3575,6 +3575,25 @@ impl Agent {
             None
         };
         child.set_thinking_level(self.thinking_level());
+        // **The parent's hooks, for the same reason the gate is derived and not shared.**
+        //
+        // `Agent::new` starts every agent on `NoopToolHooks`/`NoopTurnHooks`, and nothing here
+        // ever replaced them — so an ADR-019 `before_tool_call` that exists to **vet or block** a
+        // tool call was installed on the parent (`epsilon-runtime/src/lib.rs:1318`) and reached
+        // no child at all. A hook that blocks `bash` blocked it for the top-level agent and let
+        // every subagent run it, silently. That is the `AGENTS.md` §2.7 shape — a control the
+        // operator installed that does not act on a real path — and it is the same class as the
+        // M300 permission leak through a second door.
+        //
+        // **Inherited rather than derived, and that is the difference from the gate.** The gate
+        // needed a fresh memory because a *session's remembered allow* is a decision about one
+        // conversation. A hook is not a decision about a conversation: it is operator policy —
+        // the extension's own veto — and policy that applied to the agent and not to the agents
+        // it spawns is the defect, not the design. There is nothing in a hook to un-remember, so
+        // the parent's `Arc` is handed over as-is. Both accessors clone an `Arc`, so this costs
+        // two refcounts per delegated task.
+        child.set_tool_hooks(self.tool_hooks());
+        child.set_turn_hooks(self.turn_hooks());
         // Child discovers the same skill catalog (read-only share).
         child.set_skills(self.skill_list());
         // ...and the same identity overlays, for the same reason: the workspace's

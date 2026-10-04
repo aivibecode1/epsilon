@@ -7,6 +7,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Fixed
 
+- **An extension's `before_tool_call` hook now reaches subagent tool calls.** It did not: a child
+  agent is created with no-op hooks and `build_task_child` never replaced them, so a hook whose
+  whole purpose is to veto or block a tool call blocked it for the top-level agent and let every
+  subagent run it — silently. The child now receives both hook sets from the parent. In the same
+  family as the M300 permission leak, through a different door; ADR-027 carries the amendment
+  (M309).
 - **`docs/user/troubleshooting.md` told you to wait four seconds for a stale session lock. It is
   six.** `DEAD_HOLDER_SETTLE` was widened at M293 and three user-facing documents kept the old
   figure. Corrected in `troubleshooting.md`, `sessions.md` and `glossary.md`, with the reason the
