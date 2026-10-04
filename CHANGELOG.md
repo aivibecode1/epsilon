@@ -7,6 +7,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Added
 
+- **The desktop renders four states a person can look at.** The window has had one rendered image
+  since M305; this adds the counterpart of the terminal front end's frame dump — a permission ask, a
+  narrow window, the sessions list and the first run — written to `EPSILON_FRAME_DIR` as PNGs
+  (`audit/evidence/desktop-frames-2026-10-05/`). **Looking at the first one found a layout defect in
+  three panes at once** (M312).
 - **`scripts/desktop-reader-walk.ps1` — what a screen reader would meet in the window, and the
   four findings that make it unusable.** It walks the same tree a reader walks and prints the
   sentence each node would produce — role, name, value, and the states that change what is said —
@@ -16,6 +21,18 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   check is what found the two identically-named `File · README.md` rows this release also fixes.
   **It runs no reader and captures no audio, and its output says so** — what a reader sounds like is
   that reader's business (M312).
+
+### Fixed
+
+- **Three panes were drawing their content over their own headers.** In the agent pane the word
+  `Agent` appeared in the middle of the conversation and the first rows were clipped by the pane's
+  edge — the transcript was drawn 42 pixels too high, because a `ScrollArea` starts from the `Ui`
+  it is given and this one was handed the pane's cursor rather than the space below the header. In
+  the sessions pane the empty state printed above the word `Sessions`. **A pane that paints its
+  header with the painter must move its cursor under it**, and there is now one named constant that
+  says so. Found by rendering the window and looking at it: every test in that file asserts *which
+  strings* were drawn, and these strings were drawn, just in the wrong place. Both fixes now have a
+  negative control that fails with the defect named (M312).
 - **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
   registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
   window that already had a subagents pane, a session it can name, and a transcript it can empty.

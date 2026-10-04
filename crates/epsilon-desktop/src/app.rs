@@ -1417,6 +1417,40 @@ const AVG_ADVANCE: f32 = 0.55;
 /// [`fit`] assumes.
 const ROW_FONT: f32 = 13.0;
 
+/// How tall a pane's painted header row occupies, before [`text_scale`].
+///
+/// **Every pane that paints its header with the painter must move its `Ui` cursor down by
+/// this (M312).** A painter-drawn header does not advance the cursor, so the first widget the
+/// pane adds lands at the pane's **top** — on top of the header. Two panes did this and the
+/// rendered frames showed the empty state printed *above* the pane's own title, clipped by the
+/// pane's edge; the agent pane's transcript had the same fault, 42 pixels of it.
+///
+/// One constant, because the rule is one rule and three call sites are where it goes wrong.
+const PANE_HEADER_H: f32 = 30.0;
+
+/// Record **how far below its own top** a pane's content begins (M312).
+///
+/// One entry per frame, so the header/content relationship can be *asserted* rather than
+/// assumed: `FrameSummary::rows` records the strings, and a line printed over the pane's title
+/// records exactly the same strings — which is why this defect survived every test in the file
+/// and was found by looking at a rendered frame.
+///
+/// **The recorded rect runs from the pane's top to the cursor, so its `height` *is* the
+/// measurement.** Two earlier versions of this record measured the wrong thing and **both
+/// controls left the test green**: `ui.min_rect().top()` is the `Ui`'s own top — the pane's top,
+/// always clear of the band — and comparing the cursor against a constant ignored where the
+/// pane's `Ui` actually begins. A rect that starts where the pane starts cannot be misread.
+fn record_content_offset(ui: &egui::Ui, summary: &mut FrameSummary, rect: egui::Rect) {
+    let cursor = ui.min_rect().max.y.max(rect.top());
+    summary.hotspots.push((
+        "pane:first-content".to_string(),
+        egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top()),
+            egui::pos2(rect.left(), cursor),
+        ),
+    ));
+}
+
 impl IdeApp {
     /// Build the application around an already-composed session.
     pub fn new(
@@ -3191,6 +3225,19 @@ impl IdeApp {
             );
         }
         summary.rows.push(("tasks".into(), "Subagents".into()));
+        // **Move the cursor below the header (M312).** The header is painted at an absolute
+        // position (`rect.left_top() + (12, 16)`), which does not move the `Ui`'s cursor — so
+        // the first `colored_label` below lands at the **pane's top**, over the header. The
+        // rendered frame showed it exactly that way: `none stored for this workspace yet`
+        // printed *above* the word `Sessions`, both clipped by the pane edge.
+        //
+        // This is the same defect the transcript had (see `draw_rows`'s origin), found by
+        // rendering this window and looking at it rather than by any test: every assertion here
+        // reads which **strings** were drawn, and these strings were drawn, just in the wrong
+        // place. Three panes, one rule — **a pane that paints its header absolutely must move
+        // the cursor under it.**
+        ui.add_space(PANE_HEADER_H * scale);
+        record_content_offset(ui, summary, rect);
         let tasks = self
             .session
             .as_ref()
@@ -3324,6 +3371,11 @@ impl IdeApp {
             );
         }
         summary.rows.push(("sessions".into(), "Sessions".into()));
+        // **Under the header, not over it (M312)** — see the same line in `tasks_pane`. The
+        // header is painted absolutely and the cursor is still at the pane's top, so the empty
+        // state printed above the pane's own title.
+        ui.add_space(PANE_HEADER_H * scale);
+        record_content_offset(ui, summary, rect);
         let Some(session) = self.session.as_ref() else {
             // The pane is on screen with no list under it, and "Sessions" alone would
             // leave a reader looking for something that is not coming.
@@ -4229,14 +4281,32 @@ impl IdeApp {
             egui::pos2(rect.right() - 8.0, composer_top - 6.0),
         );
         if body.height() > 0.0 {
-            // max_height rather than a hard rect: the scroll area is handed the
-            // Ui and lays out inside the space the composer left, which is the only way
-            // three regions share one pane without one of them clipping the others.
+            // **Laid out AT `body`, not at the pane's cursor (M312).**
+            //
+            // `ScrollArea::show(ui, ..)` starts from wherever the passed `Ui`'s cursor is —
+            // which in this pane is the **top of the pane**, not `body.top`. The header line,
+            // the notices and the goal band are painted with absolute positions, so nothing
+            // moved the cursor down to where they end, and `max_height(body.height())` limits
+            // the height without moving the content. Measured on the approval frame: the pane's
+            // rect is `[[920, 42]-[1440, 870]]`, so `body.top` is **84**, and the scroll area's
+            // clip was `[[920, 42]-…]` — the transcript was drawn **42 pixels too high**, over
+            // its own header, which is why the rendered frame shows the pane's `Agent` label
+            // sitting in the middle of the conversation and the first rows clipped by the pane's
+            // top edge.
+            //
+            // Nothing caught it because every test here asserts **which** text was drawn, never
+            // **where**: a row drawn in the right place and a row drawn 42 pixels too high put
+            // the same strings in `FrameSummary::rows`. Only looking at the frame found it.
+            let mut body_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(body)
+                    .layout(egui::Layout::top_down(egui::Align::LEFT)),
+            );
             let clicks = egui::ScrollArea::vertical()
                 .id_salt("epsilon-agent-transcript")
                 .stick_to_bottom(true)
                 .max_height(body.height())
-                .show(ui, |ui| {
+                .show(&mut body_ui, |ui| {
                     ui.set_width(body.width());
                     self.draw_rows(ui, summary, scale)
                 });
@@ -4521,9 +4591,20 @@ impl IdeApp {
         // (`placer.rs:165-192`), which is why every measured height carries that one
         // spacing: row `i` then starts at `offsets[i]` on the frame, to the pixel.
         ui.add_space(offsets.at(span.start));
-        for row in &rows[span.clone()] {
+        for (i, row) in rows[span.clone()].iter().enumerate() {
             if let Some(changed) = self.draw_row(ui, summary, row, false, scale) {
                 clicks.change = Some(changed);
+            }
+            // **Where the first drawn row actually landed (M312).** One entry per frame, for the
+            // row that was drawn first: `FrameSummary::rows` records *which* text was drawn and
+            // nothing recorded *where*, which is why a transcript drawn 42 pixels too high — over
+            // its own header, with the first rows clipped by the pane edge — passed every test
+            // in this file and was visible in the rendered frame in a glance. The number this
+            // records is the one a person looks at.
+            if i == 0 {
+                summary
+                    .hotspots
+                    .push(("transcript:first-row".to_string(), ui.min_rect()));
             }
         }
         ui.add_space(offsets.total() - offsets.at(span.end));
@@ -6658,6 +6739,236 @@ mod tests {
             crate::frame_raster::write_png(&path, w, h_px, &rgba).expect("writing the frame");
             eprintln!("frame_raster: wrote {}", path.display());
         }
+    }
+
+    /// **The transcript starts below its own header (M312).**
+    ///
+    /// Found by **rendering the window and looking at it** — the frame dump this milestone
+    /// added shows the pane's `Agent` label sitting in the middle of the conversation, with the
+    /// first rows clipped by the pane's top edge. The cause: `ScrollArea::show(ui, ..)` starts
+    /// from the passed `Ui`'s cursor, which in that pane is the pane's **top**, while the
+    /// header, notices and goal band are painted at absolute positions and never move it. The
+    /// transcript was drawn **42 pixels too high**.
+    ///
+    /// **Why no test caught it.** Every other assertion in this file reads
+    /// `FrameSummary::rows`, which records *which* strings were drawn. A row drawn in the right
+    /// place and a row drawn 42 pixels too high put **identical strings** in that list. Position
+    /// was not recorded anywhere, so the only instrument that could see it was a person looking
+    /// at a picture — which is why `transcript:first-row` now records the first drawn row's
+    /// rectangle, once per frame, and this asserts on it.
+    ///
+    /// Asserted as geometry rather than as a magic number: the first row must start **below the
+    /// pane's header band** and must not be clipped by the pane's own top edge. Both halves
+    /// matter — a transcript drawn under the header but outside the clip is a different bug.
+    #[test]
+    fn the_transcript_starts_below_its_own_header_and_is_not_clipped() {
+        let (ws, _keep) = scratch_workspace("transcript-origin");
+        let mut h = Harness::new(ws.clone());
+        let mut t = Transcript::new(ws);
+        t.push_user("the first thing said");
+        t.apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(epsilon_contracts::message::Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "m1".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::text("an answer")],
+                    stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+        h.app.seed_transcript(t);
+
+        let f = h.paint();
+        let first_row = f
+            .hotspots
+            .iter()
+            .find(|(id, _)| id == "transcript:first-row")
+            .map(|(_, r)| *r)
+            .expect("the first drawn transcript row must be recorded");
+
+        // **Above the header line it belongs under.** The pane starts at the same y in every
+        // frame, so the relationship is what carries the meaning, not a coordinate.
+        let header_bottom = 42.0 + 34.0;
+        assert!(
+            first_row.top() >= header_bottom,
+            "the transcript is drawn over its own header: the first row starts at y={:.1} and the \
+             header band ends at {header_bottom:.1}. This is the defect the rendered frame showed \
+             — the pane's `Agent` label appeared in the middle of the conversation.\n{}",
+            first_row.top(),
+            f.describe()
+        );
+        assert!(
+            first_row.top() >= 42.0,
+            "and it must not start above the pane's own edge, where it would be clipped: \
+             y={:.1}",
+            first_row.top()
+        );
+    }
+
+    /// **A pane's content starts under its own header (M312).**
+    ///
+    /// The same defect as the transcript's, in the two sidebar panes, and found the same way:
+    /// **the rendered frame**. The sessions pane printed `none stored for this workspace yet`
+    /// *above* the word `Sessions`, both clipped by the pane's top edge; the subagents pane had
+    /// the same shape waiting.
+    ///
+    /// **Why nothing caught it.** Both panes' headers are painted with the painter at an
+    /// absolute position, which does not advance the `Ui` cursor — so the first label the pane
+    /// adds lands at the pane's **top**, on top of the header. Every assertion in the file reads
+    /// `FrameSummary::rows`, which records the strings: these strings *were* drawn, just in the
+    /// wrong place.
+    ///
+    /// **So this asserts the position** — from `pane:first-content`, recorded where the pane's
+    /// content is about to be laid out — against the header band, rather than checking that some
+    /// text exists. A first version of this test checked the strings, and would therefore have
+    /// passed against the defect it was written for.
+    #[test]
+    fn a_sidebar_pane_draws_its_content_under_its_own_header() {
+        for view in [SidebarView::Sessions, SidebarView::Tasks] {
+            let (ws, _keep) = scratch_workspace("pane-header");
+            let (session, notices) = faux_session(&ws);
+            let mut h = Harness::with_session(ws, session, notices);
+            h.app.set_sidebar_view(view);
+            let f = h.paint();
+
+            let content = f
+                .hotspots
+                .iter()
+                .find(|(id, _)| id == "pane:first-content")
+                .map(|(_, r)| *r)
+                .expect("the pane must record where its content lands");
+            assert!(
+                content.height() >= PANE_HEADER_H,
+                "the {view:?} pane starts its content {:.1} points below its own top, inside the \
+                 {PANE_HEADER_H:.1}-point header band — the pane's title and its first line \
+                 overlap, which is what the rendered frame showed. A pane paints its header with \
+                 the painter, which does not move the cursor, so it has to move it itself.\n{}",
+                content.height(),
+                f.describe()
+            );
+        }
+    }
+
+    /// Rasterise `h`'s next frame and write it as `name`. Returns 1 on success.
+    ///
+    /// **Not `Harness::full_frame`**, which clears `textures_delta` on purpose and takes the font
+    /// atlas with it — the frame then renders with every glyph missing, which for a probe whose
+    /// whole job is to show the text is the worst available outcome. The raster test above says
+    /// so at its own call site; this repeats it because the mistake is one line away.
+    fn save_frame(h: &mut Harness, dir: &std::path::Path, name: &str) -> usize {
+        let mut input = h.input.clone();
+        input.events = Vec::new();
+        let clear = h.app.theme.background;
+        let full = h.ctx.run_ui(input, |ui| {
+            h.app.paint(ui);
+        });
+        let size = full.pixels_per_point
+            * full.shapes[..]
+                .iter()
+                .fold(egui::Rect::ZERO, |acc, s| acc.union(s.clip_rect))
+                .size();
+        let (w, h_px) = (size.x.round() as u32, size.y.round() as u32);
+        if w == 0 || h_px == 0 {
+            eprintln!("desktop_frames: {name} reported {w}x{h_px}, so nothing was written");
+            return 0;
+        }
+        let Ok(rgba) = crate::frame_raster::rasterize(&h.ctx, full, clear) else {
+            eprintln!("desktop_frames: {name} could not be rasterised (no adapter)");
+            return 0;
+        };
+        let path = dir.join(name);
+        if crate::frame_raster::write_png(&path, w, h_px, &rgba).is_ok() {
+            eprintln!("desktop_frames: wrote {}", path.display());
+            1
+        } else {
+            0
+        }
+    }
+
+    /// **Every state worth looking at, rendered to a file so a person can look at it (M312).**
+    ///
+    /// The raster test above renders **one** window — a conversation with a change in it — and
+    /// its image from M305 is what the desktop has been judged on ever since. Four states nobody
+    /// has seen are the ones a reviewer asks about: **a permission ask**, the sessions list, a
+    /// **narrow window** where the layout must give something up, and the first-run transcript.
+    ///
+    /// **This is the desktop's counterpart of `epsilon-tui`'s `frame_dump`**, and it reads the
+    /// same `EPSILON_FRAME_DIR`, so one directory holds both front ends. It is `#[ignore]`d
+    /// because it needs a wgpu adapter, exactly like the raster test.
+    ///
+    /// **Nothing is asserted but "the frame has pixels".** An assertion a frame can make is that
+    /// it is not blank; everything past that is a person looking at it, which is the entire
+    /// reason these files are written to disk. With `EPSILON_FRAME_DIR` unset it does nothing and
+    /// succeeds, so it is safe to leave in the tree.
+    #[test]
+    #[ignore = "needs a wgpu adapter; run with --ignored and EPSILON_FRAME_DIR set"]
+    fn the_windows_a_person_has_not_seen_are_rendered_for_one_to_see() {
+        let Some(dir) = std::env::var_os("EPSILON_FRAME_DIR") else {
+            eprintln!("desktop_frames: EPSILON_FRAME_DIR is not set, so nothing is written");
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let mut written = 0usize;
+
+        // 1. A permission ask. **The state the product exists to get right**: the reader is told
+        //    what is about to happen and shown the keys. Nobody has looked at this window drawn.
+        {
+            use epsilon_contracts::agent_event::{AgentEvent, PermissionRequest};
+            let (ws, _keep) = scratch_workspace("frames-approval");
+            let mut h = Harness::new(ws.clone());
+            let mut t = Transcript::new(ws.clone());
+            t.push_user("delete the build directory");
+            t.apply(&AgentEvent::PermissionRequested {
+                request: PermissionRequest {
+                    request_id: "ask-1".into(),
+                    capability: "bash".into(),
+                    pattern: "rm -rf target".into(),
+                    detail: serde_json::json!({ "command": "rm -rf target" }),
+                },
+            });
+            h.app.seed_transcript(t);
+            written += save_frame(&mut h, &dir, "01-permission-ask.png");
+        }
+
+        // 2. A narrow window: the layout tier has to drop a pane, and say which one.
+        {
+            let (ws, _keep) = scratch_workspace("frames-narrow");
+            let mut h = Harness::new(ws.clone());
+            h.input.screen_rect = Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(620.0, 460.0),
+            ));
+            let mut t = Transcript::new(ws);
+            t.push_user("what changed in the frame?");
+            h.app.seed_transcript(t);
+            written += save_frame(&mut h, &dir, "02-narrow-window.png");
+        }
+
+        // 3. The sessions list, with the sidebar on it.
+        {
+            let (ws, _keep) = scratch_workspace("frames-sessions");
+            let (session, notices) = faux_session(&ws);
+            let mut h = Harness::with_session(ws, session, notices);
+            h.app.set_sidebar_view(SidebarView::Sessions);
+            written += save_frame(&mut h, &dir, "03-sessions.png");
+        }
+
+        // 4. The first run: no transcript, nothing chosen, the empty state a new user meets.
+        {
+            let (ws, _keep) = scratch_workspace("frames-empty");
+            let mut h = Harness::new(ws.clone());
+            h.app.seed_transcript(Transcript::new(ws));
+            written += save_frame(&mut h, &dir, "04-empty-transcript.png");
+        }
+
+        eprintln!(
+            "desktop_frames: wrote {written} frame(s) to {}",
+            dir.display()
+        );
     }
 
     /// A palette row can be **clicked**, not only typed at and confirmed.

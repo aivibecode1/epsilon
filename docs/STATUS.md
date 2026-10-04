@@ -305,6 +305,48 @@ like* — voice, verbosity, punctuation, what it skips — is that reader's busi
 closest evidence obtainable without a person listening, and calling it anything more would be the
 kind of overstatement this file has spent four milestones correcting.
 
+### Two panes were drawing their content over their own headers — found by rendering and looking
+
+The desktop has had **one** rendered frame since M305, and it was a window with a conversation in
+it. This milestone added the desktop's counterpart of the terminal's `frame_dump` — four states
+written to `audit/evidence/desktop-frames-2026-10-05/` — and **looking at the first one found a
+layout defect in three panes at once.**
+
+**What the frame showed.** In the agent pane the header word `Agent` appeared *in the middle of the
+conversation*, and the first two rows were clipped by the pane's top edge. In the sessions pane the
+empty state `none stored for this workspace yet` printed **above** the word `Sessions`, both
+clipped. One rule explains all of it:
+
+> **A pane that paints its header with the painter must move its `Ui` cursor under it.**
+
+A painter-drawn header does not advance the cursor, so the first widget the pane adds lands at the
+pane's **top**. The transcript was the worst of the three: `ScrollArea::show(ui, ..)` also starts
+from the passed `Ui`'s cursor, so the whole conversation was drawn **42 pixels too high** — over
+its own header, and clipped by the pane edge.
+
+**Measured, not guessed.** `body.top` is **84**; the scroll area's clip was `[[920, 42]-…]`. Fixed by
+giving the scroll area its own `Ui` at `body`, and by one named constant, `PANE_HEADER_H`, that the
+two sidebar panes move their cursor by. The re-rendered frames show the header, the notice and the
+transcript stacked in the right order.
+
+**Why no test caught it, which is the half worth keeping.** Every assertion in that file reads
+`FrameSummary::rows`, which records **which strings** were drawn. A row drawn in the right place
+and a row drawn 42 pixels too high put **identical strings** in that list. Position was recorded
+nowhere, so the only instrument that could see it was a person looking at a picture.
+
+**Both fixes now have a negative control, and the first version of one of the tests had to be
+thrown away to get there.** `the_transcript_starts_below_its_own_header_and_is_not_clipped` fails
+with *"the transcript is drawn over its own header: the first row starts at y=42.0 and the header
+band ends at 76.0"*. The pane test went through **three** recordings — `min_rect().top()` (the
+`Ui`'s own top, which is the pane's top and always clears the band), then an offset against a
+constant — and **both controls left the test green**. What works is a rect that runs *from* the
+pane's top *to* the cursor, so its height carries the measurement and cannot be misread:
+`the Sessions pane starts its content 0.0 points below its own top, inside the 30.0-point header
+band`.
+
+**A test that passes when the defect is present is worse than no test**, because it is a claim.
+That is now written where the recording is, next to the constant.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:
