@@ -7,6 +7,15 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Added
 
+- **`scripts/desktop-reader-walk.ps1` — what a screen reader would meet in the window, and the
+  four findings that make it unusable.** It walks the same tree a reader walks and prints the
+  sentence each node would produce — role, name, value, and the states that change what is said —
+  then reports what is a defect rather than a style choice: an unnamed node, **two nodes sharing both
+  a role and a name**, a focusable node with no name, and a name long enough to be re-read on every
+  repaint. It exits non-zero on a finding, so it is a check and not only a report. The duplicate
+  check is what found the two identically-named `File · README.md` rows this release also fixes.
+  **It runs no reader and captures no audio, and its output says so** — what a reader sounds like is
+  that reader's business (M312).
 - **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
   registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
   window that already had a subagents pane, a session it can name, and a transcript it can empty.

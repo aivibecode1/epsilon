@@ -258,6 +258,53 @@ four fixes change what the window *announces*, not what it draws, and the fourth
 that is zero in this fixture. A pixel-identical frame is the evidence that none of them moved a
 pixel it should not have.
 
+### A real screen reader, attempted and measured — and what replaced it
+
+Plan item 1 asked for a screen reader to be run against the window. **It was attempted on
+2026-10-05, and it does not read this window on this machine.** The measurements, because "we
+tried" is not a fact:
+
+| | |
+|---|---|
+| Session | **1**, `[Environment]::UserInteractive` **True**, user `Hp` — a real interactive desktop, not a service session |
+| `Narrator.exe` | present at `C:\Windows\System32\Narrator.exe`, and **it starts and stays running** (pid 12280, ~20 min) |
+| Second launch | exits in **0.5 s, exit code −1** — it is single-instance and hands off, which read at first as "it died" |
+| The window | launched and **foregrounded**, verified: `GetForegroundWindow()` equalled its handle |
+| Input | **real keystrokes sent** to the foreground window (`Tab`×4, `a`, `Tab`) through `SendKeys` |
+| Result | **zero** window events raised by Narrator against it |
+
+**The control is the part that makes the negative worth anything.** The same hook registered
+**2 events from the window's own process** (`EVENT_SYSTEM_FOREGROUND`) in the same run — so the hook
+fires, and "0 from the reader" is a measurement rather than a silent check. This repository has been
+fooled four times by a check that could not see a thing; this one demonstrably can.
+
+**So the honest claim is narrower than the plan wanted and narrower than it sounds:** on this
+machine, no screen reader announces this window, and that is now a **measured** fact rather than an
+unstated gap.
+
+#### What replaced it, and why it is not the same thing
+
+[`../scripts/desktop-reader-walk.ps1`](../scripts/desktop-reader-walk.ps1) walks the platform tree
+the way a reader walks it and prints the **sentence each node would produce** — role, name, value,
+and the states that change what is said — then reports the findings that are defects rather than
+style:
+
+- an unnamed node (still the one `ScrollBar`);
+- **two nodes sharing both a role and a name** — which is the check that found the two
+  `File · README.md` rows this milestone fixed;
+- a focusable node with no name;
+- a name long enough to be re-read on every repaint.
+
+Its transcript is
+[`../audit/evidence/desktop-reader-walk-2026-10-05.txt`](../audit/evidence/desktop-reader-walk-2026-10-05.txt):
+**no duplicates, every focusable node named, every name short**. It exits non-zero on a finding, so
+it is a check and not only a report.
+
+**It runs no reader and captures no audio, and its own output says so.** What a reader *sounds
+like* — voice, verbosity, punctuation, what it skips — is that reader's business. This is the
+closest evidence obtainable without a person listening, and calling it anything more would be the
+kind of overstatement this file has spent four milestones correcting.
+
 ### The reading guide, walked as a newcomer — and one claim that was simply false
 
 The definition of done asks for `docs/START-HERE.md` to be followed by someone who has never seen
@@ -1021,8 +1068,7 @@ against the same bar and merge into the list above.
    **Left, and it is the honest remainder** (re-measured against source 2026-10-04; two of the
    four items below turned out to be **wrong as written**, and the corrections are in the section
    above):
-   - **No screen reader has ever been run against this window**, on this machine or any other.
-     Everything else here stops at "egui emitted the node into the platform tree".
+   - ~~**No screen reader has ever been run against this window**, on this machine or any other. Everything else here stops at "egui emitted the node into the platform tree".~~ **Partly answered at M312, and the part that is left needs a person.** Narrator was started, the window foregrounded and real keys sent: the reader raises no events (gate-style measurement in the M312 section). The platform tree is now read from another process, and desktop-reader-walk.ps1 prints the sentence each node would produce. **No audio was captured, and nothing here claims otherwise.**
    - **No landmark roles — LANDED (M301).** Every region had a *name* and no *role*, and roles
      are what a screen reader's rotor is built from, so there was no fast route to the transcript
      at all. **Three places in this repository asserted that egui 0.36 could not express a
@@ -1276,7 +1322,7 @@ does not have to re-derive them from a green log:
    So the backend is not a detail on this box — it is the difference between an image and a crash.
    **Still not a screenshot of a composited desktop window** — there is no OS chrome, no shadow,
    no cursor — and the honest description is "this window's draw output".
-2. **No screen reader has ever been run against this window**, on this machine or any other.
+2. **No screen reader has ever announced this window, and on this machine none does.** Attempted and measured at M312: Narrator runs, the window is foregrounded, real keys are sent, and the reader raises no events. The announcement walk is the nearest evidence and is explicitly not the same thing.
    NVDA, Narrator, JAWS and Orca appear nowhere in this repository. **Where the evidence stops
    moved one layer at M307:** `scripts/desktop-a11y-probe.ps1` reads the window's tree through
    **Windows UI Automation**, from another process — so the tree is now known to reach the
