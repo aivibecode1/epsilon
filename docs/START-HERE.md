@@ -169,10 +169,10 @@ allowed direction, so a crate cannot quietly use one it should not.
 so a conversation stays readable in any text editor and a damaged line costs one line rather
 than the file.
 
-**Milestone (`M###`)** — a numbered unit of work in this project's history. `M291` is the
-twenty-ninth-first. Every milestone has a row in [`history.md`](history.md); recent ones are
-also summarised in [`../CHANGELOG.md`](../CHANGELOG.md) and, while work is in flight, in
-[`STATUS.md`](STATUS.md).
+**Milestone (`M###`)** — a numbered unit of work in this project's history. `M292` is the
+two-hundred-and-ninety-second. Every milestone has a row in [`history.md`](history.md); recent
+ones are also summarised in [`../CHANGELOG.md`](../CHANGELOG.md) and, while work is in flight,
+in [`STATUS.md`](STATUS.md).
 
 **Ponytail** — a minimalism discipline this project applies before adding anything, by
 [DietrichGebert](https://github.com/DietrichGebert/ponytail) (MIT). It asks one question in

@@ -403,6 +403,11 @@ budget, so the freeze point is roughly **19:00 on 2026-10-04** — about 32 hour
 only fixes, documentation, verification and cleanup. Anything cut goes in the roadmap above,
 never left half-built in the product.
 
+**This round is in that window already** (10:30 on 2026-10-04), so the list below is not a plan
+for new work — it is what is *not* being done, written down so the next person does not read the
+roadmap as a queue. **The items in Roadmap are cut, not pending**, except where a line says a fix
+landed. Nothing below is half-built in the product.
+
 1. **Composition notices reaching the desktop** — LANDED. Sixteen `eprintln!` lines inside
    `build_runtime_and_gate_runner` now go through one ordered sink, `RunParams::notices`, instead
    of to a console a window does not have. `tui_mode` appends them to the startup notices it
@@ -830,6 +835,15 @@ things a newcomer could not decode were vocabulary, and one of them — `Ponytai
 
 - **The desktop window cannot be seen on this machine** — no wgpu backend presents, so every
   claim about its pixels is inferred from egui's source and the crate's own coordinates.
+  **Re-confirmed by launching it again on 2026-10-04, not inherited:** `cargo run -q -p
+  epsilon-desktop` was started, **stayed running for 45 seconds with empty stdout and stderr**
+  (a window that opened and did not crash), and was then terminated. The process starts, opens
+  and holds; what it draws is still unverified here, and the earlier measurement with
+  screenshots is at
+  [`../audit/evidence/desktop-window-measurement-2026-10-03.md`](../audit/evidence/desktop-window-measurement-2026-10-03.md).
+  **What that means for the accessibility claims:** eleven named regions are asserted against the
+  real `accesskit::TreeUpdate` in tests, and the tree has been dumped and read — but **no screen
+  reader has ever been run against this window**, on this machine or any other.
 - **Three `epsilon-session` lease tests were timing-flaky under load earlier today** — 6/6 green
   in isolation, 3 red inside a loaded 14-crate sweep, same tree, causation never proven. They
   **passed** in the green full-workspace battery recorded above. Not fixed; not reproduced.
