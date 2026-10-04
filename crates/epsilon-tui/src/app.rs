@@ -1100,6 +1100,14 @@ impl App {
         //
         // The mirror is therefore built from the value this call just applied, which is the
         // same answer without the dependency on anyone else.
+        //
+        // **What is not lost.** The file is still the durable record and is still
+        // read-modify-write (`push_recent_model_in` reads the list before it writes, so a
+        // push from another process survives), and the mirror is re-read from it at startup
+        // (`app/session.rs:59`). What is given up is only the mid-session refresh of a list
+        // that was never refreshed mid-session before — the picker is opened, a row chosen,
+        // and the list is used for ordering. A second process's push appears on the next
+        // launch, which is the same interval at which a push made here does.
         let _ = epsilon_core::config::push_recent_model(&id);
         self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
         self.recents.insert(0, id.clone());
