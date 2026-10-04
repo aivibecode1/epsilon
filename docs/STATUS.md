@@ -695,12 +695,43 @@ bodies, not counted line by line.
 
 ## Next
 
+### Not done, and a green battery does not mean otherwise
+
+**A full battery passing is evidence about the code, not about the objective.** Three of the
+definition-of-done items are **provably unmet** today, and each is listed here so the next person
+does not have to re-derive them from a green log:
+
+1. **The desktop's pixels have never been seen on this machine.** No wgpu backend presents — it was
+   measured, not assumed, including a red-fill probe that stayed blank
+   ([`../audit/evidence/desktop-window-measurement-2026-10-03.md`](../audit/evidence/desktop-window-measurement-2026-10-03.md)).
+   Every desktop claim in this file rests on egui's source, the crate's own recorded geometry, and
+   offscreen frame tests. **That is the right way to test a window, and it is not the same as
+   having looked at it.**
+2. **No screen reader has ever been run against this window**, on this machine or any other.
+   NVDA, Narrator, JAWS and Orca appear nowhere in this repository. Every accessibility claim stops
+   at "egui emitted the node into the platform tree", which is what ADR-022 says too.
+   `audit/evidence/desktop-accesskit-tree-2026-10-04.md` is a real 39-node tree **that predates
+   M301–M303** — it records a `Role::Unknown` and a `Role::Pane` that no longer exist, and it was
+   produced by a temporary edit that was reverted, so **there is no producer for it and it cannot be
+   regenerated.** Treat it as history, not as current evidence.
+3. **No manual keyboard-only pass is recorded**, by a person, with a date, for either front end.
+   The *automated* coverage is real and substantial — roughly sixteen desktop tests drive real
+   `egui::Event::Key` through the real draw path and assert on the frame, four of them keyboard-only
+   journeys against a composed agent, plus the ConPTY suite that types into the real terminal binary
+   — but every one of the eight repo-wide matches for keyboard-pass language is a requirement, a
+   design claim or a code comment. **None is a record of somebody having done it.**
+
+**Also still open, and unchanged:** `scripts/desktop-probe.py` does not exist; the desktop answers
+3 of 38 terminal commands; the flat `REGISTRY` of `Action` rows is unbuilt; the denied-tools filter
+and the lease-takeover detection both need their own decisions; and 59 authorised dead-code
+deletions are written down and not done.
+
 **Freeze new features at two-thirds of the budget.** Start was 11:12 on 2026-10-03 with a ~2-day
 budget, so the freeze point is roughly **19:00 on 2026-10-04** — about 32 hours in. After that:
 only fixes, documentation, verification and cleanup. Anything cut goes in the roadmap above,
 never left half-built in the product.
 
-**This round is in that window already** (10:30 on 2026-10-04), so the list below is not a plan
+**The freeze point is now** (18:30 on 2026-10-04), so the list below is not a plan
 for new work — it is what is *not* being done, written down so the next person does not read the
 roadmap as a queue. **The items in Roadmap are cut, not pending**, except where a line says a fix
 landed. Nothing below is half-built in the product.
