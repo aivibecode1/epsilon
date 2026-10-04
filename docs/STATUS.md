@@ -1017,10 +1017,19 @@ does not have to re-derive them from a green log:
    — but every one of the eight repo-wide matches for keyboard-pass language is a requirement, a
    design claim or a code comment. **None is a record of somebody having done it.**
 
-**Also still open, and unchanged:** the desktop answers
-3 of 38 terminal commands; the flat `REGISTRY` of `Action` rows is unbuilt; the denied-tools filter
-and the lease-takeover detection both need their own decisions; and 59 authorised dead-code
-deletions are written down and not done.
+**Also still open:** the desktop answers 3 of 38 terminal commands; the flat `REGISTRY` of `Action`
+rows is unbuilt; the denied-tools filter and the lease-takeover detection both need their own
+decisions.
+
+**And the dead-code sweep is half done, which is the honest state of it.** Class A is closed —
+19 items deleted, 3 kept with written reasons (M308). **Class B is not touched:** 50 items,
+652 lines, *"no production caller, only test callers"*, with the first batch of 27 listed in
+[`../audit/evidence/ponytail-deadcode-2026-10-04.md`](../audit/evidence/ponytail-deadcode-2026-10-04.md).
+Those deletions take their test sites with them, so each one is a judgement about whether the
+*test* was worth more than the code it exercises — which is why they are not mechanical and why
+none of them is half-deleted here. **The ledger's own counts have been wrong once** (it said 23
+and 175; it has 22 rows summing to 160), so re-derive them before acting on Class B rather than
+trusting either number.
 
 **Freeze new features at two-thirds of the budget.** Start was 11:12 on 2026-10-03 with a ~2-day
 budget, so the freeze point is roughly **19:00 on 2026-10-04** — about 32 hours in. After that:
