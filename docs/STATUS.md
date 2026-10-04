@@ -106,21 +106,24 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M291):**
-[`../audit/evidence/gate-m294-2026-10-04.txt`](../audit/evidence/gate-m294-2026-10-04.txt).
+**Green full-workspace battery, latest measured 2026-10-04 (M292):**
+[`../audit/evidence/gate-m295-2026-10-04.txt`](../audit/evidence/gate-m295-2026-10-04.txt).
 
 | Gate | Result |
 |---|---|
-| `check-links` | PASS — 736 relative links, 0 broken |
+| `check-links` | PASS — 751 relative links, 0 broken |
 | `check-agents-lock` | PASS — `AGENTS.md` matches `AGENTS.md.sha256` |
 | `check-lint-tables` | PASS |
 | `check-line-endings` | PASS |
 | `check-control-bytes` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS — zero warnings |
-| `cargo test --workspace` | **PASS — 2,019 passed, 0 failed, 7 ignored, 78 binaries** |
+| `cargo test --workspace` | **PASS — 2,020 passed, 0 failed, 7 ignored, 78 binaries** |
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
+
+Previous green battery the same day: [`gate-m294`](../audit/evidence/gate-m294-2026-10-04.txt)
+— 2,019 passed. The difference is the two tests this round added.
 
 **The knobs that number was produced under**, because they change what the evidence is:
 `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, and
@@ -128,7 +131,7 @@ configuration:**
 own header — it is appended to the evidence file by hand, which is the only reason a reader can
 find it at all.
 
-Earlier: [`gate-m283`](../audit/evidence/gate-m283-2026-10-03.txt), [`gate-m282`](../audit/evidence/gate-m282-2026-10-03.txt), [`gate-m281`](../audit/evidence/gate-m281-2026-10-03.txt), [`gate-m280`](../audit/evidence/gate-m280-2026-10-03.txt), [`gate-m279`](../audit/evidence/gate-m279-2026-10-03.txt), [`gate-m277final`](../audit/evidence/gate-m277final-2026-10-03.txt), [`gate-base`](../audit/evidence/gate-base-2026-10-03.txt).
+Earlier: [`gate-m294`](../audit/evidence/gate-m294-2026-10-04.txt), [`gate-m283`](../audit/evidence/gate-m283-2026-10-03.txt), [`gate-m282`](../audit/evidence/gate-m282-2026-10-03.txt), [`gate-m281`](../audit/evidence/gate-m281-2026-10-03.txt), [`gate-m280`](../audit/evidence/gate-m280-2026-10-03.txt), [`gate-m279`](../audit/evidence/gate-m279-2026-10-03.txt), [`gate-m277final`](../audit/evidence/gate-m277final-2026-10-03.txt), [`gate-base`](../audit/evidence/gate-base-2026-10-03.txt).
 
 **The count is measured, and it is quoted from one battery rather than from memory.** A reader
 found this section quoting **two different totals** — 2,018 in the table above it and 1,937
@@ -708,6 +711,34 @@ row understated its own defect — there is no owner token in the lock file at a
 stolen-from holder deletes its successor's lock. **A row in this file that has not been checked
 against the code is a row about a tree nobody has looked at in a while**, which is the argument
 for checking it, and for not treating the investigation as automatic.
+
+**Two independent reviews of this round's own work, and both found something.** Neither was
+told what to find, and neither had written the code.
+
+- **A code reviewer** on the registry move and the backup fix: no blockers, both changes
+  correct — and ten findings. Three were real defects **in the guard test the registry move had
+  just required**: `async fn` was never matched (so the six `#[tokio::test]`s in an untracked
+  file were invisible), a second attribute between `#[test]` and the signature ended the
+  pairing, and the early return made the untracked scan unreachable exactly when only new files
+  had changed — the shape of the move it was written for. All three are fixed. The fourth, which
+  is a residual rather than a bug, is written into the code: the scan unions the names in every
+  untracked file, so a name collision could satisfy a deletion. One more finding was a data-loss
+  hole nobody had looked at: `fs::copy` is **not atomic** and the once-only `exists()` check
+  turned an interrupted copy into a permanent truncated "original". Now copied through a
+  scratch name and renamed, the same discipline `persist_migration` already used.
+- **A newcomer** following `README.md` → `START-HERE.md` → `STATUS.md` as a first-time reader:
+  the verdict was that the guide works and the *second* document does not. Two contradictory
+  test counts in one section of this file, a lease figure the code contradicts, an invented
+  status vocabulary in `docs/README.md`, a defect-ID range that does not exist, three terms used
+  before they are defined (`crate`, `JSONL`, `M###`, plus Ponytail, which had no entry
+  anywhere a newcomer is sent), two false `file:line` citations, and a description of `AGENTS.md`
+  that is 390 lines and three weeks out of date. All corrected except the `AGENTS.md` gate list,
+  which is locked and is filed in [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md).
+
+**The lesson worth keeping from both:** a green suite says nothing about whether the
+*statements* are true, and a review is worth more than the code it reviewed. Two of the three
+things a newcomer could not decode were vocabulary, and one of them — `Ponytail` — appears in
+`AGENTS.md`'s own rules with no introduction anywhere but `README.md`.
 
 ## Known-broken
 

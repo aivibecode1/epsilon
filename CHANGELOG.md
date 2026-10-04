@@ -7,6 +7,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **A recovery copy can no longer be left half-written.** The `.pre-epsilon` copy is written to
+  a scratch name and renamed, so an interrupted copy — a full disk, antivirus interference —
+  can no longer leave a truncated file that the once-only rule then treats as the true original
+  for ever (M292).
 - **The window's recovery copy was a file nothing could recover with.** Resuming an older
   session stamped a header onto it *before* taking the `.pre-epsilon` backup, and because the
   session handle appends, the header landed at the end of the copy. A header is only legal as

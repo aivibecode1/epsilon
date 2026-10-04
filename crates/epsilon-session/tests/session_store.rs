@@ -1426,6 +1426,46 @@ fn a_backup_taken_from_append_is_a_file_this_build_can_open() {
     );
 }
 
+/// A conversion leaves **no scratch file** beside its backup.
+///
+/// `keep_original_beside` copies through a `.partial` name and renames, because `fs::copy`
+/// is not atomic and the once-only `exists()` check would otherwise turn an interrupted copy
+/// into a permanent truncated "original" (`store.rs`, M292). The failure branch of that
+/// sequence cannot be fault-injected — the store's `WriteFault` seam does not reach
+/// `fs::copy` — so this pins the half a test *can* reach: after a real conversion the
+/// directory holds the session, the backup, and nothing else.
+///
+/// It would fail on the previous code too, in the only way a missing scratch discipline can
+/// be observed from outside: there was no scratch file to leave behind. That is stated here
+/// rather than dressed up as coverage — the assertion is cheap and the sequence is the thing
+/// a reader needs to see.
+#[test]
+fn a_conversion_leaves_no_scratch_file_beside_the_backup() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let (path, _original) = write_pi_shaped_file(&dir, "s.jsonl");
+
+    let mut store = SessionStore::open(&path).expect("open the pi-shaped file");
+    store.persist_migration().expect("convert the file");
+    drop(store);
+
+    assert!(
+        pre_epsilon_of(&path).exists(),
+        "precondition: the conversion really did take a copy"
+    );
+    let strays: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("read the directory")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "s.jsonl" && !name.ends_with(".pre-epsilon"))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "the conversion left files behind that are neither the session nor its backup: \
+         {strays:?}. A scratch name that survives a successful rename is a name a later \
+         reader will mistake for something else."
+    );
+}
+
 /// A file that needs no migration leaves no copy behind.
 ///
 /// The copy exists because conversion destroys a foreign file's only readable copy. A current

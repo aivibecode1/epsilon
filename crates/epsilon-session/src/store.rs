@@ -2054,12 +2054,40 @@ pub fn original_backup_path(path: &Path) -> PathBuf {
 /// conversion, and a second migration pass over an already-converted file must not
 /// replace it with a converted copy (which would leave no way back at all). The copy is
 /// never treated as scratch — a name already on disk is left exactly as it is.
+///
+/// **Through a scratch name, because `fs::copy` is not atomic (M292).** The `exists()`
+/// above is what makes the copy once-only, and that is also what made a *partial* copy
+/// permanent: a copy interrupted by a full disk, or by the antivirus this machine
+/// documents in `AGENTS.md` §4, left a truncated file at the real name — and every later
+/// call short-circuited on it, so the artefact meant to be the way back was a fragment
+/// for ever, with nothing reporting it. This is the same tmp-then-rename discipline
+/// [`persist_migration`] already uses for the converted file, applied to the copy of the
+/// original; the scratch name is removed on every failure path, so a failed copy leaves
+/// no file at all rather than a wrong one.
+///
+/// **What is not tested here, and should be named rather than implied.** Forcing a copy
+/// to fail mid-way needs a fault seam this function does not pass through (the store's
+/// `WriteFault` covers append and migrate operations, not `fs::copy`), so the failure
+/// branch is exercised only by inspection. What a test *does* pin is the other half: that
+/// a successful conversion leaves no scratch file behind
+/// (`a_conversion_leaves_no_scratch_file_beside_the_backup`).
 fn keep_original_beside(path: &Path) -> std::io::Result<()> {
     let backup = original_backup_path(path);
     if backup.exists() {
         return Ok(());
     }
-    std::fs::copy(path, &backup).map(|_| ())
+    let mut scratch_name = backup.as_os_str().to_os_string();
+    scratch_name.push(".partial");
+    let scratch = PathBuf::from(scratch_name);
+    if let Err(e) = std::fs::copy(path, &scratch) {
+        let _ = std::fs::remove_file(&scratch);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&scratch, &backup) {
+        let _ = std::fs::remove_file(&scratch);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// ISO-8601 UTC timestamp for new headers (pi's `new Date().toISOString()`).
