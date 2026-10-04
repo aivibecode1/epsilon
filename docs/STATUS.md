@@ -119,6 +119,25 @@ configuration:**
 
 ## Verification (what is actually true)
 
+**Five milestones landed this session (M298–M302), each with its own battery.** All five are
+committed, and the working tree is clean. Between them they closed one **data-loss** defect, one
+**permission-inheritance** defect, and three **accessibility/visibility** defects — and two of
+the nine defects were in the *tests* rather than the product, which is only visible on a machine
+somebody has actually used.
+
+| Milestone | What it closed | Battery |
+|---|---|---|
+| M298 | `/restore` deleted a file the user edited after the agent created it | `gate-m298` (and `-r`, `-r2`) |
+| M299 | The owner's report — four defects, one a silent faux fallback | `gate-m299r2` |
+| M300 | A session-remembered "always allow" reached every subagent | `gate-m300` |
+| M301 | Two `Role::Unknown` nodes: an unnamed file row and a roleless splitter | `gate-m301` |
+| M302 | The window had no landmarks; three files said it could not have them | `gate-m302` |
+
+**Every one has a negative control**, and two of them produced output that states the defect in
+one line: the subagent permission test fails with `left: 1, right: 2` (one ask where two are
+required), and the `/model` durability test fails printing the **old** model on the left and the
+**user's choice** on the right.
+
 **Green full-workspace battery, latest measured 2026-10-04 (M302):**
 [`../audit/evidence/gate-m302-2026-10-04.txt`](../audit/evidence/gate-m302-2026-10-04.txt).
 Ten legs, all `[exit=0]`. **2,035 passed / 0 failed / 7 ignored across 78 binaries**, summed from
