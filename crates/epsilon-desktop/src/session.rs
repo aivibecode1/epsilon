@@ -928,6 +928,18 @@ impl IdeSession {
         &self.approvals
     }
 
+    /// A handle to this session's runtime, so a caller can `enter` it.
+    ///
+    /// **Exists because of a quiet failure (M312).** `ask_line`, the goal round driver and the
+    /// compaction path all use `tokio::runtime::Handle::try_current`, which returns `None` and
+    /// makes them **degrade quietly** — the round driver resets its pending flag and returns, so
+    /// the feature simply does not happen. That is the shape of the freeze this harness exists to
+    /// remove, and a test that has to park an ask has no way to get onto the runtime that owns
+    /// the agent otherwise.
+    pub fn runtime_handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
     /// Whether a run is in flight.
     pub fn running(&self) -> bool {
         self.running.load(Ordering::Relaxed)

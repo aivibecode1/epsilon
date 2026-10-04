@@ -2192,11 +2192,27 @@ impl IdeApp {
     /// budget below; the budget exists for the tests and for anyone who ignores it.
     fn figures(&self, width: f32, scale: f32) -> Option<String> {
         let m = self.metrics.as_ref()?;
-        let mut parts = vec![m.context_gauge(), m.token_gauge()];
+        let mut parts = vec![m.context_gauge(), Self::token_figures(m)];
         // `cost_gauge` is `None` until something has been billed, which is the honest
         // empty state and the same one the terminal header prints.
         parts.extend(m.cost_gauge());
         Some(fit(&parts.join("  ·  "), width * 0.5, 12.0 * scale))
+    }
+
+    /// The token totals in words this window's font can draw (M312).
+    ///
+    /// [`Metrics::token_gauge`] is `↑12k ↓3k`, and **the arrows render as two empty boxes here**:
+    /// this window installs no font of its own, so egui's bundled one draws it, and that font has no
+    /// `U+2191`/`U+2193`. The terminal's font does, which is why the same string is right in one
+    /// front end and **two tofu boxes** in the other — visible in the title bar of every rendered
+    /// frame as `ctx 1%/1.0M · □0 □0`, and the same class of defect M305 found in the sidebar hint.
+    ///
+    /// **The shared formatter is still used**, so the numbers are spelled exactly as the terminal
+    /// spells them (`12k`, `3.4k`); only the two arrows become words. This is M305's answer again —
+    /// a glyph the font cannot draw is a **missing** measurement, and a missing measurement is worse
+    /// than a spelled-out one.
+    pub fn token_figures(m: &epsilon_tui::ui::metrics::Metrics) -> String {
+        m.token_gauge().replace('↑', "in ").replace('↓', "· out ")
     }
 
     /// The colour the figures are drawn in: a warning once the context is worth watching.
@@ -5571,7 +5587,13 @@ mod tests {
         let expected = format!(
             "{}  ·  {}  ·  {}",
             m.context_gauge(),
-            m.token_gauge(),
+            // **The token gauge in this window's spelling, not the terminal's (M312).** The shared
+            // string is `↑12k ↓3.4k` and this window's font draws the arrows as two empty boxes —
+            // the frame showed `ctx 1%/1.0M · □0 □0` in the title bar of every rendered window.
+            // Everything else is still the terminal's vocabulary, which is what this assertion was
+            // written to hold: a window that invents its own numbers is the failure, and the
+            // numbers are still the shared formatter's, only the two arrows are spelled out.
+            IdeApp::token_figures(&m),
             m.cost_gauge().expect("a priced session has a cost")
         );
         h.app.metrics = Some(m);
@@ -7122,6 +7144,83 @@ mod tests {
                 h.app.review = Some(change);
             }
             written += save_frame(&mut h, &dir, "06-change-review.png");
+        }
+
+        // 7. **A permission ask with its buttons — the state the whole product exists for, and
+        //    the one nobody had ever seen drawn.** The frame above (01) shows the ask *without*
+        //    them, because its window has no session and the pane says "not connected to an
+        //    agent". A previous milestone recorded that reaching the drawn buttons was not
+        //    possible: `ChannelApprovalUi` has no way to *park* an ask, only the agent can produce
+        //    one — and the drawer reads `pending_approvals()`, so a seeded transcript row has
+        //    nothing behind it.
+        //
+        //    It **is** reachable, and the existing `channel_ui` test shows how: spawn the ask and
+        //    leave it parked. The runtime is the other half — `ask_line` and the round driver both
+        //    use `try_current`, which degrades **quietly** without a context, and this is exactly
+        //    the trap that file's doc records.
+        {
+            use epsilon_contracts::agent_event::PermissionRequest;
+            let (ws, _keep) = scratch_workspace("frames-approval-live");
+            let (session, notices) = faux_session(&ws);
+            let runtime = session.runtime_handle();
+            let mut h = Harness::with_session(ws, session, notices);
+
+            let ask = PermissionRequest {
+                request_id: "ask-live".into(),
+                capability: "bash".into(),
+                pattern: "rm -rf target".into(),
+                detail: serde_json::json!({ "command": "rm -rf target" }),
+            };
+            let ui = Arc::clone(h.app.session.as_ref().expect("a session").approvals());
+            // `ask` is a trait method on `ApprovalUi`; without the trait in scope the park is a
+            // compile error rather than a finding, which is at least honest.
+            use epsilon_safety::ApprovalUi as _;
+            let _guard = runtime.enter();
+            tokio::spawn(async move {
+                // Left parked on purpose: this is the state a blocked run is in.
+                let _ = ui.ask(ask).await;
+            });
+            while h
+                .app
+                .session
+                .as_ref()
+                .expect("a session")
+                .pending_approvals()
+                .is_empty()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+
+            let mut t = Transcript::new(std::env::temp_dir());
+            t.push_user("delete the build directory");
+            h.app.seed_transcript(t);
+
+            // **Render FIRST, then read the accessibility tree — in that order, always.** `a11y_frame`
+            // clears `textures_delta` on purpose, and the font atlas lives in it, so asking for
+            // the tree first and rasterising after produces **a blank white image**: the frame
+            // that recorded the buttons was the frame that destroyed the glyphs. The raster test's
+            // own comment says this and this ordering is the other half of it.
+            written += save_frame(&mut h, &dir, "07-approval-with-buttons.png");
+
+            // **Asserted on the accessibility tree, not on `FrameSummary::rows`.** The buttons
+            // are egui widgets, and `rows` records only *painted* text — so the first version of
+            // this assertion looked for the word `Allow` in a list of painted strings and could
+            // not have passed. The node is the better question anyway: it is what the platform
+            // receives, and an approval the reader cannot reach by name is not an approval.
+            let nodes = h.named_nodes();
+            assert!(
+                nodes.iter().any(|(label, _)| label == "Allow"),
+                "**the Allow button must be on screen** — this is the interaction the product is \
+                 built around, and the first version of this check looked for it in the painted \
+                 text where a button's name never appears. Nodes: {:?}",
+                nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
+            );
+            assert!(
+                nodes.iter().any(|(label, _)| label == "Refuse"),
+                "and refusing must be one click away from allowing: {:?}",
+                nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
+            );
+            drop(_guard);
         }
 
         eprintln!(

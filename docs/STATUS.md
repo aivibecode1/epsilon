@@ -377,6 +377,32 @@ painted and never allocated. **Every one of them was invisible to a suite of 2,0
 because the suite asserts *which* strings were drawn and all of them were. The instrument that found
 them is the cheapest thing in the repository: render the window and look at it.
 
+### Two more from the frames: the approval nobody had seen, and two empty boxes in the title bar
+
+**The state the product exists for had never been rendered.** Frame 01 showed an ask *without* its
+buttons, because its window has no session. A previous milestone recorded that reaching the drawn
+buttons was **not possible** — `ChannelApprovalUi` has no way to *park* an ask and the drawer reads
+`pending_approvals()` — and gave up the drawn assertion.
+
+It **is** reachable, and the way is written down in `channel_ui`'s own test: spawn the ask and leave
+it parked. The other half is the runtime, and `IdeSession::runtime_handle()` now exists for it
+because `ask_line`, the round driver and the compaction path all use `try_current`, which **degrades
+quietly** without a context — the shape of freeze this harness exists to remove. Frame 07 is the
+first image of it: the ask, its key hints, **`Allow` and `Refuse`**, and `1 permission ask waiting` in
+the status bar.
+
+**And the first version of that assertion was wrong in an instructive way.** It looked for the word
+`Allow` in `FrameSummary::rows`, which records **painted text** — a button's name never appears
+there, so the check could not have passed. It now asks the accessibility tree, which is the better
+question anyway: an approval a reader cannot reach **by name** is not an approval.
+
+**Two empty boxes in the title bar, on every frame.** `ctx 1%/1.0M · □0 □0` — `Metrics::token_gauge`
+is `↑12k ↓3k`, and **egui's bundled font has no `U+2191`/`U+2193`**; this window installs no font of
+its own. The terminal's font does, which is why the same string is right in one front end and two
+tofu boxes in the other. The numbers are still the shared formatter's — only the two arrows are
+spelled out, in the title bar and in `/session`. **M305's answer applied again**: a glyph the font
+cannot draw is a *missing* measurement, and a missing measurement is worse than a spelled-out one.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:

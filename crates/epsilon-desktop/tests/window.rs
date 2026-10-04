@@ -1123,10 +1123,16 @@ fn the_window_names_the_provider_the_launch_chose() {
 /// **Negative control.** With the `painter.text` call for the figures removed, the region is
 /// empty and the first assertion fails on `parts.len() == 0`. With `refresh_metrics` removed
 /// from `pump`, the cached figures stay at whatever `IdeApp::new` seeded them — no cost, no
-/// token totals — and the assertion on the third fragment fails with `["ctx …", "↑0 ↓0"]`.
+/// token totals — and the assertion on the third fragment fails with `["ctx …", "in 0 · out 0"]`.
 /// With `read_metrics` returning `Metrics::idle()` unconditionally, the first fragment is
 /// `ctx ?` and the `contains('%')` assertion fails, because there is no window to be a share
 /// of.
+///
+/// **The token fragment is asserted on words, not arrows (M312).** It used to assert
+/// `U+2191`/`U+2193`, which this window's font **draws as two empty boxes** — egui's bundled font
+/// has neither, and every rendered frame showed `ctx 1%/1.0M · □0 □0` in its title bar. The
+/// numbers are still the shared formatter's; only the two glyphs are spelled out, which is M305's
+/// answer applied again.
 #[test]
 fn the_window_draws_the_context_and_cost_figures_on_its_title_bar() {
     let ws = tempfile::tempdir().expect("a workspace");
@@ -1198,7 +1204,7 @@ fn the_window_draws_the_context_and_cost_figures_on_its_title_bar() {
         frame.describe()
     );
     assert!(
-        parts[1].contains('\u{2191}') && parts[1].contains('\u{2193}'),
+        parts[1].contains("in ") && parts[1].contains("out "),
         "the second is the token totals, in and out.\n{}",
         frame.describe()
     );

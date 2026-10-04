@@ -40,6 +40,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   now allocated, which advances the cursor by exactly the row height. Found by rendering these two
   states and looking at them, and asserted on the frames' recorded row rectangles rather than on
   their text, because the text was never wrong (M312).
+- **The window's title bar printed two empty boxes where the token totals should be.** The shared
+  gauge is `↑12k ↓3k` and this window installs no font of its own, so egui's bundled one draws it —
+  and that font has neither arrow. Every rendered frame showed `ctx 1%/1.0M · □0 □0`. The numbers
+  are still spelled by the shared formatter; the two arrows are now words, in the title bar and in
+  `/session` (M312).
 - **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
   registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
   window that already had a subagents pane, a session it can name, and a transcript it can empty.

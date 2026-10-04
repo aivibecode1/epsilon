@@ -293,7 +293,10 @@ impl IdeApp {
         if let Some(m) = self.metrics.as_ref() {
             parts.push(m.model_label.clone());
             parts.push(m.context_gauge());
-            parts.push(m.token_gauge());
+            // **Words, not arrows** — see [`crate::app::token_figures`]: egui's bundled font has
+            // no `U+2191`/`U+2193`, and `/session` is the one command whose whole job is to
+            // report numbers a reader is meant to trust.
+            parts.push(IdeApp::token_figures(m));
         }
         parts.push(self.run_state().to_string());
         parts.join("  ·  ")
