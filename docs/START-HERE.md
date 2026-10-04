@@ -32,7 +32,8 @@ same rules decide. That is the central design idea, and it is worth checking for
 the same request in both and compare what happens.
 
 **It runs anywhere a Rust toolchain does.** One binary. No Node, no Python, no companion
-service. `cargo install` and it works.
+service. Install it from source with `cargo install --path crates/epsilon-cli` — it is **not
+published to crates.io**, so the `--path` form is the one that works.
 
 **You can read it in one sitting.** The interesting code is in about fourteen small folders
 under `crates/`, each with one job. The map is in §3.
@@ -71,7 +72,8 @@ If you have an hour, in this order.
 | 1 | [`../README.md`](../README.md) | The product, in plain terms |
 | 2 | [`STATUS.md`](STATUS.md) | **What is true right now** — what works, what is cut, what is broken |
 | 3 | [`../AGENTS.md`](../AGENTS.md) | The rules, the invariants, the commands |
-| 4 | [`design/epsilon-architecture.md`](design/epsilon-architecture.md) | How the pieces connect. Read its warning box: it is partly stale, and says so |
+| 4 | [`../AGENTS.md`](../AGENTS.md) §3, the repository map | Where each crate is and what it is for, **kept true** — this is the current map |
+| 4b | [`design/epsilon-architecture.md`](design/epsilon-architecture.md) | The dependency graph in more detail, and the history of why the layout is what it is. **Read its warning box first:** it is a dated snapshot from the audit era and says so, so treat a specific claim in it as a hypothesis to check rather than as current description |
 | 5 | [`design/epsilon-decisions.md`](design/epsilon-decisions.md) | Why it is built this way, decision by decision |
 | 6 | [`references/README.md`](references/README.md) | Where the ideas came from, and [`CREDITS.md`](../CREDITS.md) for the formal credit |
 | 7 | [`START-HERE.md`](START-HERE.md) (this file) | The map and the vocabulary |

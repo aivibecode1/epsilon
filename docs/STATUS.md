@@ -258,6 +258,29 @@ four fixes change what the window *announces*, not what it draws, and the fourth
 that is zero in this fixture. A pixel-identical frame is the evidence that none of them moved a
 pixel it should not have.
 
+### The reading guide, walked as a newcomer — and one claim that was simply false
+
+The definition of done asks for `docs/START-HERE.md` to be followed by someone who has never seen
+the project. Doing that found **one false claim and one bad instruction**, both in the ten-minute
+tour:
+
+- **"`cargo install` and it works" was false.** `epsilon-cli` is not published —
+  `https://crates.io/api/v1/crates/epsilon-cli` answers **404**, *crate does not exist*. Every other
+  document in the tree, `README.md:46` and `docs/user/install.md:18` included, gives the correct
+  `cargo install --path crates/epsilon-cli` form; **only the two START-HERE files, English and
+  Arabic, told a newcomer the form that does not exist.** Both fixed, and both now say why the
+  `--path` form is the one to use.
+- **Step 4 of the reading order sent a newcomer to a document that disclaims itself.** The order
+  put `design/epsilon-architecture.md` fourth — "read its warning box: it is partly stale, and says
+  so". True, and still the wrong fourth step: an hour is a lot to spend on a guide whose own
+  advice is to treat each claim as a hypothesis. The map in `AGENTS.md` §3 is maintained and true,
+  and is now step 4; the dated snapshot moved to 4b with its warning intact.
+
+Checked and found true, so left alone: the fourteen-crate map, the mermaid diagram against
+`AGENTS.md` §2, the `--demo` command (the battery runs it), and Ponytail's attribution, which
+`CREDITS.md` states from the repository's own records — including the awkward part, that the commit
+identity reads `Peter <…>` rather than the handle.
+
 ### M311 — the two silent sites, fixed with machinery that already existed
 
 **This is the prerequisite M310 named, done.** M310 established that making `append` refuse would
@@ -810,10 +833,28 @@ and [`../audit/evidence/plan024-item7-class-b-rederived.md`](../audit/evidence/p
    moment the three verbs landed. Cheapest remaining wins, by the same criterion: `/expand` (the
    card expansion the transcript already has), `/reload`, and `/settings` if a settings surface
    exists.
-2. **One unnamed `ScrollBar`** (`../audit/evidence/desktop-uia-tree-2026-10-04.txt`). Not a one-liner:
-   `Context::accesskit_node_builder` is **get-or-create**, so naming both axes unconditionally would
-   create two *phantom* nodes for a bar that is not shown. `desktop-a11y-probe.ps1` exits 1 on any
-   unnamed node and is deliberately not a gate leg while this is open.
+2. **One unnamed `ScrollBar`** (`../audit/evidence/desktop-uia-tree-2026-10-05.txt`). **Re-measured
+   2026-10-05, and the answer is now four line numbers rather than "it is hard".** In
+   `egui-0.36.2/src/containers/scroll_area.rs`: the predicate is `content_is_too_large` at
+   **`:1203-1206`**, gated on `ScrollBarVisibility` at **`:1256-1260`** (`VisibleWhenNeeded` — the
+   default — makes it the predicate directly), and the bar is skipped entirely when
+   `show_factor == 0.0` at **`:1287-1288`**. The node's id is computable: `interact_id =
+   id.with(d)` at **`:1293`**, with `d == 1` the vertical axis.
+
+   **Two routes were tried on paper and neither is the fix.** `ScrollAreaOutput` publishes
+   `content_size` and `inner_rect`, and its own doc says content larger than `inner_rect` means
+   scrolling was needed — but egui compares against `limit_rect`, which is `outer_rect` when the
+   bars float (`:1197-1201`), so the published pair does not reproduce the threshold and guessing
+   it risks a **phantom** node, which the handoff already rejected as worse than an unnamed one.
+   The other route, `Context::read_response` (`context.rs:1348-1355`), is public and returns `None`
+   for a widget not visible this pass — but its own doc says "this pass **or the previous one**",
+   so it is **one frame stale at the boundary**: it would publish a phantom for one frame after
+   the bar disappears, which is exactly when the probe samples. Conjunction of the two trades a
+   phantom for missing labels in a few pixels of margin.
+
+   **Recorded, not half-fixed**, and `desktop-a11y-probe.ps1` still exits 1 for it. A gate that is
+   red for a known finding gets deleted rather than read, which is how this repository lost a check
+   before.
 3. **A high-contrast palette.** `AGENTS.md` §8 names it; the product has two palettes. The `/theme`
    description used to promise it and the code refused it — the description is now honest and the
    *capability* is still missing. It wants one palette table per front end and **measured** contrast,
