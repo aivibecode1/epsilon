@@ -645,6 +645,25 @@ impl Transcript {
         }))
     }
 
+    /// Empty the view, keeping every durable thing (M312).
+    ///
+    /// **A view, not the conversation.** Nothing here is lost: the rows are a projection of the
+    /// session file, and the figures the window shows come from [`IdeSession`](crate::session::IdeSession)
+    /// rather than from these rows, so `/clear` leaves the token totals on screen exactly as the
+    /// terminal's does. The terminal's sentence says the same — *"transcript cleared — session
+    /// totals kept"* — and both front ends say it because it is the truth about both.
+    ///
+    /// **The live indices are cleared too, and that is the whole subtlety.** `live_assistant`
+    /// and `live_thinking` are *absolute* positions into `rows`; leaving them set would make
+    /// the next stream update write into a row that no longer exists, or into whatever took its
+    /// place. `trim` already had to learn that for the same reason (`rows.drain`), which is why
+    /// this is stated here as well as written there.
+    pub fn clear(&mut self) {
+        self.rows.clear();
+        self.live_assistant = None;
+        self.live_thinking = None;
+    }
+
     /// Drop the oldest rows past [`MAX_ROWS`].
     ///
     /// In one `drain`, not per row: a flood of events would otherwise be O(n) per event.

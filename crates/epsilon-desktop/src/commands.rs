@@ -125,11 +125,30 @@ impl IdeApp {
                 self.set_sidebar_view(crate::app::SidebarView::Sessions);
                 Outcome::Ran("sessions — click one to resume it".to_string())
             }
+            // **`/tasks` opens the pane the activity bar already draws (M312).** The window has
+            // had a subagents pane since it was built and a button beside the files one; the
+            // slash command the terminal has went on refusing it by name. This is the arm that
+            // costs nothing — the effect is a `set_sidebar_view` the button already performs.
+            Command::Tasks => {
+                self.set_sidebar_view(crate::app::SidebarView::Tasks);
+                Outcome::Ran("subagents — this session's dispatched agents".to_string())
+            }
+            // **`/session` reports rather than opens (M312).** The terminal's prints the file,
+            // the leaf and the entry count; a window has no leaf to speak of, so this says what
+            // it can see — the file, the model, the context and the state.
+            Command::Session => Outcome::Ran(self.session_summary()),
+            // **`/clear` empties the view and keeps the totals (M312)**, exactly as the
+            // terminal's does and for the same reason: the rows are a projection of the
+            // session file, and the figures come from the session rather than from them.
+            Command::Clear => {
+                self.transcript.clear();
+                Outcome::Ran("transcript cleared — the session file keeps everything".to_string())
+            }
 
             // ---- everything else is the terminal's, and saying so is the feature ----
             //
             // `other` covers every command outside SUPPORTED, because SUPPORTED and these
-            // three arms name the same three commands and
+            // arms name the same six commands and
             // `the_window_runs_exactly_the_heads_it_declares_supported` is what holds them
             // to it. A head the window does not have is refused *by name* rather than
             // forwarded to the model: a window that silently swallows a command the
@@ -254,6 +273,33 @@ fn refusal_for(command: &Command, name: &str) -> String {
     }
 }
 
+/// What `/session` says, in one line a reader can read off the screen (M312).
+///
+/// **The window's half of the terminal's `/session`, not a second `/session`.** The terminal
+/// prints the file, the current leaf and the entry count; a window has no leaf to speak of and
+/// no tree to walk, so this prints the file, the model, the context gauge and the state — the
+/// four facts this window actually holds, in the terminal's one-line shape.
+///
+/// Everything is `Option`-guarded because all of it is: a window can be opened with no session,
+/// and a session can be running with no durable file (`--faux`, a child agent). **A missing
+/// piece is named rather than omitted**, because a `/session` line that silently drops the model
+/// reads as "there is no model".
+impl IdeApp {
+    fn session_summary(&self) -> String {
+        let Some(path) = self.session.as_ref().and_then(|s| s.session_path()) else {
+            return "session: no durable session file attached to this window".to_string();
+        };
+        let mut parts = vec![format!("session: {}", path.display())];
+        if let Some(m) = self.metrics.as_ref() {
+            parts.push(m.model_label.clone());
+            parts.push(m.context_gauge());
+            parts.push(m.token_gauge());
+        }
+        parts.push(self.run_state().to_string());
+        parts.join("  ·  ")
+    }
+}
+
 /// The head the reader typed, for the refusal.
 ///
 /// **Three lines of tokenising, and no table.** This is the only place the window needs a
@@ -346,10 +392,11 @@ pub fn refused_heads() -> Vec<&'static str> {
 ///
 /// **This is the only hand-written statement of the window's capability in the tree**, and it
 /// is a declaration rather than an implementation: [`IdeApp::try_command`] holds the arms that
-/// run these three, and `the_window_runs_exactly_the_heads_it_declares_supported` is what keeps
-/// those two statements of one fact in step. Everything else about a command — which
-/// spellings reach it, what they parse to, what the refusal calls it — is read from the
-/// terminal or from the reader's own line.
+/// run these six, and `the_window_runs_exactly_the_heads_it_declares_supported` and
+/// `every_head_the_parser_knows_is_answered_or_refused_by_name` are what keep those two
+/// statements of one fact in step. Everything else about a command — which spellings reach it,
+/// what they parse to, what the refusal calls it — is read from the terminal or from the
+/// reader's own line.
 ///
 /// A command the window can run is one the terminal can run, so this set is a **subset** by
 /// construction and not by luck.
@@ -358,10 +405,18 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// refusing by name, which is a product decision with an ADR attached — not a way to make an
 /// assertion pass.
 ///
+/// **A macro that emits both this and the arms was tried and does not work (M312).** The idea is
+/// the right one — one list, no drift — and `macro_rules!` cannot express it: it will not expand
+/// inside a match's arm-list, so it would have to write the whole function from **item** position,
+/// where its arguments are parsed as *items* and `self.run_compact()` is not an item. The
+/// measured failure is `E0424: expected value, found module self` at every arm. The two tests
+/// named above are what hold the pair together instead, and the drift this would have prevented
+/// is a **red test**, not a shipped lie.
+///
 /// `/new` is **not** here: the terminal's starts a new session *file* (M221) and the window
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
-pub const SUPPORTED: &[&str] = &["compact", "goal", "sessions"];
+pub const SUPPORTED: &[&str] = &["clear", "compact", "goal", "session", "sessions", "tasks"];
 
 #[cfg(test)]
 mod tests {
@@ -602,21 +657,35 @@ mod tests {
 
     /// **The window runs exactly the heads it declares it runs.**
     ///
-    /// [`SUPPORTED`] is the declaration and the three arms in [`IdeApp::try_command`] are the
+    /// [`SUPPORTED`] is the declaration and the arms of [`IdeApp::try_command`] are the
     /// implementation, and this is the only place the two are compared. Spelled out by hand
     /// on purpose: the whole point of this file is that the command list is *read*, so a
     /// check deriving both sides from the same source could not see them disagree.
     ///
     /// It fails when a name is added to `SUPPORTED` with no arm to run it — the drift the
     /// guard test in `tests/window.rs` cannot see, because that test compares two lists and
-    /// a name the window refuses while claiming to run it appears in neither.
+    /// a name the window refuses while claiming to run it appears in neither. **It did exactly
+    /// that at M312**, when `/tasks`, `/session` and `/clear` were declared before this list
+    /// knew them.
+    ///
+    /// **This is a third hand-written list, and it is the price of the two others.** A macro
+    /// that emitted all three would need to expand inside a match's arm-list, which
+    /// `macro_rules!` cannot do — see [`SUPPORTED`] for the measured failure. Two tests hold
+    /// the pair together instead, so the drift this would have prevented is a red test rather
+    /// than a shipped lie.
     #[test]
     fn the_window_runs_exactly_the_heads_it_declares_supported() {
-        let implemented: Vec<&'static str> =
-            [Command::Compact, Command::Goal(None), Command::Sessions]
-                .iter()
-                .filter_map(|command| head_of(command))
-                .collect();
+        let implemented: Vec<&'static str> = [
+            Command::Clear,
+            Command::Compact,
+            Command::Goal(None),
+            Command::Session,
+            Command::Sessions,
+            Command::Tasks,
+        ]
+        .iter()
+        .filter_map(|command| head_of(command))
+        .collect();
         assert_eq!(
             implemented,
             SUPPORTED.to_vec(),

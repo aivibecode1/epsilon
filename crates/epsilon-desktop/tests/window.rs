@@ -1723,6 +1723,83 @@ fn every_command_head_the_window_lacks_is_refused_by_name() {
     }
 }
 
+/// **The three verbs M312 added do what they say, and `/clear` loses nothing (M312).**
+///
+/// The guard above proves each declared head *runs*; it cannot say whether it ran the **right**
+/// thing, which is the half a reader notices. So each verb is checked for its effect:
+///
+/// - `/tasks` moves the sidebar to the pane the activity bar's button already opens;
+/// - `/session` names the session file and the model, in one line;
+/// - `/clear` empties the view **and leaves the durable session and the figures alone**.
+///
+/// **The `/clear` half is the one that could have been wrong in a way nobody would see.** The
+/// rows are a projection of the session file, so clearing them loses nothing durable — and the
+/// figures come from the session rather than from the rows, so they survive too. The terminal
+/// says exactly this (*"transcript cleared — session totals kept"*), and this asserts the same
+/// property on this window rather than trusting that it is the same code.
+#[test]
+fn the_verbs_added_at_m312_do_what_they_say() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (_ctx, mut app) = wire(ws.path());
+
+    // Something to clear, seeded the way every other window test seeds a transcript.
+    let mut seeded = epsilon_desktop::session::Transcript::new(ws.path().to_path_buf());
+    seeded.push_user("a row that /clear will remove");
+    seeded.push_notice("and a notice beside it");
+    app.seed_transcript(seeded);
+    assert_eq!(
+        app.transcript().rows().len(),
+        2,
+        "the fixture must have something in the transcript or /clear proves nothing"
+    );
+
+    let Outcome::Ran(said) = app.try_command("/tasks") else {
+        panic!("/tasks must run in this window");
+    };
+    assert!(
+        app.sidebar_view() == epsilon_desktop::app::SidebarView::Tasks,
+        "`/tasks` must open the pane it names — the same pane the activity bar's button opens. \
+         Said: {said}"
+    );
+    assert!(said.contains("subagents"), "and say what it opened: {said}");
+
+    let Outcome::Ran(said) = app.try_command("/session") else {
+        panic!("/session must run in this window");
+    };
+    assert!(
+        said.starts_with("session: "),
+        "`/session` must name the session it is reporting on: {said}"
+    );
+
+    let Outcome::Ran(said) = app.try_command("/clear") else {
+        panic!("/clear must run in this window");
+    };
+    assert!(
+        said.contains("session file keeps everything"),
+        "**and it must say what survived**, because a window that empties without saying so reads \
+         as a window that lost the conversation: {said}"
+    );
+    assert_eq!(
+        app.transcript().rows().len(),
+        0,
+        "the view is empty, which is the whole effect of /clear"
+    );
+    // **The durable half, checked through the same surface the reader would use.** The rows are
+    // a view of the session file; the file is untouched, and `/session` — which reads the
+    // session, not the view — still answers. If clearing had detached the session, this is the
+    // sentence that would change.
+    let Outcome::Ran(after) = app.try_command("/session") else {
+        panic!("/session must still run after a clear");
+    };
+    assert!(
+        after.starts_with("session: ") && !after.contains("no durable session file"),
+        "**clearing the view must not unhook the session** — the rows are a projection, and a \
+         window that lost its session file would say so here: {after}"
+    );
+}
+
 /// **A gate declared in the window gates the goal — the window can now declare one.**
 ///
 /// Until M267 the window refused `/goal edit`, `/goal complete` and `/goal blocked` **by name**,

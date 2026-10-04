@@ -3803,7 +3803,10 @@ impl IdeApp {
     /// "idle" above a node named "running" is the exact disagreement this window cannot
     /// have: for a reader who cannot see the bar, the node is the only account of it there
     /// is.
-    fn run_state(&self) -> &'static str {
+    /// `pub(crate)` because `/session` reports the same three words (M312) — the same rule that
+    /// makes this the one function both places call, rather than a second copy of "is a turn in
+    /// flight" written beside it.
+    pub(crate) fn run_state(&self) -> &'static str {
         match self.session.as_ref() {
             None => "no agent attached",
             Some(s) if s.running() => "running",

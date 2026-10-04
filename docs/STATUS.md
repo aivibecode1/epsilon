@@ -134,26 +134,26 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m312green`](../audit/evidence/gate-m312green-2026-10-05.txt),
+**Latest green battery: [`gate-m312cmd`](../audit/evidence/gate-m312cmd-2026-10-05.txt),
 2026-10-05 — the tree this file describes.** Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,053 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines — 9 more than M311's 2,044, which is the seven tests M312 adds and the
-two the `note_lag` rewrite replaces. `check-links`: **810 relative links, 0 broken**. The eighth
-ignored test is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter.
-Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
-`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
-set by the caller and so is not in the log's own header** — it is appended to the evidence file by
-hand, which is the only reason a reader can find it at all.
+**2,054 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **813 relative links, 0 broken**. The eighth ignored test
+is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter. Knobs, because
+they change what the evidence is: `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is set by the caller and so is not
+in the log's own header** — it is appended to the evidence file by hand, which is the only reason a
+reader can find it at all.
 
-**Four batteries were spent getting there, and three of the failures were worth the time.**
+**Six batteries were spent getting there, and four of the failures were worth the time.**
 `gate-m312` failed `fmt` on two nits **and** the test leg on five goal-round tests — the fixture
 that deletes its own session directory, described above. `gate-m312r` failed `clippy` on a
 redundant guard and the test leg on a `Metrics` literal the desktop builds. `gate-m312s` failed
 `test` on four desktop tests, because the duplicate-`README.md` fixture I added lives in
 `scratch_workspace`, which **every** desktop test walks — a shared fixture is the wrong home for a
-fact one test needs, and moving it into the test fixed all four at once. `gate-m312final` failed
-on `no_source_file_lost_a_test_since_head`, the repository's own guard objecting that I had deleted
-a test; the replacement was renamed to keep the old name, which is what the guard is for.
+fact one test needs, and moving it into the test fixed all four at once. `gate-m312final` failed on
+`no_source_file_lost_a_test_since_head`, the repository's own guard objecting that I had deleted a
+test; the replacement was renamed to keep the old name, which is what the guard is for. Then
+`gate-m312green` went green, and `gate-m312cmd` re-ran it over the three new desktop verbs.
 
 | Milestone | What it closed | Battery |
 |---|---|---|
@@ -799,14 +799,17 @@ tree on 2026-10-04; the two investigations behind them are
 [`../audit/evidence/plan024-item5-desktop-commands.md`](../audit/evidence/plan024-item5-desktop-commands.md)
 and [`../audit/evidence/plan024-item7-class-b-rederived.md`](../audit/evidence/plan024-item7-class-b-rederived.md).
 
-1. **The desktop answers 3 of 37 commands** — `/compact`, `/goal`, `/sessions`. 34 more are refused
-   **by name**, which is honest, but a third of the surface is thin. Cheapest wins, because the
-   action already exists in the window: `/tasks` (that pane is already drawn), `/session` (reuses
-   `figures`/`model_suffix`), `/clear` (~6 lines), `/resume` in its bare form. **`window_runs` has no
-   production caller** — it feeds `refused_heads()` and two tests, so the declaration and the
-   implementation are two statements of one fact joined by a test. A `macro_rules!` in item position
-   can emit both from one list and delete the drift test outright; that is the real work, and adding
-   arms without it is the easy part.
+1. ~~**The desktop answers 3 of 37 commands**~~ **PARTLY LANDED (M312, ADR-029): six.** `/tasks`,
+   `/session` and `/clear` joined, each because the window already had the effect. `/new` and
+   `/resume` stay refused by name — the first starts a session file this window cannot, the second
+   is a handover `SidebarView::Sessions` still declines. **What did not land is the mechanism:**
+   `SUPPORTED` and the arms are still two lists, because the macro that would merge them does not
+   work — a `macro_rules!` will not expand inside a match's arm-list, and from item position its
+   arguments are parsed as items (`E0424: expected value, found module self`). The two tests hold
+   the pair, and `the_window_runs_exactly_the_heads_it_declares_supported` caught the drift the
+   moment the three verbs landed. Cheapest remaining wins, by the same criterion: `/expand` (the
+   card expansion the transcript already has), `/reload`, and `/settings` if a settings surface
+   exists.
 2. **One unnamed `ScrollBar`** (`../audit/evidence/desktop-uia-tree-2026-10-04.txt`). Not a one-liner:
    `Context::accesskit_node_builder` is **get-or-create**, so naming both axes unconditionally would
    create two *phantom* nodes for a bar that is not shown. `desktop-a11y-probe.ps1` exits 1 on any

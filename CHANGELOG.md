@@ -5,6 +5,18 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ## [Unreleased]
 
+### Added
+
+- **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
+  registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
+  window that already had a subagents pane, a session it can name, and a transcript it can empty.
+  Each new verb was added because the window already had the effect: `/tasks` opens the pane the
+  activity bar's button opens, `/session` reports the file, the model, the context gauge and the
+  state in one line, and `/clear` empties the view while saying that the session file keeps
+  everything — which is what the terminal front end says and what is true here. `/new` and
+  `/resume` stay refused by name: the first starts a session file this window cannot, and the
+  second is a handover that still needs a confirmation it does not have (M312, ADR-029).
+
 ### Fixed
 
 - **A session whose write lease was taken by another process now refuses to write, instead of

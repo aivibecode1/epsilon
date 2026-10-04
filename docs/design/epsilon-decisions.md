@@ -2359,3 +2359,55 @@ eager, and its meaning is only visible in the control's output.
 
 ---
 
+## ADR-029: The window's command list stays two lists, because a macro cannot express one — and three verbs joined it anyway
+
+**Status: accepted; implemented (M312).**
+
+**Context.** `crates/epsilon-desktop/src/commands.rs` answered **3 of the 37** heads the shared
+registry knows. That is honest — a head the window lacks is refused **by name**, so a reader is
+told where it lives — but the window had a subagents pane and a button that opens it, a session it
+can name, and a transcript it can empty, while `/tasks`, `/session` and `/clear` went on saying
+*"not in this window; it works in the terminal"*. The objective asks for the desktop "to the highest
+standard", and a third of the surface is thin.
+
+The file also had a structural smell: `SUPPORTED` declared what the window runs, the arms of
+`try_command` implemented it, and a hand-written list in a test held the two together.
+`window_runs`, the only reader of `SUPPORTED`, has **no production caller** — it feeds
+`refused_heads()` and tests.
+
+**Decision.**
+
+1. **Three verbs joined, each because the window already had the effect.** `/tasks` is a
+   `set_sidebar_view` the activity bar's button already performs. `/session` reports the file, the
+   model, the context gauge and the state — the four facts this window holds, in the terminal's
+   one-line shape, because a window has no leaf and no tree to walk. `/clear` empties the view and
+   keeps the file and the figures, which is exactly what the terminal's says in its own words.
+   **The criterion was "the action already exists", not "the command is easy"**: `/resume` is a
+   session *handover*, which `SidebarView::Sessions` still declines to do, so it stays refused by
+   name.
+2. **The declaration and the arms stay two lists.** A `macro_rules!` emitting both from one table is
+   the right idea and **does not work**: it will not expand inside a match's arm-list, so it would
+   have to write the whole function from **item** position, where its arguments are parsed as
+   *items*. The measured failure is `E0424: expected value, found module self` at every arm. Two
+   tests hold the pair instead — `the_window_runs_exactly_the_heads_it_declares_supported` and the
+   integration guard that drives every head through the real `try_command` — and **the first of
+   those two caught exactly this drift when the three verbs landed**, which is the evidence that the
+   pair is held by something rather than by hope. What the macro would have prevented is a **red
+   test**, not a shipped lie, and a red test is the cheaper failure.
+3. **A refusal stays the default.** A head with no arm is refused by name, in the reader's own
+   spelling. Growing the set remains a product decision: each name is a verb the window stops
+   refusing.
+
+**Consequences.** `/tasks`, `/session` and `/clear` work in the window — six of 37, up from three.
+/new` and `/resume` still do not, by name and for stated reasons. The refusal set is 31 heads rather
+than 34, and `Transcript::clear` had to reset the live-row indices as well as the rows, because
+those indices are absolute and a stale one writes into the wrong row.
+
+**Alternatives rejected.** *The macro* — measured, above. *Mapping `/resume <path>` onto
+`IdeSession::resume`* — it would replace the live conversation without a confirmation the session
+handover has never had, which `AGENTS.md` §6 forbids. *`/theme` in the window* — it needs a
+high-contrast palette that does not exist yet, so wiring the verb now would repeat the very claim
+`/theme` was just caught making.
+
+---
+
