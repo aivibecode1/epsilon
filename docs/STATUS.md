@@ -118,9 +118,9 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M300):**
-[`../audit/evidence/gate-m300-2026-10-04.txt`](../audit/evidence/gate-m300-2026-10-04.txt).
-Ten legs, all `[exit=0]`. **2,033 passed / 0 failed / 7 ignored across 78 binaries**, summed from
+**Green full-workspace battery, latest measured 2026-10-04 (M301):**
+[`../audit/evidence/gate-m301-2026-10-04.txt`](../audit/evidence/gate-m301-2026-10-04.txt).
+Ten legs, all `[exit=0]`. **2,034 passed / 0 failed / 7 ignored across 78 binaries**, summed from
 that one log's `test result: ok` lines.
 
 The batteries from m299 onwards, and what each failure taught:
@@ -146,7 +146,7 @@ a clean machine cannot see a dependency on machine state.**
 | `check-control-bytes` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS — zero warnings |
-| `cargo test --workspace` | **PASS — 2,033 passed, 0 failed, 7 ignored, 78 binaries** |
+| `cargo test --workspace` | **PASS — 2,034 passed, 0 failed, 7 ignored, 78 binaries** |
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
 
@@ -642,13 +642,20 @@ Next, in order:
      actions but **no role** (`egui-0.36.2/src/context.rs:1292-1297`, `response.rs:908-924`); the
      node starts as `Default::default()` (`context.rs:605`) and `Unknown` is
      `#[default]` (`accesskit-0.24.1/src/lib.rs:63`). `Sense::click()` is focusable
-     (`egui-0.36.2/src/sense.rs:60`). **Exactly two sites in the crate hit that path and never
-     name the result:** one per drawn file-tree row (`workspace.rs:344`) and one per drawn
-     `RowKind::Changed` row (`app.rs:4507`, which returns the response for the click filter and
-     never calls `name_node`). One `name_node` each is the whole fix. **Which of the two produced
-     the dumped node is not proven** — the dump carries no parent links and no bounds, and the
-     window it was taken in had one file and no `Changed` row, which is a *fit* and not a proof.
-     No test in the crate mentions `Role::Unknown` at all, which is how it survived.
+     (`egui-0.36.2/src/sense.rs:60`). **FIXED (M301)** — and there were **two** sites, not the one
+     the dump could show: one per drawn file-tree row (`workspace.rs:344`) and one per drawn
+     `RowKind::Changed` row (`app.rs:4507`). Measuring it rather than trusting the dump also
+     found a second one the dump could not: **the sidebar resize handle**, which had a full name
+     (`Resize sidebar · 264 points · drag, or use the left and right arrow keys`) and still
+     announced as `Role::Unknown`, because naming a node does not give it a role.
+     Both are named *and* roled now — `Role::TreeItem` for a tree row, `Role::Splitter` for the
+     handle (`accesskit-0.24.1/src/lib.rs:189`; `Adjustment` was considered and rejected, since
+     that role is for adjusting a *value*, not a pane's width). The new `name_role` helper
+     documents the one subtlety: it must be called **after** the widget's own `widget_info`,
+     because `fill_accesskit_node_from_widget_info` rewrites the role on the same pass.
+     **The test asserts a property over the whole tree** — *no* node has `Role::Unknown` —
+     rather than "the row I fixed is named", because a test aimed at one node passes with the
+     other still broken, which is exactly what happened here.
 
    **And one claim this section made about itself was wrong.** It said the rows still carry no
    nodes because "ordinary rows are `painter.text` with nothing registered" — they are not:

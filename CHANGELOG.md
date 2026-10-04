@@ -7,6 +7,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **Nothing in the desktop IDE announces as an unnamed, role-less box.** A file-tree row and the
+  sidebar resize handle were focusable and clickable but reached the screen-reader layer with no
+  role and — for the row — no name at all, so a reader could focus a file and be told nothing.
+  Both are now named and carry the right role (`TreeItem`, `Splitter`). A new test asserts that
+  **no** node in the window has an unknown role, rather than checking the two that were fixed
+  (M301).
 - **An "always allow" in the main loop no longer authorises every subagent.** Subagents were built
   with a clone of the parent's permission gate, and that gate holds the session's remembered
   decisions — so one "always allow bash" silently authorised `bash` for every agent spawned

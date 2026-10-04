@@ -368,6 +368,38 @@ pub fn draw_tree(
                             egui::FontId::proportional(13.0 * scale),
                             color,
                         );
+                        // **Name the node, because `Sense::click()` already created one.**
+                        //
+                        // egui allocates an AccessKit node for every focusable widget and fills
+                        // it without a role (`egui-0.36.2/src/context.rs:1292-1297`), so each
+                        // drawn row was a focusable, clickable, **unnamed** node — a screen
+                        // reader could focus a file and be told nothing about it. Caught by
+                        // reading the dumped tree on 2026-10-04, which carried exactly one
+                        // `Role::Unknown` node in a window with one file.
+                        //
+                        // The name says what the row **is** and what activating it does, because
+                        // a bare file name is ambiguous in a tree: a reader has to know whether
+                        // they are on a folder, and that Enter opens the file.
+                        crate::app::name_node(
+                            &response,
+                            &format!(
+                                "File · {}{}",
+                                row.name,
+                                if row.is_dir { " · folder" } else { "" }
+                            ),
+                        );
+                        // **And its role**, which naming it does not supply. The node was
+                        // `Role::Unknown` even once named: egui builds a node for a focusable
+                        // widget and fills it with no role
+                        // (`egui-0.36.2/src/context.rs:1292-1297`, `response.rs:908-924`), and
+                        // a reader that trusts the role first has nothing to announce.
+                        //
+                        // `Role::TreeItem` is the role for a row inside a tree, and it is what
+                        // lets a reader announce the row *in its structure* — "only.md, 1 of 3"
+                        // — rather than as an anonymous focusable box. The tree itself is a
+                        // `Role::Tree` once `workspace_pane` gets its region role; naming the
+                        // rows first is the half that can be asserted today.
+                        crate::app::name_role(&response, egui::accesskit::Role::TreeItem);
                         if response.clicked() {
                             let path = row.path.clone();
                             clicked = Some(if row.is_dir {

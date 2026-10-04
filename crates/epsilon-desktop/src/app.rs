@@ -233,9 +233,34 @@ fn name_region(ui: &egui::Ui, rect: egui::Rect, salt: &str, label: &str) {
 /// **Still only a name.** `set_label` fills `accesskit::Node::label` and nothing else: no
 /// description and no relation, exactly as through `WidgetInfo`. See [`name_region`] for the
 /// rest of what egui 0.36 can and cannot express.
-fn name_node(response: &egui::Response, label: &str) {
+/// `name_node` writes only [`accesskit::Node::label`].
+///
+/// The name is what a screen reader announces, and it is the **only** field written here on
+/// purpose: `egui::Response::widget_info` would also queue an `OutputEvent` on click and edit
+/// frames, so naming a row through it would fire a synthetic click beside every real one. A role
+/// is set separately, by [`name_role`], because a node that announces with the right words and
+/// the wrong role is still announced as "button" or "group" by a reader that trusts the role
+/// first.
+pub(crate) fn name_node(response: &egui::Response, label: &str) {
     response.ctx.accesskit_node_builder(response.id, |node| {
         node.set_label(label.to_string());
+    });
+}
+
+/// Stamp an [`accesskit::Role`] onto a widget egui already built.
+///
+/// # Why this exists separately from [`name_node`]
+///
+/// `egui`'s `WidgetInfo` has no role field (`egui-0.36.2/src/data/output.rs:563-592`) and its
+/// `WidgetType` stops at `Other` (`lib.rs:623-668`), so the table in `response.rs:935-958` caps
+/// out at `Role::Pane` — which is why every pane here reads as a pane and nothing reads as a
+/// landmark. But `Context::accesskit_node_builder` is **public** (`context.rs:3684-3690`) and
+/// `accesskit::Node::set_role` is public, so a role is assignable; the only thing to get right is
+/// the **ordering**, because `fill_accesskit_node_from_widget_info` rewrites the role on the same
+/// pass and would undo this. Call it after the widget's own `widget_info`.
+pub(crate) fn name_role(response: &egui::Response, role: egui::accesskit::Role) {
+    response.ctx.accesskit_node_builder(response.id, |node| {
+        node.set_role(role);
     });
 }
 
@@ -2974,6 +2999,16 @@ impl IdeApp {
                 self.prefs.sidebar_width_clamped()
             ),
         );
+        // **The role, which the name alone did not supply.** The node had a name and still
+        // announced as `Role::Unknown`, because egui builds the node for a focusable widget
+        // without a role and nothing had ever set one (`egui-0.36.2/src/context.rs:1292-1297`,
+        // `response.rs:908-924`). A reader that trusts the role first has nothing to announce.
+        //
+        // `Role::Splitter` (`accesskit-0.24.1/src/lib.rs:189`) is precisely what this is: a
+        // separator the user drags to resize one side. `Adjustment` was the alternative and is
+        // wrong — that role is for a *value* being adjusted (a slider or spin box), and this
+        // control adjusts the width of a pane rather than a setting.
+        name_role(&response, egui::accesskit::Role::Splitter);
         summary
             .hotspots
             .push((SIDEBAR_HANDLE_HOTSPOT.into(), handle));
@@ -7348,6 +7383,48 @@ mod tests {
         assert!(
             !names.iter().any(|n| n.contains(" 1 files")),
             "no name may carry a plural bug: {names:?}"
+        );
+    }
+
+    /// **No node in this window is `Role::Unknown`.**
+    ///
+    /// The dump read on 2026-10-04 carried one, and it was real. egui allocates an AccessKit node for
+    /// every **focusable** widget and fills it with `fill_accesskit_node_common`, which sets disabled,
+    /// bounds and actions but no role (`egui-0.36.2/src/context.rs:1292-1297`,
+    /// `response.rs:908-924`); the node starts as `Default::default()` (`context.rs:605`) and
+    /// `Unknown` is `#[default]` (`accesskit-0.24.1/src/lib.rs:63-64`). `Sense::click()` is focusable
+    /// (`egui-0.36.2/src/sense.rs:60`), so every drawn file-tree row allocated a node that announced
+    /// as nothing at all.
+    ///
+    /// Asserted as a property over the **whole** tree rather than "the row I fixed is named", because
+    /// the second unnamed site was found the same way and a test aimed at one node would pass with
+    /// the other still broken. A node whose role is `Unknown` is by definition one a screen reader
+    /// cannot describe, so none may exist.
+    #[test]
+    fn no_node_in_the_window_is_unnamed_and_unroled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("only.md"), "x").unwrap();
+        let (session, _n) = faux_session(dir.path());
+        let mut h = Harness::with_session(dir.path().to_path_buf(), session, Vec::new());
+
+        let update = h
+            .a11y_frame()
+            .platform_output
+            .accesskit_update
+            .clone()
+            .expect("checked by a11y_frame");
+        let unknown: Vec<_> = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::Unknown)
+            .map(|(id, n)| (*id, n.label().map(str::to_string)))
+            .collect();
+
+        assert!(
+            unknown.is_empty(),
+            "every node a screen reader can reach needs a role and a name; these are \
+         `Role::Unknown`: {unknown:#?}\nall named nodes: {:?}",
+            h.named_nodes()
         );
     }
 
