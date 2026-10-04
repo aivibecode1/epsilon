@@ -1401,6 +1401,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "egui-wgpu",
  "epsilon-contracts",
  "epsilon-core",
  "epsilon-llm",
@@ -1410,11 +1411,13 @@ dependencies = [
  "epsilon-session",
  "epsilon-tools",
  "epsilon-tui",
+ "png",
  "pulldown-cmark",
  "ratatui",
  "serde_json",
  "tempfile",
  "tokio",
+ "wgpu",
 ]
 
 [[package]]

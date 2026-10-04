@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M304)
+Last updated: 2026-10-04 (M306)
 
 ## Current task
 
@@ -42,6 +42,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 13:00–14:20 (10-04) | 11. **M299 — the owner's report, and four defects behind it** | "The output of the model is not shown" and switching models "keeps reverting to another". Traced to four separate causes, **two of them in the tests rather than the product** — and one of the four only exists on a machine a person has actually used. |
 | 14:20–16:00 (10-04) | 12. **M300–M302 — permissions, then the desktop's accessibility** | M300: a session-remembered "always allow" was inherited by every subagent (ADR-027). M301/M302: the window published names but no roles, so it had no landmarks at all — and a test was pinning the claim that it could not have them. |
 | 17:30–18:25 (10-04) | 13. **M303 verified and finished, then M304** | M303 was **on disk and unverified**: the first battery (`gate-m303`) failed **twice** — a `collapsible_if` from the refactor, and a golden frame test that had pinned the very glyph collision M303 fixed. Both fixed, one test rewritten to read the repertoire instead of a literal. Then two read-only investigations, **both of which corrected something written here**, and the false ADR claim closed. |
+| 18:30–18:55 (10-04) | 14. **M305 — the first frame of this window** | "No wgpu backend presents" had been recorded as a property of the machine for three days. It is a property of **presentation**; the machine has two GPUs. An **offscreen** rasteriser renders the real draw output, and **looking at it** found the sidebar hint drawing `←/→` as two tofu boxes — which sixteen string assertions had been passing straight through. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -127,11 +128,13 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m304final`](../audit/evidence/gate-m304final-2026-10-04.txt),
+**Latest green battery: [`gate-m305final`](../audit/evidence/gate-m305final-2026-10-04.txt),
 2026-10-04 — the final tree, so this log describes the code as it stands rather than as it stood
 before the documentation was corrected.** Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,040 passed / 0 failed / 7 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines. `check-links`: **759 relative links, 0 broken**.
+**2,041 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **764 relative links, 0 broken**.
+**The eighth ignored test is `the_window_rasterises_to_an_image_that_is_not_blank`** — it needs a
+GPU adapter, and a test that fails for want of one is a test that gets deleted rather than read.
 Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
 `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
 set by the caller and so is not in the log's own header** — it is appended to the evidence file by
@@ -146,8 +149,116 @@ hand, which is the only reason a reader can find it at all.
 | M302 | The window had no landmarks; three files said it could not have them | `gate-m302` |
 | M303 | A session model switch recorded in one front end only; the RPC paths got the same defect back. **Found on disk, unverified, and its first battery failed twice** | `gate-m303` (red) → `gate-m304` |
 | M304 | A **false claim in ADR-022 and here** that a test pinned numbers no build can produce; the title and status bars drawn with no width budget; two code comments stating the opposite of the truth | [`gate-m304final`](../audit/evidence/gate-m304final-2026-10-04.txt) |
+| M305 | **The first image of this window** — offscreen rasterisation, and a defect only looking could find | [`gate-m305r`](../audit/evidence/gate-m305r-2026-10-04.txt) (after a red [`gate-m305`](../audit/evidence/gate-m305-2026-10-04.txt) on clippy) |
 
-### M304 in full, because it is the one milestone here that mostly removed claims
+### M305 — the first frame of this window anyone had seen
+
+**The gap was not "no GPU". The gap was "no image", and the two had been conflated for three
+days.** `docs/STATUS.md` had been recording "the desktop window cannot be seen on this machine —
+no wgpu backend presents" as a property of the machine. It is a property of **one code path**:
+presentation. The machine has two adapters.
+
+`crates/epsilon-desktop/src/frame_raster.rs` renders a frame's own tessellation through the same
+`egui_wgpu::Renderer` `eframe` uses, into an **offscreen texture** — device, texture, render pass,
+readback, PNG. No window, no surface, no present. It takes the route that was never the one
+failing.
+
+| | |
+|---|---|
+| Adapter | `Intel(R) UHD Graphics 620` (GL) |
+| Frame | **1,440×900**, 11 clipped primitives, 1 texture delta |
+| **Inked** | **233,794 / 1,296,000 pixels (18.0%)** |
+| Image | [`../audit/evidence/desktop-frames-2026-10-04/desktop-raster.png`](../audit/evidence/desktop-frames-2026-10-04/desktop-raster.png) |
+
+**Three backend facts, each measured by crashing rather than by reading documentation:**
+
+| Backend | Outcome |
+|---|---|
+| Vulkan (default) | **Finds the adapter, then takes the process down** — `STATUS_ACCESS_VIOLATION` (0xc0000005) inside `request_device` |
+| DX12 | `STATUS_STACK_BUFFER_OVERRUN` (0xc0000409) |
+| **GL** | **Works end to end** |
+
+That table is the finding. A reader would reasonably assume "no backend presents" meant "no
+adapter". It meant "every backend crashes or blanks **on the presentation path**", and the
+offscreen path was never tried by anyone, including three days of writing it down as impossible.
+
+**And looking at the frame found a defect that no test in this repository could have found.**
+
+The status bar drew `ctrl+b sidebar  ·  □/□ width` — `←` and `→` are **tofu** in egui's
+proportional face, so the one control a reader is being taught to resize the sidebar with was
+announced as two empty boxes. Now `left/right width`, in words that cannot be missing from a font.
+
+**Why no test caught it, and it is the whole lesson of this milestone:** every assertion in this
+crate about that hint checks the **string** (`hint.contains("ctrl+b")`). A box satisfies
+`contains` exactly as well as an arrow. **Sixteen of this crate's desktop tests could have
+printed `←` for a year and every one would have stayed green.** AGENTS.md §13 says to look at the
+frame; this is the first time there *was* one to look at.
+
+`the_window_rasterises_to_an_image_that_is_not_blank` is `#[ignore]`d — a CI runner has no adapter,
+and a test that fails for want of a GPU is a test that gets deleted rather than read. It asserts
+the share of pixels differing from the clear colour, because **a rasterizer that runs and draws
+nothing passes every other check in this crate.** That is the shape of the failure this project
+keeps meeting.
+
+**Three dev-dependencies, none of them new:** `wgpu 30.0.1`, `egui-wgpu 0.36.2` and `png 0.18.1`
+were **already in `Cargo.lock`** (`eframe → egui-wgpu → wgpu`, `image → png`). The `Cargo.lock`
+diff is three added *names* on `epsilon-desktop` and nothing else — no new crate, no new version,
+and dev-dependencies are not linked into the binary.
+
+### The live model listing is louder than pi's, and reading pi is what showed how
+
+Found by reading a real transcript on 2026-10-04, after someone using deepseek saw:
+
+```
+* refreshing 'openai' models in background…
+* live listing failed: no API key for 'openai' (run `epsilon auth login openai` or set OPENAI_API_KEY)
+* refreshing 'deepseek' models in background…
+* live listing failed: HTTP 401 Unauthorized
+```
+
+**Four visible lines about a provider they had not chosen, for a refresh nobody asked for**, and
+a normal state ("you have no key for openai") reported as a failure.
+
+The cause is `request_live`: it targets **stage 2's provider, else the highlighted stage-1 row**
+(`app.rs:1099-1106`), so opening `/model` fetched for whichever row the cursor was on.
+
+**I claimed at first that pi does no runtime catalogue refresh at all. That was wrong**, and a
+broader grep caught it: pi has `modes/interactive/model-catalog-refresh.ts` and calls
+`refreshModelCatalogs` from three places. **What pi actually does** —
+`modes/interactive/interactive-mode.ts:1136-1143`:
+
+```ts
+if (!process.env.PI_OFFLINE) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    void refreshModelCatalogs(this.session.modelRuntime, controller.signal)
+        .then(() => this.updateAvailableProviderCount())
+        .catch(() => {})
+        .finally(() => clearTimeout(timeout));
+}
+```
+
+Three differences, and none of them is "pi does not fetch":
+
+| | pi | Epsilon (was) |
+|---|---|---|
+| Target | the **whole catalogue**, once, at startup | **whichever row the cursor is on**, on every picker open |
+| Failure | `.catch(() => {})` — swallowed | printed into the transcript |
+| Bound | 15 s timeout, `PI_OFFLINE` honoured | none |
+
+**The divergence that hurt is targeting plus volume, not the existence of the feature.** A
+background catalogue refresh is housekeeping, not the reader's action, so it does not belong in
+the transcript; a `Ctrl+F` the reader pressed does.
+
+**Fixed (M306):** `request_live` now asks `resolve_api_key` — the same resolution the fetcher
+itself uses, so it cannot drift — and returns **silently** when the provider has no credential.
+`force` (`Ctrl+F`) still speaks, because silence there would be its own defect.
+
+**Still open, and it is the deeper half:** the auto-fetch on picker-open targets a cursor row
+rather than the whole catalogue. Making it match pi is a behaviour change to a shipped feature
+and wants its own decision; the freeze window is for fixes.
+
+
 
 **The tree I inherited was unverified, and verification is what found the work.** M303's files
 were on disk from an interrupted battery. The first one (`gate-m303`, evidence in the log at
@@ -230,6 +341,9 @@ The batteries from m299 onwards, and what each failure taught:
 | `m303` | clippy, then 1 golden frame test | **Two real defects, both mine.** The `collapsible_if` came from M303's own resume-block restructure; the golden test had pinned the literal `•`, which *was* the bullet it was supposed to differ from. **An unverified tree on disk is not a finished milestone.** |
 | `m304` | — | **GATE PASS** — 2,040 |
 | `m304final` | — | **GATE PASS** — 2,040, re-run over the final tree after the documentation corrections, so one log describes the code as it stands |
+| `m305` | clippy | **My own leftover** — an unfulfilled `#[expect(clippy::too_many_arguments)]` in the new rasteriser, after I removed a parameter. `-D unfulfilled-lint-expectations` is denied workspace-wide, so an expectation that stops matching is an error, not a warning |
+| `m305r` | — | **GATE PASS** — 2,041 passed / 0 failed / 8 ignored across 78 binaries. The eighth ignored test is the rasteriser, which needs a GPU adapter a CI runner has none of |
+| `m305final` | — | **GATE PASS** — same numbers, re-run over the final tree after the documentation corrections |
 
 **The two rows worth remembering are the ones that were not my change.** Two tests were failing for
 a reason that had nothing to do with anything under test, and the only reason it surfaced at all is
@@ -701,12 +815,24 @@ bodies, not counted line by line.
 definition-of-done items are **provably unmet** today, and each is listed here so the next person
 does not have to re-derive them from a green log:
 
-1. **The desktop's pixels have never been seen on this machine.** No wgpu backend presents — it was
-   measured, not assumed, including a red-fill probe that stayed blank
+1. ~~**The desktop's pixels have never been seen on this machine.**~~ **CLOSED (M305) — and it
+   took the route around the broken one rather than fixing it.** No wgpu backend *presents*
+   here, measured with a red-fill probe that stayed blank
    ([`../audit/evidence/desktop-window-measurement-2026-10-03.md`](../audit/evidence/desktop-window-measurement-2026-10-03.md)).
-   Every desktop claim in this file rests on egui's source, the crate's own recorded geometry, and
-   offscreen frame tests. **That is the right way to test a window, and it is not the same as
-   having looked at it.**
+   **A swapchain was failing, not a GPU.** The machine has two adapters (`Intel UHD Graphics 620`,
+   `AMD Radeon R7 M340`), and `src/frame_raster.rs` now renders a frame's own tessellation
+   through the same `egui_wgpu::Renderer` `eframe` uses, into an **offscreen texture** — no window,
+   no surface, no present. The first frame is at
+   [`../audit/evidence/desktop-frames-2026-10-04/desktop-raster.png`](../audit/evidence/desktop-frames-2026-10-04/desktop-raster.png):
+   **1,440×900, 233,794 of 1,296,000 pixels inked (18.0%)**. Run it with
+   `WGPU_BACKEND=gl cargo test -p epsilon-desktop --lib the_window_rasterises -- --ignored`
+   and `EPSILON_FRAME_DIR` set to choose where the PNG lands.
+   **Three backend facts worth keeping**, each measured rather than assumed: **Vulkan finds the
+   Intel adapter and then takes the whole process down** (`STATUS_ACCESS_VIOLATION`) inside
+   `request_device`; **DX12 dies with `STATUS_STACK_BUFFER_OVERRUN`**; **GL works end to end**.
+   So the backend is not a detail on this box — it is the difference between an image and a crash.
+   **Still not a screenshot of a composited desktop window** — there is no OS chrome, no shadow,
+   no cursor — and the honest description is "this window's draw output".
 2. **No screen reader has ever been run against this window**, on this machine or any other.
    NVDA, Narrator, JAWS and Orca appear nowhere in this repository. Every accessibility claim stops
    at "egui emitted the node into the platform tree", which is what ADR-022 says too.

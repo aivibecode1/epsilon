@@ -1115,6 +1115,28 @@ impl App {
             }
             return;
         }
+        // **No credential means no fetch, and no announcement.**
+        //
+        // Found by reading a real session's transcript on 2026-10-04. Opening `/model`
+        // fetched for whichever stage-1 row the cursor happened to be on, announced
+        // `refreshing 'openai' models in background…`, and then reported
+        // `live listing failed: no API key for 'openai'` — **four visible lines about a
+        // provider the reader had not chosen and had no key for**, and the "failure" was a
+        // normal state. The reader was using deepseek.
+        //
+        // `resolve_api_key` is the same resolution the fetcher itself uses (stored
+        // credential, then env var), so this cannot drift from what the request would have
+        // done — it asks the real question instead of guessing with a second copy of the
+        // precedence rules. `Ctrl+F` (`force`) still speaks, because there the reader is
+        // asking about this provider on purpose and silence would be its own defect.
+        if epsilon_llm::catalog::resolve_api_key(&provider).is_none() {
+            if force {
+                self.notice(format!(
+                    "no API key for '{provider}' — set one with `/login {provider}`, then Ctrl+F"
+                ));
+            }
+            return;
+        }
         if self.live_fetched.contains(&provider) && !force {
             return;
         }

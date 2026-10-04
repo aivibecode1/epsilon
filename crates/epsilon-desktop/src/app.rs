@@ -2588,7 +2588,15 @@ impl IdeApp {
             // still learn the chord from and says which part of the line was cut.
             let hint = if self.palette.is_none() && l.status.width() >= 420.0 {
                 Some(if self.layout.sidebar_visible {
-                    format!("{SIDEBAR_TOGGLE_KEY} sidebar  ·  ←/→ width")
+                    // **Spelled out, and this is not a style preference — it is what the
+                    // rendered frame showed.** The first rasterised frame of this window
+                    // (`audit/evidence/desktop-frames-2026-10-04/desktop-raster.png`) drew
+                    // the hint as `ctrl+b sidebar  ·  □/□ width`: `←` and `→` are **tofu** in
+                    // egui's proportional face. Nobody had seen the frame, so nothing in the
+                    // repository could know, and every test here asserts on the *string* —
+                    // `hint.contains("left/right")` passes just as happily on a box as on an
+                    // arrow. Words cost four characters and cannot be missing from a font.
+                    format!("{SIDEBAR_TOGGLE_KEY} sidebar  ·  left/right width")
                 } else {
                     format!("{SIDEBAR_TOGGLE_KEY} sidebar")
                 })
@@ -6490,6 +6498,137 @@ mod tests {
         );
     }
 
+    /// **The window's pixels, rasterised offscreen, are not blank.**
+    ///
+    /// `#[ignore]`d on purpose, and for the reason `frame_dump.rs` is: this needs a
+    /// **wgpu adapter**, which a CI runner does not have, and a test that fails because
+    /// the machine has no GPU is a test that gets deleted rather than read. It is run by
+    /// hand with `--ignored`, which is what produced
+    /// `audit/evidence/desktop-frames-2026-10-04/`.
+    ///
+    /// **Why this test exists at all, and it is not another frame assertion.** Everything
+    /// else in this module checks what the window *recorded* — `FrameSummary`'s rows, the
+    /// AccessKit tree, the tessellated vertex count. All three stop one step short of an
+    /// image. And the window itself cannot supply one on this machine: **no wgpu backend
+    /// presents**, measured and re-measured, with the content rect filled solid red and
+    /// still blank (`audit/evidence/desktop-window-measurement-2026-10-03.md`). So for the
+    /// whole life of this crate **no one had looked at what it draws**, and
+    /// `AGENTS.md` §13 asks for exactly that.
+    ///
+    /// This renders the frame's own tessellation through the same `egui_wgpu::Renderer`
+    /// `eframe` uses, into an offscreen texture. It is the swapchain that was failing, not
+    /// a GPU.
+    ///
+    /// **The assertion is the one that matters: the image is not blank.** A rasterizer that
+    /// runs, picks an adapter, and returns a field of clear colour passes every other
+    /// check in this crate — which is precisely the shape of the failure that has been
+    /// happening. So it counts pixels that differ from the clear colour and requires a real
+    /// number of them.
+    #[test]
+    #[ignore = "needs a wgpu adapter; a CI runner has none. Run with --ignored."]
+    fn the_window_rasterises_to_an_image_that_is_not_blank() {
+        let (dir, _keep) = scratch_workspace("raster");
+        let mut h = Harness::new(dir.clone());
+        // A window with something in it. A blank IDE and a blank *renderer* produce the
+        // same image, so the fixture has to be one where "is anything there" has an answer.
+        let mut t = Transcript::new(dir);
+        t.push_user("fix the failing test in epsilon-core");
+        t.apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(epsilon_contracts::message::Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "m1".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    content: vec![epsilon_contracts::content::ContentBlock::text(
+                        "The guard compared against the **pre**-image, so it could never pass \
+                         after a real write. Recording the post-image fixes it at the cause \
+                         rather than by weakening the check.",
+                    )],
+                    stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+        t.push_change(&crate::diff::Change {
+            path: "src/lib.rs".into(),
+            lines: vec![
+                crate::diff::DiffLine::Removed("assert!(matches!(guard))".into()),
+                crate::diff::DiffLine::Added(
+                    "assert!(matches!(guard), \"the guard must hold\")".into(),
+                ),
+            ],
+            created: false,
+            coarse: false,
+        });
+        h.app.seed_transcript(t);
+
+        // **Not `Harness::full_frame`**: that clears `textures_delta` on purpose, and the
+        // font atlas lives in it. Upload it and get geometry pointing at glyphs that were
+        // never sent, and the frame renders with the text missing — which for a probe
+        // whose entire job is to show the text is the worst available outcome.
+        let mut input = h.input.clone();
+        input.events = Vec::new();
+        let clear = h.app.theme.background;
+        let full = h.ctx.run_ui(input, |ui| {
+            h.app.paint(ui);
+        });
+
+        let size = full.pixels_per_point
+            * full.shapes[..]
+                .iter()
+                .fold(egui::Rect::ZERO, |acc, s| acc.union(s.clip_rect))
+                .size();
+        let (w, h_px) = (size.x.round() as u32, size.y.round() as u32);
+        assert!(
+            w > 0 && h_px > 0,
+            "the frame reported a {w}x{h_px} size, so there is nothing to rasterise"
+        );
+
+        let rgba = crate::frame_raster::rasterize(&h.ctx, full, clear)
+            .expect("an offscreen render needs a wgpu adapter; without one this machine cannot produce a frame at all");
+        assert_eq!(
+            rgba.len(),
+            (w as usize) * (h_px as usize) * 4,
+            "read back {} bytes for a {w}x{h_px} frame",
+            rgba.len()
+        );
+
+        // **The assertion that is the whole point.** Pixels that differ from the clear
+        // colour by more than a rounding step. A blank render scores zero here; a blank
+        // *window* and a broken rasterizer both score zero, which is the honest
+        // ambiguity — but it is an ambiguity between two things a person can now look at,
+        // rather than between two things nobody could see.
+        let bg = clear.to_array();
+        let inked = rgba
+            .chunks_exact(4)
+            .filter(|p| (0..3).any(|i| (p[i] as i32 - bg[i] as i32).abs() > 4))
+            .count();
+        let total = w as usize * h_px as usize;
+        let share = inked as f64 / total as f64;
+        eprintln!(
+            "frame_raster: {w}x{h_px}, {inked}/{total} pixels inked ({:.1}%)",
+            share * 100.0
+        );
+        assert!(
+            share > 0.02,
+            "only {inked}/{total} pixels ({:.2}%) differ from the clear colour. That is a \
+             blank image: the rasterizer ran and drew nothing, which is the failure this test \
+             exists to catch and which no other check in this crate could see.",
+            share * 100.0
+        );
+
+        // **And keep the picture**, so a person can look at it. `EPSILON_FRAME_DIR` is the
+        // same variable `epsilon-tui`'s `frame_dump` reads, so one directory can hold both
+        // front ends' output.
+        if let Some(dir) = std::env::var_os("EPSILON_FRAME_DIR") {
+            let path = std::path::Path::new(&dir).join("desktop-raster.png");
+            crate::frame_raster::write_png(&path, w, h_px, &rgba).expect("writing the frame");
+            eprintln!("frame_raster: wrote {}", path.display());
+        }
+    }
+
     /// A palette row can be **clicked**, not only typed at and confirmed.
     ///
     /// A palette whose rows can only be reached by typing is a worse editor than the file tree
@@ -9337,7 +9476,7 @@ mod tests {
         let open = h.paint();
         let hint = open.region("hints").join(" ");
         assert!(
-            hint.contains(SIDEBAR_TOGGLE_KEY) && hint.contains("←/→"),
+            hint.contains(SIDEBAR_TOGGLE_KEY) && hint.contains("left/right"),
             "with the sidebar up, both keys are live and both are printed: {hint:?}"
         );
 
@@ -9354,7 +9493,7 @@ mod tests {
         let folded = h.paint();
         let hint = folded.region("hints").join(" ");
         assert!(
-            hint.contains(SIDEBAR_TOGGLE_KEY) && !hint.contains("←/→"),
+            hint.contains(SIDEBAR_TOGGLE_KEY) && !hint.contains("left/right"),
             "with the sidebar folded there is nothing to resize, so the arrows are not \
              printed: {hint:?}"
         );

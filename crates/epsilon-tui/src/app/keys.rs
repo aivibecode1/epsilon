@@ -153,20 +153,64 @@ pub(crate) fn handle_search_key(app: &mut App, key: KeyEvent) -> bool {
     }
 }
 
+/// What cancelling a key entry actually left behind.
+///
+/// **This exists because of a real session, not a thought experiment.** On 2026-10-04
+/// someone pasted a fresh key into `/login`, cancelled the prompt, and spent the next
+/// several turns asking why the harness kept answering from the offline demo. The harness
+/// knew the whole time: the provider still held a key, that key was six weeks old, and the
+/// live catalog check had just failed against it with a 401. **"API key entry cancelled" said
+/// none of that**, and the consequence — the old key is still in use, nothing changed —
+/// arrived five lines later as a message about an offline demo.
+///
+/// Cancelling is the right thing to do when you have pasted a secret and want it gone. Being
+/// able to cancel *safely* means being told what you cancelled into, which is this.
+///
+/// The store is a **parameter**, not a call to `load_credentials()`. The obvious spelling
+/// reads the machine-wide file, and this repository has already shipped two tests that
+/// asserted on that file and failed on any machine a person had actually used — M299's
+/// recents tests. A pure function over a fixture cannot have that failure.
+pub(super) fn cancelled_key_notice(
+    provider: &str,
+    stored: &std::collections::BTreeMap<String, epsilon_llm::auth::StoredCredential>,
+) -> String {
+    // An empty provider means no prompt was open, so there is nothing to add to the
+    // cancellation itself.
+    if provider.is_empty() {
+        return "API key entry cancelled".to_string();
+    }
+    if stored.contains_key(provider) {
+        format!(
+            "API key entry cancelled — the key already stored for '{provider}' is still in \
+             use, and nothing changed. If that key is the wrong one, run `/login {provider}` \
+             and press Enter to replace it."
+        )
+    } else {
+        format!(
+            "API key entry cancelled — '{provider}' still has no stored key, so it will keep \
+             running offline. `/login {provider}`, then press Enter to save one."
+        )
+    }
+}
+
 fn handle_auth_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
             // M52: dropping the code sender disconnects the login thread,
             // which reports the cancellation itself.
             let was_oauth = app.oauth_code_tx.take().is_some();
+            // **Read the provider before the clear below.** It is the one thing the notice
+            // needs, and clearing it first is how the message ended up able to say only
+            // "cancelled".
+            let provider = app.auth_provider.clone();
             app.auth_prompt_open = false;
             app.auth_provider.clear();
             app.auth_key.clear();
             app.auth_key_cursor = 0;
             app.ui.push_notice(if was_oauth {
-                "OAuth code entry cancelled"
+                "OAuth code entry cancelled".to_string()
             } else {
-                "API key entry cancelled"
+                cancelled_key_notice(&provider, &epsilon_llm::auth::load_credentials())
             });
             false
         }

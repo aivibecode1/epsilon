@@ -7,6 +7,30 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **The desktop IDE now has a frame you can look at.** Nothing in the repository had ever
+  produced an image of this window, because no wgpu backend *presents* on the build machine —
+  measured, including a probe that filled the whole content rect solid red and stayed blank.
+  That is a fact about presentation, not about the machine, which has two working GPUs.
+  `src/frame_raster.rs` renders a frame's own tessellation through the same `egui_wgpu::Renderer`
+  `eframe` uses, into an offscreen texture, and writes a PNG. Run it with
+  `WGPU_BACKEND=gl cargo test -p epsilon-desktop --lib the_window_rasterises -- --ignored` and
+  `EPSILON_FRAME_DIR` set (M305).
+- **The sidebar-width hint no longer draws two empty boxes.** The status bar advertised
+  `←/→ width`; both arrows are tofu in egui's proportional face, so the control a reader is
+  being taught to resize the sidebar with was announced as two blank glyphs. It now reads
+  `left/right width`. **Every test for that hint asserted on the string**, so a box satisfied
+  them exactly as well as an arrow — this is the first defect found by looking rather than by
+  reading (M305).
+- **Opening `/model` no longer prints four lines about a provider you did not choose.** The picker
+  fetched a live model list for whichever row the cursor was on, announced it, and then reported
+  "no API key" as a failure. It now checks the provider's credential with the same resolution the
+  fetcher uses and stays quiet when there is none; `Ctrl+F`, which you pressed on purpose, still
+  reports (M306).
+- **Cancelling `/login` now says what you cancelled into.** It reported only "API key entry
+  cancelled", which threw away the one fact that matters: the provider's *existing* key is still
+  in use and nothing changed. Found by a reader who pasted a fresh key, cancelled, and could not
+  work out why the harness kept answering from the offline demo (M306).
+
 - **The title bar and status bar no longer draw text with no width budget.** They were the only
   two long strings in the window that did not go through `fit`: the workspace name and model
   label ran into the figures on their right (a fixed 48-point reserve), and at 200% text the same

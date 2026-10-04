@@ -779,6 +779,50 @@ async fn oauth_need_code_opens_the_overlay_and_done_closes_it() {
 }
 
 #[tokio::test]
+async fn cancelling_a_key_entry_says_what_was_kept() {
+    use epsilon_llm::auth::StoredCredential;
+    use std::collections::BTreeMap;
+
+    let key = |k: &str| StoredCredential::Api {
+        key: k.into(),
+        env: None,
+    };
+    let mut stored: BTreeMap<String, StoredCredential> = BTreeMap::new();
+    stored.insert("deepseek".into(), key("sk-test"));
+
+    // **The case that started this.** A provider that still holds a key: cancelling must
+    // say the old key is *still in use* and that nothing changed, because that is the fact
+    // the reader cannot see — they were looking at a login prompt, not at the store.
+    let kept = super::keys::cancelled_key_notice("deepseek", &stored);
+    assert!(
+        kept.contains("deepseek")
+            && kept.contains("still in use")
+            && kept.contains("nothing changed"),
+        "the notice must name the provider and say its key survives the cancel: {kept:?}"
+    );
+    assert!(
+        kept.contains("/login deepseek"),
+        "and must say how to replace it, not only that something survived: {kept:?}"
+    );
+
+    // **The other case, which is the more confusing one to get wrong.** Nothing stored: the
+    // reader cancelled, so they may believe a key was entered. Saying only "cancelled"
+    // there leaves them waiting for a provider that will run offline.
+    let empty = super::keys::cancelled_key_notice("mistral", &BTreeMap::new());
+    assert!(
+        empty.contains("no stored key") && empty.contains("offline"),
+        "with nothing stored the notice must say the provider will still run offline: {empty:?}"
+    );
+
+    // **No prompt open at all** — the old message, kept rather than regressed. `auth_provider`
+    // is a plain `String`, so "no prompt" is the empty string rather than an `Option`.
+    assert_eq!(
+        super::keys::cancelled_key_notice("", &stored),
+        "API key entry cancelled"
+    );
+}
+
+#[tokio::test]
 async fn oauth_enter_hands_the_code_to_the_waiting_login_and_esc_cancels_it() {
     let (mut app, agent, (_f, _n)) = test_app();
     let (tx, rx) = std::sync::mpsc::channel::<String>();

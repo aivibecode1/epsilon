@@ -71,6 +71,23 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 [dev-dependencies]
 # The end-to-end window tests compose a real agent, which needs a real workspace.
 tempfile = { workspace = true }
+# **Offscreen rasterisation of a real frame. Test-only, and nothing new reaches the
+# product.** All three are already in `Cargo.lock` at exactly these versions, pulled in
+# transitively (`image` -> `png`, and `eframe` -> `egui-wgpu` -> `wgpu`), so this adds
+# no new crate and no new version to the graph — it names three crates the build already
+# links. Dev-dependencies are not linked into `epsilon-desktop`, so the shipped binary is
+# byte-identical in shape.
+#
+# The reason is a gap no test could close from the other side: **no wgpu backend presents
+# on this machine**, so every claim about this window's pixels was inferred from egui's
+# source and the crate's own coordinates (`audit/evidence/desktop-window-measurement-2026-10-03.md`
+# — the content area stayed blank even when filled solid red). An offscreen render needs a
+# *device and a texture*, not a *swapchain*, so it takes the path that was never the one
+# failing. What it produces is a real image of the real draw output, which is what
+# `AGENTS.md` §13 asks for and what nothing in the repository had.
+wgpu = "=30.0.1"
+egui-wgpu = "=0.36.2"
+png = "=0.18.1"
 
 [lints]
 workspace = true

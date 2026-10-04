@@ -50,6 +50,11 @@ const _REAL_PATH_FORWARDED: () = epsilon_core::REAL_PATH_ENABLED;
 pub mod app;
 pub mod commands;
 pub mod diff;
+/// Rasterise a real frame offscreen. **Test-only**: it needs `wgpu`, `egui-wgpu` and
+/// `png`, which are dev-dependencies precisely so this cannot reach the binary. See the
+/// module's own doc for why an offscreen path is the one that works on this machine.
+#[cfg(test)]
+mod frame_raster;
 pub mod layout;
 pub mod markup;
 pub mod session;
