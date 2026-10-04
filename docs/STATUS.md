@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M306)
+Last updated: 2026-10-04 (M307)
 
 ## Current task
 
@@ -151,7 +151,67 @@ hand, which is the only reason a reader can find it at all.
 | M304 | A **false claim in ADR-022 and here** that a test pinned numbers no build can produce; the title and status bars drawn with no width budget; two code comments stating the opposite of the truth | [`gate-m304final`](../audit/evidence/gate-m304final-2026-10-04.txt) |
 | M305 | **The first image of this window** — offscreen rasterisation, and a defect only looking could find | [`gate-m305r`](../audit/evidence/gate-m305r-2026-10-04.txt) (after a red [`gate-m305`](../audit/evidence/gate-m305-2026-10-04.txt) on clippy) |
 
+### M307 — the accessibility tree reaches the OS, and that layer had never been checked
+
+**Four places in this file said the same thing:** *"No screen reader has ever been run against
+this window, on this machine or any other."* That is still true. What is no longer true is the
+sentence underneath it — *"everything else here stops at 'egui emitted the node into the platform
+tree'"*. **It now goes one layer further, and that layer had never been tested.**
+
+Every accessibility assertion in this repository reads `accesskit::TreeUpdate` from
+`FullOutput::platform_output` — a real tree, but one read **inside the process that produced
+it**. Nothing had ever asked whether that tree reaches the **operating system's** accessibility
+API, which is the only thing an actual screen reader talks to.
+
+`scripts/desktop-a11y-probe.ps1` asks. It launches the window (or attaches to a running one),
+finds it through **UI Automation** — the Windows API NVDA and Narrator are built on — and walks
+its descendants **from another process**. That is the reader's own query.
+
+**Result: 53 descendants, 52 named, 1 unnamed.**
+
+| Role | Count | Examples |
+|---|---|---|
+| `Window` | 1 | `Epsilon` |
+| `TitleBar` / `StatusBar` / `MenuBar` / `MenuItem` | 4 | `Title bar · Epsilon · … · ctx 1%*/1.0M`, `Status bar · idle` |
+| `Group` | 5 | `Activity bar · showing files`, `Workspace files · 1027 files`, `Agent transcript · 0 entries` |
+| `Button` | 8 | `Hide sidebar · ctrl+b`, `files`, `subagents`, `sessions`, `Send` |
+| `Edit` | 2 | `Filter files in the workspace tree (1027)`, `Composer` |
+| `TreeItem` | 31 | `File · AGENTS.md`, `File · agents · folder` |
+| `Separator` | 1 | `Resize sidebar · 264 points · drag, or use the left and right arrow keys` |
+| `ScrollBar` | 1 | **`<no name>`** |
+
+**What this proves that no in-process test could:** the tree crosses the process boundary, the
+roles survive UIA's translation, and the names arrive. The `TreeItem`s are the M301/M303 role
+work visible from outside; the named filter `Edit` is the M287 wording fix; the `Group`
+landmarks are M302. **All of it reaches the platform, which had only ever been assumed.**
+
+**And it works on a window that renders nothing.** No wgpu backend presents here, so the content
+area is blank — accessibility is published by the application, not by the compositor. This probe
+succeeds where a screenshot cannot.
+
+#### The finding: one unnamed `ScrollBar`
+
+egui draws it at `scroll_area.rs:1334-1336` with
+`response.widget_info(|| WidgetInfo::new(WidgetType::ScrollBar))` — **a role and no label** — at
+the id `scroll_area_id.with(axis)`. The four scroll areas here all carry stable id salts
+(`epsilon-file-tree`, `epsilon-diff-body`, `epsilon-file-body`, `epsilon-agent-transcript`), so
+the id is computable.
+
+**It is still not a one-line fix, and the reason is worth keeping.**
+`Context::accesskit_node_builder` is **get-or-create** (`context.rs:3675-3690`, and its doc says
+so: *"get or create a node builder with the specified ID"*). Naming both axes unconditionally
+would therefore **create** a node for a scroll bar that is not shown — trading one unnamed node
+for two phantom ones, which is strictly worse for a reader than the unnamed node. A correct fix
+needs to know whether the bar exists, and the honest predicate for that is egui's own
+`content_is_too_large`, which a second copy here would duplicate.
+
+**Recorded, not half-fixed.** The probe exits **1** on an unnamed node, so it is usable as a
+check the moment this is closed; it is deliberately **not a `gate.ps1` leg**, because a gate that
+is red for a known-open finding gets deleted rather than read — which is how this repository lost
+a check before.
+
 ### M305 — the first frame of this window anyone had seen
+
 
 **The gap was not "no GPU". The gap was "no image", and the two had been conflated for three
 days.** `docs/STATUS.md` had been recording "the desktop window cannot be seen on this machine —
@@ -344,6 +404,7 @@ The batteries from m299 onwards, and what each failure taught:
 | `m305` | clippy | **My own leftover** — an unfulfilled `#[expect(clippy::too_many_arguments)]` in the new rasteriser, after I removed a parameter. `-D unfulfilled-lint-expectations` is denied workspace-wide, so an expectation that stops matching is an error, not a warning |
 | `m305r` | — | **GATE PASS** — 2,041 passed / 0 failed / 8 ignored across 78 binaries. The eighth ignored test is the rasteriser, which needs a GPU adapter a CI runner has none of |
 | `m305final` | — | **GATE PASS** — same numbers, re-run over the final tree after the documentation corrections |
+| `m307` | — | **GATE PASS** — 2,041 passed / 0 failed / 8 ignored across 78 binaries, `check-links` 764/0. The Rust tree is byte-identical to `m305final`; this run exists so one log covers a tree that also carries the new probe and its evidence |
 
 **The two rows worth remembering are the ones that were not my change.** Two tests were failing for
 a reason that had nothing to do with anything under test, and the only reason it surfaced at all is
@@ -834,12 +895,17 @@ does not have to re-derive them from a green log:
    **Still not a screenshot of a composited desktop window** — there is no OS chrome, no shadow,
    no cursor — and the honest description is "this window's draw output".
 2. **No screen reader has ever been run against this window**, on this machine or any other.
-   NVDA, Narrator, JAWS and Orca appear nowhere in this repository. Every accessibility claim stops
-   at "egui emitted the node into the platform tree", which is what ADR-022 says too.
-   `audit/evidence/desktop-accesskit-tree-2026-10-04.md` is a real 39-node tree **that predates
-   M301–M303** — it records a `Role::Unknown` and a `Role::Pane` that no longer exist, and it was
-   produced by a temporary edit that was reverted, so **there is no producer for it and it cannot be
-   regenerated.** Treat it as history, not as current evidence.
+   NVDA, Narrator, JAWS and Orca appear nowhere in this repository. **Where the evidence stops
+   moved one layer at M307:** `scripts/desktop-a11y-probe.ps1` reads the window's tree through
+   **Windows UI Automation**, from another process — so the tree is now known to reach the
+   operating system's accessibility API and not merely egui's own state. **It still stops short of
+   a reader**: UIA returns the raw tree, and a reader decides what to *say*. The remaining claim
+   is *"the platform exposes these names and roles"*, not *"a reader announced them"*.
+   The result is 53 nodes / 52 named / **1 unnamed `ScrollBar`** — see M307.
+   `audit/evidence/desktop-accesskit-tree-2026-10-04.md` is the older, in-process dump: it
+   **predates M301–M303**, records a `Role::Unknown` and a `Role::Pane` that no longer exist, and
+   was produced by a temporary edit that was reverted, so **there is no producer for it.** Treat
+   it as history; `audit/evidence/desktop-uia-tree-2026-10-04.txt` is the reproducible one.
 3. **No manual keyboard-only pass is recorded**, by a person, with a date, for either front end.
    The *automated* coverage is real and substantial — roughly sixteen desktop tests drive real
    `egui::Event::Key` through the real draw path and assert on the frame, four of them keyboard-only
@@ -847,7 +913,7 @@ does not have to re-derive them from a green log:
    — but every one of the eight repo-wide matches for keyboard-pass language is a requirement, a
    design claim or a code comment. **None is a record of somebody having done it.**
 
-**Also still open, and unchanged:** `scripts/desktop-probe.py` does not exist; the desktop answers
+**Also still open, and unchanged:** the desktop answers
 3 of 38 terminal commands; the flat `REGISTRY` of `Action` rows is unbuilt; the denied-tools filter
 and the lease-takeover detection both need their own decisions; and 59 authorised dead-code
 deletions are written down and not done.

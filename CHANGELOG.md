@@ -7,6 +7,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **The window's accessibility tree is now known to reach the operating system.** Every
+  accessibility assertion in the repository read egui's own `accesskit::TreeUpdate` from inside
+  the process that produced it. `scripts/desktop-a11y-probe.ps1` asks **Windows UI Automation** —
+  the API NVDA and Narrator are built on — from another process, and gets back 53 nodes, 52
+  named: named regions, a named filter box, the composer, the buttons, and 31 file-tree rows
+  carrying `TreeItem`. One node is unnamed: an egui-drawn `ScrollBar` (M307).
+
 - **The desktop IDE now has a frame you can look at.** Nothing in the repository had ever
   produced an image of this window, because no wgpu backend *presents* on the build machine —
   measured, including a probe that filled the whole content rect solid red and stayed blank.
