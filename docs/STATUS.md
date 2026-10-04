@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M302)
+Last updated: 2026-10-04 (M304)
 
 ## Current task
 
@@ -41,6 +41,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 11:45–12:35 (10-04) | 10. **M298 — a reachable data-loss hole in `/restore`** | Found by reading, not by a failing test: reverting an agent-**created** file called `remove_file` with **no content check at all**, so a user who edited that file and asked to undo the creation lost their edit. Fixed at the guard and at the cause (creations are now amended with a post-image), RED first, **both negative controls run separately**, ADR-026. |
 | 13:00–14:20 (10-04) | 11. **M299 — the owner's report, and four defects behind it** | "The output of the model is not shown" and switching models "keeps reverting to another". Traced to four separate causes, **two of them in the tests rather than the product** — and one of the four only exists on a machine a person has actually used. |
 | 14:20–16:00 (10-04) | 12. **M300–M302 — permissions, then the desktop's accessibility** | M300: a session-remembered "always allow" was inherited by every subagent (ADR-027). M301/M302: the window published names but no roles, so it had no landmarks at all — and a test was pinning the claim that it could not have them. |
+| 17:30–18:25 (10-04) | 13. **M303 verified and finished, then M304** | M303 was **on disk and unverified**: the first battery (`gate-m303`) failed **twice** — a `collapsible_if` from the refactor, and a golden frame test that had pinned the very glyph collision M303 fixed. Both fixed, one test rewritten to read the repertoire instead of a literal. Then two read-only investigations, **both of which corrected something written here**, and the false ADR claim closed. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -119,11 +120,22 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Five milestones landed this session (M298–M302), each with its own battery.** All five are
-committed, and the working tree is clean. Between them they closed one **data-loss** defect, one
-**permission-inheritance** defect, and three **accessibility/visibility** defects — and two of
-the nine defects were in the *tests* rather than the product, which is only visible on a machine
-somebody has actually used.
+**Seven milestones have landed against this objective (M298–M304), each with its own battery.**
+Between them: one **data-loss** defect, one **permission-inheritance** defect, three
+**accessibility/visibility** defects, and — at M304 — a **false claim in the ADR of record** plus
+the unbounded chrome lines it had been hiding. **Three of those defects were in the *tests* or the
+*documents* rather than in the product**, which is only visible on a machine somebody has actually
+used.
+
+**Latest green battery: [`gate-m304final`](../audit/evidence/gate-m304final-2026-10-04.txt),
+2026-10-04 — the final tree, so this log describes the code as it stands rather than as it stood
+before the documentation was corrected.** Ten legs, all `[exit=0]`, zero non-zero legs.
+**2,040 passed / 0 failed / 7 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **759 relative links, 0 broken**.
+Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
+set by the caller and so is not in the log's own header** — it is appended to the evidence file by
+hand, which is the only reason a reader can find it at all.
 
 | Milestone | What it closed | Battery |
 |---|---|---|
@@ -132,16 +144,80 @@ somebody has actually used.
 | M300 | A session-remembered "always allow" reached every subagent | `gate-m300` |
 | M301 | Two `Role::Unknown` nodes: an unnamed file row and a roleless splitter | `gate-m301` |
 | M302 | The window had no landmarks; three files said it could not have them | `gate-m302` |
+| M303 | A session model switch recorded in one front end only; the RPC paths got the same defect back. **Found on disk, unverified, and its first battery failed twice** | `gate-m303` (red) → `gate-m304` |
+| M304 | A **false claim in ADR-022 and here** that a test pinned numbers no build can produce; the title and status bars drawn with no width budget; two code comments stating the opposite of the truth | [`gate-m304final`](../audit/evidence/gate-m304final-2026-10-04.txt) |
+
+### M304 in full, because it is the one milestone here that mostly removed claims
+
+**The tree I inherited was unverified, and verification is what found the work.** M303's files
+were on disk from an interrupted battery. The first one (`gate-m303`, evidence in the log at
+`target/`) failed on two legs, both real:
+
+| Leg | Failure | What it was |
+|---|---|---|
+| `clippy` | `collapsible_if` at `epsilon-runtime/src/lib.rs:4989` | **My own change** — the resume block was restructured to end before `set_model_id` re-locks the store (a non-reentrant mutex locked twice **deadlocks rather than fails**, and it hung the desktop suite). Fixed with the let-chain the workspace already uses 77 times. |
+| `test` | `app::golden::an_answer_and_its_reasoning_are_distinguishable…` | **A test pinning the defect the same milestone fixed.** It asserted the answer's gutter marker literally as `•` — which *was* `UNICODE.bullet`, the collision M299 and M303 were about. It failed for exactly the right reason. Rewritten to read `UNICODE.assistant` rather than a typed character, which is the same fix pattern the row above it already used. |
+
+**Then two read-only investigations, neither told what to find, and both corrected this file.**
+
+- **One found that two documented "open defects" were described wrongly.** The file-tree pane's
+  `Region`/`TreeItem` ARIA complaint is **not a real nesting problem** — egui attaches both to
+  the root because `pane_ui`'s `Ui`s carry no node, so flipping the role would change one label
+  and create no structure. And the title bar's 200% overflow was said to land "onto the body";
+  measured from the bundled font (`USE_TYPO_METRICS` unset, so hhea governs) the descenders stop
+  at **39.39 pt** against a body starting at **42** — a 3.4 pt spill into the gutter, not the
+  body. **Every `app.rs` line number in that paragraph was 49–107 lines stale** and is now
+  re-derived. Both corrections are in Roadmap item 8.
+- **The same pass found a larger defect nobody had written down**: the title and status lines
+  were the **only** unbounded strings in the window. Everything else goes through `fit`; these
+  two had no budget, drew on the root `Ui` (no clip), and ran into a fixed 48 pt figures
+  reserve. **Fixed**, with a test, **negative control run**.
+
+**And the false claim is closed rather than deleted.** ADR-022 said *"a test pins this: 800 rich
+rows → 44 lines drawn → 53 named nodes, not 1600 … and it is in a test, not in a comment."*
+**No such test existed**, the bounding tests used one-line user rows, and the two numbers are
+**arithmetically impossible together** — a node is built per **row** and a recorded line is per
+**block**, so 53 names against 44 lines cannot occur. `docs/STATUS.md` repeated the sentence as
+*"a test rather than a claim"* while its own Roadmap said it was false: **the file contradicted
+itself, and a reader of either half alone would have believed the wrong one.**
+
+It is now the property the sentence was reaching for, pinned with the fixture it names —
+**800 rich assistant rows**, injected through `apply` so they name as `Agent said`:
+
+| Transcript | Recorded lines | **Row names published** |
+|---|---|---|
+| 200 rich rows | 17 | **15** |
+| 800 rich rows | 17 | **15** |
+
+Quadrupling the conversation does not quadruple the frame's cost. **Negative control run**: with
+the span slice replaced by `for row in rows`, the test fails printing *"took the published names
+from 200 to 800"*.
+
+**A fixture that lied, and the frame caught it.** The first version of the companion test seeded
+four adjacent `ContentBlock::text` values and expected four recorded blocks. It failed
+`left: 1, right: 2`, and the **frame dump is what explained it**: four paragraphs ran together
+into one entry with no separator, because markdown has no blank line between adjacent text
+blocks. **Blocks are separated by a blank line, not by being different content blocks** — and
+that is why the old claim's "44 lines drawn" could not have been reproduced from this tree at
+all: there is no painted-line counter in the product.
+
+**Also corrected: a verifier that could never succeed.** `scripts/check-reference-citations.py`
+resolved every citation against `references/pi-0.85.1`, which is not vendored — the folder holds
+`pi-1.0.0`. `os.path.isfile()` was therefore false for all 106 citations, so the checker
+reported *100% unresolvable and 0 checkable*, which is why it was not a gate leg. It now
+resolves the vendored directory rather than a hardcoded version, and prints the limitation it is
+working under: **106 citations, 95 checkable, 16 files genuinely absent from `pi-1.0.0`.**
 
 **Every one has a negative control**, and two of them produced output that states the defect in
 one line: the subagent permission test fails with `left: 1, right: 2` (one ask where two are
 required), and the `/model` durability test fails printing the **old** model on the left and the
 **user's choice** on the right.
 
-**Green full-workspace battery, latest measured 2026-10-04 (M302):**
+**Green full-workspace battery, previous measured 2026-10-04 (M302):**
 [`../audit/evidence/gate-m302-2026-10-04.txt`](../audit/evidence/gate-m302-2026-10-04.txt).
 Ten legs, all `[exit=0]`. **2,035 passed / 0 failed / 7 ignored across 78 binaries**, summed from
-that one log's `test result: ok` lines.
+that one log's `test result: ok` lines. **The M304 battery above supersedes this one**; the M302
+figure is kept because the difference between them is the tests M304 added.
 
 The batteries from m299 onwards, and what each failure taught:
 
@@ -151,15 +227,20 @@ The batteries from m299 onwards, and what each failure taught:
 | `m299r` | 2 TUI recents tests | **A second real defect, also in the tests.** Both assert `recents.first()` against a shared global config, and **failed on unmodified code** (proved by stashing). Fixed at the source: the mirror no longer re-reads a machine-wide file |
 | `m299r2` | — | **GATE PASS** — 2,032 |
 | `m300` | — | **GATE PASS on attempt 1** — 2,033, the subagent-permission test added |
+| `m303` | clippy, then 1 golden frame test | **Two real defects, both mine.** The `collapsible_if` came from M303's own resume-block restructure; the golden test had pinned the literal `•`, which *was* the bullet it was supposed to differ from. **An unverified tree on disk is not a finished milestone.** |
+| `m304` | — | **GATE PASS** — 2,040 |
+| `m304final` | — | **GATE PASS** — 2,040, re-run over the final tree after the documentation corrections, so one log describes the code as it stands |
 
 **The two rows worth remembering are the ones that were not my change.** Two tests were failing for
 a reason that had nothing to do with anything under test, and the only reason it surfaced at all is
 that this machine has a real config file with a real model in it. **A suite that only ever runs on
-a clean machine cannot see a dependency on machine state.**
+a clean machine cannot see a dependency on machine state.** The `m303` row is the same lesson one
+milestone earlier: **work on disk from an interrupted battery is not a milestone**, and the battery
+is what turns it into one.
 
-| Gate | Result |
+| Gate | Result (M302, the last full table in this file) |
 |---|---|
-| `check-links` | PASS — 751 relative links, 0 broken |
+| `check-links` | PASS — 751 relative links, 0 broken (**757 at M304**; the count moves as documents are added) |
 | `check-agents-lock` | PASS — `AGENTS.md` matches `AGENTS.md.sha256` |
 | `check-lint-tables` | PASS |
 | `check-line-endings` | PASS |
@@ -268,19 +349,25 @@ against the same bar and merge into the list above.
 
 1. **Transcript virtualization** (desktop). ~~The work is not started.~~ **It is done, and the
    roadmap was stale.** M285 landed it: `draw_rows` computes the visible span first
-   (`app.rs:4316`) and slices to it (`app.rs:4323`), so per-frame work is O(rows on screen).
+   (`app.rs:4423`) and slices to it (`app.rs:4430`), so per-frame work is O(rows on screen).
    **The 104 ms and the ~5 ms are not two measurements of one thing** — 104.4 ms measured the
    unvirtualised code with the accessibility tree *off*, and a control on the same box measured
-   127.9 ms; the current figure is with the tree on. Same fixture, same size. Three tests hold
-   the bound (`app.rs:7906`, `app.rs:7753`, and a pure `RowLayout::span` sweep at `app.rs:8066`).
-   **What is actually left is not performance:** ADR-022 claims "a test pins 800 rich rows → 44
-   lines drawn → 53 named nodes" and **no test in the tree does** — the bounding tests use
-   200/400 one-line *user* rows. That claim is either pinned with the fixture it names or
-   dropped; it is not true as it stands.
-2. **Subagent permission derivation. LANDED (M300, ADR-027).** The leak was **confirmed live on
-   a production path**, not merely feared: `build_task_child` (`crates/epsilon-core/src/lib.rs:3394`)
-   handed the child `Arc::clone(&self.gate)`, and **both** `SessionMemory` and the ruleset live
-   *inside* that gate (`epsilon-safety/src/gate.rs:47,52,54`). A user's `a` keypress
+   127.9 ms; the current figure is with the tree on. Same fixture, same size. Several tests hold
+   the bound (`app.rs:8317`, `:8361`, and a pure `RowLayout::span` sweep at `:8477`).
+   **What was left was never performance, it was a false claim, and it is now closed (M304).**
+   ADR-022 said "a test pins 800 rich rows → 44 lines drawn → 53 named nodes"; **no such test
+   existed**, the bounding tests used 200/400 one-line *user* rows, and the two numbers are
+   arithmetically impossible together (a node is per **row**, a recorded line is per **block**,
+   so 53 names against 44 lines cannot occur). The claim is replaced by the property it was
+   reaching for, pinned with the fixture it names — 800 **rich assistant** rows — in
+   `eight_hundred_rich_rows_pay_only_for_the_rows_that_are_drawn`. **Negative control run:** with
+   the span slice replaced by `for row in rows`, it fails printing *"took the published names
+   from 200 to 800"*.
+2. **Subagent permission derivation. LANDED (M300, ADR-027; M303 corrected two consequences).** The
+   leak was **confirmed live on a production path**, not merely feared: `build_task_child`
+   (`crates/epsilon-core/src/lib.rs:3469`, child at `:3555`) handed the child
+   `Arc::clone(&self.gate)`, and **both** `SessionMemory` and the ruleset live *inside* that gate
+   (`epsilon-safety/src/gate.rs:47,52,54`). A user's `a` keypress
    (`epsilon-tui/src/app/keys.rs:437`) therefore authorised `bash` for every subagent afterwards.
    The chain is production end to end: `epsilon-runtime:4702` registers `TaskTool` →
    `epsilon-runtime:4785` builds the `RulesetGate` → `exec.rs:795` injects the task host →
@@ -400,20 +487,69 @@ against the same bar and merge into the list above.
      is reachable by role* — rather than the implementation. **A test that documents a limitation
      is a test that will resist its correction**, which is the same shape as the gutter test that
      pinned the identical assistant/notice glyph.
-   - **Two unnamed `role=Unknown` nodes' worth of site** — one per file-tree row
-     (`workspace.rs:344`), one per `Changed` transcript row (`app.rs:4507`). One `name_node`
-     each. (Detail above.)
-   - **`layout.rs`'s `TITLE_H` (36) and `STATUS_H` (24) are unscaled** while the text in those
-     bands *is* scaled (`app.rs:2431` `15.0 * scale`, `:2500` `12.0 * scale`), and the baselines
-     are unscaled literals (`app.rs:2428`, `:2497`). `paint_text` sets no clip rect
-     (`app.rs:1228`), so at 200% a 30-point line overflows its band onto the body. **Predicted
-     from the arithmetic, not seen in a rendered frame** — and `AGENTS.md` §13 requires the
-     frame. Also unscaled and in the same class: `SIDEBAR_TOGGLE_W` (24) and
-     `SIDEBAR_TOGGLE_INSET` (22) at `app.rs:663,665`. `TAB_H`, `COMPOSER_H`, `HEADER_H` and the
-     `workspace.rs` rows are all scaled at the use site and are **not** affected.
-   - **The ADR's own "a test pins 800 rich rows → 44 lines drawn → 53 named nodes" still has no
-     test behind it** — the bounding tests use 200/400 one-line user rows. Either pinned with the
-     fixture it names or dropped; it is not true as it stands.
+   - ~~**Two unnamed `role=Unknown` nodes' worth of site**~~ **LANDED (M301–M303).** One per
+     file-tree row (`workspace.rs`, named `File · …` + `TreeItem`) and the sidebar handle
+     (`app.rs`, `Splitter`). A third site was found while writing M303 and is also fixed: the
+     **"file changed" row's click target**, the one control in the transcript whose purpose is to
+     open something. **The reviewer's correction on that last one is the useful part** — it had
+     been recorded here as having "no node at all" because "`Sense::click()` is not focusable",
+     and both halves of that were wrong: `Sense::click()` *is* focusable
+     (`egui-0.36.2/src/sense.rs:60`), and `accesskit_node_builder` is *"get or create"*
+     (`context.rs:3674-3675`), so a node can be named whether or not egui allocated one.
+   - **The chrome bands are unscaled — REAL, and its stated consequence was WRONG (M304).**
+     `layout.rs`'s `TITLE_H` (36) and `STATUS_H` (24) are unscaled — `IdeLayout::new` takes no
+     `scale` argument at all (`layout.rs:367`) — while the text in those bands *is* scaled
+     (`app.rs:2480` `15.0 * scale`, `:2521` `12.0 * scale`) and the baselines are unscaled
+     literals (`app.rs:2477`, `:2518`). **Every `app.rs` line this row used to cite was 49–107
+     lines stale**; the numbers above were re-derived against the tree on 2026-10-04.
+     `paint_text` sets no clip rect (`app.rs:1276-1291`) and the chrome draws on the **root**
+     `Ui` (`app.rs:2458`), whose clip rect is the whole content rect — so nothing clips it.
+
+     **This row said the line "overflows its band onto the body". The arithmetic does not
+     support that, and saying so is the useful part.** Measured from the bundled font rather
+     than assumed: `Ubuntu-Light.ttf` has `USE_TYPO_METRICS` unset, so hhea governs —
+     ascender 932, descender −189 — giving `row_height = 1.149 × size` and
+     `baseline = 0.932 × size`. At scale 2.0 the title line's descenders reach **39.39 pt**
+     against a band ending at 36 and a body starting at **42**: a **3.4 pt spill into the
+     gutter, not onto the body**, with a 2.6 pt margin — and the panes paint *after* the
+     chrome anyway. The status line's descenders *are* cut, by ~1.1 pt at the window's bottom
+     edge.
+
+     **The larger defect in the same two functions was undocumented, and it is fixed (M304).**
+     The title line and the status line were the **only** unbounded strings in the window:
+     every other long string goes through `fit`, and these two had no width budget at all. At
+     200% the workspace/model line runs twice as wide into a **fixed 48 pt** figures reserve,
+     and `status_line` carries an arbitrary tool refusal sentence. Both now take `fit` against
+     the width the opposite end of the bar will take; the width guard that used to withdraw
+     the key hint under 420 pt is now a budget, so the hint survives and the *text* says it
+     was cut. Pinned by `the_title_line_is_budgeted_and_says_when_it_was_cut`, **negative
+     control run**: removing the `fit` fails it printing the full unbudgeted line at 200%.
+     **Not pinned:** the status bar's half — `paint` clears `self.refusal` on an agent-less
+     window (`app.rs:1898-1899`), so a long status line needs a composed agent to drive.
+
+     Still unscaled and in the same class: `SIDEBAR_TOGGLE_W` (24) and `SIDEBAR_TOGGLE_INSET`
+     (22) at `app.rs:712,714`. Its doc comment claimed the unscaled band *was* the half-measure
+     the text-scaling work existed to avoid — **which described exactly what it was**; rewritten
+     at M304 to say so. `TAB_H`, `COMPOSER_H`, `HEADER_H` and the `workspace.rs` rows are all
+     scaled at the use site and are **not** affected (re-verified at M304, which is the one
+     part of this row that had not drifted).
+   - **The file-tree pane is a `Region`, not a `Tree` — and this row's remedy was WRONG (M304).**
+     The code comment claimed "a `treeitem` under a `region` is not a valid ARIA structure" and
+     that making the pane a real `Role::Tree` was the correct follow-up. **There is no such
+     nesting to invalidate.** egui attaches each node to the nearest ancestor that already has
+     one, and the pane `Ui`s from `pane_ui` carry no node, so `find_accesskit_parent`
+     (`egui-0.36.2/src/context.rs:613-621`) lands on the root: **the `Region` and every
+     `TreeItem` are siblings under the AccessKit root**. ADR-022 already said so. Flipping the
+     role would change one label and create no structure — the change that would have looked
+     like it worked on the frame it was written. Real hierarchy needs a node on the pane `Ui`
+     first, which moves every region's parentage and needs its own decision. **Not done**, and
+     the comment no longer claims otherwise. **No test in the tree asserts any parent/child
+     relationship** — all 24 read `update.nodes` as a flat `Vec` — which is why this was
+     invisible to the suite.
+   - ~~**The ADR's own "a test pins 800 rich rows → 44 lines drawn → 53 named nodes" still has no
+     test behind it.**~~ **LANDED (M304).** See Roadmap item 1: the claim was false, it is now
+     replaced by a real measurement pinned with the fixture it names, and the negative control
+     is run.
 9. **Four parallel command registries.** `Command` (38 variants), `COMMAND_HEADS` + `ALIAS_HEADS`
    (42), `SLASH_ITEMS` (43 rows at M290), `palette_entries()` (7) and `keybindings::DEFAULTS` (23) in the TUI —
    plus the desktop's own `app.rs:234` table, which is a separate namespace entirely. Only two
@@ -792,10 +928,14 @@ capability answer*, not production dispatch. `try_command`'s run/refuse split is
 arms, so the declaration and the implementation are two statements of one fact joined by one test,
 **not by construction**. That is the next step, not a finished thing.
 
-**Registry drift found while doing it, reported not fixed:** `ALIAS_HEADS` lists `models`, but the
-parser arm is `"models" | "model" if tail.is_empty()` (`picker.rs:820`), so **`/models gpt` parses
-as `Unknown`**; and `scoped-models` and `?` are parser-accepted spellings present in **neither**
-head list, which the reverse-drift test cannot see because it only collects `lowercase|_|:` tokens.
+**Registry drift found while doing it — the first half is STALE, corrected 2026-10-04.** It read:
+*"`ALIAS_HEADS` lists `models`, but the parser arm is `"models" | "model" if tail.is_empty()`
+(`picker.rs:820`), so **`/models gpt` parses as `Unknown`**"*. **That defect was fixed at M286**
+(`crates/epsilon-contracts/src/command.rs:482`, `"models" | "model" => Some(Command::Model(…))`)
+and the row was left describing a tree nobody had re-read. **A defect list is a claim about a
+tree**, which is the same lesson the m290 finding recorded from the other direction.
+**Still open:** `scoped-models` and `?` are parser-accepted spellings present in **neither** head
+list, which the reverse-drift test cannot see because it only collects `lowercase|_|:` tokens.
 
 **The desktop writer inherited a file that did not compile** — `view.gates.len()` where
 `GoalView` has only `goal` and `armed` (`crates/epsilon-contracts/src/goal.rs:246`); HEAD's spelling
@@ -1103,8 +1243,14 @@ Three separate facts, and only the first is the one that was reported:
   and — because `selectable_labels` makes these labels click-sensitive — queues no duplicate
   `OutputEvent`.
   Labels are `Transcript row · {kind} · {excerpt}`, excerpt ≤ 80 chars, from the **sanitised**
-  text. **Off-screen rows stay unnamed structurally**: 800 rich rows → 44 lines drawn → **53
-  named nodes**, not 1600, and that is a test rather than a claim.
+  text. **Off-screen rows stay unnamed structurally**: an 800-row rich transcript publishes the
+  **same count of row names as a 200-row one** — measured 15 either way — so the per-frame cost
+  tracks the rows on screen rather than the length of the conversation.
+  **This line used to read "800 rich rows → 44 lines drawn → 53 named nodes, not 1600, and that
+  is a test rather than a claim", which was false three ways** (no such test existed; 53 names
+  against 44 lines is arithmetically impossible, since a node is per row and a recorded line is
+  per block; and the product has no painted-line counter at all). It contradicted this file's own
+  Roadmap item 1 and ADR-022, which both said so. Corrected and pinned at M304.
 - ~~**`frame_cost.rs` cannot see node-building.**~~ **FIXED (M287) — and what it was hiding is
   worth more than the fix.** `paint_once` never called `egui::Context::enable_accesskit()`, so
   `accesskit_node_builder` returned `None` and the whole class of cost was invisible — which is why
@@ -1177,8 +1323,16 @@ Three separate facts, and only the first is the one that was reported:
   `pi-1.0.0`; tracked files cite `pi-0.84.2` (106), `pi-0.85.1` and `pi-1.0.0`.
   `scripts/check-reference-citations.py` had its version segment pinned to `pi-0.84.2`, so it
   silently ignored the other two versions entirely — a verifier checking nothing, which reads
-  as coverage. **Fixed** to `pi-[\w.\-]+`; the checker now reports all three versions and the
-  ones that do not resolve. Re-pointing the 106 citations is separate work and is not done.
+  as coverage. **Fixed** to `pi-[\w.\-]+`.
+  **The second half of that "fixed" was false until M304, and the same file said so twice.** The
+  regex half was repaired; the **resolution** arm was still pinned to `pi-0.85.1`, a directory
+  that does not exist — so `os.path.isfile()` was false for all 106 citations and the checker
+  reported *100% unresolvable, 0 checkable*, which is why it was never made a gate leg. It now
+  resolves the vendored `pi-*` directory instead of a hardcoded version, and prints the
+  limitation it is working under. **Measured on 2026-10-04: 106 citations, 95 checkable, 16
+  files genuinely absent from `pi-1.0.0`.** Re-pointing the 106 citations at the version they
+  name is separate work and is **not done** — and the checker now says so rather than looking
+  clean.
 
 - **The desktop window cannot be seen on this machine** — no wgpu backend presents, so every
   claim about its pixels is inferred from egui's source and the crate's own coordinates.

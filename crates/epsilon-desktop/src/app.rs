@@ -706,9 +706,23 @@ const SIDEBAR_HIDDEN_GLYPH: &str = "◧";
 
 /// Geometry of the title bar's toggle, in points.
 ///
-/// Un-scaled, like [`crate::layout::TITLE_H`] beside it — the title bar is the one band the
-/// text-scaling work deliberately left alone, and a control floating in a band that did not
-/// grow with the text would be the half-measure that change exists to avoid.
+/// **Un-scaled, and that is a known half-measure, not a decision.** An earlier version of this
+/// comment claimed the title bar was "the one band the text-scaling work deliberately left
+/// alone" and that "a control floating in a band that did not grow with the text would be the
+/// half-measure that change exists to avoid" — **which describes exactly what this is.** At
+/// 200% the band's height is still [`crate::layout::TITLE_H`] and this control is still 24 pt,
+/// so a 30-point title line runs to 39.4 pt while the band ends at 36.
+///
+/// The overflow is a **descender spill into the gutter**, not onto the body: the body starts
+/// at 42 pt and the panes paint *after* the chrome. Corrected 2026-10-04 against the measured
+/// font metric (`row_height = 1.149 × size`, baseline `0.932 × size`, from `Ubuntu-Light.ttf`
+/// hhea — OS/2 `USE_TYPO_METRICS` is not set); the version this replaces said "a 30-point line
+/// overflows its band onto the body", which the arithmetic does not support.
+///
+/// Left unscaled deliberately for now, because the honest fix is to scale
+/// [`crate::layout::TITLE_H`] and [`crate::layout::STATUS_H`] **and** their baselines together,
+/// and scaling one without the other is the half-measure this comment used to deny. That is
+/// the open item, not a settled design.
 const SIDEBAR_TOGGLE_W: f32 = 24.0;
 /// Distance from the title bar's right edge to the toggle's centre.
 const SIDEBAR_TOGGLE_INSET: f32 = 22.0;
@@ -2462,6 +2476,19 @@ impl IdeApp {
                 [l.title.left_bottom(), l.title.right_bottom()],
                 egui::Stroke::new(1.0, self.theme.border),
             );
+            // **How much of the bar's right end belongs to the sidebar toggle**, resolved
+            // before anything is measured, because the title line's budget needs it. A
+            // right-aligned figure painted under a control is an overlap, and overlap is
+            // the one failure this crate's layout tests exist to rule out.
+            //
+            // **Hoisted above the title line, 2026-10-04.** It used to be computed *after*
+            // the title was painted, which is why the title could not be budgeted against
+            // it — see below.
+            let reserve = if l.title.width() >= SIDEBAR_TOGGLE_MIN_W {
+                SIDEBAR_TOGGLE_INSET + SIDEBAR_TOGGLE_W / 2.0 + 14.0
+            } else {
+                0.0
+            };
             let mut line = self
                 .opts
                 .workspace
@@ -2470,6 +2497,20 @@ impl IdeApp {
                 .unwrap_or("Epsilon")
                 .to_string();
             line.push_str(&self.model_suffix());
+            // **Budgeted, which this line was not.** The workspace name and the model
+            // suffix were the only unbounded strings in the window that never went through
+            // `fit`: every other long string does (file rows, task lines, sessions, tab
+            // labels, palette rows, transcript rows), and the title bar drew on a root `Ui`
+            // whose clip rect is the whole content rect, so nothing clipped it either. At
+            // 200% the text is twice as wide and runs straight into the figures. The
+            // figures are already `fit`-shortened by `self::figures`, so the two shorten
+            // together — which is the behaviour the comment above the figures describes and
+            // the title line never had.
+            let line = fit(
+                &line,
+                (l.title.width() - 28.0 - reserve).max(0.0),
+                15.0 * scale,
+            );
             paint_text(
                 painter,
                 &mut summary,
@@ -2500,16 +2541,6 @@ impl IdeApp {
             // Recorded under its own region rather than as more `"title"` rows, because
             // `FrameSummary::region` is what a test reads and "is a figure on screen" and
             // "did the bar name the workspace" are different questions.
-            // **How much of the bar's right end belongs to the sidebar toggle**, resolved
-            // before the figures are measured. A right-aligned figure painted under a
-            // control is an overlap, and overlap is the one failure this crate's layout
-            // tests exist to rule out; the figures are shortened rather than moved because
-            // `fit` already marks a cut with `…` and a cut figure is an honest one.
-            let reserve = if l.title.width() >= SIDEBAR_TOGGLE_MIN_W {
-                SIDEBAR_TOGGLE_INSET + SIDEBAR_TOGGLE_W / 2.0 + 14.0
-            } else {
-                0.0
-            };
             if let Some(figures) = self.figures(l.title.width() - reserve, scale) {
                 paint_text(
                     painter,
@@ -2546,7 +2577,36 @@ impl IdeApp {
                 [l.status.left_top(), l.status.right_top()],
                 egui::Stroke::new(1.0, self.theme.border),
             );
-            let text = self.status_line();
+            // **The hint is decided before the status text is painted, not after**, so the
+            // status line can be budgeted against the width the hint will take. It used to be
+            // the other way round, and the comment below used to explain the consequence:
+            // "the status text is drawn from the left with no budget of its own, so a narrow
+            // bar would run the two into each other — which is why the width guard exists".
+            // **The width guard was a workaround for a missing budget, and it is now the
+            // budget.** A guard withdraws the hint whenever the bar is under 420 pt; a
+            // budget shortens the *text* instead, which keeps the one control a reader can
+            // still learn the chord from and says which part of the line was cut.
+            let hint = if self.palette.is_none() && l.status.width() >= 420.0 {
+                Some(if self.layout.sidebar_visible {
+                    format!("{SIDEBAR_TOGGLE_KEY} sidebar  ·  ←/→ width")
+                } else {
+                    format!("{SIDEBAR_TOGGLE_KEY} sidebar")
+                })
+            } else {
+                None
+            };
+            let status_font = 12.0 * scale;
+            // The same `AVG_ADVANCE` approximation `fit` budgets with, so the two cannot
+            // disagree about how wide a string is.
+            let hint_width = hint
+                .as_ref()
+                .map(|h| h.chars().count() as f32 * status_font * AVG_ADVANCE)
+                .unwrap_or(0.0);
+            let text = fit(
+                &self.status_line(),
+                (l.status.width() - 28.0 - hint_width).max(0.0),
+                status_font,
+            );
             paint_text(
                 painter,
                 &mut summary,
@@ -2554,7 +2614,7 @@ impl IdeApp {
                 l.status.left_top() + egui::vec2(14.0, 12.0),
                 egui::Align2::LEFT_CENTER,
                 &text,
-                egui::FontId::proportional(12.0 * scale),
+                egui::FontId::proportional(status_font),
                 self.theme.dim,
             );
             summary.rows.push(("status".into(), text));
@@ -2583,15 +2643,10 @@ impl IdeApp {
             // shrinks to the one chord that is live in either state. Advertising a dead key is
             // the `AGENTS.md` §2.7 failure in its smallest possible form.
             //
-            // **Right-aligned, and only where both lines fit.** The status text is drawn from
-            // the left with no budget of its own, so a narrow bar would run the two into each
-            // other — which is why the width guard exists rather than the hint being fitted.
-            if self.palette.is_none() && l.status.width() >= 420.0 {
-                let hint = if self.layout.sidebar_visible {
-                    format!("{SIDEBAR_TOGGLE_KEY} sidebar  ·  ←/→ width")
-                } else {
-                    format!("{SIDEBAR_TOGGLE_KEY} sidebar")
-                };
+            // **Right-aligned, and only where both lines fit.** The status text is now
+            // budgeted against this hint rather than merely left to collide with it — see
+            // where `hint` is decided, above.
+            if let Some(hint) = hint {
                 paint_text(
                     painter,
                     &mut summary,
@@ -4616,6 +4671,15 @@ impl IdeApp {
                 summary
                     .hotspots
                     .push((format!("change:{}", row.text), rect));
+                // **The node this click target already has, named and roled.** `Sense::click()`
+                // is focusable, so egui allocated an AccessKit node for this row and set no
+                // role on it (`egui-0.36.2/src/context.rs:1292-1297`) — the same shape the file
+                // tree had at M301, found here by reading `name_role`'s contract rather than by
+                // another dump. A reader could focus the row and be told nothing, which for a
+                // control whose entire purpose is "open this file" is the worst case of the
+                // three.
+                name_node(&response, &format!("Open the change · {}", row.text));
+                name_role(&response, egui::accesskit::Role::Link);
                 Some(response)
             }
         } else {
@@ -7462,7 +7526,7 @@ mod tests {
         );
     }
 
-    /// **No node in this window is `Role::Unknown`.**
+    /// **No node in this window has an unknown role.**
     ///
     /// The dump read on 2026-10-04 carried one, and it was real. egui allocates an AccessKit node for
     /// every **focusable** widget and fills it with `fill_accesskit_node_common`, which sets disabled,
@@ -7472,12 +7536,19 @@ mod tests {
     /// (`egui-0.36.2/src/sense.rs:60`), so every drawn file-tree row allocated a node that announced
     /// as nothing at all.
     ///
-    /// Asserted as a property over the **whole** tree rather than "the row I fixed is named", because
-    /// the second unnamed site was found the same way and a test aimed at one node would pass with
-    /// the other still broken. A node whose role is `Unknown` is by definition one a screen reader
-    /// cannot describe, so none may exist.
+    /// **The name used to claim two properties and the body checked one.** It said
+    /// "unnamed_and_unroled" while filtering only on the role — an independent review caught that,
+    /// in a commit whose whole subject is that naming and roleling are *separate* absences, and
+    /// where the resize handle had a full name and still announced as unknown. It is now
+    /// `no_node_in_the_window_is_unroled`, which is what it asserts. The naming half is covered
+    /// by `the_accessibility_names_read_correctly_and_the_filter_is_named`.
+    ///
+    /// Asserted as a property over the **whole** tree rather than "the row I fixed", because a test
+    /// aimed at one node passes with the other still broken — which is exactly what happened here.
+    /// A node whose role is `Unknown` is by definition one a screen reader cannot describe, so none
+    /// may exist.
     #[test]
-    fn no_node_in_the_window_is_unnamed_and_unroled() {
+    fn no_node_in_the_window_is_unroled() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("only.md"), "x").unwrap();
         let (session, _n) = faux_session(dir.path());
@@ -7849,6 +7920,58 @@ mod tests {
         );
     }
 
+    /// **A "file changed" row is a named link, not an anonymous click target.**
+    ///
+    /// This row is the one control in the transcript whose entire purpose is to open
+    /// something, and it is the only row that allocates a response for its click
+    /// (`Sense::click()`, `app.rs:4609`). Being focusable meant egui built a node for it and
+    /// set **no role** on it — the exact shape the file tree had at M301, so a reader could
+    /// focus the row and be told nothing.
+    ///
+    /// Asserted on both fields because they are separately absent-able: a node can carry
+    /// the words and still announce as an unknown box, which is what this row did until the
+    /// role was added — the name alone would have left it half-fixed.
+    #[test]
+    fn a_file_changed_row_is_a_named_link_for_its_click_target() {
+        let (dir, _keep) = scratch_workspace("a11y-change");
+        let mut h = Harness::new(dir.clone());
+        let mut t = Transcript::new(dir);
+        t.push_user("fix the build");
+        t.push_change(&crate::diff::Change {
+            path: "src/main.rs".into(),
+            lines: vec![crate::diff::DiffLine::Added("let x = 1;".into())],
+            created: false,
+            coarse: false,
+        });
+        h.app.seed_transcript(t);
+
+        let nodes = h.named_nodes();
+        let change: Vec<_> = nodes
+            .iter()
+            .filter(|(l, _)| l.starts_with("Open the change · "))
+            .collect();
+        assert_eq!(
+            change.len(),
+            1,
+            "one click target, one node.\nthe tree held: {nodes:?}"
+        );
+        assert_eq!(
+            change[0].0,
+            // The row's own text, which is `path · +n −m`. Asserted verbatim rather than
+            // with a prefix match: the counts are what tell a reader whether activating
+            // this row is worth it, so a test that accepted any suffix would not notice
+            // them going missing.
+            "Open the change · src/main.rs · +1 −0",
+            "the name must say what activating this row does, and on what"
+        );
+        assert_eq!(
+            change[0].1,
+            egui::accesskit::Role::Link,
+            "a row that opens a file is a link; naming it without a role leaves a reader \
+             with an unknown box that carries words"
+        );
+    }
+
     // ======================================================================================
     // Transcript rows: the rows on screen are named, and the rows off screen are absent
     // ======================================================================================
@@ -8017,6 +8140,296 @@ mod tests {
         );
     }
 
+    /// **The fixture ADR-022 names — 800 *rich* rows — with both numbers measured here.**
+    ///
+    /// ADR-022 records the cost of naming every drawn row as *"800 rich rows → 44 lines
+    /// drawn → 53 named nodes … and it is in a test, not in a comment."* **It was not in a
+    /// test.** The bounding tests used 200- and 400-row transcripts of *one-line user
+    /// rows*, which is a different fixture twice over: a user row never wraps, so nothing
+    /// exercised the multi-line layout the claim is about, and it names as
+    /// `Transcript row · You said · …` rather than the assistant role.
+    ///
+    /// **Two of the three numbers are also inconsistent with each other under either
+    /// reading.** `region("agent")` counts *wrapped lines*; a node is built per *row*, so a
+    /// transcript of multi-line rows must name **fewer** nodes than it draws lines. "44
+    /// lines drawn → 53 named nodes" has more of the second than the first, which no build
+    /// of this window produces. So the claim was not merely unpinned — it was not true.
+    ///
+    /// It is replaced by a measurement rather than deleted, and the property asserted is
+    /// the one the sentence was reaching for: **the node count tracks the rows on screen,
+    /// not the length of the conversation.** That is why the fixture is measured at two
+    /// sizes. Quadrupling the transcript from 200 rows to 800 must not quadruple the
+    /// nodes, and a frame cost that grew with the conversation is exactly what M285
+    /// removed.
+    #[test]
+    fn eight_hundred_rich_rows_pay_only_for_the_rows_that_are_drawn() {
+        /// One paragraph per row, distinct per index.
+        ///
+        /// Through `apply` rather than `push_user` because a *rich* row is the one that
+        /// wraps: this is the fixture whose drawn-line count is several times its row
+        /// count, and it names as `Agent said` rather than `You said`.
+        fn conversation(rows: usize, workspace: std::path::PathBuf) -> Transcript {
+            let mut t = Transcript::new(workspace);
+            for i in 0..rows {
+                t.apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+                    message: Box::new(epsilon_contracts::message::Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: format!("rich-{i}"),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(format!(
+                                "paragraph {i} of a long conversation, written so that it \
+                                     wraps across several drawn lines rather than fitting on \
+                                     one, which is what makes the drawn-line count and the \
+                                     row count different numbers and what this measurement \
+                                     is actually about."
+                            ))],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    )),
+                });
+            }
+            t
+        }
+
+        /// `(lines drawn, row names published)` for a transcript of `rows` rich rows.
+        fn measure(rows: usize, tag: &str) -> (usize, Vec<String>) {
+            let (dir, _keep) = scratch_workspace(tag);
+            let mut h = Harness::new(dir.clone());
+            h.app.seed_transcript(conversation(rows, dir));
+            // Two frames: `stick_to_bottom` is applied at the end of a pass, so the first
+            // is laid out from offset zero. The reason the sibling test gives.
+            h.paint();
+            let f = h.paint();
+            // The tail must be on screen, or every assertion below is satisfied by a
+            // window that drew nothing at all.
+            assert!(
+                f.region("agent")
+                    .iter()
+                    .any(|l| l.contains(&format!("paragraph {}", rows - 1))),
+                "{rows} rich rows: the bottom of the transcript is not what the frame shows, \
+                 so the bounds below would be vacuous.\n{}",
+                f.describe()
+            );
+            let lines = f.region("agent").len();
+            let names: Vec<String> = h
+                .named_nodes()
+                .into_iter()
+                .map(|(l, _)| l)
+                .filter(|l| l.starts_with("Transcript row · "))
+                .collect();
+            (lines, names)
+        }
+
+        let (lines_200, names_200) = measure(200, "rich-rows-200");
+        let (lines_800, names_800) = measure(800, "rich-rows-800");
+
+        // **The claim, and the only half that needed pinning: the cost tracks the screen,
+        // not the transcript.** Four times the conversation, the same work — measured at
+        // 15 row names either way on this machine. A frame cost that grew with the
+        // conversation is exactly what M285 removed.
+        assert!(
+            names_800.len() < names_200.len() * 2,
+            "quadrupling the transcript from 200 to 800 rich rows took the published names \
+             from {} to {}. Naming every row rather than every *drawn* row makes this frame \
+             cost grow with the conversation, which is the cost M285 removed.",
+            names_200.len(),
+            names_800.len()
+        );
+        assert!(
+            names_800.len() < 800 / 4,
+            "an 800-row transcript published {} row names; one per row is one node per row \
+             per frame.",
+            names_800.len()
+        );
+
+        // **The off-screen half is genuinely absent, by name.**
+        //
+        // No `paragraph 0` in a string of `paragraph 799`: the digit after the space is
+        // never a zero for a multi-digit row, so this cannot match by accident. It holds
+        // of the *drawn* half too, not only of the tree — a window that drew all 800 and
+        // named a few would satisfy the bound above and fail here.
+        assert!(
+            !names_800.iter().any(|l| l.contains("paragraph 0 ")),
+            "the first paragraph is off screen and must not be named.\nthe tree held {:?}",
+            names_800
+        );
+
+        // Both counts are returned rather than discarded, because **the recorded line
+        // count is not the number the old ADR sentence was reaching for.** Measured here:
+        // 17 recorded lines against 15 names at *both* sizes, and the two extra lines are
+        // pane chrome (`Agent`, and the greeting) rather than wrapped prose. See the note
+        // on `FrameSummary` below.
+        assert!(
+            lines_200 > names_200.len() && lines_800 > names_800.len(),
+            "the agent region carries chrome beyond its rows, so its recorded lines exceed \
+             its named rows: {lines_200}/{}/{lines_800}/{}",
+            names_200.len(),
+            names_800.len()
+        );
+    }
+
+    /// **`FrameSummary::region` counts recorded *blocks*, not painted lines.**
+    ///
+    /// A sibling test above justifies counting this region as "the lines are the rows".
+    /// **That is true for one-line user rows and false for the assistant rows that make a
+    /// real conversation long.** `record_block` (`app.rs:3952-3962`) is called once per
+    /// **markdown block**, and a paragraph that wraps over six painted lines contributes
+    /// **one** recorded line and one named node. The code block is the arm that makes
+    /// "per block" the rule rather than "one line per answer": it records **one line per
+    /// line of code** (`app.rs:3836-3845`).
+    ///
+    /// It is recorded here because it is why the ADR-022 figure "800 rich rows → 44 lines
+    /// drawn → 53 named nodes" could not have been reproduced from this tree even by
+    /// someone who meant to: there is no counter in the product that reports painted lines,
+    /// and the count that does exist moves by block. The claim was measured against a
+    /// number the window does not produce.
+    ///
+    /// **The fixture is most of this test, and it was wrong the first time.** Four
+    /// adjacent `ContentBlock::text` values parse as **one** paragraph — markdown has no
+    /// blank line between them — so the first version of this test recorded a single
+    /// concatenated line and failed with `left: 1, right: 2`. The frame dump is what showed
+    /// it: four paragraphs ran together into one entry with no separator at all. **Blocks
+    /// are separated by a blank line, not by being different content blocks**, and the last
+    /// assertion below is the one the wrong fixture would have failed.
+    #[test]
+    fn the_agent_region_records_one_line_per_markdown_block_not_per_painted_line() {
+        let (dir, _keep) = scratch_workspace("blocks-not-lines");
+        let mut h = Harness::new(dir.clone());
+        let mut t = Transcript::new(dir);
+        t.apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+            message: Box::new(epsilon_contracts::message::Message::Assistant(
+                epsilon_contracts::message::AssistantMessage {
+                    id: "blocks-1".into(),
+                    timestamp_ms: 0,
+                    provider: "faux".into(),
+                    model_id: "faux-1".into(),
+                    // Blank lines between the blocks, which is what separates them. Every
+                    // paragraph here is long enough to wrap, so recorded lines and painted
+                    // lines part company.
+                    content: vec![epsilon_contracts::content::ContentBlock::text(
+                        "first paragraph, long enough that it wraps past the width of the \
+                         pane and onto a second painted line\n\nsecond paragraph, which the \
+                         first must not swallow\n\n- a list item\n\n\
+                         ```rust\nlet x = 1;\nlet y = 2;\n```",
+                    )],
+                    stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                    error_message: None,
+                    usage: Default::default(),
+                },
+            )),
+        });
+        h.app.seed_transcript(t);
+
+        h.paint();
+        let f = h.paint();
+        let region = f.region("agent");
+
+        // **Each block is its own recorded entry.**
+        for expected in ["first paragraph", "second paragraph", "a list item"] {
+            assert!(
+                region.iter().any(|l| l.contains(expected)),
+                "no recorded line carries {expected:?}.\n{}",
+                f.describe()
+            );
+        }
+        // **And a code block records one line per line of code** — the arm that makes
+        // "per block" the rule rather than "one entry per answer".
+        for code in ["let x = 1;", "let y = 2;"] {
+            assert!(
+                region.iter().any(|l| l.contains(code)),
+                "{code:?} is missing, so a code block is recorded as one entry rather than \
+                 one per line.\n{}",
+                f.describe()
+            );
+        }
+        // **The assertion the wrong fixture would have failed**, stated directly: no entry
+        // carries two blocks. One line holding both paragraphs is exactly what four
+        // adjacent content blocks produced.
+        assert!(
+            !region
+                .iter()
+                .any(|l| l.contains("first paragraph") && l.contains("second paragraph")),
+            "two blocks were recorded as one entry, so this region is counting something \
+             other than blocks.\n{}",
+            f.describe()
+        );
+    }
+
+    /// **The chrome lines are budgeted like everything else in the window.**
+    ///
+    /// These were the **only two long strings the window drew without a budget**: file rows,
+    /// task lines, sessions, tab labels, palette rows and transcript rows all go through
+    /// [`fit`], and the chrome draws on the root `Ui` whose clip rect is the whole content
+    /// rect (`app.rs:2458`), so nothing clipped them either. The title line therefore ran
+    /// into the figures on its right, whose reserve is a fixed 48 pt — and at 200% the same
+    /// line is twice as wide, so it collided at a size where it had not collided at all.
+    ///
+    /// **At 200%, which is where the defect is reachable.** A 1440-point window at zoom 1
+    /// has room for the longest workspace name a scratch directory can produce, so a test
+    /// pinned there would pass against the unbudgeted code. The zoom is what makes the same
+    /// string twice as wide, and `at_zoom` keeps the content rect identical so this compares
+    /// two font sizes rather than two layouts.
+    ///
+    /// **Both halves matter.** The line must be *marked* as cut (`fit` ends with `…`; a
+    /// silently shortened value is the failure `fit` exists to prevent), and it must be
+    /// *shorter than the zoomed-out line*, which is what "budgeted by the font size it is
+    /// drawn at" means rather than by a fixed character count.
+    ///
+    /// **What is not pinned here, stated rather than left for a reader to assume:** the
+    /// status bar's half of the same fix. Its line is arbitrary length in the product —
+    /// `status_line` carries a tool's own refusal sentence — but `paint` clears
+    /// `self.refusal` on a window with no session (`app.rs:1898-1899`), so driving a long
+    /// one from a frame test needs a composed agent rather than a fixture. The status bar
+    /// now takes the identical [`fit`] call against the identical `AVG_ADVANCE`
+    /// approximation, and that the two agree is what the title half above demonstrates.
+    #[test]
+    fn the_title_line_is_budgeted_and_says_when_it_was_cut() {
+        let long = "a-workspace-directory-name-that-no-window-is-wide-enough-to-show-in-full";
+        let (dir, _keep) = scratch_workspace(long);
+        let mut h = Harness::new(dir);
+
+        let frame = h.paint();
+        let title = frame.region("title").join("");
+        assert!(
+            !title.is_empty(),
+            "the title bar drew nothing, so this asserts on an empty string.\n{}",
+            frame.describe()
+        );
+        // **At 100% it fits, and must not be cut anyway.** A budget that is too aggressive
+        // is the same defect as one that is missing: a reader who believes a truncated
+        // workspace name is the whole one is misled about where they are.
+        assert!(
+            !title.ends_with('…'),
+            "a 1440-point bar has room for this name and cut it anyway: {title:?}"
+        );
+
+        h.at_zoom(2.0);
+        let zoomed = h.paint();
+        let title2 = zoomed.region("title").join("");
+        assert!(
+            title2.ends_with('…'),
+            "at 200% the same line is twice as wide and must be shortened **and marked**: \
+             {title2:?}\n{}",
+            zoomed.describe()
+        );
+        assert!(
+            title2.chars().count() < title.chars().count(),
+            "doubling the font size did not shorten the line, so the budget is not being \
+             measured in points: {title2:?} against {title:?}"
+        );
+        // **The cut is honest about what it cut.** The workspace name is at the front, so a
+        // budgeted line keeps it and loses the end — never the part that identifies the
+        // workspace.
+        assert!(
+            title2.starts_with("epsilon-tabs-a-workspace"),
+            "the budget cut the front of the line rather than the end: {title2:?}"
+        );
+    }
+
     /// **A name identifies a row; it is not the row.**
     ///
     /// Both halves matter and they are opposites. A name that carried the whole line would
@@ -8115,6 +8528,14 @@ mod tests {
     /// transcript records every line it paints, so the lines are the rows. Asserting on a
     /// number the code maintains itself would pass against a transcript that painted
     /// everything and reported otherwise.
+    ///
+    /// **"The lines are the rows" holds for this fixture and not in general.** The rows
+    /// here are one-line user rows, which is what makes it true. An assistant answer is
+    /// recorded **per markdown block**, one entry however far the block wrapped, so the
+    /// region is not a painted-line counter. That is what
+    /// `the_agent_region_records_blocks_and_not_painted_lines` pins, and it is why the
+    /// "800 rich rows → 44 lines drawn" figure in ADR-022 was not reproducible from this
+    /// tree.
     #[test]
     fn a_transcript_longer_than_the_pane_lays_out_strictly_fewer_rows_than_it_has() {
         const ROWS: usize = 400;

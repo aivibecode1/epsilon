@@ -286,7 +286,27 @@ pub const UNICODE: Glyphs = Glyphs {
     vertical: "│",
     bullet: "•",
     cursor_bar: "▎",
-    assistant: "•",
+    // Distinct from `bullet`, and **this table needed it as much as the ASCII one did.**
+    //
+    // The first fix changed only `ASCII`, and that was half the defect. `Glyphs::detect`
+    // returns `UNICODE` everywhere except a Windows console without `WT_SESSION`
+    // (`theme.rs:392-394`), while `ColorMode::detect` returns `Ansi16` unless `COLORTERM`
+    // says truecolor (`theme.rs:84-96`) — so **every** ordinary POSIX terminal, and conhost
+    // with a UTF-8 code page, lands on UNICODE + Ansi16: no band, and these two glyphs. An
+    // independent review on 2026-10-04 caught the half that was still live, after the frame
+    // test had been written against the ASCII table and passed.
+    //
+    // The test's fault for passing is the thing worth recording: it **pinned**
+    // `Theme::new(Ansi16, ASCII)` explicitly, so it proved the ASCII case and said nothing
+    // about the much more common one. A test that sets the configuration it wants to check is
+    // a test of that configuration; the bandless case is a *pair*, and both halves of it have
+    // to be pinned. `no_glyph_set_gives_an_answer_and_a_notice_the_same_character` now pins the
+    // pair as a property over both tables.
+    //
+    // `❯` is already `prompt`, so it is not free; `▪` is unused, is in every font this
+    // program can draw on, and is what a reader expects for quoted speech. WCAG 2.2 SC 1.4.1:
+    // meaning may not be carried by shape or colour alone.
+    assistant: "▪",
     thinking: "≡",
     prompt: "❯",
     tool_call: "▸",

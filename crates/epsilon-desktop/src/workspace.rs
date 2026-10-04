@@ -395,10 +395,30 @@ pub fn draw_tree(
                         // a reader that trusts the role first has nothing to announce.
                         //
                         // `Role::TreeItem` is the role for a row inside a tree, and it is what
-                        // lets a reader announce the row *in its structure* — "only.md, 1 of 3"
-                        // — rather than as an anonymous focusable box. The tree itself is a
-                        // `Role::Tree` once `workspace_pane` gets its region role; naming the
-                        // rows first is the half that can be asserted today.
+                        // lets a reader announce the row as an item rather than as an
+                        // anonymous focusable box.
+                        //
+                        // **The pane is a `Region`, not a `Tree`, and that is not a nesting
+                        // problem.** Two earlier versions of this comment said it was: one
+                        // promised the pane "would become" a `Tree` and was never reconciled
+                        // with the role M302 gave it; the next claimed "a `treeitem` under a
+                        // `region` is not a valid ARIA structure". Both were wrong, and an
+                        // independent read-only pass on 2026-10-04 is what settled it.
+                        //
+                        // **There is no `treeitem`-under-`region` here to invalidate.**
+                        // egui attaches each new node to the nearest ancestor that already has
+                        // one, and the pane `Ui`s built by `pane_ui` carry no node at all — so
+                        // `find_accesskit_parent` (`egui-0.36.2/src/context.rs:613-621`) skips
+                        // every one of them and lands on the root. **The `Region` node and every
+                        // `TreeItem` node are siblings directly under the AccessKit root**, which
+                        // is what ADR-022 already records ("the nodes attach flat to the window
+                        // root … Truthful, but not a pane hierarchy").
+                        //
+                        // So flipping this pane's role to `Tree` would change one label and
+                        // create no structure — the change "that would have looked like it
+                        // worked on the frame it was written". Making the hierarchy real needs
+                        // a node on the pane `Ui` first, which moves *every* region's
+                        // parentage and is behaviour-level. Not done, and not a role flip.
                         crate::app::name_role(&response, egui::accesskit::Role::TreeItem);
                         if response.clicked() {
                             let path = row.path.clone();

@@ -309,28 +309,6 @@ async fn an_always_session_allow_does_not_reach_a_task_child() {
             .collect::<Vec<_>>()
     );
 
-    for r in ui.seen.lock().unwrap().iter() {
-        println!("ASK cap={}", r.capability);
-    }
-    for m in outcome.produced.iter() {
-        match m {
-            Message::ToolResult(t) => println!(
-                "RESULT {} err={} body={:?}",
-                t.tool_name,
-                t.is_error,
-                t.content
-                    .iter()
-                    .filter_map(|c| match c {
-                        epsilon_contracts::content::ContentBlock::Text { text } =>
-                            Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<String>()
-            ),
-            Message::Assistant(a) => println!("ASSISTANT {}", a.text()),
-            _ => println!("OTHER"),
-        }
-    }
     let bash_asks = ui
         .seen
         .lock()

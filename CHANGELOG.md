@@ -7,6 +7,19 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **The title bar and status bar no longer draw text with no width budget.** They were the only
+  two long strings in the window that did not go through `fit`: the workspace name and model
+  label ran into the figures on their right (a fixed 48-point reserve), and at 200% text the same
+  line is twice as wide, so it collided at a size where it had not collided at all. Both are now
+  budgeted against the width the opposite end of the bar will take, so the key hint survives and
+  the *text* is what says it was cut. The 420-point guard that used to withdraw the hint is now a
+  budget (M304).
+- **A `/model` switch is recorded in the session by every front end, not just the terminal.**
+  M299 fixed it in the terminal's `apply_model`, which left the two stdio-RPC paths switching a
+  live session without recording it — so a client got the reported "keeps reverting to another"
+  straight back. The write moved into `Agent::set_model_id`, which every front end already calls,
+  and the resume path now scopes its lock so the two cannot deadlock (M303).
+
 - **The desktop IDE now publishes landmarks a screen reader can navigate by.** Every region had a
   *name* but no *role*, and roles are what a screen reader's rotor is built from — so the fastest
   route to the transcript was arrowing through every other pane. The transcript is now a `Log`, the
@@ -87,8 +100,10 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 - **Transcript rows are now read aloud, not just found.** Every row carried its text as its
   *value* with no *name*, so a screen reader could reach a row and not say what kind of row it
   was. Rows are named now — `Transcript row · {kind} · {excerpt}` — and off-screen rows stay
-  unnamed by construction rather than by convention: 800 rich rows produce **53 named nodes**,
-  not 1600 (M286).
+  unnamed by construction rather than by convention: an 800-row rich transcript publishes the
+  **same number of row names as a 200-row one** (measured: 15 either way), because the count
+  tracks the rows on screen and not the length of the conversation (M286; the claim pinned and
+  corrected at M304 — the "53 named nodes" figure it used to quote had no test behind it).
 - **Reading the screen-reader tree found two bugs no test was looking for.** The file-tree pane
   announced `Workspace files · 1 files`, and the tree's filter was a text field with **no name at
   all** — a bare box a screen reader could say nothing about. Both fixed, and a test now pins the

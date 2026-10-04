@@ -1703,7 +1703,8 @@ Two verifications, both measured:
   `Context::accesskit_node_builder` is **public** (`egui-0.36.2/src/context.rs:3684-3690`) and
   `accesskit::Node::set_role` is public, so the window now publishes real landmarks — `Log` for
   the transcript, `Navigation` for the activity bar, `Banner` for the title bar, `Status` for the
-  status bar and the goal band, `TreeItem` for a file row, `Splitter` for the resize handle. The
+  status bar and the goal band, `TreeItem` for a file row, `Splitter` for the resize handle, and
+  `Link` for a "file changed" row (M303). The
   one subtlety is **ordering**: `fill_accesskit_node_from_widget_info` rewrites the role on the
   same pass, so the role must be stamped **after** the `widget_info` call. **Descriptions and
   relations remain genuinely inexpressible** — `WidgetInfo` has no field for either.
@@ -1789,9 +1790,30 @@ The **empty state** and a pending **permission ask** are named too.
 
 **Off-screen rows stay unnamed structurally, not by convention.** The measuring pass takes
 `Label::layout_in_ui`, which registers no node at all, and every off-screen row only ever runs in
-the measurement probe. A test pins this: 800 rich rows → **44 lines drawn → 53 named nodes**,
-not 1600. That is the evidence that this did not re-create the cost virtualisation removed — and
-it is in a test, not in a comment.
+the measurement probe. That is the evidence this did not re-create the cost virtualisation removed —
+and it is now in a test, not in a comment.
+
+**Correction, 2026-10-04 (M304): this paragraph carried two numbers no build of this window can
+produce, and the sentence above it claimed a test that did not exist.** It read "a test pins this:
+800 rich rows → **44 lines drawn → 53 named nodes**, not 1600". Three things were wrong with it.
+
+1. **No such test existed.** The bounding tests used 200-, 300- and 400-row transcripts of
+   *one-line user rows* — a fixture that never wraps and names as `You said`, so it exercised
+   neither the multi-line layout nor the assistant role the sentence is about.
+2. **The numbers are arithmetically impossible under either reading.** A node is built per
+   **row**; `FrameSummary::region` counts recorded **blocks** (see
+   `the_agent_region_records_one_line_per_markdown_block_not_per_painted_line`). Nodes ≤ rows ≤
+   recorded lines. "44 lines drawn → 53 named nodes" has *more* of the second than the first.
+3. **There is no painted-line counter in the product at all**, so "44 lines drawn" could not
+   have been measured from this tree even by someone who meant to.
+
+It is replaced by the property the sentence was reaching for, pinned in
+`eight_hundred_rich_rows_pay_only_for_the_rows_that_are_drawn`: with the fixture the claim names
+(800 rich assistant rows, injected through `apply` so they name as `Agent said`), the published
+row-name count is **identical at 200 rows and at 800** — measured 15 names either way on a
+1440×900 window, against 800 rows in the transcript. Quadrupling the conversation does not
+quadruplicate the frame's cost. The negative control is run: with the span slice replaced by
+`for row in rows`, the test fails printing *"took the published names from 200 to 800"*.
 
 **On the cost, stated carefully because the measurement could not settle it.** `frame_cost.rs`
 reported 3.927 ms → 4.004 ms at 800 rows, but the *same* build swung between 2.64 and 4.02 across
@@ -1804,12 +1826,15 @@ cannot see node-building at all** — a real gap in our instrument, recorded rat
 
 **Still open after this.** ~~There are no landmark roles~~ — **closed 2026-10-04 (M301), see the
 amendment below.** Nodes still attach flat, and there are still **no descriptions and no
-relations**, which `WidgetInfo` genuinely cannot express. A `Changed` row's click target has
-**no node at all** — its `Sense::click()` is not focusable, so egui's node-creation guard skips
-it; giving "open the file" a role needs a `WidgetInfo` there and was judged out of scope rather
-than half-done. egui's per-galley `Role::TextRun` selection run stays unnamed deliberately — its
-content *is* its value, and naming it would double-announce; a test pins that it remains one
-node. And **no screen reader has been run** at any point in this ADR.
+relations**, which `WidgetInfo` genuinely cannot express. ~~A `Changed` row's click target has
+**no node at all**~~ — **also closed (M303)**, and the *reason* it was believed was wrong twice
+over: `Sense::click()` **is** focusable (`egui-0.36.2/src/sense.rs:60`), and
+`Context::accesskit_node_builder` is *"get or create"* (`context.rs:3674-3675` — it inserts
+`Default::default()` on a vacant id), so naming a node creates it whether or not egui would have
+allocated one. That row is now `Open the change · …`, roled `Link`. egui's per-galley
+`Role::TextRun` selection run stays unnamed deliberately — its content *is* its value, and naming
+it would double-announce; a test pins that it remains one node. And **no screen reader has been
+run** at any point in this ADR.
 
 ### Fourth amendment, 2026-10-04 — roles were never the limitation, and a test was pinning it
 
@@ -1832,7 +1857,8 @@ it was written. Roles chosen to match what each region *is*: `Log` for the trans
 past events; `Document` is for text the reader edits, and this pane is read-only), `Navigation`
 for the activity bar, `Banner` for the title bar, `Status` for the status bar and the goal band,
 `TreeItem` for a file row, `Splitter` for the resize handle (`Adjustment` is for a value, not a
-pane's width).
+pane's width), and — added at M303, after a review pointed out the record did not match the tree —
+`Link` for a "file changed" row, whose click target opens the file.
 
 **The part worth keeping: a test was pinning the limitation.** `a_named_region_is_a_container_
 with_a_name_and_nothing_else` asserted the transcript was a `Role::Pane`, with a doc comment
@@ -2169,6 +2195,22 @@ filtering a list.
 **Consequences.** A subagent that needs the same capability asks again. That is the cost, and it is
 the correct one: the alternative is a permission no human granted. Denies are unaffected —
 monotonicity is in the engine, which the child shares.
+
+**Amendment, 2026-10-04 (M303) — two consequences of the fix, found by an independent review.**
+
+1. **A grant made on a subagent's prompt now dies with that subagent**, because the child's memory
+   is fresh. Before this ADR the keypress promoted into the *shared* memory and lasted for the
+   whole session. That is the fix working, but it has a cost nobody wrote down: the transcript row
+   said `permission allowed (session)`, which promised a longer scope than the code provides.
+   `AGENTS.md` §2.7 is exactly this — a control that does not do what it names — so the row now
+   says what is true: **"allowed (for this agent, not its subagents)"**.
+2. **The prompt cannot say which agent is asking.** `PermissionRequest` carries `request_id`,
+   `capability`, `pattern` and `detail` (`agent_event.rs:52-61`) and **no agent identity**, while
+   the child shares the parent's `ui` because that *is* the user. So a reader who answers "no" to
+   "run this shell?" cannot afterwards tell whether the main agent or a subagent was stopped.
+   Fixing it properly means adding an optional agent label to `PermissionRequest` — a wire type,
+   so `AGENTS.md` §2.8 applies, and it wants its own decision rather than a field added here.
+   **Recorded as open rather than done.**
 
 **Alternatives rejected.** *Filter the parent's memory into the child* — needs to distinguish
 remembered allows from engine allows, which `Authorization` cannot express (see above). *Pass a

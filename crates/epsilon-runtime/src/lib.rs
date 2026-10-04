@@ -4922,68 +4922,87 @@ pub async fn build_runtime_and_gate_runner(
         let attached = agent
             .session_store()
             .ok_or("no session store attached for a resume")?;
-        let mut restored_guard = attached.lock().map_err(|_| "session store lock poisoned")?;
-        let restored: &mut epsilon_session::SessionStore = &mut restored_guard;
-        // M41: a resumed file may predate headers — migrate before repair reads
-        // it, so the repair pass sees healed entries, never legacy shapes.
-        if restored.migrated() {
-            match restored.persist_migration() {
-                // The resume path is where a *foreign* file is most likely to arrive, so the
-                // message names the backup too — see the note on the other call site.
-                Ok(()) => notices.push(format!(
-                    "migrated {} to current version (previous bytes kept at {})",
-                    rp.display(),
-                    epsilon_session::original_backup_path(restored.path()).display()
-                )),
-                Err(e) => notices.push(format!("migration warning (continuing): {e}")),
-            }
-        }
-        // ponytail-audit follow-up: repair is now WIRED, not test-only — a crashed
-        // prior run leaves dangling tool calls on the active branch; synthesize
-        // tombstones before the model view so the resumed context stays provider-valid.
-        match epsilon_session::repair::repair_on_open(&mut *restored) {
-            Ok(report) => {
-                for line in report.summary() {
-                    notices.push(format!("repaired {}: {line}", rp.display()));
+        // **One scope, and it ends before anything that re-locks the store.** `set_model_id`
+        // now records the applied model into the attached session (M303), so it takes this
+        // same `std::sync::Mutex` — and a non-reentrant mutex locked twice on one thread
+        // **deadlocks rather than failing**. It hung the whole desktop suite, in the test whose
+        // subject is resuming a session, which is the one path that holds the guard. The guard is
+        // therefore bound *inside* this block and everything it protects is finished before the
+        // block closes.
+        let (msgs, count, resumed) = {
+            let mut restored_guard = attached.lock().map_err(|_| "session store lock poisoned")?;
+            let restored: &mut epsilon_session::SessionStore = &mut restored_guard;
+            // M41: a resumed file may predate headers — migrate before repair reads
+            // it, so the repair pass sees healed entries, never legacy shapes.
+            if restored.migrated() {
+                match restored.persist_migration() {
+                    // The resume path is where a *foreign* file is most likely to arrive, so the
+                    // message names the backup too — see the note on the other call site.
+                    Ok(()) => notices.push(format!(
+                        "migrated {} to current version (previous bytes kept at {})",
+                        rp.display(),
+                        epsilon_session::original_backup_path(restored.path()).display()
+                    )),
+                    Err(e) => notices.push(format!("migration warning (continuing): {e}")),
                 }
             }
-            Err(e) => notices.push(format!("repair warning (continuing): {e}")),
-        }
-        // An entry kind this build does not know is preserved, not refused (M113), which leaves
-        // it in the file and out of the transcript by construction: the session opens looking
-        // complete while something in it was silently skipped. Nothing else on this path can
-        // tell the user that, so say it here, beside the repairs and in the same voice.
-        if let Some(notice) = restored.preserved_unknown_notice() {
-            notices.push(format!("{}: {notice}", rp.display()));
-        }
-        let msgs: Vec<Message> = restored
-            .model_view()
-            .map_err(|e| format!("read {}: {e}", rp.display()))?
-            .into_iter()
-            .map(|v| v.into_message())
-            .collect();
-        let count = msgs.len();
+            // ponytail-audit follow-up: repair is now WIRED, not test-only — a crashed
+            // prior run leaves dangling tool calls on the active branch; synthesize
+            // tombstones before the model view so the resumed context stays provider-valid.
+            match epsilon_session::repair::repair_on_open(&mut *restored) {
+                Ok(report) => {
+                    for line in report.summary() {
+                        notices.push(format!("repaired {}: {line}", rp.display()));
+                    }
+                }
+                Err(e) => notices.push(format!("repair warning (continuing): {e}")),
+            }
+            // An entry kind this build does not know is preserved, not refused (M113), which leaves
+            // it in the file and out of the transcript by construction: the session opens looking
+            // complete while something in it was silently skipped. Nothing else on this path can
+            // tell the user that, so say it here, beside the repairs and in the same voice.
+            if let Some(notice) = restored.preserved_unknown_notice() {
+                notices.push(format!("{}: {notice}", rp.display()));
+            }
+            let msgs: Vec<Message> = restored
+                .model_view()
+                .map_err(|e| format!("read {}: {e}", rp.display()))?
+                .into_iter()
+                .map(|v| v.into_message())
+                .collect();
+            let count = msgs.len();
+            // M139: a model switch recorded in the session used to be read by nobody, so a
+            // resumed conversation silently came back on the launch model. Read it here while
+            // the store is already open — and act on it after the block, because acting on it
+            // here is what deadlocked.
+            //
+            // Precedence, and it is not arbitrary: an explicit `--model` on THIS invocation
+            // is a deliberate instruction for this run, while the session's model is a
+            // remembered default. So flag > session > project/config, which is exactly the
+            // order `candidate_raw` already builds above — the session slots in only when the
+            // user expressed no preference of their own.
+            let resumed = resumed_model_to_use(model_explicit, &*restored, model_id);
+            (msgs, count, resumed)
+        };
         agent.restore_history(msgs);
         notices.push(format!("resumed {} entries from {}", count, rp.display()));
-        // M139: a model switch recorded in the session used to be read by nobody, so a
-        // resumed conversation silently came back on the launch model. Apply it here —
-        // and only here, because this is the point where the session is known and the
-        // agent still exists.
+        // A let-chain rather than a nested `if`: clippy's `collapsible_if` is denied
+        // workspace-wide, and this is the shape it asks for — the same shape 77 other
+        // sites in the workspace already use.
         //
-        // Precedence, and it is not arbitrary: an explicit `--model` on THIS invocation
-        // is a deliberate instruction for this run, while the session's model is a
-        // remembered default. So flag > session > project/config, which is exactly the
-        // order `candidate_raw` already builds above — the session slots in only when the
-        // user expressed no preference of their own.
-        if let Some(resumed) = resumed_model_to_use(model_explicit, &*restored, model_id) {
-            let (provider, session_model) = resumed;
-            if session_model != model_id {
-                notices.push(format!(
-                    "resumed session was last used on {provider}/{session_model}; continuing \
-                     there (pass --model to override)"
-                ));
-                agent.set_model_id(session_model);
-            }
+        // The `!=` half is **not** redundant with the early return inside
+        // `resumed_model_to_use`. That one compares the *raw* recorded id against the
+        // launch model; this one compares the *resolved* id, which can come back equal
+        // after catalog resolution of an alias. Dropping either guard silently re-notices
+        // a launch that changed nothing.
+        if let Some((provider, session_model)) = resumed
+            && session_model != model_id
+        {
+            notices.push(format!(
+                "resumed session was last used on {provider}/{session_model}; continuing \
+                 there (pass --model to override)"
+            ));
+            agent.set_model_id(session_model);
         }
     }
     Ok((agent, gate_runner))

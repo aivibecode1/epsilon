@@ -159,6 +159,80 @@ fn the_answer_is_not_a_notice_when_there_is_no_band() {
     );
 }
 
+/// **The bandless case is a *pair* of glyph sets, and the first version of this test checked
+/// only one.**
+///
+/// The test above pins `Theme::new(Ansi16, ASCII)` — which is what let a half-finished fix
+/// pass. `Glyphs::detect` returns `UNICODE` on every ordinary POSIX terminal and on a conhost
+/// with a UTF-8 code page (`theme.rs:392-394`), while `ColorMode::detect` returns `Ansi16`
+/// unless `COLORTERM` says truecolor (`theme.rs:84-96`). So **UNICODE + Ansi16 is the far more
+/// common bandless configuration**, and it is a different table with its own `bullet` and
+/// `assistant`. An independent review on 2026-10-04 found the answer and a notice still drawing
+/// the same `•` there.
+///
+/// Asserted over both tables for that reason, and as a property — *no glyph set may give these
+/// two roles the same character* — rather than as the two literal characters, because a
+/// property survives the next character change and a literal does not.
+#[test]
+fn no_glyph_set_gives_an_answer_and_a_notice_the_same_character() {
+    for (name, glyphs) in [
+        ("ASCII", crate::ui::theme::ASCII),
+        ("UNICODE", crate::ui::theme::UNICODE),
+    ] {
+        // Both tables, bandless and banded, because the choice of table and the choice of
+        // colour mode are independent and a reader can land in any combination.
+        for (mode_name, mode) in [
+            ("Ansi16", ThemeColorMode::Ansi16),
+            ("None", ThemeColorMode::None),
+            ("Truecolor", ThemeColorMode::Truecolor),
+        ] {
+            let theme = Theme::new(mode, glyphs);
+            assert_ne!(
+                glyphs.assistant, glyphs.bullet,
+                "{name}/{mode_name}: the model's answer and a harness notice draw the same \
+                 character, so a reply reads as a status line without colour"
+            );
+            // And the painted row, for the case that actually produces the report.
+            let mut app = bench_app(UiState::new());
+            app.theme = theme;
+            app.ui
+                .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+                    message: Box::new(Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: "msg-pair".into(),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(
+                                "Run complete.",
+                            )],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    )),
+                });
+            app.ui.push_notice("permission allowed");
+            let rows = render_rows(&mut app, 80, 24);
+            let answer = rows
+                .iter()
+                .position(|r| r.contains("Run complete."))
+                .unwrap_or_else(|| {
+                    panic!("{name}/{mode_name}: the answer was not drawn: {rows:#?}")
+                });
+            let notice = rows
+                .iter()
+                .position(|r| r.contains("permission allowed"))
+                .unwrap_or_else(|| panic!("{name}/{mode_name}: the notice was not drawn"));
+            assert_ne!(
+                rows[answer].chars().next(),
+                rows[notice].chars().next(),
+                "{name}/{mode_name}: same pixels for the answer and the notice"
+            );
+        }
+    }
+}
+
 /// The gutter glyph appears **once** per row, on every row kind.
 ///
 /// This is the M198 defect, stated as a property rather than as three corrected
@@ -752,13 +826,27 @@ fn an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colou
 
     // The fallback markers, named rather than merely "different": `pin_theme`
     // pins the Unicode repertoire, so these are the glyphs a real terminal gets.
+    //
+    // **Read from the repertoire, not typed into the assertion.** This line had `•`
+    // written into it, and that literal was the *defect*: `UNICODE.assistant` was `•`,
+    // the same character as `UNICODE.bullet`, so on a bandless terminal the model's
+    // answer drew as a harness notice. M303 gave the answer its own `▪` and this
+    // assertion failed — for the right reason, at the wrong moment, and only because
+    // a golden frame test happened to name the character.
+    //
+    // Asserting against the table states what the test is for: the answer row carries
+    // *this repertoire's* answer marker, and the reasoning row its reasoning marker.
+    // The collision those two roles once shared is pinned as a property over both
+    // repertoires by `no_glyph_set_gives_an_answer_and_a_notice_the_same_character`,
+    // so it does not need restating here.
+    let glyphs = crate::ui::theme::UNICODE;
     assert!(
-        rows[answer_row].starts_with("• the answer"),
+        rows[answer_row].starts_with(&format!("{} the answer", glyphs.assistant)),
         "the answer's row must carry its own gutter marker: {:?}",
         rows[answer_row]
     );
     assert!(
-        rows[reasoning_row].starts_with("≡ weighing"),
+        rows[reasoning_row].starts_with(&format!("{} weighing", glyphs.thinking)),
         "the reasoning row must carry its own gutter marker: {:?}",
         rows[reasoning_row]
     );

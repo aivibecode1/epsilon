@@ -993,40 +993,6 @@ impl App {
         ));
     }
 
-    /// Append a `model_change` entry to the attached session, so a resume adopts this choice.
-    ///
-    /// **Why the session, and not only `config.toml`.** Both are durable, and they answer
-    /// different questions: the config file is what a *fresh* launch uses, while the session is
-    /// what a *resumed* launch prefers (`epsilon_runtime::resumed_model_to_use`, flag > session >
-    /// config). A `/model` switch that writes only the config is therefore silently outranked by
-    /// the model the session last ran on — the defect reported on 2026-10-04, where a switch to
-    /// `deepseek-flash` reverted to `deepseek/deepseek-chat-v3.1` on `epsilon -c`.
-    ///
-    /// The provider is the catalog's answer for this id rather than a guess. `context_settings`
-    /// keeps the pair verbatim, and a row the catalog does not know (a custom provider's model)
-    /// has no provider to record — the bare id is what pi writes for those, and the empty
-    /// provider is only ever read back as a label, never used to route.
-    fn record_model_change(&mut self, agent: &Arc<Agent>, id: &str) -> Result<(), String> {
-        let Some(store) = agent.session_store() else {
-            // No session file is a normal state (a bare `--tui` launch with no durable mirror),
-            // not a failure worth a notice: there is nothing to be inconsistent with.
-            return Ok(());
-        };
-        let provider = epsilon_llm::catalog::lookup_model(id)
-            .map(|m| m.provider.to_string())
-            .unwrap_or_default();
-        let mut guard = store
-            .lock()
-            .map_err(|_| "session store unavailable".to_string())?;
-        guard
-            .append(epsilon_contracts::session_entry::EntryKind::ModelChange {
-                provider,
-                model_id: id.to_string(),
-            })
-            .map(|_| ())
-            .map_err(|e| format!("{e}"))
-    }
-
     /// Switch the session model, persist choice + recents, and tell the user.
     fn apply_model(&mut self, agent: &Arc<Agent>, id: String) {
         if id == self.model_id {
@@ -1039,27 +1005,16 @@ impl App {
         // the `key` glyph rather than the emoji it used to be, because an astral-plane
         // codepoint cannot be rendered by a legacy console at all (M219).
         let auth_ready = epsilon_llm::catalog::credentials_ready(&id);
+        // **The session record happens inside `set_model_id`** (M303), not here.
+        //
+        // M299 fixed this in `apply_model`, which left `rpc_mode.rs:660` and `:722` switching a
+        // live session without recording it — so a stdio-RPC client got the reported "keeps
+        // reverting to another" straight back. A session file is shared by every front end, so
+        // the write belongs where all of them already call. The launch path benefits for free:
+        // `runtime:4874` and `:4985` both call `set_model_id`, so a resume that adopts the
+        // session's model now records that adoption too, rather than leaving the session saying
+        // something the next resume will read back.
         agent.set_model_id(&id);
-        // Record the switch in the **session** as well as `config.toml` (M299).
-        //
-        // Without this, a `/model` choice does not survive `epsilon -c`, and the cause is not
-        // the resume precedence but a gap on the write side: `context_settings` reads a session's
-        // model from a `ModelChange` entry, and **nothing in production ever appended one** —
-        // so the only model a session could report was whatever its last assistant message ran
-        // on, which is precisely the thing the user just replaced. Measured on the reporter's
-        // machine: `config.toml` said `deepseek-flash`, the session's last assistant entry said
-        // `deepseek/deepseek-chat-v3.1`, and the launch took the session's.
-        //
-        // A failure here is a notice rather than a refusal: the switch itself has already
-        // happened (`set_model_id` above), so refusing would undo a choice the user made and
-        // could see applied. `AGENTS.md` §8's rule is no silent failures, not no failures.
-        match self.record_model_change(agent, &id) {
-            Ok(()) => {}
-            Err(why) => self.ui.push_notice(format!(
-                "model switched, but the session could not record it ({why}) — \
-                 resuming this session may return to its previous model"
-            )),
-        }
         // M32d: if we were on faux/offline and the new model is credentialed,
         // go live immediately so the next prompt hits the real API (pi parity).
         // Same hot-swap used by /login — apply_model is the other entry point
@@ -1101,13 +1056,22 @@ impl App {
         // The mirror is therefore built from the value this call just applied, which is the
         // same answer without the dependency on anyone else.
         //
-        // **What is not lost.** The file is still the durable record and is still
-        // read-modify-write (`push_recent_model_in` reads the list before it writes, so a
-        // push from another process survives), and the mirror is re-read from it at startup
-        // (`app/session.rs:59`). What is given up is only the mid-session refresh of a list
-        // that was never refreshed mid-session before — the picker is opened, a row chosen,
-        // and the list is used for ordering. A second process's push appears on the next
-        // launch, which is the same interval at which a push made here does.
+        // **What this gives up, stated rather than denied** (an independent review caught me
+        // claiming both of these were free, and neither is). M29's deleted line was a genuine
+        // mid-session refresh: after pushing, it re-read the file so a push made by *another*
+        // process would reach this picker's ordering. That behaviour is gone. What survives is
+        // weaker than the first version of this comment claimed — `push_recent_model_in` is
+        // read-modify-write with **no lock and no temp-file rename**
+        // (`epsilon-core/src/config.rs:590-592`), so a concurrent push is lost whenever two
+        // writes interleave, which is exactly the race M29's re-read was written for. The
+        // honest statement is: this process's own push is always shown, the durable file is
+        // still updated, and another process's push appears on the next launch.
+        //
+        // **Why that trade was still worth it.** The re-read is what made two TUI tests
+        // machine-dependent — they assert `recents.first()`, and the answer was whatever a real
+        // user had once chosen in any process. The `is_ok()` gate was the other half, and
+        // fixing only the gate would have left the test's result depending on the file it
+        // claims not to depend on.
         let _ = epsilon_core::config::push_recent_model(&id);
         self.recents.retain(|r| !r.eq_ignore_ascii_case(&id));
         self.recents.insert(0, id.clone());

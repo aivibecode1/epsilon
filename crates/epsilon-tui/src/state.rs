@@ -1386,7 +1386,18 @@ impl UiState {
                 let label = match decision {
                     epsilon_contracts::agent_event::PermissionDecision::AllowOnce => "allowed",
                     epsilon_contracts::agent_event::PermissionDecision::AlwaysSession => {
-                        "allowed (session)"
+                        // **"session" means this gate's session, and since M303 that may not
+                        // be the conversation.** A subagent gets a fresh permission memory
+                        // (ADR-027: rules are inherited, remembered allows are not), so a grant
+                        // made on a subagent's prompt dies with that subagent. The row said
+                        // "allowed (session)" and implied something longer-lived, which is the
+                        // `AGENTS.md` §2.7 failure — a control that does not do what it names.
+                        //
+                        // The honest words without a contract change: the grant lasts as long as
+                        // the agent that asked. `PermissionRequest` carries no agent identity
+                        // (`agent_event.rs`), so the row cannot say *which* agent — that gap is
+                        // recorded in ADR-027 rather than papered over here.
+                        "allowed (for this agent, not its subagents)"
                     }
                     epsilon_contracts::agent_event::PermissionDecision::Deny => "denied",
                     epsilon_contracts::agent_event::PermissionDecision::DenyWithGuidance {

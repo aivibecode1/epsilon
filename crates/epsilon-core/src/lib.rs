@@ -811,15 +811,52 @@ impl Agent {
     /// compaction trigger tracks hot-swaps (`/model`, `try_hot_swap_to_real`).
     /// Unknown ids (custom providers) clear the override — the fixed threshold
     /// keeps working, and no stale window survives a model change.
+    ///
+    /// **And records the change in the session, so a resume adopts it.**
+    ///
+    /// This is here rather than in the front ends because a session is a *shared* file and
+    /// every front end writes to it: on 2026-10-04 the owner reported that switching models
+    /// "keeps reverting to another", and the cause was that `resumed_model_to_use` prefers the
+    /// **session's** model over the saved config — while **nothing** recorded a switch, so the
+    /// session could only ever report whatever its last assistant message ran on. Fixing that
+    /// in the TUI's `apply_model` left two RPC paths (`rpc_mode.rs:660`, `:722`) switching a
+    /// live session without recording it, so a stdio-RPC client got the same defect straight
+    /// back. **One writer, in the place every writer already calls.**
+    ///
+    /// A session store is optional — a bare `--tui` launch has none — so the absence of one is
+    /// `Ok(())`, not an error. A store that cannot be locked or appended is likewise not this
+    /// function's failure: the switch has already been applied and is visible in the status bar,
+    /// so refusing would undo a choice the reader can see take effect. The front end decides
+    /// whether to say so.
     pub fn set_model_id(&self, model_id: impl Into<String>) {
         let model_id = model_id.into();
         let window =
             epsilon_llm::catalog::lookup_model(&model_id).map(|m| m.context_window as usize);
         if let Ok(mut slot) = self.model_id.lock() {
-            *slot = model_id;
+            *slot = model_id.clone();
         }
         if let Ok(mut slot) = self.model_window_tokens.lock() {
             *slot = window;
+        }
+        self.record_model_change(&model_id);
+    }
+
+    /// Append a `model_change` entry to the attached session, if there is one.
+    ///
+    /// Called by [`Agent::set_model_id`]; separate only so the test that drives a front end's
+    /// switch does not have to reach through a lock. The provider comes from the catalog
+    /// because `context_settings` keeps the pair verbatim, and a model the catalog does not know
+    /// has no provider to record — pi writes the bare id for those.
+    fn record_model_change(&self, model_id: &str) {
+        let Some(store) = self.store() else { return };
+        let provider = epsilon_llm::catalog::lookup_model(model_id)
+            .map(|m| m.provider.to_string())
+            .unwrap_or_default();
+        if let Ok(mut guard) = store.lock() {
+            let _ = guard.append(epsilon_contracts::session_entry::EntryKind::ModelChange {
+                provider,
+                model_id: model_id.to_string(),
+            });
         }
     }
 

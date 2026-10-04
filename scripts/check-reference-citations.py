@@ -65,6 +65,29 @@ def expand(path: str) -> list[str]:
 SCAN_DIRS = ["audit", "docs", "crates"]
 
 
+def vendored_pi_dir():
+    """The pi tree that is actually on disk, or None.
+
+    **This was hardcoded to `pi-0.85.1`, which is not vendored.** `references/` holds
+    `pi-1.0.0`, so `os.path.isfile()` was false for every citation in the tree: the
+    checker reported 100% "no such file" and 0 checkable, which is why nobody was
+    running it. That is the failure this file's own header is about — a verifier whose
+    resolution arm can never succeed reads as a clean bill of health and as a broken
+    build at the same time, and neither is true.
+
+    Resolving the directory rather than hardcoding a version is what stops the two from
+    being the same failure next time somebody updates a vendored tree.
+    """
+    if not os.path.isdir(REFS):
+        return None
+    found = sorted(d for d in os.listdir(REFS) if d.startswith("pi-") and os.path.isdir(os.path.join(REFS, d)))
+    if not found:
+        return None
+    if len(found) > 1:
+        print(f"more than one vendored pi tree ({', '.join(found)}); resolving against {found[0]}")
+    return found[0]
+
+
 def cited_versions():
     """Every references/<dir> that a citation actually names."""
     named = set()
@@ -90,7 +113,22 @@ def main():
     named = cited_versions()
     print(f"\ndistinct versions named in citations: {sorted(named)}")
     missing = [v for v in sorted(named) if not os.path.isdir(os.path.join(REFS, v))]
-    print(f"named but ABSENT from references/: {missing}\n")
+    print(f"named but ABSENT from references/: {missing}")
+    vendored = vendored_pi_dir()
+    if vendored is None:
+        print("\nno vendored pi tree at all: every citation is UNVERIFIED, not clean.")
+        return 0
+    print(f"resolving against the vendored tree: {vendored}")
+    if missing:
+        # Said plainly, because a citation naming a version that is not on disk cannot be
+        # checked at all -- and a report that silently substitutes the one tree it does
+        # have reads as though it had checked them.
+        print(
+            f"NOTE: {len(missing)} named version(s) are not vendored ({', '.join(missing)}). "
+            "Their citations are checked against "
+            f"{vendored}, which is NOT the tree they name. That is a real limitation, not a pass."
+        )
+    print()
 
     total = ok = bad_path = bad_line = 0
     per_file = {}
@@ -109,11 +147,11 @@ def main():
                     lines = m.group("lines")
                     for path in expand(m.group("path")):
                         # Does it exist under the version we ACTUALLY have?
-                        cur = os.path.join(REFS, "pi-0.85.1", path)
+                        cur = os.path.join(REFS, vendored, path)
                         if not os.path.isfile(cur):
                             bad_path += 1
                             per_file.setdefault(rel, []).append(
-                                (path, lines, "no such file in pi-0.85.1")
+                                (path, lines, f"no such file in {vendored}")
                             )
                             continue
                         if lines:
@@ -133,8 +171,8 @@ def main():
                                 continue
                         ok += 1
 
-    print(f"citations to pi-0.84.2: {total}")
-    print(f"  file not found in pi-0.85.1 : {bad_path}")
+    print(f"citations to a vendored pi tree: {total}")
+    print(f"  file not found in {vendored} : {bad_path}")
     print(f"  line range past end of file  : {bad_line}")
     print(f"  path+range both checkable    : {ok}")
     if per_file:
