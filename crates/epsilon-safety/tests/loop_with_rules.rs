@@ -59,6 +59,12 @@ fn run_agent(
         gate,
         workspace.to_path_buf(),
     );
+    // `exec.rs:782-799` builds the one `ToolContext` the loop uses, and it already carries
+    // `task_host: Some(agent.clone_task_host())` — so a `task` call here does fan out to a real
+    // child Agent. This comment exists because the scenario below has failed twice for reasons
+    // that had nothing to do with permissions: a `task` call missing its required `description`,
+    // and a fixture that looked for the child's output in the wrong place. The precondition
+    // assertion is what caught both.
     let handle = tokio::spawn(async move { agent.run(user("go")).await });
     arctest::Spawned(handle)
 }
@@ -208,6 +214,136 @@ async fn custom_ruleset_allows_bash_without_asking() {
     )));
 }
 
+/// **An `always allow` in the main loop must not authorise a subagent's tool calls.**
+///
+/// # The defect this pins
+///
+/// `build_task_child` handed the child `Arc::clone(&self.gate)`, and `SessionMemory` — the list
+/// of "always allow" pairs a user accumulates by answering `a` — lives *inside* that gate
+/// (`epsilon-safety/src/gate.rs:47,54`). So one "always allow bash" in the main loop silently
+/// authorised `bash` for every subagent afterwards, with no prompt and no inheritance decision
+/// anywhere. Measured on 2026-10-04 as a production path, not a test artefact:
+/// `epsilon-runtime:4702` registers `TaskTool`, `exec.rs:795` injects the task host, and
+/// `delegate_task` reaches the child.
+///
+/// # Why the child must be asked again
+///
+/// opencode hands its subagents a **derived** ruleset that inherits denies only
+/// (`references/opencode-1.18.34/.../subagent-permissions.ts:21-25`), so a remembered *allow*
+/// never reaches one. The child inherits the parent's **ruleset** — policy the owner wrote — and
+/// not the parent's **session memory**, which is a decision made about one conversation.
+///
+/// # What this asserts
+///
+/// Two `bash` calls reach the approval UI: the parent's and the child's. Today the second is
+/// short-circuited by shared memory and the count is **one**, which is the whole bug: a user who
+/// allowed bash once would have no way to notice that every agent they spawn can now run it
+/// without asking.
+#[tokio::test]
+async fn an_always_session_allow_does_not_reach_a_task_child() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // One answer: the parent asks, is told "always", and is never asked again. The child
+    // must therefore ask — so the UI needs a second answer queued, or it denies and the test
+    // still sees the second ask, which is the property under test.
+    let ui = Arc::new(RecordingUi {
+        answers: Mutex::new(vec![
+            PermissionDecision::AlwaysSession,
+            PermissionDecision::AllowOnce,
+        ]),
+        seen: Mutex::new(vec![]),
+    });
+    let gate = Arc::new(RulesetGate::new(Arc::clone(&ui) as Arc<dyn ApprovalUi>));
+
+    // The parent runs bash, then delegates a task whose child also runs bash.
+    //
+    // **One tool call per turn, and neither extra step is decoration.** The faux provider is a
+    // single shared script consumed in order, and this fixture got it wrong twice before it got
+    // it right:
+    //
+    // - Two `bash` steps before the `task` meant the **parent** ran both in its own batch and
+    //   the child never got a turn, so the second bash proved nothing about inheritance.
+    // - A `say` between them ended the run after the parent's first turn, so the child never ran
+    //   at all — the ask count stayed at one for a reason that had nothing to do with
+    //   permissions.
+    //
+    // The working shape is `bash` → `task` → `bash` → `say`: the parent's turn makes its call
+    // and its `task`, the child's turn draws the next step, and the closing sentence ends it.
+    let steps = vec![
+        FauxStep::call(
+            "tc_parent",
+            "bash",
+            serde_json::json!({"command": "echo parent"}),
+        ),
+        FauxStep::call(
+            "tc_task",
+            "task",
+            serde_json::json!({"description": "probe bash in the child", "prompt": "run echo child"}),
+        ),
+        FauxStep::call(
+            "tc_child",
+            "bash",
+            serde_json::json!({"command": "echo child"}),
+        ),
+        FauxStep::say("delegated"),
+    ];
+
+    let outcome = run_agent(steps, gate, dir.path()).join().await;
+    // Precondition: the child must actually have run. A test asserting "two asks" when only
+    // one agent ever existed would pass for the wrong reason the moment the fixture broke —
+    // and it did break this way once, on a `task` call missing its required `description`.
+    assert!(
+        outcome.produced.iter().any(|m| matches!(
+            m,
+            Message::ToolResult(t) if t.tool_name == "bash" && !t.is_error
+        )),
+        "the scenario must reach a second bash call; produced: {:?}",
+        outcome
+            .produced
+            .iter()
+            .map(|m| match m {
+                Message::ToolResult(t) => format!("tool:{}:{}", t.tool_name, t.is_error),
+                Message::Assistant(a) => format!("assistant:{}", a.text()),
+                _ => "other".into(),
+            })
+            .collect::<Vec<_>>()
+    );
+
+    for r in ui.seen.lock().unwrap().iter() {
+        println!("ASK cap={}", r.capability);
+    }
+    for m in outcome.produced.iter() {
+        match m {
+            Message::ToolResult(t) => println!(
+                "RESULT {} err={} body={:?}",
+                t.tool_name,
+                t.is_error,
+                t.content
+                    .iter()
+                    .filter_map(|c| match c {
+                        epsilon_contracts::content::ContentBlock::Text { text } =>
+                            Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<String>()
+            ),
+            Message::Assistant(a) => println!("ASSISTANT {}", a.text()),
+            _ => println!("OTHER"),
+        }
+    }
+    let bash_asks = ui
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.capability == "bash")
+        .count();
+    assert_eq!(
+        bash_asks, 2,
+        "both the parent's bash and the child's must be asked: one ask means the \
+         session's 'always allow' leaked into the subagent"
+    );
+}
 #[tokio::test]
 async fn env_read_ask_flow_end_to_end() {
     let dir = tempfile::tempdir().unwrap();

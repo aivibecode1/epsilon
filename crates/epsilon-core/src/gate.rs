@@ -51,6 +51,30 @@ impl Authorization {
 pub trait PermissionGate: Send + Sync {
     /// Authorize one request; report whether asking happened.
     async fn authorize(&self, req: PermissionRequest) -> Authorization;
+
+    /// The gate a **subagent** should use, or `None` to share `self`.
+    ///
+    /// # Why this exists
+    ///
+    /// A subagent is built with a gate, and the obvious thing — handing it the parent's — is
+    /// wrong in a way nothing could see. `RulesetGate` keeps the session's "always allow"
+    /// decisions *inside* the gate, so sharing it shares them: one `always allow bash` in the
+    /// main loop silently authorised `bash` for every subagent afterwards, with no prompt and no
+    /// inheritance decision anywhere. Measured on 2026-10-04 as a live path
+    /// (`build_task_child` → `delegate_task` → `exec.rs:452`).
+    ///
+    /// The distinction being drawn is **policy vs. conversation**. A *ruleset* is what the owner
+    /// wrote and is the same for every agent; a *session memory* is a decision someone made while
+    /// talking to one of them. Subagents inherit the first and not the second — which is
+    /// exactly opencode's rule, verified at
+    /// `references/opencode-1.18.34/packages/opencode/src/agent/subagent-permissions.ts:21-25`.
+    ///
+    /// Defaulted to `None` (share self) so every existing implementation — `AutoAllow`,
+    /// `AutoDeny`, and any test's own gate — compiles unchanged and keeps its current behaviour.
+    /// A gate with no notion of session state has nothing to withhold.
+    fn child_gate(&self) -> Option<std::sync::Arc<dyn PermissionGate>> {
+        None
+    }
 }
 
 /// Allows everything without asking — for tests and trusted automation only.

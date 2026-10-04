@@ -60,6 +60,12 @@ pub struct Ruleset {
 /// **any deny wins immediately** regardless of position. A project cannot accidentally
 /// re-allow something the global config denied — security decisions are order-independent
 /// (the DSH monotonic-guard principle applied to rule stacking).
+///
+/// `Clone` because a subagent must evaluate the **same** rules while holding a **different**
+/// session memory (`PermissionGate::child_gate`). A shared engine would have forced a choice
+/// between leaking the memory and re-deriving the rules; a cloned one is a copy of a value that
+/// never changes after construction.
+#[derive(Debug, Clone)]
 pub struct PermissionEngine {
     layers: Vec<Ruleset>,
 }

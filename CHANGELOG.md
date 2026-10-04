@@ -7,6 +7,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **An "always allow" in the main loop no longer authorises every subagent.** Subagents were built
+  with a clone of the parent's permission gate, and that gate holds the session's remembered
+  decisions — so one "always allow bash" silently authorised `bash` for every agent spawned
+  afterwards, with no prompt and no inheritance decision anywhere. A subagent now inherits the
+  **rules** and is asked again about the **session's** remembers. Denies are unaffected (M300,
+  ADR-027).
 - **The model picker's "recent" list no longer depends on what other programs have written.**
   The picker re-read a shared, machine-wide config file after every switch, so its first row
   reflected whatever another process — or another test — had used most recently; and the whole

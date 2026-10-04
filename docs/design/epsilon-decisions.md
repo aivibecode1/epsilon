@@ -2074,3 +2074,72 @@ work `post_image` already does.
 
 ---
 
+## ADR-027: A subagent inherits the ruleset and not the session's memory
+
+**Status: accepted; implemented (M300).**
+
+**Context.** `build_task_child` (`crates/epsilon-core/src/lib.rs:3394`) gave every subagent
+`Arc::clone(&self.gate)`. That looks like the safe choice — one policy for the whole session — and
+it was the unsafe one, because `RulesetGate` keeps the session's remembered decisions *inside* the
+gate: `memory: SessionMemory` (`crates/epsilon-safety/src/gate.rs:47,54`) is a list of
+`(capability, pattern)` pairs pushed on an `AlwaysSession` answer (`gate.rs:118`) and read back at
+`gate.rs:93-102`.
+
+So one "always allow bash" in the main loop silently authorised `bash` for **every subagent
+afterwards**, with no prompt and no inheritance decision anywhere. Confirmed as a live path, not a
+test artefact: `epsilon-runtime:4702` registers `TaskTool`, `exec.rs:795` injects the task host,
+`delegate_task` reaches the child, and the child's own calls go through `exec.rs:452`.
+
+The roadmap's "six lines" estimate was wrong, and the reason is worth recording:
+`Authorization { decision, asked }` **cannot distinguish an allow remembered from memory** (`:99`)
+**from an allow the engine's own rules produced** (`:108`) — both are `AllowOnce, asked: false`. So
+the derivation cannot live where a decision is being made; it has to happen where the gate is
+*handed over*.
+
+**Decision.**
+
+1. **`PermissionGate` gains `fn child_gate(&self) -> Option<Arc<dyn PermissionGate>> { None }`.**
+   `None` means "share self", so `AutoAllow`, `AutoDeny` and every test's own gate compile
+   unchanged and keep their behaviour — a gate with no session state has nothing to withhold.
+2. **`RulesetGate` overrides it**: a clone of the same `engine`, the same `ui`, and a **fresh**
+   `memory`. `PermissionEngine` gains `#[derive(Clone)]` — it holds a `Vec<Ruleset>` that never
+   changes after construction, so a clone is a copy of a value, not shared mutable policy.
+3. **`build_task_child` asks.** `self.gate.child_gate().unwrap_or_else(|| Arc::clone(&self.gate))`.
+
+**What is inherited, and why each part.** The *ruleset* is the owner's policy — identical for every
+agent, and cloned rather than rebuilt so a deny cannot be escaped by being spawned into. The *UI*
+is shared because it **is** the user: a subagent's prompt goes to the same person, and a second UI
+would mean a question asked where nobody is watching. The *memory* is withheld: it records
+decisions made **about this conversation**, and inheriting it converts one "yes, always" into a
+standing permission for agents the user was never shown.
+
+This is opencode's rule, read from the reference rather than recalled
+(`references/opencode-1.18.34/packages/opencode/src/agent/subagent-permissions.ts:21-25`): a
+subagent's permissions derive from the parent's **denies**. Its filter also keeps
+`external_directory` rules regardless of action and *adds* synthetic `todowrite`/`task` denies —
+details Epsilon's rule does not reproduce, because Epsilon derives by construction rather than by
+filtering a list.
+
+**Consequences.** A subagent that needs the same capability asks again. That is the cost, and it is
+the correct one: the alternative is a permission no human granted. Denies are unaffected —
+monotonicity is in the engine, which the child shares.
+
+**Alternatives rejected.** *Filter the parent's memory into the child* — needs to distinguish
+remembered allows from engine allows, which `Authorization` cannot express (see above). *Pass a
+ruleset into `build_task_child`* — puts a policy decision at the call site, so the next call site
+would get it wrong. *Make it a required trait method* — would break every implementor for a
+decision only one of them has an opinion about.
+
+**Two failures worth recording, because the first version of the test could not have caught the
+bug.** The RED test drives a **real** parent, a real `task` call and a real child, then counts the
+`bash` asks reaching the UI. Getting that scenario right took three attempts, and each failure was
+the fixture rather than the product: a `task` call missing its required `description`; then two
+`bash` steps before the `task`, so the **parent** ran both and the child never got a turn; then a
+`say` in between, which ended the run. **A test that never spawns the subagent it is about cannot
+see the rule it names**, which is why the precondition assertion ("a bash call actually happened")
+is in the test rather than assumed. Separately, the first version of the override was written in
+the inherent `impl RulesetGate` block instead of the trait impl: it compiled, carried a full doc
+comment, and was **never called**.
+
+---
+

@@ -131,6 +131,34 @@ impl PermissionGate for RulesetGate {
             }
         }
     }
+
+    /// A subagent gets the same rules and a **fresh** session memory.
+    ///
+    /// # What is inherited, and what is not
+    ///
+    /// `engine` is the owner's ruleset — the same for every agent in the session, cloned so a
+    /// deny cannot be escaped by being spawned into. `ui` is shared because it *is* the user: a
+    /// subagent's prompt goes to the same person, and duplicating it would let a subagent ask a
+    /// question nobody is watching.
+    ///
+    /// `memory` is **not** shared, and that is the entire point. It holds the decisions *this
+    /// conversation* accumulated — one `a` keypress is one `always allow`, made about the agent in
+    /// front of the user. Inheriting it turns a single "yes, always" into a standing permission
+    /// for every agent spawned afterwards, which the user was never asked about and cannot see.
+    /// opencode draws the same line by handing its subagents a derived ruleset filtered to denies
+    /// (`references/opencode-1.18.34/packages/opencode/src/agent/subagent-permissions.ts:21-25`).
+    ///
+    /// **This override is the fix, so it lives in the trait impl and not beside it.** An earlier
+    /// version put it in the inherent `impl RulesetGate` block, where it compiled, was documented,
+    /// and was **never called** — a trait method has to be in the trait impl to override. The
+    /// integration test caught it, which is the argument for having one that exercises a real
+    /// subagent rather than the seam directly.
+    fn child_gate(&self) -> Option<std::sync::Arc<dyn epsilon_core::PermissionGate>> {
+        Some(std::sync::Arc::new(Self::layered(
+            self.engine.clone(),
+            std::sync::Arc::clone(&self.ui),
+        )))
+    }
 }
 
 #[cfg(test)]

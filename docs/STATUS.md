@@ -118,23 +118,24 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M299):**
-[`../audit/evidence/gate-m299-2026-10-04.txt`](../audit/evidence/gate-m299-2026-10-04.txt).
-Ten legs, all `[exit=0]`; `test` 456 s, `clippy` 88 s. **2,032 passed / 0 failed / 7 ignored
-across 78 binaries**, summed from that one log's `test result: ok` lines.
+**Green full-workspace battery, latest measured 2026-10-04 (M300):**
+[`../audit/evidence/gate-m300-2026-10-04.txt`](../audit/evidence/gate-m300-2026-10-04.txt).
+Ten legs, all `[exit=0]`. **2,033 passed / 0 failed / 7 ignored across 78 binaries**, summed from
+that one log's `test result: ok` lines.
 
-Three attempts reached it, and each failed on something worth keeping:
+The batteries from m299 onwards, and what each failure taught:
 
 | Attempt | Failed | What it was |
 |---|---|---|
 | `m299` | clippy, then 2 ConPTY tests | **A real defect, in the tests.** With no provider flag the launch auto-detects, so on a machine holding a provider key those two had quietly become live-network tests and failed against a real 401. Fixed by pinning `--provider faux` |
 | `m299r` | 2 TUI recents tests | **A second real defect, also in the tests.** Both assert `recents.first()` against a shared global config, and **failed on unmodified code** (proved by stashing). Fixed at the source: the mirror no longer re-reads a machine-wide file |
-| `m299r2` | — | **GATE PASS on attempt 3.** |
+| `m299r2` | — | **GATE PASS** — 2,032 |
+| `m300` | — | **GATE PASS on attempt 1** — 2,033, the subagent-permission test added |
 
-**The second row is the one to remember.** Two tests were failing for a reason that had nothing to
-do with any change under test, and the only reason it surfaced at all is that this machine has a
-real config file with a real model in it. **A suite that only ever runs on a clean machine cannot
-see a dependency on machine state.**
+**The two rows worth remembering are the ones that were not my change.** Two tests were failing for
+a reason that had nothing to do with anything under test, and the only reason it surfaced at all is
+that this machine has a real config file with a real model in it. **A suite that only ever runs on
+a clean machine cannot see a dependency on machine state.**
 
 | Gate | Result |
 |---|---|
@@ -145,7 +146,7 @@ see a dependency on machine state.**
 | `check-control-bytes` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS — zero warnings |
-| `cargo test --workspace` | **PASS — 2,032 passed, 0 failed, 7 ignored, 78 binaries** |
+| `cargo test --workspace` | **PASS — 2,033 passed, 0 failed, 7 ignored, 78 binaries** |
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
 
@@ -256,29 +257,39 @@ against the same bar and merge into the list above.
    lines drawn → 53 named nodes" and **no test in the tree does** — the bounding tests use
    200/400 one-line *user* rows. That claim is either pinned with the fixture it names or
    dropped; it is not true as it stands.
-2. **Subagent permission derivation.** **CONFIRMED live on a production path (re-measured
-   2026-10-04), not merely a roadmap worry.** A session-remembered `always allow` **does** leak
-   into every subagent: `build_task_child` (`crates/epsilon-core/src/lib.rs:3394`, child at
-   `:3455`) hands the child `Arc::clone(&self.gate)` (`:3447`), and **both** `SessionMemory` and
-   the ruleset live *inside* that gate (`epsilon-safety/src/gate.rs:47,52,54`). The decision is
-   written at `gate.rs:118` (`AlwaysSession`) and read back at `gate.rs:93-102`; the parent's `a`
-   keypress is `epsilon-tui/src/app/keys.rs:437`. The whole chain is production:
-   `epsilon-runtime:4702` registers `TaskTool` → `epsilon-runtime:4785` builds the `RulesetGate`
-   → `exec.rs:795` injects the task host → `lib.rs:4200` → `delegate_task:3969` → the child, whose
-   own calls hit `exec.rs:452`.
-   **The roadmap's "six lines" was wrong** — opencode's filter is three lines because it hands
-   the child a whole ruleset, while epsilon's `Authorization { decision, asked }` **cannot tell
-   an allow *from memory* from an allow the engine's own rules produced**: both return
-   `AllowOnce, asked: false` (`gate.rs:99` vs `:108`). So the derivation lives on the
-   `PermissionGate` trait as a **defaulted** method (`gate.rs:51`) — `fn child_gate(&self) ->
-   Option<Arc<dyn PermissionGate>> { None }`, `None` meaning "share self" — overridden once on
-   `RulesetGate` to rebuild with the same engine and a **fresh** memory. Denies ride in the
-   shared engine; remembered allows do not. Needs an ADR.
-   **opencode's rule, quoted at `references/opencode-1.18.34/…/subagent-permissions.ts:21-25`,
-   is "denies only"** — with a caveat this file had wrong: it keeps `external_directory` rules
-   *regardless of action*, and it **adds** synthetic `todowrite`/`task` denies rather than only
-   filtering. The RED test belongs in `crates/epsilon-safety/tests/loop_with_rules.rs`, the only
-   crate that can write it; today it would record **one** bash ask where it must record two.
+2. **Subagent permission derivation. LANDED (M300, ADR-027).** The leak was **confirmed live on
+   a production path**, not merely feared: `build_task_child` (`crates/epsilon-core/src/lib.rs:3394`)
+   handed the child `Arc::clone(&self.gate)`, and **both** `SessionMemory` and the ruleset live
+   *inside* that gate (`epsilon-safety/src/gate.rs:47,52,54`). A user's `a` keypress
+   (`epsilon-tui/src/app/keys.rs:437`) therefore authorised `bash` for every subagent afterwards.
+   The chain is production end to end: `epsilon-runtime:4702` registers `TaskTool` →
+   `epsilon-runtime:4785` builds the `RulesetGate` → `exec.rs:795` injects the task host →
+   `lib.rs:4200` → `delegate_task:3969` → the child, whose calls hit `exec.rs:452`.
+
+   **The "six lines" estimate was wrong for a reason worth keeping.** `Authorization { decision,
+   asked }` **cannot tell an allow remembered from memory** (`:99`) **from an allow the engine's own
+   rules produced** (`:108`) — both are `AllowOnce, asked: false`. The derivation therefore cannot
+   live where a decision is made; it has to happen where the gate is *handed over*. `PermissionGate`
+   gains a **defaulted** `child_gate()` (`None` = share self, so every existing implementor is
+   unchanged), `RulesetGate` overrides it with the same engine, the same UI and a **fresh** memory,
+   and `build_task_child` asks.
+
+   **opencode's rule, read from the reference rather than recalled**
+   (`references/opencode-1.18.34/…/subagent-permissions.ts:21-25`), is "denies only" — with a
+   detail this file previously got wrong: its filter keeps `external_directory` rules *regardless of
+   action* and **adds** synthetic `todowrite`/`task` denies. Epsilon derives by construction rather
+   than by filtering a list, so it does not reproduce those specifics — and does not need to.
+
+   **Three fixture failures before the test could see the bug at all**, each recorded in ADR-027:
+   a `task` call missing its required `description`; two `bash` steps before the `task`, so the
+   **parent** ran both and the child never got a turn; and a `say` in between, which ended the run.
+   **A test that never spawns the subagent it is about cannot see the rule it names** — hence the
+   precondition assertion. Separately, the first override was written in the inherent
+   `impl RulesetGate` block rather than the trait impl: it compiled, was fully documented, and was
+   **never called**. The integration test caught it; a unit test on the seam would not have.
+
+   **Negative control run**: removing only the override fails the test with `left: 1, right: 2` —
+   one ask, which is the leak stated as a number.
 3. **Hide denied tools from the model's tool list.** **Not implemented, and the premise is
    half false** (re-measured 2026-10-04 by an independent read-only pass). The engine exposes
    `with_defaults`/`layered`/`evaluate` (`epsilon-safety/src/engine.rs:69,76,83`) and **no

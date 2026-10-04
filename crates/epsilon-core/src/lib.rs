@@ -3519,8 +3519,10 @@ impl Agent {
             .read()
             .map(|g| std::sync::Arc::clone(&*g))
             .unwrap_or_else(|e| std::sync::Arc::clone(&*e.into_inner()));
-        let gate: std::sync::Arc<dyn crate::gate::PermissionGate> =
-            std::sync::Arc::clone(&self.gate);
+        let gate: std::sync::Arc<dyn crate::gate::PermissionGate> = self
+            .gate
+            .child_gate()
+            .unwrap_or_else(|| std::sync::Arc::clone(&self.gate));
         // Tool subset: a def WITH a tools list sees only those tools (pi
         // scout/planner/reviewer parity); no list (or no def) = full registry.
         let tools = match def.as_ref().and_then(|d| d.tools.as_ref()) {
