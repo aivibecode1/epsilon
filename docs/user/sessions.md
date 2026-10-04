@@ -33,12 +33,17 @@ epsilon --resume <file>       # resume a specific session file
 
 A cross-process **lease** (heartbeat-enforced) admits a single writer. What a second `epsilon`
 sees depends on whether the first is alive, and the difference is worth knowing because the
-second case looks like a hang for about four seconds:
+second case looks like a hang for about six seconds:
 
 | The holder is | What happens |
 |---|---|
 | **alive** | the second `epsilon` **waits**, drawing `waiting for this session to be released — Ns elapsed, ~Ms left` on the console, and is refused at the end of the window **naming the holder**. It is not refused immediately: waiting is cheaper than a false refusal when the first window is about to exit. |
-| **gone** (crashed, or the terminal was closed) | its lock stops being re-touched, and after about **four seconds** of that the second `epsilon` takes it and starts. Four seconds is deliberate — a heartbeat is two — because the margin is what stops a *live* process that stalls for a moment from being mistaken for a dead one, and the steal is the only path by which two writers could share one session file. |
+| **gone** (crashed, or the terminal was closed) | its lock stops being re-touched, and after about **six seconds** of that the second `epsilon` takes it and starts. Six seconds is deliberate — a heartbeat is two, so that is **three** heartbeats — because the margin is what stops a *live* process that stalls for a moment from being mistaken for a dead one, and the steal is the only path by which two writers could share one session file. Three rather than two because a live holder has been observed to miss a single tick under load, so one missed tick must not be enough. |
+
+> **This said "four seconds" until 2026-10-04.** M293 widened the window and updated
+> `crates/epsilon-session/src/lease.rs` — whose own comment records the change — but not this
+> page or [`../glossary.md`](../glossary.md). Two documents describing one constant is how a
+> reader ends up with a number the code does not use.
 
 Locks left by a process that is gone are also **reaped at launch** (a lock untouched for thirty
 seconds is deleted), so a workspace does not accumulate stale `.lock` files beside its sessions.

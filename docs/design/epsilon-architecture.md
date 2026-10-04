@@ -38,7 +38,23 @@ Direct internal production dependencies, as declared in crate manifests:
 | `epsilon-mcp` | contracts, core | MCP connections and tool adaptation |
 | `epsilon-tui` | contracts, core, llm, safety, session | Terminal application, editor, dialogs and transcript |
 | `epsilon-server` | contracts, core, llm, safety, tools | HTTP/SSE frontend |
-| `epsilon-cli` | all other workspace crates | Arguments, configuration, runtime composition and dispatch |
+| `epsilon-runtime` | contracts, llm, core, tools, lsp, safety, session, ext, mcp | **The one composition point**: a workspace plus a configuration becomes a running agent (`build_runtime`, `resolve_launch`) |
+| `epsilon-desktop` | contracts, core, llm, runtime, session, safety, tools, mcp, tui | Native desktop IDE (egui/eframe over winit + wgpu) |
+| `epsilon-cli` | all other workspace crates | Arguments, configuration and dispatch |
+
+> **Two rows were missing until 2026-10-04, and the omission inverted the architecture.**
+> This table listed neither `epsilon-runtime` nor `epsilon-desktop`, and gave
+> `epsilon-cli` the responsibility for "runtime composition". Composition happens in exactly
+> one place and it is not the CLI: it is `epsilon_runtime::build_runtime` /
+> `resolve_launch` (`crates/epsilon-runtime/src/lib.rs`). That is `AGENTS.md` §2.2, an
+> architecture **invariant** — *"A second copy of composition is a defect, not an
+> optimisation."*
+>
+> It mattered because this file is **step 4 of the reading order** `docs/START-HERE.md`
+> prescribes, so a newcomer met an architecture that contradicted the invariant document
+> they had just been told to read. The two rows above are derived from the crate manifests,
+> not from prose. The staleness warning at the top of this file is real and still applies to
+> the rest of it; these rows are the part that has been re-derived.
 
 Cargo checks declared dependencies and rejects cycles; it does not enforce a
 separate allowed-edge policy. Libraries must not depend on CLI. The intended

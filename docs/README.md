@@ -77,18 +77,31 @@ written after the fact from the commits, because those milestones landed without
 they say so themselves, and their `## Verification` sections name what could not be
 recovered rather than inventing it.
 
-**This list is not the timeline.** Every milestone has a row in [`history.md`](history.md) except
-M80 — whose checkpoint work is recorded inside [`M81`](milestones/M81-observation-ownership.md)
-rather than reconstructed — and almost every one has a log in [`milestones/`](milestones). Where
-no log was written the pointer below goes to the timeline row, which is then the whole record:
-M0, M29–M32, M120, M122–M124 and M128. This list is the subset a reader is most likely to want
-first, newest at the top, and it is kept current from M83 forward.
+**This list is not the timeline.** Almost every milestone has a log in [`milestones/`](milestones);
+where none was written, the pointer below goes to the [`history.md`](history.md) row, which is then
+the whole record. This list is the subset a reader is most likely to want first, newest at the top.
 
-> **The pointer list had stopped at M160 for forty milestones**, while the sentence above
-> claimed it was current — the drift this repository is built to catch, in the file that is
-> the map. M161–M201 are listed now, and the log-less ones say so on their own line rather
-> than being silently absent. The list is generated from the `H1` of each log, so an entry
-> cannot describe a milestone the log does not.
+**Measured 2026-10-04, so a reader does not have to guess where this stops.** The directory holds
+**255 logs and the highest is M276**. **22 milestones have no log at all**, and this is the
+complete set rather than the previous partial one:
+
+```
+M0, M29-M32, M80, M120, M122-M124, M128, M132, M134,
+M179-M180, M182-M183, M185, M187, M191, M197, M200
+```
+
+**M277 onward have neither a log nor a history row.** That is deliberate and recorded at
+[`history.md`](history.md) — *"no per-milestone dev log was written, so writing rows here would
+assert evidence that does not exist"* — which is why this list ends at M276. For anything after
+that, **read [`STATUS.md`](STATUS.md) instead**: it is the living record and it is current.
+
+> **This paragraph has now been wrong twice, and the second time was the same mistake.**
+> It used to say the list "had stopped at M160 for forty milestones" while claiming to be
+> current. Repaired once. It then claimed *"it is kept current from M83 forward"* and named ten
+> log-less milestones when the real number is twenty-two — a claim of currency that a single
+> directory listing shows to be false, in the file that is the map. **A count written from
+> memory drifts; the one above was measured.** `check-links` cannot see any of this: every link
+> here resolves, and a stale sentence is not a broken link.
 
 - [M231 — a 202 ms startup scan, counted instead of summarized](milestones/M231-counting-instead-of-summarizing.md)
 - [M233 — a native desktop IDE, and the composition crate it needed first](milestones/M233-desktop-ide-and-runtime-crate.md)

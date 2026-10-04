@@ -149,8 +149,13 @@ context small.
 
 **Turn lease** — An advisory lock file letting the CLI, TUI, and server share one
 session file safely. A live holder re-stamps it every 2 seconds; a holder whose stamp
-stops moving for **4 seconds** is taken as dead and its lock may be taken over. The
-older 30-second figure is the fallback for a lock that cannot be read at all.
+stops moving for **6 seconds** is taken as dead and its lock may be taken over. Six is
+three heartbeats, and the reason it is three rather than two is that a live process has
+been observed to miss one tick under load (M293 widened this from 4 seconds; the
+constants are `HEARTBEAT` and `DEAD_HOLDER_SETTLE` in
+`crates/epsilon-session/src/lease.rs`). A separate **30-second** `STALE_AFTER` bounds a
+lock that has stopped moving entirely, such as one whose holder died before it could be
+reaped.
 Cross-process coordination pattern from Hermes.
 
 **Crash repair** — On load, dangling tool calls become synthetic error results and

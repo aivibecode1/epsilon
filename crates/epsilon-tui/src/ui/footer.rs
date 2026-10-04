@@ -714,6 +714,73 @@ mod tests {
         }
     }
 
+    /// **The same property as the test above, over the footer states that test does not reach.**
+    ///
+    /// The test above is named for *"no footer row"* but exercises **one** state —
+    /// `Hints::idle`. The two approval footers are a different hint list, a different `mode`
+    /// string, and the widest rows in the UI, and nothing asserted the same property over
+    /// them. That is the gap this closes.
+    ///
+    /// **And a correction, because the first version of this comment claimed a defect that is
+    /// not one.** A frame dump read on 2026-10-04 shows the approval row at **80×24** as:
+    ///
+    /// ```text
+    /// |approval · y allow once · a always · n deny · e           ...\crates\epsilon-tui|
+    /// ```
+    ///
+    /// and I read the trailing `e` as `deny + guidance` cut mid-label. It is — but that is
+    /// **not** the defect this file names. `footer.rs:308-314` draws the distinction exactly:
+    /// `pageup sc` is a defect because it advertises *a key that does not exist*, while
+    /// `pageup` on its own is honest — *"the action can go without the key."* A bare `e` names
+    /// a key that is really bound and really handled; only its label is missing. **Degraded,
+    /// and honest.** This test's `legal` set encodes that distinction by accepting both
+    /// `"{key} {action}"` and a bare `key`, and it passes.
+    ///
+    /// What the frame did establish is worth keeping: the budget loop emits the key and the
+    /// action **together or not at all** (`footer.rs:400-412`), so the bare `e` came from
+    /// `side_by_side` cutting at a character *after* the budget had approved the pair. The
+    /// pre-budget is therefore not what produced it. Nothing here is broken today; the
+    /// property is now asserted over the states where a break would show first.
+    #[test]
+    fn the_approval_footer_never_prints_half_a_hint_either() {
+        const LOCATION: &str = r"...\crates\epsilon-tui";
+        for (name, base) in [
+            ("approval", Hints::approval()),
+            ("approval_deny_only", Hints::approval_deny_only()),
+        ] {
+            let hints = Hints {
+                location: Some(LOCATION.into()),
+                ..base
+            };
+            // Every legal rendering of a hint, longest first so a prefix of the full
+            // form cannot match the short one and pass.
+            let mut legal: Vec<String> = Vec::new();
+            for (key, action) in &hints.keys {
+                legal.push(format!("{key} {action}"));
+                legal.push(key.clone());
+            }
+            for width in 20u16..=120 {
+                let line = render(width, &hints);
+                assert!(
+                    crate::ui::layout::display_width(&line) <= width as usize,
+                    "{name} at width {width} overflowed: {line:?}"
+                );
+                let head = line.split(LOCATION).next().unwrap_or(&line);
+                for part in head.split(" · ").skip(1) {
+                    let part = part.trim_end();
+                    if part.is_empty() {
+                        continue;
+                    }
+                    assert!(
+                        legal.iter().any(|l| l == part),
+                        "{name} at width {width}: `{part}` is half a hint — the key without \
+                         its action. That is a key the reader cannot look up: {line:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_frozen_row_at_sixty_columns_keeps_the_position_and_the_exit() {
         // The finding this replaces promised 60-column survival from an *idle* row
