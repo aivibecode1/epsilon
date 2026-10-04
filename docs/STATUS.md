@@ -106,8 +106,8 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M292):**
-[`../audit/evidence/gate-m295-2026-10-04.txt`](../audit/evidence/gate-m295-2026-10-04.txt).
+**Green full-workspace battery, latest measured 2026-10-04 (M293):**
+[`../audit/evidence/gate-m296-2026-10-04.txt`](../audit/evidence/gate-m296-2026-10-04.txt).
 
 | Gate | Result |
 |---|---|
@@ -122,8 +122,9 @@ configuration:**
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
 
-Previous green battery the same day: [`gate-m294`](../audit/evidence/gate-m294-2026-10-04.txt)
-— 2,019 passed. The difference is the two tests this round added.
+Previous green batteries the same day: [`gate-m295`](../audit/evidence/gate-m295-2026-10-04.txt)
+and [`gate-m294`](../audit/evidence/gate-m294-2026-10-04.txt) — both 2,019 or 2,020 passed; the
+difference is the tests added between them.
 
 **The knobs that number was produced under**, because they change what the evidence is:
 `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, and
@@ -339,8 +340,11 @@ against the same bar and merge into the list above.
 
 Run repo-wide by an independent read-only pass (token-level call graph, `#[cfg(test)]` excluded
 from the production-reference side, every surviving candidate confirmed by opening the file).
-**38 findings, net −430 lines and −4 dependencies.** Full list retained with this section's
-summary below; nothing was edited by the auditor.
+**38 findings, net −430 lines and −4 dependencies.** The full list **was not** retained — this
+section used to claim it was, and a re-sweep on 2026-10-04 had to re-derive it from source. The
+dead-code half is now written down under
+[`../audit/evidence/ponytail-deadcode-2026-10-04.md`](../audit/evidence/ponytail-deadcode-2026-10-04.md);
+the manifest half is dispositioned below. Nothing was edited by the auditor.
 
 ### Disposition
 
@@ -372,11 +376,40 @@ acted on."
 #2: four near-identical frontmatter parsers, one per crate. #3: a ten-line character loop where
 `str::replace(['/', '\\', ':'], "-")` is byte-identical.
 
-**Dead code — 20 findings** (#10–#37), including two that are actively misleading rather than
-merely unused: `Hints::keys_text` (`ui/footer.rs:292`) carries a doc claiming it is used "by tests
-and by the width budget" — it is not, `draw()` budgets from `hints.keys` directly — and
-`HostHandle::probe_event_forward_latency` (`epsilon-ext/src/host.rs:322`) is a 40-line public
-async timing probe with one caller, a test.
+**Dead code — and the whole list is now on disk**, which it was not before:
+[`../audit/evidence/ponytail-deadcode-2026-10-04.md`](../audit/evidence/ponytail-deadcode-2026-10-04.md).
+A re-derivation from source on 2026-10-04 indexed every non-test definition in all 14 crates
+(3,078 across 228 files) and classified each mention production-or-test by hand. **73 verified
+items, 827 measured lines** - every line count is a span, not a reading. Both named findings
+**stand** - `Hints::keys_text`, whose doc is still false, and
+`probe_event_forward_latency`, which is **14 lines, not the ~40 this section used to claim** -
+and **four more** of the same misleading-doc shape turned up with zero callers, including
+`tools/tests/builtin_tools.rs:2186`, a test whose stated purpose is keeping an uncalled constant
+alive.
+
+**The disposition, which is what the definition of done actually asks for:**
+
+| Class | Items | Lines | Disposition |
+|---|---|---|---|
+| Zero callers anywhere | 23 | 175 | **delete - authorized, not done** |
+| No production caller, test callers only | 30 | 400 | **delete with the test sites - authorized** |
+| Docs assert a caller that does not exist | 6 | 103 | **file as a defect**; `bedrock_event_payloads` (39 lines) is the one to look at |
+| Test capability shipped in release libraries | ~21 | ~324 | **keep, justified** - deleting a fault-injection seam deletes real tests |
+| False alarms checked and cleared | 5 | - | do not "fix" |
+
+**Nothing was deleted, and that is a decision rather than an oversight.** 59 deletions across 14
+crates in the freeze window, each needing its own battery, is how a project ends the day with a
+red suite and a list of things that used to work. The list is written down, every row is
+authorized, and the first batch is mechanical.
+
+**The audit record had a defect worth naming.** The line above used to read "full list retained
+with this section's summary below". **It was not** - the numbered findings existed nowhere in
+the tree, which is why "finding #14" could not be disposed of by anyone, including me. A summary
+of an audit is not the audit.
+
+**Also found and fixed:** three Cyrillic characters inside an English doc comment
+(`epsilon-llm/src/providers/vertex.rs:80`), which `check-control-bytes.py` cannot see - that gate
+looks for C0 bytes, and a homoglyph is not one.
 
 **One finding already retired by this session's work.** #12 says `CheckpointStore::latest_for`
 has eight test callers and no production one. That is stale: `CheckpointStore::resolve` calls it
@@ -386,6 +419,15 @@ caller, so the audit was right about the tree it saw and wrong about the tree th
 **Justified — do not act.** #25 `PaletteEntry.binding` looks like seven hand-typed chord
 spellings restating `keybindings::DEFAULTS`, but a drift test exists and the maintainers
 chose it; deleting it would be disagreeing with a deliberate decision, not removing excess.
+
+**The gap that is still open, and it is a gap in the record rather than in the code.** The
+**38-finding list itself was never written down** — only this section's summary of it survives,
+which means the ~20 dead-code rows cannot be individually verified or justified by the next
+person, and a definition of done that asks for "each remaining finding justified in writing"
+cannot be met from a summary. A re-sweep was started on 2026-10-04 to re-establish the list
+against today's tree; **whatever it returns, the finding list is written to a file this time**,
+under `audit/evidence/`, so the next audit starts from evidence rather than from a paragraph.
+Recording the failure to record is the honest half; the other half is not leaving it there.
 
 **Flagged as least confident by the auditor itself:** the frontmatter consolidation (#2) — the
 four parsers are *near*-duplicates, not identical (only `tools/skill.rs` strips a BOM;

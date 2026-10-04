@@ -77,7 +77,7 @@ pub enum BearerSource<'a> {
 /// `https://oauth2.googleapis.com/token`, scope
 /// `https://www.googleapis.com/auth/cloud-platform`).
 ///
-/// Syncлой surface: reads + parses the file here (pure), returns the
+/// Synchronous surface: reads + parses the file here (pure), returns the
 /// assertion JWT input the caller POSTs — the single network hop stays with
 /// the caller so this function is unit-testable without HTTP. pi delegates
 /// this whole dance to the `@google/genai` SDK; we own the two lines that
