@@ -141,11 +141,18 @@ fn pane_ui(ui: &egui::Ui, rect: egui::Rect, id: &str) -> egui::Ui {
 /// **What it can honestly publish.** [`egui::Response::widget_info`]
 /// (`egui-0.36.2/src/response.rs:869`) is the hook that puts a node into that tree, and
 /// [`egui::WidgetInfo`] (`egui-0.36.2/src/data/output.rs:563`) is the whole of what it
-/// accepts: a name, a value and state. There is **no role field, no description and no
-/// relations**, so this publishes a name and nothing more. Nothing here is an ARIA
-/// landmark, and nothing here is a `describedby` relation — egui 0.36 cannot express either
-/// through this API, and writing that down here is the only way the next reader does not
-/// have to re-derive it.
+/// accepts: a name, a value and state. It has **no role field, no description and no
+/// relations**, so `widget_info` alone cannot express an ARIA landmark.
+///
+/// **This paragraph said egui 0.36 could not express a landmark at all, and that was wrong**
+/// (corrected 2026-10-04, M301). It is true of `WidgetInfo`, whose `WidgetType`
+/// (`egui-0.36.2/src/lib.rs:623-668`) ends at `Other`, so the table in `response.rs:935-958`
+/// caps out at `Role::Pane`. But roles are assignable: `Context::accesskit_node_builder` is
+/// **public** (`egui-0.36.2/src/context.rs:3684-3690`) and `accesskit::Node::set_role` is
+/// public, which is how `name_region` now stamps a landmark role. **The ordering is the
+/// subtlety**: `fill_accesskit_node_from_widget_info` rewrites the role on the same pass, so
+/// the role must be set *after* the `widget_info` call below or it is silently undone.
+/// Nothing here is a `describedby` relation — egui 0.36 still cannot express one.
 ///
 /// **The label is the caller's, and it must be bounded and truthful.** A region that
 /// published its own contents would have a screen reader announce every row on every
@@ -186,7 +193,19 @@ fn pane_ui(ui: &egui::Ui, rect: egui::Rect, id: &str) -> egui::Ui {
 /// (`egui-0.36.2/src/context.rs:1248`) and `widget_info` writes only to the AccessKit node
 /// builder and `Memory::widget_info` (`egui-0.36.2/src/response.rs:889`); neither builds a
 /// shape. This is metadata, and the frame is the proof.
-fn name_region(ui: &egui::Ui, rect: egui::Rect, salt: &str, label: &str) {
+/// Give a painted region an accessible name and an ARIA landmark role.
+///
+/// `role` is the landmark a screen reader uses to offer a rotor of the window's regions — what
+/// the WAI-ARIA Authoring Practices call landmarks, and what a sighted reader gets from the
+/// layout for free. Passing [`egui::accesskit::Role::Pane`] keeps the old behaviour for a region
+/// that is a container but not a landmark.
+fn name_region(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    salt: &str,
+    label: &str,
+    role: egui::accesskit::Role,
+) {
     // `make_persistent_id` is `self.id().with(salt)` (`egui-0.36.2/src/ui.rs:884`), and
     // `pane_ui` builds each pane's id the same way, so the result is stable for as long as
     // the pane is. **Never derive the salt from a frame counter**: an id that moved every
@@ -195,8 +214,9 @@ fn name_region(ui: &egui::Ui, rect: egui::Rect, salt: &str, label: &str) {
     let response = ui.interact(rect, ui.make_persistent_id(salt), egui::Sense::empty());
     response.widget_info(|| egui::WidgetInfo {
         // `WidgetType::Panel` is what egui maps to AccessKit's `Role::Pane`
-        // (`egui-0.36.2/src/response.rs:950`) — a container, which is the honest reading
-        // of a region. A container role, not a landmark: see the note above.
+        // (`egui-0.36.2/src/response.rs:950`). That is the container role, and the role the
+        // landmark call below **overrides** — kept as the starting point so a caller that
+        // passes `Role::Pane` gets exactly the behaviour this helper had before landmarks.
         typ: egui::WidgetType::Panel,
         enabled: true,
         label: Some(label.to_string()),
@@ -210,6 +230,10 @@ fn name_region(ui: &egui::Ui, rect: egui::Rect, salt: &str, label: &str) {
         text_selection: None,
         hint_text: None,
     });
+    // **After** `widget_info`, never before: egui's own pass rewrites the role from
+    // `WidgetType`, so a role set earlier would be overwritten every frame and the fix would
+    // look like it worked on the frame it was written.
+    name_role(&response, role);
 }
 /// Give a node egui **already built** an accessible name, and change nothing else.
 ///
@@ -2506,7 +2530,15 @@ impl IdeApp {
                 // line is, and a narrow window shortens both together.
                 title_name.push_str(&format!(" · {figures}"));
             }
-            name_region(ui, l.title, TITLE_SALT, &title_name);
+            name_region(
+                ui,
+                l.title,
+                TITLE_SALT,
+                &title_name,
+                // `Banner` is the ARIA landmark for the title bar: the region that identifies
+                // the application and its context, and the one a rotor offers first.
+                egui::accesskit::Role::Banner,
+            );
         }
         if l.status.height() > 0.0 {
             painter.rect_filled(l.status, 0.0, self.theme.panel);
@@ -2536,6 +2568,10 @@ impl IdeApp {
                 l.status,
                 STATUS_SALT,
                 &format!("Status bar · {}", self.run_state()),
+                // `Status` is the ARIA landmark for a live region of the application's state.
+                // It is the honest role here: what this band reports is what the harness is
+                // doing right now, and it changes without the reader moving.
+                egui::accesskit::Role::Status,
             );
             // **The key hints, in the band `layout.rs` reserved them for.** `layout.rs`
             // documents this bar as "goal phase, pending approvals, key hints"; the first two
@@ -2739,6 +2775,9 @@ impl IdeApp {
                     entry.command.unwrap_or(entry.label.as_str())
                 ),
                 &format!("Palette row · {} · {}", entry.label, entry.hint),
+                // `Dialog`: the palette is a modal surface over the window, and this is
+                // the row inside it. `Region` would be true and useless.
+                egui::accesskit::Role::Region,
             );
             // A command row is addressable by its **id**, so a test presses
             // `command:goal.pause` rather than the label a reader sees — a label is what
@@ -2818,6 +2857,10 @@ impl IdeApp {
             rect,
             ACTIVITY_SALT,
             &format!("Activity bar · showing {}", self.sidebar.label()),
+            // `Navigation` is the ARIA landmark for the control that moves between
+            // views. The activity bar is that control, and a rotor entry for it is
+            // how a reader gets to the sidebar at all.
+            egui::accesskit::Role::Navigation,
         );
         let mut y = rect.top() + 10.0;
         for view in SidebarView::ALL {
@@ -3077,6 +3120,7 @@ impl IdeApp {
             rect,
             TASKS_SALT,
             &format!("Subagents · {count} {}", Self::plural(count)),
+            egui::accesskit::Role::Region,
         );
         if tasks.is_empty() {
             // The empty state says how to make one, because "no tasks" on its own reads
@@ -3197,7 +3241,13 @@ impl IdeApp {
         let Some(session) = self.session.as_ref() else {
             // The pane is on screen with no list under it, and "Sessions" alone would
             // leave a reader looking for something that is not coming.
-            name_region(ui, rect, SESSIONS_SALT, "Sessions · no agent attached");
+            name_region(
+                ui,
+                rect,
+                SESSIONS_SALT,
+                "Sessions · no agent attached",
+                egui::accesskit::Role::Region,
+            );
             let line = "no agent attached";
             ui.colored_label(theme.dim, line);
             summary.rows.push(("sessions".into(), line.to_string()));
@@ -3213,6 +3263,7 @@ impl IdeApp {
             rect,
             SESSIONS_SALT,
             &format!("Sessions · {stored} stored"),
+            egui::accesskit::Role::Region,
         );
         if sessions.is_empty() {
             let line = "none stored for this workspace yet";
@@ -3350,7 +3401,13 @@ impl IdeApp {
         } else {
             format!("Workspace files · {listed} {files}")
         };
-        name_region(ui, rect, FILES_SALT, &files_name);
+        name_region(
+            ui,
+            rect,
+            FILES_SALT,
+            &files_name,
+            egui::accesskit::Role::Region,
+        );
         summary.rows.push((
             "workspace".into(),
             format!("workspace  {}", display_path(&self.opts.workspace)),
@@ -3461,6 +3518,7 @@ impl IdeApp {
                 body,
                 EDITOR_SALT,
                 &format!("Change review · {}", change.summary()),
+                egui::accesskit::Role::Region,
             );
             return;
         }
@@ -3472,6 +3530,7 @@ impl IdeApp {
                     body,
                     EDITOR_SALT,
                     &format!("Editor, read-only · {} · {} lines", file.path, file.len()),
+                    egui::accesskit::Role::Region,
                 );
                 summary.rows.push((
                     "editor".into(),
@@ -3480,7 +3539,13 @@ impl IdeApp {
                 summary.rows.push(("editor".into(), "read-only".into()));
             }
             None => {
-                name_region(ui, body, EDITOR_SALT, "Editor, read-only · no file open");
+                name_region(
+                    ui,
+                    body,
+                    EDITOR_SALT,
+                    "Editor, read-only · no file open",
+                    egui::accesskit::Role::Region,
+                );
                 let painter = ui.painter();
                 painter.rect_filled(body, 4.0, theme.background);
                 painter.rect_stroke(
@@ -4125,6 +4190,12 @@ impl IdeApp {
                     "Agent transcript · {entries} {}",
                     if entries == 1 { "entry" } else { "entries" }
                 ),
+                // `Log` is the ARIA role for a region of past events, and a conversation is
+                // exactly that. `Document` was considered and rejected: it is for a body of
+                // text the reader is *editing*, and this pane is read-only. This is also the
+                // single most important landmark in the window — it is the thing a reader came
+                // for — so it is named before anything else a reader would reach.
+                egui::accesskit::Role::Log,
             );
         }
         // ---- composer -------------------------------------------------------
@@ -4278,6 +4349,7 @@ impl IdeApp {
                 goal.max_rounds,
                 if view.armed { "armed" } else { "not armed" },
             ),
+            egui::accesskit::Role::Status,
         );
         Some(band.bottom() + 4.0)
     }
@@ -7295,18 +7367,26 @@ mod tests {
         }
     }
 
-    /// **The claim is bounded: a name, not a role, not a relation.**
+    /// **The claim is bounded: a name and a role, not a description, not a relation.**
     ///
-    /// ADR-022 states the limit rather than leaving it to be discovered in an audit:
-    /// `WidgetInfo` (`egui-0.36.2/src/data/output.rs:563`) has **no role, no description
-    /// and no relations**. This pins what egui actually did with what we gave it —
-    /// `Role::Pane` and a label — so a future change that starts claiming more is caught
-    /// here rather than in a conformance audit.
+    /// **This test asserted the opposite for a while, and its own doc comment was wrong.**
+    /// It used to require `Role::Pane` — "egui 0.36 cannot express ARIA landmarks through
+    /// this API at all" — which was a true statement about `WidgetInfo` mistaken for a
+    /// statement about egui. `Context::accesskit_node_builder` is public
+    /// (`egui-0.36.2/src/context.rs:3684-3690`) and `accesskit::Node::set_role` is public, so
+    /// ADR-022's "a name and nothing more" was narrower than the truth (M301).
     ///
-    /// `Role::Pane` is a container, and this test deliberately says so rather than calling
-    /// it a landmark: egui 0.36 cannot express ARIA landmarks through this API at all.
+    /// **The shape of the mistake is the point.** A test that documents a limitation pins it:
+    /// correcting the limitation makes the test fail, which is exactly what happened, and the
+    /// tempting response is to widen the assertion instead of reading why. What is asserted
+    /// now is the property that was always wanted — *the transcript is reachable by role*, not
+    /// *the transcript is a pane* — so it survives the next role change and fails if the role
+    /// is dropped.
+    ///
+    /// What is still bounded is real: `WidgetInfo` has no description and no relations, and
+    /// nothing here claims otherwise.
     #[test]
-    fn a_named_region_is_a_container_with_a_name_and_nothing_else() {
+    fn a_named_region_carries_the_role_it_claims() {
         let (dir, _keep) = scratch_workspace("a11y-role");
         let mut h = Harness::new(dir);
         let nodes = h.named_nodes();
@@ -7315,15 +7395,11 @@ mod tests {
             nodes
                 .iter()
                 .any(|(label, role)| label.starts_with("Agent transcript")
-                    && *role == egui::accesskit::Role::Pane),
-            "egui maps WidgetType::Panel to Role::Pane (egui-0.36.2/src/response.rs:950); \
-             anything else means the mapping changed. tree: {nodes:?}"
+                    && *role == egui::accesskit::Role::Log),
+            "the transcript is a Log - the region a reader came for, reachable from the \
+             rotor rather than by arrowing through every other pane. tree: {nodes:?}"
         );
 
-        // What egui did *not* attach: a description and a relation are not expressible
-        // through `WidgetInfo`, so there is nothing here to assert they are absent by
-        // accident — this records that the tree egui produced carries a role and a label,
-        // and that the two are all ADR-022 says is available.
         let full = h.a11y_frame();
         let update = full
             .platform_output
@@ -7425,6 +7501,65 @@ mod tests {
             "every node a screen reader can reach needs a role and a name; these are \
          `Role::Unknown`: {unknown:#?}\nall named nodes: {:?}",
             h.named_nodes()
+        );
+    }
+
+    /// **The window publishes landmarks, not just names.**
+    ///
+    /// # The claim this corrects
+    ///
+    /// `name_region`'s own doc comment said *"Nothing here is an ARIA landmark … egui 0.36 cannot
+    /// express either through this API."* **The first half was true and the conclusion was wrong.**
+    /// It is true of `WidgetInfo`, which has no role field, but `Context::accesskit_node_builder` is
+    /// public (`egui-0.36.2/src/context.rs:3684-3690`) and `accesskit::Node::set_role` is public — so
+    /// `name_region` now stamps a role after its own `widget_info` call, because egui's pass
+    /// rewrites the role otherwise.
+    ///
+    /// # Why landmarks are the difference and not a nicety
+    ///
+    /// Every region in this window already had a **name**. What it did not have was a role, and a
+    /// role is what a screen reader's rotor is built from: with every pane reading as an anonymous
+    /// container, the fastest route to the transcript was arrow keys through everything else. A
+    /// landmark is the mechanism the WAI-ARIA Authoring Practices give for exactly this, and the
+    /// transcript — the thing a reader opened the window for — was the one that had none.
+    ///
+    /// Asserted on the **roles actually published**, not on the call sites: a test that counted
+    /// `name_region` calls would pass if every one of them passed the wrong role.
+    #[test]
+    fn the_window_publishes_landmarks_a_reader_can_rotate_through() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("only.md"), "x").unwrap();
+        let (session, _n) = faux_session(dir.path());
+        let mut h = Harness::with_session(dir.path().to_path_buf(), session, Vec::new());
+
+        let update = h
+            .a11y_frame()
+            .platform_output
+            .accesskit_update
+            .clone()
+            .expect("checked by a11y_frame");
+        let roles: std::collections::BTreeSet<egui::accesskit::Role> =
+            update.nodes.iter().map(|(_, n)| n.role()).collect();
+
+        // The four the window is actually built from, each named for what it is.
+        for (role, why) in [
+            (egui::accesskit::Role::Log, "the transcript"),
+            (egui::accesskit::Role::Navigation, "the activity bar"),
+            (egui::accesskit::Role::Banner, "the title bar"),
+            (
+                egui::accesskit::Role::Status,
+                "the status bar and the goal band",
+            ),
+        ] {
+            assert!(
+                roles.contains(&role),
+                "{why} must publish its landmark role ({role:?}); this tree has {roles:?}"
+            );
+        }
+        // And the control that was `Role::Unknown` with a full name is a splitter now.
+        assert!(
+            roles.contains(&egui::accesskit::Role::Splitter),
+            "the sidebar resize handle is a splitter, not an anonymous box; this tree has {roles:?}"
         );
     }
 

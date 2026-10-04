@@ -7,6 +7,13 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Product
 
+- **The desktop IDE now publishes landmarks a screen reader can navigate by.** Every region had a
+  *name* but no *role*, and roles are what a screen reader's rotor is built from — so the fastest
+  route to the transcript was arrowing through every other pane. The transcript is now a `Log`, the
+  activity bar `Navigation`, the title bar `Banner`, the status bar and goal band `Status`, file
+  rows `TreeItem`, the sidebar handle `Splitter`. This corrects a claim in the design record that
+  egui 0.36 could not express landmarks at all: true of `WidgetInfo`, false of egui (M301,
+  ADR-022).
 - **Nothing in the desktop IDE announces as an unnamed, role-less box.** A file-tree row and the
   sidebar resize handle were focusable and clickable but reached the screen-reader layer with no
   role and — for the row — no name at all, so a reader could focus a file and be told nothing.

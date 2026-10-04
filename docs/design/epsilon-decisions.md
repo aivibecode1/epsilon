@@ -1697,9 +1697,16 @@ Two verifications, both measured:
 - **The transcript's rows have no nodes.** The region is named and counted; a screen reader cannot
   read the *conversation*. That needs real widgets or per-row names, and it remains the largest
   open gap in this ADR.
-- No landmark roles, no descriptions, no relations — not expressible through `WidgetInfo` in
+- ~~No landmark roles, no descriptions, no relations — not expressible through `WidgetInfo` in
   egui 0.36. `WidgetType::Panel` maps to AccessKit `Role::Pane`, which is a container role and not
-  an ARIA landmark.
+  an ARIA landmark.~~ **CORRECTED 2026-10-04 (M301).** True of `WidgetInfo`, false of egui:
+  `Context::accesskit_node_builder` is **public** (`egui-0.36.2/src/context.rs:3684-3690`) and
+  `accesskit::Node::set_role` is public, so the window now publishes real landmarks — `Log` for
+  the transcript, `Navigation` for the activity bar, `Banner` for the title bar, `Status` for the
+  status bar and the goal band, `TreeItem` for a file row, `Splitter` for the resize handle. The
+  one subtlety is **ordering**: `fill_accesskit_node_from_widget_info` rewrites the role on the
+  same pass, so the role must be stamped **after** the `widget_info` call. **Descriptions and
+  relations remain genuinely inexpressible** — `WidgetInfo` has no field for either.
 - The nodes attach **flat** to the window root, because the pane `Ui`s carry no node of their
   own. Truthful, but not a pane hierarchy.
 - **No screen reader was run.** The claim is "egui emitted the node into the platform tree", not
@@ -1753,8 +1760,9 @@ else changed → **130 passed, 6 failed**, the six being exactly the new tests, 
 warnings proving the removal was total. `FullOutput::shapes` identical in both builds.
 
 **Still open.** The palette's overlay rectangle, its "N more" note, its empty state and its hint
-line are unnamed. No landmark roles, descriptions or relations. The nodes attach flat. No screen
-reader has been run.
+line are unnamed. **Landmark roles were also listed here and are no longer open — see the M301
+amendment at the end of this ADR.** Descriptions and relations remain inexpressible, the nodes
+attach flat, and no screen reader has been run.
 
 ### Third amendment, 2026-10-04 — transcript rows are named, and the premise was wrong
 
@@ -1794,13 +1802,51 @@ AccessKit **on** — named 3.55 / 4.41 / 4.08 / 4.03 against control 4.08 / 3.74
 because `frame_cost.rs`'s `paint_once` never calls `enable_accesskit()`, so **that benchmark
 cannot see node-building at all** — a real gap in our instrument, recorded rather than papered over.
 
-**Still open after this.** Nodes attach flat; there are no landmark roles, descriptions or
-relations. A `Changed` row's click target has **no node at all** — its `Sense::click()` is not
-focusable, so egui's node-creation guard skips it; giving "open the file" a role needs a
-`WidgetInfo` there and was judged out of scope rather than half-done. egui's per-galley
-`Role::TextRun` selection run stays unnamed deliberately — its content *is* its value, and naming
-it would double-announce; a test pins that it remains one node. And **no screen reader has been
-run** at any point in this ADR.
+**Still open after this.** ~~There are no landmark roles~~ — **closed 2026-10-04 (M301), see the
+amendment below.** Nodes still attach flat, and there are still **no descriptions and no
+relations**, which `WidgetInfo` genuinely cannot express. A `Changed` row's click target has
+**no node at all** — its `Sense::click()` is not focusable, so egui's node-creation guard skips
+it; giving "open the file" a role needs a `WidgetInfo` there and was judged out of scope rather
+than half-done. egui's per-galley `Role::TextRun` selection run stays unnamed deliberately — its
+content *is* its value, and naming it would double-announce; a test pins that it remains one
+node. And **no screen reader has been run** at any point in this ADR.
+
+### Fourth amendment, 2026-10-04 — roles were never the limitation, and a test was pinning it
+
+**This ADR said, three times, that egui 0.36 cannot express an ARIA landmark. That was wrong**,
+and the error had a specific shape: it is a true statement about one API (`WidgetInfo` has no role
+field) generalised into a statement about the toolkit. `Context::accesskit_node_builder` is
+**public** (`egui-0.36.2/src/context.rs:3684-3690`) and `accesskit::Node::set_role` is public.
+`egui::Area` cannot help — its only role hook is crate-private (`containers/area.rs:649`) — but a
+response already in hand is enough.
+
+**What that cost.** Every region in the window had a *name* and no role, so a screen reader's
+rotor — which is built from roles — offered no route to the transcript, which is the one region a
+reader opened the application for. Names alone are what a reader searches; roles are what they
+navigate.
+
+**Decision.** `name_region` takes a `role` and stamps it **after** its own `widget_info` call,
+because `fill_accesskit_node_from_widget_info` rewrites the role on the same pass and a role set
+beforehand is overwritten every frame — a fix that would have looked like it worked on the frame
+it was written. Roles chosen to match what each region *is*: `Log` for the transcript (a region of
+past events; `Document` is for text the reader edits, and this pane is read-only), `Navigation`
+for the activity bar, `Banner` for the title bar, `Status` for the status bar and the goal band,
+`TreeItem` for a file row, `Splitter` for the resize handle (`Adjustment` is for a value, not a
+pane's width).
+
+**The part worth keeping: a test was pinning the limitation.** `a_named_region_is_a_container_
+with_a_name_and_nothing_else` asserted the transcript was a `Role::Pane`, with a doc comment
+saying landmarks were inexpressible. Correcting the limitation made that test fail — and the
+tempting move is to widen the assertion rather than read why it failed. It now asserts the
+property that was always wanted (*the transcript is reachable by role*) rather than the
+implementation (*it is a pane*), so it survives the next role change and fails if the role is
+dropped. **A test that documents a limitation is a test that will resist its correction.**
+
+Also fixed here: **two `Role::Unknown` nodes**, which is the shape egui leaves behind whenever it
+allocates a node for a focusable widget and nothing sets a role — one per drawn file-tree row and
+the sidebar resize handle, the second of which had a full name and still announced as unknown.
+`no_node_in_the_window_is_unnamed_and_unroled` asserts the property over the whole tree rather
+than the two sites, because a test aimed at one node passes with the other still broken.
 
 ---
 

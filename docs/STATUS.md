@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M299)
+Last updated: 2026-10-04 (M302)
 
 ## Current task
 
@@ -40,6 +40,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 07:35–08:15 (10-04) | 9. **M290 finished, M291 landed** | M290's files were on disk from an **interrupted** battery and unverified; they are now verified and the desktop reads the registry from `epsilon-contracts`. M291 fixes the backup ordering defect with the RED control run first. |
 | 11:45–12:35 (10-04) | 10. **M298 — a reachable data-loss hole in `/restore`** | Found by reading, not by a failing test: reverting an agent-**created** file called `remove_file` with **no content check at all**, so a user who edited that file and asked to undo the creation lost their edit. Fixed at the guard and at the cause (creations are now amended with a post-image), RED first, **both negative controls run separately**, ADR-026. |
 | 13:00–14:20 (10-04) | 11. **M299 — the owner's report, and four defects behind it** | "The output of the model is not shown" and switching models "keeps reverting to another". Traced to four separate causes, **two of them in the tests rather than the product** — and one of the four only exists on a machine a person has actually used. |
+| 14:20–16:00 (10-04) | 12. **M300–M302 — permissions, then the desktop's accessibility** | M300: a session-remembered "always allow" was inherited by every subagent (ADR-027). M301/M302: the window published names but no roles, so it had no landmarks at all — and a test was pinning the claim that it could not have them. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -118,9 +119,9 @@ configuration:**
 
 ## Verification (what is actually true)
 
-**Green full-workspace battery, latest measured 2026-10-04 (M301):**
-[`../audit/evidence/gate-m301-2026-10-04.txt`](../audit/evidence/gate-m301-2026-10-04.txt).
-Ten legs, all `[exit=0]`. **2,034 passed / 0 failed / 7 ignored across 78 binaries**, summed from
+**Green full-workspace battery, latest measured 2026-10-04 (M302):**
+[`../audit/evidence/gate-m302-2026-10-04.txt`](../audit/evidence/gate-m302-2026-10-04.txt).
+Ten legs, all `[exit=0]`. **2,035 passed / 0 failed / 7 ignored across 78 binaries**, summed from
 that one log's `test result: ok` lines.
 
 The batteries from m299 onwards, and what each failure taught:
@@ -146,7 +147,7 @@ a clean machine cannot see a dependency on machine state.**
 | `check-control-bytes` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS — zero warnings |
-| `cargo test --workspace` | **PASS — 2,034 passed, 0 failed, 7 ignored, 78 binaries** |
+| `cargo test --workspace` | **PASS — 2,035 passed, 0 failed, 7 ignored, 78 binaries** |
 | `cargo run -q -p epsilon-cli -- --demo` | PASS |
 | `cargo check -p epsilon-cli --features real` | PASS |
 
@@ -359,13 +360,27 @@ against the same bar and merge into the list above.
    above):
    - **No screen reader has ever been run against this window**, on this machine or any other.
      Everything else here stops at "egui emitted the node into the platform tree".
-   - **No landmark roles**, and the code comment explaining why (`app.rs:141-148`) is **half
-     wrong in the honest direction**: it is true that `WidgetInfo` has no role field and
-     `WidgetType` has no landmark, but `Context::accesskit_node_builder` is **public**
-     (`egui-0.36.2/src/context.rs:3684`) and `accesskit::Node::set_role` is public, so
-     `Role::Main`/`Navigation`/`Complementary`/`Region` **are** assignable. The fix is a `role`
-     parameter on `name_region` plus one call placed **after** its `widget_info`, since
-     `fill_accesskit_node_from_widget_info` rewrites the role on the same pass.
+   - **No landmark roles — LANDED (M301).** Every region had a *name* and no *role*, and roles
+     are what a screen reader's rotor is built from, so there was no fast route to the transcript
+     at all. **Three places in this repository asserted that egui 0.36 could not express a
+     landmark, and all three were wrong**: true of `WidgetInfo`, which has no role field, false of
+     egui — `Context::accesskit_node_builder` is **public**
+     (`egui-0.36.2/src/context.rs:3684-3690`) and `accesskit::Node::set_role` is public. (Credit to
+     an independent read-only pass, which found this; I had read the same comment three times and
+     agreed with it.) `name_region` now takes a role and stamps it **after** its own
+     `widget_info`, because `fill_accesskit_node_from_widget_info` rewrites the role on the same
+     pass — a role set beforehand is overwritten every frame, and the fix would have looked like it
+     worked on the frame it was written. Roles match what each region *is*: `Log` for the
+     transcript (`Document` is for text the reader edits), `Navigation`, `Banner`, `Status`,
+     `TreeItem`, `Splitter`.
+
+     **And a test was pinning the limitation.** `a_named_region_is_a_container_with_a_name_and_
+     nothing_else` asserted the transcript was a `Role::Pane` and documented that landmarks were
+     inexpressible. Correcting the limitation made it fail, and the tempting move is to widen the
+     assertion rather than read why. It now asserts the property that was wanted — *the transcript
+     is reachable by role* — rather than the implementation. **A test that documents a limitation
+     is a test that will resist its correction**, which is the same shape as the gutter test that
+     pinned the identical assistant/notice glyph.
    - **Two unnamed `role=Unknown` nodes' worth of site** — one per file-tree row
      (`workspace.rs:344`), one per `Changed` transcript row (`app.rs:4507`). One `name_node`
      each. (Detail above.)
