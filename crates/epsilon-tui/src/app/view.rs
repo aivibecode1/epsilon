@@ -255,6 +255,10 @@ impl App {
             } else {
                 epsilon_llm::catalog::display_label(&self.model_id).to_string()
             },
+            // **The level `/help` says is in the status bar, so it is (M312).** `self.thinking`
+            // is the app's mirror of the agent's level, kept exact by `set_thinking`, which is
+            // what `app::tests` already pins against `agent.thinking_level()`.
+            thinking: Some(self.thinking.as_str()),
             offline: self.is_offline(),
             context_used: (context_now > 0).then_some(context_now),
             context_window: info.as_ref().map(|i| i.context_window).filter(|w| *w > 0),

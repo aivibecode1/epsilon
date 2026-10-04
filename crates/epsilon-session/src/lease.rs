@@ -549,14 +549,67 @@ impl Drop for SessionLease {
     }
 }
 
+/// What a holder's own lock file says about who owns it now (M312).
+///
+/// **Four answers, and the two that are *not* refusals are the point.** `lock_is_ours` used to
+/// answer a single `bool`, which is all `Drop` needs — it must not delete a file it cannot
+/// identify, so "stolen", "gone" and "unreadable" are the same answer *there*. A writer deciding
+/// whether it may append is a different question, and it separates two things a `bool` merges:
+///
+/// - **Evidence that this acquisition is no longer the writer** — [`Taken`](Self::Taken) and
+///   [`Missing`](Self::Missing). Both stop the write, because the whole promise of the lease is
+///   one writer per file and two writers interleave lines into one JSONL stream.
+/// - **Absence of evidence** — [`Unreadable`](Self::Unreadable). The lock is there but could not
+///   be read *right now*, which is what a transient sharing violation looks like: this process's
+///   own heartbeat opens that file for writing every [`HEARTBEAT`]. Refusing on it would throw
+///   away a message the reader believes was saved, which is the worse of the two failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseOwnership {
+    /// The lock file carries this acquisition's token.
+    Ours,
+    /// The lock exists and carries someone else's token: it was taken from us.
+    Taken {
+        /// The lock file's contents, trimmed — `pid=… owner=…`.
+        holder: String,
+    },
+    /// The lock file is **gone**, while this acquisition is still running.
+    ///
+    /// Only a holder removes a lock file, and this acquisition is a live holder — so a missing
+    /// lock means another acquisition existed and has since finished. It is the same defect as
+    /// [`Taken`](Self::Taken), one step later, and it is the case a `read_to_string(..).is_ok_and(..)`
+    /// predicate would have folded into "unreadable" and then written through.
+    Missing,
+    /// The lock is present but could not be read: an I/O or permission failure.
+    ///
+    /// **Not a refusal.** See the type's own note.
+    Unreadable,
+}
+
 impl SessionLease {
+    /// What the lock file says about ownership right now.
+    pub fn ownership(&self) -> LeaseOwnership {
+        match std::fs::read_to_string(&self.path) {
+            Ok(text) if text.contains(&self.owner) => LeaseOwnership::Ours,
+            Ok(text) => LeaseOwnership::Taken {
+                holder: text.trim().to_string(),
+            },
+            // **`NotFound` is evidence and every other error is not.** The distinction is the
+            // whole reason this is a match on the error kind rather than a catch-all: a file that
+            // vanished is a takeover that has since released, and a file that exists but will not
+            // open says nothing about who owns it.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => LeaseOwnership::Missing,
+            Err(_) => LeaseOwnership::Unreadable,
+        }
+    }
+
     /// Whether the lock file at our path still carries **this acquisition's** token.
     ///
     /// `false` is the answer for a lease that was stolen from, and also for one whose
     /// lock file vanished or became unreadable — in both cases there is nothing here
-    /// that says we may delete a file we cannot identify.
+    /// that says we may delete a file we cannot identify. **Callers that must tell the
+    /// two apart want [`Self::ownership`]**, which is why this is now a wrapper.
     fn lock_is_ours(&self) -> bool {
-        std::fs::read_to_string(&self.path).is_ok_and(|text| text.contains(&self.owner))
+        matches!(self.ownership(), LeaseOwnership::Ours)
     }
 }
 

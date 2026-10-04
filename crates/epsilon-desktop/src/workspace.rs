@@ -383,8 +383,21 @@ pub fn draw_tree(
                         crate::app::name_node(
                             &response,
                             &format!(
+                                // **The workspace-relative path, not the bare name (M312).**
+                                // Two files called `README.md` — one at the top, one under
+                                // `agents/` — were both named `File · README.md`, and the
+                                // platform tree proves it: the UIA dump taken on 2026-10-04
+                                // carries two identically-named `TreeItem`s
+                                // (`audit/evidence/desktop-uia-tree-2026-10-04.txt`). A
+                                // reader arriving by rotor or by search gets two identical
+                                // entries and no way to tell them apart; the *drawn* row is
+                                // indented by depth, so the eye resolves this and a reader
+                                // cannot. The tree already keeps the path — `Row::path` is
+                                // "exactly what the model sees", forward slashes and all —
+                                // and a top-level file's path is its name, so the common case
+                                // is unchanged.
                                 "File · {}{}",
-                                row.name,
+                                row.path,
                                 if row.is_dir { " · folder" } else { "" }
                             ),
                         );
@@ -701,6 +714,45 @@ mod tests {
             .find(|r| r.path == "src/deep/inner.rs")
             .expect("the nested file");
         assert_eq!(row.depth, 2, "{row:?}");
+    }
+
+    /// **`Row::path` is the identifier, `Row::name` is only the label (M312).**
+    ///
+    /// The accessible name a file row publishes is its **path**, because two files can share a
+    /// name and a reader cannot tell them apart — which the platform tree proves happened
+    /// (`audit/evidence/desktop-uia-tree-2026-10-04.txt` carries two `File · README.md`). This
+    /// test pins the property that change depends on: the path is the whole workspace-relative
+    /// path with forward slashes, and the name is its last segment alone.
+    ///
+    /// **If this fails, the naming fix is wrong rather than incomplete** — a path that lost its
+    /// parents, or a name that grew them, puts `agents/README.md` on screen in a tree whose
+    /// indentation already says where it is.
+    #[test]
+    fn a_row_carries_its_whole_path_and_keeps_the_bare_name_for_drawing() {
+        let dir = workspace();
+        let tree = FileTree::load(dir.path());
+        let rows = tree.visible("");
+        let nested = rows
+            .iter()
+            .find(|r| r.path == "src/deep/inner.rs")
+            .expect("the nested file");
+        assert_eq!(
+            nested.name, "inner.rs",
+            "the drawn row shows the last segment only"
+        );
+        assert!(
+            !nested.name.contains('/'),
+            "a name that carried its parents would print `deep/inner.rs` under an indented row: {:?}",
+            nested.name
+        );
+        let top = rows
+            .iter()
+            .find(|r| r.path == "README.md")
+            .expect("the fixture's top-level file");
+        assert_eq!(
+            top.path, top.name,
+            "a top-level row's path and name agree, which is why the common case is unchanged"
+        );
     }
 
     #[test]

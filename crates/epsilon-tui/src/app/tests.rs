@@ -3166,6 +3166,63 @@ async fn theme_command_toggles_and_names_the_palette() {
         "and it must say what was wrong: {texts:?}"
     );
 }
+
+/// **The `/theme` description may only name palettes the product has (M312).**
+///
+/// Found by reading, not by a failing run: the slash item advertised *"switch palette: dark,
+/// light, high-contrast"*, `ThemeMode` has two variants, and `/theme high-contrast` therefore
+/// answered **"unknown palette"** — a command offering an option it refuses, in the one place a
+/// reader is told what is possible. ADR-024's failure class, reached from a direction its tests
+/// did not look at: `every_offered_command_is_reachable_from_slash_items` compares **heads**,
+/// so a head that exists and an argument that does not is invisible to it.
+///
+/// **Both directions are asserted, because both are ways this lies.** A description may not name
+/// a palette the code refuses, and a palette the code has may not go unmentioned — the second is
+/// the one that is easy to create by adding a variant and forgetting the prose.
+///
+/// The names are read out of the description's own list, so the test does not hard-code them
+/// twice; if someone rewrites that sentence into prose, this fails and says why.
+#[test]
+fn every_palette_the_description_advertises_is_one_the_product_has() {
+    use crate::ui::theme::ThemeMode;
+
+    let described: Vec<String> = epsilon_contracts::command::SLASH_ITEMS
+        .iter()
+        .find(|i| i.value.trim() == "/theme")
+        .expect("`/theme` is offered")
+        .description
+        .rsplit_once(": ")
+        .expect("the description lists its palettes after a colon")
+        .1
+        .split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert!(
+        described.len() >= 2,
+        "the list was not found in the description, so this test is checking nothing: {described:?}"
+    );
+
+    for name in &described {
+        assert!(
+            ThemeMode::from_name(name).is_some(),
+            "`/theme {name}` is advertised and then refused. Either build the palette or stop \
+             naming it — a command that offers an option it will not take is worse than one that \
+             offers fewer."
+        );
+    }
+
+    let missing = [ThemeMode::Dark, ThemeMode::Light]
+        .into_iter()
+        .map(|m| m.name())
+        .filter(|n| !described.iter().any(|d| d == n))
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "the product has a palette the `/theme` description never mentions, so a reader cannot \
+         find it: {missing:?}"
+    );
+}
 /// M168: `/tree` and `/timeline` used to be two 96-line copies of the same picker. These
 /// exercise the one body they now share, through both of its entry points, and through the
 /// pure helpers that decide what a row says.

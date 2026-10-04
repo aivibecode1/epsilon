@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M311)
+Last updated: 2026-10-04 (M312 — lease refusal, then a front-end polish pass)
 
 > **Picking this up from someone else? Read [`HANDOFF.md`](HANDOFF.md) first**, then
 > [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left and
@@ -47,6 +47,8 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 14:20–16:00 (10-04) | 12. **M300–M302 — permissions, then the desktop's accessibility** | M300: a session-remembered "always allow" was inherited by every subagent (ADR-027). M301/M302: the window published names but no roles, so it had no landmarks at all — and a test was pinning the claim that it could not have them. |
 | 17:30–18:25 (10-04) | 13. **M303 verified and finished, then M304** | M303 was **on disk and unverified**: the first battery (`gate-m303`) failed **twice** — a `collapsible_if` from the refactor, and a golden frame test that had pinned the very glyph collision M303 fixed. Both fixed, one test rewritten to read the repertoire instead of a literal. Then two read-only investigations, **both of which corrected something written here**, and the false ADR claim closed. |
 | 18:30–18:55 (10-04) | 14. **M305 — the first frame of this window** | "No wgpu backend presents" had been recorded as a property of the machine for three days. It is a property of **presentation**; the machine has two GPUs. An **offscreen** rasteriser renders the real draw output, and **looking at it** found the sidebar hint drawing `←/→` as two tofu boxes — which sixteen string assertions had been passing straight through. |
+| 21:25– (10-04) | 15. **M312 — a stolen lease stops the write** | Plan item 2, in flight and half-written when this session started. Finished, with four tests, a negative control that printed the defect as a value, and ADR-028. **The battery it ran then found a fixture that deleted its own session directory**, which is in Known-broken below. |
+| 22:40– (10-04) | 16. **Front-end polish, on the owner's instruction** | *"Put high efforts on polishing tui and desktop IDE."* Four defects, each found by **reading a frame or a dump this repository already had**, not by a failing test: `/theme` advertising a palette that does not exist, `/help` pointing at a thinking level the status bar never printed, two identical accessible names for two different files, and a status-bar segment that could never appear. Each has a test with a negative control. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -132,16 +134,26 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m311final`](../audit/evidence/gate-m311final-2026-10-04.txt),
-2026-10-04 — the final tree. The objective was handed off at this point.**
-Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,044 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines. `check-links`: **801 relative links, 0 broken**. The eighth ignored test
-is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter.
+**Latest green battery: [`gate-m312green`](../audit/evidence/gate-m312green-2026-10-05.txt),
+2026-10-05 — the tree this file describes.** Ten legs, all `[exit=0]`, zero non-zero legs.
+**2,053 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines — 9 more than M311's 2,044, which is the seven tests M312 adds and the
+two the `note_lag` rewrite replaces. `check-links`: **810 relative links, 0 broken**. The eighth
+ignored test is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter.
 Knobs, because they change what the evidence is: `CARGO_BUILD_JOBS=1`,
 `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is
 set by the caller and so is not in the log's own header** — it is appended to the evidence file by
 hand, which is the only reason a reader can find it at all.
+
+**Four batteries were spent getting there, and three of the failures were worth the time.**
+`gate-m312` failed `fmt` on two nits **and** the test leg on five goal-round tests — the fixture
+that deletes its own session directory, described above. `gate-m312r` failed `clippy` on a
+redundant guard and the test leg on a `Metrics` literal the desktop builds. `gate-m312s` failed
+`test` on four desktop tests, because the duplicate-`README.md` fixture I added lives in
+`scratch_workspace`, which **every** desktop test walks — a shared fixture is the wrong home for a
+fact one test needs, and moving it into the test fixed all four at once. `gate-m312final` failed
+on `no_source_file_lost_a_test_since_head`, the repository's own guard objecting that I had deleted
+a test; the replacement was renamed to keep the old name, which is what the guard is for.
 
 | Milestone | What it closed | Battery |
 |---|---|---|
@@ -159,6 +171,92 @@ hand, which is the only reason a reader can find it at all.
 | M309 | **An operator's `before_tool_call` hook never reached subagent tool calls** — the M300 shape through a second door | [`gate-m309`](../audit/evidence/gate-m309-2026-10-04.txt) |
 | M310 | The lease-takeover fix is **not the small change it looks like** — recorded rather than half-done | documentation only, covered by `gate-m311final` |
 | M311 | **Two `append` failures that were discarded or printed to a console a window does not have** | [`gate-m311final`](../audit/evidence/gate-m311final-2026-10-04.txt) (after a red [`gate-m311`](../audit/evidence/gate-m311-2026-10-04.txt) on clippy and a self-referential link) |
+| M312 | **A stolen lease stops the write** (ADR-028), plus four front-end defects found by reading frames and dumps: `/theme`'s phantom palette, `/help`'s phantom thinking level, two identically-named file rows, and a status segment that could never appear | [`gate-m312green`](../audit/evidence/gate-m312green-2026-10-05.txt) |
+
+### M312 — a stolen lease stops the write, and the fixture the battery found underneath
+
+**This is plan item 2, and it was half-written on disk when this session started**: `LeaseOwnership`
+and `StoreError::LeaseLost` existed, the store's lease field had been renamed `lease` (and the
+constructor still assigned `_lease`, so the crate did not compile), and nothing called the check.
+M310 had recorded why the obvious version is unsafe: two callers discarded `append`'s result, and
+`lock_is_ours` cannot tell "someone else owns this" from "I cannot read it right now".
+
+| Piece | What it is |
+|---|---|
+| `LeaseOwnership` | `Ours` / `Taken { holder }` / **`Missing`** / `Unreadable` — four answers, because two of them are *not* refusals |
+| `SessionStore::append` | First statement, before the attempt counter. One check covers `append_goal`, `label`, `record_turn_end` and the branch summaries |
+| `SessionStore::persist_migration` | The same check, and it is the more dangerous of the two paths: a migration **replaces** the file rather than adding to it |
+| The TUI's `/name` | Was `let _ = (|| …)()` — the last production site that discarded a write, one layer above the two M311 fixed |
+| ADR-028 | The decision, the rejected alternatives, and why the first refusal is enough |
+
+**The predicate splits "gone" from "cannot read", and the split is the point.** `read_to_string`
+answers with an I/O error either way, so the match is on the error **kind**: `NotFound` is evidence
+(only a holder removes a lock, and this store is a live holder), anything else is not — and a
+refusal on the second would throw away a turn the reader was told was saved.
+
+**Negative control, run, and the core test prints the defect as a value.** With
+`refuse_if_lease_lost` stubbed to `Ok(())`, the three refusal tests fail and the fourth — which
+asserts the *non*-refusal — stays green by design. The loop test's failure is the whole finding:
+
+```
+Outcome: Ok(RunOutcome { produced: [Assistant(AssistantMessage { … content: [Text { text:
+"an answer nothing recorded" }], stop_reason: EndTurn, … })], reason: Completed, … })
+```
+
+A completed turn, written into a session file another process owns.
+
+**Then the battery found the fifth case, and it was the product of a fixture, not of the code.**
+Five tests in `epsilon-runtime/tests/goal_round_gates.rs` failed with the `Missing` refusal.
+`gated_goal` bound `_dir` **inside** the function and dropped it at `return`, so every one of them
+handed back an agent holding a store whose file *and whose lock* had just been deleted. The
+comment above the function said the directory "must be created and used before it goes", which is
+what the code did not do. The refusal was right; the fixture was wrong; the fix binds the `TempDir`
+at each call site. **A test can be wrong for years because nothing was looking.**
+
+**The message was corrected for it too.** It read *"another epsilon took this session and has since
+closed it"* — true of a takeover, **false** of a directory deleted under a running session, and a
+reader who deletes a lock to unstick a session must not be sent looking for a rival window. Both
+causes are now offered and neither is asserted, and a test says so.
+
+### Four front-end defects, none found by a failing test
+
+The owner's instruction for this stretch was *"put high efforts on polishing tui and desktop IDE"*.
+**Every one of these was found by reading something this repository already had** — a frame dump, a
+UIA tree, a help string — which is the argument for `AGENTS.md` §5's "look at the frame", written
+down three more times.
+
+| # | Defect | Found by | Fix |
+|---|---|---|---|
+| 1 | **`/theme` advertised `dark, light, high-contrast`; `ThemeMode` has two variants.** `/theme high-contrast` answered "unknown palette" | reading the slash-item table | The description now names what exists, and `every_palette_the_description_advertises_is_one_the_product_has` asserts **both** directions — a description may not name a palette the code refuses, and a palette the code has may not go unmentioned |
+| 2 | **`/help` said "thinking: Ctrl+T cycles · current level in the status bar"**, and the status bar printed no level | reading the help guide | The level rides with the model, in **pi's own arrangement and wording** (`footer.ts:233-243`: `• thinking off` when off, the bare name otherwise). It is on the pinned part, so it survives the 60-column frame — verified by rendering it |
+| 3 | **Two `TreeItem`s named `File · README.md`** — one at the root, one under `agents/` | reading `audit/evidence/desktop-uia-tree-2026-10-04.txt`, the UIA dump M307 already had | File rows are named by their **workspace-relative path**. A reader's rotor returns two identical entries; a sighted reader resolves them from indentation. The drawn row still shows the short name |
+| 4 | **The status bar's `N event(s) dropped` segment could never appear** | an independent read-only sweep re-deriving the dead-code ledger | `Transcript::note_lag` counted drops and **nothing in production called it**. The counter moved to the session, where the lag is born, and the bridge writes it in the same place it sends the notice |
+
+**Three of the four are the same shape** — a claim made to the reader that the code does not
+honour — and `AGENTS.md` §2.4 already forbids it. The fourth is §2.7: a control that does not do
+what it names.
+
+**Each has a negative control, run.** Restoring `high-contrast` fails the palette test with
+*"`/theme high-contrast` is advertised and then refused"*; restoring `row.name` fails the tree
+test printing **`["File · README.md", "File · README.md"]`, `left: 1, right: 2`** — the same shape
+as M309's control, because the same mistake produces it.
+
+**The file-tree fix is verified one layer out, through the OS.** The probe was re-run against the
+new tree and dumped to
+[`../audit/evidence/desktop-uia-tree-2026-10-05.txt`](../audit/evidence/desktop-uia-tree-2026-10-05.txt):
+**32 tree rows, 32 distinct names**, where the 2026-10-04 dump had `File · README.md` twice. That
+is UI Automation reading the window from **another process** — the same evidence layer M307
+established, now showing the collision gone. The one unnamed `ScrollBar` is unchanged, and the
+probe still exits 1 for it.
+
+**And the drawn frame is byte-identical, which is the right result rather than a disappointing
+one.** Re-rendered through the offscreen path
+([`../audit/evidence/desktop-frames-2026-10-05/desktop-raster.png`](../audit/evidence/desktop-frames-2026-10-05/desktop-raster.png),
+1440×900, 18.0% inked, `WGPU_BACKEND=gl` because Vulkan takes the process down on this machine —
+the M305 table again): SHA-256 `fff0d40a…`, **the same hash as the 2026-10-04 image**. Three of the
+four fixes change what the window *announces*, not what it draws, and the fourth shows a number
+that is zero in this fixture. A pixel-identical frame is the evidence that none of them moved a
+pixel it should not have.
 
 ### M311 — the two silent sites, fixed with machinery that already existed
 
@@ -695,6 +793,41 @@ are all writable. The remedy is fresh test-profile metadata, with one refinement
 
 ## Roadmap (cut scope lives here)
 
+**Open front-end polish (the owner's instruction for the last stretch: "put high efforts on
+polishing tui and desktop IDE").** Ranked by what a reader sees first. Each was verified against the
+tree on 2026-10-04; the two investigations behind them are
+[`../audit/evidence/plan024-item5-desktop-commands.md`](../audit/evidence/plan024-item5-desktop-commands.md)
+and [`../audit/evidence/plan024-item7-class-b-rederived.md`](../audit/evidence/plan024-item7-class-b-rederived.md).
+
+1. **The desktop answers 3 of 37 commands** — `/compact`, `/goal`, `/sessions`. 34 more are refused
+   **by name**, which is honest, but a third of the surface is thin. Cheapest wins, because the
+   action already exists in the window: `/tasks` (that pane is already drawn), `/session` (reuses
+   `figures`/`model_suffix`), `/clear` (~6 lines), `/resume` in its bare form. **`window_runs` has no
+   production caller** — it feeds `refused_heads()` and two tests, so the declaration and the
+   implementation are two statements of one fact joined by a test. A `macro_rules!` in item position
+   can emit both from one list and delete the drift test outright; that is the real work, and adding
+   arms without it is the easy part.
+2. **One unnamed `ScrollBar`** (`../audit/evidence/desktop-uia-tree-2026-10-04.txt`). Not a one-liner:
+   `Context::accesskit_node_builder` is **get-or-create**, so naming both axes unconditionally would
+   create two *phantom* nodes for a bar that is not shown. `desktop-a11y-probe.ps1` exits 1 on any
+   unnamed node and is deliberately not a gate leg while this is open.
+3. **A high-contrast palette.** `AGENTS.md` §8 names it; the product has two palettes. The `/theme`
+   description used to promise it and the code refused it — the description is now honest and the
+   *capability* is still missing. It wants one palette table per front end and **measured** contrast,
+   not asserted.
+4. **The transcript is top-anchored**, so a short conversation sits above twenty empty rows with the
+   composer far below it. Bottom-anchoring is the chat convention; it is a behaviour-level change to
+   a shipped surface and wants its own decision.
+5. **Class B of the dead-code sweep** — the ledger's own arithmetic is wrong *again*: its header says
+   50 items / 652 lines where the tables hold **40 rows** plus 15 items in prose. Of B1's 29 rows, 15
+   are delete, 6 are keep-with-a-written-reason, 8 need a decision. **Deleting `Skill::load_body`
+   alone breaks the build** — it orphans a private `strip_frontmatter`, and `clippy -D warnings` is a
+   gate.
+
+**Highest value still open**, in the order I would take them. Items 7–12 come from a separate
+read-only sweep of the desktop, the TUI and the core run in this session; they are ranked
+against the same bar and merge into the list above.
+
 **Highest value still open**, in the order I would take them. Items 7–12 come from a separate
 read-only sweep of the desktop, the TUI and the core run in this session; they are ranked
 against the same bar and merge into the list above.
@@ -791,10 +924,7 @@ against the same bar and merge into the list above.
      the victim lives" to microseconds.
    - **The window is now 6 s, three heartbeats**, so a live holder survives two missed ticks
      rather than one. The cost is that a killed TUI recovers in ~6 s instead of ~4 s.
-   - **Still open, and it is the half that matters:** nothing detects the takeover. The store's
-     lease field is `_lease` and is never read, `append` writes through an already-open handle,
-     and `SessionLease::refresh()` has **zero callers** and is dead code. Making `append` refuse
-     once the lock is gone is a behaviour-level change and needs an ADR.
+   - ~~**Still open, and it is the half that matters:** nothing detects the takeover. The store's lease field is `_lease` and is never read, `append` writes through an already-open handle, and `SessionLease::refresh()` has **zero callers** and is dead code.~~ **LANDED (M312, ADR-028)** — the M312 section above has the detail. The field is `lease` and is read; `append` **and** `persist_migration` refuse on `Taken` and `Missing` and do **not** refuse on `Unreadable`; the TUI's `/name` — the last production site that discarded an `append` — now says which of *named* and *saved* happened. `SessionLease::refresh()` is still uncalled and stays on the Class B list.
 
      **Measured 2026-10-04 (M310), because the obvious version of that fix makes things worse.**
      It looked like a small change — `SessionLease::lock_is_ours()` already exists

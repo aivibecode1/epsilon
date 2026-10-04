@@ -211,7 +211,14 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     // and `quit`/`q` as their alternatives, so both words are offered deliberately.
     SlashItem {
         value: "/theme ",
-        description: "switch palette: dark, light, high-contrast",
+        // **The names here are the names the code accepts, and a test enforces it**
+        // (`epsilon-tui`, `every_palette_the_description_advertises_is_one_the_product_has`).
+        // This line once said "dark, light, high-contrast": `ThemeMode` has two variants, so
+        // `/theme high-contrast` printed "unknown palette" — a command advertising an option it
+        // refuses, which is the failure ADR-024 exists to prevent, in the one place a reader is
+        // told what is possible. Adding the third palette is roadmap work, and it lands here
+        // **when it lands**, not before.
+        description: "switch palette: dark, light",
     },
     SlashItem {
         value: "/expand",

@@ -230,6 +230,92 @@ mod tests {
         assert!(running.contains("streaming"), "{running}");
     }
 
+    /// **`/help` says the thinking level is in the status bar, so it is (M312).**
+    ///
+    /// The guide line reads *"thinking: Ctrl+T cycles · current level in the status bar"*, and
+    /// the row printed no level — so the reader was told where to look and found nothing, and
+    /// `Ctrl`+`T` looked broken. This is the third claim found in this session pointing at
+    /// nothing, after `/theme`'s `high-contrast` palette and the `dropped` counter.
+    ///
+    /// **The level travels with the model and is spelled pi's way** (`off` is a word, every
+    /// other level is the bare name), because that is the reference's own rule read from
+    /// `components/footer.ts:233-243` rather than invented here. The model part is `pinned`, so
+    /// the level is what survives on the narrowest row this product draws.
+    ///
+    /// Both spellings are asserted, because the failure mode is silence: a level that renders as
+    /// nothing is indistinguishable from a level that was never set.
+    #[test]
+    fn the_thinking_level_rides_with_the_model_and_is_spelled_out_when_off() {
+        let base = Metrics {
+            model_label: "DeepSeek V3.1".into(),
+            context_used: Some(48_000),
+            context_window: Some(200_000),
+            ..Metrics::default()
+        };
+
+        let off = render(
+            140,
+            &RunState::Idle,
+            &Metrics {
+                thinking: Some("off"),
+                ..base.clone()
+            },
+        );
+        assert!(
+            off.contains("thinking off"),
+            "`off` must be spelled: a bare `off` on a header row reads as a fragment of \
+             something else.\n{off}"
+        );
+
+        let high = render(
+            140,
+            &RunState::Idle,
+            &Metrics {
+                thinking: Some("high"),
+                ..base.clone()
+            },
+        );
+        assert!(
+            high.contains("DeepSeek V3.1 • high"),
+            "a level in force is the bare name, beside the model — pi's wording, not ours.\n{high}"
+        );
+
+        // **No level, no claim.** A window with no session must not print one, or it describes
+        // a turn that is not happening.
+        let none = render(
+            140,
+            &RunState::Idle,
+            &Metrics {
+                thinking: None,
+                ..base
+            },
+        );
+        assert!(
+            none.contains("DeepSeek V3.1") && !none.contains("thinking"),
+            "the model alone, and nothing invented beside it.\n{none}"
+        );
+
+        // **It survives the narrowest row the product draws**, because it is on the pinned part
+        // — a level that appears only when the terminal is wide is a level nobody reads.
+        let narrow = render(
+            60,
+            &RunState::Idle,
+            &Metrics {
+                thinking: Some("high"),
+                ..Metrics {
+                    model_label: "DeepSeek V3.1".into(),
+                    context_used: Some(48_000),
+                    context_window: Some(200_000),
+                    ..Metrics::default()
+                }
+            },
+        );
+        assert!(
+            narrow.contains("high"),
+            "the level must survive the budget the gauges yield to.\n{narrow}"
+        );
+    }
+
     #[test]
     fn measurements_sit_on_the_right_and_never_wrap() {
         let metrics = Metrics {

@@ -7,6 +7,34 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Fixed
 
+- **A session whose write lease was taken by another process now refuses to write, instead of
+  interleaving two writers into one file.** The store held its lease for `Drop` and never read it, so
+  a process that had its lock stolen went on appending through an already-open handle for the rest of
+  the session. `append` — and `persist_migration`, which replaces the file rather than adding to it —
+  now check the lock first, and refuse with a message that names the other holder and says the file
+  is unchanged. A lock that cannot be *read* is not a refusal: that is absence of evidence, and
+  refusing on it would drop a turn the reader was told was saved. The terminal front end's `/name`
+  no longer discards the write result — it says whether the name was saved or only applied to this
+  run (M312, ADR-028).
+- **`/theme` no longer advertises a `high-contrast` palette the product does not have.** The slash
+  command offered three palettes and there are two, so `/theme high-contrast` answered "unknown
+  palette" — a command offering an option it refuses. The description now names what exists, and a
+  test asserts both directions: no palette is named that the code refuses, and none the code has goes
+  unmentioned (M312).
+- **The status bar's `N event(s) dropped` segment can now appear.** It was drawn from a counter whose
+  only writer nothing in production called, so the number on screen was always zero. The counter
+  lives where the lag is born, on the session, and the bridge writes it in the same place it sends the
+  notice (M312).
+- **The thinking level is now in the status bar, because `/help` said it was.** `Ctrl`+`T` cycled
+  the level through seven steps with nothing on screen to show which one was in force. The level
+  rides with the model, in pi's own arrangement and wording, and survives the narrowest row the
+  terminal front end draws (M312).
+- **Two files with the same name are now two rows a screen reader can tell apart.** The file tree
+  named every row after its last path segment, so the accessibility tree carried two identically
+  named `File · README.md` entries — one at the workspace root, one under a subdirectory. Rows are
+  named by their workspace-relative path; the drawn row still shows the short name, because the
+  indentation already says where it is (M312).
+
 - **A model switch whose session record fails now says so.** It was discarded with `let _ =`, and
   the code comment claimed "the front end decides whether to say so" — which no front end could,
   because nothing told one. The switch still applies; the notice says the session could not remember

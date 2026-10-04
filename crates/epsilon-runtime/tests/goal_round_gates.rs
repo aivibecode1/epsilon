@@ -37,10 +37,16 @@ fn agent_with_store() -> (Arc<Agent>, tempfile::TempDir) {
 }
 
 /// A goal declaring `gates`, armed so it will continue.
-fn gated_goal(gates: &[&str]) -> Arc<Agent> {
-    let (agent, _dir) = agent_with_store();
-    // The store lives in a temp dir the test drops, so the goal must be created and used
-    // before it goes: `_dir` is bound above for the whole function.
+///
+/// **Returns the `TempDir` too, and every caller binds it — because dropping it deletes the
+/// session directory out from under a live store (M312).** The comment this replaces said the
+/// directory "must be created and used before it goes", which was not what the code did: `_dir`
+/// was bound inside this function and dropped at `return`, so the agent was handed back holding
+/// a store whose file *and whose `.lock`* had just been removed. Nothing noticed for the life of
+/// the test, because nothing looked — and the day something looked, the five tests below failed
+/// with a lease refusal that named the real cause. The fixture was wrong; the refusal was right.
+fn gated_goal(gates: &[&str]) -> (Arc<Agent>, tempfile::TempDir) {
+    let (agent, dir) = agent_with_store();
     agent
         .goal_apply(
             None,
@@ -61,14 +67,14 @@ fn gated_goal(gates: &[&str]) -> Arc<Agent> {
         )
         .unwrap();
     agent.set_goal_armed(true);
-    agent
+    (agent, dir)
 }
 
 #[tokio::test]
 async fn a_goal_with_no_gates_continues_unchanged() {
     // The ordinary path must not change. A gate-aware round that altered the no-gate prompt
     // would silently change every existing goal's behaviour.
-    let agent = gated_goal(&[]);
+    let (agent, _dir) = gated_goal(&[]);
     let round = begin_goal_round(&agent, None, Path::new("."))
         .await
         .unwrap();
@@ -90,7 +96,7 @@ async fn a_goal_with_no_gates_continues_unchanged() {
 
 #[tokio::test]
 async fn a_failing_gate_becomes_the_continuation_prompt() {
-    let agent = gated_goal(&["cargo definitely-not-a-subcommand"]);
+    let (agent, _dir) = gated_goal(&["cargo definitely-not-a-subcommand"]);
     let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let round = begin_goal_round(&agent, Some(&runner), Path::new("."))
         .await
@@ -127,7 +133,7 @@ async fn a_failing_gate_becomes_the_continuation_prompt() {
 
 #[tokio::test]
 async fn a_passing_gate_sends_the_ordinary_prompt() {
-    let agent = gated_goal(&["cargo --version"]);
+    let (agent, _dir) = gated_goal(&["cargo --version"]);
     let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let round = begin_goal_round(&agent, Some(&runner), Path::new("."))
         .await
@@ -151,7 +157,7 @@ async fn a_passing_gate_sends_the_ordinary_prompt() {
 async fn a_gate_failure_still_costs_a_round() {
     // The accounting that stops a red suite being retried for free. Hermes says it in as
     // many words: a quality gate consumes "the same turn budget".
-    let agent = gated_goal(&["cargo definitely-not-a-subcommand"]);
+    let (agent, _dir) = gated_goal(&["cargo definitely-not-a-subcommand"]);
     let runner = GoalGateRunner::new(None, Some(std::sync::Arc::new(epsilon_safety::AutoApprove)));
     let before = agent.goal().unwrap().goal.rounds_started;
     begin_goal_round(&agent, Some(&runner), Path::new("."))
@@ -166,7 +172,7 @@ async fn a_goal_with_no_runner_continues_rather_than_pretending_to_have_checked(
     // `None` means this platform resolved no sandbox. The round must still happen - refusing
     // to continue would stop a goal that never asked for a gate - and must not claim a gate
     // passed.
-    let agent = gated_goal(&["cargo --version"]);
+    let (agent, _dir) = gated_goal(&["cargo --version"]);
     let round = begin_goal_round(&agent, None, Path::new("."))
         .await
         .unwrap();

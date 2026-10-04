@@ -3024,3 +3024,70 @@ async fn a_model_switch_whose_session_record_fails_is_reported() {
          Notices seen: {notices:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// M312 — the refusal has to be *reported*, or it is a lost turn.
+// ---------------------------------------------------------------------------
+
+/// **A turn whose session lease was taken is refused, and the reader is told.**
+///
+/// The store test proves the write stops. This proves the stop is **visible**, which is the half
+/// that had to come first: a refusal nobody prints is not a refusal, it is a dropped turn — which
+/// is why M311 gave `append`'s callers a way to report before the store was allowed to refuse at
+/// all. The takeover here is real, not a fault injection: another process's token in the lock
+/// file, which is the whole condition `LeaseOwnership::Taken` describes.
+///
+/// Two assertions that only make sense together: the run **fails**, so the loop does not keep
+/// building a transcript the file is not keeping, and a **notice** carries the reason, because the
+/// TUI discards `run()`'s result and a window has no console.
+#[tokio::test]
+async fn a_turn_whose_session_lease_was_taken_is_refused_and_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let store = epsilon_session::SessionStore::open_in(&path, dir.path()).unwrap();
+    // Another process takes this session while we hold it open. Same shape as the store test;
+    // here it is the *loop* that has to notice.
+    std::fs::write(
+        path.with_extension("lock"),
+        "pid=999999 owner=another-epsilon\n",
+    )
+    .expect("another holder took the lock");
+
+    let agent = epsilon_core::Agent::new(
+        LoopLimits::default(),
+        Arc::new(epsilon_llm::PanicGuard(FauxProvider::new(vec![
+            epsilon_llm::FauxStep::say("an answer nothing recorded"),
+        ]))),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(AutoAllow),
+        dir.path().to_path_buf(),
+    );
+    agent.attach_session_store(Arc::new(Mutex::new(store)));
+    let mut rx = agent.subscribe();
+
+    let outcome = agent.run(user_msg("go")).await;
+    assert!(
+        outcome.is_err(),
+        "the turn must fail rather than carry on against a session file this process no longer \
+         owns — continuing is what interleaves two writers. Outcome: {outcome:?}"
+    );
+
+    let notices: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter_map(|ev| match &*ev {
+            epsilon_contracts::agent_event::AgentEvent::Notice { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("lease is no longer ours")),
+        "the refusal must reach the reader in words, naming the cause. Notices seen: {notices:?}"
+    );
+
+    let written = std::fs::read_to_string(&path).expect("read the session file");
+    assert!(
+        !written.contains("an answer nothing recorded"),
+        "and the turn must not be half-recorded: a refused write is not a lost one"
+    );
+}

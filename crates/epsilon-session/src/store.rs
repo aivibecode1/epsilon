@@ -14,7 +14,7 @@ use epsilon_contracts::session_entry::{
     SessionLine, SessionTreeNode,
 };
 
-use crate::lease::{LeaseOutcome, SessionLease};
+use crate::lease::{LeaseOutcome, LeaseOwnership, SessionLease};
 
 /// One row of the model-visible view.
 #[derive(Debug, Clone)]
@@ -198,6 +198,20 @@ pub enum StoreError {
         /// How long acquisition waited before reporting the refusal (M136).
         waited: std::time::Duration,
     },
+    /// **This store's own lease was taken by another process (M312).**
+    ///
+    /// Deliberately not [`StoreError::Leased`]. That one is `open` refusing to *acquire* a lease
+    /// somebody else holds; this one is `append` refusing to *write*, on a store that opened
+    /// legitimately and whose lock was taken afterwards. Continuing would interleave two writers
+    /// into one file, which corrupts more than the message the refusal costs.
+    ///
+    /// **The refusal leaves the file untouched**, which is what `AGENTS.md` §6 requires of a
+    /// refusal path, and it is reported rather than swallowed — every `append` caller surfaces it,
+    /// which is the prerequisite M310 identified and M311 landed.
+    LeaseLost {
+        /// Holder line from the lock file.
+        holder: String,
+    },
 }
 
 impl StoreError {
@@ -247,6 +261,34 @@ impl std::fmt::Display for StoreError {
                      close it, or delete the .lock file beside the session: a live holder \
                      re-stamps it every few seconds, so a lock that stays put after that is \
                      a leftover, not a running instance.",
+                )
+            }
+            StoreError::LeaseLost { holder } => {
+                // **The message must say the file is intact and that this is not the
+                // reader's fault.** The write was refused, so the file still holds everything up
+                // to the last successful append; a reader who is told only "refused" will assume
+                // the opposite, and the honest thing to do next is to open the session again —
+                // which re-runs the lease acquisition and tells them who holds it.
+                //
+                // Two sentences for two facts. An empty holder is not a holder we failed to read:
+                // it is `LeaseOwnership::Missing` — the lock file is gone — and **the wording must
+                // stay true for every way that can happen.** Another epsilon took this session and
+                // has since closed is one; a directory deleted under a running session (a
+                // `TempDir` dropped by a test, a user clearing a sessions folder) is the other,
+                // and the battery found that one. So the sentence offers both and names neither as
+                // certain: a reader who deletes a lock to unstick a session must not be told a
+                // rival exists.
+                let who = match holder.trim() {
+                    "" => "the .lock file beside it is gone — another epsilon may have taken this \
+                           session and since closed it, or it was deleted"
+                        .to_string(),
+                    held => format!("another epsilon holds it ({held})"),
+                };
+                write!(
+                    f,
+                    "this session's write lease is no longer ours — {who}. The write was refused \
+                     and the file is unchanged. Close any other window using this session, then \
+                     reopen it to continue.",
                 )
             }
         }
@@ -365,7 +407,11 @@ pub struct SessionStore {
     /// any other — is refused at construction, and the lock is released exactly
     /// when the store goes away. Readers never open a store (session discovery
     /// parses the file directly), so reads stay unconstrained.
-    _lease: SessionLease,
+    ///
+    /// **Read, not merely held, since M312.** It was `_lease` — held for its `Drop`, never
+    /// consulted — which is why a holder whose lock was taken went on appending. Every write
+    /// now asks [`SessionLease::ownership`] first.
+    lease: SessionLease,
     /// Armed fault plan (F07): the next matching write fails with this message instead of
     /// touching the file, index or cache. Empty — the state production code is always in —
     /// leaves the write path exactly as it was.
@@ -560,7 +606,7 @@ impl SessionStore {
             header_end: None,
             migrated: false,
             cached_entries: Vec::new(),
-            _lease: lease,
+            lease,
             faults: Vec::new(),
             appends: 0,
         };
@@ -574,6 +620,35 @@ impl SessionStore {
             store.write_header(cwd, parent)?;
         }
         Ok(store)
+    }
+
+    /// Refuse a write when this store is no longer the session's writer (M312).
+    ///
+    /// The other half of the acquisition in [`SessionStore::open_with_parent`]: that call decides
+    /// *once* whether this process may write, which is enough to open with and not enough to
+    /// keep writing — a lease can be taken at any moment afterwards, and until now nothing looked.
+    ///
+    /// **The two refusals are not the same decision, and that is why this lives in `lease.rs`.**
+    /// A lock carrying someone else's token is evidence; a lock that cannot be read this instant is
+    /// not, and `LeaseOwnership` is what tells them apart. Writing through the second would discard
+    /// a message the caller has already been told was saved, over a sharing violation that lasts a
+    /// millisecond.
+    ///
+    /// **The file is left exactly as it was**, which is what a refusal owes the reader and what
+    /// `AGENTS.md` §6 asks of one: the check runs before any write, and every caller of
+    /// [`SessionStore::append`] has a way to surface the error, so a refusal is reported rather
+    /// than swallowed into a lost turn.
+    fn refuse_if_lease_lost(&self) -> Result<(), StoreError> {
+        match self.lease.ownership() {
+            LeaseOwnership::Ours | LeaseOwnership::Unreadable => Ok(()),
+            // An **empty** holder is `Missing`: the lock file is gone. `Display` carries its
+            // own wording for that, because an empty holder is not "nobody left to name" — it
+            // is two causes that read identically here, and it must assert neither.
+            LeaseOwnership::Taken { holder } => Err(StoreError::LeaseLost { holder }),
+            LeaseOwnership::Missing => Err(StoreError::LeaseLost {
+                holder: String::new(),
+            }),
+        }
     }
 
     /// The session header (`None` only for an empty file with no entries yet).
@@ -671,13 +746,17 @@ impl SessionStore {
         });
     }
 
-    /// How many [`SessionStore::append`] calls this store has seen, refused ones included
-    /// (F07's test seam).
+    /// How many [`SessionStore::append`] calls reached the write path, armed-fault
+    /// refusals included (F07's test seam).
     ///
     /// Counts *attempts*, not lines on disk, so it is the position an `occurrence` argument
     /// names: a test that arms a failure for "the second append" asserts this counter to prove
     /// the write it aimed at is the write that happened, rather than assuming the caller makes
     /// exactly one append first.
+    ///
+    /// **A lease refusal is deliberately not counted** (M312): it happens before the counter
+    /// because nothing was written and nothing was attempted, and a test that wants to know a
+    /// refused store is still refusing can read the unchanged count.
     #[doc(hidden)]
     pub fn appends(&self) -> usize {
         self.appends
@@ -706,6 +785,13 @@ impl SessionStore {
     /// *before* the rename, so a failure on either side leaves nothing behind; a failed
     /// copy fails the migration rather than converting a file without a way back.
     pub fn persist_migration(&mut self) -> Result<(), StoreError> {
+        // **The other writer, and it is the more dangerous of the two (M312).** A migration does
+        // not add a line: it rewrites the whole file and renames it over the top. A store whose
+        // lease was taken would therefore not interleave with the other writer — it would
+        // *replace* its file, taking every entry that writer appended since with it. `append`
+        // checks first, so this only matters for the direct callers (`build_runtime`'s launch and
+        // resume paths), which is exactly why the check is here too rather than only there.
+        self.refuse_if_lease_lost()?;
         // Only a file that was actually migrated has an original worth keeping: this is the
         // same flag that says the entries in hand are healed ones rather than the file's own.
         let converting = self.migrated;
@@ -1190,7 +1276,19 @@ impl SessionStore {
     /// M41: the first append to a headerless preexisting file stamps the header
     /// first (lazy creation — `open` only stamps brand-new files, so a resumed
     /// empty file and a fresh file converge on the same bytes).
+    ///
+    /// **M312: refuses once this store's own lease is no longer its own.** Every write path in
+    /// the product funnels through here — `append_goal`, `label`, `record_turn_end` and the
+    /// branch summaries are all this function with a different [`EntryKind`] — so one check covers
+    /// them all rather than five, and the refusal cannot be routed around by a caller that picked
+    /// a typed wrapper.
     pub fn append(&mut self, kind: EntryKind) -> Result<SessionEntry, StoreError> {
+        // **First, and before the counter.** A refusal is not a write attempt: it must not
+        // consume one of a fault plan's `times`, and `appends()` must stay a count of what was
+        // written. It is also before everything else in this function on purpose — the lazy
+        // header stamp and the migration both write, so a check further down would let a store
+        // whose lock is gone rewrite the whole file first.
+        self.refuse_if_lease_lost()?;
         // Counted before the fault check: the seam counts *attempts*, which is what a `times`
         // argument is spent against (F07 — see [`SessionStore::appends`]).
         self.appends += 1;

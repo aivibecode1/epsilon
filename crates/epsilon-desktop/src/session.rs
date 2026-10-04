@@ -172,10 +172,6 @@ pub struct Transcript {
     /// user still act on?". Deleting the row to answer the second would be answering it
     /// by destroying the first.
     answered: std::collections::BTreeSet<String>,
-    /// How many events were dropped by a lagging broadcast. Surfaced, never swallowed —
-    /// the terminal reports lag rather than skipping it, and a window that silently loses
-    /// tool output is worse than one that says it did.
-    dropped: u64,
     /// Bumped once per recorded change, and the workspace paths they touched.
     ///
     /// A frontend shows a *snapshot*: a file tree walked at launch and an editor holding
@@ -377,11 +373,6 @@ impl Transcript {
     /// The rows, oldest first.
     pub fn rows(&self) -> &[Row] {
         &self.rows
-    }
-
-    /// How many events a lagging broadcast dropped.
-    pub fn dropped(&self) -> u64 {
-        self.dropped
     }
 
     /// The permission asks that have not been answered, oldest first.
@@ -612,17 +603,6 @@ impl Transcript {
         self.trim();
     }
 
-    /// Record that a lagging broadcast dropped `n` events, and say so on screen.
-    pub fn note_lag(&mut self, n: u64) {
-        self.dropped += n;
-        self.push(
-            RowKind::Notice,
-            format!(
-                "{n} event(s) dropped while the window was busy — the transcript may be incomplete"
-            ),
-        );
-    }
-
     /// Add a row and return its index.
     fn push_row(&mut self, row: Row) -> usize {
         self.rows.push(row);
@@ -777,6 +757,20 @@ pub struct IdeSession {
     failure_slot: Arc<Mutex<Option<String>>>,
     /// Whether a run is in flight.
     running: AtomicBool,
+    /// Events the broadcast lost because this window could not keep up (M312).
+    ///
+    /// **A counter beside the session, not a field on the transcript — and that placement is the
+    /// fix.** `Lagged(n)` is raised on the *bridge task*, not on the transcript: the transcript is
+    /// fed only by `AgentEvent`, so a count kept there could not learn of a lag without a new
+    /// wire variant to carry it. The status line's `N event(s) dropped` segment was therefore
+    /// **unreachable in production** — `Transcript::note_lag`, its only writer, had no caller, and
+    /// the live lag path forwarded a notice instead (a read-only sweep found this; see
+    /// `audit/evidence/plan024-item7-class-b-rederived.md`).
+    ///
+    /// Sharing an `AtomicU64` with the bridge is the existing idiom here, not a new one:
+    /// `failure_slot` is shared with the spawned run for the same reason — a fact born on a task
+    /// has to survive to the frame that will show it.
+    dropped_events: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl IdeSession {
@@ -854,7 +848,33 @@ impl IdeSession {
             inbox: std::sync::Mutex::new(inbox),
             failure_slot: Arc::new(Mutex::new(None)),
             running: AtomicBool::new(false),
+            dropped_events: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
+    }
+
+    /// How many agent events this window has lost to lag (M312).
+    ///
+    /// Cumulative for the life of the session, which is what the status line says: a count that
+    /// reset would under-report a hole the transcript still has.
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped_events
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Record `n` dropped events the way the bridge would, for a test (M312).
+    ///
+    /// **The window field cannot be set instead, and that is the point.** `IdeApp::pump`
+    /// refreshes its copy from this counter every frame, so a test that wrote to the app's field
+    /// would be testing a copy it also owns — and would go green against a window whose status
+    /// bar read nothing at all. Driving the seam the bridge drives is what makes the assertion
+    /// about the product's path rather than about its plumbing.
+    ///
+    /// A real lag needs a broadcast outrun, which no test should arrange by racing one; this is
+    /// the same shape as `SessionStore::set_write_fault_for_tests` and `seed_transcript`.
+    #[doc(hidden)]
+    pub fn note_dropped_events_for_tests(&self, n: u64) {
+        self.dropped_events
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The agent, for a caller that wants to run a turn.
@@ -996,6 +1016,7 @@ impl IdeSession {
     pub fn attach_bridge(&self, ctx: &egui::Context) {
         let mut events = self.agent.subscribe();
         let tx = self.forwarder_tx.clone();
+        let dropped = self.dropped_events.clone();
         let ctx = ctx.clone();
         self.runtime.spawn(async move {
             loop {
@@ -1010,17 +1031,7 @@ impl IdeSession {
                         ctx.request_repaint_after(REPAINT_COALESCE);
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        // Forwarded as a marker rather than dropped: the transcript is a
-                        // view of the run, and a view with a silent hole in it is worse
-                        // than one that says it has one.
-                        if tx
-                            .send(Arc::new(AgentEvent::Notice {
-                                text: format!(
-                                    "{n} event(s) dropped — the window could not keep up"
-                                ),
-                            }))
-                            .is_err()
-                        {
+                        if forward_lag(&dropped, &tx, n).is_err() {
                             break;
                         }
                         ctx.request_repaint_after(REPAINT_COALESCE);
@@ -1052,6 +1063,32 @@ impl IdeSession {
 /// while it is technically busy.
 const MAX_EVENTS_PER_FRAME: usize = 512;
 
+/// Record a lag the bridge saw and forward a marker for it (M312).
+///
+/// **Both effects are here, in one function, because the status bar's `N event(s) dropped`
+/// segment used to be unreachable (M312).** `Transcript::note_lag` counted drops and had no
+/// caller; the bridge counted nothing and forwarded a notice. One of the two was therefore dead
+/// and the other was the only thing a reader ever saw — so the count the window shows is taken
+/// from the same place the notice is sent.
+///
+/// The notice stays: it says *when*, and the counter says *how much*, and a transcript with a
+/// silent hole needs the marker in it. Dropping the notice to save one line would be the
+/// "reuse over add" instinct applied backwards — it is not duplication, it is two audiences.
+///
+/// Returns `Err(())` when the window is gone, which is the bridge's cue to stop.
+fn forward_lag(
+    dropped: &std::sync::atomic::AtomicU64,
+    tx: &std::sync::mpsc::Sender<Arc<AgentEvent>>,
+    n: u64,
+) -> Result<(), ()> {
+    use std::sync::atomic::Ordering;
+    dropped.fetch_add(n, Ordering::Relaxed);
+    tx.send(Arc::new(AgentEvent::Notice {
+        text: format!("{n} event(s) dropped — the window could not keep up"),
+    }))
+    .map_err(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1064,6 +1101,60 @@ mod tests {
     /// because the change watcher resolves files against one and the constructor asks.
     fn transcript() -> Transcript {
         Transcript::new(std::env::temp_dir())
+    }
+
+    /// **The lag path counts and reports, or the status bar's segment is decoration (M312).**
+    ///
+    /// Found by a read-only sweep rather than by a failing run: `Transcript::note_lag` counted
+    /// drops, `app.rs` drew `N event(s) dropped` from it, and **nothing in production ever
+    /// called it** — the bridge's lag arm forwarded a notice and moved on. The segment could not
+    /// appear on any real window, which is `AGENTS.md` §2.7: a control that does not do what it
+    /// names.
+    ///
+    /// **This test keeps the name of the one it replaces, and not only for the guard.** The old
+    /// `a_lagging_broadcast_is_reported_and_counted_not_swallowed` called `note_lag` directly — a
+    /// method no production code reached, so it passed for years over a path nothing used. This
+    /// one drives `forward_lag`, which is what the bridge actually calls, so a regression in the
+    /// real path could not leave it green. The repository's own
+    /// `no_source_file_lost_a_test_since_head` guard caught the deletion and forced the question,
+    /// which is the guard working: a renamed test has to be *explained*, not waved through.
+    ///
+    /// Both halves are asserted because the defect was one half being live and the other dead:
+    /// a counter that is not read is as much a lie as a drawn number that is always zero, and a
+    /// notice with no count leaves the reader unable to tell how bad the hole was.
+    #[test]
+    fn a_lagging_broadcast_is_reported_and_counted_not_swallowed() {
+        use std::sync::atomic::AtomicU64;
+        let dropped = AtomicU64::new(0);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        forward_lag(&dropped, &tx, 7).expect("the window is still there");
+        assert_eq!(
+            dropped.load(std::sync::atomic::Ordering::Relaxed),
+            7,
+            "the status bar reads this number, so the lag path must write it"
+        );
+        let marker = match &*rx.recv().expect("the marker is forwarded") {
+            AgentEvent::Notice { text } => text.clone(),
+            other => panic!("a lag is announced as a notice, not as {other:?}"),
+        };
+        assert!(
+            marker.contains("7 event(s) dropped"),
+            "and the transcript still gets the hole marked in it: {marker}"
+        );
+
+        // Cumulative, because a transcript still has the hole and a count that reset would
+        // under-report it.
+        forward_lag(&dropped, &tx, 3).expect("still there");
+        assert_eq!(
+            dropped.load(std::sync::atomic::Ordering::Relaxed),
+            10,
+            "drops accumulate across a session rather than reporting only the last one"
+        );
+        assert!(
+            rx.try_recv().is_ok(),
+            "a second lag says so too — a reader must not have to guess whether the count moved"
+        );
     }
 
     fn assistant(text: &str) -> Message {
@@ -1376,17 +1467,10 @@ mod tests {
         assert!(t.rows().is_empty(), "{:?}", t.rows());
     }
 
-    #[test]
-    fn a_lagging_broadcast_is_reported_and_counted_not_swallowed() {
-        let mut t = transcript();
-        t.note_lag(12);
-        assert_eq!(t.dropped(), 12);
-        assert!(
-            t.rows().iter().any(|r| r.text.contains("12")),
-            "the reader is told the transcript has a hole: {:?}",
-            t.rows()
-        );
-    }
+    // The test that used to stand here kept its name and was rewritten: it called
+    // `Transcript::note_lag`, which had **no production caller**, so it passed for years over a
+    // method nothing used. The one above it, of the same name, drives `forward_lag` — the path
+    // the bridge actually takes. `Transcript::note_lag` and `Transcript::dropped()` are deleted.
 
     #[test]
     fn the_transcript_is_bounded_and_the_trim_drops_the_oldest() {

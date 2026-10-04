@@ -1,11 +1,38 @@
 # Plan 024 — finishing the objective
 
-**Status: open. This is the fresh authorization for the work below.**
+**Status: item 2 is LANDED (M312, ADR-028). The rest is open.**
 
 Written 2026-10-04 at handoff, because the session that produced it ran out of clock rather than
 because the list is speculative. **Every item here was verified against the tree at the time of
 writing**, and the evidence is named so you can re-check it before you spend a day on it — which you
 should, because a finding is a claim about a tree and trees move.
+
+> **Three of this plan's numbers were wrong when this file was written, and two independent
+> read-only passes corrected them on the same day.** They are corrected below and the corrections are
+> kept in the text rather than quietly applied, because the plan is the artefact a later session
+> will trust:
+>
+> - **§2 is done.** `append` refuses once the lock is not ours, `persist_migration` too, the
+>   predicate separates a takeover from an unreadable lock, and the TUI's `/name` — the last
+>   production site that discarded a write — now reports it. ADR-028.
+> - **§5's denominator is wrong: it is 3 of 37, not 3 of 38.** `COMMAND_HEADS` holds 37 rows;
+>   38 is the non-`Unknown` variant count, because `Models`/`Model(String)` are two variants for one
+>   head. The numerator was exact. [`audit/evidence/plan024-item5-desktop-commands.md`](../../audit/evidence/plan024-item5-desktop-commands.md)
+>   also finds **two** joining tests rather than one, a 7-row palette table nothing reconciles, and
+>   two ADR-024 citations pointing at the wrong lines.
+> - **§7's counts are wrong in the same direction Class A's were**: the header says 50 items /
+>   652 lines; the tables hold **40 rows** plus 15 items in prose. Trust the rows.
+>   [`audit/evidence/plan024-item7-class-b-rederived.md`](../../audit/evidence/plan024-item7-class-b-rederived.md).
+> - **§3's recipe cannot work as written.** "`evaluate` is already `pub` … so a defaulted method
+>   belongs on the `PermissionGate` trait and reuses `evaluate`" is architecturally impossible:
+>   `epsilon-safety` depends on `epsilon-core`, not the reverse, so a default body in
+>   `epsilon-core` cannot name `PermissionEngine`. The call belongs in an override in
+>   `epsilon-safety`. There are also **three** call sites, not two, and **the default ruleset has
+>   zero `Deny` rules**, so the feature hides nothing unless a project config or `--plan` supplies
+>   one. [`audit/evidence/plan024-item3-denied-tools.md`](../../audit/evidence/plan024-item3-denied-tools.md).
+> - **Not in this plan at all, and found while doing §5:** `/theme` advertised a
+>   `high-contrast` palette that does not exist. Fixed at M312, and the capability is still
+>   missing — see the roadmap in [`../STATUS.md`](../STATUS.md).
 
 Read [`../HANDOFF.md`](../HANDOFF.md) first if you have not. Read [`../../AGENTS.md`](../../AGENTS.md)
 before your first change.
@@ -57,7 +84,18 @@ found has a test that fails without its fix.
 
 ---
 
-## 2. Make a stolen session lease stop the write, and **read this before you touch it**
+## 2. Make a stolen session lease stop the write — **LANDED (M312, ADR-028)**
+
+**Done, and the two traps below are where the work went.** The lease field is `lease` rather than
+`_lease`, `LeaseOwnership` answers `Ours` / `Taken` / `Missing` / `Unreadable`, `append` refuses on
+the two that are evidence and not on the one that is not, `persist_migration` refuses as well
+(it replaces the file rather than adding to it), and every caller surfaces the error. Four tests,
+each with a negative control; the loop test's control prints a completed turn written into a session
+file another process owns.
+
+**What the battery added:** five `epsilon-runtime` goal-round tests failed because their fixture
+deleted its own session directory at the end of a helper. The refusal was right, the fixture was
+wrong, and the message was corrected because it asserted a rival that might not exist.
 
 **Why.** Two writers can still share one session file. The victim keeps appending through an
 already-open handle after another process has taken the lock, and nothing detects it.

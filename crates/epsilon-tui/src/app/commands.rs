@@ -1261,7 +1261,7 @@ impl App {
                     // Persist as non-LLM Custom entry so it survives restarts via
                     // the same session file pi/gap-analysis parity intended (extend
                     // to a dedicated EntryKind when a UI needs to render it).
-                    let _ = (|| -> Result<(), String> {
+                    let persisted = (|| -> Result<(), String> {
                         let store = agent.session_store().ok_or("no session store attached")?;
                         let mut st = store.lock().map_err(|_| "store lock".to_string())?;
                         st.append(epsilon_contracts::session_entry::EntryKind::Custom {
@@ -1271,7 +1271,18 @@ impl App {
                         .map_err(|e| format!("{e}"))?;
                         Ok(())
                     })();
-                    self.ui.push_notice(format!("session name set to '{name}'"));
+                    // **Say which of the two happened (M312).** The name is set in memory either
+                    // way, so the only honest notice names what was persisted — and the refusal
+                    // this reports is the one that now exists: a write refused because another
+                    // process holds the session. `let _ =` on that is the silent failure M311
+                    // closed twice in the core, and it would have been a third instance of the
+                    // same shape one layer up.
+                    match persisted {
+                        Ok(()) => self.ui.push_notice(format!("session name set to '{name}'")),
+                        Err(why) => self.ui.push_notice(format!(
+                            "session named '{name}' for this run, but not saved: {why}"
+                        )),
+                    }
                 }
             }
             // `run_command` owns the routing, so reaching a variant here means the

@@ -1539,6 +1539,156 @@ fn a_session_file_has_one_writer_at_a_time() {
     SessionStore::open_in(&path, dir.path()).expect("the lease is released with the store");
 }
 
+/// **M312: a store whose lease was taken stops writing, and says so.**
+///
+/// The gap this closes was measured, not feared: the store's lease field was `_lease` — held for
+/// its `Drop` and never consulted — so a process that had its lock stolen went on appending
+/// through an already-open `O_APPEND` handle, interleaving two writers' lines into one JSONL
+/// stream. Two things must be true at once for that refusal to be worth having, and each has its
+/// own test below:
+///
+/// - it **stops the write** and leaves the file exactly as it was, and
+/// - it does **not** fire on a lock that merely could not be read this instant.
+///
+/// The second half is the trap, and it is why the predicate is [`epsilon_session::lease::
+/// LeaseOwnership`] rather than a `bool`: `lock_is_ours` answers "no" for *someone else owns
+/// this* and for *I cannot read it right now* alike. A check that confuses them refuses a
+/// legitimate write and loses the message, which trades an interleaving risk for silent data
+/// loss — the worse of the two.
+#[test]
+fn a_writer_whose_lease_was_taken_refuses_to_append_and_leaves_the_file_alone() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open_in(&path, dir.path()).expect("writer");
+    store
+        .append(EntryKind::Message {
+            message: user_msg("before the takeover"),
+            api_request_sha256: None,
+        })
+        .expect("the first append lands: nothing has been taken yet");
+    let before = std::fs::read(&path).expect("read the file");
+
+    // The takeover, reduced to its effect: the file at our path now names someone else. What
+    // produces it for real — a stale-steal after missed heartbeats, or a hand-deleted lock — is
+    // measured in `lease.rs`. The store cannot tell which, and must not have to.
+    std::fs::write(
+        path.with_extension("lock"),
+        "pid=999999 owner=another-epsilon\n",
+    )
+    .expect("another holder took the lock");
+
+    let err = match store.append(EntryKind::Message {
+        message: user_msg("after the takeover"),
+        api_request_sha256: None,
+    }) {
+        Ok(entry) => panic!("a store that no longer owns this session wrote {entry:?}"),
+        Err(e) => e,
+    };
+    let StoreError::LeaseLost { holder } = &err else {
+        panic!("a taken lease is a typed error, not a generic io failure: {err:?}");
+    };
+    assert!(
+        holder.contains("another-epsilon"),
+        "the refusal names who took it, so the reader can go and close that window: {holder}"
+    );
+    assert!(
+        err.to_string().contains("file is unchanged"),
+        "a reader told only \"refused\" will assume the opposite: {}",
+        err
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("read the file again"),
+        before,
+        "a refusal must not touch the file: it takes no line, and it may not take a partial one"
+    );
+    assert_eq!(
+        store.appends(),
+        1,
+        "a refusal is not a write attempt, so it must not spend the next attempt a fault plan \
+         was armed for"
+    );
+    assert!(
+        store
+            .append(EntryKind::TurnEnd {
+                reason: TurnEndReason::Completed
+            })
+            .is_err(),
+        "…and it stays refused. A store that resumes appending after telling the reader once is \
+         a store that interleaves for the rest of the session."
+    );
+}
+
+/// **A lock file that has *vanished* is a takeover too — and it is the case a `bool` loses.**
+///
+/// Only a holder removes a lock file, and this store is a live holder, so a missing lock means
+/// another acquisition existed and has since finished. Reading that as "unreadable" and writing
+/// through it is exactly the interleaving the lease exists to prevent, one step later than the
+/// case above.
+#[test]
+fn a_writer_whose_lock_file_vanished_also_refuses() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open_in(&path, dir.path()).expect("writer");
+    std::fs::remove_file(path.with_extension("lock")).expect("someone removed the lock");
+
+    let err = match store.append(EntryKind::Message {
+        message: user_msg("after the lock went"),
+        api_request_sha256: None,
+    }) {
+        Ok(entry) => panic!("a store whose lock is gone wrote {entry:?}"),
+        Err(e) => e,
+    };
+    let text = err.to_string();
+    assert!(
+        text.contains(".lock"),
+        "the reader is told the lock file is gone: {text}"
+    );
+    assert!(
+        text.contains("reopen"),
+        "and is told what to do next, which is cheap and loses nothing: {text}"
+    );
+    // **The wording must not claim a rival exists.** The battery that introduced this check
+    // also found the case where the whole directory was deleted under a running session — a
+    // `TempDir` a test dropped — and a message that said "another epsilon took this session"
+    // would have sent that reader looking for a window that never existed. Both causes are
+    // offered; neither is asserted.
+    assert!(
+        text.contains("may have"),
+        "…offered as a possibility, never asserted: {text}"
+    );
+}
+
+/// **…and a lock that merely cannot be read this instant must not refuse.**
+///
+/// The half of the predicate that protects the reader's data. A sharing violation on the lock
+/// file is indistinguishable from a takeover by reading the file, so the discriminator has to be
+/// the *kind* of the I/O error: `NotFound` is evidence (only a holder removes a lock, and we are
+/// one), anything else is not.
+///
+/// A directory in the lock file's place produces exactly that, deterministically, on every
+/// platform this build runs on — access denied on Windows, `EISDIR` elsewhere — instead of the
+/// race a second writer would give.
+#[test]
+fn a_lock_that_cannot_be_read_right_now_is_not_a_takeover() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("s.jsonl");
+    let mut store = SessionStore::open_in(&path, dir.path()).expect("writer");
+    let lock = path.with_extension("lock");
+    std::fs::remove_file(&lock).expect("remove our own lock");
+    std::fs::create_dir(&lock).expect("a path that cannot be read as text");
+
+    store
+        .append(EntryKind::Message {
+            message: user_msg("still ours"),
+            api_request_sha256: None,
+        })
+        .expect(
+            "an unreadable lock is absence of evidence, not evidence of a takeover. Refusing here \
+             would drop a turn the reader was already told was saved, over a sharing violation \
+             that lasts a millisecond.",
+        );
+}
+
 #[test]
 fn each_child_session_leases_its_own_file() {
     let dir = tempfile::tempdir().expect("tmp");

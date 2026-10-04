@@ -1100,6 +1100,15 @@ pub struct IdeApp {
     placeholder: &'static str,
     /// Set when the last submit was refused, so the pane can say why.
     refusal: Option<String>,
+    /// Agent events this window lost to lag, as of the last frame (M312).
+    ///
+    /// **A copy, refreshed in `pump`, because the count is born on the bridge task** and the
+    /// status line is drawn on the render thread — the same arrangement `refusal` uses for the
+    /// same reason. Reading it live from the session would mean an atomic load per segment, which
+    /// is cheaper still and was rejected for a better reason: the status line must be readable
+    /// **without a session** (the tests that pin it have none), and a field the window owns is
+    /// what lets that be true.
+    dropped_events: u64,
     /// The workspace's files, walked once and folded into a tree.
     tree: crate::workspace::FileTree,
     /// The sidebar's filter box.
@@ -1480,6 +1489,7 @@ impl IdeApp {
             draft: String::new(),
             placeholder: "ask anything  ·  enter sends  ·  shift+enter for a new line",
             refusal: None,
+            dropped_events: 0,
             tree,
             tree_query: String::new(),
             open: None,
@@ -1537,6 +1547,7 @@ impl IdeApp {
             draft: String::new(),
             placeholder: "no agent attached",
             refusal: None,
+            dropped_events: 0,
             tree,
             tree_query: String::new(),
             open: None,
@@ -1898,6 +1909,12 @@ impl IdeApp {
         if self.refusal.is_some() && !self.session.as_ref().map(|s| s.running()).unwrap_or(false) {
             self.refusal = None;
         }
+        // **The lag count, taken here so the status line can show it (M312).** The counter lives
+        // on the session because that is where the fact is born, and it is copied here because
+        // the status line is a field of this window. One atomic load per frame, and the copy is
+        // what makes the segment reachable at all: nothing in production ever bumped the
+        // transcript's own counter, so `N event(s) dropped` had never appeared on a real window.
+        self.dropped_events = self.session.as_ref().map_or(0, |s| s.dropped_events());
         // Through the `Arc`, and that is the whole reason `drain` takes `&self`: anything
         // else holding this session — a shortcut, a second window, a test — must not be
         // able to stop the frame from updating.
@@ -2072,6 +2089,12 @@ impl IdeApp {
                 epsilon_llm::catalog::display_label(&model_id).to_string()
             },
             offline: launch.offline,
+            // **The desktop does not draw a thinking level, and says `None` rather than a
+            // word (M312).** This table is built for the *terminal's* header renderer, which
+            // the window reuses for its own figures; printing a level here would put a claim
+            // on a surface that has no control to change it, and the terminal front end owns
+            // the `Ctrl`+`T` that sets one. The desktop's own title bar carries the model.
+            thinking: None,
             // `None` rather than `Some(0)`: the gauge prints `?` for an absent measurement
             // and `0%` for a measured one, and a window that printed the second where the
             // terminal prints the first would be asserting something nobody observed.
@@ -3810,8 +3833,13 @@ impl IdeApp {
         if let Some(refusal) = &self.refusal {
             parts.push(refusal.clone());
         }
-        if self.transcript.dropped() > 0 {
-            parts.push(format!("{} event(s) dropped", self.transcript.dropped()));
+        if self.dropped_events > 0 {
+            // **The window's own copy, not the transcript's (M312).** This segment was drawn from
+            // `self.transcript.dropped()`, whose only writer (`Transcript::note_lag`) nothing in
+            // production called — so the count could only ever be zero and the segment could never
+            // appear. A status bar that says a thing it can never say is worse than one that says
+            // less, and the fix is to make the number real rather than to remove the sentence.
+            parts.push(format!("{} event(s) dropped", self.dropped_events));
         }
         // Only when the layout has actually given something up. `full` is a word about the
         // window's size that a reader cannot act on; `no-sidebar` explains a sidebar that
@@ -7153,6 +7181,64 @@ mod tests {
     /// would pass with a strip that draws nothing, which is exactly what the first version
     /// of this feature did: the field existed, the tabs were correct, and nothing had ever
     /// been on screen.
+    /// **Two files of the same name are two rows a reader can tell apart (M312).**
+    ///
+    /// Found by reading the platform tree this repository had already captured: the UIA dump
+    /// (`audit/evidence/desktop-uia-tree-2026-10-04.txt`) carries **two `TreeItem`s named
+    /// `File · README.md`** — one at the workspace root, one under `agents/`. The rows were
+    /// named from `Row::name`, which is the last segment.
+    ///
+    /// This is not a cosmetic naming preference. A screen-reader rotor or a search returns the
+    /// names, so a reader asking for "README.md" got two identical entries and no way to choose
+    /// — while a sighted reader resolves the same two rows instantly from the indentation. The
+    /// eye has information the name does not carry, which is the whole of the defect.
+    ///
+    /// The assertion is on uniqueness over the **published node names**, not on a substring: a
+    /// test that checked "the name contains README.md" would have passed against the broken code,
+    /// which is the mistake M305 documents — sixteen assertions on this crate's hint string all
+    /// passed while it drew two tofu boxes.
+    #[test]
+    fn a_file_row_is_named_by_its_path_so_two_of_the_same_name_differ() {
+        // **Its own workspace, not `scratch_workspace`.** Adding two `README.md` files to the
+        // shared fixture moved four other tests' file counts and tree positions — a fixture
+        // shared by every desktop test is the wrong place to put a fact only this test needs.
+        let dir = std::env::temp_dir().join("epsilon-tabs-tree-names");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("agents")).expect("scratch workspace");
+        std::fs::write(dir.join("README.md"), "# top\n").expect("top readme");
+        std::fs::write(dir.join("agents").join("README.md"), "# agents\n").expect("nested readme");
+        let _keep = TempWorkspace(dir.clone());
+        let mut h = Harness::new(dir);
+        let f = h.paint();
+
+        let readmes: Vec<String> = h
+            .named_nodes()
+            .into_iter()
+            .map(|(label, _)| label)
+            .filter(|l| l.contains("README.md"))
+            .collect();
+        assert_eq!(
+            readmes.len(),
+            2,
+            "the workspace holds two README.md files, so both must be published: {readmes:?}\n{}",
+            f.describe()
+        );
+        let unique: std::collections::BTreeSet<&String> = readmes.iter().collect();
+        assert_eq!(
+            unique.len(),
+            readmes.len(),
+            "two rows a reader cannot tell apart are one row twice: {readmes:?}"
+        );
+        assert!(
+            readmes.iter().any(|l| l == "File · agents/README.md")
+                && readmes.iter().any(|l| l == "File · README.md"),
+            "each name identifies its own file, and the top-level one is unchanged: {readmes:?}"
+        );
+        // The *drawn* row keeps the short name — indenting `agents/README.md` under its own
+        // folder would be noise in a tree. `workspace::tests` pins that on the row itself,
+        // because this frame summary does not carry the tree's per-row text.
+    }
+
     #[test]
     fn two_open_files_draw_a_tab_strip_and_mark_the_one_being_shown() {
         let (dir, _keep) = scratch_workspace("strip");
@@ -8566,6 +8652,48 @@ mod tests {
         assert!(
             title2.starts_with("epsilon-tabs-a-workspace"),
             "the budget cut the front of the line rather than the end: {title2:?}"
+        );
+    }
+
+    /// **The status bar's dropped-events segment appears, because it can (M312).**
+    ///
+    /// It used to be drawn from `self.transcript.dropped()`, whose only writer —
+    /// `Transcript::note_lag` — **no production code called**. The number on screen was therefore
+    /// always zero and the segment could never appear: a control that does not do what it names,
+    /// which `AGENTS.md` §2.7 rules out and which a read-only sweep found by grepping callers.
+    ///
+    /// **Asserted on the frame, and driven through the whole path**: the count is written on the
+    /// session (where the bridge writes it), read by `pump`, carried in the status line, and only
+    /// then asserted. Setting `IdeApp::dropped_events` directly would have been a test of the copy
+    /// rather than of the path — and `pump` overwrites that field every frame, so it would have
+    /// failed for a reason unrelated to the defect.
+    #[test]
+    fn the_status_bar_says_how_many_events_were_dropped_when_there_were_some() {
+        let (dir, _keep) = scratch_workspace("dropped-events");
+        let (session, notices) = faux_session(&dir);
+        let mut h = Harness::with_session(dir, session, notices);
+
+        let quiet = h.paint().region("status").join("");
+        assert!(
+            !quiet.contains("event(s) dropped"),
+            "a window that has dropped nothing must not say it has: {quiet:?}"
+        );
+
+        h.app
+            .session
+            .as_ref()
+            .expect("a session")
+            .note_dropped_events_for_tests(5);
+        let loud = h.paint().region("status").join("");
+        assert!(
+            loud.contains("5 event(s) dropped"),
+            "the count the bridge recorded must reach the reader. The status bar drew: {loud:?}"
+        );
+        // **The other half of the run state is still there.** A status line that replaced the
+        // bar with a number would satisfy the assertion above and be worse than useless.
+        assert!(
+            loud.contains("idle"),
+            "the segment was added without displacing the state beside it: {loud:?}"
         );
     }
 

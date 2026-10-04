@@ -35,6 +35,11 @@ pub const CONTEXT_DANGER: f64 = 0.90;
 pub struct Metrics {
     /// Model id as the catalog spells it (display form, not the wire id).
     pub model_label: String,
+    /// The thinking level in force, as `ThinkingLevel::as_str` spells it.
+    ///
+    /// `None` where no level is known — a window with no session — which prints the model
+    /// alone rather than claiming a level nobody set (M312).
+    pub thinking: Option<&'static str>,
     /// Whether the active model is the offline scripted provider.
     pub offline: bool,
     /// How full the session's context is: the tokens the **next** request will
@@ -327,6 +332,9 @@ impl Metrics {
     pub fn idle() -> Self {
         Self {
             model_label: "no model".to_string(),
+            // **No level is claimed where there is no session to hold one (M312)** — `no model`
+            // alongside `thinking high` would describe a turn that is not happening.
+            thinking: None,
             context_used: None,
             context_window: None,
             // Nothing has been measured, so nothing is claimed to be a measurement.
@@ -408,6 +416,33 @@ pub enum MetricRole {
 }
 
 impl Metrics {
+    /// The model, and the thinking level, as the header prints them (M312).
+    ///
+    /// **The level rides with the model, which is pi's arrangement and its wording** —
+    /// `references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:233-243`
+    /// builds `` `${modelName} • thinking off` `` when the level is off and
+    /// `` `${modelName} • ${level}` `` when it is not, beside the model and nowhere else. The
+    /// reasoning is the same here: the level is a property of *what you are talking to*, so it
+    /// belongs with the model, and it travels with the pinned part, which is the one fragment
+    /// that survives a narrow row.
+    ///
+    /// **Why it is now here at all: `/help` claimed it was.** The help guide said *"thinking:
+    /// Ctrl+T cycles · current level in the status bar"*, and the status bar printed no level —
+    /// so pressing `Ctrl`+`T` appeared to do nothing, seven times in a row, with the product
+    /// telling the reader where to look for the answer. A hint that names a place is a promise
+    /// that the place has it (`AGENTS.md` §2.4), and this is the third claim this session found
+    /// pointing at nothing — after `/theme`'s `high-contrast` palette.
+    ///
+    /// The word `off` is spelled out rather than shown as a bare `off`, because `off` alone on a
+    /// header row reads as a fragment of something else; that is pi's rule and it is kept.
+    pub fn model_label_with_thinking(&self) -> String {
+        match self.thinking {
+            None => self.model_label.clone(),
+            Some("off") => format!("{} • thinking off", self.model_label),
+            Some(level) => format!("{} • {level}", self.model_label),
+        }
+    }
+
     /// The right-hand side of the header, richest last.
     ///
     /// Order is the order of questions: how much room is left, what has been spent
@@ -454,7 +489,7 @@ impl Metrics {
         // something to notice when no provider is configured — which is exactly why
         // the pin is a field and not a role.
         parts.push(MetricPart {
-            text: self.model_label.clone(),
+            text: self.model_label_with_thinking(),
             role: if self.offline {
                 MetricRole::Warn
             } else {

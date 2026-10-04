@@ -2286,3 +2286,76 @@ same file was fooled twice.
 
 ---
 
+## ADR-028: A store stops writing when its own lease is gone, and a refusal it cannot prove is not a refusal
+
+**Status: accepted; implemented (M312).**
+
+**Context.** A session file has exactly one writer, enforced by `crates/epsilon-session/src/lease.rs`:
+acquisition is `create_new` on `<session>.lock`, a live holder re-stamps it every
+[`HEARTBEAT`], and `Drop` removes the file. That protocol is sound for *acquisition* and says
+nothing about what a holder does afterwards, because nothing ever looked again. The store's field
+was `_lease` — held for its `Drop`, never consulted — and `append` writes through a handle opened
+`O_APPEND` at construction. So a takeover, once it happened, was invisible to the victim: it went
+on interleaving lines into one JSONL stream for the rest of the session. `SessionLease::refresh()`
+had **zero callers**, which is the same fact from the other side.
+
+The gap was not hypothetical. M294 fixed the *other* half — a stolen-from holder's `Drop` no longer
+deletes the thief's lock — and recorded the residual in those words. M310 then measured why the
+obvious fix is not two lines:
+
+1. Two production call sites discarded `append`'s result, so a refusal would have been a **silent
+   drop** — trading an interleaving risk for data loss nobody is told about. M311 gave both a way to
+   report (`AgentEvent::Notice`) *before* the store was allowed to refuse at all.
+2. `lock_is_ours()` answers one `bool`, and it answers "no" for **someone else owns this** and for
+   **"I could not read it right now"** alike. A check built on it refuses legitimate writes over a
+   transient sharing violation, and this process's own heartbeat opens that same file for writing
+   every two seconds.
+
+**Decision.**
+
+1. **`SessionLease::ownership()` returns `LeaseOwnership`, not a `bool`** — `Ours`, `Taken { holder }`,
+   `Missing`, `Unreadable`. `lock_is_ours()` survives as a wrapper, because `Drop` genuinely does not
+   need the distinction: it must not delete a file it cannot identify, and all three non-`Ours` cases
+   say the same thing to it.
+2. **`append` refuses on `Taken` and `Missing`; it does not refuse on `Unreadable`.** The
+   discriminator is the *kind* of the I/O error, not the file: `NotFound` is evidence — only a holder
+   removes a lock file, and we are a live holder, so a missing one means another acquisition existed
+   and has since finished — while a present-but-unopenable lock says nothing about who owns it.
+3. **`persist_migration` refuses too**, and it is the more dangerous of the two paths: a migration does
+   not add a line, it rewrites the file and renames it over the top, so a store whose lease was taken
+   would not interleave with the other writer, it would **replace its file** and take every entry that
+   writer appended since.
+4. **The check is the first statement in `append`, before the attempt counter.** One check covers every
+   typed wrapper — `append_goal`, `label`, `record_turn_end`, the branch summaries — so a caller cannot
+   route around it by picking a different door. And a refusal is not a write attempt: it must not spend
+   the next attempt an F07 fault plan was armed for, and `appends()` must keep counting what was written.
+
+**First refusal, not a silent re-open.** The alternative considered and rejected is to re-acquire and
+carry on. Re-opening a session means acquiring a lease **another process currently holds** — the exact
+thing `open` refuses — and a wait there is up to [`STALE_AFTER`]. A refusal that says "close the other
+window and reopen this one" costs one turn and loses no file; the alternative either corrupts the
+session or blocks the reader for thirty seconds on a write that is going to fail anyway.
+
+**Consequences.** Two writers are now impossible to sustain *silently* rather than impossible to
+sustain: the second one gets an error, a notice, and a file that is byte-for-byte what it was. A
+process whose lock file was deleted out from under it by hand also stops writing — deliberately, since
+it can no longer prove it is the writer, and the remedy (reopen) is immediate.
+
+**Alternatives rejected.** *Check in `Drop` too* — `Drop` cannot report; it can only decline to delete
+a file it cannot identify, which it already does. *A write lock held open for the store's lifetime
+(`LockFileEx`)* — this workspace forbids `unsafe`, and a platform lock is not portable to the second
+front end's process model; the file protocol stays and gains a reader. *Only refuse on `Taken`* — that
+leaves the commonest shape of the defect open: a thief that has since closed leaves no lock to read,
+and the victim resumes writing into a session somebody else owns.
+
+**Evidence, RED first.** Four tests: the store refuses on a taken lock, on a vanished one, does **not**
+refuse on one it cannot read this instant, and the agent loop turns that refusal into a
+`Notice` and fails the run. **Negative control run** — with `refuse_if_lease_lost` stubbed to `Ok(())`
+the three refusal tests fail, and the core one fails printing the whole defect as a value: the run
+returns `Ok(RunOutcome { produced: [Assistant(… "an answer nothing recorded" …)], reason: Completed })`
+— a completed turn, written into a session file another process owns. The fourth test stays green
+under the control **by design**: it asserts the non-refusal, so it is there to catch a fix that is too
+eager, and its meaning is only visible in the control's output.
+
+---
+
