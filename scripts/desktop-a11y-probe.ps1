@@ -22,7 +22,21 @@
 #
 # It is not a substitute for running a real reader — UIA gives the raw tree, while a reader
 # decides what to *say* and in what order. It is the difference between "the harness believes
-# it published something" and "the platform agrees".
+# it published something" and "the platform agrees". `desktop-reader-walk.ps1` covers the second
+# half: it walks the same tree the way a reader walks it and reports the findings that are
+# defects rather than style.
+#
+# **This probe is green: every node in the tree is named (M312).** It has exited 1 on one
+# unnamed `ScrollBar` since it was written, and the window now names it — and names it *only*
+# when it is really there. That last half is the whole difficulty, and it is written down at
+# `crates/epsilon-desktop/src/app.rs` in `name_scrollbar`: `accesskit_node_builder` is
+# get-or-create, so naming a bar that was never drawn puts a phantom in the tree a reader
+# browses. The predicate therefore reproduces egui's own threshold from what `ScrollAreaOutput`
+# publishes, and `a_scrollbar_is_named_only_when_there_is_one` asserts both directions — a
+# pane that overflows is named, a pane that fits contributes no node at all.
+#
+# It is still **not a battery leg**, for a different reason now: it needs a desktop session and
+# a window on screen, and the battery is meant to run without either.
 #
 # # The window does not have to render for this to work
 #

@@ -521,6 +521,34 @@ key a user presses to change their mind about brightness cannot land on a third 
 exist — `12-high-contrast.png` for the window, which is the only front end that can paint the page,
 and the terminal's `high-contrast` dumps.
 
+### The last unnamed node in the tree, closed
+
+`desktop-a11y-probe.ps1` has exited **1** on one unnamed `ScrollBar` since it was written at M307,
+which is why it was never a gate: a check that is red for a known finding gets deleted rather than
+read. **It exits 0 now** — `--- UNNAMED NODES: none ---` — and `desktop-reader-walk.ps1` is clean
+alongside it.
+
+**The work was not the name; it was not naming a bar that is not there.** egui's
+`accesskit_node_builder` is **get-or-create**, so naming a scrollbar unconditionally puts a
+**phantom** in the tree a reader browses — worse than the unnamed node it replaced. So the
+predicate **reproduces egui's own threshold** from what `ScrollAreaOutput` publishes
+(`content_size.y > inner_rect.height().ceil()`), and `a_scrollbar_is_named_only_when_there_is_one`
+asserts **both** directions: a 200-file workspace publishes `Scroll · the file tree`, and a
+one-file workspace publishes **no node at all**.
+
+**The premise is a number, and I got the number wrong first.** The derivation holds while the bars
+are allocated no width — `outer_rect = inner_rect + current_bar_use` (`scroll_area.rs:1195`), so
+zero allocated means zero difference. A first version guarded on `floating: bool` and refused to
+name anything when it was true; **these bars float**, so it never named anything and the probe
+stayed red. Measured on the frame that needed one: `content=[248.0 4197.0] inner_h=744.0` — the
+tree wanted a bar and was given none. `the_window_allocates_no_width_to_its_scroll_bars` now holds
+the number that matters, so a future style that reserves width says so before the predicate
+quietly stops being egui's.
+
+**One honest residue, stated in the code rather than hidden:** egui animates the bar in, so on the
+first frame content overflows the bar is not drawn *yet* while the predicate already says it will
+be. The node is one frame early — a far smaller cost than a bar no reader can name at all.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:
@@ -1133,28 +1161,12 @@ and [`../audit/evidence/plan024-item7-class-b-rederived.md`](../audit/evidence/p
    moment the three verbs landed. Cheapest remaining wins, by the same criterion: `/expand` (the
    card expansion the transcript already has), `/reload`, and `/settings` if a settings surface
    exists.
-2. **One unnamed `ScrollBar`** (`../audit/evidence/desktop-uia-tree-2026-10-05.txt`). **Re-measured
-   2026-10-05, and the answer is now four line numbers rather than "it is hard".** In
-   `egui-0.36.2/src/containers/scroll_area.rs`: the predicate is `content_is_too_large` at
-   **`:1203-1206`**, gated on `ScrollBarVisibility` at **`:1256-1260`** (`VisibleWhenNeeded` — the
-   default — makes it the predicate directly), and the bar is skipped entirely when
-   `show_factor == 0.0` at **`:1287-1288`**. The node's id is computable: `interact_id =
-   id.with(d)` at **`:1293`**, with `d == 1` the vertical axis.
-
-   **Two routes were tried on paper and neither is the fix.** `ScrollAreaOutput` publishes
-   `content_size` and `inner_rect`, and its own doc says content larger than `inner_rect` means
-   scrolling was needed — but egui compares against `limit_rect`, which is `outer_rect` when the
-   bars float (`:1197-1201`), so the published pair does not reproduce the threshold and guessing
-   it risks a **phantom** node, which the handoff already rejected as worse than an unnamed one.
-   The other route, `Context::read_response` (`context.rs:1348-1355`), is public and returns `None`
-   for a widget not visible this pass — but its own doc says "this pass **or the previous one**",
-   so it is **one frame stale at the boundary**: it would publish a phantom for one frame after
-   the bar disappears, which is exactly when the probe samples. Conjunction of the two trades a
-   phantom for missing labels in a few pixels of margin.
-
-   **Recorded, not half-fixed**, and `desktop-a11y-probe.ps1` still exits 1 for it. A gate that is
-   red for a known finding gets deleted rather than read, which is how this repository lost a check
-   before.
+2. ~~**One unnamed `ScrollBar`.**~~ **LANDED (M312).** The probe is green: every node in the tree is
+   named, and the bar is named **only** when egui drew one — `accesskit_node_builder` is
+   get-or-create, so an unconditional name is a phantom a reader browses. The predicate reproduces
+   egui's threshold from `ScrollAreaOutput`, the premise (`allocated_width() == 0`) is a test, and
+   `audit/evidence/desktop-uia-tree-2026-10-05b.txt` is the proof. Still not a battery leg: it needs
+   a desktop session.
 3. ~~**A high-contrast palette.**~~ **LANDED (M312, ADR-030).** `AGENTS.md` §8 asks for it, the
    product did not have it, and `/theme` was advertising one. Third palette in the terminal's table
    (the desktop inherits it and paints its own black page), every one of 21 roles measured at 7:1 or

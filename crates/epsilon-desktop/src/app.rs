@@ -271,6 +271,69 @@ pub(crate) fn name_node(response: &egui::Response, label: &str) {
     });
 }
 
+/// Name the vertical scrollbar **of a scroll area that drew one this frame** (M312).
+///
+/// **The last unnamed node in this window's accessibility tree, and the fix is a derivation
+/// rather than a guess.** egui creates an `accesskit` node for every scrollbar it draws and labels
+/// none of them, so `desktop-a11y-probe.ps1` exits 1 and has since the probe was written. Naming it
+/// naively — unconditionally, for every scroll area — is the mistake the probe's own doc warns
+/// about: `Context::accesskit_node_builder` is **get-or-create**, so a node named for a bar that
+/// was never drawn is a **phantom** in the tree a reader browses.
+///
+/// # Why the predicate can be reproduced
+///
+/// egui decides to draw the bar at `egui-0.36.2/src/containers/scroll_area.rs:1256-1260`:
+///
+/// ```text
+/// ScrollBarVisibility::VisibleWhenNeeded => content_is_too_large
+/// ```
+///
+/// and `content_is_too_large` (`:1203-1206`) is
+/// `direction_enabled[1] && (limit_rect.height().ceil() < content_size.y)` — and `limit_rect` is
+/// `outer_rect` when the bars float (`:1197-1201`), where `outer_rect` is
+/// `inner_rect + current_bar_use` (`:1195`) and `current_bar_use` is
+/// `allocated_width * show_bars` (`:757-761`).
+///
+/// **So the derivation holds exactly when the scroll bars are allocated no space** — and egui's
+/// floating style allocates none: `ScrollStyle::floating()` sets `floating_allocated_width: 0.0`
+/// (`style.rs:648`), and `allocated_width()` (`:656-658`) returns that. With zero allocated,
+/// `outer_rect == inner_rect`, `limit_rect == inner_rect`, and the published pair *is* egui's
+/// threshold. The node's id is `id.with(1)` (`:1293`, `d == 1` for the vertical axis).
+///
+/// **The premise is the number, not the boolean, and getting that wrong is what this comment
+/// records.** A first version of this function took a `floating: bool` and refused to name
+/// anything when it was true — which meant it **never named anything**, because these bars float.
+/// Measured on the tree that needed one: `content=[248.0 4197.0] inner_h=744.0`. The guard was
+/// the bug. `the_window_allocates_no_width_to_its_scroll_bars` holds the thing that actually
+/// matters, so a future style that *does* reserve width says so here first.
+///
+/// Should that ever happen, this predicate becomes conservative by that width rather than wrong,
+/// and the bar is then named one frame late rather than never.
+///
+/// **What remains is one frame, and it is stated rather than hidden:** egui animates the bar in
+/// (`show_bars_factor`, `:1262-1268`), so on the first frame content overflows, the bar is *not*
+/// drawn yet while this predicate already says it will be. The node is then one frame early. A
+/// scrollbar a reader reaches a frame before it appears is a far smaller cost than a scrollbar no
+/// reader can name at all, which is the state this replaces.
+///
+/// Only a name, like [`name_node`]: no role, because egui already gives the bar `Role::ScrollBar`
+/// through `WidgetInfo` (`scroll_area.rs:1336`).
+pub(crate) fn name_scrollbar<R>(
+    ctx: &egui::Context,
+    out: &egui::containers::scroll_area::ScrollAreaOutput<R>,
+    what: &str,
+) {
+    // Spelled the readable way round, and the same test: the bar is drawn when the content is
+    // **taller** than the space it has. `!(a > b)` says the same thing and trips a lint nobody
+    // can skim past.
+    if out.content_size.y <= out.inner_rect.height().ceil() {
+        return;
+    }
+    ctx.accesskit_node_builder(out.id.with(1usize), |node| {
+        node.set_label(format!("Scroll · {what}"));
+    });
+}
+
 /// Stamp an [`accesskit::Role`] onto a widget egui already built.
 ///
 /// # Why this exists separately from [`name_node`]
@@ -4318,7 +4381,7 @@ impl IdeApp {
                     .max_rect(body)
                     .layout(egui::Layout::top_down(egui::Align::LEFT)),
             );
-            let clicks = egui::ScrollArea::vertical()
+            let out = egui::ScrollArea::vertical()
                 .id_salt("epsilon-agent-transcript")
                 .stick_to_bottom(true)
                 .max_height(body.height())
@@ -4326,17 +4389,23 @@ impl IdeApp {
                     ui.set_width(body.width());
                     self.draw_rows(ui, summary, scale)
                 });
+            // **The scrollbar, named when there is one (M312).** A conversation longer than the
+            // pane is the case the transcript's virtualisation exists for, so this is the bar a
+            // reader meets exactly when they need it. **Before** `out.inner` is taken out: the
+            // output is borrowed whole here, and moving a field out of it first would leave a
+            // partially-moved value to borrow.
+            name_scrollbar(body_ui.ctx(), &out, "the conversation");
+            let clicks = out.inner;
             // Applied here rather than inside the draw, so a click is resolved once, in
             // one place, and the draw path stays a draw path.
-            if let (Some((id, decision)), Some(s)) = (clicks.inner.decision, self.session.as_ref())
-            {
+            if let (Some((id, decision)), Some(s)) = (clicks.decision, self.session.as_ref()) {
                 s.resolve(&id, decision);
             }
             // A clicked "changed" row opens the review. It lands on the **next** frame,
             // because this pane is drawn after the editor pane — an immediate-mode frame
             // paints top to bottom, and pretending otherwise would mean moving the agent
             // panel in front of the file view to save one repaint.
-            if let Some(summary_text) = clicks.inner.change
+            if let Some(summary_text) = clicks.change
                 && let Some(change) = self
                     .transcript
                     .diffs()
@@ -7104,6 +7173,98 @@ mod tests {
         }
         a.free.extend(b.free.iter().copied());
         a
+    }
+
+    /// **The scrollbar is named when there is one, and absent when there is not (M312).**
+    ///
+    /// The last unnamed node in this window's tree, and the fix could have made things worse:
+    /// `Context::accesskit_node_builder` is **get-or-create**, so naming a bar that was never
+    /// drawn puts a **phantom** in the tree a reader browses. The probe's own doc warns about
+    /// exactly this, so the second half of this test matters more than the first — a pane that
+    /// fits must contribute **no** node at all.
+    ///
+    /// The predicate is egui's own threshold reproduced from what `ScrollAreaOutput` publishes
+    /// (`scroll_area.rs:1203-1206`, `:1256-1260`), which is only equivalent while the bars are
+    /// not floating (`style.rs:595` has `floating: false`, and this window never changes it).
+    /// **`the_window_does_not_float_its_scroll_bars` holds that premise**, so a future change to
+    /// it fails a test instead of silently producing a bar that is not there.
+    ///
+    /// Driven on the **file tree**, which is the pane the probe found unnamed: a workspace with
+    /// more files than fit gets a bar, and a small one does not.
+    #[test]
+    fn a_scrollbar_is_named_only_when_there_is_one() {
+        // A workspace too tall for its pane: 200 files, a pane that fits a few dozen.
+        let dir = std::env::temp_dir().join("epsilon-tabs-scrollbar-overflow");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch workspace");
+        for i in 0..200 {
+            std::fs::write(dir.join(format!("file-{i:03}.txt")), "x").expect("a file");
+        }
+        let mut h = Harness::new(dir.clone());
+        let nodes = h.named_nodes();
+        assert!(
+            nodes.iter().any(|(l, _)| l.starts_with("Scroll")),
+            "a workspace that overflows must publish a **named** scrollbar. Nodes: {:?}",
+            nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
+        );
+        assert!(
+            nodes.iter().any(|(l, _)| l == "Scroll · the file tree"),
+            "and the name says what it scrolls: {:?}",
+            nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
+        );
+
+        // **And the control**: a workspace that fits contributes nothing. This is the half that
+        // would have been broken by naming a bar unconditionally.
+        let small = std::env::temp_dir().join("epsilon-tabs-scrollbar-fits");
+        let _ = std::fs::remove_dir_all(&small);
+        std::fs::create_dir_all(&small).expect("scratch workspace");
+        std::fs::write(small.join("only.rs"), "fn only() {}").expect("one file");
+        let mut h = Harness::new(small);
+        let nodes = h.named_nodes();
+        assert!(
+            !nodes.iter().any(|(l, _)| l.starts_with("Scroll")),
+            "a workspace that fits must publish **no** scrollbar node: a node named for a bar that \
+             was never drawn is a phantom in the tree a reader browses. Nodes: {:?}",
+            nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
+        );
+    }
+
+    /// **The premise the scrollbar derivation rests on (M312).**
+    ///
+    /// `name_scrollbar` reproduces egui's own threshold from `ScrollAreaOutput`, and it is only
+    /// equivalent to it while `limit_rect == inner_rect`. That holds while the scroll bars are
+    /// **allocated no width**: `outer_rect = inner_rect + current_bar_use` (`scroll_area.rs:1195`)
+    /// and `current_bar_use = allocated_width * show_bars` (`:757-761`), so zero allocated means
+    /// zero difference.
+    ///
+    /// **This test exists because a first version asserted the wrong number.** It asked whether
+    /// the bars were *floating* and refused to name anything when they were — and they float, so
+    /// the function never named anything and the probe stayed red. The boolean is not the premise;
+    /// `allocated_width()` is, and egui's floating style sets it to zero (`style.rs:648`).
+    ///
+    /// So the premise is a number, read the way the drawing code reads it, and asserted.
+    #[test]
+    fn the_window_allocates_no_width_to_its_scroll_bars() {
+        let dir = std::env::temp_dir().join("epsilon-tabs-scrollbar-premise");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch workspace");
+        std::fs::write(dir.join("a.rs"), "fn a() {}").expect("a file");
+        let h = Harness::new(dir);
+        // Ask a `Ui` the question the drawing code asks, rather than reading the style struct:
+        // the number that matters is the one the layout will actually use.
+        let mut allocated = f32::NAN;
+        h.ctx
+            .run_ui(egui::RawInput::default(), |ui| {
+                allocated = ui.spacing().scroll.allocated_width();
+            })
+            .drop_without_applying_deltas();
+        assert_eq!(
+            allocated, 0.0,
+            "the scrollbar naming reproduces egui's threshold from the published output, which is \
+             only egui's threshold while the bars reserve no width. These reserve {allocated}; if \
+             that changes, `name_scrollbar` must account for it rather than comparing against \
+             `inner_rect` alone."
+        );
     }
 
     /// Rasterise `h`'s next frame and write it as `name`. Returns 1 on success.

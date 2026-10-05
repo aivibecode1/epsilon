@@ -82,6 +82,15 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Fixed
 
+- **The window's scrollbars are named, so its accessibility tree has no unnamed node in it.** The
+  desktop's accessibility probe — which reads the window's tree through Windows UI Automation from
+  another process — has exited non-zero on one unnamed `ScrollBar` since it was written, which is
+  why it was never a gate: a check that is red for a known finding gets deleted rather than read.
+  It is green now. Naming a bar naively would have been worse than the bug, because egui's
+  `accesskit_node_builder` is get-or-create and would have published a **phantom** node for bars that
+  were never drawn, so the name is applied only when the published output says the bar is really
+  there — and a test asserts both directions, including that a pane which fits contributes no node at
+  all (M312).
 - **A session whose write lease was taken by another process now refuses to write, instead of
   interleaving two writers into one file.** The store held its lease for `Drop` and never read it, so
   a process that had its lock stolen went on appending through an already-open handle for the rest of

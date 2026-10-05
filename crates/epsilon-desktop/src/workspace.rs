@@ -318,7 +318,7 @@ pub fn draw_tree(
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
         |ui| {
-            egui::ScrollArea::vertical()
+            let out = egui::ScrollArea::vertical()
                 .id_salt("epsilon-file-tree")
                 .auto_shrink([false, true])
                 .show_rows(ui, 18.0 * scale, visible.len(), |ui, range| {
@@ -444,6 +444,11 @@ pub fn draw_tree(
                         summary.hotspots.push((hotspot_id(&row.path), row_rect));
                     }
                 });
+            // **The scrollbar, named when there is one (M312).** This is the pane the probe
+            // found unnamed: a 1000-file workspace scrolls, egui draws the bar and labels it
+            // nothing, and a reader met a `ScrollBar` with no name. The predicate is egui's own
+            // threshold reproduced from what the output publishes; see `name_scrollbar`.
+            crate::app::name_scrollbar(ui.ctx(), &out, "the file tree");
         },
     );
     clicked
@@ -532,7 +537,7 @@ pub fn draw_diff(
     let gutter = 52.0 * scale;
     let rows = change.lines.len();
     ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-        egui::ScrollArea::vertical()
+        let out = egui::ScrollArea::vertical()
             .id_salt("epsilon-diff-body")
             .auto_shrink([false, false])
             .show_rows(ui, line_h, rows, |ui, range| {
@@ -575,6 +580,10 @@ pub fn draw_diff(
                     }
                 }
             });
+        // **The scrollbar, named when there is one (M312).** A diff longer than the pane is
+        // the ordinary case here, which makes this the pane where the unnamed node was easiest
+        // for a reader to meet.
+        crate::app::name_scrollbar(ui.ctx(), &out, "the change under review");
     });
 }
 
@@ -628,7 +637,7 @@ pub fn draw_editor(
     // pane, which is where the header was painted; without it the scroll area would open
     // underneath the header line.
     ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-        egui::ScrollArea::vertical()
+        let out = egui::ScrollArea::vertical()
             .id_salt("epsilon-file-body")
             .auto_shrink([false, false])
             .show_rows(ui, line_h, file.len(), |ui, range| {
@@ -687,6 +696,9 @@ pub fn draw_editor(
                     }
                 }
             });
+        // **The scrollbar, named when there is one (M312).** Any file longer than the pane needs
+        // it, so this is the most reachable unnamed node in the window.
+        crate::app::name_scrollbar(ui.ctx(), &out, "the open file");
     });
 }
 
