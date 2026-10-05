@@ -6998,6 +6998,14 @@ mod tests {
     /// whole job is to show the text is the worst available outcome. The raster test above says
     /// so at its own call site; this repeats it because the mistake is one line away.
     fn save_frame(h: &mut Harness, dir: &std::path::Path, name: &str) -> usize {
+        // **The visuals, exactly as `eframe::App::ui` sets them (M312).** `set_visuals` lives in
+        // `ui()` and nowhere else — `paint` draws the panes from `theme` itself — so a harness
+        // that calls `paint` directly paints **every** widget with egui's default (dark) visuals
+        // whatever the theme says. The light-palette frame proved it: the panes came out light and
+        // both text inputs came out as **black boxes**, which reads as a defect in the light theme
+        // and is not one. A frame dump that is not the frame the product draws is worse than no
+        // dump, so this mirrors the production call.
+        h.ctx.set_visuals(h.app.theme.visuals());
         let mut input = h.input.clone();
         input.events = Vec::new();
         let clear = h.app.theme.background;
@@ -7221,6 +7229,35 @@ mod tests {
                 nodes.iter().map(|(l, _)| l).collect::<Vec<_>>()
             );
             drop(_guard);
+        }
+
+        // 8. **The light palette.** `AGENTS.md` §8 asks for AA contrast "in every theme", and the
+        //    window has had a light one since the theme module grew it — with **no rendered frame
+        //    of it anywhere**, so the one claim nobody could check was the one about a theme a
+        //    person would choose on a bright desk.
+        {
+            let (ws, _keep) = scratch_workspace("frames-light");
+            let mut h = Harness::new(ws.clone());
+            h.app.theme = crate::theme::IdeTheme::from(epsilon_tui::ui::theme::ThemeMode::Light);
+            let mut t = Transcript::new(ws);
+            t.push_user("what does the contrast look like here?");
+            h.app.seed_transcript(t);
+            written += save_frame(&mut h, &dir, "08-light-palette.png");
+        }
+
+        // 9. **200% text.** Required by the same section, measured once at M305 for the title
+        //    bar's collision, and never looked at as a picture.
+        {
+            let (ws, _keep) = scratch_workspace("frames-zoom");
+            std::fs::write(
+                ws.join("alpha.rs"),
+                "fn alpha() {\n    let total = compute(&items);\n    report(total)\n}\n",
+            )
+            .expect("a file to open");
+            let mut h = Harness::new(ws.clone());
+            h.app.open_file("alpha.rs");
+            h.at_zoom(2.0);
+            written += save_frame(&mut h, &dir, "09-text-200-percent.png");
         }
 
         eprintln!(

@@ -403,6 +403,23 @@ tofu boxes in the other. The numbers are still the shared formatter's — only t
 spelled out, in the title bar and in `/session`. **M305's answer applied again**: a glyph the font
 cannot draw is a *missing* measurement, and a missing measurement is worse than a spelled-out one.
 
+**And the two requirements that had never been shown at all.** `AGENTS.md` §8 asks for AA contrast in
+**every** theme and for **text scaling**; the window has had a light palette and a zoom path since
+both were built, and **neither had ever been rendered**. Two more frames answer both:
+
+- `08-light-palette.png` — light surfaces, dark text, both text inputs legible.
+- `09-text-200-percent.png` — **200% text**, and it holds: the tree, the editor's gutter and
+  monospace body, the composer, the Send button, the status bar and the hints all scale, and
+  nothing overlaps or clips.
+
+**The first light frame showed two black boxes, and it was the harness's fault — the frame was not
+the frame the product draws.** `set_visuals` is called in `eframe::App::ui` and **nowhere else**;
+`paint` draws the panes from `theme` itself. So a harness that calls `paint` directly paints every
+*widget* with egui's default dark visuals whatever the theme says — which is exactly what the two
+text inputs did. `save_frame` now makes the same call the product makes. **Nearly "fixed" a light
+theme that was never broken**, which is the third time this session that reading a picture without
+reading the code would have cost a commit.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:
