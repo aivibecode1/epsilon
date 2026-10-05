@@ -420,6 +420,24 @@ text inputs did. `save_frame` now makes the same call the product makes. **Nearl
 theme that was never broken**, which is the third time this session that reading a picture without
 reading the code would have cost a commit.
 
+### The transcript's commonest content: a tool row with a box for a name
+
+The tenth frame — **a conversation with tool calls in it**, which is where a reader spends most of
+their time and which nobody had ever drawn — found two more defects in one row:
+
+- the marker was an **empty box** for every finished call, because `✓`/`✗` (`U+2713`/`U+2717`) are
+  **Dingbats** and egui's bundled font has no Dingbats. The same font turned the token arrows into
+  boxes; `▸`, `±`, `◨` and `›` all render, so this is not "no symbols" but **two missing blocks**.
+  The replacements are the terminal's own ASCII repertoire (`tick: "+"`, `cross: "x"`,
+  `cursor_bar: ">"`), so both front ends draw the same outcome the same way.
+- the row showed the tool's **arguments without its name**: `{"command": "cargo test"}`, from a
+  reader who was never told `bash` ran. The name *was* in the row's accessible name — a
+  screen-reader user knew and a sighted one did not, which is the wrong way round for a pane.
+
+The arguments are still JSON, which is the terminal's tool *card* to improve on (M273) and **not**
+this fix; **which tool ran** was the half that was missing entirely. Glyph coverage cannot be
+asserted from code at all — that is what looking at the frame is for.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:

@@ -4689,14 +4689,27 @@ impl IdeApp {
         scale: f32,
     ) -> Option<String> {
         let theme = self.theme;
+        // **Markers this window's font can draw (M312).** They were `▸`/`✓`/`✗`, and the rendered
+        // frame showed **both finished tool calls as an empty box** — `U+2713`/`U+2717` are
+        // Dingbats, and egui's bundled font has no Dingbats (the same font that turned the token
+        // arrows into boxes, and the same answer: the title bar's `↑`/`↓` are Arrows and are also
+        // missing). `▸`, `±`, `◨` and `›` are all covered, so this is not "no symbols" — it is
+        // **two missing blocks**.
+        //
+        // The spellings are the terminal's own ASCII repertoire (`tick: "+"`, `cross: "x"`,
+        // `cursor_bar: ">"`, `crates/epsilon-tui/src/ui/theme.rs:340-358`), so both front ends
+        // draw the same outcome the same way rather than this window inventing a third set.
+        // Meaning is not carried by shape alone: the row's **accessible name** already says
+        // `Tool call`, `ok` or `failed` (`row_kind_name`), which is WCAG 2.2 SC 1.4.1's "not by
+        // shape or colour alone" satisfied by text rather than by a third glyph.
         let (marker, color) = match &row.kind {
             RowKind::User => ("› ", theme.user),
             RowKind::Assistant => ("  ", theme.text),
             RowKind::Thinking => ("~ ", theme.thinking),
             RowKind::Tool { failed, .. } => match failed {
-                None => ("▸ ", theme.accent),
-                Some(false) => ("✓ ", theme.success),
-                Some(true) => ("✗ ", theme.danger),
+                None => ("> ", theme.accent),
+                Some(false) => ("+ ", theme.success),
+                Some(true) => ("x ", theme.danger),
             },
             RowKind::Approval { .. } => ("! ", theme.warn),
             RowKind::Changed => ("± ", theme.accent),
@@ -4713,13 +4726,19 @@ impl IdeApp {
         // cleaned only its permission prompt until now. One call here covers every kind,
         // and `draw_markdown` inherits it because the assistant's prose is rendered *from*
         // this text rather than beside it.
-        let body: std::borrow::Cow<'_, str> = if row.text.is_empty() {
-            match &row.kind {
-                RowKind::Tool { name, .. } => format!("{name}…").into(),
-                _ => "".into(),
+        let body: std::borrow::Cow<'_, str> = match &row.kind {
+            // **The tool's name belongs on the row, not only in its accessible name (M312).**
+            // A rendered frame showed `+ {"command": "cargo test -p epsilon-session"}` — the
+            // arguments of a tool the reader was never told the name of, while the row's
+            // accessible name said `Tool call · bash · …` and no sighted reader could see it.
+            // The arguments are still JSON, which is the terminal's tool *card* to improve on
+            // (M273) and not this fix; **which tool ran** is the half that was missing entirely.
+            RowKind::Tool { name, .. } if !row.text.is_empty() => {
+                format!("{name} {}", Self::safe_to_show(&row.text)).into()
             }
-        } else {
-            Self::safe_to_show(&row.text)
+            RowKind::Tool { name, .. } => format!("{name}…").into(),
+            _ if row.text.is_empty() => "".into(),
+            _ => Self::safe_to_show(&row.text),
         };
         // **Only the assistant's text is interpreted.** A user who types `**hi**`
         // must see `**hi**`; a diff line is a diff line. Rendering is an
@@ -6991,6 +7010,75 @@ mod tests {
         }
     }
 
+    /// **A tool row says which tool it was, and marks it with a glyph this window can draw (M312).**
+    ///
+    /// Found by rendering a conversation with tool calls in it — the transcript's commonest
+    /// content, and the only state nobody had drawn. Two defects in one row: the marker was an
+    /// **empty box** (`U+2713`/`U+2717` are Dingbats, which egui's bundled font has not got, the
+    /// same two missing blocks that turned the token arrows into boxes), and the row showed the
+    /// tool's **arguments without its name** — `{"command": "cargo test"}` from a reader who was
+    /// never told `bash` ran. The name was in the row's *accessible* name, so a screen-reader user
+    /// knew and a sighted one did not, which is the wrong way round for a pane.
+    ///
+    /// Asserted on the **drawn text**, which is where both were wrong. The glyph *coverage* cannot
+    /// be asserted from code at all — that is what looking at the frame is for, and
+    /// `10-tool-calls.png` is the evidence.
+    #[test]
+    fn a_tool_row_names_its_tool_and_marks_it_with_a_drawable_glyph() {
+        use epsilon_contracts::agent_event::AgentEvent;
+        let (ws, _keep) = scratch_workspace("tool-row");
+        let mut h = Harness::new(ws.clone());
+        let mut t = Transcript::new(ws);
+        t.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "cargo test" }),
+        });
+        t.apply(&AgentEvent::ToolExecutionEnd {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            is_error: false,
+        });
+        h.app.seed_transcript(t);
+
+        let ok = h.paint();
+        let line = ok.region("agent").join(" ");
+        assert!(
+            line.contains("+ bash") && line.contains("cargo test"),
+            "a finished tool call must name the tool it ran **and** what it ran — a reader who \
+             cannot see which tool produced a result cannot trust it.\n{}",
+            ok.describe()
+        );
+        assert!(
+            !line.contains('✓') && !line.contains('▸'),
+            "**and the markers must be ones this window's font actually has.** U+2713 and U+25B8 \
+             rendered as empty boxes in the frame; the terminal's own ASCII repertoire is `+` and \
+             `>`.\n{line}"
+        );
+
+        // And the failed marker differs, so the two outcomes are not told apart by colour alone.
+        let mut failed = Harness::new(std::env::temp_dir());
+        let mut t = Transcript::new(std::env::temp_dir());
+        t.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "c2".into(),
+            tool_name: "write".into(),
+            args: serde_json::json!({ "path": "src/lib.rs" }),
+        });
+        t.apply(&AgentEvent::ToolExecutionEnd {
+            tool_call_id: "c2".into(),
+            tool_name: "write".into(),
+            is_error: true,
+        });
+        failed.app.seed_transcript(t);
+        let bad = failed.paint();
+        let bad_line = bad.region("agent").join(" ");
+        assert!(
+            bad_line.contains("x write"),
+            "a failed tool call is marked differently and names its tool too.\n{}",
+            bad.describe()
+        );
+    }
+
     /// Rasterise `h`'s next frame and write it as `name`. Returns 1 on success.
     ///
     /// **Not `Harness::full_frame`**, which clears `textures_delta` on purpose and takes the font
@@ -7258,6 +7346,75 @@ mod tests {
             h.app.open_file("alpha.rs");
             h.at_zoom(2.0);
             written += save_frame(&mut h, &dir, "09-text-200-percent.png");
+        }
+
+        // 10. **A conversation with tool calls in it — the transcript's commonest content, and the
+        //     only state nobody had ever drawn.** Every frame so far showed prompts and answers;
+        //     a reader spends most of their time looking at what the agent *did*. One call
+        //     succeeded and one failed, because the failed marker is the one that has to be right.
+        {
+            use epsilon_contracts::agent_event::AgentEvent;
+            let (ws, _keep) = scratch_workspace("frames-tools");
+            let mut h = Harness::new(ws.clone());
+            let mut t = Transcript::new(ws);
+            t.push_user("run the suite and tell me what broke");
+            t.apply(&AgentEvent::ToolExecutionStart {
+                tool_call_id: "c1".into(),
+                tool_name: "bash".into(),
+                args: serde_json::json!({ "command": "cargo test -p epsilon-session" }),
+            });
+
+            t.apply(&AgentEvent::ToolExecutionEnd {
+                tool_call_id: "c1".into(),
+                tool_name: "bash".into(),
+                is_error: false,
+            });
+            t.apply(&AgentEvent::ToolExecutionStart {
+                tool_call_id: "c2".into(),
+                tool_name: "write".into(),
+                args: serde_json::json!({ "path": "src/lib.rs" }),
+            });
+            t.apply(&AgentEvent::ToolExecutionEnd {
+                tool_call_id: "c2".into(),
+                tool_name: "write".into(),
+                is_error: true,
+            });
+            t.apply(&AgentEvent::MessageStart {
+                message: Box::new(epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m2".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "The session crate is green. The write failed because the path does \
+                             not exist, so nothing changed on disk.",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                )),
+            });
+            t.apply(&AgentEvent::MessageEnd {
+                message: Box::new(epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m2".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "The session crate is green. The write failed because the path does \
+                             not exist, so nothing changed on disk.",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                )),
+            });
+            h.app.seed_transcript(t);
+            written += save_frame(&mut h, &dir, "10-tool-calls.png");
         }
 
         eprintln!(

@@ -45,6 +45,11 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   and that font has neither arrow. Every rendered frame showed `ctx 1%/1.0M · □0 □0`. The numbers
   are still spelled by the shared formatter; the two arrows are now words, in the title bar and in
   `/session` (M312).
+- **A tool call in the transcript now says which tool it was, and is marked with a glyph the window
+  can draw.** The rendered frame showed `□ {"command": "cargo test"}` — an empty box instead of the
+  outcome marker, because `✓`/`✗` are Dingbats that egui's bundled font has not got, and no tool
+  name at all next to its arguments. The markers are now the terminal front end's own ASCII
+  repertoire, so both front ends draw the same outcome the same way (M312).
 - **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
   registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
   window that already had a subagents pane, a session it can name, and a transcript it can empty.
