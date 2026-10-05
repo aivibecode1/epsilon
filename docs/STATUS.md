@@ -134,15 +134,16 @@ the unbounded chrome lines it had been hiding. **Three of those defects were in 
 *documents* rather than in the product**, which is only visible on a machine somebody has actually
 used.
 
-**Latest green battery: [`gate-m312cmd`](../audit/evidence/gate-m312cmd-2026-10-05.txt),
+**Latest green battery: [`gate-m312long`](../audit/evidence/gate-m312long-2026-10-05.txt),
 2026-10-05 — the tree this file describes.** Ten legs, all `[exit=0]`, zero non-zero legs.
-**2,054 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
-`test result: ok` lines. `check-links`: **813 relative links, 0 broken**. The eighth ignored test
-is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter. Knobs, because
-they change what the evidence is: `CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`,
-`CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`. **The last is set by the caller and so is not
-in the log's own header** — it is appended to the evidence file by hand, which is the only reason a
-reader can find it at all.
+**2,061 passed / 0 failed / 8 ignored across 78 binaries**, summed from that one log's
+`test result: ok` lines. `check-links`: **816 relative links, 0 broken**. The eighth ignored test
+is `the_window_rasterises_to_an_image_that_is_not_blank`, which needs a GPU adapter — and which
+this milestone gave a sibling, `the_windows_a_person_has_not_seen_are_rendered_for_one_to_see`,
+which draws **eleven** desktop states. Knobs, because they change what the evidence is:
+`CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`.
+**The last is set by the caller and so is not in the log's own header** — it is appended to the
+evidence file by hand, which is the only reason a reader can find it at all.
 
 **Six batteries were spent getting there, and four of the failures were worth the time.**
 `gate-m312` failed `fmt` on two nits **and** the test leg on five goal-round tests — the fixture
