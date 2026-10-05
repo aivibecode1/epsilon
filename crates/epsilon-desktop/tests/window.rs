@@ -1216,6 +1216,63 @@ fn the_window_draws_the_context_and_cost_figures_on_its_title_bar() {
     );
 }
 
+/// **`/theme` changes what the window draws, and says which way (M312).**
+///
+/// The window had no way to change its own palette: the colour scheme was whatever
+/// `IdeTheme::resolve(None)` picked at launch, so a user who wanted the light one — or, since
+/// M312, the high-contrast one — had to edit a config file and restart. `/theme` was refused here
+/// by name, which is the honest default and also the whole gap.
+///
+/// **Asserted on the frame and on the theme's own colours**, because either alone is a weak claim:
+/// the text row proves the command ran, and the *background* proves the window changed rather than
+/// the sentence claiming it did. A command that reports a switch it did not perform is the failure
+/// this repository cares most about, and it is exactly what a text-only assertion would miss.
+#[test]
+fn the_theme_command_changes_the_window_and_says_so() {
+    use epsilon_desktop::commands::Outcome;
+
+    let ws = tempfile::tempdir().expect("a workspace");
+    let (ctx, mut app) = wire(ws.path());
+
+    let before = app.theme().background;
+    let Outcome::Ran(said) = app.try_command("/theme") else {
+        panic!("/theme must run in this window");
+    };
+    assert!(
+        said.contains("palette: dark") && said.contains("light"),
+        "**and it names both ends**, so a reader who pressed it knows which way it went: {said}"
+    );
+    assert_ne!(
+        app.theme().background,
+        before,
+        "the window's background must actually change: a command that reports a switch it did \
+         not perform is worse than one that refuses"
+    );
+
+    // A named palette, including the third one.
+    let Outcome::Ran(said) = app.try_command("/theme high-contrast") else {
+        panic!("/theme high-contrast must run in this window");
+    };
+    assert!(said.contains("high-contrast"), "{said}");
+    assert_eq!(
+        app.theme().background,
+        egui::Color32::BLACK,
+        "and high contrast paints the black page its contrast is measured against"
+    );
+
+    // An unknown name is refused with the three that exist — the same sentence the terminal
+    // gives, so the two front ends cannot disagree about what the verb accepts.
+    let Outcome::Ran(said) = app.try_command("/theme solarized") else {
+        panic!("an unknown palette is still handled, not a panic");
+    };
+    assert!(
+        said.contains("unknown palette 'solarized'") && said.contains("high-contrast"),
+        "a refusal must name what is available: {said}"
+    );
+
+    let _ = ctx;
+}
+
 /// **The window and the wire cannot disagree about the context figure.**
 ///
 /// The claim in `read_metrics` is that reading `Agent::estimated_context_tokens` gives this

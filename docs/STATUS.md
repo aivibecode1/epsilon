@@ -521,6 +521,26 @@ key a user presses to change their mind about brightness cannot land on a third 
 exist — `12-high-contrast.png` for the window, which is the only front end that can paint the page,
 and the terminal's `high-contrast` dumps.
 
+### `/theme` in the window, because three palettes nobody could reach is not a feature
+
+The palette was whatever `IdeTheme::resolve(None)` picked at launch. **The window had no way to
+change its own colour scheme** — a user who wanted the light one, or since this milestone the
+high-contrast one, had to edit a config file and restart, while the terminal's `/theme` was
+refused here by name. That refusal was the honest default and also the whole gap.
+
+Same shape as the terminal's, deliberately: applied to the live theme, **not written to config**,
+because a cosmetic change must not quietly rewrite a file the user may have under version control.
+Bare flips brightness and leaves high contrast alone; a name selects any of the three; an unknown
+name is refused with the three that exist.
+
+**Asserted on the frame and on the theme's own colours**, because either alone is a weak claim:
+the text row proves the command ran, and `theme().background == BLACK` proves the window changed
+rather than the sentence claiming it did. A command that reports a switch it did not perform is
+the failure this repository cares most about, and a text-only assertion cannot see it.
+
+**The desktop is now seven of 37 commands**, and the drift guard caught the seventh the moment it
+was added — which is the two-lists arrangement working, not a nuisance.
+
 ### The last unnamed node in the tree, closed
 
 `desktop-a11y-probe.ps1` has exited **1** on one unnamed `ScrollBar` since it was written at M307,
@@ -1150,17 +1170,18 @@ tree on 2026-10-04; the two investigations behind them are
 [`../audit/evidence/plan024-item5-desktop-commands.md`](../audit/evidence/plan024-item5-desktop-commands.md)
 and [`../audit/evidence/plan024-item7-class-b-rederived.md`](../audit/evidence/plan024-item7-class-b-rederived.md).
 
-1. ~~**The desktop answers 3 of 37 commands**~~ **PARTLY LANDED (M312, ADR-029): six.** `/tasks`,
-   `/session` and `/clear` joined, each because the window already had the effect. `/new` and
-   `/resume` stay refused by name — the first starts a session file this window cannot, the second
-   is a handover `SidebarView::Sessions` still declines. **What did not land is the mechanism:**
-   `SUPPORTED` and the arms are still two lists, because the macro that would merge them does not
-   work — a `macro_rules!` will not expand inside a match's arm-list, and from item position its
-   arguments are parsed as items (`E0424: expected value, found module self`). The two tests hold
-   the pair, and `the_window_runs_exactly_the_heads_it_declares_supported` caught the drift the
-   moment the three verbs landed. Cheapest remaining wins, by the same criterion: `/expand` (the
-   card expansion the transcript already has), `/reload`, and `/settings` if a settings surface
-   exists.
+1. ~~**The desktop answers 3 of 37 commands**~~ **MOSTLY LANDED (M312, ADR-029): seven.**
+   `/tasks`, `/session`, `/clear` and `/theme` joined, each because the window already had the
+   effect — and with three palettes, a window that could not reach them was the gap. Still refused
+   by name, each for a stated reason: `/new` (starts a session file this window cannot),
+   `/resume` (a handover `SidebarView::Sessions` still declines), `/expand` (needs a collapse
+   behaviour the desktop does not have), `/reload` and `/settings` (no such surfaces here).
+   **What did not land is the mechanism:** `SUPPORTED` and the arms are still two lists, because
+   the macro that would merge them does not work — a `macro_rules!` will not expand inside a
+   match's arm-list, and from item position its arguments are parsed as items (`E0424: expected
+   value, found module self`). Two tests hold the pair, and
+   `the_window_runs_exactly_the_heads_it_declares_supported` caught the drift the moment `/theme`
+   landed, which is the arrangement working rather than a nuisance.
 2. ~~**One unnamed `ScrollBar`.**~~ **LANDED (M312).** The probe is green: every node in the tree is
    named, and the bar is named **only** when egui drew one — `accesskit_node_builder` is
    get-or-create, so an unconditional name is a phantom a reader browses. The predicate reproduces

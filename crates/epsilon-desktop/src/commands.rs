@@ -144,6 +144,33 @@ impl IdeApp {
                 self.transcript.clear();
                 Outcome::Ran("transcript cleared — the session file keeps everything".to_string())
             }
+            // **`/theme` in the window (M312).** The window had no way to change its own palette:
+            // the colour scheme was whatever `IdeTheme::resolve(None)` picked at launch, so a user
+            // on a dark desk who wanted the light one had to edit a config file and restart. The
+            // terminal's `/theme` was refused here by name, which is the honest default and also
+            // the whole gap — and with a third palette it is wider.
+            //
+            // Same shape as the terminal's, deliberately: apply to the live theme and **do not
+            // write config**, because a cosmetic change must not quietly rewrite a file the user
+            // may have under version control. Bare flips brightness and leaves high contrast
+            // alone (`flipped()` is dark↔light by design); a name selects any of the three.
+            Command::Theme(argument) => {
+                use epsilon_tui::ui::theme::ThemeMode;
+                let next = match argument.as_deref().map(str::trim) {
+                    None | Some("") => self.theme().palette.flipped(),
+                    Some(name) => match ThemeMode::from_name(name) {
+                        Some(mode) => mode,
+                        None => {
+                            return Outcome::Ran(format!(
+                                "unknown palette '{name}' — use `dark`, `light` or \
+                                 `high-contrast`, or bare `/theme` to flip"
+                            ));
+                        }
+                    },
+                };
+                let was = self.set_palette(next).palette;
+                Outcome::Ran(format!("palette: {} → {}", was.name(), next.name()))
+            }
 
             // ---- everything else is the terminal's, and saying so is the feature ----
             //
@@ -419,7 +446,9 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// `/new` is **not** here: the terminal's starts a new session *file* (M221) and the window
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
-pub const SUPPORTED: &[&str] = &["clear", "compact", "goal", "session", "sessions", "tasks"];
+pub const SUPPORTED: &[&str] = &[
+    "clear", "compact", "goal", "session", "sessions", "tasks", "theme",
+];
 
 #[cfg(test)]
 mod tests {
@@ -685,6 +714,7 @@ mod tests {
             Command::Session,
             Command::Sessions,
             Command::Tasks,
+            Command::Theme(None),
         ]
         .iter()
         .filter_map(|command| head_of(command))

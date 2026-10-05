@@ -7,6 +7,12 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Added
 
+- **The desktop window can now change its own colour scheme.** `/theme` was refused there by name,
+  so the palette was whatever the window picked at launch — a user who wanted the light one, or the
+  high-contrast one, had to edit a config file and restart. It now behaves exactly as the terminal's:
+  bare flips brightness, a name selects any of the three palettes, an unknown name is refused with
+  the list of the ones that exist, and **nothing is written to config**, because a cosmetic change
+  must not quietly rewrite a file the user may have under version control (M312, ADR-029).
 - **A high-contrast palette, in both front ends.** `AGENTS.md` asks for high-contrast support and
   the product had none — while `/theme` advertised one, which a milestone resolved by removing the
   word and recording the capability as roadmap work. This is the other resolution: `/theme

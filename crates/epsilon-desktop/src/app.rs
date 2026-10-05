@@ -1126,7 +1126,9 @@ impl FocusTarget {
 /// The desktop application.
 pub struct IdeApp {
     opts: Options,
-    theme: IdeTheme,
+    /// The window's colours. pub(crate) so /theme and the frame tests can read what the
+    /// window is actually painting; the setters beside it are the way to change it.
+    pub(crate) theme: IdeTheme,
     /// What the last launch remembered, and what the reader is changing now.
     ///
     /// **Read once, at construction, and written back when it changes** — see
@@ -1986,6 +1988,35 @@ impl IdeApp {
     /// of hit-testing to change one field would be testing the input system instead.
     pub fn set_sidebar_view(&mut self, view: SidebarView) {
         self.sidebar = view;
+    }
+    /// Switch the window's palette (M312).
+    ///
+    /// **The window had no way to change its own palette** — the colour scheme was whatever
+    /// `IdeTheme::resolve(None)` picked at launch, so a user on a dark desk who wanted the light
+    /// one had to edit a config file and restart. `/theme` exists in the terminal and was refused
+    /// here by name, which is the honest default but also the whole gap.
+    ///
+    /// Bare flips brightness (`ThemeMode::flipped`, which deliberately excludes high contrast); a
+    /// name selects one. Both are the terminal's behaviour, in the same shape, so the two front
+    /// ends cannot disagree about what `/theme` means.
+    ///
+    /// **Returns the theme it replaced**, as the terminal's `Theme::set_palette` does, so the
+    /// caller can name both ends of the change without a second accessor on a private field.
+    pub fn set_palette(
+        &mut self,
+        palette: epsilon_tui::ui::theme::ThemeMode,
+    ) -> crate::theme::IdeTheme {
+        std::mem::replace(&mut self.theme, crate::theme::IdeTheme::from(palette))
+    }
+
+    /// The window's colours, for a caller that only needs to read them.
+    ///
+    /// Exists beside [`Self::set_palette`] for the same reason `transcript`, `set_focus` and
+    /// `sidebar_view` do: a test has to be able to ask **what the window is painting** rather than
+    /// believe a command's sentence. A command that reports a switch it did not perform is
+    /// exactly the failure worth a check, and a text-only assertion cannot see it.
+    pub fn theme(&self) -> &crate::theme::IdeTheme {
+        &self.theme
     }
     /// Drain the agent's event queue into the transcript.
     ///
