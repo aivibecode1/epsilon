@@ -1,0 +1,34 @@
+
+=== palette-open @ 100x30 ===
++----------------------------------------------------------------------------------------------------+
+|idle                ?/1.0M · ↑0 ↓0 · R0 W0 CH n/a · Faux (offline scripted) • thinking off · offline|
+|> type to filter                                                                                    |
+|                  + commands ----------------------------------------------------+                  |
+|                  | > Models — switch model                             [ctrl+m] |                  |
+|                  |   Connect provider — set API key (paste, masked)             |                  |
+|                  |   Skills — list discovered skills                            |                  |
+|                  |   Clear transcript                                           |                  |
+|                  |   Help — command reference                                   |                  |
+|                  |   Quit session                                               |                  |
+|                  |   Toggle tool output expand                         [ctrl+x] |                  |
+|                  |                                                              |                  |
+|                  | type filter · ^v move · enter run · esc close                |                  |
+|                  |                                                              |                  |
+|                  |                                                              |                  |
+|                  |                                                              |                  |
+|                  +--------------------------------------------------------------+                  |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|                                                                                                    |
+|> ask anything                                                                                      |
+|----------------------------------------------------------------------------------------------------|
+|list · type filter · ^v move · enter choose · esc close                       ...\crates\epsilon-tui|
++----------------------------------------------------------------------------------------------------+

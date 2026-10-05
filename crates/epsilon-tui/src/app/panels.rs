@@ -434,7 +434,7 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
         // already is (the composer), and a centred panel would jump as the
         // filter list changes height.
         area: Rect {
-            y: outer.y + 1,
+            y: outer.y + 2,
             ..overlay::centered(outer, width, height)
         },
         title: "commands",
@@ -464,7 +464,13 @@ pub(super) fn draw_palette(f: &mut Frame<'_>, app: &App, outer: Rect) {
             inner.width as usize,
         ));
     }
-    // The filter itself lives in the title bar, so the body stays a pure list.
+    // **The filter stays on the composer's line, and that is a correction (M312).** The comment
+    // here used to read "The filter itself lives in the title bar, so the body stays a pure
+    // list" — and the title is `"commands"`, with no filter in it. What the frame showed was the
+    // composer row *and* the box's top border sharing one line, with the filter text reading as
+    // part of the border. **The claim was true of the design and false of the code**, which is
+    // the shape of a comment that has drifted. The filter is what the reader typed and where they
+    // expect to see it; the box keeps a pure list.
     lines.push(Line::from(""));
     let arrows = overlay::up_down(app.theme.glyphs.up, app.theme.glyphs.down);
     lines.push(overlay::hint_row(

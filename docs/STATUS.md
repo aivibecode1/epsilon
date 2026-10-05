@@ -438,6 +438,31 @@ The arguments are still JSON, which is the terminal's tool *card* to improve on 
 this fix; **which tool ran** was the half that was missing entirely. Glyph coverage cannot be
 asserted from code at all — that is what looking at the frame is for.
 
+### The same method on the terminal: a tool card that dropped its line breaks, and a palette that ate its own title
+
+Two more states dumped for the TUI — **a tool card**, the commonest thing in a transcript and never
+rendered here either, and **the command palette open** — and both found something:
+
+- **A tool's output lost its line breaks.** `CardBody::Text` was drawn as `vec![vec![(sanitize(text),
+  …)]]` — the whole body on **one row** — and `sanitize` **strips** `\n` because it strips control
+  characters. A card holding `running 74 tests\ntest result: ok. 74 passed; 0 failed` rendered as
+  one sentence: `running 74 teststest result: ok. 74 passed`. **The store already keeps the lines**
+  (`state.rs` accumulates a bounded tail and joins with `\n`), so this was a renderer that could not
+  draw what it was handed, and every line after the first was lost. One `.lines()` and the existing
+  `cap()` prints `N more lines (ctrl+x)` for the rest. Negative control run: it fails printing the
+  whole body in a single span.
+- **The palette's top border shared a row with the filter text**, so `> type to filter` read as part
+  of `+ commands -------+`. One row down fixes it. The comment above that code claimed *"the filter
+  itself lives in the title bar"* — and the title is `"commands"`, with no filter in it. **The claim
+  was true of the design and false of the code**, which is the shape of a comment that has drifted;
+  it is corrected where it stood.
+
+**And the first tool-card frame I dumped found nothing at all**, which was the fixture's fault and
+not the product's: the card is committed when the **assistant message** ends, not when the tool
+starts, so tool events alone produce an empty transcript. The first frame that looked like a defect
+was a fixture that did not send what the product sends — the third time this session that reading a
+picture without reading the code would have cost a commit.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:

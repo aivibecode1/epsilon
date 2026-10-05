@@ -189,7 +189,26 @@ pub fn rows(
     let body = match &card.body {
         CardBody::Diff(diff) => diff_rows(diff, width, theme),
         CardBody::Prompt(text) => prompt_rows(text, expanded, theme),
-        CardBody::Text(text) => vec![vec![(sanitize(text), theme.dim())]],
+        // **One row per line, or the lines run together (M312).** This was
+        // `vec![vec![(sanitize(text), …)]]` — the whole body on one row — and
+        // [`sanitize`] **strips the newline**, because it strips control characters
+        // and `\n` is one (this is the same `text_safety` rule that keeps a model's
+        // output from steering the screen). A tool that printed two lines therefore
+        // rendered as one sentence: `running 74 teststest result: ok. 74 passed`.
+        //
+        // **The product deliberately stores multi-line bodies**, so this was a renderer that
+        // could not draw what it was given: the streaming path keeps a bounded **tail of
+        // lines** (`state.rs`, `CardBody::Text(tail.join("\n"))`), and every line after the
+        // first was being lost. [`cap`] then does what it exists for and prints
+        // `N more lines (ctrl+x)` for the rest, so a long body costs rows rather than
+        // becoming one unreadable row.
+        //
+        // This is the M198 class this module's own header is about — a card that is
+        // correct in every field and unreadable on screen.
+        CardBody::Text(text) => text
+            .lines()
+            .map(|l| vec![(sanitize(l), theme.dim())])
+            .collect(),
     };
     let mut rows: Vec<CardRow> = vec![vec![(title(card, theme), theme.text())]];
     // The budgets the skill asks for are *visible* rows, so the wrap happens first
@@ -823,5 +842,58 @@ mod tests {
         assert_eq!(status_word(CardStatus::Ok, &ASCII).0, ASCII.tick);
         assert_eq!(status_word(CardStatus::Failed, &UNICODE).1, "failed");
         assert_eq!(status_word(CardStatus::Failed, &ASCII).0, ASCII.cross);
+    }
+
+    /// A tool's output keeps its line breaks on screen (M312).
+    ///
+    /// Found by rendering a frame with a tool card in it and reading it: a card whose body was
+    /// `running 74 tests\ntest result: ok. 74 passed; 0 failed` came out as **one row**,
+    /// `running 74 teststest result: ok. 74 passed; 0 failed` — two sentences run together, with
+    /// the newline *gone* rather than turned into anything. `sanitize` strips it, because it
+    /// strips control characters and `\n` is one.
+    ///
+    /// **The store already keeps the lines** (`state.rs` accumulates a bounded tail and joins it
+    /// with `\n`), so this was a renderer that could not draw what it was handed — and the rows
+    /// after the first were simply lost.
+    #[test]
+    fn a_text_card_draws_one_row_per_line_of_its_body() {
+        use crate::ui::theme::Theme;
+        let theme = Theme::new(crate::ui::theme::ColorMode::Ansi16, UNICODE);
+        let card = super::Card {
+            tool_call_id: "c1".into(),
+            name: "bash".into(),
+            status: CardStatus::Ok,
+            body: super::CardBody::Text(
+                "running 74 tests\ntest result: ok. 74 passed; 0 failed".into(),
+            ),
+            started_at_ms: 0,
+            ended_at_ms: Some(1),
+            args: serde_json::json!({}),
+            head: String::new(),
+        };
+        let rows = super::rows(&card, false, 100, 20, &theme, Some("ctrl+x"));
+        // One row is the title; the body follows it.
+        assert!(
+            rows.len() >= 3,
+            "a two-line body must draw two rows and the title a third: {rows:?}"
+        );
+        let joined = rows
+            .iter()
+            .map(|r| {
+                r.iter()
+                    .map(|(s, _)| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(
+            joined.contains("running 74 tests") && joined.contains("test result: ok. 74 passed"),
+            "both lines must be on screen, separately: {joined}"
+        );
+        assert!(
+            !joined.contains("74 teststest result"),
+            "**and the two must not be run together** — that is the defect this is about: {joined}"
+        );
     }
 }

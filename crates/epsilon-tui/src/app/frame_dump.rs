@@ -187,3 +187,99 @@ fn frames_permission_dialog() {
     app.pending_ask = h.block_on(approvals.next_ask());
     shoot("permission", &mut app);
 }
+
+/// **Tool cards, and a card that failed (M312).**
+///
+/// A tool call is the commonest thing in a transcript and the terminal has rendered one since
+/// M63 — yet **no frame of one had ever been dumped here**, which is the same gap the desktop
+/// turned out to have, in the other front end. One succeeded and one failed, because the failed
+/// card's marker and colour are the two things a reader scans for.
+///
+/// The output arrives through `ToolExecutionUpdate`, which is the event that used to reach the
+/// `_ => {}` arm and be dropped: a three-minute `cargo test` looked like a three-minute freeze
+/// because nothing printed until the end.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_tool_cards() {
+    // **The card is committed when the *assistant message* ends, not when the tool starts**
+    // (`state.rs`, `ToolExecutionStart`: "The card was committed when the assistant message
+    // ended"). The first version of this fixture sent tool events alone and the frame came out
+    // with the prompt and twenty-four empty rows — which reads as "the terminal draws no tool
+    // cards" and is not true. The first frame that looked like a defect turned out to be a
+    // fixture that did not send what the product sends.
+    let (mut app, _a, _r) = test_app();
+    app.ui
+        .push_local_input("run the suite and tell me what broke");
+    let call = |id: &str, name: &str, args: serde_json::Value| {
+        epsilon_contracts::content::ContentBlock::ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: args,
+        }
+    };
+    app.ui.apply(&AgentEvent::MessageEnd {
+        message: Box::new(Message::Assistant(AssistantMessage {
+            id: "m1".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![
+                call("c1", "bash", serde_json::json!({ "command": "cargo test" })),
+                call(
+                    "c2",
+                    "write",
+                    serde_json::json!({ "path": "src/missing.rs" }),
+                ),
+            ],
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            usage: Usage::default(),
+        })),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        args: serde_json::json!({ "command": "cargo test -p epsilon-session" }),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionUpdate {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        partial: epsilon_contracts::tool::ToolPartial {
+            content: vec![epsilon_contracts::content::ContentBlock::Text {
+                text: "running 74 tests\ntest result: ok. 74 passed; 0 failed\n".into(),
+            }],
+            details: serde_json::json!({}),
+        },
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionEnd {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        is_error: false,
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionStart {
+        tool_call_id: "c2".into(),
+        tool_name: "write".into(),
+        args: serde_json::json!({ "path": "src/missing.rs" }),
+    });
+    app.ui.apply(&AgentEvent::ToolExecutionEnd {
+        tool_call_id: "c2".into(),
+        tool_name: "write".into(),
+        is_error: true,
+    });
+    shoot("tool-cards", &mut app);
+}
+
+/// **The command palette, open (M312).**
+///
+/// A full-screen overlay that `Ctrl`+`P` opens, with no rendered frame of it anywhere in the
+/// repository — and the desktop side of this milestone found a header drawn 42 pixels off its own
+/// layout the moment it was rendered, so "never looked at" is a finding waiting to happen rather
+/// than a reassurance.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_command_palette() {
+    let (mut app, _a, _r) = test_app();
+    app.ui.push_local_input("type to filter");
+    app.palette_open = true;
+    shoot("palette-open", &mut app);
+}

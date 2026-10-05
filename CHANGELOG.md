@@ -50,6 +50,15 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
   outcome marker, because `✓`/`✗` are Dingbats that egui's bundled font has not got, and no tool
   name at all next to its arguments. The markers are now the terminal front end's own ASCII
   repertoire, so both front ends draw the same outcome the same way (M312).
+- **A tool's output keeps its line breaks in the terminal front end.** A card whose body held two
+  lines was drawn as one row with the newline *stripped* rather than drawn — `running 74
+  teststest result: ok. 74 passed` — while the store was deliberately keeping a multi-line tail the
+  renderer could not draw. One row per line now, with the existing "N more lines" affordance for
+  the rest (M312).
+- **The command palette no longer shares a row with the composer's filter text.** Its top border sat
+  on the composer row, so the text the reader had typed read as part of the box's title. The
+  comment above that code claimed the filter lived in the title bar; it did not, and it now says
+  what is true (M312).
 - **The desktop now answers `/tasks`, `/session` and `/clear`.** It answered three of the
   registry's thirty-seven commands and refused the rest by name, which is honest but thin for a
   window that already had a subagents pane, a session it can name, and a transcript it can empty.
