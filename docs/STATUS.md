@@ -463,6 +463,26 @@ starts, so tool events alone produce an empty transcript. The first frame that l
 was a fixture that did not send what the product sends — the third time this session that reading a
 picture without reading the code would have cost a commit.
 
+### And the dump pipeline itself was producing frames nobody could trust
+
+The long-conversation frame came out **blank white**, twice, for two different reasons — and both
+reasons are the kind this repository keeps a note about:
+
+- `Harness::paint` goes through `full_frame`, which clears `textures_delta` on purpose and takes the
+  **font atlas** with it. Rasterising after that gives a frame full of geometry pointing at glyphs
+  that were never uploaded.
+- `frame_raster::rasterize` builds a **fresh** `egui_wgpu` renderer per call, so it needs the atlas
+  *in the frame it is handed* — and only a frame whose text changed carries it. Every later frame
+  from the same context has none. Measured: `atlas=1` on a context's second frame and `atlas=0` on
+  its third.
+
+`save_frame` now renders twice and **merges the first frame's atlas into the second**. Every frame
+in the dump is now the **steady state** a reader is in, not the first frame after a change — which
+is also why the long conversation shows its **tail**: stick-to-bottom needs a prior frame to be
+stuck from, so the first frame after seeding 120 pairs showed the **top** and read as a broken
+stick. It is not broken: the frame now draws 71 shapes for 240 rows, which is the virtualisation
+claim as a picture rather than as a number.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:

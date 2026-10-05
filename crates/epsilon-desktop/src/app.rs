@@ -7079,6 +7079,33 @@ mod tests {
         );
     }
 
+    /// One painted frame with the harness's input, keeping everything the renderer would be handed.
+    fn paint_once(h: &mut Harness) -> egui::FullOutput {
+        let mut input = h.input.clone();
+        input.events = Vec::new();
+        h.ctx.run_ui(input, |ui| {
+            h.app.paint(ui);
+        })
+    }
+
+    /// `a` with `b`'s textures added on top — so a frame that carries no atlas can still be drawn.
+    ///
+    /// The first frame after a font change is the one carrying the atlas; every later frame from the
+    /// same context has an empty `textures_delta`, and a fresh `egui_wgpu` renderer has nothing to
+    /// draw glyphs from. This is what makes "render twice" work, and it is why every dump in this
+    /// module went blank until it was written down.
+    fn merge_atlas(mut a: egui::TexturesDelta, b: egui::TexturesDelta) -> egui::TexturesDelta {
+        // `TexturesDelta` implements `Drop`, so neither side can be *moved* out of — they are taken
+        // by value and drained through the borrow.
+        for (id, image) in b.set.iter() {
+            if !a.set.contains_key(id) {
+                a.set.insert(*id, image.clone());
+            }
+        }
+        a.free.extend(b.free.iter().copied());
+        a
+    }
+
     /// Rasterise `h`'s next frame and write it as `name`. Returns 1 on success.
     ///
     /// **Not `Harness::full_frame`**, which clears `textures_delta` on purpose and takes the font
@@ -7094,14 +7121,25 @@ mod tests {
         // and is not one. A frame dump that is not the frame the product draws is worse than no
         // dump, so this mirrors the production call.
         h.ctx.set_visuals(h.app.theme.visuals());
-        let mut input = h.input.clone();
-        input.events = Vec::new();
+
+        // **Two passes, and the atlas is carried from the first into the second.** Both facts
+        // are about what a *fresh* rasteriser needs, and both have produced a blank white PNG:
+        //
+        // 1. `rasterize` builds a new `egui_wgpu` renderer every call, so it needs the font
+        //    atlas **in the frame it is given**. Only a frame whose text changed carries it in
+        //    `textures_delta`; every later frame from the same context has none. Hence "render
+        //    twice" — and it is also what makes the second frame the *steady state*, which is the
+        //    state a reader is in (a scroll area's stick-to-bottom needs a prior frame to be
+        //    stuck from, so a long conversation dumped on its first frame shows the top).
+        // 2. `Harness::paint` goes through `full_frame`, which clears `textures_delta` on
+        //    purpose — the same trap, one call away in the harness's API.
+        let first = paint_once(h);
+        let mut second = paint_once(h);
+        second.textures_delta = merge_atlas(first.textures_delta, second.textures_delta);
+
         let clear = h.app.theme.background;
-        let full = h.ctx.run_ui(input, |ui| {
-            h.app.paint(ui);
-        });
-        let size = full.pixels_per_point
-            * full.shapes[..]
+        let size = second.pixels_per_point
+            * second.shapes[..]
                 .iter()
                 .fold(egui::Rect::ZERO, |acc, s| acc.union(s.clip_rect))
                 .size();
@@ -7110,7 +7148,7 @@ mod tests {
             eprintln!("desktop_frames: {name} reported {w}x{h_px}, so nothing was written");
             return 0;
         }
-        let Ok(rgba) = crate::frame_raster::rasterize(&h.ctx, full, clear) else {
+        let Ok(rgba) = crate::frame_raster::rasterize(&h.ctx, second, clear) else {
             eprintln!("desktop_frames: {name} could not be rasterised (no adapter)");
             return 0;
         };
@@ -7415,6 +7453,48 @@ mod tests {
             });
             h.app.seed_transcript(t);
             written += save_frame(&mut h, &dir, "10-tool-calls.png");
+        }
+
+        // 11. **A long conversation — the state the virtualisation claim is about.** M285 measured that
+        //     800 rich rows cost only the rows that are drawn, and every test since has been a
+        //     *number*; no frame has ever shown what a long transcript actually looks like, which
+        //     is where a scroll offset that is a row too far, a sticky-to-bottom that does not
+        //     stick, or a composer that has been pushed off the pane would show.
+        {
+            use epsilon_contracts::agent_event::AgentEvent;
+            let (ws, _keep) = scratch_workspace("frames-long");
+            let mut h = Harness::new(ws.clone());
+            let mut t = Transcript::new(ws);
+            for i in 0..120 {
+                t.push_user(&format!("question {i}: what does the layout module own?"));
+                t.apply(&AgentEvent::MessageEnd {
+                    message: Box::new(epsilon_contracts::message::Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: format!("m{i}"),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(
+                                "It owns the spatial model: the header, the transcript, the \
+                                 composer and the footer, and it decides what a too-small \
+                                 terminal gives up first.",
+                            )],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    )),
+                });
+            }
+            h.app.seed_transcript(t);
+            // `save_frame` renders twice on purpose, so this is the **steady state**: a scroll
+            // area's stick-to-bottom is "keep it at the bottom *as content grows*", which needs a
+            // prior frame to be stuck from, and the first frame after seeding 120 pairs shows the
+            // **top** of the conversation — indistinguishable from a broken stick. Dumped once,
+            // this frame read as a defect. It is not one: at the tail, the newest exchange is
+            // fully visible above the composer, and 71 shapes are drawn for 240 rows, which is
+            // the virtualisation claim as a picture rather than as a number.
+            written += save_frame(&mut h, &dir, "11-long-conversation.png");
         }
 
         eprintln!(
