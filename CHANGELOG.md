@@ -7,6 +7,17 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Added
 
+- **A high-contrast palette, in both front ends.** `AGENTS.md` asks for high-contrast support and
+  the product had none — while `/theme` advertised one, which a milestone resolved by removing the
+  word and recording the capability as roadmap work. This is the other resolution: `/theme
+  high-contrast`, `--theme high-contrast` and `EPSILON_THEME=high-contrast` all select it, every one
+  of its 21 roles is measured at **7:1 or better on pure black** (WCAG 2.2 SC 1.4.6, AAA) against the
+  4.5:1 the other two palettes hold, and **nothing in it is dimmed** — a role measured at 7:1 and
+  rendered with `DIM` is not a 7:1 role. Secondary text is carried by lightness instead, the
+  semantic hues keep the dark palette's slots so a 16-colour console still tells success from
+  danger, and the desktop paints its own black page. It is deliberately **not** in the bare `/theme`
+  toggle, which stays a dark↔light flip (M312, ADR-030).
+
 - **The desktop renders four states a person can look at.** The window has had one rendered image
   since M305; this adds the counterpart of the terminal front end's frame dump — a permission ask, a
   narrow window, the sessions list and the first run — written to `EPSILON_FRAME_DIR` as PNGs

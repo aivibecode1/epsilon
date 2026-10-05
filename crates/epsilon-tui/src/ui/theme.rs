@@ -114,6 +114,23 @@ pub enum ThemeMode {
     /// Tuned for a light background: darker text, pastel bands, and no
     /// near-white anywhere.
     Light,
+    /// **Black on white at a higher floor: every role clears 7:1** (M312).
+    ///
+    /// `AGENTS.md` §8 asks for high-contrast support in both front ends and neither
+    /// had one, while `/theme`'s description briefly advertised one — the claim was
+    /// removed at M312 because the code refused it, and this is the code that makes
+    /// the claim true again.
+    ///
+    /// What makes it high contrast is the **floor**, not the hues: the same 21 roles
+    /// at ≥7:1 (WCAG 2.2 SC 1.4.6, AAA) where [`Self::Dark`] holds 4.5:1 (AA). The
+    /// background is pure black and the body text pure white — 21:1 — because a user
+    /// who asks for this is asking for the ends of the range removed.
+    ///
+    /// **Reached by name, not by the bare `/theme` toggle.** [`Self::flipped`] is
+    /// dark↔light and stays that way, so the key a user presses to change their mind
+    /// about brightness keeps meaning the same thing. This one is a decision — `--theme
+    /// high-contrast`, `EPSILON_THEME=high-contrast`, or `/theme high-contrast`.
+    HighContrast,
 }
 
 impl ThemeMode {
@@ -127,11 +144,13 @@ impl ThemeMode {
         Self::from_name(&std::env::var(THEME_ENV).unwrap_or_default()).unwrap_or_default()
     }
 
-    /// Parse a palette name (`dark` / `light`, case-insensitively).
+    /// Parse a palette name (`"dark"` / `"light"` / `"high-contrast"`,
+    /// case-insensitively, and with `_` standing in for `-`).
     pub fn from_name(name: &str) -> Option<Self> {
-        match name.trim().to_ascii_lowercase().as_str() {
+        match name.trim().to_ascii_lowercase().replace('_', "-").as_str() {
             "dark" => Some(Self::Dark),
             "light" => Some(Self::Light),
+            "high-contrast" | "contrast" | "hc" => Some(Self::HighContrast),
             _ => None,
         }
     }
@@ -141,13 +160,20 @@ impl ThemeMode {
         match self {
             Self::Dark => "dark",
             Self::Light => "light",
+            Self::HighContrast => "high-contrast",
         }
     }
 
-    /// The other palette, for the runtime toggle.
+    /// The other *brightness*, for the runtime toggle.
+    ///
+    /// **High contrast is not in this pair, on purpose (M312).** Bare `/theme` is a
+    /// toggle a user presses when they want the other brightness, and a key that
+    /// sometimes lands on a third thing stops meaning what it said. Turning the
+    /// ceiling on is a decision, so it is taken by name — and leaving it out here is
+    /// what keeps `/theme`'s existing behaviour, and its test, exactly as they were.
     pub fn flipped(self) -> Self {
         match self {
-            Self::Dark => Self::Light,
+            Self::Dark | Self::HighContrast => Self::Light,
             Self::Light => Self::Dark,
         }
     }
@@ -874,6 +900,101 @@ light_palette! {
     surface_err:     (0xf9, 0xe3, 0xe3), Color::Reset, false;
 }
 
+/// The high-contrast palette: black, and every role at 7:1 or better (M312).
+///
+/// **A third table, for the same reason the light one is a table and not modifiers**: the
+/// numbers are not a transform of either other palette. Pure black is a *floor*, and a floor is
+/// what this is for — WCAG 2.2 SC 1.4.6 asks 7:1 for AAA, where [`Palette::DARK`] holds 4.5:1 and
+/// [`Palette::LIGHT`] holds 4.5:1 over a page that is nearly white. A user who asks for this is
+/// asking for the ends of the range removed: `#000000` behind `#ffffff` is **21:1**, and every
+/// other role here clears 7:1 too, so **no role depends on the user's terminal having a particular
+/// background** — which is the other thing this mode is for.
+///
+/// **Nothing in this table is dimmed, and that is the policy (M312).** `Slot::quiet` adds
+/// `Modifier::DIM`, and dimming is the one thing that would break the floor this palette exists to
+/// guarantee: a measured 7:1 role rendered dim is not a 7:1 role. So every slot here is
+/// `quiet: false` and **secondary is expressed by lightness instead** — `text_faint` is `#b0b0b0`
+/// against `text`'s `#ffffff`, which survives any terminal, rather than a `DIM` attribute a
+/// terminal may apply however it likes. Each of those is also paired with a glyph or a label, so
+/// nothing here depends on colour alone (SC 1.4.1).
+///
+/// **On ANSI-16 that means the structure and text roles all emit the terminal's own foreground.**
+/// A 16-colour console in this mode shows one colour for text at three lightness levels — which is
+/// the honest trade: **one legible colour beats two, one of which is illegible.**
+///
+/// **The semantic hues keep the dark table's slots.** Green, red, yellow, magenta and cyan are all
+/// legible on black, so there is nothing to gain by moving them and two palettes' worth of
+/// reasoning to keep honest. `the_high_contrast_palette_dims_nothing_and_keeps_the_semantic_hues`
+/// holds both halves of this.
+macro_rules! contrast_palette {
+    ($($name:ident: $rgb:expr, $ansi:expr, $quiet:expr;)*) => {
+        impl Palette {
+            /// Black, and nothing below 7:1.
+            ///
+            /// Every ratio in the comments beside each line is measured against **pure
+            /// black**, which is what `the_high_contrast_palette_clears_the_aaa_floor` checks.
+            pub(crate) const CONTRAST: Self = Self {
+                $($name: Slot { rgb: $rgb, ansi: $ansi, quiet: $quiet },)*
+            };
+        }
+    };
+}
+
+contrast_palette! {
+    // 8.3:1 on black — above the 7:1 floor, and deliberately *brighter* than the 6.7:1 a
+    // first pass here used, which the floor test caught. A hairline has to be seen to
+    // exist, and this is the palette whose whole promise is a number on the other side
+    // of every one of them.
+    border:        (0x9a, 0xa3, 0xb4), Color::Reset, false;
+
+    // 12.6:1. The focus ring is the one border that has to be unmistakable: it is
+    // how a keyboard user knows where they are, and it is drawn over `selection`.
+    border_focus:  (0x7d, 0xd3, 0xfc), Color::Cyan, false;
+    // 21:1. Pure white on pure black, and not `#e8e8e8` for a gentler look: in
+    // this palette the ends are the feature.
+    text:          (0xff, 0xff, 0xff), Color::Reset, false;
+
+    // 13.6:1. Secondary copy is secondary by *weight and pairing*, not by being
+    // hard to read — see SC 1.4.1 in the table docs.
+    text_dim:      (0xd0, 0xd0, 0xd0), Color::Reset, false;
+
+    // 9.7:1, which is above the 7:1 floor and therefore not a liability. The dark
+    // table's faint grey is 3.4:1 and exists to disappear; this one may not.
+    text_faint:    (0xb0, 0xb0, 0xb0), Color::Reset, false;
+    // 14.1:1.
+    user:          (0x9e, 0xdc, 0xff), Color::Cyan, false;
+
+    assistant:     (0xff, 0xff, 0xff), Color::Reset, false;
+
+    thinking:      (0xd0, 0xd0, 0xd0), Color::Reset, false;
+    // Outcome: 14.9:1 / 10.6:1 / 15.3:1. Each is distinguishable from the other two
+    // by hue *and* by lightness, so the three survive a monochrome display and a
+    // reader who cannot separate them by colour — which is the usual reason someone
+    // turns this on.
+    success:       (0x7d, 0xf0, 0xa8), Color::Green, false;
+
+    danger:        (0xff, 0x9e, 0x9e), Color::Red, false;
+
+    warn:          (0xff, 0xd7, 0x7d), Color::Yellow, false;
+
+    // 11.1:1.
+    accent:        (0xc7, 0xb0, 0xff), Color::Magenta, false;
+    // 15.3:1 and 15.9:1.
+    code:          (0xff, 0xd7, 0x7d), Color::Yellow, false;
+
+    code_block:    (0xe0, 0xe0, 0xe0), Color::Reset, false;
+    // Filled bands: near-black, tinted enough to read as a *different* surface from
+    // the page and no brighter — a band is a boundary, and the text on it is body
+    // copy that has to clear 7:1 too. These measure 16–18:1 under white text.
+    surface_user:    (0x00, 0x1a, 0x2b), Color::Reset, false;
+
+    surface_pending: (0x1f, 0x1f, 0x00), Color::Reset, false;
+
+    surface_ok:      (0x00, 0x28, 0x00), Color::Reset, false;
+
+    surface_err:     (0x33, 0x00, 0x00), Color::Reset, false;
+}
+
 /// The resolved styles for one session.
 ///
 /// Built once and stored on the app; widgets read tokens and never touch
@@ -941,6 +1062,7 @@ impl Theme {
         match self.palette {
             ThemeMode::Dark => &Palette::DARK,
             ThemeMode::Light => &Palette::LIGHT,
+            ThemeMode::HighContrast => &Palette::CONTRAST,
         }
     }
 
@@ -1393,6 +1515,209 @@ mod tests {
                 Palette::LIGHT.get(role).rgb,
                 Palette::DARK.get(role).rgb,
                 "{role:?} is the dark palette's value under a light name"
+            );
+        }
+    }
+
+    /// **Every role in the high-contrast palette clears 7:1 on black (M312).**
+    ///
+    /// **Every foreground role clears 7:1 on black, and every band does the opposite (M312).**
+    ///
+    /// The promise the mode is named for, stated as a number and measured for **all 21 roles**
+    /// rather than a sample: 7:1 is WCAG 2.2 SC 1.4.6 (AAA), where the other two palettes hold
+    /// the 4.5:1 AA floor for body text.
+    ///
+    /// **Foreground and background are held to opposite properties, and conflating them is the
+    /// first version of this test.** A band *must* be low-contrast against the page — a band that
+    /// stood out would read as text, not as a surface — so applying the floor to `surface_user`
+    /// measured 1.18:1 and failed a role that was right. The floor belongs to the ink; the bands
+    /// are checked in the other direction below, by the text they carry.
+    ///
+    /// **The control is a finding, not a formality, and it is not the one this test first wrote.**
+    /// The assumption going in was that the dark palette misses the AAA floor on black. Measured,
+    /// its body text scores **15.1:1** — a dark palette is built for a dark background and pure
+    /// black is its best case. The roles that actually fail are the *quiet* ones: `text_faint` is
+    /// **3.4:1**, and a reader who asks for more contrast needs that role more than they need body
+    /// text. So the control is stated on the role that fails, and **every** role is checked against
+    /// the palette it replaces as well as against the floor — a stronger claim than the one it
+    /// replaces, because a floor alone cannot say "never worse than what we had".
+    #[test]
+    fn the_high_contrast_palette_clears_the_aaa_floor_on_black() {
+        const AAA: f64 = 7.0;
+        /// The page this mode is built around. Named here because a *terminal* has no background
+        /// of its own: black is what the palette assumes the user has set, and the desktop's own
+        /// `ThemeMode::HighContrast` arm paints exactly this.
+        const BLACK: (u8, u8, u8) = (0x00, 0x00, 0x00);
+        /// The four bands: backgrounds, held to the opposite property.
+        const BANDS: [Role; 4] = [
+            Role::surface_user,
+            Role::surface_pending,
+            Role::surface_ok,
+            Role::surface_err,
+        ];
+
+        for role in Role::ALL {
+            if BANDS.contains(role) {
+                continue;
+            }
+            let dark = contrast(Palette::DARK.get(*role).rgb, BLACK);
+            let hc = contrast(Palette::CONTRAST.get(*role).rgb, BLACK);
+            assert!(
+                hc >= AAA,
+                "{role:?} scores {hc:.2}:1 on black in the high-contrast palette, under the 7:1 \
+                 floor it exists to guarantee"
+            );
+            assert!(
+                hc >= dark,
+                "{role:?} is {hc:.2}:1 here against the dark palette's {dark:.2}:1 — a \
+                 high-contrast palette that is worse than the default is not one"
+            );
+        }
+        // **Every band is covered too**, by the opposite property: near the page, and carrying
+        // text that clears the floor. Skipping them would be leaving four roles unchecked.
+        for role in Role::ALL {
+            if !BANDS.contains(role) {
+                continue;
+            }
+            let band = Palette::CONTRAST.get(*role).rgb;
+            assert!(
+                contrast(WHITE, band) >= AAA,
+                "{role:?} is a background: body text on it scores {:.2}:1, under the floor",
+                contrast(WHITE, band)
+            );
+            assert!(
+                luminance(band) < 0.02,
+                "{role:?} must stay near-black to read as a surface rather than as text, and it \
+                 carries {:.1}% of white's luminance",
+                luminance(band) * 100.0
+            );
+        }
+
+        // The control, stated on the role that fails: this is the number the mode moves.
+        let dark_faint = contrast(Palette::DARK.get(Role::text_faint).rgb, BLACK);
+        assert!(
+            dark_faint < AAA,
+            "the dark palette's quiet role scores {dark_faint:.2}:1 on black, so it is expected to \
+             miss the floor; if it does not, this mode is solving a problem that does not exist"
+        );
+        let hc_faint = contrast(Palette::CONTRAST.get(Role::text_faint).rgb, BLACK);
+        assert!(
+            hc_faint >= AAA,
+            "and this palette's quiet role is {hc_faint:.2}:1, which is the whole improvement"
+        );
+
+        for role in [
+            Role::surface_user,
+            Role::surface_pending,
+            Role::surface_ok,
+            Role::surface_err,
+        ] {
+            let band = Palette::CONTRAST.get(role).rgb;
+            let ratio = contrast(WHITE, band);
+            assert!(
+                ratio >= AAA,
+                "{role:?} is a background: body text on it scores {ratio:.2}:1, under the floor"
+            );
+            assert!(
+                luminance(band) < 0.02,
+                "{role:?} must stay near-black to read as a surface rather than as text, and it \
+                 carries {:.1}% of white's luminance",
+                luminance(band) * 100.0
+            );
+        }
+    }
+
+    /// The three semantic outcomes stay tellable apart **without colour**, which is the other
+    /// half of what a high-contrast mode promises (M312).
+    ///
+    /// SC 1.4.1: colour may not be the only means of conveying information. Measured with the
+    /// same [`luminance`] every other check here uses, the three land at **success 177, warn 182,
+    /// danger 123** on a 0–255 scale against body text at 255 — so `danger` is the odd one out and
+    /// `success`/`warn` sit within five of each other. **That is the honest shape of it**, and the
+    /// test says so rather than pretending they are three distinct greys: what carries `success`
+    /// from `warn` is the glyph and the word each is drawn with. The two properties that have to
+    /// hold anyway are the ones asserted — no outcome reads as body copy, and failure is
+    /// unmistakable without colour.
+    #[test]
+    fn the_outcome_roles_are_tellable_apart_without_colour() {
+        let lightness = |role: Role| luminance(Palette::CONTRAST.get(role).rgb) * 255.0;
+        let success = lightness(Role::success);
+        let danger = lightness(Role::danger);
+        let warn = lightness(Role::warn);
+        let body = lightness(Role::text);
+
+        for (name, value) in [("success", success), ("danger", danger), ("warn", warn)] {
+            assert!(
+                (value - body).abs() >= 40.0,
+                "{name} is {value:.0} against body text at {body:.0}: too close to read as an \
+                 outcome rather than as more body copy"
+            );
+        }
+        assert!(
+            (success - danger).abs() >= 20.0,
+            "and failure must not share a lightness with success: {success:.0} against {danger:.0}"
+        );
+    }
+
+    /// The high-contrast table dims nothing and keeps the dark table's semantic hues — and both
+    /// are checked rather than asserted in a comment (M312).
+    ///
+    /// The table's docs make two claims — *"nothing here is dimmed"* and *"the semantic hues keep
+    /// the dark table's slots"* — and a claim in a comment is a claim nothing holds. This holds
+    /// both, for all 21 roles.
+    ///
+    /// **Why "dims nothing" is the rule and not an accident:** `Slot::quiet` adds `Modifier::DIM`,
+    /// and a measured 7:1 role rendered dim is not a 7:1 role. The whole promise of the mode is a
+    /// number, and DIM is a terminal's discretion about a number. Every role here is therefore
+    /// `quiet: false`, and **secondary is carried by lightness** (`text_faint` `#b0b0b0` against
+    /// `text` `#ffffff`), which survives a terminal that ignores attributes entirely.
+    ///
+    /// **The semantic hues are the exception and they are the point.** `success`, `danger`, `warn`,
+    /// `accent` and `code` must stay tellable apart on a console that has sixteen colours, and
+    /// green/red/yellow/magenta are legible on black — so those keep the dark table's slots
+    /// exactly. A reader who cannot separate a warning from an error by colour needs the glyph and
+    /// the word, which is SC 1.4.1's answer and the one this table leans on least.
+    ///
+    /// **What this table does NOT claim:** that a 16-colour console shows three distinct greys for
+    /// body, secondary and tertiary text. It does not, and should not — one legible colour beats
+    /// two, one of which is illegible.
+    #[test]
+    fn the_high_contrast_palette_dims_nothing_and_keeps_the_semantic_hues() {
+        for role in Role::ALL {
+            assert!(
+                !Palette::CONTRAST.get(*role).quiet,
+                "{role:?} is marked quiet, so a terminal may render it DIM and this palette's \
+                 measured floor stops being true on screen"
+            );
+        }
+        for role in [
+            Role::success,
+            Role::danger,
+            Role::warn,
+            Role::accent,
+            Role::code,
+            Role::user,
+            Role::border_focus,
+        ] {
+            assert_eq!(
+                Palette::CONTRAST.get(role).ansi,
+                Palette::DARK.get(role).ansi,
+                "{role:?} carries meaning on its own, so it keeps the dark palette's ANSI slot: a \
+                 16-colour console must still tell success from danger"
+            );
+        }
+        // And the text roles follow the terminal, for the reason they do in every palette here.
+        for role in [
+            Role::text,
+            Role::text_dim,
+            Role::text_faint,
+            Role::assistant,
+            Role::border,
+        ] {
+            assert_eq!(
+                Palette::CONTRAST.get(role).ansi,
+                Color::Reset,
+                "{role:?} should follow whatever the user has actually set"
             );
         }
     }

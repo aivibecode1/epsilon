@@ -2411,3 +2411,62 @@ high-contrast palette that does not exist yet, so wiring the verb now would repe
 
 ---
 
+---
+
+## ADR-030: High contrast is a third palette, chosen by name, and it dims nothing
+
+**Status: accepted; implemented (M312).**
+
+**Context.** `AGENTS.md` §8 asks for **OS dark/light and high-contrast support** in both front ends.
+The product had two palettes and no third. Worse, `/theme`'s description said
+`switch palette: dark, light, high-contrast` while `ThemeMode` had two variants — so
+`/theme high-contrast` answered **"unknown palette"**. A milestone removed the word to stop the lie
+and recorded the capability as roadmap work.
+
+**That was the right call at the time and the wrong place to stop.** The requirement is real, the
+description was already right, and the fix that keeps the promise is the code rather than the
+sentence.
+
+**Decision.**
+
+1. **A third palette, `ThemeMode::HighContrast`, in the terminal's table — so the desktop inherits
+   it.** `IdeTheme::from(ThemeMode)` already adapts a terminal palette, and the desktop is the front
+   end that has to *paint* the page. One table, two front ends, and the shared-tokens rule in
+   `AGENTS.md` §8 honoured rather than worked around.
+2. **The claim is a number, and the number is 7:1 (WCAG 2.2 SC 1.4.6, AAA) on pure black** — where
+   the other two palettes hold 4.5:1 (AA). Measured for **all 21 roles**, not sampled, and every
+   role is also checked against the palette it replaces, so "never worse than the default" is part
+   of the promise rather than an afterthought.
+3. **Bands are backgrounds and are held to the opposite property.** `surface_*` must stay near-black
+   or they read as text; what they are checked for is the **text they carry**. The first version of
+   the test applied the foreground floor to them and failed a role that was right.
+4. **Nothing in the palette is dimmed.** `Slot::quiet` adds `Modifier::DIM`, and a measured 7:1 role
+   rendered dim is not a 7:1 role — the mode's whole promise is a number, and `DIM` is a terminal's
+   discretion about a number. Secondary roles are carried by **lightness** instead (`text_faint`
+   `#b0b0b0` against `text` `#ffffff`), which survives a terminal that ignores attributes. The
+   **semantic hues keep the dark table's slots**, so a 16-colour console still tells success from
+   danger.
+5. **Reached by name, not by the bare `/theme` toggle.** `flipped()` stays dark↔light. A key a user
+   presses to change their mind about brightness should not sometimes land on a third thing, and
+   turning the ceiling on is a decision rather than a preference.
+
+**The control was a finding, and not the one expected.** The assumption going in was "the dark
+palette misses the AAA floor on black, so this fixes it". Measured, the dark palette's body text is
+**15.1:1 on black** — a dark palette is built for a dark background and pure black is its best case.
+The roles that actually fail are the quiet ones: `text_faint` is **3.4:1**. That is a better
+statement of what the mode is for than the one it replaced, and it is why the test checks *every*
+role against both the floor and the palette it supersedes.
+
+**Consequences.** On a 16-colour console this mode shows **one colour** for body, secondary and
+tertiary text, because all three are `Color::Reset` and only lightness separates them — which a
+terminal may not honour. That is the honest trade and it is stated in the table's docs and in the
+test: **one legible colour beats two, one of which is illegible.** In a 24-bit window, where the
+mode paints its own black page, all three are distinct.
+
+**Alternatives rejected.** *Detect the OS high-contrast setting* — egui exposes no hook, winit's
+system-theme signal is light/dark only, and this workspace forbids `unsafe`; a name the user sets is
+honest where a detection that cannot see is not. *Make it a modifier over the dark palette* — the
+light table's own docs reject that reasoning for the same reason: the numbers are not a transform of
+each other. *Put high contrast in the bare `/theme` cycle* — see 5.
+
+---

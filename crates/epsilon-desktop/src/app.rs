@@ -7497,6 +7497,25 @@ mod tests {
             written += save_frame(&mut h, &dir, "11-long-conversation.png");
         }
 
+        // 12. **The high-contrast palette — the one mode that paints its own page (M312).**
+        //     `AGENTS.md` §8 asks for high-contrast support and the window had none; this is the
+        //     only frame that can show it, because a terminal has no background to show and a
+        //     window does. The numbers are held by tests in the terminal's theme; what a frame
+        //     adds is whether the whole window reads as one system rather than a page with some
+        //     black on it.
+        {
+            let (ws, _keep) = scratch_workspace("frames-contrast");
+            let mut h = Harness::new(ws.clone());
+            h.app.theme =
+                crate::theme::IdeTheme::from(epsilon_tui::ui::theme::ThemeMode::HighContrast);
+            let mut t = Transcript::new(ws);
+            t.push_user("what does the contrast look like here?");
+            t.push_notice("Pure white on black: 21:1, and every role clears 7:1.");
+            t.push_notice("failed gate: cargo test -p epsilon-session");
+            h.app.seed_transcript(t);
+            written += save_frame(&mut h, &dir, "12-high-contrast.png");
+        }
+
         eprintln!(
             "desktop_frames: wrote {written} frame(s) to {}",
             dir.display()

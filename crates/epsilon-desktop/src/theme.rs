@@ -223,6 +223,22 @@ impl IdeTheme {
                 Color32::from_rgb(0xDD, 0xE3, 0xEC),
                 Color32::from_rgb(0xB4, 0xCB, 0xEC),
             ),
+            // **Pure black, and a panel that is nearly the same black (M312).** The roles come
+            // from the terminal's high-contrast table and already clear 7:1 against this; what
+            // only the desktop has to supply is the *page* they are measured against, and the
+            // whole promise of the mode is that the page is the darkest it can be.
+            //
+            // The panel is `#0a0a0a` rather than black so the sidebar is still *a* surface — a
+            // pane that is indistinguishable from the page is the failure
+            // `separated_from_background` exists to prevent, and at 0.02:1 a panel on black
+            // would be exactly that. The selection roles are the brightest blues available so the
+            // cursor and the focus ring stay visible on a background that gives nothing away.
+            ThemeMode::HighContrast => (
+                Color32::BLACK,
+                Color32::from_rgb(0x0A, 0x0A, 0x0A),
+                Color32::from_rgb(0x00, 0x33, 0x66),
+                Color32::from_rgb(0x00, 0x66, 0xCC),
+            ),
         };
         Self {
             palette,
@@ -346,8 +362,13 @@ impl IdeTheme {
     /// function rather than a per-widget mapping because egui exposes no other
     /// hook, and it is here rather than in `app.rs` so a second window cannot
     /// quietly get a different chrome.
+    /// **High contrast is dark, and the distinction is load-bearing (M312).** egui only
+    /// offers a light and a dark `Visuals`, and this palette is a *dark* one with a
+    /// higher floor — mapping it onto `Visuals::light()` would put a light widget
+    /// theme's own greys on top of a black page and undo the palette in the one place
+    /// the window cannot control.
     pub fn visuals(&self) -> Visuals {
-        let dark = matches!(self.palette, ThemeMode::Dark);
+        let dark = matches!(self.palette, ThemeMode::Dark | ThemeMode::HighContrast);
         let mut v = if dark {
             Visuals::dark()
         } else {

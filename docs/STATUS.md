@@ -484,6 +484,43 @@ stuck from, so the first frame after seeding 120 pairs showed the **top** and re
 stick. It is not broken: the frame now draws 71 shapes for 240 rows, which is the virtualisation
 claim as a picture rather than as a number.
 
+### High contrast, which was a requirement and not a palette
+
+`AGENTS.md` §8 asks for **OS dark/light and high-contrast support**. The product had dark and light;
+the third was roadmap work, recorded the milestone a `/theme` description promised a palette the
+code refused.
+
+**The requirement was real, so the code moved rather than the sentence.** One palette table in the
+terminal — which the desktop inherits, because it is the front end that paints the page — and the
+promise is a number: **7:1 on pure black for all 21 roles** (SC 1.4.6, AAA) where the other two
+palettes hold 4.5:1 (AA). Measured, not asserted; and every role is also checked against the palette
+it replaces, so "never worse than the default" is part of the claim.
+
+**The control was a finding, and not the one expected.** The assumption was that the dark palette
+misses the AAA floor on black, so this fixes it. Measured, its body text is **15.1:1** — a dark
+palette is built for a dark background and pure black is its best case. The roles that fail are the
+**quiet** ones: `text_faint` is **3.4:1**, and that is what a reader asking for more contrast needs.
+It is a better statement of the problem than the one it replaced.
+
+**Two of my own measurements were wrong before the test was right**, and both are recorded where the
+numbers live: the first `border` value scored 6.72:1 (the floor test caught it, and it is now
+8.3:1), and the first separability check used weighted channel bytes instead of the module's
+`luminance()`, so it reported a warning 30 units off. Separability is now measured with the same
+function as every other contrast check, and the numbers in the comments are the numbers the test
+reports.
+
+**One design decision fell out of the floor: nothing in this palette is dimmed.** `Slot::quiet`
+adds `Modifier::DIM`, and a measured 7:1 role rendered dim is not a 7:1 role — so every slot is
+`quiet: false` and secondary is carried by **lightness** instead. On a 16-colour console that means
+body, secondary and tertiary text are **one colour**, which is the honest trade and is stated in
+both the table and the test: one legible colour beats two, one of which is illegible. The semantic
+hues keep their slots, so success and failure are still separable there.
+
+**Reached by name, not by the bare toggle.** `/theme` with no argument stays a dark↔light flip, so a
+key a user presses to change their mind about brightness cannot land on a third thing. Both frames
+exist — `12-high-contrast.png` for the window, which is the only front end that can paint the page,
+and the terminal's `high-contrast` dumps.
+
 ### Driving the real binary found a bug that was not in the binary
 
 The most productive hour of this stretch was spent **using** the TUI rather than reading it:
@@ -1118,10 +1155,11 @@ and [`../audit/evidence/plan024-item7-class-b-rederived.md`](../audit/evidence/p
    **Recorded, not half-fixed**, and `desktop-a11y-probe.ps1` still exits 1 for it. A gate that is
    red for a known finding gets deleted rather than read, which is how this repository lost a check
    before.
-3. **A high-contrast palette.** `AGENTS.md` §8 names it; the product has two palettes. The `/theme`
-   description used to promise it and the code refused it — the description is now honest and the
-   *capability* is still missing. It wants one palette table per front end and **measured** contrast,
-   not asserted.
+3. ~~**A high-contrast palette.**~~ **LANDED (M312, ADR-030).** `AGENTS.md` §8 asks for it, the
+   product did not have it, and `/theme` was advertising one. Third palette in the terminal's table
+   (the desktop inherits it and paints its own black page), every one of 21 roles measured at 7:1 or
+   better, nothing dimmed, reachable by name and **not** by the bare toggle. Both frames are in
+   `audit/evidence/`.
 4. **The transcript is top-anchored**, so a short conversation sits above twenty empty rows with the
    composer far below it. Bottom-anchoring is the chat convention; it is a behaviour-level change to
    a shipped surface and wants its own decision.

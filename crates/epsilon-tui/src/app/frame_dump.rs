@@ -269,6 +269,36 @@ fn frames_tool_cards() {
     shoot("tool-cards", &mut app);
 }
 
+/// **The high-contrast palette, on the drawn frame (M312).**
+///
+/// That palette's claim is a set of numbers, and numbers are what every other check in this
+/// repository reads — which is exactly how a palette can be right in a table and unreadable on a
+/// screen. This draws it.
+///
+/// A terminal has no background of its own, so what the frame can show is the **foreground**
+/// palette: body copy at pure white, the quiet roles legible rather than dimmed, and the outcomes
+/// far apart in lightness. The page is the user's — which is the one thing a frame cannot supply,
+/// and the reason the mode also exists on the desktop, where it paints black itself.
+#[test]
+#[ignore = "a rendering fixture; run with --ignored --nocapture"]
+fn frames_high_contrast() {
+    let (mut app, _a, _r) = test_app();
+    app.theme
+        .set_palette(crate::ui::theme::ThemeMode::HighContrast);
+    app.ui
+        .push_local_input("what does the contrast look like here?");
+    for text in [
+        "Pure white on black: 21:1.",
+        "Quiet roles stay legible - the floor is not negotiable by a DIM attribute.",
+        "failed gate: cargo test -p epsilon-session",
+    ] {
+        app.ui.push_notice(text);
+    }
+    app.input = "and the failed one?".into();
+    app.cursor_chars = app.input.chars().count();
+    shoot("high-contrast", &mut app);
+}
+
 /// **The command palette, open (M312).**
 ///
 /// A full-screen overlay that `Ctrl`+`P` opens, with no rendered frame of it anywhere in the

@@ -213,12 +213,17 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
         value: "/theme ",
         // **The names here are the names the code accepts, and a test enforces it**
         // (`epsilon-tui`, `every_palette_the_description_advertises_is_one_the_product_has`).
-        // This line once said "dark, light, high-contrast": `ThemeMode` has two variants, so
-        // `/theme high-contrast` printed "unknown palette" — a command advertising an option it
+        // This line said "dark, light, high-contrast" while `ThemeMode` had two variants, so
+        // `/theme high-contrast` printed "unknown palette" — a command offering an option it
         // refuses, which is the failure ADR-024 exists to prevent, in the one place a reader is
-        // told what is possible. Adding the third palette is roadmap work, and it lands here
-        // **when it lands**, not before.
-        description: "switch palette: dark, light",
+        // told what is possible. **M312 fixed it the other way round**: `high-contrast` is now a
+        // real palette with every role at 7:1 on black, so the promise is kept rather than
+        // withdrawn.
+        //
+        // Reachable by name and by `--theme`/`EPSILON_THEME`, and **not** by bare `/theme`, which
+        // stays a dark↔light toggle: a key a user presses to change their mind about brightness
+        // should not sometimes land on a third thing.
+        description: "switch palette: dark, light, high-contrast",
     },
     SlashItem {
         value: "/expand",
