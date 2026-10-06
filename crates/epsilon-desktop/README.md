@@ -24,10 +24,11 @@ types that appear as `RunParams` fields, not for behaviour.
 
 | Item | Where |
 |---|---|
-| `run(Options) -> Result<(), String>` — open the window and run | `src/lib.rs:113` |
-| `IdeApp::new` — application state and the frame | `src/app.rs:637` |
-| `IdeSession::start` — compose the agent, then hand it to the window | `src/session.rs:799` |
-| `IdeTheme` — the palette, converted from the terminal's roles | `src/theme.rs:117` |
+| `run(Options) -> Result<(), String>` — open the window and run | `src/lib.rs:118` |
+| `IdeApp::new` — application state and the frame | `src/app.rs:1521` |
+| `IdeSession::start` — compose the agent, then hand it to the window | `src/session.rs:822` |
+| `IdeTheme` — the palette, converted from the terminal's roles | `src/theme.rs:141` |
+| `IdeApp::try_command` — typed slash command, or a refusal by name | `src/commands.rs:111` |
 | the binary's `main` | `src/main.rs:26` |
 
 ## How to run and test it
@@ -50,7 +51,7 @@ Flags are `--session FILE`, `--model ID`, `--light`, `--dark`.
 - `run` returns `Err(String)`, not an `eframe::Error`: the binary adds the "could not open
   the Epsilon window" prefix (`src/main.rs:67`), and a shared function must never exit.
 - The palette is borrowed from `epsilon_tui::ui::theme::Theme` and converted one way, ratatui
-  colour to egui `Color32` (`src/theme.rs:174`). A colour the window needs and the terminal
+  colour to egui `Color32` (`theme.rs::to_color32`). A colour the window needs and the terminal
   lacks is a missing *role*, not a second palette.
 - Tests render into an off-screen `egui::Context` — no window, no GPU — while driving the real
   draw path against a real composed agent (`tests/window.rs:1`).

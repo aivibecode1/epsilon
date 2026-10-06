@@ -22,8 +22,8 @@
 //!   answer from the third case below and is worded differently for that reason;
 //! * **a command the terminal has and the window does not** — it is **refused, by name**.
 //!
-//! That third case is the whole point. A window with four commands is a smaller product; a
-//! window that quietly forwards the other thirty-six to the model is a window that lies.
+//! That third case is the whole point. A window with a handful of commands is a smaller
+//! product; a window that quietly forwards the rest to the model is a window that lies.
 //!
 //! # Why this file holds no list of commands
 //!
@@ -175,7 +175,7 @@ impl IdeApp {
             // ---- everything else is the terminal's, and saying so is the feature ----
             //
             // `other` covers every command outside SUPPORTED, because SUPPORTED and these
-            // arms name the same six commands and
+            // arms name the same commands and
             // `the_window_runs_exactly_the_heads_it_declares_supported` is what holds them
             // to it. A head the window does not have is refused *by name* rather than
             // forwarded to the model: a window that silently swallows a command the
@@ -422,7 +422,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 ///
 /// **This is the only hand-written statement of the window's capability in the tree**, and it
 /// is a declaration rather than an implementation: [`IdeApp::try_command`] holds the arms that
-/// run these six, and `the_window_runs_exactly_the_heads_it_declares_supported` and
+/// run exactly these heads, and `the_window_runs_exactly_the_heads_it_declares_supported` and
 /// `every_head_the_parser_knows_is_answered_or_refused_by_name` are what keep those two
 /// statements of one fact in step. Everything else about a command — which spellings reach it,
 /// what they parse to, what the refusal calls it — is read from the terminal or from the

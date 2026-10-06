@@ -1,8 +1,12 @@
 //! The `epsilon-desktop` binary.
 //!
-//! Everything of substance lives in the library, so that the CLI can offer the
-//! same window behind a flag and a test can drive the same draw path without a
-//! process. This file exists to parse arguments and open the window.
+//! Everything of substance lives in the library, so that a test can drive the same draw path
+//! without a process. This file exists to parse arguments and open the window.
+//!
+//! **The CLI does not offer this window behind a flag**, which an earlier version of this
+//! comment claimed: `epsilon-cli` has no dependency on this crate, and adding one would make
+//! the CLI carry a GUI stack it does not otherwise need. The window has its own binary, and
+//! that is the whole of it.
 
 use std::path::PathBuf;
 

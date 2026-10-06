@@ -741,22 +741,24 @@ const SIDEBAR_TOGGLE_HOTSPOT: &str = "sidebar-toggle";
 
 /// The chord that folds and unfolds the sidebar, as it is written on screen.
 ///
-/// **Why `Ctrl`+`B` and not something invented here.** It is the chord every other IDE
-/// already uses for exactly this — Visual Studio Code, Sublime Text and Atom all bind it to
-/// "toggle the primary side bar" — so a reader arriving at this window has the binding in
-/// their hands before they read it. `AGENTS.md` §2.4 wants one binding declared once; the
-/// registry that would carry it does not exist yet (roadmap item 4), and the desktop's own
-/// key namespace is separate from the terminal's (`docs/STATUS.md`, roadmap item 9), so the
-/// honest thing today is to take the convention rather than to mint a chord this window
-/// alone would answer to.
+/// The window's bindings, read from the user's `keybindings.json` when there is one.
 ///
-/// **Nothing else in this window claims it**, checked rather than assumed: the window binds
-/// `Enter`, `Escape`, `Ctrl`+`P`, `F6`, `Shift`+`F6`, the tree's arrows and `Ctrl`+`+`/`-`/`0`
-/// (`palette_keys`, [`IdeApp::pane_keys`], and the zoom block in [`IdeApp::paint`]). The
-/// terminal binds `ctrl+b` to page-up in its transcript
-/// (`epsilon-tui/src/keybindings.rs`); that is a different application's namespace, and the
-/// two frontends are separate windows.
-const SIDEBAR_TOGGLE_KEY: &str = "ctrl+b";
+/// **Replaces a constant, and that is the point.** This used to be
+/// `const SIDEBAR_TOGGLE_KEY: &str = "ctrl+b"`, hand-written and used in four hint strings,
+/// with the comment above it claiming the terminal bound `ctrl+b` to page-up. **It does not** —
+/// `ctrl+b` is the terminal *composer's* readline back-character, and it is not in the
+/// terminal's table at all. The comment was wrong and the constant was unreachable by a user's
+/// configuration.
+///
+/// Now: `Ctrl`+`B` is the convention every other IDE uses for "toggle the primary side bar" —
+/// VS Code, Sublime and Atom all bind it there — so a reader arriving at this window has the
+/// binding in their hands before they read it, and a reader who wants it elsewhere can now say so.
+fn window_keys() -> crate::keys::KeyBindings {
+    match epsilon_core::config::global_dir() {
+        Some(dir) => crate::keys::KeyBindings::load(&dir),
+        None => crate::keys::KeyBindings::defaults(),
+    }
+}
 
 /// The two glyphs the title bar's toggle draws.
 ///
@@ -877,7 +879,7 @@ impl IdeApp {
     /// had already been taken. Which is the same mistake the tab strip made in M250, one
     /// layer down: a key read after the widget that wanted it has already had it.
     fn palette_keys(&mut self, ctx: &egui::Context) {
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::P)) {
+        if self.keys.take(ctx, "window.palette") {
             // Toggling rather than only opening, because the chord people press twice
             // because it did not seem to work must not need a different one.
             if self.palette.is_some() {
@@ -889,19 +891,20 @@ impl IdeApp {
         let Some(query) = self.palette.as_ref().map(|p| p.query.clone()) else {
             return;
         };
-        let mut closed = false;
+        // **Order matters and is unchanged**: the first chord that is present wins, and each
+        // is a separate table read rather than one `input_mut` closure — because a binding
+        // is resolved by name now, and a name has no fixed order of its own.
+        let closed = self.keys.take(ctx, "window.palette.close");
         let mut submitted = false;
+        if !closed {
+            submitted = self.keys.take(ctx, "window.palette.submit");
+        }
         let mut step: i32 = 0;
-        ctx.input_mut(|i| {
-            closed = i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
-            submitted = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                step += 1;
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                step -= 1;
-            }
-        });
+        if self.keys.take(ctx, "window.palette.next") {
+            step += 1;
+        } else if self.keys.take(ctx, "window.palette.previous") {
+            step -= 1;
+        }
         if closed {
             self.close_palette();
             return;
@@ -1303,8 +1306,101 @@ pub struct IdeApp {
     /// index means something different on every frame — which is the reason
     /// [`crate::workspace::FileTree::toggle`] matches on the path too.
     tree_cursor: Option<String>,
+    /// The path of the **sessions** row the keyboard is on.
+    ///
+    /// **This field exists because the sessions list was a keyboard trap.** The arrows and
+    /// `Enter` were gated on `sidebar == SidebarView::Files`, so `F6` into a Sessions
+    /// sidebar produced a focus ring over a pane where no key did anything — a pane a
+    /// keyboard reader can enter and not leave, which is WCAG 2.1.2 (No Keyboard Trap).
+    /// The list was clickable and nothing else, and every assertion about it in the suite
+    /// was a pointer.
+    ///
+    /// A path, for the same reason [`Self::tree_cursor`] is one: the list is re-read from
+    /// disk on every frame and a session can be deleted between two of them, so an index
+    /// would name a different row than the one it meant.
+    session_cursor: Option<std::path::PathBuf>,
     /// Geometry of the most recent frame, kept for hit-testing and for tests.
     layout: IdeLayout,
+    /// The window's keyboard, read from the shared table
+    /// (`epsilon_contracts::keybind::WINDOW`) and overridable per key.
+    ///
+    /// **This field exists because the window had no keyboard it could name.** Every chord
+    /// was a literal `consume_key` and every on-screen hint was a hand-written string, so
+    /// `keybindings.json` could not touch a single one of them — while the terminal's could.
+    /// `AGENTS.md` §2.4 says one table; this is the half that was missing.
+    keys: crate::keys::KeyBindings,
+    /// What a close request would interrupt, once one has been caught.
+    ///
+    /// **`AGENTS.md` §6: never lose a user's work.** Closing the window used to end the
+    /// process, so a turn in flight was killed and a reader who had not pressed `/clear`
+    /// had no way to know what a durable session file does and does not cover. DSH asks the
+    /// host what a quit would interrupt and treats an unknown answer as "work is running";
+    /// this is the same rule, and `None` here means **no request is pending**, so the
+    /// `Some` arm is the one that has to be written carefully.
+    ///
+    /// **Filled once, at the moment of the request**, and drawn from that snapshot rather
+    /// than re-measured while the dialog is up — a dialog that changed its own warning while
+    /// the reader was deciding would be worse than no dialog.
+    quit_confirm: Option<QuitAsk>,
+}
+
+/// What closing the window right now would interrupt.
+///
+/// **An unknown answer is "work is running".** The reference does the same thing with its
+/// inspection timeout, and the reason is the one in `AGENTS.md` §6: a guard that assumes the
+/// best case is not a guard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuitAsk {
+    /// A turn is in flight. The agent appends durably as it goes, so this is not data loss
+    /// on its own — it is a turn that stops where it is.
+    running: bool,
+    /// Permission asks are parked and unanswered, so **nothing is running** while the
+    /// window is blocked. Quitting here discards the gate, and the tool never ran.
+    pending_approvals: usize,
+    /// A session file with something in it, and whether it has been `/clear`ed in this
+    /// window. The transcript on screen is the only record of a conversation nobody exported.
+    conversation: bool,
+    /// No session at all — the window opened onto nothing, so there is nothing to lose and
+    /// the dialog would be pure friction. Recorded so the "ask anyway?" path is a decision
+    /// rather than a reflex.
+    empty: bool,
+}
+
+impl QuitAsk {
+    /// One sentence, naming what is actually at stake.
+    ///
+    /// **Specific beats alarming.** "Quit?" for a turn that is one tool call from finishing
+    /// teaches a reader to click through it, and then it is not a guard for the case that
+    /// matters.
+    fn sentence(&self) -> String {
+        if self.empty {
+            return "Nothing is in flight. Close the window?".to_string();
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if self.running {
+            parts.push("a turn is in flight and will stop where it is".to_string());
+        }
+        if self.pending_approvals > 0 {
+            parts.push(format!(
+                "{} permission ask{} waiting, and the tool never ran",
+                self.pending_approvals,
+                if self.pending_approvals == 1 {
+                    " is"
+                } else {
+                    "s are"
+                }
+            ));
+        }
+        if self.conversation {
+            parts.push(
+                "this conversation is only on screen until the session is reopened".to_string(),
+            );
+        }
+        if parts.is_empty() {
+            return "Nothing is in flight. Close the window?".to_string();
+        }
+        format!("Closing now: {}.", parts.join("; "))
+    }
 }
 /// Shorten `text` so it fits `points` at `font_size`, marking that it was cut.
 ///
@@ -1609,7 +1705,10 @@ impl IdeApp {
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
             tree_cursor: None,
+            session_cursor: None,
             layout,
+            keys: window_keys(),
+            quit_confirm: None,
         };
         // **Once, here.** A window that opens onto an existing session has to show what
         // that session has cost without waiting for an event to arrive first: a `pump`
@@ -1667,6 +1766,9 @@ impl IdeApp {
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
             tree_cursor: None,
+            session_cursor: None,
+            keys: window_keys(),
+            quit_confirm: None,
             layout: IdeLayout::new(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
                 prefs,
@@ -1730,19 +1832,16 @@ impl IdeApp {
     /// them when `layout.sidebar_visible` is false. A key that is printed and does nothing
     /// is the `AGENTS.md` §2.7 failure in its smallest form.
     fn layout_keys(&mut self, ctx: &egui::Context) {
-        let folded = ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::B));
-        if folded {
+        if self.keys.take(ctx, "window.sidebar.toggle") {
             self.prefs.sidebar_visible = !self.prefs.sidebar_visible;
             self.persist_prefs();
         }
-        // **`NONE` and no shift**, matching the tree's own reads below: `consume_key`
-        // matches modifiers logically, so a `SHIFT` match would also swallow a bare press.
-        let (narrower, wider) = ctx.input_mut(|i| {
-            (
-                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft),
-                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight),
-            )
-        });
+        // **The arrows are named bindings, matched exactly.** `KeyBindings::take` compares
+        // modifiers for equality, so a `Shift+Left` press is not a resize — which is what
+        // `consume_key`'s logical matching would have made of it, and the reason the two
+        // are named separately rather than read as one.
+        let narrower = self.keys.take(ctx, "window.sidebar.narrower");
+        let wider = self.keys.take(ctx, "window.sidebar.wider");
         if (narrower || wider) && self.layout.sidebar_visible {
             let step = if wider { SIDEBAR_STEP } else { -SIDEBAR_STEP };
             self.prefs.sidebar_width =
@@ -1809,11 +1908,14 @@ impl IdeApp {
         // owns every key while it is open — which is also why the status bar stops
         // advertising them while it is.
         self.layout_keys(ctx);
-        // **`Shift` first, and that is not stylistic.** `InputState::consume_key`
-        // matches modifiers *logically* — extra shift and alt are ignored — so a
-        // `NONE` match also swallows `Shift+F6` and cycles forward on a reverse press.
-        let back = ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::F6));
-        let forward = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F6));
+        // **`Shift` first, and that is no longer a workaround.** It used to be needed
+        // because `InputState::consume_key` matches modifiers *logically* — extra shift and
+        // alt are ignored — so a `NONE` match also swallowed `Shift+F6` and cycled forward
+        // on a reverse press. `KeyBindings::take` compares modifiers for **equality**, so the
+        // two ids are genuinely distinct and either order would do. The order is kept because
+        // it costs nothing and because a table is free to change tomorrow.
+        let back = self.keys.take(ctx, "window.focus.previous");
+        let forward = self.keys.take(ctx, "window.focus.next");
         if back || forward {
             let layout = self.layout;
             self.focus = FocusTarget::cycled(self.focus, &layout, if back { -1 } else { 1 });
@@ -1834,32 +1936,50 @@ impl IdeApp {
         if self.focus == FocusTarget::Agent {
             return;
         }
-        // The arrows and `Enter` belong to the **tree**, so they answer only when the
-        // tree is the thing on screen. The sidebar has three views, and a cursor
-        // walking rows the reader cannot see is a keyboard that appears to be busy.
-        let tree_is_here = self.focus == FocusTarget::Sidebar && self.sidebar == SidebarView::Files;
+        // The arrows and `Enter` belong to the **list on screen**, and the sidebar has
+        // three views. A cursor walking rows the reader cannot see is a keyboard that
+        // appears busy — so the gate is *which list*, and each list answers with its own
+        // rows. The Sessions view is here because excluding it made a keyboard trap:
+        // `F6` into that pane produced a focus ring over a list where no key did
+        // anything, which is WCAG 2.1.2.
+        let sidebar_has_keyboard =
+            self.focus == FocusTarget::Sidebar && self.layout.sidebar_visible;
+        let tree_is_here = sidebar_has_keyboard && self.sidebar == SidebarView::Files;
+        let sessions_are_here = sidebar_has_keyboard && self.sidebar == SidebarView::Sessions;
         let mut step = 0i32;
         let mut opened = false;
         // `Escape` is not the tree's: it is the way **out** of a pane whatever that
         // pane is showing, and a region the reader cannot leave is the keyboard trap
         // WCAG 2.1.2 forbids.
-        let mut home = false;
-        ctx.input_mut(|i| home = i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        if tree_is_here && self.layout.sidebar_visible {
-            ctx.input_mut(|i| {
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                    step = 1;
-                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                    step = -1;
-                }
-                opened = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-            });
+        let home = self.keys.take(ctx, "window.pane.leave");
+        if tree_is_here {
+            if self.keys.take(ctx, "window.tree.next") {
+                step = 1;
+            } else if self.keys.take(ctx, "window.tree.previous") {
+                step = -1;
+            }
+            opened = self.keys.take(ctx, "window.tree.open");
         }
         if step != 0 {
             self.move_tree_cursor(step);
         }
         if opened {
             self.open_tree_cursor();
+        }
+        if sessions_are_here {
+            let mut step = 0i32;
+            if self.keys.take(ctx, "window.tree.next") {
+                step = 1;
+            } else if self.keys.take(ctx, "window.tree.previous") {
+                step = -1;
+            }
+            let resume = self.keys.take(ctx, "window.tree.open");
+            if step != 0 {
+                self.move_session_cursor(step);
+            }
+            if resume {
+                self.open_session_cursor();
+            }
         }
         if home {
             // **Consumed here rather than left for the composer.** With nothing else
@@ -1901,6 +2021,77 @@ impl IdeApp {
             Some(i) => (i + step).clamp(0, last),
         };
         self.tree_cursor = Some(visible[next as usize].path.clone());
+    }
+
+    /// Move the sessions cursor by `step` rows.
+    ///
+    /// **The same rule as [`Self::move_tree_cursor`], and it is copied rather than
+    /// shared on purpose.** The tree's version takes a `&str` path out of a *filtered,
+    /// collapsible* list and has to re-find it by value; this one reads a flat list
+    /// straight off disk. The part that matters is the same in both: **arriving takes the
+    /// first row going down and the last going up**, which is what every list a reader
+    /// already uses does, and it is the part that is easy to get wrong by only handling
+    /// the "already on a row" case.
+    fn move_session_cursor(&mut self, step: i32) {
+        let Some(session) = self.session.as_ref() else {
+            self.session_cursor = None;
+            return;
+        };
+        let sessions = session.sessions(&self.opts.workspace);
+        if sessions.is_empty() {
+            self.session_cursor = None;
+            return;
+        }
+        let last = sessions.len() as i32 - 1;
+        let here = self
+            .session_cursor
+            .as_deref()
+            .and_then(|p| sessions.iter().position(|s| s.path == p))
+            .map(|i| i as i32);
+        let next = match here {
+            None if step > 0 => 0,
+            None => last,
+            Some(i) => (i + step).clamp(0, last),
+        };
+        self.session_cursor = Some(sessions[next as usize].path.clone());
+    }
+
+    /// Resume the session under the cursor — the two lines the click path runs.
+    ///
+    /// **The same discipline as [`Self::open_tree_cursor`]: the keyboard must not be a
+    /// second editor.** It calls the same [`Self::switch_session`] the pointer does, so a
+    /// refusal reads the same sentence and lands in the same two places.
+    fn open_session_cursor(&mut self) {
+        let Some(path) = self.session_cursor.clone() else {
+            return;
+        };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        // A cursor left behind by a session deleted since is not a row.
+        if !session
+            .sessions(&self.opts.workspace)
+            .iter()
+            .any(|s| s.path == path)
+        {
+            return;
+        }
+        // **Resuming the session this window is already in is skipped, because the click
+        // path skips it** (`!is_current` in the pane). The comment there says why, and
+        // "clicking the session you are already in is neither an error nor a spinner" is
+        // true of the keyboard too — reopening the same conversation would be a
+        // needless rebuild the reader did not ask for.
+        if session.session_path().as_deref() == Some(path.as_path()) {
+            return;
+        }
+        match self.switch_session(&path) {
+            Ok(restored) => self
+                .transcript
+                .push_notice(&format!("resumed — {restored} message(s)")),
+            Err(reason) => self
+                .transcript
+                .push_notice(&format!("cannot resume that session: {reason}")),
+        }
     }
 
     /// Do what clicking the row under the tree cursor does.
@@ -2546,6 +2737,29 @@ impl IdeApp {
     /// This is the whole of the draw path. [`eframe::App::ui`] is a thin wrapper so a test
     /// can paint into an off-screen `egui::Context` at any size, with no window.
     pub fn paint(&mut self, ui: &mut egui::Ui) -> FrameSummary {
+        let ctx = ui.ctx();
+        // **A close request is caught here, before anything is drawn.** egui flags a close
+        // the *platform* raised (`ViewportInfo::close_requested`) and waits for the frame to
+        // end; `ViewportCommand::CancelClose` is how the application says "not yet". DSH does
+        // the same with its host inspection, and the reason it exists is `AGENTS.md` §6:
+        // **never lose a user's work.** Closing the window used to end the process, so a turn
+        // in flight stopped where it was and a parked permission ask was discarded.
+        //
+        // `close_requested` is a flag egui only ever *reads* — the backend produces it — so
+        // this is also the seam a test can drive, and there is one implementation either way.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.answer_close_request(ctx);
+        }
+        // **The dialog owns Escape while it is up, and it reads it HERE.**
+        //
+        // The composer takes the same chord to clear a draft, and it draws long before the
+        // dialog does — so a read down there would never see the key, and Escape would
+        // silently clear the reader's words instead of dismissing the question. This is the
+        // ordering rule `approve_pending` already follows for the same reason, and the
+        // failure when it is got wrong is invisible: the dialog simply does nothing.
+        if self.quit_confirm.is_some() && self.keys.take(ctx, "window.composer.escape") {
+            self.quit_confirm = None;
+        }
         // **Make the zoom reachable before reading it.** The scale is plumbed everywhere, but
         // plumbing nobody can move is not a feature — it is an unreachable code path wearing a
         // feature's name. `egui::gui_zoom` supplies the clamped step (`zoom_in` / `zoom_out`);
@@ -2555,15 +2769,16 @@ impl IdeApp {
         //
         // **Before** `text_scale` is read below, because this is what sets the factor it returns.
         let ctx = ui.ctx();
-        let zoom = ctx.input_mut(|i| {
-            // `Plus` is the shifted form and `Equals` the unshifted one; a keyboard reports
-            // whichever it has, and a person pressing Ctrl+= means the same thing as Ctrl++.
-            let up = i.consume_key(egui::Modifiers::CTRL, egui::Key::Plus)
-                || i.consume_key(egui::Modifiers::CTRL, egui::Key::Equals);
-            let down = i.consume_key(egui::Modifiers::CTRL, egui::Key::Minus);
-            let reset = i.consume_key(egui::Modifiers::CTRL, egui::Key::Num0);
-            (up, down, reset)
-        });
+        // **Three bindings, read by name.** The shifted and unshifted forms of "zoom in"
+        // are two chords of one id in the shared table — `plus` and `=` — because a
+        // keyboard reports whichever it has and a person pressing `Ctrl`+`=` means the
+        // same thing as `Ctrl`+`Shift`+`=`. Writing both here would put the decision in
+        // this function; the table is where a keybinding lives.
+        let zoom = (
+            self.keys.take(ctx, "window.zoom.in"),
+            self.keys.take(ctx, "window.zoom.out"),
+            self.keys.take(ctx, "window.zoom.reset"),
+        );
         if zoom.0 {
             egui::gui_zoom::zoom_in(ctx);
         }
@@ -2601,7 +2816,7 @@ impl IdeApp {
         // composer consumed both. `approve_pending` existed, was correct, had a test, and
         // **had no caller in the crate**: the window drew a gate it could not open.
         if let Some(s) = self.session.clone() {
-            approve_pending(&s, ui.ctx());
+            approve_pending(&s, &self.keys, ui.ctx());
         }
         // The palette reads Enter and Escape, so it goes before the composer — which takes
         // both unconditionally, to send and to abort.
@@ -2755,17 +2970,29 @@ impl IdeApp {
             // still learn the chord from and says which part of the line was cut.
             let hint = if self.palette.is_none() && l.status.width() >= 420.0 {
                 Some(if self.layout.sidebar_visible {
+                    // **The chord is read from the binding table, not typed here.** A hint
+                    // that hardcodes `ctrl+b` names a key the window only *hopes* is bound;
+                    // a reader who rebinds it must see their own chord or the hint is a lie.
+                    let toggle = self
+                        .keys
+                        .label("window.sidebar.toggle")
+                        .unwrap_or_else(|| "ctrl+b".into());
                     // **Spelled out, and this is not a style preference — it is what the
                     // rendered frame showed.** The first rasterised frame of this window
                     // (`audit/evidence/desktop-frames-2026-10-04/desktop-raster.png`) drew
-                    // the hint as `ctrl+b sidebar  ·  □/□ width`: `←` and `→` are **tofu** in
-                    // egui's proportional face. Nobody had seen the frame, so nothing in the
-                    // repository could know, and every test here asserts on the *string* —
+                    // the hint as `{toggle} sidebar  ·  □/□ width`: `←` and `→` are **tofu**
+                    // in egui's proportional face. Nobody had seen the frame, so nothing in
+                    // the repository could know, and every test here asserts on the *string* —
                     // `hint.contains("left/right")` passes just as happily on a box as on an
                     // arrow. Words cost four characters and cannot be missing from a font.
-                    format!("{SIDEBAR_TOGGLE_KEY} sidebar  ·  left/right width")
+                    format!("{toggle} sidebar  ·  left/right width")
                 } else {
-                    format!("{SIDEBAR_TOGGLE_KEY} sidebar")
+                    format!(
+                        "{} sidebar",
+                        self.keys
+                            .label("window.sidebar.toggle")
+                            .unwrap_or_else(|| "ctrl+b".into())
+                    )
                 })
             } else {
                 None
@@ -2887,6 +3114,18 @@ impl IdeApp {
         // Drawn **last**, so it is on top of every pane rather than behind whichever one
         // happened to be laid out last.
         self.draw_palette(ui, &mut summary, scale);
+        // **The quit dialog is above the palette, not beside it.** A close request arrives
+        // from outside the window — from a button the reader pressed without touching the
+        // application — so it cannot be queued behind whatever the application happens to
+        // have open. A guard that waits its turn behind a palette is a guard that sometimes
+        // does not run.
+        //
+        // It reads the keyboard **here**, after the palette and the composer have had theirs,
+        // so a key that sent a prompt or opened a palette is not also read as "keep the
+        // window open".
+        if self.quit_confirm.is_some() {
+            self.draw_quit_confirm(ui, &mut summary, scale);
+        }
         ui.ctx().set_style_of(theme, base_style);
         summary
     }
@@ -3160,6 +3399,12 @@ impl IdeApp {
         }
         let theme = self.theme;
         let shown = self.prefs.sidebar_visible;
+        // **The chord comes from the table**, so a reader who rebinds it is told their own
+        // chord here and in the status bar, not the one the source happens to carry.
+        let chord = self
+            .keys
+            .label("window.sidebar.toggle")
+            .unwrap_or_else(|| "ctrl+b".into());
         let rect = egui::Rect::from_center_size(
             egui::pos2(title.right() - SIDEBAR_TOGGLE_INSET, title.center().y),
             egui::vec2(SIDEBAR_TOGGLE_W, SIDEBAR_TOGGLE_W),
@@ -3183,7 +3428,7 @@ impl IdeApp {
             // pointer, never a screen reader, which is why `name_node` below carries the
             // chord instead.
             .on_hover_text(format!(
-                "{} ({SIDEBAR_TOGGLE_KEY})",
+                "{} ({chord})",
                 if shown {
                     "Hide sidebar"
                 } else {
@@ -3195,7 +3440,7 @@ impl IdeApp {
         } else {
             "Show sidebar"
         };
-        name_node(&button, &format!("{action} · {SIDEBAR_TOGGLE_KEY}"));
+        name_node(&button, &format!("{action} · {chord}"));
         summary
             .hotspots
             .push((SIDEBAR_TOGGLE_HOTSPOT.into(), button.rect));
@@ -3527,7 +3772,18 @@ impl IdeApp {
         summary.rows.push(("sessions".into(), header));
         for entry in &sessions {
             let is_current = current.as_deref() == Some(entry.path.as_path());
-            let marker = if is_current { "● " } else { "  " };
+            // **Two markers, and they mean different things.** `●` is the session this
+            // window is already in — a fact about the *session*. `▸` is where the
+            // *keyboard* is, which is a fact about the *reader*. Drawing only the first
+            // is what let a keyboard user move a cursor they could not see; drawing only
+            // the second would hide which conversation is open.
+            let on_cursor = self.session_cursor.as_deref() == Some(entry.path.as_path());
+            let marker = match (is_current, on_cursor) {
+                (true, true) => "●▸ ",
+                (true, false) => "●  ",
+                (false, true) => "  ▸ ",
+                (false, false) => "   ",
+            };
             // Name first, timestamp second: the name is what a reader recognises, and
             // the timestamp is what they check afterwards.
             let name = entry
@@ -4356,18 +4612,37 @@ impl IdeApp {
                 if y > rect.bottom() - COMPOSER_H * scale {
                     break;
                 }
+                // **Budgeted, and the summary carries the fitted text, not the raw one.**
+                // This notice stack was the last unbounded string in the window, and
+                // looking at a rendered frame is the only way it shows: a real launch
+                // notice — `no credentials for provider "openrouter" — set
+                // OPENROUTER_API_KEY or run: epsilon auth login openrouter` — ran off
+                // the right edge of the pane and stopped mid-word with **no marker**,
+                // while every test still passed, because they assert on `summary.rows`
+                // and this pushed the *unclipped* text.
+                //
+                // That is the trap this repository has been caught by repeatedly: code
+                // that draws can be deleted while the row it pushed stays. `fit`
+                // appends `…` and the summary records what was actually drawn, so the
+                // two cannot disagree.
+                let shown = fit(notice, rect.width() - 24.0, 12.0 * scale);
                 paint_text(
                     painter,
                     summary,
                     "agent",
                     egui::pos2(rect.left() + 12.0, y),
                     egui::Align2::LEFT_TOP,
-                    notice,
+                    &shown,
                     egui::FontId::proportional(12.0 * scale),
                     theme.dim,
                 );
-                summary.rows.push(("agent".into(), notice.clone()));
                 y += 17.0 * scale;
+                // **The row is recorded here, not by `paint_text`** — which only pushes a
+                // text *size* (`app.rs:1391`). A first version of this fix dropped this
+                // line while replacing it with the fitted text, and the test failed with
+                // an agent pane that had drawn nothing at all: the drawing and the record
+                // are two separate acts, and this one is the record.
+                summary.rows.push(("agent".into(), shown));
             }
         }
         // ---- goal banner ----------------------------------------------------
@@ -4774,6 +5049,200 @@ impl IdeApp {
         clicks
     }
 
+    /// Answer a close request. Returns `true` when the window may close.
+    ///
+    /// **The one place that decision is made**, and it is a function rather than an inline
+    /// check because `ViewportInfo::close_requested` is a flag egui only ever *reads* — the
+    /// platform produces it — so a test cannot raise it through `Context`. Putting the answer
+    /// behind a callable seam is what makes the guard testable **without** giving the test a
+    /// second implementation to pass against.
+    ///
+    /// **Fails closed, twice over.** An answer this code cannot compute is treated as "work
+    /// is running" (see [`QuitAsk`]), and a request that arrives while the dialog is already
+    /// up is cancelled again rather than re-arming — so holding the window's close button does
+    /// not fall through into a close.
+    pub fn answer_close_request(&mut self, ctx: &egui::Context) -> bool {
+        if self.quit_confirm.is_none() {
+            self.quit_confirm = Some(self.inspect_quit());
+        }
+        let _ = ctx;
+        false
+    }
+
+    /// What closing the window right now would interrupt.
+    ///
+    /// **Read once, when the request arrives, and never again while the dialog is up** — a
+    /// warning that changes under the reader is worse than no warning, because the thing it
+    /// said a moment ago is the thing they decided about.
+    ///
+    /// Fails closed: a window with no session attached is the *one* case that reports
+    /// `empty`, and a session whose state cannot be read is not that case.
+    fn inspect_quit(&self) -> QuitAsk {
+        match self.session.as_ref() {
+            None => QuitAsk {
+                running: false,
+                pending_approvals: 0,
+                conversation: false,
+                empty: true,
+            },
+            Some(session) => {
+                let rows = self.transcript.rows().len();
+                QuitAsk {
+                    running: session.running(),
+                    pending_approvals: session.pending_approvals().len(),
+                    // "Something is on screen the reader would want again." The session
+                    // file is durable, so this is not a claim that work is lost — it is the
+                    // claim that `/clear` was not pressed, which is what the reference asks
+                    // about too.
+                    conversation: rows > 0,
+                    empty: false,
+                }
+            }
+        }
+    }
+
+    /// Ask, when there is something to lose. Returns `true` when the reader chose to close.
+    ///
+    /// **The safe answer is the one a stray key gets.** `Enter` and `Escape` both keep the
+    /// window, because a dialog that a reflexive `Enter` dismisses destructively is the
+    /// reflexive-`Enter` case `AGENTS.md` §6 and DSH's `RiskConfirmation` both exist to
+    /// prevent. Quitting still has a keyboard route — the buttons are real egui buttons, so
+    /// `Tab` reaches them and `Space` presses one — and it is deliberately the longer way.
+    fn draw_quit_confirm(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
+        let Some(ask) = self.quit_confirm.clone() else {
+            return;
+        };
+        let theme = self.theme;
+        let screen = ui.ctx().content_rect();
+        let text = ask.sentence();
+        let width = 460.0 * scale;
+        let height = 96.0 * scale;
+        let box_rect = egui::Rect::from_center_size(
+            screen.center(),
+            egui::vec2(width.min(screen.width()), height.min(screen.height())),
+        );
+        // **Painted with the painter, like the palette**, rather than through
+        // `egui::Modal`. The modal is the right widget for an application that owns a
+        // viewport; this window draws its own chrome into whatever `Ui` the host hands it,
+        // and a `Modal` opened from a bare `Context` in a test had nothing to lay out in.
+        // One idiom for every overlay is also the reason the palette's tests can read its
+        // rectangles: a second mechanism would be a second thing that can silently not draw.
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+        // **No scrim, and that is a measured choice rather than a missing nicety.** A
+        // translucent dim over the window was the obvious way to say "the window
+        // underneath is not in charge", and it rendered as a **blank white PNG** from the
+        // offscreen rasteriser — every other screen in the showcase is fine, and only the one
+        // with a blend pass came out empty. A guard whose screen cannot be looked at is a
+        // guard nobody has reviewed, so the scrim goes: the box has a border, a strong title
+        // and a centred position, and those carry the same meaning without a dependency on
+        // how the frame happens to be captured. (`audit/evidence/desktop-frames-2026-10-05-m316/13-quit-guard.png`
+        // is the blank one, kept because a defect found by looking is evidence.)
+
+        // **Painted, not `egui::Label`.** Every other string in this window goes through
+        // `paint_text`, and that is not tidiness: a first version used two wrapping
+        // `Label`s here and the offscreen rasteriser produced a **blank white PNG** for this
+        // screen alone, while the other twelve rendered normally. A screen nobody can look at
+        // is a screen nobody has reviewed, so the dialog uses the same paint path as the rest
+        // of the window — one mechanism rather than two.
+        paint_text(
+            ui.painter(),
+            summary,
+            "agent",
+            box_rect.left_top() + egui::vec2(12.0, 12.0),
+            egui::Align2::LEFT_TOP,
+            "Close this window?".to_string(),
+            egui::FontId::proportional(14.0 * scale),
+            theme.title,
+        );
+        let body_text = fit(&text, box_rect.width() - 24.0, 12.0 * scale);
+        paint_text(
+            ui.painter(),
+            summary,
+            "agent",
+            box_rect.left_top() + egui::vec2(12.0, 34.0 * scale),
+            egui::Align2::LEFT_TOP,
+            body_text.clone(),
+            egui::FontId::proportional(12.0 * scale),
+            theme.text,
+        );
+        // **Named, and named as a dialog.** An unnamed box of strings is a group a reader
+        // arrives at with no idea what it is — the same failure the composer's unnamed
+        // `TextEdit` was, and the reason [`name_region`] exists.
+        let name = format!("Close this window? {text}");
+        name_region(
+            ui,
+            box_rect,
+            "quit-confirm",
+            &name,
+            egui::accesskit::Role::Dialog,
+        );
+        // **One node for the whole dialog, and no node per line.** The painter path builds
+        // no `Response` to name — that is what `paint_text` is — so the lines are carried by
+        // the single `Dialog` region above, which is also what a reader wants: one thing to
+        // arrive at, saying what the window is asking and why.
+        summary
+            .rows
+            .push(("agent".into(), "Close this window?".into()));
+        summary.rows.push(("agent".into(), text.clone()));
+
+        // **Keep working is the first button**, so the leftmost control and the default tab
+        // stop are both the answer that loses nothing.
+        let buttons = egui::Rect::from_min_size(
+            box_rect.left_bottom() + egui::vec2(12.0, -34.0 * scale),
+            egui::vec2(box_rect.width() - 24.0, 24.0 * scale),
+        );
+        // **Painted at absolute positions, not laid out.** This window draws its chrome with
+        // the painter rather than in a `Ui`'s flow — the palette above does the same, and for
+        // the same reason: a `Ui` that lays out children will not put them where the painter
+        // put the box. The buttons are `ui.put` into their own rect, which is both absolute
+        // and a real widget, so they still take focus and still answer the keyboard.
+        let keep_rect = egui::Rect::from_min_size(
+            buttons.left_top(),
+            egui::vec2(buttons.width() * 0.5, buttons.height()),
+        );
+        let quit_rect = egui::Rect::from_min_size(
+            egui::pos2(buttons.left_top().x + buttons.width() * 0.5, buttons.top()),
+            egui::vec2(buttons.width() * 0.5, buttons.height()),
+        );
+        let keep_button = ui
+            .put(
+                keep_rect,
+                egui::Button::new("Keep working").min_size(egui::vec2(120.0, 24.0 * scale)),
+            )
+            .on_hover_text("Stay open. Escape does the same.");
+        let quit_button = ui
+            .put(
+                quit_rect,
+                egui::Button::new("Close anyway").min_size(egui::vec2(120.0, 24.0 * scale)),
+            )
+            .on_hover_text("Stop the turn and close the window.");
+        // **Keep working is the first control**, so the leftmost button and the default tab
+        // stop are both the answer that loses nothing.
+        keep_button.request_focus();
+        let keep = keep_button.clicked();
+        let quit = quit_button.clicked();
+        // Escape is read at the **top of `paint`**, before the composer takes it; see the
+        // note there. Reading it here would find nothing, and the dialog would appear not to
+        // answer the keyboard at all.
+        if keep {
+            self.quit_confirm = None;
+            return;
+        }
+        if quit {
+            self.quit_confirm = None;
+            // **A second close request is the one we mean.** The first was refused; sending
+            // it again with nothing pending is how the application says yes.
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     /// Draw one transcript row, and report a change row the reader clicked.
     ///
     /// **The same function measures and draws** — `measure` says which. That is the whole
@@ -5160,12 +5629,26 @@ impl IdeApp {
         // * Acting on it *after* the text edit is drawn is what makes the draft contain
         //   the words typed on this very frame. Doing it before submits an empty prompt,
         //   which is what the first version did.
-        let sent = ui
-            .ctx()
-            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-        let escaped = ui
-            .ctx()
-            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        //
+        // **`Shift+Enter` is a newline, and no longer needs a hand-written guard to prove it.**
+        //
+        // M314 fixed this by hand: egui's `consume_key` matches modifiers *logically*
+        // (`egui-0.36.2/src/input_state/mod.rs:717-718`), so a plain `Enter` read also
+        // swallowed `Shift+Enter` and the draft was **sent** — the opposite of what this
+        // composer advertises. The fix was a block that scanned the event stream for a
+        // `Shift`+`Enter` and declined to claim it.
+        //
+        // **That block is deleted.** `KeyBindings::take` compares modifiers for *equality*,
+        // so `window.composer.submit` — spelled `enter`, no modifiers — does not match
+        // `Shift+Enter` and does not consume it, which leaves the event in the stream for the
+        // `TextEdit` drawn two lines below to turn into a newline. The general rule replaced
+        // the special case, and the test that proved the special case
+        // (`shift_enter_is_a_newline_in_the_composer_not_a_send`) still holds.
+        //
+        // What the guard taught is kept in `KeyBindings::take`, where it belongs: **a binding
+        // is a choice by a person, so it means one specific set of modifiers.**
+        let sent = self.keys.take(ui.ctx(), "window.composer.submit");
+        let escaped = self.keys.take(ui.ctx(), "window.composer.escape");
         let editor = egui::Rect::from_min_size(
             rect.min,
             egui::vec2(rect.width(), rect.height() - 28.0 * scale),
@@ -5348,14 +5831,24 @@ impl eframe::App for IdeApp {
 /// Split out from [`IdeApp::paint`] because it is the part with a policy — Enter allows,
 /// Escape refuses — and a policy is worth one test that names it rather than one that
 /// pokes at pixels.
-pub fn approve_pending(session: &IdeSession, ctx: &egui::Context) -> Option<(String, bool)> {
+///
+/// **`keys` is a parameter rather than read from the app** because this is a free function and
+/// because the two ids it consults — `window.approval.allow` and `window.approval.deny` — are
+/// **deliberately different ids from the composer's `Enter`/`Escape`.** The same chord answers a
+/// different action depending on which surface holds the keyboard, and which one that is is
+/// decided by the drawing order above, not by the table.
+pub fn approve_pending(
+    session: &IdeSession,
+    keys: &crate::keys::KeyBindings,
+    ctx: &egui::Context,
+) -> Option<(String, bool)> {
     let ask = session.pending_approvals().into_iter().next()?;
-    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+    if keys.take(ctx, "window.approval.allow") {
         let decision = PermissionDecision::AllowOnce;
         let resolved = session.resolve(&ask.request_id, decision);
         return Some((ask.request_id, resolved));
     }
-    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+    if keys.take(ctx, "window.approval.deny") {
         let decision = PermissionDecision::Deny;
         let resolved = session.resolve(&ask.request_id, decision);
         return Some((ask.request_id, resolved));
@@ -6370,6 +6863,174 @@ mod tests {
             "agent" => layout.agent,
             other => panic!("{other} is not a pane this window has"),
         }
+    }
+
+    /// `Shift+Enter` puts a **newline** in the draft, which is what the composer's own
+    /// placeholder promises — `ask anything · enter sends · shift+enter for a new line`.
+    ///
+    /// **Found by reading the promise against the code, not by a failing test.** egui's
+    /// `InputState::consume_key` matches modifiers **logically**, so the composer's
+    /// `consume_key(NONE, Enter)` also claimed `Shift+Enter` and the draft was **sent**.
+    /// The sentence on screen and the behaviour under the hand disagreed, and nothing in
+    /// the suite pressed the chord — every composer test pressed plain `Enter`.
+    ///
+    /// **Driven through the real key path** with a real `Modifiers::SHIFT`, because the
+    /// whole defect lives in which modifiers egui is told about.
+    #[test]
+    fn shift_enter_is_a_newline_in_the_composer_not_a_send() {
+        let (ws, _keep) = scratch_workspace("shift-enter");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        // One frame first: the composer takes its focus with `request_focus`, and egui
+        // honours that on the **next** frame. Pressing on frame one is pressing at a
+        // widget that does not yet hold the keyboard.
+        let _ = h.paint();
+        // **Typed first, on purpose.** If the composer does not hold the keyboard then
+        // this fails on `"a\n"` rather than on the newline, and the reader learns the
+        // problem is focus and not the chord. A test that pressed only `Shift+Enter`
+        // would report the same empty draft for two different reasons.
+        h.type_text("a");
+        let _ = h.paint();
+        assert_eq!(
+            h.app.draft,
+            "a",
+            "the typed character must be in the draft before any key is pressed. \
+             egui focus: {:?}",
+            h.ctx.memory(|m| m.focused())
+        );
+
+        let frame = h.chord(egui::Modifiers::SHIFT, egui::Key::Enter);
+        assert_eq!(
+            h.app.draft,
+            "a\n",
+            "shift+enter must leave a newline in the draft, not send it. \
+             The placeholder promises exactly this.\negui focus: {:?}\nrunning: {:?}\nframe: {}",
+            h.ctx.memory(|m| m.focused()),
+            h.app.session.as_ref().map(|s| s.running()),
+            frame.describe()
+        );
+        assert!(
+            !h.app.session.as_ref().map(|s| s.running()).unwrap_or(false),
+            "and nothing may be sent — this run was not asked for"
+        );
+        // The sentence that promised this is still on screen, and now true. A first
+        // version of this test asserted the draft row carried the terminal's `▸` cursor
+        // marker — which the **terminal** draws and this window never did, so it failed
+        // against a build that had already fixed the defect.
+        assert!(
+            frame
+                .region("composer")
+                .iter()
+                .any(|t| t.contains("shift+enter for a new line")),
+            "the placeholder still promises it, so it must still say it. {}",
+            frame.describe()
+        );
+    }
+
+    /// The **sessions** sidebar answers the keyboard — a list a keyboard reader can enter
+    /// and use.
+    ///
+    /// **It used to be a keyboard trap, and that is the WCAG it breaks.** `pane_keys`
+    /// gated its arrows and `Enter` on `SidebarView::Files`, so `F6` into a Sessions
+    /// sidebar drew a focus ring over a list where no key did anything at all. The list
+    /// was clickable and nothing else, and every assertion about it in the suite was a
+    /// pointer.
+    ///
+    /// Asserted on **the drawn frame**, twice over: that the cursor is *visible* (a
+    /// cursor a reader cannot see is not a cursor), and that `Enter` resumes the row it
+    /// is on. The first assertion is the one a field holding a path could not satisfy.
+    ///
+    /// The walk is a loop rather than a fixed number of presses **because the list is
+    /// newest-first and this window's own session is in it** — one press would land on a
+    /// row chosen by clock time rather than by anything the test states. Walking down
+    /// until the wanted row is under the cursor is what a reader does, and it encodes no
+    /// guess about sort order.
+    #[test]
+    fn the_sessions_sidebar_answers_the_keyboard_and_shows_where_it_is() {
+        let (ws, _keep) = scratch_workspace("sessions-keys");
+
+        // A second, older session with a message in it, so `Enter` has somewhere to go.
+        let older = ws.join("older.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(older.clone(), &ws).expect("a store opens");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m-old".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "a memorable line from last time",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        drop(store);
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        // Walk the focus ring onto the sidebar, the way a reader would. This frame is
+        // also the "before" one, so the assertion below is made on a painted screen
+        // rather than on a field.
+        let before = h.chord(egui::Modifiers::NONE, egui::Key::F6);
+        assert_eq!(
+            h.app.focus,
+            FocusTarget::Sidebar,
+            "one F6 from the agent pane lands on the sidebar"
+        );
+
+        assert!(
+            before
+                .region("sessions")
+                .iter()
+                .any(|t| t.contains("older")),
+            "the stored session must be listed before the keyboard is asked to move.\n{}",
+            before.describe()
+        );
+        assert!(
+            !before.region("sessions").iter().any(|t| t.contains('▸')),
+            "and no cursor exists yet — arriving is what puts one there.\n{}",
+            before.describe()
+        );
+
+        // Walk down until the wanted row is under the keyboard. Bounded, and the bound
+        // is a failure rather than a silent exit.
+        for _ in 0..8 {
+            if h.app.session_cursor.as_deref() == Some(older.as_path()) {
+                break;
+            }
+            let frame = h.chord(egui::Modifiers::NONE, egui::Key::ArrowDown);
+            assert!(
+                frame.region("sessions").iter().any(|t| t.contains('▸')),
+                "the keyboard cursor must be DRAWN, or it is a cursor nobody can see.\n{}",
+                frame.describe()
+            );
+        }
+        assert_eq!(
+            h.app.session_cursor.as_deref(),
+            Some(older.as_path()),
+            "the cursor must be able to reach the row the reader is looking for"
+        );
+
+        // and `Enter` does what clicking that row does.
+        let resumed = h.chord(egui::Modifiers::NONE, egui::Key::Enter);
+        assert!(
+            resumed
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("a memorable line from last time")),
+            "Enter must resume the row the cursor is on, through the same call the click \
+             path uses.\n{}",
+            resumed.describe()
+        );
     }
 
     /// `F6` walks the ring left-to-right across the panes, and `Shift+F6` walks it back.
@@ -7708,6 +8369,24 @@ mod tests {
             written += save_frame(&mut h, &dir, "12-high-contrast.png");
         }
 
+        // 13. The quit guard — **deliberately not rendered here, and the reason is the
+        // finding.**
+        //
+        // Added to this showcase, it produced a **blank white PNG** with three different
+        // dialog bodies (an `egui::Modal`, two wrapping `Label`s, and two `paint_text`
+        // calls all rasterised to the identical 7,059-byte image — so the output did not
+        // depend on the dialog at all), and once the extra priming paint was removed the
+        // whole test process died with `STATUS_STACK_BUFFER_OVERRUN`.
+        //
+        // **A screen that cannot be looked at, and a renderer that crashes on it, are two
+        // findings — and neither is a reason to ship the frame.** The guard itself is tested
+        // through the real draw path (`closing_the_window_asks_before_it_loses_a_turn` and its
+        // three siblings assert the dialog's rows on the frame and that the frame emits no
+        // `ViewportCommand::Close`), and the buttons are real egui widgets, so the keyboard
+        // and pointer routes are covered. What is **not** verified is how it looks, and
+        // `docs/STATUS.md` records that as open rather than letting this comment stand in
+        // for evidence.
+
         eprintln!(
             "desktop_frames: wrote {written} frame(s) to {}",
             dir.display()
@@ -7880,6 +8559,14 @@ mod tests {
                         egui::Pos2::ZERO,
                         egui::vec2(1440.0, 900.0),
                     )),
+                    // **`focused: true`, and it is load-bearing.** `RawInput` defaults it
+                    // to false and egui **drops keyboard events for an unfocused window**
+                    // (`tests/window.rs` says the same about its own harness). This
+                    // harness built the default, so nothing typed into the composer ever
+                    // reached it and no in-crate test could have noticed: the composer's
+                    // `Shift+Enter` promise, and the `Ctrl`+`+` zoom keys, were both
+                    // untestable here rather than unverified because of it.
+                    focused: true,
                     ..Default::default()
                 },
             }
@@ -7890,6 +8577,8 @@ mod tests {
                     egui::Pos2::ZERO,
                     egui::vec2(w, h),
                 )),
+                // Focused for the same reason as `with_session` above.
+                focused: true,
                 ..Default::default()
             };
             let mut app = IdeApp::without_agent(Options::for_workspace(workspace));
@@ -7910,6 +8599,45 @@ mod tests {
             full.textures_delta.clear();
             out
         }
+        /// Raise a close request the way the window's close button does, and report whether
+        /// the application let it through.
+        ///
+        /// **Goes through [`IdeApp::answer_close_request`], the same function the platform
+        /// flag reaches**, because `ViewportInfo::close_requested` is a flag egui only ever
+        /// *reads* — a bare `Context` cannot raise it, and a test that poked the field
+        /// instead would be testing a path no window takes.
+        fn request_close(&mut self) -> bool {
+            self.app.answer_close_request(&self.ctx)
+        }
+
+        /// What the application asked the **window** to do on the last painted frame.
+        ///
+        /// **This is how a test sees that a close was refused.** The application never closes
+        /// a window itself — it sends `ViewportCommand::Close` and lets the window honour it —
+        /// so "did the window close" is a question about the commands the frame emitted, not
+        /// about any field the application holds. Without it, a test asserting the dialog
+        /// appeared would pass against a build that asked and then closed anyway.
+        fn viewport_commands(&mut self) -> Vec<egui::ViewportCommand> {
+            let mut full = self.ctx.run_ui(self.input.clone(), |ui| {
+                let _ = self.app.paint(ui);
+            });
+            full.textures_delta.clear();
+            std::mem::take(
+                &mut full
+                    .viewport_output
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .expect("the root viewport is always present")
+                    .commands,
+            )
+        }
+
+        /// True when the application answered a close request with "yes".
+        fn close_was_accepted(&self, commands: &[egui::ViewportCommand]) -> bool {
+            commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::Close))
+        }
+
         /// The window at `zoom`, with the **same content rect** as it had at 1.0.
         ///
         /// `Context::set_zoom_factor` does two things at the start of the next pass
@@ -8212,6 +8940,187 @@ mod tests {
         }
     }
 
+    /// **Closing the window asks first, and a close request does not close the window.**
+    ///
+    /// `AGENTS.md` §6: never lose a user's work. Closing used to end the process, so a turn
+    /// in flight stopped where it was and a parked permission ask was thrown away — and a
+    /// reader who had not pressed `/clear` had no way to know which of those two had happened.
+    ///
+    /// **Two assertions, because either alone is a test that cannot see the thing.** The
+    /// dialog appearing would pass against a build that asks and then closes anyway; the
+    /// window still being open is a claim about the commands the frame emitted.
+    #[test]
+    fn closing_the_window_asks_before_it_loses_a_turn() {
+        let (ws, _keep) = scratch_workspace("quit-guard");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        // Say something, so the conversation is not empty and the warning is a real one.
+        h.type_text("hello");
+        let _ = h.paint();
+
+        assert!(
+            !h.request_close(),
+            "a close request must be refused while there is something to lose"
+        );
+        let frame = h.paint();
+        assert!(
+            h.app.quit_confirm.is_some(),
+            "and the refusal must be a question, not a silent block.\n{}",
+            frame.describe()
+        );
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Close this window?")),
+            "which must be on screen and named.\n{}",
+            frame.describe()
+        );
+
+        // **The window is still open**, and that is the part that matters.
+        let commands = h.viewport_commands();
+        assert!(
+            !h.close_was_accepted(&commands),
+            "the frame must not ask the window to close. It asked for: {commands:?}"
+        );
+    }
+
+    /// **A second close request does not fall through into a close.**
+    ///
+    /// A guard that can be beaten by holding the window's close button is not a guard, and
+    /// this is the case a reader would find before a test did.
+    #[test]
+    fn a_second_close_request_does_not_fall_through() {
+        let (ws, _keep) = scratch_workspace("quit-guard-2");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        assert!(!h.request_close());
+        let _ = h.paint();
+        assert!(
+            !h.request_close(),
+            "a second request while the dialog is up is still refused"
+        );
+        let frame = h.paint();
+        assert!(
+            h.app.quit_confirm.is_some(),
+            "the dialog stays up rather than re-arming"
+        );
+        let commands = h.viewport_commands();
+        assert!(
+            !h.close_was_accepted(&commands),
+            "and the window is still open after two requests.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// **`Escape` keeps the window, and the dialog goes away.**
+    ///
+    /// **The safe answer is the one a stray key gets**, which is the reflexive-`Enter` case
+    /// `AGENTS.md` §6 and DSH's `RiskConfirmation` both exist to prevent.
+    #[test]
+    fn escape_keeps_the_window_open() {
+        let (ws, _keep) = scratch_workspace("quit-guard-3");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        assert!(!h.request_close());
+        let _ = h.paint();
+        h.press(egui::Key::Escape);
+        let frame = h.paint();
+        assert!(
+            h.app.quit_confirm.is_none(),
+            "escape dismisses the question.\n{}",
+            frame.describe()
+        );
+        let commands = h.viewport_commands();
+        assert!(
+            !h.close_was_accepted(&commands),
+            "and the window is still open"
+        );
+    }
+
+    /// **A window with nothing in flight is not told a turn is running.**
+    ///
+    /// The other arm of the same rule, and the one that keeps the guard usable: a dialog that
+    /// cries wolf for an empty window teaches a reader to click through it, and then it is not
+    /// a guard for the case that matters.
+    #[test]
+    fn an_empty_window_says_so_and_still_asks() {
+        let (dir, _keep) = scratch_workspace("quit-empty");
+        let mut h = Harness::new(dir);
+        assert!(
+            !h.request_close(),
+            "even an empty window is asked about, not closed"
+        );
+        let frame = h.paint();
+        assert!(
+            h.app.quit_confirm.is_some(),
+            "the question is still asked — closing is the reader's decision.\n{}",
+            frame.describe()
+        );
+        assert!(
+            frame
+                .region("agent")
+                .iter()
+                .any(|t| t.contains("Nothing is in flight")),
+            "and it must not invent work to justify itself.\n{}",
+            frame.describe()
+        );
+    }
+    /// **The warning names what is actually at stake.**
+    ///
+    /// **Specific beats alarming.** "Quit?" for a turn one tool call from finishing teaches a
+    /// reader to click through it, and then it is not a guard for the case that matters.
+    #[test]
+    fn the_warning_names_what_is_actually_at_stake() {
+        let ask = QuitAsk {
+            running: true,
+            pending_approvals: 0,
+            conversation: true,
+            empty: false,
+        };
+        let text = ask.sentence();
+        assert!(text.contains("a turn is in flight"), "{text}");
+        assert!(text.contains("only on screen"), "{text}");
+
+        let idle = QuitAsk {
+            running: false,
+            pending_approvals: 0,
+            conversation: false,
+            empty: true,
+        };
+        assert!(
+            idle.sentence().contains("Nothing is in flight"),
+            "an empty window must not be told a turn is running: {}",
+            idle.sentence()
+        );
+    }
+
+    /// **A parked permission ask is named as such**, and it is the case that reads as "nothing
+    /// is happening": the run is blocked on the reader, so `running` is **false**, and a
+    /// warning that only looked at `running` would say there was nothing at stake.
+    #[test]
+    fn a_parked_ask_is_named_as_such() {
+        let ask = QuitAsk {
+            running: false,
+            pending_approvals: 1,
+            conversation: false,
+            empty: false,
+        };
+        let text = ask.sentence();
+        assert!(text.contains("1 permission ask is waiting"), "{text}");
+        assert!(text.contains("the tool never ran"), "{text}");
+
+        let two = QuitAsk {
+            pending_approvals: 2,
+            ..ask
+        };
+        assert!(
+            two.sentence().contains("2 permission asks are waiting"),
+            "pluralisation is a detail a reader notices: {}",
+            two.sentence()
+        );
+    }
+
     /// A workspace on disk with two readable files, removed when the test ends.
     fn scratch_workspace(name: &str) -> (std::path::PathBuf, TempWorkspace) {
         let dir = std::env::temp_dir().join(format!("epsilon-tabs-{name}"));
@@ -8499,6 +9408,53 @@ mod tests {
             agent.contains("resumed 1 entries"),
             "a session that restored entries announced it, and the window is the only surface \
              that can show it.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// A startup notice longer than its pane is **marked as cut**, not clipped.
+    ///
+    /// **Found by looking at a rendered frame**, which is the only way this one shows.
+    /// [`03-sessions.png`] carried the real launch notice — `no credentials for provider
+    /// "openrouter" — set OPENROUTER_API_KEY or run: epsilon auth login openrouter` — and
+    /// it ran past the right edge of the agent pane, stopping mid-word with no `…` at all.
+    /// Every test passed, because they assert on `FrameSummary::rows` and the notice stack
+    /// pushed the **unclipped** text: the drawing could have been deleted and the row would
+    /// still be there.
+    ///
+    /// So the assertion here is deliberately about a notice **too long for the pane**, and
+    /// it is the `…` that matters: a notice that fits must still read whole, and one that
+    /// does not must say so.
+    #[test]
+    fn a_launch_notice_too_long_for_its_pane_is_marked_rather_than_clipped() {
+        let long = "no credentials for provider \"openrouter\" — set OPENROUTER_API_KEY or run: \
+                    epsilon auth login openrouter, which is a deliberately long sentence so \
+                    that it cannot possibly fit the agent pane at 1440 points wide";
+        let (ws, _keep) = scratch_workspace("notice-budget");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        // **Pushed here, not handed to the constructor**, so the test is about the
+        // *drawing* and not about the launch path that would supply this text. The frame
+        // below must therefore contain this sentence and no other notice is relevant.
+        h.app.notices = vec![long.to_string()];
+        let frame = h.paint();
+        let agent = frame.region("agent").join("\n");
+
+        assert!(
+            agent.contains('…'),
+            "a notice that cannot fit must end in the marker, so a reader can tell a cut \
+             sentence from a whole one.\n{}",
+            frame.describe()
+        );
+        assert!(
+            !agent.contains("which is a deliberately long sentence"),
+            "and the text past the budget must not still be reported as drawn — the summary \
+             and the pixels are the same string now.\n{}",
+            frame.describe()
+        );
+        assert!(
+            agent.contains("no credentials for provider"),
+            "the beginning still reads, or the budget ate the sentence instead of cutting it.\n{}",
             frame.describe()
         );
     }
@@ -10624,9 +11580,16 @@ mod tests {
             ),
             "the name reports the width on screen and the keyboard route to it."
         );
+        // **Read from the table, not from the source text.** These are the assertions
+        // that a chord printed on screen is the chord the window acts on, and a test that
+        // compared the two to a hand-written literal would keep passing after someone
+        // renamed the binding.
+        let toggle = crate::keys::KeyBindings::defaults()
+            .label("window.sidebar.toggle")
+            .expect("the window declares a sidebar chord");
         assert_eq!(
             h.node_named("Hide sidebar"),
-            format!("Hide sidebar · {SIDEBAR_TOGGLE_KEY}"),
+            format!("Hide sidebar · {toggle}"),
             "the control says what it does *now* and which key does it, because the glyph \
              reaches neither a reader nor `on_hover_text`."
         );
@@ -10636,7 +11599,7 @@ mod tests {
         h.chord(egui::Modifiers::CTRL, egui::Key::B);
         assert_eq!(
             h.node_named("Show sidebar"),
-            format!("Show sidebar · {SIDEBAR_TOGGLE_KEY}"),
+            format!("Show sidebar · {toggle}"),
             "with the sidebar folded the control now offers to show it."
         );
         // And the handle is gone with it — a node for a control that is not on screen is a
@@ -10660,8 +11623,11 @@ mod tests {
 
         let open = h.paint();
         let hint = open.region("hints").join(" ");
+        let toggle = crate::keys::KeyBindings::defaults()
+            .label("window.sidebar.toggle")
+            .expect("the window declares a sidebar chord");
         assert!(
-            hint.contains(SIDEBAR_TOGGLE_KEY) && hint.contains("left/right"),
+            hint.contains(&toggle) && hint.contains("left/right"),
             "with the sidebar up, both keys are live and both are printed: {hint:?}"
         );
 
@@ -10678,7 +11644,7 @@ mod tests {
         let folded = h.paint();
         let hint = folded.region("hints").join(" ");
         assert!(
-            hint.contains(SIDEBAR_TOGGLE_KEY) && !hint.contains("left/right"),
+            hint.contains(&toggle) && !hint.contains("left/right"),
             "with the sidebar folded there is nothing to resize, so the arrows are not \
              printed: {hint:?}"
         );

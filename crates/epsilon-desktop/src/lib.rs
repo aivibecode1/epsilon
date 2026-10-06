@@ -24,9 +24,15 @@
 //!
 //! | Module | Owns |
 //! |---|---|
-//! | [`theme`] | The palette, adapted from the terminal's semantic roles to egui colors |
+//! | [`app`] | Application state, the frame, and the whole draw path |
+//! | [`session`] | The agent handle, and the event-to-row reducer behind it |
+//! | [`commands`] | Typed-slash-command dispatch, and the wording of a refusal |
+//! | [`workspace`] | File tree, read-only editor, and change review — all painting |
+//! | [`markup`] | Assistant markdown to egui layout jobs, with a parse cache |
+//! | [`diff`] | Snapshot-and-compare for the files a tool touched |
 //! | [`layout`] | Which region sits where, and how the layout degrades as the window shrinks |
-//! | [`app`] | Application state and the frame |
+//! | [`theme`] | The palette, adapted from the terminal's semantic roles to egui colors |
+//! | `frame_raster` | Offscreen rasterisation of a real frame — **test-only**, see below |
 //!
 //! [`ApprovalUi`]: epsilon_core::gate::ApprovalUi
 
@@ -55,6 +61,7 @@ pub mod diff;
 /// module's own doc for why an offscreen path is the one that works on this machine.
 #[cfg(test)]
 mod frame_raster;
+pub mod keys;
 pub mod layout;
 pub mod markup;
 pub mod session;
@@ -63,6 +70,7 @@ pub mod workspace;
 
 pub use app::IdeApp;
 pub use diff::{Change, ChangeWatcher, DiffLine};
+pub use keys::KeyBindings;
 pub use layout::IdeLayout;
 pub use session::{IdeSession, Row, RowKind, Transcript};
 pub use theme::IdeTheme;
