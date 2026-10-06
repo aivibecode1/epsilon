@@ -552,6 +552,30 @@ pub fn env_credential_name_live(provider: &str, env_key: &str) -> Option<String>
     )
 }
 
+/// Whether a stored OAuth credential can never be used for `provider`.
+///
+/// A stored OAuth pair is consumed only through a refresh endpoint
+/// (`providers::refresh_oauth_before_use`, gated on `oauth::refresh_endpoint`)
+/// or a login flow — everywhere else the resolver skips it (OAuth never
+/// resolves to an API key). A pair stored for a provider with neither is dead
+/// configuration that reads as "logged in": the picker warns rather than let
+/// it sit. Stored API keys never trigger this (they always resolve or fall
+/// back), so the warning cannot fire on a working setup. `dir` is injected
+/// for the same reason as above; `None` means no store was readable.
+pub fn oauth_credential_unused(dir: Option<&std::path::Path>, provider: &str) -> bool {
+    let Some(d) = dir else {
+        return false;
+    };
+    if !matches!(
+        crate::auth::load_credentials_in(d).get(provider),
+        Some(crate::auth::StoredCredential::Oauth { .. })
+    ) {
+        return false;
+    }
+    crate::oauth_login::login_flow(provider).is_none()
+        && crate::oauth::refresh_endpoint(provider).is_none()
+}
+
 /// The precedence core, with the store directory and env lookup injected so
 /// tests can pin stored-wins/env-fallback without touching `$HOME`.
 ///
@@ -899,6 +923,59 @@ mod tests {
             env_credential_name(None, "anthropic", "ANTHROPIC_API_KEY", &env),
             Some("ANTHROPIC_API_KEY".to_string())
         );
+    }
+
+    #[test]
+    fn oauth_credential_unused_fires_only_on_dead_logins() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let oauth = |refresh: &str| {
+            serde_json::json!({ "type": "oauth", "refresh": refresh, "access": "a", "expires": 0 })
+                .to_string()
+        };
+
+        // Nothing stored -> silent, for every provider shape.
+        for provider in ["mistral", "anthropic", "openai-codex", "faux"] {
+            assert!(
+                !oauth_credential_unused(Some(dir), provider),
+                "no stored credential, no warning: {provider}"
+            );
+        }
+
+        // Stored API key -> silent everywhere, including providers with flows:
+        // an API key always resolves or falls back, so warning there would fire
+        // on working setups (anthropic + API key is the common one).
+        crate::auth::save_credential_in(dir, "anthropic", "sk-test").expect("save");
+        crate::auth::save_credential_in(dir, "mistral", "sk-test").expect("save");
+        assert!(!oauth_credential_unused(Some(dir), "anthropic"));
+        assert!(!oauth_credential_unused(Some(dir), "mistral"));
+
+        // Stored OAuth where a flow or endpoint exists -> silent (it is used).
+        std::fs::write(
+            crate::auth::auth_path_in(dir),
+            serde_json::json!({
+                "anthropic": { "type": "oauth", "refresh": "r", "access": "a", "expires": 0 },
+                "openai-codex": serde_json::from_str::<serde_json::Value>(&oauth("r")).unwrap(),
+            })
+            .to_string(),
+        )
+        .expect("write oauth pair");
+        assert!(!oauth_credential_unused(Some(dir), "anthropic"));
+        assert!(!oauth_credential_unused(Some(dir), "openai-codex"));
+
+        // Stored OAuth where neither exists -> warning (nothing will ever read it).
+        std::fs::write(
+            crate::auth::auth_path_in(dir),
+            serde_json::json!({ "mistral": serde_json::from_str::<serde_json::Value>(&oauth("r")).unwrap() }).to_string(),
+        )
+        .expect("write dead oauth");
+        assert!(
+            oauth_credential_unused(Some(dir), "mistral"),
+            "an OAuth pair for a provider with no flow and no endpoint warns"
+        );
+
+        // No readable store -> silent (absence of evidence either way).
+        assert!(!oauth_credential_unused(None, "mistral"));
     }
 
     #[test]

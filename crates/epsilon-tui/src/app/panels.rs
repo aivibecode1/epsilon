@@ -1128,7 +1128,18 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         } else {
             ""
         };
-        let meta = format!("{auth} · {} models {oauth}", prow.model_count)
+        // Warn on a stored OAuth login nothing will ever read (P-313): dead
+        // configuration that reads as "logged in". The helper owns the
+        // flow/endpoint rule; the draw only words it.
+        let warn = if epsilon_llm::catalog::oauth_credential_unused(
+            epsilon_llm::auth::global_dir().as_deref(),
+            &prow.id,
+        ) {
+            " · ! oauth login unused"
+        } else {
+            ""
+        };
+        let meta = format!("{auth} · {} models {oauth}{warn}", prow.model_count)
             .trim_end()
             .to_string();
         let label = if prow.is_active {

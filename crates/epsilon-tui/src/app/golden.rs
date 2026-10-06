@@ -2809,6 +2809,10 @@ fn the_auth_picker_shows_no_source_for_an_unconfigured_provider() {
             !line.contains("(env:"),
             "an unset variable must not be named.\n{line}\n{joined}"
         );
+        assert!(
+            !line.contains("! oauth login unused"),
+            "no stored login, no warning: the warning must never fire on an empty store.\n{line}\n{joined}"
+        );
     }
 }
 
