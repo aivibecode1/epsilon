@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is three names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is eight names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -124,6 +124,14 @@ impl IdeApp {
             Command::Sessions => {
                 self.set_sidebar_view(crate::app::SidebarView::Sessions);
                 Outcome::Ran("sessions — click one to resume it".to_string())
+            }
+            // **`/help` opens the command palette.** The terminal's `/help` prints
+            // the command reference; the window's equivalent surface is the
+            // palette, which lists every file and every command this window
+            // answers. Opening it is what "show me what I can do" means here.
+            Command::Help => {
+                self.open_palette();
+                Outcome::Ran("palette — every file and command, type to filter".to_string())
             }
             // **`/tasks` opens the pane the activity bar already draws (M312).** The window has
             // had a subagents pane since it was built and a button beside the files one; the
@@ -447,7 +455,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "compact", "goal", "session", "sessions", "tasks", "theme",
+    "clear", "compact", "goal", "help", "session", "sessions", "tasks", "theme",
 ];
 
 #[cfg(test)]
@@ -711,6 +719,7 @@ mod tests {
             Command::Clear,
             Command::Compact,
             Command::Goal(None),
+            Command::Help,
             Command::Session,
             Command::Sessions,
             Command::Tasks,

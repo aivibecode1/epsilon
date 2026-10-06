@@ -2180,6 +2180,14 @@ impl IdeApp {
     pub fn set_sidebar_view(&mut self, view: SidebarView) {
         self.sidebar = view;
     }
+    /// Open the command palette directly.
+    ///
+    /// `Ctrl+P` does this from the keyboard; `/help` does it from the composer.
+    /// A test that has to drive a chord to open one field would be testing the
+    /// input system instead — the same reason [`Self::set_sidebar_view`] exists.
+    pub fn open_palette(&mut self) {
+        self.palette = Some(Palette::default());
+    }
     /// Switch the window's palette (M312).
     ///
     /// **The window had no way to change its own palette** — the colour scheme was whatever
@@ -7280,6 +7288,38 @@ mod tests {
         assert!(
             palette_has(&opened, "reload tree"),
             "and the window's own commands, not only files.\n{}",
+            opened.describe()
+        );
+    }
+
+    /// `/help` opens the palette — the window's honest equivalent of the terminal's
+    /// command reference.
+    ///
+    /// The palette lists every file and every command the window answers, so it is
+    /// what "show me what I can do" means here. Before this arm, `/help` was
+    /// refused by name like every other unbuilt verb; the refusal was honest, and
+    /// this is the verb that replaces it.
+    #[test]
+    fn slash_help_opens_the_palette() {
+        let (dir, _keep) = scratch_workspace("palette-help");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        assert!(h.app.palette.is_none(), "the palette starts closed");
+
+        let outcome = h.app.try_command("/help");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/help must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("palette"),
+            "the answer names what opened: {said:?}"
+        );
+        assert!(h.app.palette.is_some(), "/help opens the palette");
+
+        let opened = h.paint();
+        assert!(
+            palette_has(&opened, "reload tree"),
+            "and the opened palette lists the window's commands.\n{}",
             opened.describe()
         );
     }

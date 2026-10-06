@@ -111,7 +111,7 @@ write the checker, let it print the failures, then fix what it names.
 
 ### C. Bring the window up to a usable floor — **P1** (L)
 
-**Why.** The desktop is half the objective and answers 7 of 37 commands (review §3.2). Four gaps are
+**Why.** The desktop is half the objective and answers 8 of 37 commands (review §3.2, plus `/help` in round 4). Four gaps are
 the ones a user hits first, and three of them are already itemised in the matrices:
 
 | Gap | Rows | Where |

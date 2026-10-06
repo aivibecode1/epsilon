@@ -2409,6 +2409,11 @@ handover has never had, which `AGENTS.md` §6 forbids. *`/theme` in the window* 
 high-contrast palette that does not exist yet, so wiring the verb now would repeat the very claim
 `/theme` was just caught making.
 
+**Amendment (full-port round 4).** `/help` joins under the same criterion: the effect already
+exists — `Ctrl+P` opens the command palette, which lists every file and every command this window
+answers, so it is the window's honest equivalent of the terminal's command reference. 8 of 37, up
+from the seven above (plus `/compact`, `/goal` and `/theme`, which landed alongside).
+
 ---
 
 ---
