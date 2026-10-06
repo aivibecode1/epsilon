@@ -57,6 +57,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 22. **Full-port round 6 — the window answers `/new`, and the Sessions pane lists for the first time** | `/new` names a file with the runtime's `fresh_session_file`, creates it under a lease, and hands over through `switch_session` — 9 of 37, under ADR-029's criterion. RED first (both new tests failed with the honest refusal), then the arm. **Writing the test found the bigger defect:** `IdeSession::sessions` passed the workspace root where `list_sessions_for_cwd` needs the sessions root, so it read a directory that never exists — the Sessions pane could never list anything, in production, with no error (M217 prescribed sessions-root for every reader; this reader was missed). One-line fix; the pane test fails `none stored` without it. Three integration fixtures that created session files directly in the workspace root — a place no session has ever lived — moved to the sessions root. Batteries `port-r6`/`port-r6b` failed on my fmt, my collapsible-`if`, and those fixtures; `port-r6c` green (2,094). |
 | (10-06) | 23. **Full-port round 7 — the window answers `/resume`** | Bare opens the sessions browser (the view `/sessions` shows — no agent needed); a path hands over through `switch_session`, with the terminal's busy refusal and missing-file wording kept word for word, and same-path resumes saying so rather than rebuilding silently (following the click path). Five tests, all RED first with the honest refusal: switch, bare, same-file, missing-file, no-agent. 10 of 37; counts updated everywhere live. Battery `port-r7b` (2,099); `port-r7` failed `fmt` on a long line of mine. |
 | (10-06) | 24. **Full-port round 8 — the window answers `/fork` and `/clone`** | Both run through the store's `fork_branch_at` (not a file copy) through one helper differing only in the verb it reports — the terminal's shape exactly; neither switches (moving is `/resume`'s job). Four tests, all RED first: branch-and-stay, the second spelling, empty-session, no-agent. The clone test caught `"clone" + "ed"`: the helper takes the past tense explicitly now. 12 of 37; counts updated everywhere live. Battery `port-r8b` (2,103); `port-r8` failed `fmt` on a long line of mine. |
+| (10-06) | 25. **Full-port round 9 — the auth picker names the env var behind the credential** | Half of P-313's remaining gap, closed: providers authenticated purely from the environment now read `key (env: NAME)` in the auth picker, sourced from `catalog::env_credential_name` (stored-wins, blank-keys-count-absent, empty keys never named) with 7 injected cases that touch neither `$HOME` nor process env. The draw change is three lines; a frame test pins the unconfigured branch on a custom provider with a unique unset variable. Stated limit: setting process env is unavailable (edition 2024 made `set_var` unsafe; the workspace forbids it), so no frame shows the suffix pixels — the precedence is pinned, the format line is reviewed. Also recorded: this machine holds a DeepSeek credential, so hermetic tests must never assert on bundled providers. P-313 stays `partial` (no type-mismatch warning anywhere). Battery `port-r9b` (2,105); `port-r9` failed `fmt` twice over. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -204,12 +205,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r8b-2026-10-06.txt`](../audit/evidence/gate-port-r8b-2026-10-06.txt),
+**Latest green battery: [`gate-port-r9b-2026-10-06.txt`](../audit/evidence/gate-port-r9b-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,103 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — four more than `gate-port-r7b`: the `/fork` (3) and `/clone` tests.
-(`gate-port-r8` failed `fmt --check` on a long `format!` line — mine; rustfmt collapsed it, and
-this is the re-run.)
+**2,105 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r8b`: the credential-source precedence test and
+the auth-picker frame test. (`gate-port-r9` failed `fmt --check` on two long lines — mine, the
+third round in a row; the checklist now says `cargo fmt --check` before launching a battery.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

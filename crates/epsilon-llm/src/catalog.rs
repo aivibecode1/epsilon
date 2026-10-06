@@ -507,6 +507,51 @@ pub fn resolve_api_key(provider: &str) -> Option<String> {
     })
 }
 
+/// The env var name to display when `provider` is authenticated purely from
+/// the environment — `Some("ANTHROPIC_API_KEY")`, never the value.
+///
+/// Stored entries win over env (the [`resolve_api_key_in`] precedence): a
+/// provider with a stored credential reads "key", one authenticated purely by
+/// its environment variable reads "key (env: NAME)", and one with neither
+/// reads "—" via the existing `auth_ready` gate. A blank stored key counts as
+/// absent (the trim-then-check contract). An empty `env_key` (local providers)
+/// never names a variable. `dir`/`env_lookup` are injected so tests pin the
+/// precedence without touching `$HOME` or the process env; `None` dir means no
+/// store was readable.
+pub fn env_credential_name(
+    dir: Option<&std::path::Path>,
+    provider: &str,
+    env_key: &str,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if env_key.is_empty() {
+        return None;
+    }
+    let stored = dir.is_some_and(
+        |d| match crate::auth::load_credentials_in(d).get(provider) {
+            Some(crate::auth::StoredCredential::Api { key, .. }) => !key.trim().is_empty(),
+            Some(_) => true,
+            None => false,
+        },
+    );
+    if stored {
+        return None;
+    }
+    env_lookup(env_key)
+        .filter(|v| !v.trim().is_empty())
+        .map(|_| env_key.to_string())
+}
+
+/// [`env_credential_name`] against the real store directory and process env.
+pub fn env_credential_name_live(provider: &str, env_key: &str) -> Option<String> {
+    env_credential_name(
+        crate::auth::global_dir().as_deref(),
+        provider,
+        env_key,
+        &|name| std::env::var_os(name).map(|v| v.to_string_lossy().into_owned()),
+    )
+}
+
 /// The precedence core, with the store directory and env lookup injected so
 /// tests can pin stored-wins/env-fallback without touching `$HOME`.
 ///
@@ -791,6 +836,68 @@ mod tests {
         assert_eq!(
             resolve_api_key_in(dir, "anthropic", &env("ANTHROPIC_API_KEY")),
             Some("env-key".into())
+        );
+    }
+
+    #[test]
+    fn env_credential_name_pins_the_display_precedence() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let env = |name: &str| {
+            if name == "ANTHROPIC_API_KEY" {
+                Some("env-key".to_string())
+            } else {
+                None
+            }
+        };
+
+        // Env only, no store -> name the variable, never the value.
+        assert_eq!(
+            env_credential_name(Some(dir), "anthropic", "ANTHROPIC_API_KEY", &env),
+            Some("ANTHROPIC_API_KEY".to_string())
+        );
+
+        // Stored beats env -> no suffix (the row reads "key").
+        crate::auth::save_credential_in(dir, "anthropic", "stored-key").expect("save");
+        assert_eq!(
+            env_credential_name(Some(dir), "anthropic", "ANTHROPIC_API_KEY", &env),
+            None,
+            "a stored credential reads key, not key (env: ...)"
+        );
+
+        // Neither -> None.
+        assert_eq!(
+            env_credential_name(Some(dir), "openai", "OPENAI_API_KEY", &|_| None),
+            None
+        );
+
+        // Local providers name no variable, even with a same-named value around.
+        assert_eq!(env_credential_name(Some(dir), "faux", "", &env), None);
+
+        // A whitespace-only env value is not a credential.
+        assert_eq!(
+            env_credential_name(Some(dir), "openai", "OPENAI_API_KEY", &|_| Some(
+                "   ".to_string()
+            )),
+            None
+        );
+
+        // Blank stored keys count as absent (trim-then-check, same contract as
+        // resolution) — so env still gets named rather than hidden.
+        std::fs::write(
+            crate::auth::auth_path_in(dir),
+            serde_json::json!({ "anthropic": { "type": "api", "key": "   " } }).to_string(),
+        )
+        .expect("write legacy blank key");
+        assert_eq!(
+            env_credential_name(Some(dir), "anthropic", "ANTHROPIC_API_KEY", &env),
+            Some("ANTHROPIC_API_KEY".to_string())
+        );
+
+        // No readable store -> env still names itself.
+        assert_eq!(
+            env_credential_name(None, "anthropic", "ANTHROPIC_API_KEY", &env),
+            Some("ANTHROPIC_API_KEY".to_string())
         );
     }
 

@@ -2756,6 +2756,62 @@ fn stage_one_provider_rows_carry_an_auth_badge_and_an_active_mark() {
     }
 }
 
+/// The auth picker names nothing when no credential exists anywhere (P-313).
+///
+/// The positive half — "key (env: NAME)" — is pinned at the precedence helper
+/// (`env_credential_name_pins_the_display_precedence`); this pins the draw half
+/// a frame can see without touching the machine: a custom provider on a
+/// variable no other test uses, unset, renders its row with "—" and no
+/// "(env:". Setting process env is unavailable (edition 2024 made `set_var`
+/// unsafe; the workspace forbids it), so a frame showing the suffix pixels
+/// cannot exist here — stated, not assumed.
+#[test]
+fn the_auth_picker_shows_no_source_for_an_unconfigured_provider() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // A custom provider on a variable no other test uses. If the process ever
+    // holds it set, the row below names it — which is the feature working, and
+    // the assertion names the variable so the failure reads as that.
+    app.customs.push(
+        epsilon_llm::custom::CustomProvider::from_config(
+            "testcred",
+            "http://localhost:9/v1",
+            "EPSILON_TEST_CRED_SRC",
+        )
+        .expect("custom provider builds"),
+    );
+    app.auth_pick_open = true;
+    // Aim the window at the custom row: it sorts past the panel's visible
+    // slice, and an assertion on a row that never drew would pass for the
+    // wrong reason (the P-313 test aims the same way).
+    // NOTE (read before "fixing"): this machine holds a DeepSeek credential,
+    // so the deepseek row reads "key" here. That is the room, not the test —
+    // the assertions below touch only the test's own row.
+    let providers = crate::picker::build_provider_rows(&app.model_id, &app.customs);
+    app.auth_pick_index = providers
+        .iter()
+        .position(|p| p.id == "testcred")
+        .expect("the custom provider is listed");
+
+    let rows = render_rows(&mut app, 100, 30);
+    let joined = rows.join("\n");
+    let own: Vec<&String> = rows.iter().filter(|r| r.contains("testcred")).collect();
+    assert!(
+        !own.is_empty(),
+        "the custom provider row must render.\n{joined}"
+    );
+    for line in &own {
+        assert!(
+            line.contains("—"),
+            "an unconfigured provider reads unconfigured, in words.\n{line}\n{joined}"
+        );
+        assert!(
+            !line.contains("(env:"),
+            "an unset variable must not be named.\n{line}\n{joined}"
+        );
+    }
+}
+
 /// **The frame cannot see a display-steering character at all, and that is why this strip is
 /// asserted on text rather than on pixels.**
 ///

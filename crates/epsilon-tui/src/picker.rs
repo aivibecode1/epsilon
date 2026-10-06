@@ -429,6 +429,31 @@ pub fn build_provider_rows(current: &str, customs: &[CustomProvider]) -> Vec<Pro
     rows
 }
 
+/// The env var that authenticates `provider`, for display ("env: NAME").
+///
+/// Proven unique per provider across the bundled catalog, so the first match
+/// is the rule rather than a guess; customs carry their own. `None` means
+/// local (no variable exists) — never "unknown".
+pub fn provider_env_key(provider: &str, customs: &[CustomProvider]) -> Option<String> {
+    if let Some(c) = customs.iter().find(|c| c.name == provider) {
+        return if c.env_key.is_empty() {
+            None
+        } else {
+            Some(c.env_key.clone())
+        };
+    }
+    catalog::curated()
+        .iter()
+        .find(|m| m.provider == provider)
+        .and_then(|m| {
+            if m.env_key.is_empty() {
+                None
+            } else {
+                Some(m.env_key.to_string())
+            }
+        })
+}
+
 /// Stage-2 rows: the models of ONE provider, reusing [`build_rows`] ordering rules
 /// via fuzzy filter across id + label. Live-listed ids for this provider that are
 /// missing from the bundled catalog are merged on top (M20 auto-fetch).

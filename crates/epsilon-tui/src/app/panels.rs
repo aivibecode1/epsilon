@@ -1110,7 +1110,19 @@ pub(super) fn draw_auth_picker(f: &mut Frame<'_>, app: &App, outer: Rect) {
         // Auth state is a word, not only a colour: a key glyph is invisible on a
         // console that cannot render it, and "ready to use" is not a detail to
         // lose to a font.
-        let auth = if prow.auth_ready { "key" } else { "—" };
+        let auth = if prow.auth_ready {
+            // Name the variable when the environment is the credential (P-313):
+            // "key (env: NAME)". Stored entries read plain "key"; the lookup is
+            // the same stored-wins precedence the resolver uses.
+            match crate::picker::provider_env_key(&prow.id, &app.customs)
+                .and_then(|key| epsilon_llm::catalog::env_credential_name_live(&prow.id, &key))
+            {
+                Some(name) => format!("key (env: {name})"),
+                None => "key".to_string(),
+            }
+        } else {
+            "—".to_string()
+        };
         let oauth = if epsilon_llm::oauth_login::login_flow(&prow.id).is_some() {
             "oauth"
         } else {
