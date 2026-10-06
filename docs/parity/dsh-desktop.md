@@ -117,10 +117,10 @@ measurements taken here at all.
 | Transcript, streaming and tool cards | 82 | 1 | 18 | 57 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 3 | 8 | 52 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
-| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 22 | 38 | 5 |
+| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 23 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 10 | 37 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **13** | **90** | **288** | **42** |
+| **Total** | **433** | **13** | **91** | **287** | **42** |
 
 ---
 
@@ -498,7 +498,7 @@ computed while drawing is a layout nobody can test.
 | L-111 | Sidebar scrollbars are a *pointer* affordance: the bar hides when the pointer leaves and stays drawn for 2 s. | `ui-sidebar/src/client/SidebarRoot.tsx:39`, `:154-170` | missing | — | egui's own scrollbars, with their own behaviour. |
 | L-112 | A complete build stacks a code badge under the brand name formatted `version[-commit][-dirty]`. | `ui-sidebar/src/client/SidebarRoot.tsx:42-49` | missing | — | No build badge. |
 | L-113 | On the expanded sidebar the brand row *is* the New Session button — except on macOS desktop. | `ui-sidebar/src/client/SidebarRoot.tsx:216-256` | partial | `crates/epsilon-desktop/src/app.rs` sessions pane — a real "New session" button atop the list (Tab-reachable, screen-reader-named), running the same `run_new_session` the `/new` head runs; no brand row, deliberately (a native window has none — the action lives where the sessions are) | `clicking_new_session_starts_a_session_file` (button rect recorded, a11y name asserted, click stores one more file) |
-| L-114 | The New Session button shows its effective keybinding as trailing grey text on hover or keyboard focus. | `ui-sidebar/src/client/SidebarRoot.tsx:259-277` | missing | `crates/epsilon-desktop/src/app.rs:2864-2877` | As S-103 there is no button — but the window does name the chords it has, in the status bar's hint region and on the fold control's own accessible name (`app.rs:2864-2877`, `:3193-3198`), and it prints them **only while they work** (`app.rs:2919-2927`). |
+| L-114 | The New Session button shows its effective keybinding as trailing grey text on hover or keyboard focus. | `ui-sidebar/src/client/SidebarRoot.tsx:259-277` | partial | The sessions pane has a real "New session" button since round 10, and since round 16 it carries its chord both ways the reference asks: hover tooltip (`New session (ctrl+n)`) and the renamed accesskit node (`New session · ctrl+n`), both read from the binding table so a rebound chord is announced rebound. What it does not draw is trailing grey text beside the label on keyboard focus — the sighted-keyboard case hears nothing new, and that half stays open | `new_session_button_names_its_chord` (node name carries the chord; RED first) |
 | L-115 | On macOS desktop a fully collapsed sidebar reappears as two window-chrome buttons mounted beside the traffic lights. | `ui-sidebar/src/client/HeaderLeadingControls.tsx:26-54` | deliberately different | `crates/epsilon-desktop/src/app.rs:3248-3265` | The fold control lives in the **title bar at every window size above `COMPACT`** (`app.rs:2956-2958`), because a control placed on the sidebar cannot put the sidebar back — a one-way door. So it never needs a macOS-specific reappearance. |
 | L-116 | An open Workspace shows **5** idle, non-blank Sessions; each **Show more** adds 5. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:55`, `:58-70` | missing | `crates/epsilon-desktop/src/app.rs:3636-3698` | The sessions pane lists everything stored for the workspace (`app.rs:3613`, `:3528`) with no pagination. |
 | L-117 | **View options** is one menu with Group by, Order by and Filter by choices. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:106-167` | missing | — | No view options; the session list is newest-first with no filter. |

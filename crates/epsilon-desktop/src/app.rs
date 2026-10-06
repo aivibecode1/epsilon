@@ -3842,7 +3842,18 @@ impl IdeApp {
         // sessions are. A real button, not painted text: Tab reaches it, a
         // screen reader names it, and the click runs the same `run_new_session`
         // the `/new` head runs — one act, two doors.
-        let new = ui.button("New session");
+        // **The chord comes from the table (L-114)**, so a reader who rebinds
+        // it is told their own chord here, not the default below: the tooltip
+        // reaches a pointer, and the renamed node reaches a screen reader
+        // (egui never writes a tooltip onto the node).
+        let session_chord = self
+            .keys
+            .label("window.session.new")
+            .unwrap_or_else(|| "ctrl+n".into());
+        let new = ui
+            .button("New session")
+            .on_hover_text(format!("New session ({session_chord})"));
+        name_node(&new, &format!("New session · {session_chord}"));
         summary.row_rects.push(("sessions-new".into(), new.rect));
         if new.clicked() {
             let outcome = self.run_new_session();
@@ -8037,6 +8048,27 @@ mod tests {
             listed_before + 1,
             "clicking New session stores one branch file beside the others.\n{}",
             after.describe()
+        );
+    }
+
+    /// The New session button names its chord — hover text and reader name.
+    ///
+    /// L-114: the reference shows the effective keybinding as trailing text on
+    /// hover or keyboard focus. The tooltip reaches a pointer; the renamed
+    /// accesskit node reaches a screen reader (egui never writes a tooltip
+    /// onto the node). Both read the chord from the binding table, so a
+    /// rebound chord is announced rebound. RED first: "New session" alone.
+    #[test]
+    fn new_session_button_names_its_chord() {
+        let (ws, _keep) = scratch_workspace("sessions-new-chord");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        let frame = h.paint();
+        assert!(
+            h.node_named("New session").contains("ctrl+n"),
+            "the accessible name must carry the effective chord.\n{}",
+            frame.describe()
         );
     }
 
