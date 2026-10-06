@@ -67,6 +67,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 32. **Full-port round 16 — the New session button names its chord** | L-114 moves to `partial`: hover tooltip plus a renamed accesskit node (`New session · ctrl+n`), both read from the binding table so a rebound chord is announced rebound — the fold control's pattern, reused. Visible trailing text on keyboard focus stays open (recorded in the row). DSH counts move to **13 / 91 / 287** in the summary and here. Battery `port-r16` (2,118), green first time. |
 | (10-06) | 33. **Full-port round 17 — the quit guard actually guards (CancelClose), and stays honest about D-031** | Reading eframe's own source proved the M316 quit dialog could never appear in production: no `CancelClose` was ever sent, and uncancelled viewports close. One-line enforcement fix in the seam tests drive, with a test observing the command on the frame (it failed with the send removed — the old suite never looked). Two more tests: the draft keeps its guard, and the empty-window rule stands. A silent-close for empty windows was implemented, then reverted the same round: an explicit tested rule says closing is the reader's decision, and overturning it solo is not this round's to do — D-031 moves to `partial` with the tension recorded, not resolved. DSH counts move to **13 / 92 / 286**. Battery `port-r17b` (2,120); `port-r17` (mid-edit tree) failed on the empty-window rule test, as it should have. |
 | (10-06) | 34. **Full-port round 18 — truncated replies say so (P-127)** | A reply stopped for length used to read as a whole answer in both the live transcript and resumed sessions — the stop reason was never rendered. Both assistant paths now append `Response was truncated before completion.`, beside the M62 error marker. Two frame tests (one truncated + one whole reply with exactly one notice; replayed history), RED first with a control on the history arm. P-127 moves to `done`; Pi counts move to **39 / 124 / 158**. Desktop follow-up noted (its transcript ignores stop reasons too). Battery `port-r18` (2,122), green first time. |
+| (10-06) | 35. **Full-port round 19 — the window says so too (truncation parity)** | Round 18's follow-up, closed the same day: the desktop reducer appends the same notice in both its paths (`MessageEnd` live, `from_messages` history) as a `Notice` row — the kind whose draw path already reaches pixels. Three tests, RED first: two reducer tests (one with an EndTurn control) plus a resume-to-screen test proving the row reaches the agent region. No matrix rows move (P-127 already `done`; no DSH row covers truncation). Battery `port-r19` (2,125), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -214,11 +215,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r18-2026-10-06.txt`](../audit/evidence/gate-port-r18-2026-10-06.txt),
+**Latest green battery: [`gate-port-r19-2026-10-06.txt`](../audit/evidence/gate-port-r19-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,122 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r17b`: the truncation frame tests (live and
-resume). (`cargo fmt --check` ran before launching.)
+**2,125 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r18`: the two desktop reducer tests and the
+resume-to-screen test. (`cargo fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use epsilon_contracts::agent_event::{AgentEvent, PermissionDecision, PermissionRequest};
 use epsilon_contracts::content::ContentBlock;
-use epsilon_contracts::message::Message;
+use epsilon_contracts::message::{Message, StopReason};
 use epsilon_core::Agent;
 use epsilon_safety::ChannelApprovalUi;
 
@@ -275,6 +275,15 @@ impl Transcript {
                     if !answer.trim().is_empty() {
                         t.push(RowKind::Assistant, answer);
                     }
+                    if a.stop_reason == StopReason::MaxTokens {
+                        // P-127, window half, history path: a replayed reply that
+                        // hit the token limit says so — same words, same
+                        // condition as the terminal.
+                        t.push(
+                            RowKind::Notice,
+                            "Response was truncated before completion.".to_string(),
+                        );
+                    }
                 }
                 Message::ToolResult(r) => {
                     let text: String = r
@@ -465,6 +474,17 @@ impl Transcript {
                 }
                 self.live_assistant = None;
                 self.live_thinking = None;
+                // P-127, window half, live path: the stop reason is authoritative
+                // only at the end, so the notice lands here, not on the rows the
+                // stream opened.
+                if let Message::Assistant(a) = &**message
+                    && a.stop_reason == StopReason::MaxTokens
+                {
+                    self.push(
+                        RowKind::Notice,
+                        "Response was truncated before completion.".to_string(),
+                    );
+                }
             }
 
             AgentEvent::ToolExecutionStart {
@@ -1552,6 +1572,62 @@ mod tests {
             .collect();
         assert_eq!(rows.len(), 1, "{:?}", t.rows());
         assert_eq!(rows[0].text, "the whole answer, at once");
+    }
+
+    /// A reply cut off by the token limit adds a notice row (P-127, window half).
+    ///
+    /// The terminal says the same words over the same condition; a window that
+    /// stayed silent would let a half answer read whole. The EndTurn message is
+    /// the control: two replies, one notice. RED first: no row carries it.
+    #[test]
+    fn a_truncated_reply_adds_a_notice_row() {
+        fn stopped(text: &str, stop: StopReason) -> Message {
+            let mut m = assistant(text);
+            if let Message::Assistant(a) = &mut m {
+                a.stop_reason = stop;
+            }
+            m
+        }
+        let mut t = transcript();
+        for (text, stop) in [
+            ("the answer so far", StopReason::MaxTokens),
+            ("the whole answer", StopReason::EndTurn),
+        ] {
+            t.apply(&AgentEvent::MessageEnd {
+                message: Box::new(stopped(text, stop)),
+            });
+        }
+        let notices: Vec<&Row> = t
+            .rows()
+            .iter()
+            .filter(|r| r.kind == RowKind::Notice && r.text.contains("Response was truncated"))
+            .collect();
+        assert_eq!(
+            notices.len(),
+            1,
+            "exactly one truncation notice for one truncated reply: {:?}",
+            t.rows()
+        );
+    }
+
+    /// Replayed history carries the notice too (P-127, window half).
+    ///
+    /// `from_messages` renders without events; a session reopened onto a
+    /// cut-off answer must not read whole either.
+    #[test]
+    fn replayed_history_carries_the_truncation_notice() {
+        let mut m = assistant("the resumed half");
+        if let Message::Assistant(a) = &mut m {
+            a.stop_reason = StopReason::MaxTokens;
+        }
+        let t = Transcript::from_messages(&[m]);
+        assert!(
+            t.rows()
+                .iter()
+                .any(|r| r.kind == RowKind::Notice && r.text.contains("Response was truncated")),
+            "a replayed cut-off answer must carry its notice: {:?}",
+            t.rows()
+        );
     }
 
     #[test]

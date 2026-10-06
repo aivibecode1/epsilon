@@ -7619,6 +7619,53 @@ mod tests {
         assert!(after.exists(), "and that file exists: {}", after.display());
     }
 
+    /// A resumed session with a truncated reply shows the notice (P-127, pixels).
+    ///
+    /// The reducer tests pin the row; this pins the row reaching the screen
+    /// through the path a reader actually takes — resume a file, look at it.
+    #[test]
+    fn a_resumed_truncated_reply_reaches_the_screen() {
+        let (ws, _keep) = scratch_workspace("truncated-screen");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("cut.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m-cut".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "the cut answer",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::MaxTokens,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        drop(store);
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command(&format!("/resume {}", other.display()));
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/resume <path> must run, not refuse or send: {outcome:?}");
+        };
+        let frame = h.paint();
+        let agent = frame.region("agent").join("\n");
+        assert!(
+            agent.contains("Response was truncated"),
+            "the notice must reach the screen, not just the rows.\n{agent}"
+        );
+    }
+
     /// Bare `/resume` opens the sessions browser — the path form's partner.
     ///
     /// The terminal's bare form opens its session browser; here the browser is
