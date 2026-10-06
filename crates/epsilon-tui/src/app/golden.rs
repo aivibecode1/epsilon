@@ -2682,6 +2682,80 @@ fn a_panel_row_is_stripped_before_it_is_drawn() {
     );
 }
 
+/// Stage-1 provider rows carry an auth badge and an active mark (P-313).
+///
+/// The matrix row claims provider rows carry `• not configured`, `✓ configured`,
+/// `✓ env: NAME` or a type-mismatch warning, and names two tests that never look
+/// at a provider row — so the row was `done` on evidence that does not establish
+/// it, and on literals this window never draws. What it actually draws is the
+/// same distinction in its own visual language: a key glyph for a configured
+/// provider, `·` for one that is not, `●` on the active one
+/// (`panels.rs:112-131`). This test pins that half through the production draw
+/// path. It does not establish the `env: NAME` display or the type-mismatch
+/// warning — neither exists in the tree — and the row says so.
+#[test]
+fn stage_one_provider_rows_carry_an_auth_badge_and_an_active_mark() {
+    let mut app = bench_app(UiState::new());
+    pin_theme(&mut app, ThemeColorMode::Ansi16);
+    // Stage 1: the picker open on providers, no filter.
+    app.picker_open = true;
+    app.picker_provider = None;
+
+    // Aim the window at the faux provider: it sorts last, past the panel's
+    // visible slice at this size, and it is the deterministic half of this
+    // test — it needs no credential by construction
+    // (`row_credentials_ready`: an empty env_key), so its badge is on no
+    // matter what this machine holds.
+    let providers = crate::picker::build_provider_rows(&app.model_id, &app.customs);
+    let faux_at = providers
+        .iter()
+        .position(|p| p.id == "faux")
+        .expect("the catalog holds a faux provider");
+    app.picker_index = faux_at;
+
+    let rows = render_rows(&mut app, 100, 30);
+    let joined = rows.join("\n");
+
+    // The anchor: at least one rendered provider row, or the loop below is vacuous.
+    let provider_lines: Vec<&String> = rows
+        .iter()
+        .filter(|r| r.contains("models") && providers.iter().any(|p| r.contains(&p.id as &str)))
+        .collect();
+    assert!(
+        !provider_lines.is_empty(),
+        "no provider row rendered at all.\n{joined}"
+    );
+
+    let faux: Vec<&&String> = provider_lines
+        .iter()
+        .filter(|r| r.contains("faux"))
+        .collect();
+    assert!(
+        !faux.is_empty(),
+        "the faux provider row must render.\n{joined}"
+    );
+    for line in faux {
+        assert!(
+            line.contains("🔑"),
+            "a provider that needs no credential carries the key badge.\n{line}\n{joined}"
+        );
+        assert!(
+            line.contains("●"),
+            "the test app runs faux-1, so faux is the active provider.\n{line}\n{joined}"
+        );
+    }
+
+    // Structure: every rendered provider row says something in the badge
+    // column. A row that said neither would read as "unknown", which is the
+    // state the badge exists to prevent.
+    for line in provider_lines {
+        assert!(
+            line.contains("🔑") || line.contains("·"),
+            "a provider row with no auth badge.\n{line}\n{joined}"
+        );
+    }
+}
+
 /// **The frame cannot see a display-steering character at all, and that is why this strip is
 /// asserted on text rather than on pixels.**
 ///

@@ -51,6 +51,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 22:40– (10-04) | 16. **Front-end polish, on the owner's instruction** | *"Put high efforts on polishing tui and desktop IDE."* Four defects, each found by **reading a frame or a dump this repository already had**, not by a failing test: `/theme` advertising a palette that does not exist, `/help` pointing at a thinking level the status bar never printed, two identical accessible names for two different files, and a status-bar segment that could never appear. Each has a test with a negative control. |
 | 08:20– (10-05) | 17. **M313 — the parity matrices, and what reading the sources found** | Four read-only inventories, one per (reference, our code) pair, produced **356 rows from Pi** and **403 from DSH Desktop**, every one cited to a line in the vendored source. Writing [`docs/parity/`](parity/README.md) from them is the objective's own deliverable and **it did not exist** until now. The inventories also found **a reachable panic on an advertised key** and two binding declarations no handler read — see the M313 section. |
 | (10-06) | 18. **Full-port objective, round 1 — the tree is landed and the battery is green** | New owner objective: a full port of Pi (TUI and logic) plus what Pi lacks, and a desktop as good as DSH Desktop on the native stack. `gate-land316a` went 9/10 with the test leg blocked by the filename-bound AV fault (proved again by probe: exact name denied, one char longer allowed); re-run under `CARGO_PROFILE_DEV_DEBUG=line-directives-only` went green first time ([`gate-port-r1-2026-10-06.txt`](../audit/evidence/gate-port-r1-2026-10-06.txt), 2,088/0/12). M313–M316, the review and plan 025 landed in four slices plus a fifth: 11 Pi-matrix `ours` citations re-pointed at the moved binding table (`keybind.rs:242-365`) and the id count corrected 24 → 23. Tree clean. |
+| (10-06) | 19. **Full-port rounds 2–3 — two `done` rows re-proven, one honestly downgraded** | P-252 named a test that never typed a query: new test descends, moves to row 1, types, and asserts row 0 (negative control fails `left: 1, right: 0`); VER cell re-pointed. P-313 was worse — it claimed Pi's four auth literals and named tests that never look at a provider row, while the window draws the distinction as key / `·` / `●`: new frame test pins that half through the production draw, the row moves to `partial` (no `env: NAME`, no type warning), and the Pi counts move to **38 done / 122 partial** in both summaries and here. Batteries `port-r2` (2,089) and `port-r3b` (2,090); `port-r3` failed `fmt` on a long line in the new test. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -142,7 +143,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 39 | 121 | 161 | 18 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 122 | 161 | 18 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 11 | 88 | 292 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -198,11 +199,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r2-2026-10-06.txt`](../audit/evidence/gate-port-r2-2026-10-06.txt),
+**Latest green battery: [`gate-port-r3b-2026-10-06.txt`](../audit/evidence/gate-port-r3b-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,089 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r1`: the P-252 test
-(`typing_a_query_resets_the_picker_selection_to_row_zero`), with its negative control run.
+**2,090 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r2`: the P-313 frame test
+(`stage_one_provider_rows_carry_an_auth_badge_and_an_active_mark`), with its negative control run.
+(`gate-port-r3` failed `fmt --check` on a long line in that test — mine, caught by the gate rather
+than by reading the diff; rustfmt reflowed only the new lines, and this is the re-run.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

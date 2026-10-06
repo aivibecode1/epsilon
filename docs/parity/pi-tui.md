@@ -88,8 +88,8 @@ this document**, tallied from its own tables — not a projection.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 7 | 25 | 41 | 6 |
-| **Total** | **339** | **39** | **121** | **161** | **18** |
+| 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
+| **Total** | **339** | **38** | **122** | **161** | **18** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -721,7 +721,7 @@ the per-selector ones.
 | P-310 | `/fork` opens `Fork from Message` with an explanation and the cursor on the most recent message | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:123`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5427` | missing | none — Epsilon forks at the current leaf (`crates/epsilon-tui/src/app/commands.rs:1161`) | — |
 | P-311 | Each fork row is three lines with a `Message N of M` caption, ten visible | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:54`, `:42`, `:73`, `:19` | missing | none | — |
 | P-312 | Fork-picker navigation wraps at both ends, where the auth selector clamps | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:84`, `:88`, contrasted with `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:198` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:1228` — Epsilon's overlays clamp at both ends and keep their position after filtering, one policy rather than three | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame), `two_stage_picker_descends_and_applies_model` |
-| P-313 | Provider rows carry `• not configured`, `✓ configured`, `✓ env: NAME`, or a warning when the stored credential's type differs | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:36`, `:47`, `:49-52`, `:42-46` | done | `crates/epsilon-tui/src/app/panels.rs:244`, `:315` — the picker draws an auth/key badge column and marks the active row `●` | `two_stage_picker_descends_and_applies_model`, `a_panel_row_is_stripped_before_it_is_drawn` (frame) |
+| P-313 | Provider rows carry `• not configured`, `✓ configured`, `✓ env: NAME`, or a warning when the stored credential's type differs | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:36`, `:47`, `:49-52`, `:42-46` | partial | `crates/epsilon-tui/src/app/panels.rs:112-131` — stage-1 rows draw the same distinction in this window's own visual language (key glyph for configured, `·` for not, `●` on the active provider; `key` / `—` / `oauth` words in the auth picker), but none of Pi's four literals exists here: no `env: NAME` display and no credential-type warning | `stage_one_provider_rows_carry_an_auth_badge_and_an_active_mark` (frame; negative control run — the flipped badge fails the key assertion) |
 | P-314 | The `[api key]` / `[subscription]` / `[account]` tag appears only when the list mixes auth types | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:92`, `:160`, `:32` | missing | none | — |
 | P-315 | Three distinct auth empty states: no providers available, none logged in, no matching providers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:182`, `:186` | partial | `crates/epsilon-tui/src/app/commands.rs:635` — `/logout` distinguishes removed from nothing-to-remove and says which; there is no provider-selector overlay to have an empty state | `no_slash_command_panics_when_typed` |
 | P-316 | The `Sign in with Radius` option shimmers through four brand colours, only while selected | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:11`, `:18`, `:72` | missing | none — no Radius provider | — |
@@ -779,8 +779,8 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
-| 18. Selector and overlay components | 79 | 7 | 25 | 41 | 6 |
-| **Total** | **339** | **39** | **121** | **161** | **18** |
+| 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
+| **Total** | **339** | **38** | **122** | **161** | **18** |
 
 ### The `missing` rows — 161
 
