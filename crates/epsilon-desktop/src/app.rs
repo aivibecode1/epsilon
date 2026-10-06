@@ -602,6 +602,37 @@ struct Palette {
     selected: usize,
 }
 
+/// The model picker: two stages over the shared catalog builders.
+///
+/// Stage one lists providers (`provider` is `None`); choosing one drills into
+/// its models. The rows themselves come from `epsilon_tui::picker` — the same
+/// builders the terminal draws — so the two front ends cannot disagree about
+/// what a provider holds; only the pixels here are the window's own.
+#[derive(Default)]
+struct ModelPicker {
+    query: String,
+    /// Index into the filtered entries.
+    selected: usize,
+    /// The drilled provider, or `None` for the provider list.
+    provider: Option<String>,
+}
+
+/// One drawable model-picker row, either stage.
+///
+/// `Clone` for the same reason as `PaletteAction`: the chosen row is read
+/// after the borrow that produced it has ended.
+#[derive(Clone)]
+struct ModelPickerEntry {
+    /// What the reader sees and types.
+    label: String,
+    /// Dim meta on the right (model counts, auth marks).
+    meta: String,
+    /// The provider id (stage one) or model id (stage two) choosing applies.
+    id: String,
+    /// Stage one rows drill; stage two rows apply.
+    is_provider: bool,
+}
+
 /// What a palette row does when it is chosen.
 ///
 /// An enum rather than a function pointer, deliberately: a table of `fn(&mut IdeApp)` would
@@ -724,6 +755,12 @@ const GOAL_SALT: &str = "epsilon-goal-band";
 /// The palette's search box, so its focus survives between frames.
 fn palette_input_id() -> egui::Id {
     egui::Id::new("epsilon-palette-search")
+}
+
+/// The model picker's search box id: its own, so the two overlays never share
+/// a focused widget.
+fn model_input_id() -> egui::Id {
+    egui::Id::new("epsilon-model-search")
 }
 
 // ---- the sidebar's two controls ------------------------------------------------------
@@ -892,6 +929,92 @@ impl IdeApp {
         }
         out
     }
+    /// The rows the model picker is currently offering.
+    ///
+    /// Providers first, then the drilled provider's models — the terminal's
+    /// two stages, over the terminal's builders (`epsilon_tui::picker`), so
+    /// the two front ends cannot disagree about what a provider holds. Live
+    /// listings are not merged (the fetch is async; the paint thread is not),
+    /// and customs come from the same loader the terminal reads.
+    fn model_picker_entries(&self) -> Vec<ModelPickerEntry> {
+        let Some(picker) = self.model_picker.as_ref() else {
+            return Vec::new();
+        };
+        let current = self
+            .session
+            .as_ref()
+            .map(|s| s.agent().model_id())
+            .unwrap_or_default();
+        let customs = epsilon_llm::custom::custom_providers();
+        match picker.provider.clone() {
+            None => {
+                let needle = picker.query.trim().to_lowercase();
+                epsilon_tui::picker::build_provider_rows(&current, &customs)
+                    .into_iter()
+                    .filter(|r| needle.is_empty() || r.id.to_lowercase().contains(&needle))
+                    .map(|r| {
+                        let mut label = r.id.clone();
+                        if r.is_active {
+                            label.push_str(" (active)");
+                        }
+                        let mut meta = format!("{} models", r.model_count);
+                        if r.auth_ready {
+                            meta.push_str(" · key");
+                        }
+                        ModelPickerEntry {
+                            label,
+                            meta,
+                            id: r.id,
+                            is_provider: true,
+                        }
+                    })
+                    .collect()
+            }
+            Some(provider) => epsilon_tui::picker::build_models_for_provider(
+                &provider,
+                &picker.query,
+                &current,
+                &[],
+                &customs,
+            )
+            .into_iter()
+            .map(|r| {
+                let mut label = r.label.clone();
+                if r.id == current {
+                    label.push_str(" (active)");
+                }
+                ModelPickerEntry {
+                    label,
+                    meta: if r.auth_ready {
+                        "key".to_string()
+                    } else {
+                        String::new()
+                    },
+                    id: r.id,
+                    is_provider: false,
+                }
+            })
+            .collect(),
+        }
+    }
+    /// Open the model picker on the provider list, closing the palette.
+    ///
+    /// One overlay at a time: two boxes reading the same arrows would make one
+    /// keystroke mean two things, which is the mistake `pane_keys` exists to
+    /// prevent.
+    pub fn open_model_picker(&mut self) {
+        self.palette = None;
+        self.model_picker = Some(ModelPicker::default());
+    }
+    /// Close the model picker and hand the keyboard back to the agent pane.
+    ///
+    /// The same two halves as [`Self::close_palette`], for the same reason: a
+    /// picker that closed without the second half leaves the window with no
+    /// focused widget at all.
+    fn close_model_picker(&mut self) {
+        self.model_picker = None;
+        self.focus = FocusTarget::Agent;
+    }
     /// Read the palette's keys, and act on one.
     ///
     /// **Before the panes, and before the composer**, which is the only reason Enter and
@@ -965,6 +1088,94 @@ impl IdeApp {
             self.run_palette_action(entry.action.clone(), &query);
             self.close_palette();
         }
+    }
+
+    /// Read the model picker's keys, and act on one.
+    ///
+    /// After `palette_keys` — an open palette owns every key — and before the
+    /// panes, for the same reason the palette reads before the composer.
+    /// Escape backs out of the model list to providers; a second one closes.
+    fn model_keys(&mut self, ctx: &egui::Context) {
+        if self.model_picker.is_none() {
+            return;
+        }
+        let stage2 = self.model_picker.as_ref().and_then(|p| p.provider.clone());
+        let closed = self.keys.take(ctx, "window.model.close");
+        let mut submitted = false;
+        if !closed {
+            submitted = self.keys.take(ctx, "window.model.submit");
+        }
+        let mut step: i32 = 0;
+        if self.keys.take(ctx, "window.model.next") {
+            step += 1;
+        } else if self.keys.take(ctx, "window.model.previous") {
+            step -= 1;
+        }
+        if closed {
+            if stage2.is_some() {
+                if let Some(p) = self.model_picker.as_mut() {
+                    p.provider = None;
+                    p.query.clear();
+                    p.selected = 0;
+                }
+                return;
+            }
+            self.close_model_picker();
+            return;
+        }
+        let entries = self.model_picker_entries();
+        // **A click on a row chooses it**, resolved against last frame's
+        // rectangles — the same before-draw discipline as the palette, and the
+        // same reason: a picker that ignores the mouse is a menu that forgot
+        // half its readers.
+        let (any_click, at) = ctx.input(|i| (i.pointer.any_click(), i.pointer.interact_pos()));
+        if any_click
+            && let Some(at) = at
+            && let Some((index, _)) = self
+                .model_rects
+                .iter()
+                .find(|(_, r)| r.contains(at))
+                .copied()
+            && let Some(entry) = entries.get(index)
+        {
+            self.choose_model_entry(entry.clone());
+            return;
+        }
+        if let Some(p) = self.model_picker.as_mut() {
+            if step != 0 {
+                let last = entries.len().saturating_sub(1) as i32;
+                p.selected = (p.selected as i32 + step).clamp(0, last) as usize;
+            }
+            if submitted {
+                p.selected = p.selected.min(entries.len().saturating_sub(1));
+            }
+        }
+        if submitted
+            && let Some(entry) =
+                entries.get(self.model_picker.as_ref().map(|p| p.selected).unwrap_or(0))
+        {
+            self.choose_model_entry(entry.clone());
+        }
+    }
+
+    /// Act on a chosen model-picker row: drill into providers, apply models.
+    ///
+    /// Applying runs the same `run_model_argument` `/model <id>` runs — one
+    /// act, two doors — so the picker and the composer cannot disagree about
+    /// what switching means.
+    fn choose_model_entry(&mut self, entry: ModelPickerEntry) {
+        if entry.is_provider {
+            self.model_picker = Some(ModelPicker {
+                query: String::new(),
+                selected: 0,
+                provider: Some(entry.id),
+            });
+            return;
+        }
+        if let crate::commands::Outcome::Ran(said) = self.run_model_argument(Some(entry.id)) {
+            self.transcript.push_notice(&said);
+        }
+        self.close_model_picker();
     }
 
     /// Close the palette and hand the keyboard back to the agent pane.
@@ -1239,6 +1450,10 @@ pub struct IdeApp {
     /// palette is the one route to every file and every command from the keyboard, which is
     /// what every one of the four reference harnesses has and this one did not.
     palette: Option<Palette>,
+    /// The model picker, open while it is `Some`. See [`ModelPicker`].
+    model_picker: Option<ModelPicker>,
+    /// Row rectangles of the last drawn model-picker frame, for clicks.
+    model_rects: Vec<(usize, egui::Rect)>,
     /// A gate-checked goal round, from the task that ran the gates back to the draw path.
     ///
     /// The same shape and the same reason as the terminal's: a gate is a shell command, and
@@ -1732,6 +1947,8 @@ impl IdeApp {
             compact_tx,
             compact_rx,
             palette_rects: Vec::new(),
+            model_picker: None,
+            model_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -1793,6 +2010,8 @@ impl IdeApp {
             compact_tx,
             compact_rx,
             palette_rects: Vec::new(),
+            model_picker: None,
+            model_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -1929,7 +2148,7 @@ impl IdeApp {
     /// is up; `AGENTS.md` §2.7 would call the alternative a silent no-op in the
     /// direction that matters.
     fn pane_keys(&mut self, ctx: &egui::Context) {
-        if self.palette.is_some() {
+        if self.palette.is_some() || self.model_picker.is_some() {
             return;
         }
         // **The window's two layout keys, before every pane key.** They are read here
@@ -2900,6 +3119,9 @@ impl IdeApp {
         // The palette reads Enter and Escape, so it goes before the composer — which takes
         // both unconditionally, to send and to abort.
         self.palette_keys(ui.ctx());
+        // The model picker reads the same keys for the same reason, after the
+        // palette (an open palette owns every key) and before the composer.
+        self.model_keys(ui.ctx());
         // Pane focus, and the keys that act inside the focused pane. **After the
         // palette**, which owns those keys while it is open, and **before every pane is
         // drawn**, because the composer consumes Enter and Escape unconditionally and a
@@ -3193,6 +3415,9 @@ impl IdeApp {
         // Drawn **last**, so it is on top of every pane rather than behind whichever one
         // happened to be laid out last.
         self.draw_palette(ui, &mut summary, scale);
+        // The model picker draws beside the palette, same layer: only one of
+        // the two is ever open (opening either closes the other).
+        self.draw_model_picker(ui, &mut summary, scale);
         // **The quit dialog is above the palette, not beside it.** A close request arrives
         // from outside the window — from a button the reader pressed without touching the
         // application — so it cannot be queued behind whatever the application happens to
@@ -3367,6 +3592,150 @@ impl IdeApp {
         summary
             .rows
             .push(("palette".into(), "esc closes · enter opens".into()));
+    }
+
+    /// The model picker: the terminal's two stages, in the window's overlay.
+    ///
+    /// Positioned like the palette, for the same reason: the eye goes to the
+    /// top for a thing you are typing into. Providers first; choosing one
+    /// drills into its models.
+    fn draw_model_picker(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
+        let Some(picker) = self.model_picker.as_ref() else {
+            return;
+        };
+        self.model_rects.clear();
+        let selected = picker.selected;
+        let stage = picker.provider.clone();
+        let entries = self.model_picker_entries();
+        let shown: Vec<&ModelPickerEntry> = entries.iter().take(PALETTE_LIMIT).collect();
+
+        let screen = ui.ctx().content_rect();
+        let width = (screen.width() * 0.6).clamp(240.0, 720.0);
+        let height = ((28.0 + shown.len() as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.6);
+        let box_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
+            egui::vec2(width, height),
+        );
+        let theme = self.theme;
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        // The search box. Same contract as the palette's: it must hold the
+        // keyboard, so the request is made here every frame the picker is open.
+        let hint = match &stage {
+            None => "providers".to_string(),
+            Some(provider) => format!("models of {provider}"),
+        };
+        let search = egui::Rect::from_min_size(
+            box_rect.left_top() + egui::vec2(8.0, 8.0),
+            egui::vec2(box_rect.width() - 16.0, 24.0 * scale),
+        );
+        let response = ui.put(
+            search,
+            egui::TextEdit::singleline(&mut self.model_picker.as_mut().expect("checked").query)
+                .id(model_input_id())
+                .hint_text(hint)
+                .desired_width(search.width() - 8.0),
+        );
+        response.request_focus();
+        summary
+            .hotspots
+            .push(("model-search".into(), response.rect));
+
+        let mut y = search.max.y + 4.0;
+        for (index, entry) in shown.iter().enumerate() {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(box_rect.left() + 8.0, y),
+                egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
+            );
+            if index == selected {
+                painter.rect_filled(row, 3.0, theme.selection_focus);
+            }
+            let color = if index == selected {
+                theme.title
+            } else {
+                theme.text
+            };
+            paint_text(
+                &painter,
+                summary,
+                "models",
+                row.left_top() + egui::vec2(4.0, 14.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                entry.label.clone(),
+                egui::FontId::proportional(13.0 * scale),
+                color,
+            );
+            if !entry.meta.is_empty() {
+                paint_text(
+                    &painter,
+                    summary,
+                    "models",
+                    row.right_top() - egui::vec2(4.0, 14.0 * scale),
+                    egui::Align2::RIGHT_CENTER,
+                    entry.meta.clone(),
+                    egui::FontId::proportional(11.0 * scale),
+                    theme.dim,
+                );
+            }
+            summary.rows.push(("models".into(), entry.label.clone()));
+            summary.row_rects.push(("models".into(), row));
+            self.model_rects.push((index, row));
+            // **A row is a model, and a painted row is invisible to a screen
+            // reader.** Same arrangement as the palette: named by what it is,
+            // salted by the row's identity (a provider or model id is stable
+            // whatever order the filter puts it in), not by its position.
+            let name = if entry.meta.is_empty() {
+                format!("Model row · {}", entry.label)
+            } else {
+                format!("Model row · {} · {}", entry.label, entry.meta)
+            };
+            name_region(
+                ui,
+                row,
+                &format!("epsilon-model-row-{}", entry.id),
+                &name,
+                egui::accesskit::Role::Region,
+            );
+            y += 22.0 * scale;
+        }
+        if entries.len() > PALETTE_LIMIT {
+            let note = format!("… {} more — keep typing", entries.len() - PALETTE_LIMIT);
+            paint_text(
+                &painter,
+                summary,
+                "models",
+                egui::pos2(box_rect.left() + 12.0, y + 10.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                note.clone(),
+                egui::FontId::proportional(11.0 * scale),
+                theme.dim,
+            );
+            summary.rows.push(("models".into(), note));
+        }
+        if shown.is_empty() {
+            let none = "nothing matches";
+            paint_text(
+                &painter,
+                summary,
+                "models",
+                egui::pos2(box_rect.left() + 12.0, search.max.y + 18.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                none,
+                egui::FontId::proportional(12.0 * scale),
+                theme.dim,
+            );
+            summary.rows.push(("models".into(), none.into()));
+        }
+        summary
+            .rows
+            .push(("models".into(), "esc backs out · enter chooses".into()));
     }
     /// The icon strip that chooses what the sidebar shows.
     ///
@@ -8012,21 +8381,23 @@ mod tests {
         let (ws, _keep) = scratch_workspace("slash-model");
         let (session, notices) = faux_session(&ws);
         let mut h = Harness::with_session(ws, session, notices);
-        let current = h
-            .app
-            .session
-            .as_ref()
-            .map(|s| s.agent().model_id())
-            .unwrap_or_default();
 
+        // Bare opens the picker now (round 21 built it); the running model is
+        // marked active inside, which is the informational half the old
+        // "names the current model" answer carried.
         let outcome = h.app.try_command("/model");
         let crate::commands::Outcome::Ran(said) = outcome else {
             panic!("bare /model must answer, not refuse or send: {outcome:?}");
         };
         assert!(
-            said.contains(&current),
-            "bare /model names the model that is running: {said:?}"
+            said.contains("pick a provider"),
+            "bare /model opens the picker: {said:?}"
         );
+        assert!(
+            h.app.model_picker.is_some(),
+            "and the picker is open afterwards"
+        );
+        h.app.close_model_picker();
 
         let outcome = h.app.try_command("/model zzz-test-model");
         let crate::commands::Outcome::Ran(said) = outcome else {
@@ -8058,20 +8429,191 @@ mod tests {
     }
 
     /// `/model` with no agent answers rather than refusing.
+    ///
+    /// Bare still opens the picker (browsing needs no agent — the catalog is
+    /// static); only applying needs one, and that refusal names it.
     #[test]
     fn slash_model_without_an_agent_names_what_is_missing() {
         let (ws, _keep) = scratch_workspace("slash-model-no-agent");
         let mut h = Harness::new(ws);
-        for line in ["/model", "/model zzz-test-model"] {
-            let outcome = h.app.try_command(line);
-            let crate::commands::Outcome::Ran(said) = outcome else {
-                panic!("{line} without an agent must answer: {outcome:?}");
-            };
-            assert!(
-                said.contains("no agent"),
-                "names the missing piece: {said:?}"
-            );
-        }
+        let outcome = h.app.try_command("/model");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("bare /model without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("pick a provider"),
+            "bare /model opens the picker: {said:?}"
+        );
+        assert!(
+            h.app.model_picker.is_some(),
+            "and the picker is open afterwards"
+        );
+        h.app.close_model_picker();
+
+        let outcome = h.app.try_command("/model zzz-test-model");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/model <id> without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
+
+    /// The model picker lists providers (stage one).
+    ///
+    /// Over the shared builders, so this pins the window drawing what the
+    /// terminal draws from — not the catalog data itself, which is the
+    /// builders' own tests' job.
+    #[test]
+    fn model_picker_lists_providers() {
+        let (ws, _keep) = scratch_workspace("model-providers");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/model");
+        let frame = h.paint();
+        let rows = frame.region("models").join("\n");
+        assert!(
+            rows.contains("anthropic"),
+            "the provider list must name a bundled provider.\n{rows}"
+        );
+    }
+
+    /// Typing in the picker filters; gibberish matches nothing.
+    #[test]
+    fn typing_in_the_model_picker_filters() {
+        let (ws, _keep) = scratch_workspace("model-filter");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/model");
+        // One frame with the picker open before typing: the search box takes
+        // focus when it is drawn, and text typed before that lands nowhere.
+        let _ = h.paint();
+        h.type_text("anthropic");
+        let filtered = h.paint();
+        let rows = filtered.region("models").join("\n");
+        assert!(
+            rows.contains("anthropic"),
+            "the typed provider must remain: {rows:?}"
+        );
+        assert!(
+            !rows.contains("openai"),
+            "a provider that does not match must be gone, not merely further down: {rows:?}"
+        );
+
+        h.type_text("zzz-no-such-provider");
+        let empty = h.paint();
+        let rows = empty.region("models").join("\n");
+        assert!(
+            rows.contains("nothing matches"),
+            "gibberish must say so: {rows:?}"
+        );
+    }
+
+    /// Enter on a provider drills into its models (stage two).
+    #[test]
+    fn choosing_a_provider_drills_into_its_models() {
+        let (ws, _keep) = scratch_workspace("model-drill");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/model");
+        // One frame with the picker open before typing: the search box takes
+        // focus when it is drawn, and text typed before that lands nowhere.
+        let _ = h.paint();
+        h.type_text("anthropic");
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        assert_eq!(
+            h.app.model_picker.as_ref().and_then(|p| p.provider.clone()),
+            Some("anthropic".to_string()),
+            "Enter on a provider row must drill, not apply"
+        );
+        let frame = h.paint();
+        let rows = frame.region("models").join("\n");
+        assert!(
+            !rows.contains("nothing matches"),
+            "the drilled provider must offer models: {rows:?}"
+        );
+    }
+
+    /// Enter on a model applies it through the shared switch.
+    #[test]
+    fn choosing_a_model_applies_it() {
+        let (ws, _keep) = scratch_workspace("model-apply");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let before = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().model_id())
+            .unwrap_or_default();
+        let _ = h.app.try_command("/model");
+        // One frame with the picker open before typing: the search box takes
+        // focus when it is drawn, and text typed before that lands nowhere.
+        let _ = h.paint();
+        h.type_text("anthropic");
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        let _ = h.paint();
+        // Whatever the builders put first is what Enter must apply: the
+        // window applies the row, it does not choose the model.
+        let first = h.app.model_picker_entries().first().map(|e| e.id.clone());
+        let _ = h.press(egui::Key::Enter);
+        assert!(h.app.model_picker.is_none(), "applying closes the picker");
+        let after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().model_id())
+            .unwrap_or_default();
+        assert_eq!(
+            Some(after.clone()),
+            first,
+            "the agent runs the row Enter applied (was {before})"
+        );
+    }
+
+    /// Escape backs out of the model list, then closes.
+    #[test]
+    fn escape_backs_out_of_models_then_closes() {
+        let (ws, _keep) = scratch_workspace("model-escape");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/model");
+        // One frame with the picker open before typing: the search box takes
+        // focus when it is drawn, and text typed before that lands nowhere.
+        let _ = h.paint();
+        h.type_text("anthropic");
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        assert!(
+            h.app
+                .model_picker
+                .as_ref()
+                .and_then(|p| p.provider.clone())
+                .is_some(),
+            "precondition: drilled into a provider"
+        );
+        let _ = h.press(egui::Key::Escape);
+        assert_eq!(
+            h.app.model_picker.as_ref().and_then(|p| p.provider.clone()),
+            None,
+            "first Escape backs out to providers, picker still open"
+        );
+        assert!(h.app.model_picker.is_some(), "still open after backing out");
+        let _ = h.press(egui::Key::Escape);
+        assert!(h.app.model_picker.is_none(), "second Escape closes");
+    }
+
+    /// Model rows are named for screen readers.
+    #[test]
+    fn model_rows_are_named_for_screen_readers() {
+        let (ws, _keep) = scratch_workspace("model-a11y");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/model");
+        let frame = h.paint();
+        assert!(
+            h.node_named("Model row").starts_with("Model row"),
+            "a screen reader must reach the rows by name.\n{}",
+            frame.describe()
+        );
     }
 
     /// `/fork` on an empty session names it rather than branching nothing.

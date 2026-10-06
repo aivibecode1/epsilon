@@ -2443,6 +2443,14 @@ but not its machine-wide default save (that file is the terminal's default for n
 a window action does not rewrite it behind the terminal's back). Bare names the running
 model; the picker half stays refused until a picker exists. 14 of 37.
 
+**Amendment (full-port round 21).** The picker half now exists: a two-stage overlay
+(providers, then models) drawn by the window over the terminal's builders
+(`build_provider_rows`, `build_models_for_provider`), so the two front ends cannot disagree
+about what a provider holds. Bare `/model` opens it (the terminal's shape, current marked
+active); choosing a model runs the same `run_model_argument` the head runs. Customs flow
+through the shared loader; live listings do not (the fetch is async, the paint thread is
+not) — stated, not silent.
+
 ---
 
 ---

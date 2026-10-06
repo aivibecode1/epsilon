@@ -163,7 +163,13 @@ impl IdeApp {
             // of reach: there is no model picker in this window yet, and a
             // bare `/model` that opened nothing would be the silent no-op, so
             // bare names what is running instead.
-            Command::Models => self.run_model_argument(None),
+            //
+            // Round 21 built the picker, so bare opens it — the terminal's
+            // shape, with the running model marked active inside.
+            Command::Models => {
+                self.open_model_picker();
+                Outcome::Ran("models — pick a provider, then a model".to_string())
+            }
             Command::Model(id) => self.run_model_argument(Some(id)),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
@@ -584,7 +590,9 @@ impl IdeApp {
     /// and its key warning, but not its machine-wide default save: that file
     /// is the terminal's default for *new* sessions, and a window action does
     /// not rewrite it behind the terminal's back.
-    fn run_model_argument(&mut self, arg: Option<String>) -> Outcome {
+    /// Shared by the `/model <id>` head and the model picker: one act, two
+    /// doors. `pub(crate)` for the picker; the head owns the words.
+    pub(crate) fn run_model_argument(&mut self, arg: Option<String>) -> Outcome {
         let Some(session) = self.session.as_ref() else {
             return Outcome::Ran("model: no agent attached to this window".to_string());
         };

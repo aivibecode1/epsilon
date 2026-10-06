@@ -69,6 +69,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 34. **Full-port round 18 — truncated replies say so (P-127)** | A reply stopped for length used to read as a whole answer in both the live transcript and resumed sessions — the stop reason was never rendered. Both assistant paths now append `Response was truncated before completion.`, beside the M62 error marker. Two frame tests (one truncated + one whole reply with exactly one notice; replayed history), RED first with a control on the history arm. P-127 moves to `done`; Pi counts move to **39 / 124 / 158**. Desktop follow-up noted (its transcript ignores stop reasons too). Battery `port-r18` (2,122), green first time. |
 | (10-06) | 35. **Full-port round 19 — the window says so too (truncation parity)** | Round 18's follow-up, closed the same day: the desktop reducer appends the same notice in both its paths (`MessageEnd` live, `from_messages` history) as a `Notice` row — the kind whose draw path already reaches pixels. Three tests, RED first: two reducer tests (one with an EndTurn control) plus a resume-to-screen test proving the row reaches the agent region. No matrix rows move (P-127 already `done`; no DSH row covers truncation). Battery `port-r19` (2,125), green first time. |
 | (10-06) | 36. **Full-port round 20 — the window answers `/model` (by id, not by picker)** | An id runs the shared `set_model_id` — session record included — with the terminal's words and key warning, but not its machine-wide default save (a window action does not rewrite the terminal's defaults behind its back). Bare names the running model; the picker half stays honestly refused until a picker exists. Two tests, RED first with the honest refusal. 14 of 37, under ADR-029's criterion, amended. Battery `port-r20` (2,127), green first time. |
+| (10-06) | 37. **Full-port round 21 — the window grows a model picker** | Bare `/model` opens it now (the terminal's shape): providers, then models, over the terminal's builders — same data, native pixels. Four new chords (separate ids so rebinding never moves the palette), mouse clicks, Escape-back-out, screen-reader-named rows, apply through the same switch `/model <id>` runs. Six tests (list, filter, drill, apply, escape, a11y); the filter test caught a real focus-ordering defect mid-round (text typed before the first painted frame lands nowhere). Stated limits: no live listings (async fetch, not paint thread), customs via the shared loader. I-149 moves to `partial`; DSH counts move to **13 / 93 / 285**. Battery `port-r21` (2,133), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -161,7 +162,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 39 | 124 | 158 | 18 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 92 | 286 | 42 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 93 | 285 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -216,11 +217,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r20-2026-10-06.txt`](../audit/evidence/gate-port-r20-2026-10-06.txt),
+**Latest green battery: [`gate-port-r21-2026-10-06.txt`](../audit/evidence/gate-port-r21-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,127 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r19`: the window `/model` tests. (`cargo fmt
---check` ran before launching.)
+**2,133 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — six more than `gate-port-r20`: the model-picker tests (list, filter,
+drill, apply, escape, a11y). (`cargo fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

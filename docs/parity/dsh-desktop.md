@@ -118,9 +118,9 @@ measurements taken here at all.
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 3 | 8 | 52 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 23 | 37 | 5 |
-| Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 10 | 37 | 0 |
+| Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **13** | **92** | **286** | **42** |
+| **Total** | **433** | **13** | **93** | **285** | **42** |
 
 ---
 
@@ -611,7 +611,7 @@ opinion.
 | I-146 | Dragging a file anywhere over the page shows a **full-viewport drop invitation**. | `ui-attachment/src/client/drop-events.ts:51-56` | missing | — | No attachment intake. |
 | I-147 | The draft rail is one non-wrapping strip **64 px** tall that pans on vertical wheel. | `ui-attachment/src/AttachmentRail.module.css:27` | missing | — | As I-146. |
 | I-148 | A draft file card shows a determinate progress bar while uploading and becomes a retry button on failure. | `ui-attachment/src/client/FileCard.tsx:46-78` | missing | — | As I-146. |
-| I-149 | The composer's model menu shows a **search field only when the catalog holds more than 4 models**. | `ui-model-selection/src/client/ModelSelect.tsx:106` | missing | `crates/epsilon-desktop/src/app.rs:4067-4078` | No model picker in the window. The model is named from the launch and changing it means relaunching; `/model` is a head the window refuses by name (`commands.rs:449-451`). |
+| I-149 | The composer's model menu shows a **search field only when the catalog holds more than 4 models**. | `ui-model-selection/src/client/ModelSelect.tsx:106` | partial | The window has a search-filtered model chooser since round 21 (two stages over the terminal's builders, `/model` bare opens it) — the search condition is vacuous with a 557-model catalog, so the field is always shown; but it lives in an overlay, not in the composer, and the composer names no model to click | `typing_in_the_model_picker_filters`, `choosing_a_model_applies_it` |
 | I-150 | Each session resolves one shared model directory; the catalog refreshes on adapter, settings and credential events. | `ui-model-selection/src/client/service.ts:50-57` | missing | `crates/epsilon-desktop/src/lib.rs:135-147` | No catalog in the window; model resolution happens once, before it opens, through the same resolver the CLI uses. |
 ---
 
@@ -821,7 +821,7 @@ rather than merely underserved:
 | Keyboard and settings | S-101, S-102, S-103, S-104, S-105, S-106, S-107, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-126, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
 | Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
 | Layout and panes | L-104, L-109, L-111, L-112, L-113, L-114, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
-| Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-149, I-150 |
+| Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-150 |
 | Un-numbered reference rows | U-002, U-004, U-005, U-007, U-008, U-009, U-010, U-011, U-013, U-014, U-015, U-016, U-018, U-019, U-020, U-021, U-026, U-027, U-028, U-029, U-030 |
 
 ### The five highest-priority missing rows

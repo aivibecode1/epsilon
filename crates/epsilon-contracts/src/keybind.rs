@@ -388,6 +388,12 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.palette.submit", &["enter"]),
     ("window.palette.next", &["down"]),
     ("window.palette.previous", &["up"]),
+    // The model picker walks like the palette (separate ids so rebinding one
+    // never moves the other).
+    ("window.model.close", &["escape"]),
+    ("window.model.submit", &["enter"]),
+    ("window.model.next", &["down"]),
+    ("window.model.previous", &["up"]),
     ("window.focus.next", &["f6"]),
     ("window.focus.previous", &["shift+f6"]),
     ("window.tree.next", &["down"]),
