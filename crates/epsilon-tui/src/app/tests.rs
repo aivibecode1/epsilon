@@ -2212,6 +2212,64 @@ async fn two_stage_picker_descends_and_applies_model() {
     assert!(!app.picker_open);
 }
 
+/// Entering a query resets the picker selection to row 0 (P-252).
+///
+/// The matrix row named `two_stage_picker_descends_and_applies_model`, which
+/// descends and closes but never types a query and never reads `picker_index` —
+/// so the row was `done` on evidence that does not establish it. This test is
+/// the evidence it needed: descend, move off row 0, type a query character, and
+/// the best match is highlighted again while the filter keeps the character.
+#[tokio::test]
+async fn typing_a_query_resets_the_picker_selection_to_row_zero() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    // Open the picker (stage 1: providers) and descend into the highlighted
+    // provider — the first row, which holds dozens of models in the catalog.
+    assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('m'))));
+    assert!(app.picker_open);
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(
+        app.picker_provider.is_some(),
+        "Enter on stage 1 descends into the provider"
+    );
+
+    // Move off row 0, so the reset below has something to undo.
+    let rows = crate::picker::build_models_for_provider(
+        app.picker_provider.as_deref().unwrap_or(""),
+        &app.input,
+        &app.model_id,
+        &app.live_cache,
+        &app.customs,
+    );
+    assert!(
+        rows.len() > 1,
+        "need two model rows for the selection to move, got {} for {:?}",
+        rows.len(),
+        app.picker_provider
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Down));
+    assert_eq!(
+        app.picker_index, 1,
+        "Down moves the selection off row 0 first"
+    );
+
+    // Type a query character: the filter gains it, the picker stays open, and
+    // the selection returns to row 0 so the best match is highlighted.
+    handle_key(&mut app, &agent, key(KeyCode::Char('x')));
+    assert!(
+        app.input.contains('x'),
+        "the character filters rather than submits: {:?}",
+        app.input
+    );
+    assert!(
+        app.picker_open,
+        "typing a query must not close or submit the picker"
+    );
+    assert_eq!(
+        app.picker_index, 0,
+        "a query resets the selection to the best match"
+    );
+}
+
 // ---- M21: thinking level surface -------------------------------------------------
 
 #[tokio::test]

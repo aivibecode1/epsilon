@@ -198,11 +198,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r1-2026-10-06.txt`](../audit/evidence/gate-port-r1-2026-10-06.txt),
+**Latest green battery: [`gate-port-r2-2026-10-06.txt`](../audit/evidence/gate-port-r2-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,088 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — the same totals as `gate-m316d`, which is expected: no source file changed
-between the two runs.
+**2,089 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r1`: the P-252 test
+(`typing_a_query_resets_the_picker_selection_to_row_zero`), with its negative control run.
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
