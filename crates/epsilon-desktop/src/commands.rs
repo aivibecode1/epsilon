@@ -78,9 +78,11 @@
 //! * **agent-level** — the effect is on the agent or its session, so both frontends can do it
 //!   identically: `/compact`, `/goal`.
 //! * **window-level** — the effect is on a particular set of pixels, so it belongs to the
-//!   window that has those pixels: `/sessions`, `/new`, `/theme`.
-//! * **terminal-only** — the effect is on a terminal that does not exist here: `/timeline`,
-//!   `/fork`, `/editor`, `/hotkeys`.
+//!   window that has those pixels: `/sessions`, `/tasks`, `/session`, `/clear`, `/theme`,
+//!   `/help` — exactly [`SUPPORTED`], no more.
+//! * **terminal-only** — everything else, refused by name: a terminal-only surface
+//!   (`/timeline`, `/editor`, `/hotkeys`), a session-file action this window has no
+//!   equivalent for (`/new`, `/resume`, `/fork`, `/clone`), and the rest.
 
 use std::sync::Arc;
 

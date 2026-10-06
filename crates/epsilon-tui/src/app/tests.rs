@@ -2603,6 +2603,15 @@ async fn f2_cycles_favorites_and_guides_when_empty() {
     );
     assert_eq!(app.model_id, "deepseek-chat", "shift = backward");
 
+    // The switch is reported, not silent: Pi prints `Switched to <name>`, this
+    // prints the same fact in its own words (P-038). Transcript lines only —
+    // no new filesystem reads (lesson 16b above).
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("model switched to")),
+        "a cycled switch must say so: {texts:?}"
+    );
+
     // Persistence side effects: cycling routes through apply_model, so the
     // saved model id must reflect the last switch. The recents list also
     // persists, but asserting the real global config here races every other

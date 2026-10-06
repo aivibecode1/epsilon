@@ -76,7 +76,7 @@ this document**, tallied from its own tables — not a projection.
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 7 | 5 | 23 | 0 |
-| 6. Model picker and thinking | 9 | 0 | 2 | 7 | 0 |
+| 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 1 | 9 | 7 | 0 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **38** | **122** | **161** | **18** |
+| **Total** | **339** | **38** | **124** | **159** | **18** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -333,8 +333,8 @@ is recorded in the rows below as a gap in the inventory rather than a claim that
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-037 | `Shift+Tab` steps the thinking level and reports it; a model with no reasoning support says so | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4440-4449`, `packages/coding-agent/src/core/keybindings.ts:100-103` | missing | none — the id `app.thinking.cycle` is declared at `crates/epsilon-contracts/src/keybind.rs:256` with a handler at `crates/epsilon-tui/src/app/keys.rs:1435`, but no `E-` row establishes the behaviour, so this is `missing` rather than `partial` | — |
-| P-038 | `Ctrl+P` / `Ctrl+Shift+P` cycle models and print `Switched to <name> (thinking: <level>)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4451-4468`, `packages/coding-agent/src/core/keybindings.ts:108-115` | missing | none — `app.model.cycleForward` / `cycleBackward` are declared at `crates/epsilon-contracts/src/keybind.rs:257-258` with handlers at `crates/epsilon-tui/src/app/keys.rs:1459-1460`, but no `E-` row establishes the behaviour | — |
+| P-037 | `Shift+Tab` steps the thinking level and reports it; a model with no reasoning support says so | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4440-4449`, `packages/coding-agent/src/core/keybindings.ts:100-103` | partial | `crates/epsilon-contracts/src/keybind.rs:256` — `app.thinking.cycle` is `ctrl+t` here (`Shift+Tab` is unreliable across terminals, `keys.rs:1436-1437`); the step-and-report half is pinned, but a model with no reasoning support says nothing anywhere: the catalog has no reasoning flag (`ModelInfo` carries `supports_tools`, not thinking support), so the message has no data source and guessing per provider would lie | `ctrl_t_cycles_the_thinking_ladder` (steps off→minimal→low→medium, asserts the `thinking level: medium` report and the footer mirror) |
+| P-038 | `Ctrl+P` / `Ctrl+Shift+P` cycle models and print `Switched to <name> (thinking: <level>)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4451-4468`, `packages/coding-agent/src/core/keybindings.ts:108-115` | partial | `crates/epsilon-contracts/src/keybind.rs:257-258` — `ctrl+p` opens the palette here; cycling is `F2` / `Shift+F2` over *favorites* (`keys.rs:1459-1460` → `cycle_favorite`, `app.rs:665`), and the switch is reported by `apply_model` (`model switched to … — saved to …`); Pi cycles all models, this cycles the starred set, deliberately (M23) | `f2_cycles_favorites_and_guides_when_empty` (forward, wrap-around, backward, the empty-list guide, and the `model switched to` report) |
 | P-048 | `/thinking <level>` sets it for this session; bare `/thinking` opens a picker that can also persist a default | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5067-5082`, `:5095-5114` | partial | `crates/epsilon-contracts/src/command.rs:495` — the `/think` head parses an optional argument and runs without panicking; no `E-` row establishes the argument form or a picker | `no_slash_command_panics_when_typed`, `commands_parse_with_optional_args_and_case` |
 | P-262 | The thinking panel is searchable, annotates each level (`Maximum reasoning`) and marks the default | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:78`, `:119`, `:23`, `:72` | missing | none | — |
 | P-263 | Filtering the thinking list re-selects the surviving value rather than dropping to row 0 | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:125`, `:123` | missing | none | — |
@@ -767,7 +767,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 7 | 5 | 23 | 0 |
-| 6. Model picker and thinking | 9 | 0 | 2 | 7 | 0 |
+| 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 1 | 9 | 7 | 0 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **38** | **122** | **161** | **18** |
+| **Total** | **339** | **38** | **124** | **159** | **18** |
 
 ### The `missing` rows — 161
 

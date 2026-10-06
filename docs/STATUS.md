@@ -53,6 +53,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 18. **Full-port objective, round 1 — the tree is landed and the battery is green** | New owner objective: a full port of Pi (TUI and logic) plus what Pi lacks, and a desktop as good as DSH Desktop on the native stack. `gate-land316a` went 9/10 with the test leg blocked by the filename-bound AV fault (proved again by probe: exact name denied, one char longer allowed); re-run under `CARGO_PROFILE_DEV_DEBUG=line-directives-only` went green first time ([`gate-port-r1-2026-10-06.txt`](../audit/evidence/gate-port-r1-2026-10-06.txt), 2,088/0/12). M313–M316, the review and plan 025 landed in four slices plus a fifth: 11 Pi-matrix `ours` citations re-pointed at the moved binding table (`keybind.rs:242-365`) and the id count corrected 24 → 23. Tree clean. |
 | (10-06) | 19. **Full-port rounds 2–3 — two `done` rows re-proven, one honestly downgraded** | P-252 named a test that never typed a query: new test descends, moves to row 1, types, and asserts row 0 (negative control fails `left: 1, right: 0`); VER cell re-pointed. P-313 was worse — it claimed Pi's four auth literals and named tests that never look at a provider row, while the window draws the distinction as key / `·` / `●`: new frame test pins that half through the production draw, the row moves to `partial` (no `env: NAME`, no type warning), and the Pi counts move to **38 done / 122 partial** in both summaries and here. Batteries `port-r2` (2,089) and `port-r3b` (2,090); `port-r3` failed `fmt` on a long line in the new test. |
 | (10-06) | 20. **Full-port round 4 — the window answers `/help`** | First desktop verb beyond the M312–M315 seven: `/help` opens the command palette (the window's honest equivalent of the terminal's command reference — the palette lists every file and command the window answers), under ADR-029's own criterion that the effect already exists (`Ctrl+P`). RED first (refused by name), then `open_palette` + arm + `SUPPORTED`, 8 of 37; the guard test's third list (`implemented`) caught the missing entry before the suite did. Count updates everywhere it was live (matrix prose, `commands.rs` module doc, plan 025); the correction ledger and the dated review keep their history. Battery `port-r4` (2,091). |
+| (10-06) | 21. **Full-port round 5 — two `missing` rows become `partial` on tests that already existed** | P-037 (thinking cycle) and P-038 (model cycle) both said "no row establishes the behaviour" while `ctrl_t_cycles_the_thinking_ladder` and `f2_cycles_favorites_and_guides_when_empty` pinned exactly those behaviours — the inventory, not the product, was behind. Both move to `partial` with the chord divergences written down (`ctrl+t`, F2-over-favorites) and the genuinely absent halves named: no reasoning-support message exists anywhere (and the catalog has no reasoning flag to source one from — guessing per provider would lie). The F2 test additionally asserts the `model switched to` report now. Pi counts move to **38 done / 124 partial / 159 missing** in both summaries and here; the `commands.rs` module doc's split (which still listed `/new` as window-level) matches `SUPPORTED` again. Battery `port-r5` (2,091, no new tests). |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -144,7 +145,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 122 | 161 | 18 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 124 | 159 | 18 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 11 | 88 | 292 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -200,11 +201,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r4-2026-10-06.txt`](../audit/evidence/gate-port-r4-2026-10-06.txt),
+**Latest green battery: [`gate-port-r5-2026-10-06.txt`](../audit/evidence/gate-port-r5-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
 **2,091 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r3b`: the `/help` test
-(`slash_help_opens_the_palette`), with its RED run recorded.
+`test result:` lines — same totals as `gate-port-r4`: this round added no tests, it pinned the F2
+switch report inside the existing test and moved P-037/P-038 to `partial`.
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
