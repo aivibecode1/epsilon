@@ -60,6 +60,12 @@ run "check-links"    python scripts/check-links.py --quiet        || overall=1
 # `epsilon-lsp` had exactly that bug (D1/D21), found by a human reading twelve
 # manifests; this is the check that means nobody has to.
 run "check-lint-tables" python scripts/check-lint-tables.py       || overall=1
+# Parity-matrix citations name production lines, and moving code re-points
+# every citation below it without touching the row. The export move deleted 53
+# lines and shifted nineteen rows in round 14, all repaired by hand; this is
+# the check that means nobody has to. Reference-side paths are excluded (not
+# committed) -- see the script.
+run "check-parity-citations" python scripts/check-parity-citations.py --quiet || overall=1
 # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises on
 # commit) and breaks every source-parsing test in the tree while reporting
 # something else entirely -- M231 lost a battery to a dispatcher reported as

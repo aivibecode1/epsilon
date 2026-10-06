@@ -363,6 +363,33 @@ the interim wording must name the platform, not just the mode:
 
 ---
 
+## 11. The gate list in §4 is stale again: eleven legs, and proposal 10 is half-answered
+
+**Filed:** 2026-10-06, full-port round 22.
+
+**Current text** (§4):
+
+> Gates, in order: `check-links`, `check-agents-lock`, `check-lint-tables`, `check-line-endings`,
+> `check-control-bytes`, `fmt`, `clippy`, `test`, `demo`, `real-check`.
+
+**The gap.** Both gate scripts now run eleven legs: `check-parity-citations`
+(`scripts/check-parity-citations.py`) was wired in after `check-lint-tables`
+(`gate.ps1`, `gate.sh`), because the export move deleted 53 lines and silently
+re-pointed nineteen matrix citations in round 14 — all repaired by hand, the
+twentieth such move should fail the build instead. The script checks 464
+citations across both matrices (workspace paths with `:line`/`:start-end`;
+reference-side paths excluded like `check-links.py` excludes `references/`).
+
+**Proposed:** add `check-parity-citations` to the §4 list in the same position.
+
+**Relation to proposal 10.** Proposal 10 measured 36 dead backticked paths under
+`docs/` and asked that every code-span path resolve. This gate answers a subset:
+citations *with line numbers* in the *two matrices*. It does not touch bare
+paths, other documents, or the proposal-vs-stale-pointer distinction — proposal
+10 stays open in full. Noted here so the maintainer can see the overlap.
+
+---
+
 ## Closed proposals
 
 _Moved here when a proposal was applied and the lock re-issued. Kept, because deleting a

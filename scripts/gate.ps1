@@ -192,6 +192,12 @@ $gates = @(
     # that bug (D1/D21) and it was found by a human reading twelve manifests.
     # This is the check that means nobody has to.
     @{ Name = "check-lint-tables"; Exe = "python"; Args = @("scripts/check-lint-tables.py") },
+    # Parity-matrix citations name production lines, and moving code re-points
+    # every citation below it without touching the row: a claim that cannot be
+    # followed. The export move deleted 53 lines and shifted nineteen rows in
+    # round 14, all repaired by hand; this is the check that means nobody has
+    # to. Reference-side paths are excluded (not committed) — see the script.
+    @{ Name = "check-parity-citations"; Exe = "python"; Args = @("scripts/check-parity-citations.py", "--quiet") },
     # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises
     # on commit), and it breaks every source-parsing test in the tree in a way that
     # reports something else entirely -- M231 lost a battery to a dispatcher

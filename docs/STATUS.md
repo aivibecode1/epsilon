@@ -70,6 +70,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 35. **Full-port round 19 — the window says so too (truncation parity)** | Round 18's follow-up, closed the same day: the desktop reducer appends the same notice in both its paths (`MessageEnd` live, `from_messages` history) as a `Notice` row — the kind whose draw path already reaches pixels. Three tests, RED first: two reducer tests (one with an EndTurn control) plus a resume-to-screen test proving the row reaches the agent region. No matrix rows move (P-127 already `done`; no DSH row covers truncation). Battery `port-r19` (2,125), green first time. |
 | (10-06) | 36. **Full-port round 20 — the window answers `/model` (by id, not by picker)** | An id runs the shared `set_model_id` — session record included — with the terminal's words and key warning, but not its machine-wide default save (a window action does not rewrite the terminal's defaults behind its back). Bare names the running model; the picker half stays honestly refused until a picker exists. Two tests, RED first with the honest refusal. 14 of 37, under ADR-029's criterion, amended. Battery `port-r20` (2,127), green first time. |
 | (10-06) | 37. **Full-port round 21 — the window grows a model picker** | Bare `/model` opens it now (the terminal's shape): providers, then models, over the terminal's builders — same data, native pixels. Four new chords (separate ids so rebinding never moves the palette), mouse clicks, Escape-back-out, screen-reader-named rows, apply through the same switch `/model <id>` runs. Six tests (list, filter, drill, apply, escape, a11y); the filter test caught a real focus-ordering defect mid-round (text typed before the first painted frame lands nowhere). Stated limits: no live listings (async fetch, not paint thread), customs via the shared loader. I-149 moves to `partial`; DSH counts move to **13 / 93 / 285**. Battery `port-r21` (2,133), green first time. |
+| (10-06) | 38. **Full-port round 22 — matrix citations become a gate leg** | Plan 025 §2.B, banked: `scripts/check-parity-citations.py` verifies all 464 backticked workspace citations (`:line`, `:start-end`) across both matrices resolve to real files and in-range lines — reference-side paths excluded like `check-links` excludes `references/`. Proven by breaking six citations and watching it name every one, then restored byte-identically. Wired into both gate scripts (eleven legs from here); proposal 11 filed for the locked §4 list, noting the partial overlap with proposal 10. No Rust changes, no rows move. Battery `port-r22` (2,133), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -217,11 +218,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r21-2026-10-06.txt`](../audit/evidence/gate-port-r21-2026-10-06.txt),
-2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
+**Latest green battery: [`gate-port-r22-2026-10-06.txt`](../audit/evidence/gate-port-r22-2026-10-06.txt),
+2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS` — the
+first battery with `check-parity-citations` wired in.
 **2,133 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — six more than `gate-port-r20`: the model-picker tests (list, filter,
-drill, apply, escape, a11y). (`cargo fmt --check` ran before launching.)
+`test result:` lines — unchanged from `gate-port-r21`: no Rust changes this round. (`cargo fmt
+--check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
