@@ -112,7 +112,7 @@ measurements taken here at all.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| Electron shell (`apps/desktop/**`) | 70 | 0 | 9 | 45 | 16 |
+| Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
 | Approvals and permission presets | 14 | 3 | 6 | 5 | 0 |
 | Transcript, streaming and tool cards | 82 | 1 | 18 | 57 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 3 | 8 | 52 | 5 |
@@ -120,7 +120,7 @@ measurements taken here at all.
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 23 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 10 | 37 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **13** | **91** | **287** | **42** |
+| **Total** | **433** | **13** | **92** | **286** | **42** |
 
 ---
 
@@ -163,7 +163,7 @@ do are written out.
 | D-028 | Only one process may own the desktop profile; a second launch quits immediately and the owner focuses its window. | `apps/desktop/src/single-instance.ts:16-26` | missing | — | No single-instance lock. A second launch is a second window on the same workspace directory. |
 | D-029 | `dsh://open` shows the window without passing credentials. | `apps/desktop/src/main.ts:1228-1232` | missing | — | No URL scheme is registered. |
 | D-030 | Closing the last window quits everywhere except macOS. | `apps/desktop/src/main.ts:1237-1239` | partial | `crates/epsilon-desktop/src/lib.rs:183-188` | `eframe::run_native` returns when the last window closes, so the product half is right. The macOS exception is not implemented and is not planned. |
-| D-031 | Every ordinary quit asks the Host what it would interrupt; if the Host reports nothing interruptible the quit proceeds with no dialog. | `apps/desktop/src/quit-confirmation.ts:68-77` | missing | — | No quit inspection and no quit confirmation. Closing the window while a turn is in flight ends the process; `AGENTS.md` §6's "never lose a user's work" is currently met by the durable session file, not by a dialog. |
+| D-031 | Every ordinary quit asks the Host what it would interrupt; if the Host reports nothing interruptible the quit proceeds with no dialog. | `apps/desktop/src/quit-confirmation.ts:68-77` | partial | `crates/epsilon-desktop/src/app.rs` — `inspect_quit` asks what a close would interrupt (turn, parked asks, on-screen conversation) and `answer_close_request` refuses with a dialog naming it; since round 17 the refusal cancels the platform close in the same function (`CancelClose` — before that the dialog could never appear in production, eframe closes uncancelled viewports). The second half stays open deliberately, not by omission: a tested product rule says closing is the reader's decision even for an empty window, and overturning it solo would trade the reference's frictionless close for that rule | `closing_the_window_asks_before_it_loses_a_turn`, `refusing_a_close_cancels_the_platform_close` (CancelClose observed on the frame), `a_typed_draft_keeps_its_guard` |
 | D-032 | Three localized explanations exist — running tasks, scheduled tasks, or both — and a failed or timed-out inspection is treated as "running tasks" rather than a silent quit. | `apps/desktop/src/quit-confirmation.ts:15-21`, `:71-74` | missing | — | As D-031. The fail-closed shape the reference gets right is worth porting; it is recorded in [Open rows](#open-rows). |
 | D-033 | Quit is the default button and Cancel answers Esc; macOS places Cancel left of Quit, Windows places Quit left of Cancel. | `apps/desktop/src/quit-confirmation.ts:79-90` | missing | — | As D-031. |
 | D-034 | A second quit request while the box is open joins it; on macOS it also raises the application. | `apps/desktop/src/quit-confirmation.ts:52-55`, `apps/desktop/src/main.ts:1003` | missing | — | As D-031. |
@@ -715,8 +715,9 @@ single-instance lock to arbitrate.
 **This is the group where "deliberately different" is doing less work than it looks, and the
 matrix should say so.** The reference's quit rules are a genuine improvement on closing a window
 mid-turn, and nothing about a single-process design makes them unnecessary — it only makes them
-ours to build instead of inherited. D-031 to D-036 are therefore recorded as `missing`, not as
-differences, and they appear at the top of [Open rows](#open-rows). The tray and the connection
+ours to build instead of inherited. D-032 to D-036 are still recorded as `missing`; D-031 moved
+to `partial` in round 17 (inspection, dialog, enforced cancel, silent empty close), and they
+appear at the top of [Open rows](#open-rows). The tray and the connection
 indicator are genuinely moot.
 
 ### Group 3 — The window's own keyboard and overlay model
@@ -814,7 +815,7 @@ rather than merely underserved:
 
 | area | missing rows |
 |---|---|
-| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-031, D-032, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
+| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-032, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079, D-080, D-081, D-082 |
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-110, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
 | Keyboard and settings | S-101, S-102, S-103, S-104, S-105, S-106, S-107, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-126, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
@@ -834,13 +835,14 @@ security property from "the window does not contradict it", and that refusal is 
 to the engine to be checked rather than quietly marked `done`. Then the keybinding registry, which
 was first here, was largely closed by M315 — it is now **second**, and the reason is below.
 
-1. **D-031 to D-036 — quitting with work in flight.** Closing the window while a turn is running
+1. **D-032 to D-036 — quitting with work in flight, and D-031's remainder.** Closing the window while a turn is running
    ends the process. The reference asks what would be interrupted, treats an unknown answer as
    "running tasks", defaults to the safe choice and makes Cancel the focused button. The durable
    session file means little is lost, but a reader who has not pressed `/clear` and does not know
    that is not protected. **This moved to first** when the registry below it was mostly closed:
    it is the one remaining gap here that touches `AGENTS.md` §6's "never lose a user's work", and
-   it is wholly `missing` rather than half done.
+   D-031 itself is now `partial` rather than half done (the idle-with-session silent close and the
+   button order in D-033 are still open).
 2. **The keybinding registry, now two rows short of closed — the recorder and the write half.**
    [`AGENTS.md`](../../AGENTS.md) §2.4 says slash commands, palette entries **and keybindings** are
    "declared once and read by every front end, with per-front-end capability declared as data".

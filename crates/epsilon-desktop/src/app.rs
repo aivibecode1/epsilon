@@ -5166,7 +5166,18 @@ impl IdeApp {
         if self.quit_confirm.is_none() {
             self.quit_confirm = Some(self.inspect_quit());
         }
-        let _ = ctx;
+        // **Cancel the platform close here, not in `paint`.** eframe closes a
+        // viewport whose close was not cancelled in the same frame
+        // (`epi_integration.rs`), so a refusal recorded anywhere else is a
+        // dialog over a window that is already gone. Sending it here keeps the
+        // decision and its enforcement in the one function tests drive — the
+        // reason `answer_close_request` exists at all.
+        //
+        // Deliberately no silent path, even for an empty window: a tested
+        // product rule says closing is the reader's decision, and overturning
+        // it solo would trade D-031's second half for that rule. The tension
+        // is recorded in D-031 itself.
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         false
     }
 
@@ -9912,6 +9923,63 @@ mod tests {
             !h.close_was_accepted(&commands),
             "and the window is still open after two requests.\n{}",
             frame.describe()
+        );
+    }
+
+    /// Refusing a close cancels the platform close — not just records a dialog.
+    ///
+    /// The production hole this closes: nothing ever sent `CancelClose`, and
+    /// eframe closes a viewport whose close was not cancelled in the same
+    /// frame — so the dialog, the default-safe buttons and the second-request
+    /// logic could never execute outside a test. This asserts the command a
+    /// frame carries, through the same `request_close` seam the platform flag
+    /// reaches.
+    #[test]
+    fn refusing_a_close_cancels_the_platform_close() {
+        let (ws, _keep) = scratch_workspace("quit-cancel");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.type_text("hello");
+        let _ = h.paint();
+
+        assert!(
+            !h.request_close(),
+            "a close with a conversation on screen is refused"
+        );
+        let commands = h.viewport_commands();
+        assert!(
+            commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::CancelClose)),
+            "refusing must cancel the platform close, or the dialog is drawn over a window that is already gone: {commands:?}"
+        );
+        assert!(
+            !h.close_was_accepted(&commands),
+            "and must not ask for the close in the same breath"
+        );
+    }
+
+    /// A typed draft keeps its guard.
+    ///
+    /// An unsent draft is work even with no agent to send it to, and closing
+    /// over it would be the silent data loss `AGENTS.md` §6 exists to prevent.
+    /// There is no silent path that a draft could slip through: every close is
+    /// asked about, empty window or not, by tested product rule.
+    #[test]
+    fn a_typed_draft_keeps_its_guard() {
+        let (ws, _keep) = scratch_workspace("quit-draft");
+        let mut h = Harness::new(ws);
+        // Set, not typed: the typing path is tested elsewhere, and what this
+        // decides on is the draft's content, however it got there.
+        h.app.draft = "unsent words".to_string();
+        let _ = h.paint();
+        assert!(
+            !h.request_close(),
+            "an unsent draft is work, even with no agent to send it to"
+        );
+        assert!(
+            h.app.quit_confirm.is_some(),
+            "and the refusal must be a question"
         );
     }
 
