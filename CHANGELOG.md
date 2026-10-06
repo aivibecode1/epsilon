@@ -7,6 +7,23 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Added
 
+- **The desktop window's shortcuts can be rebound, from the same file the terminal already reads.**
+  `Ctrl`+`B`, `Ctrl`+`P`, `F6`, `Shift`+`F6`, `Enter`, `Escape`, the arrows and the zoom keys were
+  seventeen literal `consume_key` reads and one hand-written `"ctrl+b"` constant — so
+  `keybindings.json` could touch the terminal and **not the window**, which is the half of
+  `AGENTS.md` §2.4 that was not true. The chord grammar now lives in `epsilon-contracts`, so a
+  binding a user writes means the same in both front ends, and the window reads the same
+  `<config dir>/keybindings.json` (M315, ADR-031). **Not** in this: nothing writes the file yet, and
+  there is no recorder — a binding can be set by hand, not recorded with a keystroke.
+- **Two parity matrices, and the guide that explains them.** [`docs/parity/`](docs/parity/README.md)
+  holds **one row per behaviour** against the two projects Epsilon is a port of:
+  [`pi-tui.md`](docs/parity/pi-tui.md) against Pi's interactive terminal mode, and
+  [`dsh-desktop.md`](docs/parity/dsh-desktop.md) against DSH Desktop. Each row carries where the
+  *reference* defines the behaviour, our status, where *we* implement it, and how it was verified —
+  because the objective asks how close a port is, and until now the answer was a commit message
+  rather than a document. They are built from **869 cited rows read out of the vendored sources**
+  (`audit/evidence/parity-*-reference.md`, `parity-epsilon-*.md`), every one pointing at a line.
+  **Both reference sources were already present** under `references/`; nothing had to be fetched.
 - **The desktop window can now change its own colour scheme.** `/theme` was refused there by name,
   so the palette was whatever the window picked at launch — a user who wanted the light one, or the
   high-contrast one, had to edit a config file and restart. It now behaves exactly as the terminal's:
@@ -41,6 +58,54 @@ All notable changes to Epsilon, grouped by milestone. Most milestones have a dev
 
 ### Fixed
 
+- **Closing the desktop window asks first.** It used to end the process, so a turn in flight
+  stopped where it was and a parked permission ask was discarded — and a reader who had not
+  pressed `/clear` had no way to know which of the two had happened. A close request is now
+  refused and answered with a dialog that names what is actually at stake, including the case
+  that reads as "nothing is happening" (a run blocked on a permission ask, where nothing is
+  *running*). `Escape` keeps the window and `Keep working` is the first button, so a stray key
+  never loses work (M316).
+- **`Shift+Enter` in the desktop composer sent the draft.** The placeholder has always promised
+  `shift+enter for a new line`, and it sent. egui matches modifiers *logically*, so the composer's
+  plain `Enter` read also swallowed `Shift+Enter`. Now the most specific chord is matched first —
+  and the fix reads the **event's** modifiers, because `InputState::modifiers` is never filled
+  from an event and a first attempt that read it silently did nothing. Pinned by a test that drives
+  a real `Modifiers::SHIFT` through the real key path (M314).
+- **The sessions sidebar was a keyboard trap.** `F6` into it drew a focus ring over a list where no
+  key did anything at all — WCAG 2.1.2. The arrows and `Enter` now answer the list that is actually
+  on screen, the cursor is **drawn** with a `▸` marker, and `Enter` calls the same `switch_session`
+  the click path calls. Negative control run (M314).
+- **A launch notice ran off the edge of the agent pane with no marker.** Found by **looking at a
+  rendered frame**, not by a failing test — every test passed, because they assert on the strings
+  the code recorded and it recorded the *unclipped* ones. The last unbounded string in the window
+  is budgeted now, and the recorded string is the drawn one (M314).
+- **The desktop's in-crate test harness could not type at all.** It built an unfocused `RawInput`,
+  and egui drops keyboard events for an unfocused window; every existing test typed through a
+  text event, which is delivered regardless. Fixed, which makes the zoom keys and the composer's
+  chord handling reachable by tests at last (M314).
+- **`Ctrl+F` in the model picker panicked — in a release binary.** `/models` (or `Ctrl+M`), then
+  `Ctrl+F`, `Ctrl+Up` or `Ctrl+Down`, reached an `unreachable!` that fired *before* the arms it
+  claimed to defer to. `Ctrl+F` is advertised in `/help` and in the picker's own hint row, and the
+  handler it protected — toggling a favourite — was unreachable code. 2,061 green tests had never
+  seen it, because the only `Ctrl+F` test runs with the picker **closed**. A guard placed in front
+  of the code it guards is not a guard; the arm is gone, so one match is the only reader (M313).
+- **Two bindings the footer printed and no handler read.** `app.interrupt` was a literal `Esc` in
+  the handler while `/hotkeys` and the status bar printed it from the binding table — so a user who
+  moved it was shown **their** key beside "stop", and pressing it did nothing. `tui.input.submit`
+  was `KeyCode::Enter if keybindings.matches(…)`: a guard re-deriving the answer the pattern in
+  front of it had already given, so binding it to anything else removed submit entirely while
+  `/hotkeys` still advertised the new chord. Both are read from the table now, and each test
+  asserts **both** directions — the rebound chord works, and the old key says it is not bound
+  rather than quietly working anyway (M313).
+- **Model output is stripped on the live streaming tail, not only when it is committed.** A
+  committed line goes through `push_line`, which strips control and bidi characters; the
+  in-flight tail did not, so the same bytes sat unstripped in state for the whole of every answer.
+  **Measured, and the obvious conclusion was wrong:** the frame was already clean, because ratatui
+  discards a zero-width format character on its way into a cell — so there was no user-visible
+  defect, and equally no guarantee. `AGENTS.md` §6 strips untrusted text *before* it reaches a
+  screen, and "a layout crate happened to drop it" is not that; a dependency bump can take it away
+  silently. Fixed at the point the text enters state, with a negative control that fails printing
+  the override (M313).
 - **Three panes were drawing their content over their own headers.** In the agent pane the word
   `Agent` appeared in the middle of the conversation and the first rows were clipped by the pane's
   edge — the transcript was drawn 42 pixels too high, because a `ScrollArea` starts from the `Ui`

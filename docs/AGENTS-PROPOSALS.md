@@ -19,6 +19,11 @@ Five, filed 2026-10-03. The first came from a battery failure; the other four fr
 reference harnesses' own agent conventions, which is where a rule that a working project has
 already had to learn actually comes from.
 
+**Later filings:** 6 (2026-10-04, by a newcomer review), 7 (2026-10-05, by the parity-matrix
+inventory), and 9 and 10 (2026-10-06, by
+[an independent review of the objective](reviews/2026-10-06-objective-review.md)); **8 is closed
+below** because the work was done.
+
 ### 1. A recorded gap is not a task
 
 **The gap.** §5 says "Deletion beats addition. A refactor that also changes behaviour cannot be
@@ -146,6 +151,215 @@ answers; the locked one is the outlier.
 **The same review found a second stale pointer**, which needed no proposal because the file it is
 in is not locked and has been fixed: `scripts/gate.ps1:9` sent the reader to `AGENTS.md`'s
 "Windows notes", and v2 calls that section **"This machine"**.
+
+---
+
+## 7. Provider credentials are on disk in plaintext, and §6 forbids that
+
+**Found by.** A read-only source inventory of `crates/epsilon-tui` for the parity matrix,
+2026-10-05. Reported through [`STATUS.md`](STATUS.md) per §14 rather than acted on.
+
+**The contradiction, exactly.** §6 says:
+
+> **Never write a credential to disk in plaintext.** Secrets belong in the OS credential
+> store. Never accept one on a command line.
+
+The product writes every provider credential — API keys **and** OAuth token pairs — to
+`<global config dir>/auth.json`, i.e. `~/.config/epsilon/auth.json` on this platform:
+
+- `crates/epsilon-llm/src/auth.rs:1-23` — the module doc states the design plainly, and
+  names its model: *"opencode's `auth.json` pattern (M22)"*.
+- `crates/epsilon-llm/src/auth.rs:6` — the path.
+- `StoredCredential::Api { key, .. }` and `StoredCredential::OAuth { access, refresh, .. }`
+  (`auth.rs:47-60`) are both `Deserialize` from that file, so a refresh token is stored the
+  same way an API key is.
+- Measured, not assumed: **`keyring`, `wincred`, `secret-service` and `keychain` appear
+  nowhere in `crates/**/*.rs`, and `keyring` is not in `Cargo.lock`.** There is no OS
+  credential store in this project at all.
+
+**What the code does get right**, so the decision is not one-sided. The store takes a
+cross-process `auth.lock` with stale-lock stealing, persists through a same-directory temp
+file plus atomic rename, enforces `0600` on unix, and **refuses to overwrite a corrupt file**
+so a failed-open read cannot become a wipe (`auth.rs:15-19`). Those are the right disciplines
+for a file that holds a secret. The problem is that it is a file.
+
+**Why no agent fixed it.** Three reasons, stated so the maintainer can weigh them:
+
+1. It is a **behaviour-level change** with a wire format and a migration, which §5 says wants
+   an ADR.
+2. It needs a **new dependency** — an OS keychain crate — which §5 also gates behind an ADR.
+3. The objective's own desktop standard repeats the requirement (*"secrets in the OS keychain,
+   not plaintext"*), so this is not a rule only the terminal happens to bend.
+
+**Two ways to close it. The maintainer should pick one.**
+
+**(a) Change the rule to match the product**, as a statement of what is actually enforced:
+
+> Provider credentials live in `<config dir>/auth.json`, in the opencode and Pi shape.
+> They are written `0600` on unix, via atomic rename, under a cross-process lock, and a
+> corrupt file is never overwritten. **The OS credential store is the target, not the
+> current state**; until it is adopted, this file is a known plaintext store and every
+> document that says otherwise is wrong.
+
+**(b) Change the product to match the rule**: adopt an OS keychain, keep `auth.json` as an
+import/export format for CI, and migrate on first read. This is the better answer on the
+merits — a 0600 file on a machine with malware, a backup, or a synced home directory is not a
+secret store — and it is what the objective asked for. It is also a day of work, and it should
+be scheduled as its own milestone rather than folded into a hardening round.
+
+**Recommendation: (b), with (a)'s wording adopted for the interim** so that the locked file
+describes the product truthfully in the meantime. Filing a rule that the tree violates is
+worse than either fixing the tree or fixing the rule.
+
+---
+
+## 8. ~~§2.4's "one command registry" describes keybindings the tree does not have~~ — **CLOSED by the work, 2026-10-05 (M315, ADR-031)**
+
+> **Status: resolved in the tree, so the proposal is withdrawn rather than answered.** The
+> registry now exists, the window reads it, and `§2.4` is true of the code for the first time.
+> The entry is kept below because a later reader who remembers the gap deserves to know it was
+> real, and because the *shape* of the fix is a decision someone may want to revisit.
+
+**Found by.** A source survey of `crates/epsilon-desktop` for the parity matrix, 2026-10-05,
+confirmed in the integrator's session against the source rather than relayed.
+
+**§2.4 says:**
+
+> **One command registry.** Slash commands, palette entries and keybindings are declared once
+> and read by every front end, with per-front-end capability declared as data rather than as a
+> second hand-maintained list.
+
+Measured:
+
+| | Shared? |
+|---|---|
+| Slash commands | **yes** — `epsilon-contracts`, read by both front ends |
+| Palette entries | **partly** — the desktop's eight are declared in `crates/epsilon-desktop/src/app.rs:806-838`, not in the shared table |
+| **Keybindings** | **no** |
+
+`keybindings`, `KeybindingsManager` and `key_text` appear **nowhere** in `crates/epsilon-desktop`.
+Every chord is a literal egui `consume_key` — `Ctrl+P` at `app.rs:880`, `Ctrl+B` at `:1733`,
+`F6`/`Shift+F6` at `:1815-1816`, the tree arrows at `:1850-1855`, zoom at `:2561-2564`, submit
+and abort at `:5165-5168`, allow/deny at `:5353-5358` — and the on-screen hint comes from a
+hand-written constant, `SIDEBAR_TOGGLE_KEY: &str = "ctrl+b"` (`app.rs:759`).
+
+**The code is honest about it.** The comment above that constant says the registry *"does not
+exist yet"* and that the two front ends are separate namespaces. **§2.4 is the thing that
+overstates**, because a reader who trusts it concludes one table governs both front ends.
+
+**Proposed**, replacing the last sentence of §2.4:
+
+> …with per-front-end capability declared as data rather than as a second hand-maintained
+> list. **This holds for slash commands today and not yet for keybindings:** the terminal reads
+> `epsilon-tui`'s binding table and the desktop window's chords are literals in `app.rs`. Do
+> not write "the binding table is honoured" about the window.
+
+**Why.** The locked file is what every agent reads first, and §13 asks an agent to treat it as
+the contract. A rule that is true of one front end and false of the other will be cited as if it
+covered both — which is how the window's shortcuts came to be un-rebindable without anyone
+noticing that was a choice rather than an accident.
+
+**If instead you would rather build it**, the honest scope is a shared table in
+`epsilon-contracts` plus migrating 17 read sites, with a capability flag per front end so the
+terminal's `ctrl+b` (page-up) and the window's `ctrl+b` (fold sidebar) can differ. That is its
+own milestone, not a cleanup.
+
+### What was actually done, and the one place the answer differs from this proposal
+
+**ADR-031**, M315. The grammar (`Chord::parse`) moved to `epsilon-contracts`; the terminal's
+table moved with it; and the window's seventeen literals became a second table in the same module.
+**No capability flag** — the proposal suggested one, and ADR-031 argues against it: two adjacent
+tables are easier to read than one table with a conditional on every row, and `§2.4` asks for
+per-front-end capability "declared as data", which two tables in one format are.
+
+**The window's shortcuts are now rebindable from the same `keybindings.json` the terminal reads.**
+That is the capability this proposal identified as missing, and it is real.
+
+**What is still missing, so the withdrawal is not overclaiming:** nothing *writes* the file (so it
+is not atomic or 0600, because it is not written), and there is **no recorder** — a user can set a
+binding by hand but cannot record one with a keystroke, which is the reference's S-122 and the
+largest remaining piece of this row.
+
+---
+
+## 9. §13's definition of done has no clause about the *deliverable*
+
+**Filed:** 2026-10-06, by [an independent review of the objective](reviews/2026-10-06-objective-review.md).
+
+**The gap.** §13 is a good *engineering* definition of done — a fresh clone builds, the battery is
+green, changed behaviour has a test, docs are current, credits are complete. Every one of those was
+true of this tree while the objective it was built for was **11.5% and 2.5% complete** by the
+project's own parity matrices. Nothing in the locked file asks what the deliverable *is*, how
+complete it has to be, or who decides that it is finished.
+
+**Proposed**, as a new first checkbox in §13:
+
+> - [ ] **The deliverable is named, and its completeness criterion was agreed with the owner before
+>   the work started.** A green battery proves the tree is sound; it does not prove the thing asked
+>   for exists. When the task is a port, a migration or a replacement, the criterion is a count
+>   against the thing being ported — not a list of defects closed.
+
+**Why.** The single largest structural cause of this project not meeting its objective was that the
+objective was never operationalised: the only instrument that could measure it (the parity matrices)
+was written on the last day, and it is still untracked in git. One checkbox would have forced that
+instrument to exist on day one. It is also cheap: the matrices are already the right shape.
+
+---
+
+## 10. §9's "every link must resolve" is enforced for links and not for paths
+
+**Filed:** 2026-10-06, by the same review. **Measured:** 36 repo-relative paths written in backticks
+under `docs/` resolve to nothing, and `check-links.py` cannot see any of them because it matches
+markdown links only. Live examples: `docs/plans/README.md` sends a reader to
+`audit/04-roadmap.md` (the file is `audit/history/04-roadmap.md`, and `audit/history/` is excluded
+from the gate on purpose), and `docs/AGENTS-PROPOSALS.md` cites `gate-base-2026-10-03.log` for a
+battery whose file is `.txt`.
+
+**A second measurement, made while filing this.** The same naive matcher reads a *link written
+inside a code span* as a real link: quoting the syntax in this very proposal failed the gate on the
+word `target`, and `docs/reviews/2026-10-06-objective-review.md` failed it on an empty-label
+example. The gate is therefore wrong in both directions — blind to code-span paths, and credulous
+about code-span link examples. Both are the same defect: it parses characters without knowing
+whether they are prose, code or a path.
+
+**The current text** (§9):
+
+> **Every command in the docs must have been run. Every link must resolve.**
+> `scripts/check-links.py` is a gate; the commands are on you.
+
+**Proposed**, replacing the second sentence:
+
+> **Every command in the docs must have been run. Every link must resolve, and so must every
+> repository path written as a code span** — the gate matches markdown links and cannot see a path
+> in backticks, which is how a moved file stays plausible for months. A path that
+> names a file which does not exist yet (a proposal, a roadmap item) says so in the same sentence,
+> so the check can tell a proposal from a stale pointer.
+
+**Why.** This is §5's own failure mode — *a check that cannot see a thing is indistinguishable from
+a check that found nothing* — and it is measurable, which is what makes it worth a rule: the
+checker is a dozen lines, and 36 dead pointers is what its absence cost.
+
+---
+
+## 7b. Measured addition to proposal 7: on Windows the file has no explicit protection at all
+
+**Added 2026-10-06 by the same review, because it sharpens the choice rather than changing it.**
+
+Proposal 7 says the store *"enforces `0600` on unix"*. Read against the source, the qualifier is
+doing more work than it looks: the permission call is `#[cfg(unix)]`
+(`crates/epsilon-llm/src/auth.rs:775-780`), the test that pins the mode is `#[cfg(unix)]` too
+(`:1133`), and the code's own doc comment states the Windows position plainly — *"Windows relies on
+the user-profile ACL, which is already user-scoped"* (`:345-346`).
+
+**So on the platform this project is developed and run on, the plaintext secret file has no
+protection beyond the ACL it inherits from the profile directory.** That does not change the
+recommendation — (b), the OS credential store, with (a)'s wording as the interim — but it does mean
+the interim wording must name the platform, not just the mode:
+
+> Provider credentials live in `<config dir>/auth.json`, in the opencode and Pi shape. On unix they
+> are written `0600` via atomic rename under a cross-process lock, and a corrupt file is never
+> overwritten. **On Windows the file inherits the user-profile ACL and has no protection of its
+> own.** The OS credential store is the target, not the current state.
 
 ---
 

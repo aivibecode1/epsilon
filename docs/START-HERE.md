@@ -98,6 +98,7 @@ If you have an hour, in this order.
 | `crates/epsilon-mcp` | Connecting to external tool servers (MCP) | Anyone extending the tool set |
 | `crates/epsilon-ext` | Running third-party helper processes | Extension work |
 | `docs/` | Everything written down: decisions, history, guides, this file | Reviewers, contributors |
+| `docs/parity/` | **One row per behaviour** against the two projects this is a port of — [a guide to reading them](parity/README.md) first | Anyone asking "how close is it?" |
 | `audit/` | Older assessment of the project's state. **Superseded** by `docs/STATUS.md` where they disagree | Historians |
 | `references/` | The six projects studied, vendored read-only. Not built, not committed | The curious |
 | `scripts/` | The verification battery and repository checks | Contributors |
@@ -278,6 +279,32 @@ Three questions answer most of it.
 3. **Do the claims match the code?** [`STATUS.md`](STATUS.md) says what is verified and how.
    [`../AGENTS.md`](../AGENTS.md) explains the evidence rules that project holds itself to,
    including the ones it learned by getting them wrong.
+
+### The two parity matrices, and how to read one
+
+Both front ends are **ports**: the terminal UI of [Pi](https://github.com/earendil-works/pi)'s
+interactive terminal mode, and the desktop window of **DSH Desktop**. A port means *the same
+thing happens, the same way* — not the same pixels.
+
+[`docs/parity/`](parity/README.md) holds one row per behaviour:
+
+| File | Compares our… | Against |
+|---|---|---|
+| [`pi-tui.md`](parity/pi-tui.md) | terminal UI | Pi's interactive terminal mode |
+| [`dsh-desktop.md`](parity/dsh-desktop.md) | desktop window | DSH Desktop |
+
+Read the [guide in that folder](parity/README.md) first — it explains the four statuses
+(`done`, `partial`, `missing`, `deliberately different`) and why a row is allowed to say no.
+
+The one thing to know before you judge a row: **`done` means exercised, not written.** A row is
+`done` only when something was run or rendered and looked at. And a row that says
+`deliberately different` has to name a reason that would make the product *worse* if we copied the
+reference — a licence, a platform limit, a conflict between the two ports, or the accessibility
+standard in [`../AGENTS.md`](../AGENTS.md) §8. "We did not get to it" is written as **missing**,
+never dressed up as a decision.
+
+The evidence each row was built from is under [`../audit/evidence/`](../audit/evidence/) — **869
+cited rows** read from the vendored sources, every one pointing at a line.
 
 ## 7. If you want to change something
 

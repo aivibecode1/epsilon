@@ -4,7 +4,7 @@
 in flight, what is cut, what is broken. The permanent rules live in
 [`../AGENTS.md`](../AGENTS.md), which is locked. Do not put moving state in `AGENTS.md`.
 
-Last updated: 2026-10-04 (M312 — lease refusal, then a front-end polish pass)
+Last updated: 2026-10-05 (M313 — the parity matrices, and four defects the inventories found)
 
 > **Picking this up from someone else? Read [`HANDOFF.md`](HANDOFF.md) first**, then
 > [`plans/024-finishing-the-objective.md`](plans/024-finishing-the-objective.md) for what is left and
@@ -49,6 +49,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | 18:30–18:55 (10-04) | 14. **M305 — the first frame of this window** | "No wgpu backend presents" had been recorded as a property of the machine for three days. It is a property of **presentation**; the machine has two GPUs. An **offscreen** rasteriser renders the real draw output, and **looking at it** found the sidebar hint drawing `←/→` as two tofu boxes — which sixteen string assertions had been passing straight through. |
 | 21:25– (10-04) | 15. **M312 — a stolen lease stops the write** | Plan item 2, in flight and half-written when this session started. Finished, with four tests, a negative control that printed the defect as a value, and ADR-028. **The battery it ran then found a fixture that deleted its own session directory**, which is in Known-broken below. |
 | 22:40– (10-04) | 16. **Front-end polish, on the owner's instruction** | *"Put high efforts on polishing tui and desktop IDE."* Four defects, each found by **reading a frame or a dump this repository already had**, not by a failing test: `/theme` advertising a palette that does not exist, `/help` pointing at a thinking level the status bar never printed, two identical accessible names for two different files, and a status-bar segment that could never appear. Each has a test with a negative control. |
+| 08:20– (10-05) | 17. **M313 — the parity matrices, and what reading the sources found** | Four read-only inventories, one per (reference, our code) pair, produced **356 rows from Pi** and **403 from DSH Desktop**, every one cited to a line in the vendored source. Writing [`docs/parity/`](parity/README.md) from them is the objective's own deliverable and **it did not exist** until now. The inventories also found **a reachable panic on an advertised key** and two binding declarations no handler read — see the M313 section. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -125,7 +126,137 @@ configuration:**
 - **`LNK1318: Unexpected PDB error; LIMIT (12)`** on the `epsilon-desktop` link. Cleared by
   stopping `mspdbsrv.exe` and deleting the `.pdb` files in the build tree.
 
+## Parity: where the two ports actually stand
+
+**This is the honest answer to the objective's central question, and it is the first time anyone
+could read it in one place.** Both matrices are row-level and every row cites the reference and,
+where one exists, our implementation. **No third-party source code was copied**: all four
+inventories are inventories.
+
+> **An independent review of the objective was written on 2026-10-06:**
+> [`reviews/2026-10-06-objective-review.md`](reviews/2026-10-06-objective-review.md) — verdict
+> clause by clause, twelve flaws it found that this file did not record (including three in this
+> section), the structural reasons the objective was not met, and what success requires. The plan
+> that follows from it is [`plans/025-completion-plan.md`](plans/025-completion-plan.md).
+
+| Matrix | Rows | done | partial | missing | deliberately different |
+|---|---|---|---|---|---|
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 39 | 121 | 161 | 18 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 11 | 88 | 292 | 42 |
+
+> **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
+> DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
+> own data rows (with the three escaped `\|` cells un-escaped before splitting — they mis-parse
+> otherwise), the matrix holds **11 / 88 / 292 / 42**, which is what
+> [`dsh-desktop.md:123`](parity/dsh-desktop.md) already said. The Pi row was exact and is unchanged.
+> **The matrix was right and this file was the stale copy**, which is the failure mode this section
+> exists to warn about.
+
+**Read those numbers before reading anything else about this project.** They say a large part of
+Pi's terminal surface and a much larger part of DSH Desktop's has no counterpart here — and the
+matrices say **which rows, by id**, in an *Open rows* section at the end of each. They are not 39/339
+and 11/433 *failures*: much of what the references ship is extension authoring, settings overlays,
+mermaid/image rendering, a browser pane and Electron window management, which Epsilon does not have
+and does not intend to acquire. But the honest shape is that **parity is not complete**, and no
+document in this repository should let a reader conclude otherwise.
+
+**The two `AGENTS.md` claims the matrices put in doubt, both verified against source rather than
+inferred:**
+
+- **§2.4's "one command registry" does not hold for keybindings.** Slash commands *are* shared —
+  the window reads `epsilon-contracts` and refuses 30 of 37 heads by name — but
+  `keybindings`/`KeybindingsManager`/`key_text` appear **nowhere** in `crates/epsilon-desktop`.
+  Every chord is a literal `consume_key`. **The window's shortcuts cannot be rebound; the
+  terminal's can.** Proposal 8.
+- **§6's "secrets belong in the OS credential store" is not true of this tree.** Provider
+  credentials, including OAuth token pairs, are written to `<config dir>/auth.json`.
+  `keyring` is in neither `crates/**/*.rs` nor `Cargo.lock`. Proposal 7, which recommends
+  building it and amending the rule meanwhile.
+
+**The highest-priority open rows, taken from the matrices' own *Open rows* sections** and
+not from memory. **Two of the five M313 listed are now closed** (M314): `shift+enter` sent
+instead of newlining, and the sessions sidebar being a keyboard trap. What remains:
+
+1. **The desktop does not read the shared binding registry** (§2.4 above) — the largest gap, and
+   a refactor across ~17 read sites rather than a fix. Proposal 8.
+2. **No permission-preset surface in the window**, so a privilege-raising control has no risk gate
+   to sit behind. Closes rows D-080 to D-082 and I-121/I-131.
+3. **No session-management verbs in the window** — a reader cannot start, rename, fork or archive
+   a session from here; every such head is refused by name, with the reason written down.
+4. **`epsilon-tui`'s footer advertises the idle key row while a transcript search is open**, so
+   `enter send` really means "next match". The keys are not silent — `handle_search_key` says so —
+   so this is a mislabelled footer, not a set of no-ops.
+5. ~~**Quitting with work in flight ends the process.**~~ **CLOSED (M316)** —
+   `IdeApp::answer_close_request` (`app.rs:5064`) refuses a platform close while a turn is in
+   flight, an ask is parked, or the conversation is on screen, and asks instead; six tests and a
+   negative control. **This entry was written before M316 landed and was stale within hours of
+   being written**; three of the five rows remain, not five. The M316 section below has the detail,
+   including what is still unverified: how the dialog *looks*.
+
+---
+
 ## Verification (what is actually true)
+
+**Latest green battery: [`gate-port-r1-2026-10-06.txt`](../audit/evidence/gate-port-r1-2026-10-06.txt),
+2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
+**2,088 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — the same totals as `gate-m316d`, which is expected: no source file changed
+between the two runs.
+
+> **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
+> green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
+> `epsilon_core-*.exe` — *never executed*. Probed the documented way: creating a file at that exact
+> name is denied, one character longer succeeds. The filename-bound security-software block again,
+> not a code defect. Re-run under a profile value this machine had not used
+> (`CARGO_PROFILE_DEV_DEBUG=line-directives-only`), which changes the metadata hash and therefore
+> the blocked name; green first time. `CARGO_INCREMENTAL=0` was set by the caller and is recorded in
+> the evidence copy by hand, as before.
+
+**One battery was spent failing in this round too, and it is a two-part lesson.** `gate-m315`
+failed `check-line-endings` — a PowerShell `Add-Content` wrote the new ADR with a CRLF — and
+`clippy` on an `unused_mut` in a test helper. **Both were mine and both were caught by the gates
+rather than by me reading the diff**, which is the whole argument for having them. The CRLF is
+worth a line of its own: the file is now normalise-to-LF on disk, and a mixed-ending markdown file
+is invisible until a gate says so.
+
+**The knobs, because they change what the evidence is:** `CARGO_BUILD_JOBS=1`,
+`CARGO_PROFILE_DEV_DEBUG=1`, `CARGO_INCREMENTAL=0`. The first two are in the log's own header;
+**`CARGO_INCREMENTAL=0` is set by the caller and so is not**, and it is appended to the
+evidence file by hand — which is the only reason a reader can find it at all.
+
+**Why `CARGO_PROFILE_DEV_DEBUG=1` and not the `=0` this file used to name.** The first battery of
+this round failed the test leg with `Access is denied. (os error 5)` on
+`epsilon_core-3997881e360b3ae6.exe` — **never executed**, not a test failure. Probed rather than
+assumed, the same way `STATUS.md` records for this fault before:
+
+```
+WRITE DENIED: epsilon_core-3997881e360b3ae6.exe   -> Access to the path ... is denied.
+WRITE OK   : epsilon_core-probeA.exe
+WRITE OK   : epsilon_core-3997881e360b3ae6b.exe
+```
+
+**The block binds to one exact filename, and this is the documented machine fault, not a defect.**
+The remedy did not work as this file described. `CARGO_PROFILE_TEST_DEBUG` is rejected outright
+by this tree — `cargo` errors with *"could not load config key `profile.test`"* because
+`Cargo.toml` declares `[profile.release]` and **no `[profile.test]`** to merge the override into.
+Changing `CARGO_PROFILE_DEV_DEBUG` does work, because the test profile inherits from `dev`: it
+yields `epsilon_core-5520760560bd9f1e.exe`, links, and runs. **Proposal 5 in
+[`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md) recommends naming a fresh `CARGO_PROFILE_TEST_DEBUG`
+value; on this tree that knob cannot be set at all, and the working one is `CARGO_PROFILE_DEV_DEBUG`.**
+
+**Twelve ignored tests, every one with a written reason in its own source**: six TUI
+`frame_dump` rendering fixtures, two desktop offscreen-rasteriser tests needing a GPU adapter, three
+desktop frame-cost timings, and one real-provider smoke test that must never spend money by
+default.
+
+**Seven batteries were spent across this round, and three of the failures were worth the time.**
+`gate-m313base` failed on the machine fault above. `gate-m313` then failed
+`f2_cycles_favorites_and_guides_when_empty` — **for a reason that was not the obvious one**, and
+the second run of the same failure is the finding: the favourites list was empty, so the cause was
+`recents`, which `test_app()` also reads from the user's real config. That test is now hermetic.
+`gate-m313green`, `gate-m313final` and then `gate-m313ship` went green — the last after this
+file's own Parity section and its verification paragraph were both added, so the log finally
+describes the tree it is cited for.
 
 **Seven milestones have landed against this objective (M298–M304), each with its own battery.**
 Between them: one **data-loss** defect, one **permission-inheritance** defect, three
@@ -173,6 +304,9 @@ test; the replacement was renamed to keep the old name, which is what the guard 
 | M310 | The lease-takeover fix is **not the small change it looks like** — recorded rather than half-done | documentation only, covered by `gate-m311final` |
 | M311 | **Two `append` failures that were discarded or printed to a console a window does not have** | [`gate-m311final`](../audit/evidence/gate-m311final-2026-10-04.txt) (after a red [`gate-m311`](../audit/evidence/gate-m311-2026-10-04.txt) on clippy and a self-referential link) |
 | M312 | **A stolen lease stops the write** (ADR-028), plus four front-end defects found by reading frames and dumps: `/theme`'s phantom palette, `/help`'s phantom thinking level, two identically-named file rows, and a status segment that could never appear | [`gate-m312green`](../audit/evidence/gate-m312green-2026-10-05.txt) |
+| M313 | **The parity matrices** — 339 paired rows against Pi's TUI and 433 against DSH Desktop, built from **869 cited rows** read out of the vendored sources — plus **a reachable `unreachable!()` panic on `Ctrl+F` in the model picker**, two binding declarations no handler read, the streaming tail's text-safety guarantee made explicit rather than incidental, and eight documents corrected against source | [`gate-m313ship`](../audit/evidence/gate-m313ship-2026-10-05.txt) |
+| M314 | **Three rows the matrices named, closed**: `Shift+Enter` sent instead of newlining, the sessions sidebar was a keyboard trap, and a launch notice ran off its pane with no marker — the last two found by rendering and **looking**. Plus the in-crate harness could not type at all, and **219 shifted citations re-pointed by a measured mapping** rather than left plausible and wrong | [`gate-m314b`](../audit/evidence/gate-m314b-2026-10-05.txt) |
+| M315 | **One chord grammar, two binding tables, and a window whose shortcuts can be rebound** (ADR-031). Closes the one row the objective names verbatim — "one command registry (slash commands, palette actions, keybindings)" — for the third of those. M314's hand-written `Shift+Enter` guard is **deleted**, because a general rule replaced it | [`gate-m315b`](../audit/evidence/gate-m315b-2026-10-05.txt) |
 
 ### M312 — a stolen lease stops the write, and the fixture the battery found underneath
 
@@ -218,6 +352,477 @@ at each call site. **A test can be wrong for years because nothing was looking.*
 closed it"* — true of a takeover, **false** of a directory deleted under a running session, and a
 reader who deletes a lock to unstick a session must not be sent looking for a rival window. Both
 causes are now offered and neither is asserted, and a test says so.
+
+### M313 — four inventories, a reachable panic, and the matrices the objective asked for
+
+**The gap that started this round.** The objective's definition of done names two files:
+`docs/parity/pi-tui.md` and `docs/parity/dsh-desktop.md`. **Neither existed.** Parity work had
+been real and continuous — `audit/02-port-fidelity.md`, ADR-019/021/023/026/027/028, the M276–M312
+defect stream — but it was recorded as prose and commit messages, not as a row per behaviour with
+a status anyone could check. A reviewer could not answer "how close are you?" in one reading.
+
+So four read-only inventories were run, one per (reference, our code) pair. All four cite a line,
+and all four wrote to `audit/evidence/`:
+
+| File | Rows | What it read |
+|---|---|---|
+| `parity-pi-tui-reference.md` | **356** (323 `P-`, 4 `L-`, 12 `T-`, 10 `Y-`, 7 `AA-`) | `references/pi-1.0.0/packages/coding-agent/src/modes/interactive/`, 613 citations over 95 files, machine-validated |
+| `parity-dsh-desktop-reference.md` | **403** + ~35 | `references/deepseek-harness-dsh-v0.2.1-alpha.1/apps/desktop/` and the 62 `packages/client/ui-*` it loads |
+| `parity-epsilon-tui.md` | our terminal UI | `crates/epsilon-tui` and `crates/epsilon-contracts/src/command.rs` |
+| `parity-epsilon-desktop.md` | our window | `crates/epsilon-desktop` |
+
+**Both of our own halves are being re-derived, and the reason is worth recording.** Each
+investigator's session ended before it wrote its file, and a forked agent starts with **no prior
+turns** — so the row-level detail had to be rebuilt from source rather than transcribed. That is
+the better outcome anyway: a citation nobody re-opened is not evidence, and the rule this
+repository follows is that *a summary of an audit is not the audit*. The two reference halves were
+already on disk and are untouched.
+
+**Both reference sources were present**, so nothing had to be fetched from anywhere else:
+`references/pi-1.0.0` holds Pi's TUI, and `references/deepseek-harness-dsh-v0.2.1-alpha.1/apps/desktop`
+holds DSH Desktop. The brief's guess that DSH's UI lives in `packages/web` is **wrong** and the
+correction is in the evidence file: `packages/web` is the agent's *web tools*; the desktop is an
+Electron shell around a client that lives in 62 `packages/client/ui-*` packages.
+
+**The headline finding was not in either reference. It was a panic, and it was ours.**
+
+### `Ctrl+F` in the model picker panicked — in a release binary
+
+`crates/epsilon-tui/src/app/keys.rs`, inside the `if app.picker_open` block:
+
+```rust
+KeyCode::Up | KeyCode::Down | KeyCode::Char('f' | 'F')
+    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+{ unreachable!("handled by guarded arms below") }
+```
+
+It sits **before** the arms it claims to defer to, and nothing above it intercepts those chords.
+So `/models` — or `Ctrl+M` — followed by `Ctrl+F`, `Ctrl+Up` or `Ctrl+Down` reached an
+`unreachable!`, which panics in **every** profile. `Ctrl+F` is advertised in `/help` and in the
+picker's own hint row, and the handler it was protecting (`toggle_favorite`, `keys.rs:1259`) was
+**unreachable code**.
+
+**2,061 green tests never saw it**, and the reason is the useful half: the one `Ctrl+F` test
+(`ctrl_b_ctrl_f_move_cursor_by_char`) runs with the picker **closed**. A guard placed in front of
+the code it guards is not a guard.
+
+Fixed by deleting the arm, so the second match is the only reader and there is one answer per
+chord. `ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking` descends into a
+provider, presses `Ctrl+F`, and asserts the favourite handler answered.
+
+### Two bindings the footer printed and no handler read
+
+Both are `AGENTS.md` §2.7 in the exact shape §2.7 names — **a bound key the UI does not act on** —
+and both are the same mistake as the M312 palette row: a claim made to the reader that the code
+does not honour.
+
+| Binding | Was | Now |
+|---|---|---|
+| `app.interrupt` | `KeyCode::Esc` written as a literal in the handler. `DEFAULTS` declares it, `/hotkeys` prints it from `effective()`, the footer prints it through `key_text("app.interrupt", …)` — so a user who moved it was shown **their** key beside "stop", and pressing it did nothing | read from the table: `_ if app.keybindings.matches("app.interrupt", &key)`. Unchanged under defaults, because `specs_for` yields `escape` with no modifiers and `key_matches` compares modifiers for equality |
+| `tui.input.submit` | `KeyCode::Enter if keybindings.matches("tui.input.submit", &key)` — a guard re-deriving the answer the pattern in front of it had already given. Bind it to anything else and **submit is gone**: Enter falls to the "not bound here" notice and the new chord does nothing | the binding alone: `_ if app.keybindings.matches("tui.input.submit", &key)` |
+
+The second is the same fix `app.transcript.pageUp` already got, for the same reason: *"so the key
+in the footer is the key that scrolls."* Both tests assert **both** directions — the rebound chord
+works, **and** the old literal now says it is not bound rather than silently working anyway.
+
+### The streaming tail, and a measurement that contradicted the obvious conclusion
+
+A read-only sweep reported that the **live streaming tail** reaches the screen unstripped, which
+would break `AGENTS.md` §6: `UiState::apply` assigns `streaming_text` / `streaming_thinking` raw,
+while `push_line` strips every committed line, and `panels::draw_transcript` draws the tail every
+frame.
+
+**The report was right about the code and wrong about the consequence, and it took a measurement
+to know which.** The first test passed. So the second version asserted the *stored field* first,
+as a precondition — and it failed there, proving the field really did hold `U+202E` while the
+frame did not. The frame:
+
+```
+= checking running ls -R /tmp now
+" running ls -R /tmp now
+```
+
+**The override never reached the terminal, because ratatui discards a zero-width format character
+on its way into a cell.** So there was no user-visible defect — and there was also no guarantee:
+`AGENTS.md` §6 strips untrusted text *before* it reaches a screen, and "a layout crate happened to
+discard it" is not that. A dependency bump can take it away silently.
+
+Fixed anyway, at the point the text enters state, so the property is ours rather than borrowed.
+**Negative control run** — with the fix reverted the test fails with the defect printed as a value:
+
+```
+the live tail stored a bidi override: thinking="checking running ls\u{202e} -R /tmp now"
+                                     text="running ls\u{202e} -R /tmp now"
+```
+
+**This is the fourth time this file has recorded a finding that was right about a tree and wrong
+about the product**, and the shape is always the same: a static read cannot see what a renderer
+does. It is why the test asserts the field *and* the frame, and why the comment above the fix
+says which one was already true.
+
+### Documents that contradicted the code, corrected from source
+
+Read-only sweeps check the code against the docs as well as against the reference, because this
+repository has lost more time to a stale sentence than to a wrong design.
+
+| Where | Said | Measured |
+|---|---|---|
+| `crates/epsilon-desktop/src/commands.rs` (×3) | "six commands", "the other thirty-six" | **seven** run, **30** refused. The number was **deleted rather than corrected**, because a count written by hand drifts — which is what this file says three separate times about itself |
+| `crates/epsilon-desktop/src/lib.rs` module map | 3 modules | **9**, plus the test-only rasteriser. Six were missing from the table a reader is pointed at for orientation |
+| `crates/epsilon-desktop/README.md` entry points | 5 rows, **4 stale** | all five re-derived from source, and a sixth row added for `try_command` |
+| `crates/epsilon-desktop/src/main.rs` | "so that the CLI can offer the same window behind a flag" | `epsilon-cli` has **no** dependency on this crate, and adding one would make the CLI carry a GUI stack |
+| `docs/plans/024` §5 | "answers 3 of 38" | **7 of 37**; 38 was never the head count |
+| `docs/STATUS.md` §Roadmap 9 and 11 | 38 variants, 42 heads, 23 bindings; "3 of 38" | **39 / 45 / 24**; **7 of 37**. Two of the row's *structural* claims were also stale in our favour: `halfUp`/`halfDown` **are** in `/hotkeys` through `effective()`, and the palette key column **is** resolved from the table |
+| `docs/STATUS.md` §Roadmap 8 | "No screen reader has ever announced this window" | still true, and still measured — see the M312 section |
+
+### A locked rule the tree violates, reported rather than acted on
+
+The TUI inventory turned up something no amount of reading the front ends would have found,
+because it is in `epsilon-llm` and every front end reads it through one accessor.
+
+**`AGENTS.md` §6 says: *"Never write a credential to disk in plaintext. Secrets belong in the
+OS credential store."* Epsilon stores every provider credential — API keys and OAuth token
+pairs alike — in `<config dir>/auth.json`.** Measured, not inferred: `keyring`, `wincred`,
+`secret-service` and `keychain` appear **nowhere** in `crates/**/*.rs`, and `keyring` is not in
+`Cargo.lock`. There is no OS credential store in this project.
+
+The design is deliberate and documented — `crates/epsilon-llm/src/auth.rs:1-23` names its model,
+*opencode's `auth.json` pattern* — and the write discipline is good: cross-process `auth.lock`
+with stale-lock stealing, same-directory temp file plus atomic rename, `0600` on unix, and a
+**refusal to overwrite a corrupt file** so a failed-open read cannot become a wipe. The problem
+is that it is a file.
+
+**No agent fixed it**, for three reasons worth weighing: it is a behaviour-level change with a
+migration, §5 gates that behind an ADR; it needs a **new dependency**, which §5 also gates
+behind an ADR; and the objective's own desktop standard repeats the requirement — *"secrets in
+the OS keychain, not plaintext"* — so this is not a rule only the terminal happens to bend.
+
+Filed as **proposal 7** in [`AGENTS-PROPOSALS.md`](AGENTS-PROPOSALS.md), with both ways to close
+it. **The recommendation there is to adopt the keychain, and to adopt the proposal's interim
+wording for the locked file meanwhile**, because a locked file that describes a product the
+tree does not contain is the failure mode this repository keeps paying for.
+
+### A test of mine changed the machine, and named a landmine already in the suite
+
+The first version of `ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking`
+asserted on the favourite it had just starred. `toggle_favorite` writes
+`<config dir>/config.toml`, so the test **wrote the user's real configuration** — and the next
+workspace run failed in `f2_cycles_favorites_and_guides_when_empty`, which reads the same global
+file. Two runs cancelled out by parity, so the damage did not persist; **the hazard did**.
+
+**It then failed a second time, for the other half of the same cause, and that is the part worth
+keeping.** The favourites list was *empty* (`favorite = []`), so the obvious explanation was that
+something else was at fault. It was not: `test_app()` loads `favorites` **and `recents`** from the
+user's config, this machine's `recents` held four ids, and F2 fell straight through an empty
+favourites list into them and cycled the model to `gpt-4`. **Real behaviour, answering a different
+question than the one the test asked.**
+
+The fix is two lines, and the comment above them says why:
+
+```rust
+app.favorites.clear();
+app.recents.clear();
+```
+
+The second half of that test already seeded `favorites` explicitly — the author knew the mirror
+was what F2 owns and simply did not seed the first half. **A test that reads the user's config
+answers a question about the user**, and it took two failures to see that the exposure was
+`recents` and not `favorites`.
+
+**Checked whether the class was wider, rather than assuming it was one test:** `app/tests.rs`
+touches `app.recents` and `app.favorites` in seven places, and the only other assertions
+(`:1416`, `:2560`) read the mirror **after** an `apply_model`, which puts the applied id at
+position zero whatever was there before. **One test was exposed, and it is now hermetic.**
+
+My test now asserts **without a filesystem write**: with the arm removed, `Ctrl+F` falls through
+to the last arm of that match, `Char(c) => insert_char`, so the discriminator is that **the
+filter did not gain an `f`**. That is a stronger claim about the key's destination than the
+notice was, and it costs nothing.
+
+### The desktop does not read the shared binding registry, and §2.4 says it should
+
+A survey of the window found this and a parallel pass found it independently, from opposite
+directions. Verified here rather than relayed: **`keybindings`, `KeybindingsManager` and
+`key_text` appear nowhere in `crates/epsilon-desktop`.** Every chord is a literal egui
+`consume_key` read in `app.rs` — `Ctrl+P` at `:880`, `Ctrl+B` at `:1733`, `F6`/`Shift+F6` at
+`:1815-1816`, the tree arrows at `:1850-1855`, the zoom block at `:2561-2564`, submit and abort
+at `:5165-5168`, allow/deny at `:5353-5358`. The hint text comes from a hand-written constant,
+`SIDEBAR_TOGGLE_KEY: &str = "ctrl+b"` (`app.rs:759`), used in four places.
+
+`AGENTS.md` §2.4 states: *"One command registry. Slash commands, palette entries and keybindings
+are declared once and read by every front end, with per-front-end capability declared as data
+rather than as a second hand-maintained list."* Measured against the tree:
+
+| | Shared? | Where |
+|---|---|---|
+| Slash commands | **yes** | `epsilon-contracts`, read by both front ends |
+| Palette entries | **partly** | the desktop's eight are declared in `app.rs:806-838`, not in the shared table |
+| **Keybindings** | **no** | the terminal has a table; the window has literals |
+
+**So a reader who trusts §2.4 would conclude something false**, and the comment at `app.rs:753-758`
+is careful to say the opposite — that the registry which would carry it *"does not exist yet"* and
+that the two front ends are separate namespaces. **The code is honest and the locked rule is the
+thing that overstates.** Recorded here and in the parity matrix rather than fixed: adopting a
+registry for the window is a real refactor across 17 read sites, which is not a change to make at
+the freeze with a battery running.
+
+The practical consequence for a reader, which is why it is worth a row: **the window's shortcuts
+cannot be rebound**, while the terminal's can. Two front ends, two policies, and only one of them
+is configurable.
+
+### And the frames were rendered and looked at, because three of those fixes touch drawing
+
+`AGENTS.md` §13 asks for anything a user sees to be **looked at**, not only asserted on. Three of
+this round's changes sit on a draw path, so the terminal's frame dump was re-run and read:
+[`../audit/evidence/tui-frames-2026-10-05-m313/`](../audit/evidence/tui-frames-2026-10-05-m313/) —
+six states × three sizes, 21 screens.
+
+**What the two frames that matter actually show.** The tool-card screen draws both cards with the
+tool **named** and its output on **separate lines** — `bash $ cargo test · pending` over
+`running 74 tests` and `test result: ok. 74 passed; 0 failed` — which is the M312 line-break fix
+still holding after a round of edits to the same file. The permission dialog fits at 80×24 with
+all four keys **and** their actions, and the streaming frame shows the live tail with its header,
+transcript, composer and footer stacked in the right order. Nothing moved.
+
+**The one thing that looks wrong and is not.** Every frame's footer ends
+`ctrl+j   ...\crates\epsilon-tui` — the "ctrl+j newline" hint is cut and the working directory
+follows. That is `ui/footer.rs`'s width budget doing what it was built to do at 100 columns, and
+the AGENTS.md rule is that a cut row says it was cut rather than silently clipping. It is the
+designed degradation, not a defect, and it is recorded here so the next reader does not file it.
+
+### Sampling the matrix, because "the citation resolves" is not "the citation is right"
+
+The Pi matrix writer machine-validated its own output and reported **724 citations, all 724
+resolving, 0 problems**. That check answers one question — *does this line exist* — and the
+question a matrix actually needs is *does this line say what the row claims about it*.
+
+So three citations were opened by hand, chosen across both halves of a claim:
+
+| Citation | Result |
+|---|---|
+| `references/pi-1.0.0/README.md:42` — Pi has no permission system | **exact**, verbatim |
+| `crates/epsilon-safety/src/gate.rs:85` — a deny is evaluated before session memory | **exact** |
+| `crates/epsilon-tui/src/app.rs:153` — "the only dialog that can answer keys" | **wrong** |
+
+The third pointed at `fit_width(&summarize_request(detail), 96)`, a width helper. Replaced with the
+three lines that actually carry the claim — `event.rs:281` (the ask arriving),
+`panels.rs:835` (the modal's own title) and `keys.rs:550` (`pending_ask.is_some()` →
+`handle_approval_key`) — and **all three re-opened and confirmed**.
+
+**One wrong citation in the handful sampled is the expected rate**, and the honest statement is
+therefore not "the matrix is verified" but: *its line references are machine-checked for
+existence, and a human sample found one whose content did not match the claim.* That is the
+limitation of an automated citation check, and this file has been burned four times by a check
+that could not see the thing it was checking.
+
+### M314 — three defects the matrices named, and a citation problem this round caused
+
+**Where this round started.** The matrices from M313 ended with a ranked list of open rows. This
+is the first pass taken directly from that list, which is the point of writing one.
+
+**1. `Shift+Enter` was advertised and sent.** The composer's placeholder has always said
+`shift+enter for a new line`; the handler took `consume_key(Modifiers::NONE, Enter)` **before** the
+`TextEdit` is drawn, and egui matches modifiers **logically**
+(`egui-0.36.2/src/input_state/mod.rs:717-718`), so `Shift+Enter` matched that read and the draft
+was **sent**. Fixed by matching the most specific chord first, as egui's own paragraph instructs
+(`mod.rs:719-721`).
+
+**The detail that cost three builds, and is the whole lesson:** the first fix read
+`InputState::modifiers`, and it did not work. `begin_pass` **never copies an event's modifiers
+into that field** — it only tracks `keys_down` for repeat (`mod.rs:393-414`) — while
+`count_and_consume_key` matches `ev_mods` **on the event** (`mod.rs:702`). The field that looks
+like the answer is not the field the question is asked of. The test now says so in its own
+comment, because the next person will try the obvious thing first.
+
+**2. The sessions sidebar was a keyboard trap.** `pane_keys` gated its arrows and `Enter` on
+`SidebarView::Files`, so `F6` into a Sessions sidebar drew a focus ring over a list where **no key
+did anything** — WCAG 2.1.2. The gate is now on *which list is on screen*; each answers with its
+own rows. A `▸` marker is **drawn** on the cursor row, because a cursor a reader cannot see is
+not a cursor, and `Enter` calls the same `switch_session` the click path calls, with the same
+skip-the-current-session rule. **Negative control run:** with the gate restored to `Files`, the
+test fails with *"the keyboard cursor must be DRAWN, or it is a cursor nobody can see."*
+
+**3. The in-crate `Harness` could not type at all.** It built its `RawInput` with
+`..Default::default()`, and `focused` defaults to **false** — and egui **drops keyboard events for
+an unfocused window**. Every in-crate test typed through `Event::Text`, which is delivered
+regardless, so the suite never noticed. That is why the composer's `Shift+Enter` promise and the
+`Ctrl`+`+` zoom keys were *untestable here* rather than merely unverified. Fixed, and the third
+finding in the desktop survey becomes reachable.
+
+**4. A launch notice ran off the edge of the pane with no marker — found by looking at a frame.**
+[`03-sessions.png`](../audit/evidence/desktop-frames-2026-10-05-m313/03-sessions.png) carried the
+real notice, `no credentials for provider "openrouter" — set OPENROUTER_API_KEY or run: epsilon
+auth login openrouter`, and it stopped mid-word at the pane's right edge. **Every test passed**,
+because they assert on `FrameSummary::rows` and the notice stack pushed the **unclipped** text —
+the drawing could have been deleted and the row would still be there. It is the last unbounded
+string in the window; it now goes through `fit`, and the summary records what was actually drawn,
+so the two cannot disagree. **Re-rendered and looked at again:** both long notices now end `…`
+inside the pane.
+
+**A mistake inside that fix is worth recording.** Replacing the `summary.rows.push` with the
+fitted text deleted the push, because `paint_text` only records a text *size*
+(`app.rs:1391`) — the drawing and the record are two separate acts. The test caught it by
+showing an agent pane that had drawn nothing at all, which is the shape a mistake of this kind
+always has.
+
+### The citation problem this round caused, and the tool that fixed it
+
+**219 citations in the two parity documents pointed at `crates/epsilon-desktop/src/app.rs`, and
+every one of them after my first edit was a hundred lines out.** The matrix writer had verified
+them; the tree then moved under the document.
+
+**A citation that resolves to the wrong line is worse than one that resolves to nothing**,
+because it looks verified — and this repository has been caught by a check that could not see the
+thing it was checking four times over.
+
+So rather than leave 219 plausible-looking wrong references, or hand-edit them:
+[`../scripts/remap-citations.py`](../scripts/remap-citations.py) aligns the pre-edit file against
+the post-edit one with `difflib.SequenceMatcher` over whole lines and rewrites the citations
+from the measured mapping. **10,677 of 10,686 lines anchored, 8 unaligned** — and those 8 are
+exactly the lines whose *content* I replaced, which a positional map must not guess at. Three
+citations in the matrix and three in the evidence file pointed at them; **each was rewritten by
+hand with its claim corrected**, because a changed line needs a re-read row, not a moved one.
+The tool refuses to write anything unless every citation maps.
+
+**Verified rather than assumed:** the sessions click path was cited at `app.rs:3560`; the remap
+put it at `3679`, and `if response.clicked() && !is_current` is at **3679**. Exact.
+
+### M315 — one chord grammar, and a window whose shortcuts can finally be rebound
+
+**The row this closes is the one the objective names verbatim.** §4 of the objective asks for
+"one command registry (slash commands, palette actions, **keybindings**)" shared by both front
+ends, and `AGENTS.md` §2.4 says the same. Commands were true. **Keybindings were not, at all**:
+the terminal had a table of 24 ids, and the window had **seventeen literal `consume_key` reads**
+plus a hand-written `const SIDEBAR_TOGGLE_KEY: &str = "ctrl+b"` used in four hint strings. So
+`keybindings.json` could touch the terminal and not the window.
+
+**ADR-031.** Three parts, and the middle one is the argument:
+
+1. **The grammar moves to `epsilon-contracts`**, UI-neutral. `Chord::parse` is now the one function
+   that decides what `"ctrl+shift+f2"` means — a verbatim move of the terminal's `parse_key_id`
+   with `KeyCode`/`KeyModifiers` replaced by neutral types, because declaring a keyboard must not
+   invert the dependency direction the repository is built on. Each front end converts once, at its
+   own input boundary.
+2. **Two tables, not one, in the same module** — `TERMINAL` and `WINDOW`. This looks like the thing
+   the rule forbids, so it is worth stating why it is not: a terminal and a window are different
+   programs (`F6` is a focus ring in one and nothing in the other; `ctrl+b` is a text cursor in one
+   and a fold in the other), and §2.4 asks for *per-front-end capability declared as data* — which
+   is what two lists in one format are. A reader looking for "what does this product bind?" finds
+   both in one file.
+3. **Ids are per action, not per key.** `Escape` means four things in a window — close a palette,
+   leave a pane, clear the draft, refuse an ask — so there is no single `app.interrupt` there. **The
+   consequence had to be written down:** a chord may appear against more than one id in `WINDOW`, so
+   the one-chord-one-id rule now holds for `TERMINAL` **and not** for `WINDOW`. The test says so
+   rather than being quietly narrowed.
+
+**A comment that was simply wrong is gone.** The constant's doc claimed *"the terminal binds
+`ctrl+b` to page-up in its transcript"*. It does not: `ctrl+b` is the terminal **composer's**
+readline back-character and is not a table entry at all. The claim survived because nobody opened
+the other crate to check it.
+
+**M314's hand-written guard is deleted, not kept.** The composer had a block that scanned the event
+stream for `Shift+Enter` and declined to claim it, because egui's `consume_key` matches modifiers
+*logically*. `KeyBindings::take` compares them for **equality**, so the general rule replaces the
+special case — and the test that proved the special case still holds. **A general rule is worth
+more than the exception it retires.**
+
+**Two bugs the tests caught on the first run, which is the point of writing them first.**
+`every_declared_chord_parses` failed on `ctrl++`, which cannot be spelled — `"ctrl++"` splits into
+`["ctrl", "", ""]`. And `neutral_key` assumed egui has no letter keys, returned a placeholder for
+all of them, and **four palette tests failed** because `Ctrl+P` — the one chord every IDE uses for a
+command palette — never matched. A static reading of a dependency's API is a claim; only a running
+test is evidence.
+
+**What is still missing, stated rather than implied:** nothing *writes* `keybindings.json` (so it is
+neither atomic nor `0600`, because it is not written), and there is **no recorder** — a user can
+set a binding by hand but cannot record one with a keystroke, which is the reference's S-122 and
+the largest remaining piece of this row.
+
+### M316 — the window asks before it loses a turn
+
+**The top open row, and the only one touching `AGENTS.md` §6's "never lose a user's work".**
+Closing the window ended the process: a turn in flight stopped where it was, a parked permission
+ask was discarded, and a reader who had not pressed `/clear` had no way to know which of those
+two had happened. The durable session file limits the damage; it does not tell anyone.
+
+**What it does now.** egui flags a close the *platform* raised
+(`ViewportInfo::close_requested`); the window answers through one function,
+`IdeApp::answer_close_request`, which **refuses** and asks. The dialog names what is actually at
+stake — a turn in flight, parked asks (where `running` is **false**, which is why a guard that
+only looked at `running` would have said there was nothing at stake), and whether the
+conversation is on screen. It fails closed twice: an answer it cannot compute counts as work in
+flight, and a second request while the dialog is up is refused again rather than falling through.
+
+**Two decisions worth recording.** `Escape` keeps the window and `Keep working` is the first
+button, so the safe answer is the one a stray key gets — the reflexive-`Enter` case §6 and DSH's
+`RiskConfirmation` both exist to prevent. And **the warning is specific rather than alarming**:
+"Quit?" for a turn one tool call from finishing teaches a reader to click through it.
+
+**The Escape read is at the top of `paint`, not in the dialog**, and the first version got that
+wrong: the composer draws long before the dialog and takes the same chord to clear a draft, so a
+read down there never saw the key and **the dialog simply appeared not to answer the keyboard**.
+The failure is invisible by construction, and it is the same ordering rule `approve_pending`
+already follows.
+
+**Six tests, and a negative control run.** With the guard reverted to "close", all four
+close-path tests fail — *"a close request must be refused while there is something to lose"*, and
+the rest — rather than passing against a build that asks and then closes anyway.
+
+### And a screen that could not be looked at, which is two findings
+
+**The quit dialog is not in the rendered showcase, and the reason is the finding.** Added to it,
+the screen produced a **blank white PNG** — with three different dialog bodies (an `egui::Modal`,
+two wrapping `Label`s, and two `paint_text` calls), all rasterising to the *identical* 7,059-byte
+image, so the output did not depend on the dialog at all. With the extra priming paint removed,
+the whole test process died with **`STATUS_STACK_BUFFER_OVERRUN`**.
+
+**A translucent scrim was not the cause** (tried and re-rendered: byte-identical), and neither was
+the widget type. What is recorded is the honest position: the guard is tested through the real
+draw path — the dialog's rows are asserted on the frame, the buttons are real egui widgets, and
+the frame is asserted to emit no `ViewportCommand::Close` — but **how it looks is not verified**,
+and the offscreen rasteriser is unstable on this screen in a way the other twelve are not. That
+is left open rather than papered over with a comment standing in for evidence.
+
+### The machine pruned the build tree mid-round, and then blocked a test binary again
+
+Two environment faults, both worth recording because both look like code failures and are not.
+
+**The build tree lost 1,700 files underneath a running battery.** `gate-m316b` failed `test`,
+`demo` and `real-check` with *"The system cannot find the file specified (os error 2)"* and
+*"failed to write … The system cannot find the path specified (os error 3)"*, while
+`debug\deps` held **31 files** where it had held thousands. Disk was at 57 GB free, so this was not
+reclamation: something outside this session removed the artifacts. The battery re-ran and
+recovered, at the cost of a 20-minute clippy leg and a 20-minute test leg rebuilding from nothing.
+
+**Then the documented fault returned, on a new filename.** `gate-m316c` failed with
+`epsilon_core-a037f2a5119ff8f3.exe` — *"could not execute … never executed … Access is denied
+(os error 5)"*. Probed the same way, and the same way it behaved:
+
+```
+WRITE DENIED: epsilon_core-a037f2a5119ff8f3.exe
+WRITE OK   : epsilon_core-probeB.exe
+WRITE OK   : epsilon_core-a037f2a5119ff8f3b.exe
+```
+
+**The block binds to one exact filename and the blocklist follows the metadata hash**, so every
+rebuild that changes the profile produces a new candidate to be blocked. `CARGO_PROFILE_DEV_DEBUG`
+went to `line-tables-only` for the next run, which both changes the hash and keeps the artifacts
+small — the knob this file's §"Verification" already names, with a third value now exercised.
+
+**What this costs, stated plainly:** two of the four batteries in this round were lost to the
+machine rather than to the tree, and a reader comparing the logs would otherwise see three
+different test totals and no explanation. The rule is unchanged and worth restating: **a number
+quoted without the log that produced it is a claim, not a measurement.**
+
+### The completeness audit, run against the whole tree
+
+The objective asks for a sweep for stubs, placeholders, dead controls and skipped tests.
+`crates/**/*.rs` returns **71 matches** for `TODO|FIXME|XXX|unimplemented!|todo!|not
+implemented|coming soon|stub|placeholder`, and **every one is legitimate on inspection**: a
+provider's `is_placeholder_key`, a UI placeholder string, a doc comment about the word, or the
+`/commands` catch-all at `commands.rs:1630` that exists precisely so an unrouted variant says so
+in words. **`#[ignore]` appears 20 times and each carries a written reason.** Nothing was left
+half-built by this round.
 
 ### Four front-end defects, none found by a failing test
 
@@ -1440,18 +2045,25 @@ against the same bar and merge into the list above.
      test behind it.**~~ **LANDED (M304).** See Roadmap item 1: the claim was false, it is now
      replaced by a real measurement pinned with the fixture it names, and the negative control
      is run.
-9. **Four parallel command registries.** `Command` (38 variants), `COMMAND_HEADS` + `ALIAS_HEADS`
-   (42), `SLASH_ITEMS` (43 rows at M290), `palette_entries()` (7) and `keybindings::DEFAULTS` (23) in the TUI —
-   plus the desktop's own `app.rs:234` table, which is a separate namespace entirely. Only two
-   drift checks exist. Measured drift today: `theme`, `expand` and `templates` parse but appear
-   in neither `/help` nor autocomplete; `app.transcript.halfUp`/`halfDown` have handlers and no
-   binding entry; the palette's `binding` is a hand-typed string, not a table lookup.
-   **→ PARTLY LANDED (M279, M290).** The `theme`/`templates` gap and the palette's hand-typed
-   key are closed, and the command half now lives in `epsilon-contracts` with the desktop reading
-   it there — so the two front ends share one crate for it. **Still open:** the rows are four
-   tables that merely live in one place, and one flat `REGISTRY` of `Action` rows (with the
-   keybinding axis separate, because `halfUp` being unlisted is what happens when they are
-   conflated) is unbuilt. That is a real refactor with no user-visible defect left attached.
+9. **Four parallel command registries.** **Re-measured 2026-10-05 from source, because three of
+   the five counts this row carried had drifted.** `Command` has **39** variants,
+   `COMMAND_HEADS` + `ALIAS_HEADS` hold **37 + 8 = 45** rows, `SLASH_ITEMS` has **43** rows and
+   `palette_entries()` returns **7** — the two that were right — and `keybindings::DEFAULTS` has
+   **24** ids, not 23. In `crates/epsilon-tui`: `crates/epsilon-contracts/src/command.rs:254`
+   (variants), `:383` (`COMMAND_HEADS`), `:458` (`ALIAS_HEADS`), `:47` (`SLASH_ITEMS`);
+   `crates/epsilon-tui/src/keybindings.rs:27`; `crates/epsilon-tui/src/picker.rs:541`.
+   Two of the structural claims are also now false in our favour: `app.transcript.halfUp` /
+   `halfDown` **do** appear in `/hotkeys` through `effective()`, and the palette's key column is
+   resolved from the binding table rather than typed.
+   Measured drift today: `theme`, `expand` and `templates` are closed; `app.model.select`, `app.palette`
+   and `app.thinking.cycle` are bound and handled.
+   **→ PARTLY LANDED (M279, M290, M313).** The `theme`/`templates` gap and the palette's hand-typed
+   key are closed, the command half lives in `epsilon-contracts` with the desktop reading it
+   there, and M313 closed the two bindings whose declared chord no handler read
+   (`app.interrupt`, `tui.input.submit`). **Still open:** the rows are four tables that merely
+   live in one place, and one flat `REGISTRY` of `Action` rows (with the keybinding axis
+   separate, because `halfUp` being unlisted is what happens when they are conflated) is unbuilt.
+   That is a real refactor with no user-visible defect left attached.
 10. **Checkpoint rollback is unreachable.** `record` runs on every write and edit
     (`epsilon-tools/src/files.rs:356,533`); `CheckpointStore::restore`
     (`crates/epsilon-tools/src/checkpoint.rs:322`) has **no production caller**. Checkpoints
@@ -1462,10 +2074,12 @@ against the same bar and merge into the list above.
     edge. Fixing it exposed a second, larger defect — the restore guard compared against the
     **pre**-image and so could never pass after a real write. Now recorded and fixed via
     `Entry::post_image`. ADR-023.
-11. **The desktop answers 3 of 38 terminal commands** — `SUPPORTED` in
-    `crates/epsilon-desktop/src/commands.rs:364` (after M290; it was `:272` before the registry
-    moved) is `compact`, `goal`, `sessions`. Refusing by name is the right pattern; a third of
-    the surface is the problem.
+11. ~~**The desktop answers 3 of 38 terminal commands.**~~ **SUPERSEDED by the open-polish list
+    above, item 1, which is where this lives now.** Re-measured 2026-10-05 from source: it is
+    **seven of 37**, and the denominator was never 38 — `COMMAND_HEADS` holds 37 rows; 38 was the
+    non-`Unknown` variant count, because `Models`/`Model(String)` are two variants for one head.
+    The window runs `compact`, `goal`, `sessions`, `session`, `tasks`, `clear` and `theme`
+    (`crates/epsilon-desktop/src/commands.rs:449`), and refuses the other 30 **by name**.
 12. ~~**Desktop layout has no user agency.**~~ **LANDED (M289, ADR-025).** `Preferences` was dead
     state; there is now a drag handle on the sidebar's right edge, `Ctrl`+`B` to fold, arrows in
     16-point steps, and one small JSON file per workspace. **Still open:** the new bindings are

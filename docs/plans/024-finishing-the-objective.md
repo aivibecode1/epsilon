@@ -176,9 +176,16 @@ recorded as a behaviour change.
 
 ## 5. Raise the desktop's command coverage
 
-**Why.** `crates/epsilon-desktop/src/commands.rs` answers **3 of 38** terminal commands. Refusing by
-name is the right pattern; a third of the surface is the problem, and the objective asks for the
-desktop "to the highest standard".
+**Why.** `crates/epsilon-desktop/src/commands.rs` answered **3 of 37** terminal commands when
+this was written. Refusing by name is the right pattern; a small fraction of the surface is the
+problem, and the objective asks for the desktop "to the highest standard".
+
+> **Re-measured 2026-10-05: this section was stale on arrival and is now seven of 37.**
+> `/tasks`, `/session`, `/clear` and `/theme` landed at M312 (ADR-029), and the denominator was
+> wrong even then — `COMMAND_HEADS` holds 37 rows, not 38; 38 was the non-`Unknown` *variant*
+> count, because `Models`/`Model(String)` are two variants for one head. What has **not** landed
+> is the mechanism: `SUPPORTED` and the match arms remain two statements of one fact held together
+> by tests rather than by construction. That is the real work; adding arms was the easy part.
 
 **Where.** `crates/epsilon-desktop/src/commands.rs` (`window_runs`, `SUPPORTED`) and the shared
 registry in `crates/epsilon-contracts/src/command.rs`.

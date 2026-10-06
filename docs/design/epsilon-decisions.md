@@ -2470,3 +2470,88 @@ light table's own docs reject that reasoning for the same reason: the numbers ar
 each other. *Put high contrast in the bare `/theme` cycle* — see 5.
 
 ---
+---
+
+## ADR-031: One chord grammar, two binding tables, and a window that can finally be rebound
+
+**Status:** accepted, 2026-10-05 (M315). Amends `AGENTS.md` §2.4's evidence, not its rule: the
+rule was right and the tree did not satisfy it.
+
+### The problem, measured
+
+`AGENTS.md` §2.4 says slash commands, palette entries **and keybindings** are "declared once and
+read by every front end". Commands were true — `COMMAND_HEADS` lives in `epsilon-contracts` and
+both front ends read it. Palette entries were half true. **Keybindings were not true at all**:
+
+- the terminal had a table of 24 ids in `epsilon-tui/src/keybindings.rs`;
+- the window had **seventeen literal `consume_key` reads** and one hand-written
+  `const SIDEBAR_TOGGLE_KEY: &str = "ctrl+b"` used in four hint strings.
+
+So `keybindings.json` could touch the terminal and not the window. The comment above that constant
+compounded it: it claimed *"the registry that would carry it does not exist yet"* and that
+*"the terminal binds `ctrl+b` to page-up in its transcript"* — **both untrue**. The registry did
+not exist, which was the real point; and `ctrl+b` is the terminal *composer's* readline
+back-character, not a table entry at all.
+
+### The decision
+
+**1. The chord grammar moves to `epsilon-contracts` (`keybind.rs`), UI-neutral.** `Chord::parse` is
+now the one function that decides what `"ctrl+shift+f2"` means. It is a verbatim move of the
+terminal's `parse_key_id` with `KeyCode`/`KeyModifiers` replaced by `Key`/`Mods`, so that the crate
+keeps no UI dependency — declaring a keyboard must not invert the dependency direction the whole
+repository is built on (`design/epsilon-architecture.md` §2). Each front end converts once, at its
+own input boundary.
+
+**2. Two tables, not one: `TERMINAL` and `WINDOW`, in the same module.** This is the part worth
+arguing, because it looks like the thing the ADR was supposed to prevent.
+
+A terminal and a window are different programs. `F6` cycles a focus ring in the window and means
+nothing in the terminal. `ctrl+b` moves a text cursor in the terminal's composer and folds the
+window's sidebar. Collapsing both into one list would mean either two entries per id with a
+per-front-end flag on every chord, or a chord that means different things in different places —
+and a table like that is harder to read than two tables that are adjacent.
+
+`AGENTS.md` asks for *"per-front-end capability declared as data rather than as a second
+hand-maintained list"*, and **that is exactly what this is**: one module, one format, one grammar,
+two lists, each front end reading its own. A reader looking for "what does this product bind?" finds
+both in one file. A reader looking for "what does *this* front end bind?" filters one list.
+
+**3. Ids are per *action*, not per key, and that is a real modelling change.** `Escape` means four
+things in the window — close a palette, leave a pane, clear the draft, refuse an ask. There is no
+single `app.interrupt` there; there are four ids, and which one answers is decided by the drawing
+order, which is code. A terminal has one composer; a window stacks surfaces.
+
+**The consequence that had to be written down:** a chord may appear against more than one id in
+`WINDOW`, so the "no chord is bound to two ids" rule now holds for `TERMINAL` **and not** for
+`WINDOW`. In a terminal a shared chord is a coin toss decided by handler order; in a window it is
+a priority the drawing already states. The test says so rather than being quietly narrowed.
+
+**4. `take` matches modifiers for *equality*, and that is not a detail.** egui's own `consume_key`
+matches **logically** — extra Shift and Alt are ignored — which is how `Shift+Enter` came to be
+swallowed by a plain `Enter` read in the composer, and M314 fixed it with a hand-written guard
+scanning the event stream. **That guard is deleted.** A binding is a choice by a person, so it
+means one specific set of modifiers, and the general rule replaces the special case. The test that
+proved the special case still holds.
+
+### What this costs
+
+- `epsilon-contracts` gains a module. It is the crate `AGENTS.md` §2 calls the "stud standard", and
+  this is vocabulary, not logic — which is what that crate is for.
+- Two places now convert: the terminal's `KeySpec` and the window's `neutral_key`. Both are
+  mechanical and both are covered by a round-trip test (`a_label_round_trips_to_the_chord_it_came_from`)
+  that fails if a printed hint cannot be parsed back into the chord that produced it.
+- **The window's `neutral_key` had a bug the tests caught on the first run**, and it is worth
+  recording: it assumed egui has no letter keys and returned a placeholder for all of them, so
+  `Ctrl+P` — the one chord every IDE uses for a command palette — never matched and four palette
+  tests failed. The lesson is the repo's own: a static reading of a dependency's API is a claim,
+  and only a running test is evidence.
+
+### Alternatives rejected
+
+- **One table with a per-front-end flag on every chord.** Rejected: it makes the common case (a
+  binding both front ends share) harder to read than two adjacent lists, and it puts a conditional
+  in the one place a reader looks to find out what a key does.
+- **Keep the terminal's table where it is and give the window its own.** Rejected: that is the
+  status quo, and it is what the matrix and the a11y survey both flagged.
+- **Adopt the terminal's `keybindings.json` format but not its parser.** Rejected: two parsers are
+  two answers to "what does `ctrl+shift+f2` mean", and they would eventually disagree.
