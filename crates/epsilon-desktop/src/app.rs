@@ -621,6 +621,10 @@ enum PaletteAction {
     ReloadTree,
     /// Do this to the session's goal.
     Goal(GoalCommand),
+    /// Run one of the window's own slash heads, as `/head` typed in the
+    /// composer would. The head, not a copy of what it does: the row must not
+    /// carry a second implementation of anything.
+    Verb(&'static str),
 }
 
 /// The goal verbs the window can run.
@@ -869,6 +873,23 @@ impl IdeApp {
                 });
             }
         }
+        // Every head the window answers, derived from the declaration rather
+        // than listed a second time: a verb the window learns must reach the
+        // palette without a second edit. Labels live here as owned strings —
+        // the shared table above keeps `&'static str` for its hand-written
+        // rows — and the id is the bare head, which is what
+        // `run_palette_command` and the hotspot names resolve.
+        for head in crate::commands::SUPPORTED {
+            let label = format!("/{head}");
+            if needle.is_empty() || label.contains(&needle) {
+                out.push(PaletteEntry {
+                    label,
+                    hint: "command".into(),
+                    command: Some(head),
+                    action: PaletteAction::Verb(head),
+                });
+            }
+        }
         out
     }
     /// Read the palette's keys, and act on one.
@@ -970,6 +991,16 @@ impl IdeApp {
                 self.tree = crate::workspace::FileTree::load(&self.opts.workspace)
             }
             PaletteAction::Goal(cmd) => self.run_goal_command(cmd, query),
+            PaletteAction::Verb(head) => {
+                // The row carries the head, not a copy of what it does: this
+                // runs the same dispatch the composer sends through, so the
+                // two doors cannot disagree about what a verb means.
+                match self.try_command(&format!("/{head}")) {
+                    crate::commands::Outcome::Ran(said)
+                    | crate::commands::Outcome::Refused(said) => self.transcript.push_notice(&said),
+                    crate::commands::Outcome::Send(_) => {}
+                }
+            }
         }
     }
 
@@ -2700,7 +2731,22 @@ impl IdeApp {
                 self.run_palette_action(cmd.action, query);
                 true
             }
-            None => false,
+            None => {
+                // The derived verb rows live in `palette_entries`, not in the
+                // table above: same dispatch, with the head resolved back to
+                // its static spelling rather than trusted from the caller.
+                match crate::commands::SUPPORTED
+                    .iter()
+                    .copied()
+                    .find(|head| *head == id)
+                {
+                    Some(head) => {
+                        self.run_palette_action(PaletteAction::Verb(head), query);
+                        true
+                    }
+                    None => false,
+                }
+            }
         }
     }
     /// Re-read what the agent just changed: the tree, and the open file if it is one.
@@ -7311,6 +7357,50 @@ mod tests {
             palette_has(&opened, "reload tree"),
             "and the window's own commands, not only files.\n{}",
             opened.describe()
+        );
+    }
+
+    /// The palette offers every verb the window answers — derived, not listed.
+    ///
+    /// The command table below is hand-written for views and goals, but the
+    /// slash verbs come from the shared `SUPPORTED` declaration: a verb the
+    /// window learns must reach the palette without a second edit, or the
+    /// palette is a menu that forgot the kitchen grew. RED first: twelve
+    /// answered verbs, eight offered rows.
+    #[test]
+    fn the_palette_offers_every_verb_the_window_answers() {
+        use crate::commands::SUPPORTED;
+        let (dir, _keep) = scratch_workspace("palette-verbs");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        let opened = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        for head in SUPPORTED {
+            let label = format!("/{head}");
+            assert!(
+                palette_has(&opened, &label),
+                "the palette must offer {label}.\n{}",
+                opened.describe()
+            );
+        }
+    }
+
+    /// Choosing a verb row runs it through the same dispatch the composer uses.
+    ///
+    /// The row must not carry its own copy of what `/help` does: it runs the
+    /// head, and the head decides. `/help` opens the palette, so running it
+    /// from the palette leaves the palette open on the commands.
+    #[test]
+    fn choosing_a_verb_row_runs_it() {
+        let (dir, _keep) = scratch_workspace("palette-verb-run");
+        let mut h = Harness::new(dir);
+        let _ = h.paint();
+        assert!(
+            h.app.run_palette_command("help", ""),
+            "the palette must resolve the help verb"
+        );
+        assert!(
+            h.app.palette.is_some(),
+            "running /help from the palette opens the palette"
         );
     }
 
