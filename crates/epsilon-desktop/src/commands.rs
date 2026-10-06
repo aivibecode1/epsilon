@@ -472,7 +472,10 @@ impl IdeApp {
     /// keeps the leaf's path under a fresh header — pi's `forkFrom`, which is
     /// also what the RPC surface calls. The fork is stored, not switched to:
     /// moving there is `/resume`'s job.
-    fn run_fork_session(&mut self, verb: &'static str, past: &'static str) -> Outcome {
+    /// Shared by the `/fork` head, the `/clone` head and the session chord:
+    /// one act, three doors. `pub(crate)` for the pane and the keys; the heads
+    /// own the words.
+    pub(crate) fn run_fork_session(&mut self, verb: &'static str, past: &'static str) -> Outcome {
         let Some(session) = self.session.as_ref() else {
             return Outcome::Ran(format!("{verb}: no agent attached to this window"));
         };

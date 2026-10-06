@@ -407,6 +407,11 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.composer.escape", &["escape"]),
     ("window.approval.allow", &["enter"]),
     ("window.approval.deny", &["escape"]),
+    // Session verbs with a keyboard route (S-103, S-107): the composer spells
+    // them `/new` and `/fork`; these chords do the same through the same
+    // dispatch. Rebindable like every other row in this table.
+    ("window.session.new", &["ctrl+n"]),
+    ("window.session.fork", &["ctrl+alt+f"]),
 ];
 
 /// The default chords for `id` in `table`, or an empty slice.

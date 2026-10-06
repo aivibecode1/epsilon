@@ -60,6 +60,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 25. **Full-port round 9 — the auth picker names the env var behind the credential** | Half of P-313's remaining gap, closed: providers authenticated purely from the environment now read `key (env: NAME)` in the auth picker, sourced from `catalog::env_credential_name` (stored-wins, blank-keys-count-absent, empty keys never named) with 7 injected cases that touch neither `$HOME` nor process env. The draw change is three lines; a frame test pins the unconfigured branch on a custom provider with a unique unset variable. Stated limit: setting process env is unavailable (edition 2024 made `set_var` unsafe; the workspace forbids it), so no frame shows the suffix pixels — the precedence is pinned, the format line is reviewed. Also recorded: this machine holds a DeepSeek credential, so hermetic tests must never assert on bundled providers. P-313 stays `partial` (no type-mismatch warning anywhere). Battery `port-r9b` (2,105); `port-r9` failed `fmt` twice over. |
 | (10-06) | 26. **Full-port round 10 — a New session button in the sessions pane** | L-113's missing verb now has a door: a real button atop the sessions list (Tab-reachable, screen-reader-named, rect recorded), running the same `run_new_session` the `/new` head runs — one act, two doors. RED first (no rect, no node), then the button plus a `pub(crate)` widening. L-113 moves to `partial` (action exists; no brand row, deliberately — the action lives where the sessions are). DSH counts move to **11 / 89 / 291** in the summary and here. Battery `port-r10` (2,106), green first time — `fmt --check` ran before launch. |
 | (10-06) | 27. **Full-port round 11 — the palette offers every verb the window answers** | The palette's command list was a third hand-written list next to `SUPPORTED` and the dispatch arms: 12 answered verbs, 8 offered rows. Verb rows are now derived from `SUPPORTED` (labels teach the `/head` spelling), running through the same dispatch the composer sends through — a fourth list almost happened (`Box::leak` per palette open) and was reverted before commit. Two tests, RED first: every head offered, and choosing one runs it. No matrix row covers the palette's offering, so no row moves; the plan-025 §2.D direction (capability derived, not listed) is one list shorter. Battery `port-r11` (2,108), green first time. |
+| (10-06) | 28. **Full-port round 12 — `Ctrl+N` starts a session, `Ctrl+Alt+F` forks it** | S-103 and S-107 move to `done`: two rows in the shared keybinding tables (`window.session.new`, `window.session.fork`), read below the palette guard in `pane_keys`, running the same helpers the `/new` and `/fork` heads run. Both tests drive real key events with real modifiers through the real draw — the defect class is chords that parse and never fire. DSH counts move to **13 / 89 / 289** in the summary and here; ADR-031 amended (the machinery's first real users arrived through the front door). Battery `port-r12` (2,110), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -152,7 +153,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 124 | 159 | 18 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 11 | 89 | 291 | 42 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 89 | 289 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -207,11 +208,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r11-2026-10-06.txt`](../audit/evidence/gate-port-r11-2026-10-06.txt),
+**Latest green battery: [`gate-port-r12-2026-10-06.txt`](../audit/evidence/gate-port-r12-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,108 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r10`: the palette-verbs tests. (`cargo fmt
---check` ran before launching, so no re-run was needed.)
+**2,110 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r11`: the `Ctrl+N` and `Ctrl+Alt+F` chord tests.
+(`cargo fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

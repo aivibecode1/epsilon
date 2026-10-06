@@ -1939,6 +1939,18 @@ impl IdeApp {
         // owns every key while it is open — which is also why the status bar stops
         // advertising them while it is.
         self.layout_keys(ctx);
+        // **Session chords, beside the layout keys.** They act on the session,
+        // not on a pane, so they are read here rather than inside a pane
+        // handler — the same reason as the two lines above. Below the palette
+        // guard, because the palette owns every key while it is open.
+        if self.keys.take(ctx, "window.session.new") {
+            let outcome = self.run_new_session();
+            self.notice_outcome(outcome);
+        }
+        if self.keys.take(ctx, "window.session.fork") {
+            let outcome = self.run_fork_session("fork", "forked");
+            self.notice_outcome(outcome);
+        }
         // **`Shift` first, and that is no longer a workaround.** It used to be needed
         // because `InputState::consume_key` matches modifiers *logically* — extra shift and
         // alt are ignored — so a `NONE` match also swallowed `Shift+F6` and cycled forward
@@ -2218,6 +2230,19 @@ impl IdeApp {
     /// input system instead — the same reason [`Self::set_sidebar_view`] exists.
     pub fn open_palette(&mut self) {
         self.palette = Some(Palette::default());
+    }
+    /// Say what a command did, in the transcript.
+    ///
+    /// The sessions button and the session chords answer through this so the
+    /// doors cannot disagree about what "ran" looks like. (The composer does
+    /// its own routing because it also clears the draft — a different job.)
+    fn notice_outcome(&mut self, outcome: crate::commands::Outcome) {
+        match outcome {
+            crate::commands::Outcome::Ran(said) | crate::commands::Outcome::Refused(said) => {
+                self.transcript.push_notice(&said)
+            }
+            crate::commands::Outcome::Send(_) => {}
+        }
     }
     /// Switch the window's palette (M312).
     ///
@@ -3820,12 +3845,8 @@ impl IdeApp {
         let new = ui.button("New session");
         summary.row_rects.push(("sessions-new".into(), new.rect));
         if new.clicked() {
-            match self.run_new_session() {
-                crate::commands::Outcome::Ran(said) | crate::commands::Outcome::Refused(said) => {
-                    self.transcript.push_notice(&said)
-                }
-                crate::commands::Outcome::Send(_) => {}
-            }
+            let outcome = self.run_new_session();
+            self.notice_outcome(outcome);
         }
         if sessions.is_empty() {
             let line = "none stored for this workspace yet";
@@ -7921,6 +7942,120 @@ mod tests {
             listed_before + 1,
             "clicking New session stores one branch file beside the others.\n{}",
             after.describe()
+        );
+    }
+
+    /// `Ctrl+N` starts a new session (S-103) — the `/new` head behind a chord.
+    ///
+    /// Driven through the real key path with real modifiers, because the whole
+    /// defect class here is chords that parse in the table and never fire.
+    /// RED first: the chord falls through to whatever holds the keyboard.
+    #[test]
+    fn control_n_starts_a_new_session() {
+        let (ws, _keep) = scratch_workspace("chord-new");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        let before = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("the attached session holds a file");
+        let listed_before = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+
+        let frame = h.chord(egui::Modifiers::CTRL, egui::Key::N);
+        let after = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("still attached after the chord");
+        assert_ne!(
+            before,
+            after,
+            "Ctrl+N must move to a new file.\n{}",
+            frame.describe()
+        );
+        assert!(
+            after.exists(),
+            "and that file exists.\n{}",
+            frame.describe()
+        );
+        let listed_after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+        assert_eq!(
+            listed_after,
+            listed_before + 1,
+            "one session file added, the previous one kept.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// `Ctrl+Alt+F` forks the session (S-107).
+    ///
+    /// Same shape: the `/fork` head behind the reference's chord, driven
+    /// through the real key path. The session needs a leaf to branch from.
+    #[test]
+    fn control_alt_f_forks_the_session() {
+        let (ws, _keep) = scratch_workspace("chord-fork");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        {
+            let store = h
+                .app
+                .session
+                .as_ref()
+                .and_then(|s| s.agent().session_store())
+                .expect("attached store");
+            let mut guard = store.lock().expect("store lock");
+            guard
+                .append(epsilon_contracts::session_entry::EntryKind::Message {
+                    message: epsilon_contracts::message::Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: "m-chord".into(),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(
+                                "the line being forked",
+                            )],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    ),
+                    api_request_sha256: None,
+                })
+                .expect("the message lands");
+        }
+        let listed_before = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+
+        let frame = h.chord(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::F);
+        let listed_after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+        assert_eq!(
+            listed_after,
+            listed_before + 1,
+            "Ctrl+Alt+F stores one branch file beside the others.\n{}",
+            frame.describe()
         );
     }
 

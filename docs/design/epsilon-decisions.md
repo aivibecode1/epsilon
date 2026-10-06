@@ -2578,3 +2578,10 @@ proved the special case still holds.
   status quo, and it is what the matrix and the a11y survey both flagged.
 - **Adopt the terminal's `keybindings.json` format but not its parser.** Rejected: two parsers are
   two answers to "what does `ctrl+shift+f2` mean", and they would eventually disagree.
+
+**Amendment (full-port round 12).** The first two rows the tables gained after the move:
+`window.session.new` (`ctrl+n`) and `window.session.fork` (`ctrl+alt+f`), read in `pane_keys`
+below the palette guard and running the same `run_new_session` / `run_fork_session` the `/new`
+and `/fork` heads run. Nothing about the mechanism changed — same tables, same `take`, same
+`keybindings.json` — which is the point the amendment records: the first real users of the
+machinery arrived through the front door, driven by real key events in tests.

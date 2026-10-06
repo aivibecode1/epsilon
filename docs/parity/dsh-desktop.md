@@ -115,12 +115,12 @@ measurements taken here at all.
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 9 | 45 | 16 |
 | Approvals and permission presets | 14 | 3 | 6 | 5 | 0 |
 | Transcript, streaming and tool cards | 82 | 1 | 18 | 57 | 6 |
-| Keyboard, settings, themes, locale, account, models, plugins | 68 | 1 | 8 | 54 | 5 |
+| Keyboard, settings, themes, locale, account, models, plugins | 68 | 3 | 8 | 52 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 22 | 38 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 10 | 37 | 0 |
 | Un-numbered reference rows | 30 | 1 | 2 | 22 | 5 |
-| **Total** | **433** | **11** | **89** | **291** | **42** |
+| **Total** | **433** | **13** | **89** | **289** | **42** |
 
 ---
 
@@ -340,11 +340,11 @@ chords, all literals.** See **ED-001**.
 |---|---|---|---|---|---|
 | S-101 | Mod+/ opens the Keyboard shortcuts reference and closes it when already in front. | `ui-shortcuts/src/client/index.ts:49`, `:62` | missing | — | No shortcuts reference surface. The chords the window does bind are printed in the status bar (`app.rs:2864-2877`) — which is where a reader learns `ctrl+b sidebar`, and where the arrow glyphs are spelled out in words because egui's bundled font cannot draw them (`app.rs:2866-2874`). |
 | S-102 | Mod+, toggles Settings; on Web it is Mod+Alt+, so the browser keeps Mod+,. | `ui-settings-general/src/client/index.ts:185`, `:192` | missing | — | No Settings surface (S-128). |
-| S-103 | Mod+N starts a new session. | `ui-workspace/src/client/shortcuts.ts:88` | missing | `crates/epsilon-desktop/src/commands.rs:446-451` | The window has no new-session action: `/new` is a head the parser knows and the window refuses by name, deliberately, because the terminal's starts a new session *file* and "this window has no such action" (`commands.rs:446-448`). Creating a session from inside a running window is a real gap. |
+| S-103 | Mod+N starts a new session. | `ui-workspace/src/client/shortcuts.ts:88` | done | `crates/epsilon-contracts/src/keybind.rs` (`window.session.new` = `ctrl+n`) read in `app.rs` pane keys, running the same `run_new_session` the `/new` head runs — rebindable like every table row, no literal chord anywhere | `control_n_starts_a_new_session` (real Ctrl+N through the real draw: path moves, file exists, list grows by one) |
 | S-104 | Mod+K opens session search. | `ui-workspace/src/client/shortcuts.ts:90` | missing | — | The palette filters files and commands (`app.rs:846-871`), not sessions. The sessions pane lists stored sessions but cannot search them (L-122). |
 | S-105 | Mod+O opens the add-workspace directory flow, and returns **blocked** with a reason when no picker is mounted. | `ui-workspace/src/client/shortcuts.ts:92` | missing | — | As D-046. |
 | S-106 | Mod+Alt+G renames the current session. | `ui-workspace/src/client/shortcuts.ts:97` | missing | — | No rename. |
-| S-107 | Mod+Alt+F forks the session. | `ui-workspace/src/client/shortcuts.ts:103` | missing | — | `/fork` is refused by name (`commands.rs:449-451`). |
+| S-107 | Mod+Alt+F forks the session. | `ui-workspace/src/client/shortcuts.ts:103` | done | `window.session.fork` = `ctrl+alt+f`, same dispatch as `/fork` (the grammar already parsed `alt`; only the row was missing) | `control_alt_f_forks_the_session` (real Ctrl+Alt+F: one branch file added, current file untouched) |
 | S-108 | Mod+Shift+A archives the session. | `ui-workspace/src/client/shortcuts.ts:117` | missing | — | No archive. |
 | S-109 | Mod+B toggles the left sidebar. | `ui-layout/src/client/index.ts:194` | partial | `crates/epsilon-desktop/src/app.rs:759`, `crates/epsilon-desktop/src/app.rs:1748` | The fold is bound, works, persists and is named on screen — the constant carries the chord, the title-bar button carries the verb and the chord in its accessible name (`app.rs:3301-3306`), and the status bar prints it. The chord is **`Ctrl`+`B`**, not the platform `Mod`: on Windows and Linux that is the same key, on macOS it is not. Covered by `the_sidebar_folds_and_unfolds_from_the_keyboard` and `dragging_the_sidebar_handle_resizes_it_and_stops_at_both_ends`. |
 | S-110 | Mod+Alt+B toggles the right sidebar. | `ui-sidebar-right/src/client/shortcuts.ts:30` | missing | — | No right sidebar (L-154). |
