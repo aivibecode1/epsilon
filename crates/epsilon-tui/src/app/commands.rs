@@ -2167,32 +2167,12 @@ impl App {
                 }
             }
             crate::picker::Command::Export(arg) => {
-                let tail = arg.as_deref().unwrap_or("").trim();
+                let tail = arg.as_deref().unwrap_or("");
                 // Bare `/export` defaults to html into .epsilon/exports/ (pi parity:
                 // `/export` without args writes the HTML export automatically).
-                let bare = tail.is_empty();
-                let (fmt, raw_path) = if bare {
-                    ("html".to_string(), String::new())
-                } else {
-                    let mut parts = tail.split_whitespace();
-                    let first = parts.next().unwrap_or("");
-                    let rest = parts.next();
-                    if first.eq_ignore_ascii_case("html")
-                        || first.eq_ignore_ascii_case("json")
-                        || first.eq_ignore_ascii_case("jsonl")
-                    {
-                        (first.to_ascii_lowercase(), rest.unwrap_or("").to_string())
-                    } else {
-                        let inferred = if tail.ends_with(".json") {
-                            "json"
-                        } else if tail.ends_with(".jsonl") {
-                            "jsonl"
-                        } else {
-                            "html"
-                        };
-                        (inferred.to_string(), tail.to_string())
-                    }
-                };
+                // The spelling is shared (`split_export_arg`) so both front ends
+                // mean the same thing by it.
+                let (fmt, raw_path) = epsilon_contracts::command::split_export_arg(tail);
                 let dest: std::path::PathBuf = if raw_path.is_empty() {
                     // default: <workspace>/.epsilon/exports/session-<id>.{html,json}
                     let id = epsilon_contracts::new_id("export");

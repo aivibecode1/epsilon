@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twelve names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirteen names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -148,6 +148,12 @@ impl IdeApp {
             // --session" rather than moving.
             Command::Fork => self.run_fork_session("fork", "forked"),
             Command::Clone => self.run_fork_session("clone", "cloned"),
+            // **`/export` writes the session to HTML or JSON (full-port round 15).**
+            // Same formats, same default folder, same words as the terminal's:
+            // the spelling is shared (`split_export_arg`) and the rendering is
+            // shared (`epsilon_session::export`) — this arm is only the window's
+            // half (workspace root, notices) around both.
+            Command::Export(arg) => self.run_export_session(arg),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -507,6 +513,57 @@ impl IdeApp {
             Err(e) => Outcome::Ran(format!("{verb} failed: {e}")),
         }
     }
+
+    /// Write the session to HTML or JSON.
+    ///
+    /// Same formats, same default folder, same words as the terminal's: the
+    /// spelling comes from the shared [`epsilon_contracts::command::split_export_arg`]
+    /// and the rendering from the shared `epsilon_session::export` — this arm
+    /// is only the window's half (workspace root, notices) around both.
+    fn run_export_session(&mut self, arg: Option<String>) -> Outcome {
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("export: no agent attached to this window".to_string());
+        };
+        let (fmt, raw_path) =
+            epsilon_contracts::command::split_export_arg(arg.as_deref().unwrap_or(""));
+        let workspace = self.workspace().to_path_buf();
+        let dest = if raw_path.is_empty() {
+            let id = epsilon_contracts::new_id("export");
+            let ext = if fmt == "html" { "html" } else { "json" };
+            workspace
+                .join(".epsilon")
+                .join("exports")
+                .join(format!("session-{id}.{ext}"))
+        } else {
+            let p = std::path::PathBuf::from(&raw_path);
+            if p.is_absolute() {
+                p
+            } else {
+                workspace.join(p)
+            }
+        };
+        let result = (|| -> Result<usize, String> {
+            let store = session
+                .agent()
+                .session_store()
+                .ok_or("no session store attached")?;
+            let guard = store.lock().map_err(|_| "store unavailable")?;
+            if fmt == "html" {
+                epsilon_session::export::write_html(&guard, &dest)
+            } else {
+                epsilon_session::export::write_json(&guard, &dest)
+            }
+        })();
+        match result {
+            Ok(n) => Outcome::Ran(format!(
+                "exported {} → {} ({} entries)",
+                if fmt == "html" { "html" } else { "json" },
+                dest.display(),
+                n
+            )),
+            Err(e) => Outcome::Ran(format!("export failed: {e}")),
+        }
+    }
 }
 
 /// The head the reader typed, for the refusal.
@@ -626,8 +683,8 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "clone", "compact", "fork", "goal", "help", "new", "resume", "session", "sessions",
-    "tasks", "theme",
+    "clear", "clone", "compact", "export", "fork", "goal", "help", "new", "resume", "session",
+    "sessions", "tasks", "theme",
 ];
 
 #[cfg(test)]
@@ -891,6 +948,7 @@ mod tests {
             Command::Clear,
             Command::Clone,
             Command::Compact,
+            Command::Export(None),
             Command::Fork,
             Command::Goal(None),
             Command::Help,

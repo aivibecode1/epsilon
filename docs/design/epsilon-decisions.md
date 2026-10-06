@@ -2432,6 +2432,11 @@ through the store's `fork_branch_at` — the call the terminal and the RPC surfa
 and differ only in the verb they report, so the window shares one helper the same way. Neither
 switches: the fork is stored and named, and moving there is `/resume`'s job. 12 of 37.
 
+**Amendment (full-port round 15).** `/export` joins under the same criterion, and it took a move
+to get there: the HTML/JSON rendering now lives in `epsilon-session::export`, shared with the
+terminal's `/export` and `/share` (which call it since this round), and the argument spelling
+lives in `split_export_arg`, shared with the terminal's arm. 13 of 37.
+
 ---
 
 ---

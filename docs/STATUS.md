@@ -63,6 +63,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 28. **Full-port round 12 — `Ctrl+N` starts a session, `Ctrl+Alt+F` forks it** | S-103 and S-107 move to `done`: two rows in the shared keybinding tables (`window.session.new`, `window.session.fork`), read below the palette guard in `pane_keys`, running the same helpers the `/new` and `/fork` heads run. Both tests drive real key events with real modifiers through the real draw — the defect class is chords that parse and never fire. DSH counts move to **13 / 89 / 289** in the summary and here; ADR-031 amended (the machinery's first real users arrived through the front door). Battery `port-r12` (2,110), green first time. |
 | (10-06) | 29. **Full-port round 13 — the picker warns on dead OAuth logins** | P-313's last gap, closed at the logic level: a stored OAuth pair with no login flow and no refresh endpoint reads `! oauth login unused` in the auth picker, sourced from `catalog::oauth_credential_unused`. Proven safe first (stored pairs are consumed only via refresh endpoints; API keys always resolve), then pinned with 6 injected cases plus a no-false-warning frame assertion. Stated limit: the suffix pixels have no frame (stored logins untouchable in tests) — logic pinned, wiring reviewed. P-313 stays `partial` by the project's own bar (a seen behaviour needs a seen frame). Battery `port-r13` (2,111), green first time. |
 | (10-06) | 30. **Full-port round 14 — export rendering moves to the session crate** | Foundation for the window's `/export`: `write_html`/`write_json` now live in `epsilon-session::export` over read entries (plus 3 unit tests incl. escaping and empty), and the TUI's `/export` + `/share` arms read-then-call through one shape. Zero behaviour change — a pure move, reviewable as one — except the TUI test, which became an end-to-end command test covering the rewired arms. The move deleted 53 lines from the TUI app file, shifting 19 matrix citations; all re-pointed by the measured offset and verified byte-identical. Battery `port-r14` (2,114), green first time. |
+| (10-06) | 31. **Full-port round 15 — the window answers `/export`** | The argument spelling is shared now too (`split_export_arg` in contracts, with its own grammar tests; the TUI arm calls it, behaviour identical): bare means HTML into `.epsilon/exports/`, `json`/`jsonl`/paths all spell like the terminal. The window arm reuses the shared rendering from round 14 — 13 of 37, under ADR-029's criterion, amended. U-006 moves to `partial` (same capability, deliberately different shape: native files, not a browser ZIP). Two tests, RED first with the honest refusal. Battery `port-r15` (2,117), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -155,7 +156,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 124 | 159 | 18 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 89 | 289 | 42 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 90 | 288 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -210,11 +211,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r14-2026-10-06.txt`](../audit/evidence/gate-port-r14-2026-10-06.txt),
+**Latest green battery: [`gate-port-r15-2026-10-06.txt`](../audit/evidence/gate-port-r15-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,114 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — three more than `gate-port-r13`: the session export unit tests (the TUI
-test became an end-to-end command test). (`cargo fmt --check` ran before launching.)
+**2,117 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r14`: the export-grammar test and the two
+window `/export` tests. (`cargo fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

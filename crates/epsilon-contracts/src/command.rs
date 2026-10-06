@@ -578,6 +578,38 @@ pub fn parse_command(input: &str) -> Option<Command> {
     }
 }
 
+/// Split an `/export` tail into `(format, path)`.
+///
+/// Bare means HTML with no path (the caller picks the default file);
+/// otherwise the first word names a format (`html`/`json`/`jsonl`) with the
+/// rest as the path, or the path alone with the format inferred from its
+/// extension (HTML unless it ends `.json`/`.jsonl`). Shared by both front
+/// ends so `/export` spells the same thing in the terminal and in the window.
+pub fn split_export_arg(tail: &str) -> (String, String) {
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return ("html".to_string(), String::new());
+    }
+    let mut parts = tail.split_whitespace();
+    let first = parts.next().unwrap_or("");
+    let rest = parts.next();
+    if first.eq_ignore_ascii_case("html")
+        || first.eq_ignore_ascii_case("json")
+        || first.eq_ignore_ascii_case("jsonl")
+    {
+        (first.to_ascii_lowercase(), rest.unwrap_or("").to_string())
+    } else {
+        let inferred = if tail.ends_with(".json") {
+            "json"
+        } else if tail.ends_with(".jsonl") {
+            "jsonl"
+        } else {
+            "html"
+        };
+        (inferred.to_string(), tail.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -751,6 +783,37 @@ mod tests {
             "unknown slash words error out — never sent to the model"
         );
         assert_eq!(parse_command("fix the bug"), None);
+    }
+
+    /// `/export` tails split the same way for both front ends: bare means HTML
+    /// with no path, a leading format word wins, otherwise the extension
+    /// decides (HTML unless `.json`/`.jsonl`).
+    #[test]
+    fn split_export_arg_spells_one_grammar() {
+        assert_eq!(split_export_arg(""), ("html".into(), "".into()));
+        assert_eq!(split_export_arg("   "), ("html".into(), "".into()));
+        assert_eq!(
+            split_export_arg("json out.json"),
+            ("json".into(), "out.json".into())
+        );
+        assert_eq!(
+            split_export_arg("HTML OUT.HTML"),
+            ("html".into(), "OUT.HTML".into())
+        );
+        assert_eq!(
+            split_export_arg("jsonl out.jsonl"),
+            ("jsonl".into(), "out.jsonl".into())
+        );
+        assert_eq!(
+            split_export_arg("out.json"),
+            ("json".into(), "out.json".into())
+        );
+        assert_eq!(
+            split_export_arg("notes.txt"),
+            ("html".into(), "notes.txt".into())
+        );
+        // A format word with no path that follows: empty path, not the word.
+        assert_eq!(split_export_arg("json"), ("json".into(), "".into()));
     }
 
     /// `/skill <name> on|off` parses, and a bare `/skill` does not guess.

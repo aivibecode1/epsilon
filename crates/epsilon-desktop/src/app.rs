@@ -7836,6 +7836,101 @@ mod tests {
         );
     }
 
+    /// Bare `/export` writes HTML into `.epsilon/exports/` — the terminal's default.
+    ///
+    /// Same formats, same folder, same words: the spelling is shared and the
+    /// rendering is shared, so this pins the window's half (workspace root,
+    /// notices) through the real dispatch.
+    #[test]
+    fn slash_export_writes_html_by_default() {
+        let (ws, _keep) = scratch_workspace("slash-export");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        {
+            let store = h
+                .app
+                .session
+                .as_ref()
+                .and_then(|s| s.agent().session_store())
+                .expect("attached store");
+            let mut guard = store.lock().expect("store lock");
+            guard
+                .append(epsilon_contracts::session_entry::EntryKind::Message {
+                    message: epsilon_contracts::message::Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: "m-export".into(),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(
+                                "a line worth exporting",
+                            )],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    ),
+                    api_request_sha256: None,
+                })
+                .expect("the message lands");
+        }
+
+        let outcome = h.app.try_command("/export");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/export must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("exported html"),
+            "the answer names format and file: {said:?}"
+        );
+        let exports = ws.join(".epsilon").join("exports");
+        let files: Vec<_> = std::fs::read_dir(&exports)
+            .expect("exports dir")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "one default file beside no others: {files:?}"
+        );
+        let body = std::fs::read_to_string(&files[0]).expect("read back");
+        assert!(
+            body.contains("a line worth exporting"),
+            "the export carries the conversation"
+        );
+    }
+
+    /// `/export json` writes JSON where told, and `/export` with no agent answers.
+    #[test]
+    fn slash_export_json_and_no_agent() {
+        let (ws, _keep) = scratch_workspace("slash-export-json");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+
+        let outcome = h.app.try_command("/export json out.json");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/export json must run: {outcome:?}");
+        };
+        assert!(
+            said.contains("exported json"),
+            "the answer names format and file: {said:?}"
+        );
+        let body = std::fs::read_to_string(ws.join("out.json")).expect("read back");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("valid json");
+        assert!(v.is_array(), "json export must be an array");
+
+        let (ws2, _keep2) = scratch_workspace("slash-export-no-agent");
+        let mut bare = Harness::new(ws2);
+        let outcome = bare.app.try_command("/export");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/export without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
+
     /// `/fork` on an empty session names it rather than branching nothing.
     ///
     /// The terminal's words ("nothing to fork — session is empty"), because a
