@@ -2967,3 +2967,83 @@ fn switching_the_palette_redraws_the_transcript_and_not_just_the_chrome() {
         "the row must keep its text after a palette switch"
     );
 }
+
+/// A reply cut off by the token limit says so on screen (P-127).
+///
+/// Without the line, a half answer reads as a whole one — the same honesty
+/// hole the M62 error marker closes for failures. The EndTurn message in
+/// the same frame is the control: one truncated reply, one whole one, and
+/// exactly one notice.
+#[test]
+fn a_truncated_reply_says_so() {
+    let mut app = bench_app(UiState::new());
+    for (id, text, stop) in [
+        (
+            "msg-cut",
+            "the answer so far",
+            epsilon_contracts::message::StopReason::MaxTokens,
+        ),
+        (
+            "msg-whole",
+            "the whole answer",
+            epsilon_contracts::message::StopReason::EndTurn,
+        ),
+    ] {
+        app.ui
+            .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+                message: Box::new(Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: id.into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(text)],
+                        stop_reason: stop,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                )),
+            });
+    }
+
+    let rows = render_rows(&mut app, 80, 24);
+    let hits: Vec<_> = rows
+        .iter()
+        .filter(|r| r.contains("Response was truncated before completion."))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "exactly one truncation notice for one truncated reply: {rows:#?}"
+    );
+}
+
+/// A resumed truncated reply says so too (P-127, history path).
+///
+/// The live path and the resume path render assistant messages separately;
+/// a session reopened onto a cut-off answer must not read whole either.
+#[test]
+fn a_resumed_truncated_reply_says_so() {
+    let mut app = bench_app(UiState::new());
+    app.ui.hydrate_from_history(&[Message::Assistant(
+        epsilon_contracts::message::AssistantMessage {
+            id: "msg-resumed".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "the resumed half",
+            )],
+            stop_reason: epsilon_contracts::message::StopReason::MaxTokens,
+            error_message: None,
+            usage: Default::default(),
+        },
+    )]);
+
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("Response was truncated before completion.")),
+        "a replayed cut-off answer must carry its notice: {rows:#?}"
+    );
+}

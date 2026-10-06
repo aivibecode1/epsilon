@@ -66,6 +66,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 31. **Full-port round 15 — the window answers `/export`** | The argument spelling is shared now too (`split_export_arg` in contracts, with its own grammar tests; the TUI arm calls it, behaviour identical): bare means HTML into `.epsilon/exports/`, `json`/`jsonl`/paths all spell like the terminal. The window arm reuses the shared rendering from round 14 — 13 of 37, under ADR-029's criterion, amended. U-006 moves to `partial` (same capability, deliberately different shape: native files, not a browser ZIP). Two tests, RED first with the honest refusal. Battery `port-r15` (2,117), green first time. |
 | (10-06) | 32. **Full-port round 16 — the New session button names its chord** | L-114 moves to `partial`: hover tooltip plus a renamed accesskit node (`New session · ctrl+n`), both read from the binding table so a rebound chord is announced rebound — the fold control's pattern, reused. Visible trailing text on keyboard focus stays open (recorded in the row). DSH counts move to **13 / 91 / 287** in the summary and here. Battery `port-r16` (2,118), green first time. |
 | (10-06) | 33. **Full-port round 17 — the quit guard actually guards (CancelClose), and stays honest about D-031** | Reading eframe's own source proved the M316 quit dialog could never appear in production: no `CancelClose` was ever sent, and uncancelled viewports close. One-line enforcement fix in the seam tests drive, with a test observing the command on the frame (it failed with the send removed — the old suite never looked). Two more tests: the draft keeps its guard, and the empty-window rule stands. A silent-close for empty windows was implemented, then reverted the same round: an explicit tested rule says closing is the reader's decision, and overturning it solo is not this round's to do — D-031 moves to `partial` with the tension recorded, not resolved. DSH counts move to **13 / 92 / 286**. Battery `port-r17b` (2,120); `port-r17` (mid-edit tree) failed on the empty-window rule test, as it should have. |
+| (10-06) | 34. **Full-port round 18 — truncated replies say so (P-127)** | A reply stopped for length used to read as a whole answer in both the live transcript and resumed sessions — the stop reason was never rendered. Both assistant paths now append `Response was truncated before completion.`, beside the M62 error marker. Two frame tests (one truncated + one whole reply with exactly one notice; replayed history), RED first with a control on the history arm. P-127 moves to `done`; Pi counts move to **39 / 124 / 158**. Desktop follow-up noted (its transcript ignores stop reasons too). Battery `port-r18` (2,122), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -157,7 +158,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 124 | 159 | 18 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 39 | 124 | 158 | 18 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 92 | 286 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -213,11 +214,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r17b-2026-10-06.txt`](../audit/evidence/gate-port-r17b-2026-10-06.txt),
+**Latest green battery: [`gate-port-r18-2026-10-06.txt`](../audit/evidence/gate-port-r18-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,120 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r16`: the CancelClose test and the draft-guard
-test. (`cargo fmt --check` ran before launching.)
+**2,122 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r17b`: the truncation frame tests (live and
+resume). (`cargo fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

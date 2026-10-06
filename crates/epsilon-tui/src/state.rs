@@ -1094,6 +1094,15 @@ impl UiState {
                     for (id, name, args) in a.tool_calls() {
                         self.push_tool_call(id, name, args, now);
                     }
+                    if a.stop_reason == StopReason::MaxTokens {
+                        // P-127, resume path: a replayed reply that hit the token
+                        // limit says so too, or a resumed half answer reads as
+                        // whole. The live path (`apply`) carries the same line.
+                        self.push_line(TranscriptLine::plain(
+                            LineKind::System,
+                            "Response was truncated before completion.",
+                        ));
+                    }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
                     self.cache_read += a.usage.cache_read;
@@ -1246,6 +1255,16 @@ impl UiState {
                                  API key, then send this again",
                             ));
                         }
+                    }
+                    if a.stop_reason == StopReason::MaxTokens {
+                        // P-127, live path: a reply that hit the token limit says
+                        // so, or the cut-off answer reads as a complete one — the
+                        // M62 error marker's sibling for the non-failure stop.
+                        // The resume path (`hydrate_from_history`) carries it too.
+                        self.push_line(TranscriptLine::plain(
+                            LineKind::System,
+                            "Response was truncated before completion.",
+                        ));
                     }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;

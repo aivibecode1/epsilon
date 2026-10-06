@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 2 | 2 | 5 | 1 |
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 7 | 5 | 23 | 0 |
+| 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 1 | 9 | 7 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **38** | **124** | **159** | **18** |
+| **Total** | **339** | **39** | **124** | **158** | **18** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -304,7 +304,7 @@ in each component.
 | P-124 | A hidden thinking block becomes a dim italic `Thinking...` label | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:145`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:484` | missing | none — there is no hidden-thinking state | — |
 | P-125 | A thinking block toggles individually on left-click | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:163`, `:143` | missing | none — mouse capture is off (`crates/epsilon-tui/src/app.rs:1359`) | — |
 | P-126 | Thinking is followed by a blank line only when more assistant content follows | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:138`, `:171` | missing | none | — |
-| P-127 | A reply that hit the token limit appends `Response was truncated before completion.` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:182` | missing | none | — |
+| P-127 | A reply that hit the token limit appends `Response was truncated before completion.` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:182` | done | `crates/epsilon-tui/src/state.rs` — both assistant paths (`apply` for live turns, `hydrate_from_history` for resumed sessions) append the line as a `System` notice when `stop_reason` is `MaxTokens`, beside the M62 error marker | `a_truncated_reply_says_so` (frame: one truncated + one whole reply, exactly one notice) + `a_resumed_truncated_reply_says_so` (frame over replayed history; negative control run on the history arm) |
 | P-128 | An aborted reply shows its message or `Operation aborted`; an errored one shows `Error: …` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:188`, `:195` | partial | `crates/epsilon-tui/src/state.rs:971` — an aborted run produces a harness-authored system row, not text on the answer's own row | `retry_notices_land_in_the_transcript_and_the_status_line` |
 | P-129 | Abort/error text is suppressed on the assistant block when the message contains tool calls | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:180` | missing | none | — |
 | P-130 | A theme change rebuilds assistant markdown from the cached **source**, not a rendered string | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:51` | done | `crates/epsilon-tui/src/app/commands.rs:1532` — `/theme` clears the transcript render cache so rows already drawn do not survive in the old colours | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 2 | 2 | 5 | 1 |
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 7 | 5 | 23 | 0 |
+| 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 1 | 9 | 7 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **38** | **124** | **159** | **18** |
+| **Total** | **339** | **39** | **124** | **158** | **18** |
 
 ### The `missing` rows — 161
 
@@ -793,7 +793,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Layout and renderer (5) | P-015, P-017, P-020, P-021, P-220 |
 | Composer and editor (8) | P-013, P-029, P-032, P-033, P-211, P-212, P-213, P-214 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
-| Transcript and streaming (23) | P-040, P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-127, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
+| Transcript and streaming (22) | P-040, P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (7) | P-037, P-038, P-262, P-263, P-264, P-265, P-273 |
 | Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
 | Sessions (7) | P-026, P-055, P-071, P-073, P-080, P-081, P-085 |
