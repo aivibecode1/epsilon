@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is ten names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twelve names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -140,6 +140,14 @@ impl IdeApp {
             // than rebuilding silently, because a typed line that does nothing
             // and says nothing is the state this UI refuses.
             Command::Resume(path) => self.run_resume_session(path),
+            // **`/fork` and `/clone` branch the current file (full-port round 8).**
+            // Same act as the terminal's: the store's `fork_branch_at`, not a
+            // file copy (a copy duplicates abandoned branches under one
+            // identity). The fork is stored and named; switching to it is
+            // `/resume`'s job, exactly as the terminal says "open with
+            // --session" rather than moving.
+            Command::Fork => self.run_fork_session("fork", "forked"),
+            Command::Clone => self.run_fork_session("clone", "cloned"),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -450,6 +458,49 @@ impl IdeApp {
             Err(e) => Outcome::Ran(format!("resume failed: {e}")),
         }
     }
+
+    /// Branch the current session file under `verb` (`fork` or `clone`).
+    ///
+    /// The terminal runs both verbs through the store's `fork_branch_at` and
+    /// differs only in the word it reports; this window does the same through
+    /// one helper, taking the past tense too because English does not form it
+    /// with a rule (`forked`, `cloned` — not `cloneed`). A whole-file copy
+    /// would duplicate abandoned branches under one identity, so the branch
+    /// keeps the leaf's path under a fresh header — pi's `forkFrom`, which is
+    /// also what the RPC surface calls. The fork is stored, not switched to:
+    /// moving there is `/resume`'s job.
+    fn run_fork_session(&mut self, verb: &'static str, past: &'static str) -> Outcome {
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran(format!("{verb}: no agent attached to this window"));
+        };
+        let Some(store) = session.agent().session_store() else {
+            return Outcome::Ran(format!("{verb}: no session store attached"));
+        };
+        let (path, leaf) = match store.lock() {
+            Ok(st) => (st.path().to_path_buf(), st.leaf_id()),
+            Err(_) => return Outcome::Ran(format!("{verb}: session store unavailable")),
+        };
+        let Some(leaf_id) = leaf else {
+            return Outcome::Ran(format!("{verb}: nothing to {verb} — session is empty"));
+        };
+        let dest_dir = match path.parent() {
+            Some(d) => d.to_path_buf(),
+            None => {
+                return Outcome::Ran(format!("{verb}: the session file has no parent directory"));
+            }
+        };
+        let forked = match store.lock() {
+            Ok(st) => st.fork_branch_at(&leaf_id, &dest_dir),
+            Err(_) => return Outcome::Ran(format!("{verb}: session store unavailable")),
+        };
+        match forked {
+            Ok(dest) => Outcome::Ran(format!(
+                "{past} session → {} (resume it from /sessions)",
+                dest.display()
+            )),
+            Err(e) => Outcome::Ran(format!("{verb} failed: {e}")),
+        }
+    }
 }
 
 /// The head the reader typed, for the refusal.
@@ -569,7 +620,8 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "compact", "goal", "help", "new", "resume", "session", "sessions", "tasks", "theme",
+    "clear", "clone", "compact", "fork", "goal", "help", "new", "resume", "session", "sessions",
+    "tasks", "theme",
 ];
 
 #[cfg(test)]
@@ -831,7 +883,9 @@ mod tests {
     fn the_window_runs_exactly_the_heads_it_declares_supported() {
         let implemented: Vec<&'static str> = [
             Command::Clear,
+            Command::Clone,
             Command::Compact,
+            Command::Fork,
             Command::Goal(None),
             Command::Help,
             Command::New,

@@ -7579,6 +7579,172 @@ mod tests {
         );
     }
 
+    /// `/fork` branches the current session file — and stays where it is.
+    ///
+    /// Same act as the terminal's: the store's `fork_branch_at`, not a file
+    /// copy (a copy duplicates abandoned branches under one identity). The
+    /// fork is stored and named; switching to it is `/resume`'s job, exactly
+    /// as the terminal says "open with --session" rather than moving.
+    #[test]
+    fn slash_fork_branches_the_current_file_and_stays_put() {
+        let (ws, _keep) = scratch_workspace("slash-fork");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        // Give the attached session a leaf to branch from.
+        {
+            let store = h
+                .app
+                .session
+                .as_ref()
+                .and_then(|s| s.agent().session_store())
+                .expect("attached store");
+            let mut guard = store.lock().expect("store lock");
+            guard
+                .append(epsilon_contracts::session_entry::EntryKind::Message {
+                    message: epsilon_contracts::message::Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: "m-fork".into(),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(
+                                "the line being forked",
+                            )],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    ),
+                    api_request_sha256: None,
+                })
+                .expect("the message lands");
+        }
+        let before = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("the attached session holds a file");
+        let listed_before = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+
+        let outcome = h.app.try_command("/fork");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/fork must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("forked session"),
+            "the answer names what happened: {said:?}"
+        );
+        let still = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("still attached");
+        assert_eq!(still, before, "forking stores; it does not move");
+        let listed_after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+        assert_eq!(
+            listed_after,
+            listed_before + 1,
+            "one branch file added beside the others"
+        );
+    }
+
+    /// `/clone` is the same branch under its own name.
+    ///
+    /// The terminal's `/fork` and `/clone` share `fork_branch_at` and differ
+    /// only in the verb they report; the window does the same through one
+    /// helper, so this test pins the shared path once more under the second
+    /// spelling rather than re-proving the mechanics.
+    #[test]
+    fn slash_clone_branches_under_its_own_name() {
+        let (ws, _keep) = scratch_workspace("slash-clone");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        {
+            let store = h
+                .app
+                .session
+                .as_ref()
+                .and_then(|s| s.agent().session_store())
+                .expect("attached store");
+            let mut guard = store.lock().expect("store lock");
+            guard
+                .append(epsilon_contracts::session_entry::EntryKind::Message {
+                    message: epsilon_contracts::message::Message::Assistant(
+                        epsilon_contracts::message::AssistantMessage {
+                            id: "m-clone".into(),
+                            timestamp_ms: 0,
+                            provider: "faux".into(),
+                            model_id: "faux-1".into(),
+                            content: vec![epsilon_contracts::content::ContentBlock::text(
+                                "the line being cloned",
+                            )],
+                            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                            error_message: None,
+                            usage: Default::default(),
+                        },
+                    ),
+                    api_request_sha256: None,
+                })
+                .expect("the message lands");
+        }
+
+        let outcome = h.app.try_command("/clone");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/clone must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("cloned session"),
+            "the answer uses the verb that was typed: {said:?}"
+        );
+    }
+
+    /// `/fork` on an empty session names it rather than branching nothing.
+    ///
+    /// The terminal's words ("nothing to fork — session is empty"), because a
+    /// reader who just opened the window has an empty session and the message
+    /// must explain the no-op rather than print a path.
+    #[test]
+    fn slash_fork_on_an_empty_session_names_it() {
+        let (ws, _keep) = scratch_workspace("slash-fork-empty");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let outcome = h.app.try_command("/fork");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/fork on empty must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("nothing to fork"),
+            "names the empty session: {said:?}"
+        );
+    }
+
+    /// `/fork` with no agent names what's missing.
+    #[test]
+    fn slash_fork_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-fork-no-agent");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/fork");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/fork without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
+
     /// The sessions pane lists the stored session — it did not, until the root fix.
     ///
     /// `IdeSession::sessions` passed the workspace root where

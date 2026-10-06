@@ -2427,6 +2427,11 @@ silently, following the click path, which skips them for the same reason. 10 of 
 refusal and the missing-file wording ("no file at ... — check the path") are the terminal's, kept
 word for word so the two front ends cannot disagree about what went wrong.
 
+**Amendment (full-port round 8).** `/fork` and `/clone` join under the same criterion: both run
+through the store's `fork_branch_at` — the call the terminal and the RPC surface already share —
+and differ only in the verb they report, so the window shares one helper the same way. Neither
+switches: the fork is stored and named, and moving there is `/resume`'s job. 12 of 37.
+
 ---
 
 ---
