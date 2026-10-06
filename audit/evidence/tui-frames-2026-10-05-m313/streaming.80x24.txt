@@ -1,0 +1,28 @@
+
+=== streaming @ 80x24 ===
++--------------------------------------------------------------------------------+
+|idle           ?/1.0M · ↑0 ↓0 · Faux (offline scripted) • thinking off · offline|
+|> run the tests                                                                 |
+|* context compacted: 1,633 tokens dropped, summary 210 tokens                   |
+|" I will start by listing the files in the workspace and then read the layout   |
+|" module to understand how the frame is composed before making any changes to   |
+|" it.                                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|> while you work - what is the plan                                             |
+|--------------------------------------------------------------------------------|
+|insert · enter send · pageup scroll back · pagedown       ...\crates\epsilon-tui|
++--------------------------------------------------------------------------------+

@@ -1,0 +1,976 @@
+# DSH Desktop — parity matrix for `epsilon-desktop`
+
+**Status:** behavioural parity, measured from source on both sides. Every row below was written
+after reading the reference citation and opening the ours citation, or after recording an honest
+`missing`.
+**Our side:** [`crates/epsilon-desktop`](../../crates/epsilon-desktop) — egui/eframe over
+winit + wgpu, rendered natively (ADR-020).
+**Evidence the rows were built from:**
+[`audit/evidence/parity-dsh-desktop-reference.md`](../../audit/evidence/parity-dsh-desktop-reference.md).
+
+---
+
+## What DSH Desktop is
+
+DSH Desktop is **"an Electron shell around the complete dsh Web application"**
+(`references/deepseek-harness-dsh-v0.2.1-alpha.1/apps/desktop/README.md:7`). Its manifest is
+`@deepseek-ai/dsh-desktop`, "Electron desktop shell for a bundled dsh runtime and external
+plugins" (`apps/desktop/package.json:2-3`), version `0.2.1-alpha.1` in this tree
+(`apps/desktop/package.json:4`).
+
+**Licence: MIT, `Copyright (c) 2026 DeepSeek`** (`LICENSE:1`, `LICENSE:3`); the desktop package
+declares the same (`apps/desktop/package.json:6`). Nothing was copied. This is a behavioural
+port; the credits for the ideas are in [`CREDITS.md`](../../CREDITS.md).
+
+**It is built on `electron ^44.0.0`** (`apps/desktop/package.json:63`). The renderer is a
+Chromium document served at a privileged `dsh-app://` scheme (`apps/desktop/src/main.ts:132-142`,
+`:662-677`), and the product UI is not in `apps/desktop` at all — it lives in roughly sixty
+`packages/client/*` workspace packages (`packages/client/AGENTS.md`; `apps/web/src/main.ts:3`).
+DSH documents itself as being in developer preview and warns that there will be
+compatibility-breaking changes (`README.md:13`).
+
+## What this document compares, and what it does not
+
+**Behaviour, not pixels.** A row asks: does a person using the two programs see the same thing
+happen, at the same moment, for the same reason? It does not ask whether the two draw the same
+pixels, use the same type scale, or lay out the same way — because they cannot and should not.
+DSH Desktop is a Chromium-rendered web application inside an Electron shell; Epsilon is one
+native binary with no runtime to install and no browser engine to embed.
+[`AGENTS.md`](../../AGENTS.md) §2.3 forbids a webview in this window, and that is not a gap to be
+closed later: it is the decision the port is built on. A large share of the reference's row count
+is therefore about a browser, a DOM, an Electron IPC channel or a CSS layout engine — surface that
+has no counterpart in a canvas-less native window and is not owed one. Those rows are marked
+**deliberately different** and argued in [Deliberately different](#deliberately-different), not
+tagged one at a time.
+
+**Accessibility.** [`AGENTS.md`](../../AGENTS.md) §8 sets **WCAG 2.2 AA** as the floor. That is
+above the reference. The evidence file records explicitly that DSH ships **no accessibility
+conformance statement** — no ARIA audit, no screen-reader walkthrough, no contrast table — and
+that **no row in its §4 is a WCAG claim**
+(`audit/evidence/parity-dsh-desktop-reference.md`, §5 and §6.9). So no row below asserts anything
+about how well the reference meets a standard. Where this matrix says a row is `done`, it is
+because *our* side is exercised and our side is measured against the floor in §8.
+
+**Statuses.** `done`, `partial`, `missing`, `deliberately different`, as defined in
+[`../parity/README.md`](../parity/README.md). `done` means a named test drove the real draw path
+and asserted on the frame, or a named screen shows it — never merely that code exists.
+
+## How the ours column was checked
+
+1. [`crates/epsilon-desktop/tests/window.rs`](../../crates/epsilon-desktop/tests/window.rs) —
+   **49 end-to-end tests** over a real faux agent, composing through
+   `epsilon_runtime::resolve_launch` and asserting on `FrameSummary`, never on state alone. It is
+   the strongest evidence available and most `done` rows name a test from it.
+2. The in-crate frame tests in `src/app.rs` and `src/layout.rs`, which assert on rendered
+   rectangles, on the accessibility tree, and on a rasterised frame.
+3. [`crates/epsilon-desktop/tests/frame_cost.rs`](../../crates/epsilon-desktop/tests/frame_cost.rs)
+   — frame cost, the accessibility tree the window publishes, and where transcript milliseconds
+   go.
+4. The source itself, for anything the tests do not reach. A row whose code exists but which no
+   test or screen reaches is `partial` or `missing`, and says which.
+
+**A fact this document asserts once, because it changes how the keyboard rows read.**
+[`AGENTS.md`](../../AGENTS.md) §2.4 says slash commands, palette entries **and keybindings** are
+declared once and read by every front end. **Commands are shared, and have been since the start:**
+the window answers 7 of the 37 heads in `COMMAND_HEADS`
+(`crates/epsilon-contracts/src/command.rs:383`) and refuses the other 30 by name, with the refusal
+set **derived** rather than hand-written (`crates/epsilon-desktop/src/commands.rs:410`, `:449`).
+
+**Keybindings are half shared, as of M315.** The *store* is now shared: the window reads
+`<config dir>/keybindings.json` through the same shape and the same grammar the terminal reads
+(`crates/epsilon-contracts/src/keybind.rs`, `crates/epsilon-desktop/src/keys.rs`), so a user's
+file means the same thing in both front ends. What the rows record as still local is everything
+around it: **nothing writes the file**, and there is no recorder. Two things this paragraph
+deliberately does **not** claim, because `src/app.rs` changed at M314 and M315 and was not re-read
+here: whether the window's own chords now route through the shared table or are still literal
+`consume_key` reads, and whether the constant that names a chord on screen still carries the
+comment recorded before that work — "the registry that would carry it does not exist yet … the
+desktop's key namespace is separate from the terminal's"
+(`crates/epsilon-desktop/src/app.rs:744-759`, measured at M313). **Rows D-061, D-062 and S-125
+carry the current state**; this paragraph is not a substitute for them. What is left of the §2.4
+gap as those rows record it is the recorder (S-122) and persistence (S-125), and it is **second** in
+[The five highest-priority missing rows](#the-five-highest-priority-missing-rows).
+
+**Every `path:line` in the ours column is point-in-time, and dated.** They were measured at
+**M313**, against the tree as it stood in that pass. M314 and M315 both edited
+`crates/epsilon-desktop/src/app.rs`, so **line numbers into that file are known-stale unless the
+row says otherwise** — read every ours citation as *this is where the behaviour was measured*,
+not *this is where it is today*.
+
+**A few rows have been re-measured since, and the document is deliberately in that mixed state
+rather than pretending otherwise.** C-123, C-141, S-117 and D-064 were re-pointed against the
+M315 source and are current; the rest are the M313 measurements. A plausible-looking wrong line
+is worse than one that is openly dated, and a re-measure that quietly skipped rows would be
+worse still — so the rule is: **re-point a row when you have opened the line and confirmed it,
+and leave it alone otherwise.** The four above are the complete set.
+
+Citations into `crates/epsilon-contracts` are dated the same way; the `crates/epsilon-safety`
+citations on D-078 and I-107 were supplied by the integrator after this pass, and are not
+measurements taken here at all.
+
+## Summary by area
+
+| area | rows | done | partial | missing | deliberately different |
+|---|---|---|---|---|---|
+| Electron shell (`apps/desktop/**`) | 70 | 0 | 9 | 45 | 16 |
+| Approvals and permission presets | 14 | 3 | 6 | 5 | 0 |
+| Transcript, streaming and tool cards | 82 | 1 | 18 | 57 | 6 |
+| Keyboard, settings, themes, locale, account, models, plugins | 68 | 1 | 8 | 54 | 5 |
+| Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
+| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 21 | 39 | 5 |
+| Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 10 | 37 | 0 |
+| Un-numbered reference rows | 30 | 1 | 2 | 22 | 5 |
+| **Total** | **433** | **11** | **88** | **292** | **42** |
+
+---
+
+## A. The Electron shell (`apps/desktop/**`)
+
+`D-001`–`D-070`. These rows describe an Electron application: window chrome, application and
+caption menus, tray, process lifetime, native pickers, update and crash machinery, and the
+keyboard interception layer. Most of it has no counterpart in a native window, and the ones that
+do are written out.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| D-001 | The workspace window opens at 1280 x 820 with a minimum of 520 x 600. | `apps/desktop/src/main.ts:207-212` | partial | `crates/epsilon-desktop/src/lib.rs:157`, `:172` | Default inner size is 1280x820, matching. The minimum is **900x560**, not 520x600, and the reason is written at `lib.rs:159-172`: below 860 the layout folds the sidebar, so a minimum below that would contradict the fold control. The layout's own degradation tiers are untouched. |
+| D-002 | On Windows the main window uses a hidden title bar with a native caption overlay of exactly 40 DIP. | `apps/desktop/src/main.ts:213-217`, `apps/desktop/src/windows-layout.ts:4` | deliberately different | `crates/epsilon-desktop/src/lib.rs:156-175` | The window keeps the operating system's own caption and draws no overlay; eframe is given a `ViewportBuilder` and nothing else (`lib.rs:156-175`). A native binary that custom-draws a caption would be reimplementing the platform, not porting the product. |
+| D-003 | On macOS the main window is `hiddenInset` with traffic lights at (16, 18), sidebar vibrancy, a transparent background and `visualEffectState: 'active'`. | `apps/desktop/src/main.ts:220-228` | deliberately different | `crates/epsilon-desktop/src/lib.rs:156-175` | Same reason as D-002: winit and the platform draw the window frame. Vibrancy is a `NSVisualEffectView` property the reference has to opt into; nothing here opts out of one. |
+| D-004 | Only the primary window enables the `<webview>` tag; every window is sandboxed with context isolation on and Node integration off. | `apps/desktop/src/main.ts:229-237` | deliberately different | `AGENTS.md` §2.3; `crates/epsilon-desktop/src/lib.rs:1-8` | This row is the security boundary of a Chromium renderer. Epsilon has no renderer process, no Node integration and no `<webview>`; `lib.rs:1-8` states the crate's own rule ("this crate owns pixels, it does not own agent behaviour"). |
+| D-005 | Any attempt to open a new window is denied; `http:`/`https:` targets are handed to the system browser instead. | `apps/desktop/src/main.ts:239-242` | deliberately different | — | There is no window-opened handler because there is no web contents view. The window opens no child windows and no URLs. See U-013 for the "open in another application" half, which we also do not have. |
+| D-006 | In-page navigation away from the `dsh-app://` origin is blocked and forwarded to the external browser. | `apps/desktop/src/main.ts:303-311` | deliberately different | — | Same reason as D-005: no in-page navigation exists. The window's only navigation is between its own panes. |
+| D-007 | In an editable field the context menu is undo, redo, cut, copy, paste, delete, select all — each with an **empty accelerator** so no shortcut label is shown. | `apps/desktop/src/main.ts:276-288`, `:292-300` | missing | — | No right-click context menu anywhere in the window. The composer's editing keys are egui's `TextEdit` own (`crates/epsilon-desktop/src/app.rs:5350-5357`), which handles them, but there is no menu surface to configure. |
+| D-008 | In read-only text with a selection the context menu offers **only** Copy. | `apps/desktop/src/main.ts:289-291` | missing | — | As D-007. The editor pane is read-only (`crates/epsilon-desktop/src/app.rs:3858`) and offers no context menu. |
+| D-009 | macOS and Windows relay fullscreen transitions — and the state again after every page load — so overlays can drop caption clearance. | `apps/desktop/src/main.ts:243-253` | missing | — | The window has no fullscreen surface and no overlay that depends on caption height. |
+| D-010 | macOS paints an opaque chrome fill while the window is minimized or hidden, because `NSVisualEffectView` detaches during deminiaturize. | `apps/desktop/src/main.ts:254-275` | deliberately different | `crates/epsilon-desktop/src/lib.rs:156-175` | A repair for a macOS compositing artefact in a custom-drawn vibrancy chrome. Nothing here draws the chrome that detaches. |
+| D-011 | Window drag regions on macOS are declared per element (`data-window-drag`), with interactive elements subtracted from any drag row they overlap. | `packages/client/web/src/window-drag/regions.ts:40`, `:56-62`, `:84-89` | deliberately different | — | Dragging the window is the platform's job and the drag region is the title bar the platform draws. There is no DOM box arithmetic to compose, which is why the reference needs the "last box containing the point decides" rule at all. |
+| D-012 | The Application menu contains About, **Check for Updates…**, **Manage dsh Command…**, development **Reload Page** and **Restart App and Host**, then the platform hide commands and Quit/Exit. | `apps/desktop/src/main.ts:947-971` | missing | — | The window has no application menu. Every window-level action it has is reachable from the composer, the palette or the keyboard, which is enumerated in the palette's command table at `crates/epsilon-desktop/src/app.rs:806-838`. |
+| D-013 | On macOS the About entry is Electron's native `role: 'about'`; on Windows the shell renders its own message box. | `apps/desktop/src/main.ts:949-953` | missing | — | As D-012. |
+| D-014 | The About panel shows application name `DeepSeek Harness` and the installed version, with **no** bundle version and **no** copyright. | `apps/desktop/src/main.ts:927-934` | missing | — | As D-012. The window's title is the workspace directory name (`crates/epsilon-desktop/src/lib.rs:149-153`). |
+| D-015 | DevTools toggle is reachable in packaged builds through hidden menu items, including **F12** on every platform. | `apps/desktop/src/main.ts:972-975`, `apps/desktop/README.md:23` | deliberately different | — | There is no renderer to inspect. The window does not ship a debug inspector surface, and a key that opened one would be a key that opens nothing — the failure `AGENTS.md` §2.7 names. |
+| D-016 | On Windows the native application menu is replaced by **two invisible DevTools items**; the real menu is a DOM menubar mounted by the preload beside the sidebar toggle. | `apps/desktop/src/main.ts:977-980`, `apps/desktop/src/preload-menu.ts:89-97` | deliberately different | — | As D-012. |
+| D-017 | The Windows caption menubar is `role="menubar"` with two `role="menuitem"` buttons in a roving tabindex; ArrowLeft/ArrowRight move focus, ArrowDown opens the popup. | `apps/desktop/src/preload-menu.ts:53-87` | missing | — | As D-012. The window's focus model is a three-pane ring driven by `F6` and `Shift+F6`, described at `crates/epsilon-desktop/src/app.rs:1045-1124` and exercised by `f6_walks_the_focus_ring_across_the_panes_and_shift_f6_walks_it_back`. |
+| D-018 | Opening a caption popup restores the previously focused editor and its exact selection range and direction. | `apps/desktop/src/preload-menu.ts:31-51`, `:66` | missing | — | As D-017: there is no popup menu to restore a caret from. |
+| D-019 | The Windows Edit popup sends undo/redo/cut/copy/paste/delete/select-all as **real key events** to the focused editor, independent of the user's custom shortcut bindings. | `apps/desktop/src/main.ts:1019-1036`, `apps/desktop/src/keyboard.ts:225-241` | missing | — | As D-018, and the window has no user-rebindable bindings at all (ED-001). |
+| D-020 | The macOS File menu shows the user's accepted single-key close binding as its accelerator, including arrow keys, and routes Close through the client. | `apps/desktop/src/keyboard.ts:48-49`, `:242-249` | missing | — | As D-012 and ED-001. |
+| D-021 | Caption menubar buttons show a 2 px focus ring, but not when the document's input modality is pointer. | `apps/desktop/src/preload-menu.ts:25-26` | partial | `crates/epsilon-desktop/src/app.rs:2050-2079` | The window paints a 2 px pane focus ring and does not gate it on input modality, because egui publishes no pointer/keyboard modality flag to read. Covered by `the_focus_ring_is_painted_and_the_unfocused_panes_carry_nothing`. |
+| D-022 | On Windows a tray icon exists for the whole run; a single click shows and focuses the window, and the context menu offers Open and Quit in the shell locale. | `apps/desktop/src/tray.ts:18-40`, `apps/desktop/src/main.ts:985-991` | missing | — | No tray icon, no notification-area presence. |
+| D-023 | Closing the main window **hides** it; the page and the Host keep running and the next show resumes the same document. | `apps/desktop/src/main.ts:1072-1081` | deliberately different | `crates/epsilon-desktop/src/lib.rs:124-188` | The agent runtime is built inside `run` and owned by the `IdeSession` in this process (`lib.rs:125-147`); there is no second Host process to keep alive behind a hidden window. Closing the last window ends the run. The window does carry a related property: the event queue is drained from `eframe::App::logic` as well as from `paint`, precisely because `ui` does not run while a window is hidden (`app.rs:5504-5517`). |
+| D-024 | On macOS, hiding a fullscreen window leaves fullscreen first, so no empty black space is left behind. | `apps/desktop/src/main.ts:1056-1064` | missing | — | No fullscreen surface (D-009). |
+| D-025 | On Windows, the **first** hide shows a one-time confirmation explaining that running tasks continue and the window can be reopened from the tray; confirming writes `background-close-confirmed` under Electron userData. | `apps/desktop/src/background-notice.ts:30-55`, `apps/desktop/src/main.ts:992-995` | missing | — | As D-023: nothing is hidden, so there is no first hide to warn about. |
+| D-026 | Repeated close requests focus the existing confirmation instead of stacking a second one. | `apps/desktop/src/background-notice.ts:32` | missing | — | As D-025. |
+| D-027 | Closing the welcome window before the workspace opens quits on Windows; on macOS the application stays in the Dock with no window. | `apps/desktop/src/main.ts:1184-1191` | missing | — | The window has no welcome window; see D-040 and S-154. |
+| D-028 | Only one process may own the desktop profile; a second launch quits immediately and the owner focuses its window. | `apps/desktop/src/single-instance.ts:16-26` | missing | — | No single-instance lock. A second launch is a second window on the same workspace directory. |
+| D-029 | `dsh://open` shows the window without passing credentials. | `apps/desktop/src/main.ts:1228-1232` | missing | — | No URL scheme is registered. |
+| D-030 | Closing the last window quits everywhere except macOS. | `apps/desktop/src/main.ts:1237-1239` | partial | `crates/epsilon-desktop/src/lib.rs:183-188` | `eframe::run_native` returns when the last window closes, so the product half is right. The macOS exception is not implemented and is not planned. |
+| D-031 | Every ordinary quit asks the Host what it would interrupt; if the Host reports nothing interruptible the quit proceeds with no dialog. | `apps/desktop/src/quit-confirmation.ts:68-77` | missing | — | No quit inspection and no quit confirmation. Closing the window while a turn is in flight ends the process; `AGENTS.md` §6's "never lose a user's work" is currently met by the durable session file, not by a dialog. |
+| D-032 | Three localized explanations exist — running tasks, scheduled tasks, or both — and a failed or timed-out inspection is treated as "running tasks" rather than a silent quit. | `apps/desktop/src/quit-confirmation.ts:15-21`, `:71-74` | missing | — | As D-031. The fail-closed shape the reference gets right is worth porting; it is recorded in [Open rows](#open-rows). |
+| D-033 | Quit is the default button and Cancel answers Esc; macOS places Cancel left of Quit, Windows places Quit left of Cancel. | `apps/desktop/src/quit-confirmation.ts:79-90` | missing | — | As D-031. |
+| D-034 | A second quit request while the box is open joins it; on macOS it also raises the application. | `apps/desktop/src/quit-confirmation.ts:52-55`, `apps/desktop/src/main.ts:1003` | missing | — | As D-031. |
+| D-035 | The confirmation is skipped when the OS is ending the session. | `apps/desktop/src/main.ts:1082-1090`, `:1240` | missing | — | As D-031. |
+| D-036 | Cancelling a quit that closing the welcome window started brings the welcome window back. | `apps/desktop/src/main.ts:1278-1279` | missing | — | As D-031 and D-027. |
+| D-037 | The welcome window is a fixed 600 x 700 **content size**, centred, and not resizable, maximizable or fullscreenable. | `apps/desktop/src/welcome-window.ts:16-27` | missing | — | No welcome window. |
+| D-038 | Welcome uses macOS menu vibrancy, or Windows acrylic with a 42 DIP transparent caption. | `apps/desktop/src/welcome-window.ts:28-38` | missing | — | As D-037. |
+| D-039 | Welcome loads a local React document through an isolated preload with a locale passed as an argument; navigation and window opening are denied. | `apps/desktop/src/welcome-window.ts:39-46`, `:117-120` | missing | — | As D-037. |
+| D-040 | Welcome is shown at startup or after sign-out only when there is **neither** an account sign-in **nor** an API key. | `apps/desktop/src/welcome-api.ts:73-74`, `apps/desktop/src/main.ts:1204-1210` | missing | `crates/epsilon-desktop/src/lib.rs:135-147` | No welcome window and no credential prompt. Model and provider are resolved before the window opens, through `epsilon_runtime::resolve_launch` — the same resolver the CLI uses (`lib.rs:135-144`), so a launch that cannot produce a usable agent returns a sentence and no window rather than a window that cannot do anything. |
+| D-041 | Saving the API key writes through the credential service and then opens the workspace; "Set up later" opens the workspace without saving anything. | `apps/desktop/src/main.ts:1168-1175` | missing | — | As D-040. |
+| D-042 | A saved API key must be printable ASCII `0x21`-`0x7E`; anything else is rejected before reaching the credential service. | `apps/desktop/src/welcome-window.ts:98` | missing | — | As D-040. The window never accepts a key at all, so it has no validation to do. |
+| D-043 | Closing Welcome with a pending sign-in attempt cancels that attempt. | `apps/desktop/src/main.ts:1178-1183` | missing | — | As D-040. |
+| D-044 | An expired account credential returns to Welcome only when no API key is configured. | `apps/desktop/src/main.ts:473-494`, `:1148-1152` | missing | — | As D-040. |
+| D-045 | Entering the workspace from Welcome focuses the document body rather than selecting a sidebar control. | `apps/desktop/src/preload-app.ts:66-73` | partial | `crates/epsilon-desktop/src/app.rs:5423-5429` | There is no Welcome, but the property holds at launch for a different reason: the focus starts on the agent pane (`app.rs:1292-1299`) and the composer claims the keyboard whenever nothing else holds it (`app.rs:5423-5429`), so the first frame behaves as the reference intends. Covered by `typing_reaches_the_composer_and_sending_puts_the_words_on_screen`. |
+| D-046 | The desktop folder chooser is a native Electron dialog with `openDirectory` + `createDirectory`, and it restores, shows and focuses the window first. | `apps/desktop/src/directory-picker.ts:21-25` | missing | `crates/epsilon-desktop/src/lib.rs:81` | The workspace is a launch argument (`Options.workspace`), not something the window chooses. Adding a workspace from inside the window is a real gap; it is recorded in [Open rows](#open-rows). |
+| D-047 | Concurrent pick requests share one dialog; cancelling returns no path and leaves the operation retryable. | `apps/desktop/src/directory-picker.ts:19-28` | missing | — | As D-046. |
+| D-048 | Microphone access is granted only to the primary `dsh-app://app` main frame, for audio-only requests. | `apps/desktop/src/microphone-permissions.ts:17-29` | deliberately different | — | There is no media permission model: the window captures no audio. This is a Chromium capability the port has no use for. |
+| D-049 | On macOS the system microphone authorization must already be granted. | `apps/desktop/src/microphone-permissions.ts:21`, `:29` | deliberately different | — | As D-048. |
+| D-050 | Usage and Top-up open as native `WebContentsView`s owned by the account, positioned from a renderer-supplied rectangle. | `apps/desktop/src/platform-view.ts:41-48`, `:79-80`, `apps/desktop/src/main.ts:733-737` | deliberately different | `AGENTS.md` §2.3 | This is an embedded web view, which the port forbids outright. There is no account-billing surface in this window, and adding one by embedding a page would break the architecture invariant rather than fill a feature. |
+| D-051 | The Platform view stays hidden until its document finishes loading, and closing or replacing a pending view prevents it from appearing later. | `apps/desktop/README.md:483` | deliberately different | — | As D-050. |
+| D-052 | Ordinary update polling runs on a 10-minute base interval with independently sampled +/-20 % jitter, doubling the delay on failure up to a one-hour cap and resetting on success. | `apps/desktop/src/update-schedule.ts:20-26`, `:93-104` | missing | — | No update client, no polling, no self-update. |
+| D-053 | Automatic checks never open a dialog or download anything; only the explicit Check for Updates… entry does. | `apps/desktop/src/update-schedule.ts:59-62`, `apps/desktop/src/main.ts:797-825` | missing | — | As D-052. |
+| D-054 | The update status handed to the UI is a **presentation** — phase, version, floored percent, and a typed failure kind. | `apps/desktop/src/update-presentation.ts:44-51` | missing | — | As D-052. |
+| D-055 | Failure copy is selected from a typed cause rather than from raw diagnostics. | `apps/desktop/src/update-presentation.ts:12-38` | missing | — | As D-052. |
+| D-056 | Installing while tasks are active warns and offers "Stop tasks" / "Update later". | `apps/desktop/src/main.ts:594-600` | missing | — | As D-052. |
+| D-057 | A download that completes while the window is hidden defers the install-and-restart confirmation. | `apps/desktop/src/main.ts:646-660` | missing | — | As D-052. |
+| D-058 | The first fatal failure in a process opens one native recovery dialog offering Exit, Restart, and Disable third-party plugins. | `apps/desktop/src/fatal-recovery.ts:74-87` | partial | `crates/epsilon-desktop/src/lib.rs:144`, `:183-188` | A launch that fails produces a sentence and no window: `resolve_launch` returns `Err(String)` (`lib.rs:144`) and `run_native`'s error is mapped to one (`lib.rs:188`), which is `AGENTS.md` §2.6 — a refusal path returns rather than dying. What is missing is the recovery *dialog* and the plugin-disabling escape. |
+| D-059 | A failure whose text contains `listen EADDRINUSE` replaces the diagnostics and the reinstall advice. | `apps/desktop/src/fatal-recovery.ts:73-83` | missing | — | As D-058. Nothing in the window occupies a port — there is no `desktop-host` — so the specific failure cannot arise. |
+| D-060 | The recovery dialog's detail is capped at 1 200 UTF-16 code units and the last 8 error lines; a crash report is written first. | `apps/desktop/src/fatal-recovery.ts:20-26`, `:34-41`, `:106-119` | missing | — | As D-058. |
+| D-061 | Shortcut overrides live in Electron `userData/keybindings.json`, written atomically with mode 0600. | `apps/desktop/src/keybindings.ts:17-25` | partial | `crates/epsilon-desktop/src/keys.rs`, `crates/epsilon-contracts/src/keybind.rs` | **M315: the window reads a keybinding file, and the file is shared.** `KeyBindings::load` reads `<config dir>/keybindings.json` — the same path, the same `{ "id": "chord" \| ["chord", …] }` shape and the same `Chord::parse` grammar the terminal reads, so a user's file means the same in both. **What is still missing is the write half:** nothing writes it, and it is neither atomic nor `0600` *because nothing writes it* — a file only this process reads is also a file it cannot have corrupted. |
+| D-062 | Only bindings with **no** issue and **no** conflict are intercepted; a conflicting or unparseable binding is silently not dispatched. | `apps/desktop/src/keyboard.ts:61-65`, `:148-151` | partial | `crates/epsilon-contracts/src/keybind.rs`, `crates/epsilon-desktop/src/keys.rs` | **M315: there is now a table in which a conflict can exist.** `no_chord_is_bound_to_two_ids_in_the_terminal_table` holds the terminal's half, and an unparseable chord is dropped rather than guessed at: `KeyBindings::raw` keeps only the user's spellings that parse and otherwise falls back to the declared defaults. **The window's table is deliberately exempt from the conflict rule** and says why in its own docs — a chord there is shared by actions in *different contexts*, and which one answers is decided by the drawing order rather than by luck. |
+| D-063 | Two-key chords leave the first key's initial press available to the page and do not intercept its release; only complete chords and their repeats are consumed. | `apps/desktop/src/keyboard.ts:158-194` | missing | — | No two-key chords. The window binds single keys, some with modifiers, and `KeyBindings::take` consumes the whole event on a match rather than a press/release pair. |
+| D-064 | While a shortcut is being recorded, and while an IME composition or a dead key is in progress, interception is suspended. | `apps/desktop/src/keyboard.ts:91-96`, `:153-155` | partial | `crates/epsilon-desktop/src/app.rs:5500-5520`, `:5353-5358` | The recording half is missing (no recorder). The composition half is held by egui rather than by this window: the composer's `TextEdit` owns composition, and the window adds no key interception on top of it. **M313 makes this row's own claim the interesting one**: the one modified-key read this window *does* make is the composer's Enter, and it now inspects the event's own modifiers so that egui's logically-matching `TextEdit` can take `Shift+Enter` as the newline the composer advertises. |
+| D-065 | Update overlays block product shortcuts and editing-key delivery to the parent window and its guests. | `apps/desktop/src/keyboard.ts:129-132`, `:227` | deliberately different | — | No update overlay exists (D-052). |
+| D-066 | The web UI's theme source is mirrored into Electron's `nativeTheme`, so native chrome and the Platform login page follow the in-app theme rather than the OS. | `apps/desktop/src/preload-theme.ts:18-33`, `apps/desktop/src/main.ts:744-747` | partial | `crates/epsilon-desktop/src/commands.rs:157-173`, `crates/epsilon-desktop/src/app.rs:5518-5520` | The window **can** change its own palette at runtime — `/theme` applies live and reports both ends — and the change reaches the frame because `eframe::App::ui` sets egui's visuals every frame. There is no OS-chrome mirroring to do and no `system` mode: `/theme` names `dark`, `light` and `high-contrast`. Covered by `the_theme_command_changes_the_window_and_says_so`. |
+| D-067 | On Windows the caption's background and symbol colours follow the renderer palette through a validated `windowsAppearance` IPC. | `apps/desktop/src/main.ts:1042-1053` | deliberately different | — | As D-002: the caption is the platform's, and the platform takes its colours from the OS theme. |
+| D-068 | **Manage dsh Command…** shows the resolved command location, whether Desktop's own command is selected, and offers Close/Repair/Remove. | `apps/desktop/src/command-management.ts:90-110`, `apps/desktop/README.md:27` | missing | — | No shell command is installed or managed by this window. |
+| D-069 | Switching away from a pre-existing command asks for confirmation, and the safe choice is the default. | `apps/desktop/src/command-management.ts:202-211` | missing | — | As D-068. |
+| D-070 | Feedback submissions carry a machine description of `platform`, `os`, `app_arch`, `cpu` and `memory_gib`. | `apps/desktop/src/device-info.ts:10-17` | missing | — | The window has no feedback surface at all; see I-143 to I-145. |
+
+## B. Approvals and permission presets (client **and** host)
+
+`D-071`–`D-084`. This is the highest-risk area in the matrix, and the one the evidence file flags
+as read and line-checked rather than sampled. It is also where this window is strongest: the
+approval path is exercised end to end by a real faux agent in `tests/window.rs`.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| D-071 | The interactive approval prompt has exactly **two** outcomes: `allowed-once` and `rejected`. There is no "always allow" in the client presentation. | `packages/client/ui-approval/src/client/contract/slots.ts:66` | done | `crates/epsilon-desktop/src/app.rs:4890-4906`, `crates/epsilon-desktop/src/app.rs:5528-5537` | The row draws exactly two buttons, "Allow" and "Refuse", mapping to `PermissionDecision::AllowOnce` and `PermissionDecision::Deny`; the keyboard path produces the same two. Covered by `a_permission_gate_is_answered_by_pressing_enter_in_the_window` and `escape_refuses_a_waiting_gate`. |
+| D-072 | In the focused approval panel, **Enter grants once and Escape rejects**; both are registered as *fixed* shortcuts so no user binding can steal them. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:57`, `packages/client/ui-approval/src/client/index.ts:82`, `:85` | done | `crates/epsilon-desktop/src/app.rs:5528-5537` | Enter resolves `AllowOnce`, Escape resolves `Deny`, and both are consumed by `approve_pending` **before** any pane or the composer is read (`app.rs:2705-2713`), which is what makes them unstealable here as well. Covered by the same two tests. |
+| D-073 | Enter keeps its **native** action when the focused element is a button, link or `[role=button]`. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:51` | partial | `crates/epsilon-desktop/src/app.rs:2705-2713`, `crates/epsilon-desktop/src/app.rs:5530` | The two outcomes match, but the disambiguation does not: the window resolves the gate from a global unmodified-Enter read that runs before any widget is drawn, so Enter always means "allow" — Enter aimed at the **Refuse** button still allows. That is the divergence the reference's row exists to prevent, stated plainly. The buttons themselves work by click. |
+| D-074 | Modifier combinations, auto-repeat and IME composition all cancel the Enter/Escape handling. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:52`, `:56` | partial | `crates/epsilon-desktop/src/app.rs:5530`, `:5358` | Both reads require `egui::Modifiers::NONE`, so a modified press does not match. The window adds **no** IME guard and no repeat guard of its own; those would have to come from egui and were not verified here. |
+| D-075 | A double answer is closed synchronously: the panel returns early if a press is in flight or the request is no longer answerable. | `packages/client/ui-approval/src/client/ApprovalPanel.tsx:37`, `:40-44` | partial | `crates/epsilon-desktop/src/app.rs:5528-5534` | One press resolves the ask and the key is consumed once, so a double press cannot answer twice; the second press finds no pending ask. What is missing is the reference's other half — buttons that re-enable when an answer *fails* and the request is still open. Ours does not re-enable at all; a failed answer leaves the ask resolved from the window's point of view. |
+| D-076 | A second answer on a settled request throws `pending approval … is already settled`. Deny is one-shot in the client; monotonicity of a denial is a **host** guarantee. | `packages/client/ui-approval/src/client/contract/slots.ts:169` | partial | `crates/epsilon-desktop/src/session.rs:168-174`, `crates/epsilon-desktop/src/app.rs:5532` | The client-side half is real: an answered request id is recorded in a set so it stops being offered (`session.rs:168-174`), and `session.resolve` returns a `bool` rather than throwing. The monotonicity of a denial is a core guarantee this window does not implement and does not duplicate — see D-078. |
+| D-077 | An approval request with no Agent scope is delegated to the next listener without a prompt appearing. | `packages/client/ui-approval/src/client/index.ts:43-44`, `:55-58` | missing | — | There is one answerer and one scope. The window's ask always belongs to its own session, so the delegation question does not arise — and there is no second listener to delegate to. |
+| D-078 | **The approval channel fails closed on the host side.** With no composed answerer the waterfall falls through to `unavailable`; a throwing answerer also yields `unavailable`; a rogue non-vocabulary return is normalised to `unavailable`. | `packages/interaction/user-approval/src/index.ts:283`, `:288`, `:291` | done | `crates/epsilon-safety/src/channel_ui.rs:120`, `:128` | **Resolved by the integrator after the writing pass, which had opened `crates/epsilon-desktop` only and correctly refused to infer a security property from "the window does not contradict it".** The rule lives in `epsilon-safety`, and it is *stronger* than the reference's: a channel send error returns `Deny` (`channel_ui.rs:120`), and a responder that drops without answering resolves `unwrap_or(Deny)` (`channel_ui.rs:128`). It is **tested, not merely documented** — `dropped_ask_denies_fail_closed` (`channel_ui.rs:186`) drops the asker without answering and asserts the result is `Deny` (`:195`). The engine's own doc states the rule at `channel_ui.rs:39-41`. |
+| D-079 | The `never` policy rejects deterministically **before** any dispatch, so no listener is ever asked. | `packages/interaction/user-approval/src/index.ts:275` | missing | — | As D-078, but narrower: D-078 was opened in `crates/epsilon-safety` and is `done`, while **this** policy was not opened or tested by either pass, so it stays `missing`. The window offers no way to set an approval policy at all; see D-080. |
+| D-080 | Only two permission presets gate behind a risk confirmation: **Full access** and **Auto review**. Every other preset submits immediately. | `packages/client/ui-permission-presets/src/client/presentation.ts:4`, `:7`, `packages/client/ui-permission-presets/src/client/PermissionSelect.tsx:129-138` | missing | — | The window has no permission-preset surface. Permission policy is a launch and configuration concern of `epsilon-runtime`, which this pass did not open. |
+| D-081 | In the risk confirmation the safe choice is Cancel: the confirm button is disabled until an acknowledgement checkbox is ticked, and **initial focus goes to the checkbox**. | `packages/client/ui-primitives/src/RiskConfirmation.tsx:53`, `:59`, `:76` | missing | — | As D-080. The pattern — a destructive or privilege-raising action that cannot be taken by a reflexive Enter — is one this project would want, and `AGENTS.md` §6 supports it; nothing implements it. |
+| D-082 | Cancelling the confirmation **resets** the acknowledgement. | `packages/client/ui-permission-presets/src/client/PermissionSelect.tsx:133`, `:141` | missing | — | As D-081. |
+| D-083 | Selecting a preset is dispatched as a session command `/permission <preset>`, and a host that offers no `/permission` command is an error, not a silent no-op. | `packages/client/ui-permission-presets/src/client/index.ts:126`, `:130` | partial | `crates/epsilon-desktop/src/commands.rs:185`, `crates/epsilon-desktop/src/commands.rs:449-451` | `/permission` is a head the parser knows and the window does not run, so it is **refused by name** — "`/permission` — not in this window; it works in the terminal" — rather than forwarded to the model as a prompt. The reference's no-silent-no-op property holds; the capability does not exist. Covered by `a_command_the_window_lacks_is_refused_and_never_sent_to_the_model`. |
+| D-084 | The session goal strip's **Clear** action calls the mutation directly, with **no confirmation dialog**; the strip hides only after the call succeeds, and a failure is announced inline. | `packages/client/ui-goal/src/client/GoalBar.tsx:81-83`, `:99`, `:139` | partial | `crates/epsilon-desktop/src/app.rs:962-971`, `crates/epsilon-desktop/src/app.rs:979-1031`, `crates/epsilon-desktop/src/app.rs:4661` | The shape matches: `goal: clear` calls the mutation with no dialog (`app.rs:1003`), a refusal is announced in the transcript (`app.rs:1030`), and the band disappears only because the cache no longer holds a goal (`app.rs:4661`). No test drives `clear` end to end through the window, so the effect is read from the source rather than exercised — hence `partial`. The evidence file flags this asymmetry as worth a deliberate decision on our side; ours currently agrees with the reference by default rather than by decision. |
+---
+
+## C. Transcript, streaming, reasoning and tool cards (`ui-chat`, `ui-conversation`, `ui-tool`, `ui-trajectory`)
+
+`C-101`–`C-182`. This is the largest block in the matrix and the one where the two products
+disagree most in shape: DSH builds a process graph out of collapsible groups, a turn rail and a
+ledger view; this window draws a flat, virtualised, scrolling list of reduced rows. Both are
+answers to the same question, and where this window has an answer the row says so.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| C-101 | A **Work details** setting switches the transcript between Compact, Standard, Detailed and Verbose. | `ui-chat/src/client/presentation-policy.ts:24-53` | missing | — | One transcript presentation, and no setting that changes it. The row reducer emits a fixed set of kinds (`crates/epsilon-desktop/src/session.rs:88-136`). |
+| C-102 | A completed Turn shows one **whole-Turn control** labelled by outcome that folds and unfolds that Turn's process range. | `ui-chat/src/client/chat/TurnProcessNodeView.tsx:36-58` | missing | — | The window has no turn structure on screen: rows are a flat list and nothing folds a range. |
+| C-103 | Whole-Turn collapse is **unavailable** while a Turn is running, stopped or failed. | `ui-chat/src/client/contract/turn-process.ts:69-74` | missing | — | As C-102. |
+| C-104 | Process rows are grouped into **collapsible group headers** whose closed title names the top three activity categories. | `ui-chat/src/client/chat/step-process.ts:11-28` | missing | — | As C-102. Tool rows are individual rows (`session.rs:96-120`). |
+| C-105 | A **running** group title changes no faster than every 150 ms. | `ui-chat/src/client/chat/ChatGroupSeat.tsx:27` | missing | — | As C-104. |
+| C-106 | An expanded process group is an **independent scrollport** capped at `min(400px, 50vh)`. | `ui-chat/src/client/chat/use-process-scroll.ts:19-88` | missing | — | As C-104. The window has exactly one scrollport, for the transcript (`app.rs:4807`). |
+| C-107 | The **Think** row is collapsed by default and shows a preview of the reasoning's first line in Standard, Detailed and Verbose. | `ui-chat/src/client/chat/ReasoningRow.tsx:56-59` | partial | `crates/epsilon-desktop/src/session.rs:94`, `crates/epsilon-desktop/src/app.rs:4946` | Reasoning exists as its own row kind and is drawn in the quieter `thinking` role, which is the part this port wanted. There is no collapse and no preview line. |
+| C-108 | While reasoning streams, the preview shows the first line of the latest paragraph that is already newline-terminated. | `ui-chat/src/client/chat/ReasoningRow.tsx:16-32` | missing | — | No reasoning preview. The row is drawn as a whole line of text. |
+| C-109 | While the Session runs, a **whale tail with a shimmering elapsed clock** sits at the bottom of the transcript and ticks once a second. | `ui-chat/src/client/chat/RunningStatus.tsx:20-39` | partial | `crates/epsilon-desktop/src/app.rs:4090-4096`, `crates/epsilon-desktop/src/app.rs:4103-4116` | The window does report that it is running — `run_state` is the single function both the status bar and the bar's accessible name call, so the two cannot disagree — and it reports how many approvals are waiting. It has no elapsed timer and no run-tail decoration. Covered by `the_status_bar_names_the_state_it_is_in`. |
+| C-110 | An Assistant message frozen by a stop renders a **"Stopped"** marker under its partial text. | `ui-chat/src/client/chat/AssistantMarkdown.tsx:146-148` | missing | — | No stop marker on an aborted answer. |
+| C-111 | Submitting shows your message **immediately as a local echo** in its final position. | `ui-chat/src/client/chat/ChatView.tsx:187-208` | done | `crates/epsilon-desktop/src/app.rs:5258` | `send_draft` pushes the reader's own words into the transcript at the moment of the send, not when the model answers — the reason is written at `app.rs:5252-5258`. Covered by `typing_reaches_the_composer_and_sending_puts_the_words_on_screen` and `a_real_turn_runs_to_completion_through_a_permission_ask`, both of which assert the words are on the frame. |
+| C-112 | Steered text renders as a bubble visually identical to the eventual durable steering message. | `ui-chat/src/client/chat/MessageItem.tsx:242-263` | missing | — | No steering: a second send during a turn is refused with a sentence, not queued (`app.rs:5218-5234`). |
+| C-113 | A **model retry** appears as a shimmering row counting down the host-scheduled delay. | `ui-chat/src/client/chat/MessageItem.tsx:61-127` | missing | — | Retry lives in the provider layer; the window has no retry row. |
+| C-114 | Every terminal Turn failure renders a persistent **red-dot row** with a localized reason and the raw error code. | `ui-chat/src/client/chat/MessageItem.tsx:130-144` | missing | — | No terminal-failure row. Tool failures do get a distinct marker and colour (`app.rs:4947-4951`), and the accessible name says `failed` rather than relying on the colour, which is the `AGENTS.md` §8 rule; that property is exercised by `a_tool_row_names_its_tool_and_marks_it_with_a_drawable_glyph`. |
+| C-115 | A Turn stopped at the output-token cap renders a persistent **amber warning row**. | `ui-chat/src/client/chat/MessageItem.tsx:147-159` | missing | — | As C-114. |
+| C-116 | The **completed-Turn footer** carries copy, branch and a token-usage pill. | `ui-chat/src/client/chat/TurnTailNodeView.tsx:35-41`, `:56-79` | missing | — | No per-turn footer, no copy control, no per-turn usage. Usage is a single session-level figure on the title bar (`app.rs:2819-2838`). |
+| C-117 | Copying a message swaps the copy icon for a check for one second. | `ui-chat/src/client/chat/MessageIconActions.tsx:62-76` | missing | — | No copy control on a transcript row. |
+| C-118 | The branch (fork) control stays **focusable but unavailable** on messages that cannot fork. | `ui-chat/src/client/chat/MessageIconActions.tsx:94-109` | missing | — | No fork control; `/fork` is a head the window refuses by name (`commands.rs:449-451`). |
+| C-119 | Message timestamps are date-aware: `HH:mm` today, a month/day template earlier this year, a full date in other years. | `ui-chat/src/client/chat/message-chrome.ts:86-99` | missing | — | Transcript rows carry no timestamp. The window does show relative ages for **sessions** (`app.rs:3668-3676`), which is a different list. |
+| C-120 | An unregistered tool name renders a generic row titled `Tool call · <tool name>`; a known name gets a tool-owned title. | `ui-tool/src/client/tool/models/tool-call-model.ts:315`, `:44-71` | partial | `crates/epsilon-desktop/src/session.rs:96-120`, `crates/epsilon-desktop/src/app.rs:4974-4977` | A tool row always names its tool on screen and in its accessible name. There is no registry of tool-owned titles, so every tool gets the same generic presentation; only the name differs. Covered by `a_tool_row_names_its_tool_and_marks_it_with_a_drawable_glyph`. |
+| C-121 | A tool row shows a **preparing** state that cannot be expanded, and `error`/`stopped` rows drop both the summary suffix and the diff totals. | `ui-tool/src/client/tool/components/ToolRow.tsx:170`, `:186-188` | partial | `crates/epsilon-desktop/src/session.rs:108`, `crates/epsilon-desktop/src/app.rs:4947-4951` | The row kind carries a tri-state outcome — `None` running, `Some(false)` ok, `Some(true)` failed — and each draws a distinct marker and colour from it, with the outcome in words in the accessible name. There is no expanding at all, so the drop-the-summary rule has nothing to drop. |
+| C-122 | Write and edit rows show a decoded input size as **`NKB`** beside the path once any content field arrives. | `ui-tool/src/client/tool/toolviews/file-mutation-row.tsx:13-27` | missing | — | No size figure on a tool row. |
+| C-123 | A `read` row's path is an openable link that lands on the **1-based `offset` line** the call named, and the read card folds to 8 lines. | `ui-tool/src/client/tool/models/read-card-model.ts:17`, `:85-89` | partial | `crates/epsilon-desktop/src/app.rs:4039`, in-crate test `the_editor_starts_at_the_first_line_of_the_file` (`app.rs:6147`) | A path opens in the read-only editor, and re-opening a file already open moves it to the front of the tab strip rather than adding a second tab. The editor deliberately starts at line 1 — the offset landing and the 8-line fold are not implemented, and the first is a named decision rather than an oversight. **This row carried a path to a file that does not exist (`src/tests/window.rs`); the writing pass flagged it and the integrator corrected it against source, twice — once in M313 for the path and again in M315 for the line, after `app.rs` moved.** |
+| C-124 | A `grep`/`glob` card folds to **8 result rows**, and a truncated search keeps a full-result locator visible. | `ui-tool/src/client/tool/models/search-card-model.ts:12`, `:91` | missing | — | Search output is shown as ordinary tool output lines (`app.rs:5024-5045`), bounded to a 40-line tail (`session.rs:67`), with no fold and no locator. |
+| C-125 | `bash`, `pwsh` and `terminal_send` render as **terminal cards** whose exit code and signal are parsed from a trailing marker in the recorded result. | `ui-tool/src/client/tool/models/terminal-card-model.ts:268-274` | missing | — | No terminal card and no marker parsing. |
+| C-126 | A bash command that exits non-zero shows as a **failed row** even though the call itself settled successfully. | `ui-tool/src/client/tool/models/terminal-card-model.ts:95-98` | partial | `crates/epsilon-desktop/src/session.rs:108` | A failed tool row is drawn as failed, but only from the tool event's own error flag, not from a parsed exit code. The reference's specific rule — success at the call level, failure at the command level — is not reproduced. |
+| C-127 | Terminal output inside a chat row is **uncapped**. | `ui-tool/src/client/tool/components/ToolRow.tsx:262` | deliberately different | `crates/epsilon-desktop/src/session.rs:61-80` | The window keeps a **bounded 40-line tail**, the same number and the same reason as the terminal frontend's `CARD_STREAM_TAIL_LINES` (`session.rs:61-67`). A delta-streamed build log would otherwise grow a row nobody can scroll in a view that is itself capped. This is a deliberate divergence with a shared constant, not an oversight. |
+| C-128 | A collapsed `web_fetch` row's URL is an http(s) link that opens a new browser tab. | `ui-tool/src/client/tool/models/web-card-model.ts:89-99` | missing | — | No URLs are links in this window, and no external browser is launched. |
+| C-129 | An Auto-review denial bypasses every keyed tool view and renders the generic row without raw arguments. | `ui-tool/src/client/tool/ToolCallTree.tsx:40-55` | missing | — | No auto-review mode in this window; see D-080. |
+| C-130 | A tool call with nested PTC subcalls renders as an **indented subtree**. | `ui-tool/src/client/tool/ToolCallTree.tsx:82-99` | missing | — | No subtree rendering. A tool row is one row. |
+| C-131 | The `run_code` row's expanded body is **the program source itself**. | `ui-tool/src/client/tool/models/tool-call-model.ts:287-290` | missing | — | As C-130. |
+| C-132 | A subagent delegation is titled by its own wire name and grouped as **one `subagents` call**. | `ui-tool/src/client/tool/models/tool-call-model.ts:103` | partial | `crates/epsilon-desktop/src/app.rs:3417-3473` | Subagents are real and visible, but in a sidebar pane rather than a transcript group: the **Subagents** view reads `Agent::task_snapshots()` live rather than keeping a copy, names itself with a count, and says "no agent attached" when there is none. Covered by `an_empty_subagent_pane_says_what_is_missing` and `the_activity_bar_switches_the_sidebar_and_the_change_is_on_screen`. |
+| C-133 | A `todo_write` row summarises "done of total · active" with a **`+N`** count. | `ui-tool/src/client/tool/toolviews/todo-row.tsx:30-50` | missing | — | Task state is shown in the Subagents pane and in the status bar (`app.rs:4103`), not on a `todo_write` transcript row. |
+| C-134 | An `ask_user_question` row carries a **separate answer-panel button** beside its summary. | `ui-tool/src/client/tool/components/QuestionToolRow.tsx:39-43` | missing | — | No question card; see I-110 to I-119. |
+| C-135 | A write/edit diff card shows **9 rows** before folding, with `+added`/`-removed` totals in the tool header. | `ui-tool/src/client/tool/models/diff-card-model.ts:7` | partial | `crates/epsilon-desktop/src/diff.rs:110-125`, `crates/epsilon-desktop/src/app.rs:5057-5077` | A changed file gets a transcript row naming the path and both counts (`diff.rs:110-125`), the row is a real click target that opens the change for review in the editor pane, and it is named and roled as a link (`app.rs:5057-5077`). There is no 9-row fold. Covered by `a_change_is_reviewed_with_its_path_and_counts`, `clicking_a_changed_row_opens_the_change_for_review` and `a_change_under_review_draws_its_lines_on_separate_lines`. |
+| C-136 | Dropping or picking images is refused **as a whole batch** with a toast when it would exceed a projected limit. | `ui-conversation/src/client/skeleton/InputBar.tsx:211-233` | missing | — | The composer accepts no attachments at all. |
+| C-137 | A **subagent-facing composer accepts no files at all**. | `ui-conversation/src/client/skeleton/InputBar.tsx:212` | missing | — | As C-136. |
+| C-138 | Chat and Trajectory share **one session-authorized image URL cache**. | `ui-conversation/src/client/conversation/historical-images.ts:16-27` | missing | — | As C-136. |
+| C-139 | Generic file uploads run **two at a time** by default, queue FIFO, and keep byte progress across navigation. | `ui-conversation/src/client/apply.ts:63`, `:68` | missing | — | As C-136. |
+| C-140 | Two independent **Escape** presses within 500 ms stop the running Turn and **preserve the queued messages**. | `ui-conversation/src/client/stop-sequence.ts:38-51` | deliberately different | `crates/epsilon-desktop/src/app.rs:5385-5400` | **One** Escape stops the run (`app.rs:5393-5396`). A sequence would have nothing to preserve: this window does not queue, and a second send during a turn is refused in words (`app.rs:5218-5234`). A single key is the safer affordance for a window with no queue to protect, and it is also what the composer's own hint prints — "running — esc stops" (`app.rs:5288-5290`). |
+| C-141 | Plain **Enter** submits, exactly **Ctrl+Enter or Cmd+Enter** uses the opposite delivery mode, **Shift+Enter** inserts a line break. | `ui-conversation/src/client/input/editor/keymap.ts:135-158` | partial | `crates/epsilon-desktop/src/app.rs:5500-5520`, `crates/epsilon-desktop/src/app.rs:5529-5534` | **Enter sends and Shift+Enter inserts a newline, and that was a lie until M313 fixed it.** The composer's placeholder has always promised `shift+enter for a new line`; the handler was a plain `consume_key(Modifiers::NONE, Enter)`, and egui matches modifiers **logically**, so it also swallowed `Shift+Enter` and **sent** the draft. The fix matches the most specific chord first, as egui's own documentation instructs (`egui-0.36.2/src/input_state/mod.rs:719-721`), by reading the **event's** modifiers — not `InputState::modifiers`, which `begin_pass` never fills from an event and which is why a first attempt did not work. Covered by `shift_enter_is_a_newline_in_the_composer_not_a_send`, which drives a real `Modifiers::SHIFT` through the real key path. There is still no delivery-mode preference and no Ctrl/Cmd+Enter, because there is no second mode to switch to (C-140). |
+| C-142 | While the agent is busy, plain Enter delivers to the **Queue** by default; a setting switches it to **Steer**. | `ui-conversation/src/client/submission-settings.ts:6-28` | missing | `crates/epsilon-desktop/src/app.rs:5218-5234` | No queue and no steer. |
+| C-143 | The composer's primary button is **Stop** while running with an empty draft and flips to **Send** the moment the draft becomes actionable. | `ui-conversation/src/client/skeleton/InputBar.tsx:303-322` | partial | `crates/epsilon-desktop/src/app.rs:5287-5292`, `crates/epsilon-desktop/src/app.rs:5366-5374` | The button stays "Send" and the placeholder becomes "running — esc stops" while a turn is in flight, so the mode is named but not made a button. |
+| C-144 | Disabled Send and Stop **suppress their tooltips**, and the Stop tooltip shows the `Esc Esc` chord. | `ui-conversation/src/client/skeleton/InputBar.tsx:476`, `:461` | missing | — | No disabled-button tooltip state, and the stop chord is one Escape here (C-140). |
+| C-145 | An **overlay** takes the keyboard and returns it to the caret position where the draft left it, not at the start. | `ui-conversation/src/client/input/editor/keymap.ts:116-125` | partial | `crates/epsilon-desktop/src/app.rs:953-956` | Closing the palette hands the keyboard back to the agent pane rather than leaving the window with no focused widget at all — the reason is written at `app.rs:946-952`. It restores the pane, not the exact caret offset. Covered by `escape_closes_the_palette_and_leaves_the_draft_alone`. |
+| C-146 | An IME composition **holds the submit guard for 10 ms after `compositionend`**. | `ui-conversation/src/client/input/editor/keymap.ts:9-15`, `:70-81` | missing | — | No guard of our own; composition is egui's (`app.rs:5350-5357`). Whether egui's `TextEdit` filters the closing Enter was not verified here. |
+| C-147 | Chat follows the tail only within **25 px of the floor**, and other reader movement stays pending for **500 ms**. | `ui-chat/src/client/chat/use-chat-reading.ts:7-8` | partial | `crates/epsilon-desktop/src/app.rs:4782-4795` | The transcript uses egui's `ScrollArea` with `stick_to_bottom`, so the tail is followed while the reader is at the bottom and released when they are not; the reason the scroll extent is preserved through spacer widgets rather than by not drawing rows is written at `app.rs:4788-4795`. The specific 25 px threshold and 500 ms pending window are not reproduced. |
+| C-148 | A **back-to-bottom** button appears only when the transcript is not following the tail. | `ui-chat/src/client/chat/ChatView.tsx:287-298` | missing | — | No such button; scrolling returns to the bottom by hand. |
+| C-149 | A fixed-pitch **turn rail** marks every known Turn and pages history in before landing on an unmarked one. | `ui-chat/src/client/chat/TurnNavigator.tsx:29-33`, `:161-177` | missing | — | No turn rail, no history paging. |
+| C-150 | The turn rail **hides when the transcript's available width is at most 900 px**. | `ui-chat/src/client/chat/TurnNavigator.module.css:207` | missing | — | As C-149. |
+| C-151 | **Load older** compensates the retained anchor inside a capped group first, then the outer transcript. | `ui-chat/src/client/chat/use-chat-navigation.ts:114-121` | missing | — | As C-149. |
+| C-152 | Rows hidden behind a fold use `hidden="until-found"` with a `beforematch` listener, so browser find can reveal them. | `ui-chat/src/client/chat/searchable-hidden.ts:9-31` | deliberately different | — | Find-in-page is a browser affordance over a DOM. A canvas-less native window has neither the hidden-subtree mechanism nor the browser's find; offering it would mean building a search over the transcript, which is a different feature with a different name. |
+| C-153 | The transcript root uses `overflow-y: clip` with `overflow-x: visible`, so sticky code-block banners keep the real scrollport. | `ui-chat/src/client/chat/ChatView.module.css:18-19` | deliberately different | — | A CSS overflow rule. egui's `ScrollArea` owns clipping, and each pane gets its own `Ui` with its own clip rect (`app.rs:2959-2987`). |
+| C-154 | Consecutive Assistant **image blocks tile into one gallery** keyed by the first block's index. | `ui-chat/src/client/chat/AssistantMarkdown.tsx:104-127` | missing | — | No image blocks: assistant content renders as text blocks (`app.rs:4153-4178`). |
+| C-155 | An Assistant **file link opens in the right Sidebar**, honours `#L24` and `#L24-L30`, and reuses an existing file tab. | `ui-chat/README.md:36`, `ui-chat/src/client/chat/ChatView.tsx:256` | missing | `crates/epsilon-desktop/src/app.rs:4039-4058` | There is no right sidebar. A path can be opened into the editor and reuses an existing tab, but nothing in an assistant answer is a link to it. |
+| C-156 | An unknown Assistant block or unknown Node kind falls back to a **JSON block labelled with the offending type**. | `ui-chat/src/client/chat/AssistantMarkdown.tsx:131-140` | missing | — | No unknown-block surface in the renderer. |
+| C-157 | Every tool row carries a **visually hidden state announcement** — Preparing / Running / Failed / Stopped — so colour is never the only signal. | `ui-tool/src/client/tool/components/ToolRow.tsx:104-112` | partial | `crates/epsilon-desktop/src/app.rs:4930-4942`, `crates/epsilon-desktop/src/app.rs:4995-5006` | The window meets the underlying rule — `AGENTS.md` §8's "never rely on colour alone" — by putting the outcome in the row's **accessible name** (`Tool call`, `ok`, `failed`) rather than in a hidden span beside the marker, and by choosing markers the bundled font can actually draw (the reference to the tofu discovery is at `app.rs:4930-4935`). It does not have the reference's four-state vocabulary. |
+| C-158 | Enter or Space on a tool row's **path link or URL link** activates the link instead of toggling the row. | `ui-tool/src/client/tool/components/ToolRow.tsx:196-204` | missing | — | No links inside tool rows (C-128, C-155). |
+| C-159 | `Inspect` appears on the expanded body as a hover-revealed pill. | `ui-tool/src/client/tool/components/ToolRow.tsx:342-351` | missing | — | No expanded tool body. |
+| C-160 | The composer dock shows **two statistics pills** — `activity` and `usage`. | `ui-chat/src/client/chat/StatsPills.tsx:173-182` | partial | `crates/epsilon-desktop/src/app.rs:2819-2838`, `crates/epsilon-desktop/src/app.rs:2395-2402` | The window reports context occupancy, token totals and cost, right-aligned on the title bar as one budgeted line rather than as two dismissible pills, and the line turns to the `warn` role when the shared metrics report pressure (`app.rs:2425-2434`). There are no dialogs behind it (C-164). Covered by `the_window_draws_the_context_and_cost_figures_on_its_title_bar`. |
+| C-161 | The **Performance & usage** setting chooses `detailed` or `compact`. | `ui-chat/src/chat-settings.ts:35-42` | missing | — | No such setting. |
+| C-162 | The completed-Turn **token-usage row** appears only when every started model attempt reported safe, exact usage. | `ui-chat/src/client/chat/TurnUsagePanel.tsx:31-108` | partial | `crates/epsilon-desktop/src/app.rs:2395-2402` | There is no per-turn usage row. The session-level figures come from the shared metrics projection, and `cost_gauge` is `None` until something has been billed, which is the honest empty state (`app.rs:2398-2400`). Covered by `the_window_draws_the_context_and_cost_figures_on_its_title_bar`, which runs a real turn first because there is nothing to show before one. |
+| C-163 | Compact token counts render as `517 / 12.2K / 517K / 1.2M`, and a partial cache hit never rounds to 100 %. | `ui-chat/src/client/chat/token-format.ts:9-15`, `:67-98` | partial | `crates/epsilon-desktop/src/app.rs:2404-2418` | The **formatter is the shared one**, so the numbers are spelled as the terminal spells them; only the two arrow glyphs are replaced with the words "in " and "· out ", because egui's bundled font has no `U+2191`/`U+2193` and every rendered frame was drawing them as two empty boxes (`app.rs:2406-2415`). The reference's cache-hit precision rule was not checked here — the formatter lives in `epsilon-tui`, which this pass did not open. |
+| C-164 | A statistics dialog opens from its pill, is anchored above the trigger, and closes on Escape or an outside pointerdown. | `ui-chat/src/client/chat/stat-dialog.ts:9-18` | missing | — | No statistics dialog. The figures are a single line with no disclosure (C-160). |
+| C-165 | A **quota failure** publishes one frame-wide notice that outlives the Chat panel. | `ui-chat/src/client/chat/QuotaNoticeHost.tsx:14-26` | missing | — | No quota notice surface. |
+| C-166 | A **"Sending…"** queue echo shows its status while its Edit, Remove and Steer buttons are disabled. | `ui-conversation/src/client/queue/QueueDock.tsx:324-379` | missing | — | No queue. |
+| C-167 | The **queue dock** renders one item inline, collapses behind a count header at two or more. | `ui-conversation/src/client/queue/QueueDock.tsx:132-144` | missing | — | As C-166. |
+| C-168 | The composer shows a **context-occupancy ring and percentage** below the input card. | `ui-conversation/src/client/skeleton/ContextMeter.tsx:56-108` | partial | `crates/epsilon-desktop/src/app.rs:2395-2402` | The percentage is real and on screen — `Metrics::context_gauge`, the same number the compaction trigger decides on — but as text on the title bar rather than as a ring. The window and the wire are held to agreeing on it by `the_window_agrees_with_the_wire_about_the_context`. |
+| C-169 | A prompt failure raises a **keyed Toast**; writer contention gets localized recovery guidance. | `ui-conversation/src/client/skeleton/InputBar.tsx:92-118` | partial | `crates/epsilon-desktop/src/app.rs:5218-5234`, `crates/epsilon-desktop/src/app.rs:4103-4119` | A refused submit puts the sentence in the status bar **and** in the transcript as a notice, so it cannot be missed and cannot be lost — but it persists, where a toast fades. The project invariant this satisfies is stronger than the reference's: "nothing happened" must never be a state the UI can be in, which is what `pressing_enter_while_a_turn_runs_explains_itself` pins. |
+| C-170 | With **no Session**, the composer stays mounted and inert, and the whole input capsule acts as the Workspace-picker trigger. | `ui-conversation/src/client/skeleton/InputBar.tsx:139-156` | deliberately different | `crates/epsilon-desktop/src/lib.rs:81`, `crates/epsilon-desktop/src/lib.rs:124-147` | A window is always launched with a workspace and composed before it opens, so the "no workspace, pick one" state cannot be reached by launching the product — which is why the recovery affordance the reference needs is not needed here. It is needed by a *second* window, which D-046 records as missing. |
+| C-171 | The View tab selects **stored preference -> `chat` -> nothing**, and never falls back to the first registered View. | `ui-conversation/src/client/view-selection.ts:4`, `:15-21` | missing | — | The window has no view tabs. The sidebar has three views chosen from the activity bar (`app.rs:5455-5469`), and the first is the default. |
+| C-172 | The transcript content width is **draggable from both side gutters**, clamped to a 640 px floor, and persisted. | `ui-conversation/src/client/skeleton/ConversationWidthControls.tsx:6-28` | missing | `crates/epsilon-desktop/src/layout.rs:534-546` | The transcript width is a consequence of the pane carve, not a user-set value. The agent panel takes a comfortable width and gives the remainder to the editor, bounded above so a 4K window does not produce a 1,900-point transcript (`layout.rs:534-546`). |
+| C-173 | A **blank Session** keeps the header's leading and corner controls while hiding its title, actions, utilities and View tabs. | `ui-conversation/src/client/skeleton/ConversationHeader.tsx:12-26` | missing | — | The agent pane header is fixed: a label, the launch notices, the goal band if any (`app.rs:4431-4530`). It does not respond to whether the conversation is empty. |
+| C-174 | With **no Session at all**, the resident header reserves a 40 px window strip only on macOS. | `ui-conversation/README.md:75` | deliberately different | — | Same reason as C-170: there is no session-less launch state, so the platform-specific reservation has nothing to reserve for. |
+| C-175 | Trajectory's **ledger virtualizes only above 100 records**, with 12 rows of overscan and a 600 px initial viewport. | `ui-trajectory/src/client/TrajectoryTable.tsx:45-50` | missing | — | No ledger view. The transcript virtualizes unconditionally instead: rows are measured once and only the on-screen span is drawn (`app.rs:4782-4795`), which the in-crate frame test `eight_hundred_rich_rows_pay_only_for_the_rows_that_are_drawn` pins. |
+| C-176 | Trajectory derives its data from **50 nodes ending at the mount-time tail**, then reveals earlier resident nodes in further 50-node pages. | `ui-trajectory/src/client/TrajectoryView.tsx:34-35` | missing | — | As C-175. |
+| C-177 | The Trajectory **Overview** timeline zooms with the wheel, selects an interval by dragging, and clears it with a right-click or Escape. | `ui-trajectory/src/client/TrajectoryTimeline.tsx:19-24` | missing | — | As C-175. |
+| C-178 | A Trajectory **record inspector** offers a different tab set per record kind. | `ui-trajectory/src/client/TrajectoryTable.tsx:972-1007` | missing | — | As C-175. The window's closest equivalent is the change review in the editor pane, which is single-purpose. |
+| C-179 | A Trajectory `run_code` inspector picks its highlighting language only from an unambiguous `TypeScript`/`Python` word in the recorded schema. | `ui-trajectory/src/client/code-program.ts:31-40` | missing | — | As C-175. |
+| C-180 | Trajectory's markdown **preview is bounded twice**: 2048 source characters parsed, 512 output characters kept. | `ui-trajectory/src/client/trajectory-preview.ts:5-6` | missing | — | As C-175. |
+| C-181 | Trajectory's **search box** filters the visible window, and its index rebuild is throttled to 3 seconds. | `ui-trajectory/src/client/TrajectoryView.tsx:34` | missing | — | As C-175. The window has one filter — the workspace file tree's, at `app.rs:3782-3809` — and it filters files, not the transcript. |
+| C-182 | Trajectory's toolbar offers a duration toggle, **fold-all-turns**, **fold-all-assistant-calls** and a search box. | `ui-trajectory/src/client/TrajectoryToolbar.tsx:51-124` | missing | — | As C-175. |
+---
+
+## D. Keyboard, settings, themes, localisation, account, models, plugin manager
+
+`S-101`–`S-168`. The reference's defaults are declared per-plugin across six profiles and its
+Settings is a web application with nine sections, a plugin manager and a model catalogue. This
+window has a keyboard surface of seven chords, three palettes and one palette overlay. Where a row
+is `partial` here it is because the *capability* exists in a different shape, not because it is
+half-finished.
+
+### D.1 The binding table
+
+The reference declares eighteen commands with up to six profiles each
+(`apps/desktop` §4.2.1 of the evidence file; `ui-workspace/src/client/shortcuts.ts:88-117` and
+siblings), and states that `web:linux` is unbound for all eighteen. **This window binds seven
+chords, all literals.** See **ED-001**.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| S-101 | Mod+/ opens the Keyboard shortcuts reference and closes it when already in front. | `ui-shortcuts/src/client/index.ts:49`, `:62` | missing | — | No shortcuts reference surface. The chords the window does bind are printed in the status bar (`app.rs:2864-2877`) — which is where a reader learns `ctrl+b sidebar`, and where the arrow glyphs are spelled out in words because egui's bundled font cannot draw them (`app.rs:2866-2874`). |
+| S-102 | Mod+, toggles Settings; on Web it is Mod+Alt+, so the browser keeps Mod+,. | `ui-settings-general/src/client/index.ts:185`, `:192` | missing | — | No Settings surface (S-128). |
+| S-103 | Mod+N starts a new session. | `ui-workspace/src/client/shortcuts.ts:88` | missing | `crates/epsilon-desktop/src/commands.rs:446-451` | The window has no new-session action: `/new` is a head the parser knows and the window refuses by name, deliberately, because the terminal's starts a new session *file* and "this window has no such action" (`commands.rs:446-448`). Creating a session from inside a running window is a real gap. |
+| S-104 | Mod+K opens session search. | `ui-workspace/src/client/shortcuts.ts:90` | missing | — | The palette filters files and commands (`app.rs:846-871`), not sessions. The sessions pane lists stored sessions but cannot search them (L-122). |
+| S-105 | Mod+O opens the add-workspace directory flow, and returns **blocked** with a reason when no picker is mounted. | `ui-workspace/src/client/shortcuts.ts:92` | missing | — | As D-046. |
+| S-106 | Mod+Alt+G renames the current session. | `ui-workspace/src/client/shortcuts.ts:97` | missing | — | No rename. |
+| S-107 | Mod+Alt+F forks the session. | `ui-workspace/src/client/shortcuts.ts:103` | missing | — | `/fork` is refused by name (`commands.rs:449-451`). |
+| S-108 | Mod+Shift+A archives the session. | `ui-workspace/src/client/shortcuts.ts:117` | missing | — | No archive. |
+| S-109 | Mod+B toggles the left sidebar. | `ui-layout/src/client/index.ts:194` | partial | `crates/epsilon-desktop/src/app.rs:759`, `crates/epsilon-desktop/src/app.rs:1748` | The fold is bound, works, persists and is named on screen — the constant carries the chord, the title-bar button carries the verb and the chord in its accessible name (`app.rs:3301-3306`), and the status bar prints it. The chord is **`Ctrl`+`B`**, not the platform `Mod`: on Windows and Linux that is the same key, on macOS it is not. Covered by `the_sidebar_folds_and_unfolds_from_the_keyboard` and `dragging_the_sidebar_handle_resizes_it_and_stops_at_both_ends`. |
+| S-110 | Mod+Alt+B toggles the right sidebar. | `ui-sidebar-right/src/client/shortcuts.ts:30` | missing | — | No right sidebar (L-154). |
+| S-111 | Mod+\ splits the focused pane; Mod+Alt+Enter toggles pane fullscreen. | `ui-sidebar-right/src/client/shortcuts.ts:44`, `:45` | missing | — | No pane splitting. The editor pane is one pane. |
+| S-112 | Mod+W closes the focused page, or the top dialog when one is open. | `ui-sidebar-right/src/client/shortcuts.ts:66` | missing | — | No close-page chord. Tabs close only by opening another file or opening a change (`app.rs:4039-4058`); see L-155 for the reference's related rule. |
+| S-113 | Mod+R refreshes the focused page. | `ui-sidebar-right/src/client/shortcuts.ts:71` | partial | `crates/epsilon-desktop/src/app.rs:827-832`, `crates/epsilon-desktop/src/app.rs:966-968` | A refresh exists as a palette command, `tree.reload`, which rebuilds the file tree from disk. It is not a chord and it does not refresh a page. |
+| S-114 | Mod+Alt+O opens the workspace in a local app. | `ui-open-in-app/src/client/index.ts:66` | missing | — | No open-in-application; see U-013. |
+| S-115 | Mod+P opens the Files tab, Mod+T the Browser tab. | `ui-sidebar-files/src/client/index.ts:64`, `ui-sidebar-browser/src/client/index.ts:50` | partial | `crates/epsilon-desktop/src/app.rs:880-888`, `crates/epsilon-desktop/src/app.rs:846-871` | `Ctrl`+`P` opens the palette and **files are its first section**, so the route a reader would use to reach a file exists; the palette also carries commands, which is more than the reference's Files tab. There is no Browser tab, and cannot be — an embedded browser is forbidden (`AGENTS.md` §2.3). Covered by `control_p_opens_a_palette_of_files_and_commands` and `typing_in_the_palette_filters_and_enter_opens_the_file`. |
+| S-116 | Ctrl+` opens a new terminal tab. | `ui-sidebar-terminal/src/client/index.ts:57` | missing | — | No terminal pane. A window that draws a terminal would have to be a terminal emulator; the harness's own shell tool output is shown instead (`app.rs:5024-5045`). |
+| S-117 | Composer fixed input: Enter sends, Shift+Enter newlines, `/` opens the command menu, Shift+2 mentions. | `ui-conversation/src/client/apply.ts:239`, `:241`, `:247`, `:249` | partial | `crates/epsilon-desktop/src/app.rs:5500-5520`, `crates/epsilon-desktop/src/commands.rs:111-114` | Enter sends and Shift+Enter newlines — **the second half of that was untrue until M313 and is now pinned by `shift_enter_is_a_newline_in_the_composer_not_a_send`**; see C-141 for what the defect was. The `/` menu does not exist: a slash line is submitted and **then** parsed, so `/compact` compacts rather than opening a menu. That is a different interaction, chosen because the window's command set is seven verbs and a menu of seven is not worth a mode (P-101). |
+| S-118 | Two Escapes within the stop window stop the current response. | `ui-conversation/src/client/apply.ts:260`, `shortcuts/src/config.ts:12` | deliberately different | `crates/epsilon-desktop/src/app.rs:5393-5396` | One Escape stops. See C-140 for the argument. |
+| S-119 | Menus and dialogs reserve up/down to move, Enter to select, Esc to dismiss. | `ui-shortcuts/src/client/fixed.ts:12-14` | partial | `crates/epsilon-desktop/src/app.rs:896-903` | The palette reserves Escape, Enter and both arrows for itself (`app.rs:896-903`), which is the same reservation. There are no menus and no dialogs to reserve for. Covered by `the_palette_owns_its_arrows_and_the_tree_cursor_stays_where_it_was` and `escape_closes_the_palette_and_leaves_the_draft_alone`. |
+| S-120 | While an approval is pending, Enter allows once and Esc rejects. | `ui-approval/src/client/index.ts:82`, `:85` | done | `crates/epsilon-desktop/src/app.rs:5528-5537` | Same code path as D-072. Covered by `a_permission_gate_is_answered_by_pressing_enter_in_the_window` and `escape_refuses_a_waiting_gate`. |
+| S-121 | The reference is a 480x600 card grouped Application / Message input / Menus and dialogs / Approval area. | `ui-shortcuts/src/client/Reference.tsx:153` | missing | — | As S-101. |
+| S-122 | Clicking an application row opens an inline recorder that records two overlapping keys and saves on **key release**. | `ui-shortcuts/src/client/Editor.tsx:44`, `:126`, `:132` | missing | — | **No recorder**, and this is the largest remaining gap in the keybinding story: a user can now *set* a binding in a file but cannot record one with a keystroke. The table it would record into is in place (`crates/epsilon-contracts/src/keybind.rs`), so what is missing is the surface, not the mechanism. |
+| S-123 | A saved combination occupied by another command is refused with both command names. | `shortcuts/src/configuration.ts:147`, `ui-shortcuts/src/client/Editor.tsx:68` | missing | — | As S-122: no recorder to refuse anything. The conflict check the reference has is a **test** here (`no_chord_is_bound_to_two_ids_in_the_terminal_table`), which catches the same mistake at build time rather than at save time. |
+| S-124 | **Restore all defaults** affects only the current runtime/platform profile and asks for confirmation. | `ui-shortcuts/src/client/Reference.tsx:205`, `:213` | missing | — | As S-122. There is nothing to restore, because nothing is written. |
+| S-125 | Bindings persist per device: Web in `localStorage`, Desktop in `userData/keybindings.json`. | `shortcuts/src/client/storage.ts:6`, `:38` | partial | `crates/epsilon-desktop/src/keys.rs` | **M315: the window reads a keybinding store**, from the same `<config dir>/keybindings.json` the terminal reads and through the same grammar. What is missing is persistence *back*: nothing writes it, so a binding a user set by hand survives and one set in a UI would not. |
+| S-126 | An unreadable keybinding file disables all editing and names the document and reload action in a toast. | `ui-shortcuts/src/client/Reference.tsx:93`, `shortcuts/src/persistence.ts:17` | missing | — | As S-125. |
+| S-127 | Windows keycaps join modifiers with `+`; macOS uses control glyphs; a two-key chord prints no `aria-keyshortcuts`. | `shortcuts/src/binding.ts:86`, `:87`, `:78` | deliberately different | `crates/epsilon-desktop/src/app.rs:2864-2877` | There is no keycap reference to render. The few chords the window prints are printed as words — `ctrl+b sidebar  ·  left/right width` — and that spelling is itself a measured decision: the first rasterised frame drew the arrows as two tofu boxes because egui's bundled proportional font has no `U+2190`/`U+2192`, and no assertion was looking at the screen (`app.rs:2866-2874`). |
+| S-128 | Settings opens as a centred modal panel **800 px wide and 800 px tall**. | `ui-settings-general/src/client/SettingsRoot.module.css:89-91` | missing | — | No Settings surface. |
+| S-129 | The Settings navigation lists Account, General, Models, Built-in plugins in a fixed order. | `ui-settings-general/src/client/index.ts:234` | missing | — | As S-128. |
+| S-130 | A pale-yellow **Disconnected** / **Reconnecting** / pale-green **Connected** pill sits beside Settings and starts an immediate retry. | `ui-settings-general/src/client/SettingsRoot.tsx:234`, `:241` | missing | — | No connection indicator, and no connection to lose: the agent runtime is built in this process at launch (`lib.rs:125-147`). The reference's host can die and need reconnecting; here there is nothing to reconnect to. |
+| S-131 | The **Show coding view** switch controls the shared `ui-settings.enabled` preference, default **true**. | `ui-settings/src/developer-tools-settings.ts:15` | missing | — | No switch. The coding surfaces — editor, file tree, change review — are always on. |
+| S-132 | The current release version is printed at the bottom of General, from build metadata. | `ui-settings-general/src/client/CurrentVersionRow.tsx:11` | missing | — | No Settings, and the window prints no version anywhere. |
+| S-133 | On a loopback browser only, Settings offers **Open configuration file** in the native text editor. | `ui-settings-general/src/client/index.ts:102` | missing | — | No Settings. The window reads one config file of its own (`layout.rs:209-231`) and never opens it for the reader. |
+| S-134 | First-run onboarding mounts exactly one registered step at a time. | `ui-settings-general/src/client/SettingsRoot.tsx:139`, `:154` | missing | — | No onboarding steps. |
+| S-135 | On a non-loopback page every settings form starts `unavailable` and never crosses the wire; writes are inert. | `ui-settings/src/client/config-form.ts:79` | deliberately different | `crates/epsilon-desktop/src/layout.rs:209-217` | There is no remote page and no privileged-vs-unprivileged distinction to enforce. The window's one settings read is advisory and never blocks startup: a missing, unreadable, malformed or out-of-range file resolves to the defaults, and the reason is written down at `layout.rs:199-208`. |
+| S-136 | Plugins-page cards appear only while the host serves their namespace and vanish when it stops. | `ui-settings/src/client/config-form.ts:317` | missing | — | No plugin settings. |
+| S-137 | **Agent loop -> Parallel tool calls**: a staged number field, nothing written until Save. | `ui-settings-agent-loop/src/client/agent-loop-card-controller.ts:45` | missing | — | As S-136. |
+| S-138 | **Shell -> Command timeout (ms)** and **Output cap per stream (bytes)**, staged, with Overridden badge and Reset to default. | `ui-settings-shell/src/client/shell-card-controller.ts:45` | missing | — | As S-136. |
+| S-139 | **Subagent -> Maximum recursion depth** and **Subagent parallelism limit**, plus a model switch, saved by one Save. | `ui-settings-subagent/src/client/subagent-limits-card-controller.ts:48` | missing | — | As S-136. |
+| S-140 | **Web search -> API key** starts blank on every load and reports only configured/unconfigured. | `ui-settings-web-search/src/client/locales.ts:17` | missing | — | As S-136. |
+| S-141 | **Settings -> General** carries an **Upload Session Log** switch with its own toast. | `ui-settings-session-log/src/client/index.ts:37` | missing | — | As S-136. |
+| S-142 | The **Built-in plugins** section's read-only inventory is its one tab. | `ui-settings-plugins/src/client/PluginsSettingsSection.tsx:57` | missing | — | As S-136. |
+| S-143 | The **Plugin list** tab lists agent presets open by default, then a collapsed global inventory. | `ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx:316` | missing | — | As S-136. |
+| S-144 | Inventory cards mark only non-plain states with a tag, and map fiber phases to dots. | `ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx:206` | missing | — | As S-136. |
+| S-145 | The inventory's preset switcher only changes what the list shows — it writes nothing. | `ui-settings-plugin-inventory/README.md:40` | missing | — | As S-136. |
+| S-146 | The sidebar **Plugins** page lists **Official** bundles first, then **Installed**. | `ui-plugin-manager/src/client/locales.ts:233`, `:306` | missing | — | No plugin manager page. |
+| S-147 | **Refresh** shows its tooltip after 500 ms and a spinner for at least 400 ms before clearing. | `ui-plugin-manager/src/client/PluginManagerPage.tsx:1433` | missing | `crates/epsilon-desktop/src/app.rs:966-968` | The window has a `tree.reload` that does the work (`app.rs:966-968`) and no refresh control with hover semantics. |
+| S-148 | First list read shows an Official-heading placeholder and **four skeleton cards**; uninstalling always asks for confirmation. | `ui-plugin-manager/src/client/PluginManagerPage.tsx:1449` | missing | — | As S-146. |
+| S-149 | The Models page lists **DeepSeek Account** first and **DeepSeek** second; third-party providers keep directory order. | `ui-settings-models/README.md:32`, `ui-settings-models/src/client/index.ts:141` | missing | `crates/epsilon-desktop/src/app.rs:4067-4078` | No Models page. The window names the provider the **launch** resolved — never a guess, including the offline marker, which is why an offline launch reads as offline here exactly as it does in the terminal header (`app.rs:4060-4068`). Covered by `the_window_names_the_provider_the_launch_chose`. |
+| S-150 | An API key must be printable ASCII `\x21-\x7E`; a pasted `NAME=value` line is refused as a format failure. | `ui-settings-models/src/client/apiKey.ts:12`, `:23` | missing | — | The window never accepts a key (D-042). Key handling belongs to the credential store, which this pass did not open. |
+| S-151 | A typed key is stored **write-only** under a derived `<ROUTE>_API_KEY` reference. | `ui-settings-models/src/client/store.ts:118` | missing | — | As S-150. |
+| S-152 | The model list editor shows inherited-vs-customized state and offers **Restore defaults**. | `ui-settings-models/src/client/ModelListEditor.tsx:327`, `:339` | missing | — | As S-150. |
+| S-153 | **Add model provider** opens a segmented switch between Third-party model provider and Custom model API. | `ui-settings-models/src/client/locales.ts:95` | missing | — | As S-150. |
+| S-154 | First-run shows a versioned welcome notice then a conditional DeepSeek credential dialog; the Electron preload marker suppresses both. | `ui-settings-models/src/onboarding-config.ts:13`, `ui-settings-models/src/client/index.ts:82` | deliberately different | `crates/epsilon-desktop/src/lib.rs:124-147` | The window has no welcome notice and no credential dialog to suppress — it composes its agent before it opens a window, so a launch that cannot produce one produces a sentence and no window (`lib.rs:106-114`). |
+| S-155 | The **Account** settings section exists only inside Desktop and is the first nav entry while signed in. | `ui-settings-account/src/client/index.ts:44`, `:293` | missing | — | No account surface. |
+| S-156 | Sign-in shows a copyable authorization link whose copy button restores its label after 2 s. | `ui-settings-account/README.md:78` | missing | — | As S-155. |
+| S-157 | Sign out queries running account-token tasks and opens a confirmation naming interruption or retained data. | `ui-settings-account/README.md:53` | missing | — | As S-155. |
+| S-158 | A server-granted bonus appears above the sidebar account launcher without taking focus. | `ui-settings-account/README.md:55` | missing | — | As S-155. |
+| S-159 | Settings -> General -> **Appearance** offers three cubes — Light, Dark, System. | `ui-theme/src/client/AppearanceRow.tsx:31`, `:53` | partial | `crates/epsilon-desktop/src/commands.rs:157-173` | Three palettes exist and one of them is `high-contrast` rather than `system`; they are selected by the `/theme` command and an unknown name is refused with the three that exist (`commands.rs:163-170`). There is no Settings row and no OS-following mode. Covered by `the_theme_command_changes_the_window_and_says_so`, which asserts both the sentence and the background colour, so a command that reported a switch it did not perform would fail. |
+| S-160 | A **font size** stepper sets conversation content text from 10 to 22 px, default 14 px. | `ui-theme/src/theme-settings.ts:24`, `:27` | missing | `crates/epsilon-desktop/src/app.rs:1433` | No stored font-size preference. The window does honour a **text scale** read from the egui context (`app.rs:2688`), and every pane string is drawn at the scaled size, which the in-crate tests `every_painter_string_is_drawn_at_the_scaled_size`, `at_the_default_zoom_every_size_is_exactly_what_it_was` and `the_transcript_is_re_measured_when_the_text_scale_changes` pin. That is OS/egui zoom, which the reader can change without this product's help; it is not a Settings control. |
+| S-161 | With `system` selected the app follows `prefers-color-scheme` and republishes the moment the OS scheme flips. | `ui-theme/src/client/index.ts:182`, `:186` | missing | `crates/epsilon-desktop/src/commands.rs:157-173` | No `system` palette. A reader who wants a different palette presses `/theme` and the window changes immediately. |
+| S-162 | The font size is read back from the boot script so the first paint matches the stored value. | `ui-theme/src/client/index.ts:369` | missing | — | As S-160. |
+| S-163 | A third-party theme registers an id plus alias-token overrides; every override must supply both a light and a dark value. | `ui-theme/src/client/index.ts:276`, `:309` | missing | `crates/epsilon-desktop/src/theme.rs:141-188` | No plugin-registered themes. The window's roles come from the terminal's semantic palette and are converted one way, `ratatui::Color` -> `egui::Color32`, with **no desktop-specific colours defined** (`theme.rs:1-15`, `:28-53`) — so a role the window needs that the terminal lacks is a missing role rather than a second palette. |
+| S-164 | Focus rings are drawn at a standard 2 px width, and suppressed entirely in pointer modality. | `ui-theme/src/styles/focus.css:3`, `:10`, `:18` | partial | `crates/epsilon-desktop/src/app.rs:2050-2079` | The ring is a real 2 px stroke in the `border_focus` role (`app.rs:2070-2075`), and that role is held to a **3:1 state floor** against both the page and the unfocused border it sits in (`crates/epsilon-desktop/src/theme.rs:91`, `:307-324`) — the second comparison is the one a person makes when looking for where they are. The modality suppression is missing: egui publishes no pointer/keyboard flag to gate on. Covered by `the_focus_ring_is_painted_and_the_unfocused_panes_carry_nothing`. |
+| S-165 | Spinners and pulses stop animating under `prefers-reduced-motion: reduce`. | `ui-settings-general/src/client/DesktopUpdateIndicator.module.css:44` | deliberately different | — | The window has no animation at all, so there is no spinner to stop: reduced motion is honoured by the absence of motion rather than by a media query. That is a stronger answer than the row's mechanism, but it is the same answer, and if animation is ever added the obligation arrives with it. |
+| S-166 | Settings -> General -> **Language** is a selector pill plus menu. | `locale/src/client/index.ts:616` | missing | — | No localisation surface. The window's strings are English literals. |
+| S-167 | A browser with no stored preference takes the first registered locale matching `navigator.languages`. | `locale/src/client/index.ts:535`, `:544` | missing | — | As S-166. |
+| S-168 | Switching language applies immediately, updates `<html lang>`, and persists to the host settings document. | `locale/src/client/index.ts:255`, `:583` | missing | — | As S-166. |
+---
+
+## E. Command palette, quick open, composer, connection state and the design system
+
+`P-101`–`P-154`. The window has one overlay — the palette, on `Ctrl+P` — and it does a real job:
+it is the keyboard route to every file and every command, which is what the reference's palette,
+quick-open menu and slash menu are collectively for. The rows below compare it to all three and
+say which one it answers.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-101 | Typing `/` at the caret opens a grouped menu over the composer with an "Add" section then a "Commands" section. | `ui-commands/src/client/service.ts:115-123`, `ui-commands/src/client/presentation.ts:19-22` | deliberately different | `crates/epsilon-desktop/src/commands.rs:111-114` | No in-composer menu. A slash line is submitted to the window's parser and comes back as one of three outcomes — it ran, it was sent as the reader's words, or it was **refused by name** — and the transcript says which (`commands.rs:96-104`, `:185`). With seven verbs a popup menu would be a mode that hides more than it shows, and the refusal path is the thing this window is built around. |
+| P-102 | A typed query fuzzy-matches case-insensitive ordered subsequences of a command's name or label; prefix hits rank first. | `ui-commands/src/client/service.ts:248`, `ui-primitives/src/rank-by-name.ts:70-93` | partial | `crates/epsilon-desktop/src/app.rs:846-871` | Commands are matched by case-insensitive substring (`app.rs:861`); files by the tree's own filter. No subsequence matching and no prefix ranking. |
+| P-103 | Space after a `/token` that declares an input claim keeps the token and switches the composer to claimed mode. | `ui-commands/src/client/service.ts:278-284` | missing | — | No claimed mode; see P-101. |
+| P-104 | A `/` line is never downgraded to a plain prompt: it resolves to a claim, popup, action or detached execute. | `ui-commands/src/client/service.ts:302-349` | done | `crates/epsilon-desktop/src/commands.rs:111-186`, `crates/epsilon-desktop/src/app.rs:5245-5274` | Anything starting with a slash is a command attempt and comes back `Unknown` rather than `None`, so a typo is corrected rather than sent to the model as a prompt (`commands.rs:18-22`). Covered by four tests: `a_line_that_is_not_a_command_is_still_sent`, `an_unknown_slash_word_says_unknown_rather_than_not_in_this_window`, `a_command_the_window_lacks_is_refused_and_never_sent_to_the_model`, `every_command_head_the_window_lacks_is_refused_by_name`. |
+| P-105 | Submitting images/files with a command that does not declare `input.attachments` shows a transient toast and keeps the draft. | `ui-commands/src/client/service.ts:315-317` | missing | — | No attachments (C-136). |
+| P-106 | First-party slash rows show the client's own localized title and description, not the host's English catalog text. | `ui-commands/src/client/resolution.ts:6-13` | partial | `crates/epsilon-desktop/src/app.rs:806-838` | The palette's rows carry the window's own labels and hints, not the shared catalog's text (`app.rs:823-837`). There is no localisation layer to preserve them through, so the property is structural rather than defended. |
+| P-107 | Localized typed spellings resolve: typing `/计划` executes the registered `plan` command. | `ui-commands/src/client/resolution.ts:34-58` | missing | — | English only (S-166). |
+| P-108 | The popupSelect panel **holds** focus in its own search box: typing filters locally, up/down walk, Enter/Tab accept, Esc/Shift+Tab return to the composer. | `ui-commands/src/client/PopupSelectView.tsx:97-132` | partial | `crates/epsilon-desktop/src/app.rs:879-956` | The palette owns Escape, Enter and both arrows before any pane is drawn, which is what makes it mean anything (`app.rs:872-878`). Arrows **clamp** rather than wrap and Tab does nothing. Closing it hands focus back to the agent pane rather than leaving the window with nothing focused (`app.rs:946-956`). Covered by `the_palette_owns_its_arrows_and_the_tree_cursor_stays_where_it_was` and `escape_closes_the_palette_and_leaves_the_draft_alone`. |
+| P-109 | A popup opens with the highlight on the session's *current* value, so accepting blind confirms the value in use. | `ui-commands/src/client/popup.ts:127-130` | missing | — | The palette opens on row zero; it has no notion of a current value to land on. |
+| P-110 | Popup options grouped by `group.name` render under localized sticky headings. | `ui-commands/src/client/option-groups.ts:15-24` | missing | `crates/epsilon-desktop/src/app.rs:846-871` | Rows are flat, each carrying a one-word hint (`file`, `command`, `goal`) rather than a group heading. Files first, then commands, is the grouping the reader means. |
+| P-111 | Popup search mode is per-command: `substring` by default; `/model` opts into fuzzy-label ranking. | `ui-commands/src/client/popup.ts:102-115` | missing | — | One search mode for everything (P-102). |
+| P-112 | A failed popup option load keeps the panel open with an inline error strip and a Retry button. | `ui-commands/src/client/PopupSelectView.tsx:173-180` | missing | — | The palette's rows come from two in-process sources that cannot fail asynchronously: the tree already in memory and a static command table (`app.rs:846-871`). |
+| P-113 | A popup option carrying `confirmation` opens a modal risk gate whose primary button is disabled until a checkbox is ticked. | `ui-commands/src/client/PopupSelectView.tsx:195-209` | missing | — | No palette option is destructive or privilege-raising today. See D-081 for the rule this port would need when one is. |
+| P-114 | A dismissed slash menu stays dismissed: the same token with the same query cannot reopen it. | `ui-input-trigger/src/client/controller.ts:622-628` | deliberately different | — | There is no in-composer menu to dismiss (P-101). The palette does toggle on its chord rather than only opening (`app.rs:880-888`), because a chord people press twice because it did not seem to work must not need a different one. |
+| P-115 | `@` opens one completion menu listing files first, then direct subagents, then other sessions. | `ui-reference/src/client/index.ts:54-57`, `:103-107` | missing | — | No `@` trigger. The palette is the keyboard route to files and it is opened deliberately, not by a character. |
+| P-116 | An explicitly opened quoted token `@"…` searches files only. | `ui-reference/src/client/index.ts:73-75` | missing | — | As P-115. |
+| P-117 | A directory row has two verbs: Enter inserts the folder as an atomic reference; Tab or the chevron descends. | `ui-reference/src/client/index.ts:112-131` | partial | `crates/epsilon-desktop/src/app.rs:846-871`, `crates/epsilon-desktop/src/app.rs:3828-3830` | Directories are excluded from the palette's entries (`app.rs:852`) — the palette opens files, and a directory is not something to open. Descent is the tree's job and works: clicking a directory row toggles it (`app.rs:3829`). |
+| P-118 | A drilled directory listing shows a breadcrumb from the workspace root down. | `ui-reference/src/client/index.ts:180-207` | missing | — | No drilling; see P-117. |
+| P-119 | Clicking a file reference chip in the composer previews the file's contents in the right Sidebar. | `ui-reference/src/client/index.ts:145-151` | missing | — | No reference chips in the composer, and no right sidebar. |
+| P-120 | One unavailable candidate domain yields no rows for that domain while the other still lists — failure is silent. | `ui-reference/src/client/index.ts:71-77` | missing | — | Neither domain can fail asynchronously (P-112). |
+| P-121 | The composer's `+` button opens the same menu, with focus returned to the editor first. | `ui-conversation/src/client/skeleton/InputBar.tsx:274-282` | partial | `crates/epsilon-desktop/src/app.rs:5366-5374` | The composer has one button, `Send` (`app.rs:5366-5374`); the palette is reached by its chord. |
+| P-122 | The placeholder is state-dependent, and the steer hint deliberately outranks the plan hint. | `ui-conversation/src/client/skeleton/InputBar.tsx:343-352` | partial | `crates/epsilon-desktop/src/app.rs:5287-5292` | The hint is state-dependent: while a turn runs the placeholder reads `running — esc stops`, otherwise it is the idle placeholder (`app.rs:5288-5292`). There are no further states to order, because there is no steer and no plan mode in this window. |
+| P-123 | A claimed command renders its argument hint as CSS ghost text after the token. | `ui-conversation/src/client/skeleton/InputBar.tsx:327-341` | missing | — | No claimed command; see P-101. |
+| P-124 | Adding images past a projected limit is refused as a whole batch with a toast. | `ui-conversation/src/client/skeleton/InputBar.tsx:211-233` | missing | — | No attachments (C-136). |
+| P-125 | Send stays disabled while any picked file is uploading or failed; a failed upload is retried or removed. | `ui-conversation/src/client/skeleton/InputBar.tsx:82-86` | missing | — | As C-136. |
+| P-126 | A prompt failure shows a transient toast, the draft stays in the machine, and the user resubmits. | `ui-conversation/src/client/skeleton/InputBar.tsx:108-121` | partial | `crates/epsilon-desktop/src/app.rs:5235-5274` | The draft survives both refusals: a refused command leaves it exactly as typed, on the stated ground that clearing it would make a refusal indistinguishable from a run (`app.rs:5266-5273`), and a failed submit returns before `self.draft.clear()` (`app.rs:5247-5250`). The failure is reported in the status bar and the transcript rather than in a fading toast, which is this project's stronger invariant (C-169). |
+| P-127 | With no session the composer renders the same element inert and uses it as the workspace-picker trigger. | `ui-conversation/src/client/skeleton/InputBar.tsx:147-152` | deliberately different | `crates/epsilon-desktop/src/lib.rs:81` | As C-170: a window always launches with a workspace, so this state cannot be reached by launching the product. |
+| P-128 | The draft grows with its content and scrolls at a **336 px** cap; the caret is scrolled into view manually. | `ui-conversation/src/client/skeleton/InputBar.module.css:129` | partial | `crates/epsilon-desktop/src/app.rs:4444`, `crates/epsilon-desktop/src/app.rs:5346-5357` | The composer is a **fixed** 92-point box (`app.rs:4444`) holding a multiline `TextEdit` that scrolls internally. It does not grow, so it cannot push the transcript off screen — and the box scales with the text inside it, so a scaled window does not draw its transcript into a composer it has outgrown (`app.rs:4438-4444`). |
+| P-129 | The composer is a slot host with **ten** declared extension positions. | `ui-conversation/src/client/contract/slots.ts:195-223` | missing | — | No slot host; the composer is one `TextEdit` plus one button (`app.rs:5346-5374`). |
+| P-130 | The queue dock shows one queued item directly; two or more collapse behind a count header. | `ui-conversation/src/client/queue/QueueDock.tsx:173-194` | missing | — | No queue (C-166). |
+| P-131 | A queued message can be edited inline, removed, or steered now. | `ui-conversation/src/client/queue/QueueDock.tsx:267-311` | missing | — | No queue (C-166). |
+| P-132 | Enter sends, Shift+Enter inserts a line break, and Ctrl/Cmd+Enter selects the opposite of the busy-Enter preference. | `ui-conversation/src/client/input/editor/keymap.ts:135-158` | partial | `crates/epsilon-desktop/src/app.rs:5293-5345` | As C-141: Enter and Shift+Enter, no delivery-mode pair. |
+| P-133 | A held-down Enter does not machine-gun sends. | `ui-conversation/src/client/input/editor/keymap.ts:154` | done | `crates/epsilon-desktop/src/app.rs:5218`, `:5097`, `:5113` | **Answered by measurement rather than left open.** The window adds no repeat guard, so the question is whether a repeat can send twice — and it cannot, for two independent reasons. `send_draft` returns early on a running session (`:5080`) and on an empty draft (`:5097`), and a successful send clears the draft (`:5113`), so the **second** repeat of a held Enter finds nothing to send. The residual is cosmetic, not a defect: while a run is in flight, each repeat pushes the same refusal notice (`:5093-5094`), so a held Enter repeats a sentence rather than a turn. |
+| P-134 | An IME composition-closing Enter or Space never submits. | `ui-conversation/src/client/input/editor/keymap.ts:48-52`, `:74-81` | missing | — | As C-146: egui owns composition, and this pass did not verify its behaviour. |
+| P-135 | Paste routes clipboard files into attachments and text through the shell's sanitizer. | `ui-conversation/src/client/input/editor/keymap.ts:159-185` | missing | `crates/epsilon-desktop/src/app.rs:4421-4423` | No attachment routing. Text that *does* reach a row is stripped of control and bidi characters before it is drawn — the shared rule is `epsilon_runtime::text_safety::display_safe` (`app.rs:4421-4423`) — but the composer's own draft is the reader's own typing and is not stripped. |
+| P-136 | Escape closes an open composer overlay first; a claimed token is **not** released by Escape. | `ui-conversation/src/client/input/editor/keymap.ts:116-125` | partial | `crates/epsilon-desktop/src/app.rs:2714-2721` | The ordering matches: the palette is read before the composer, which takes both keys unconditionally (`app.rs:2714-2716`), so Escape closes the overlay rather than aborting the run. There is no claimed token to hold. Covered by `escape_closes_the_palette_and_leaves_the_draft_alone`. |
+| P-137 | Busy-Enter defaults to Queue and is switchable to Steer in General settings. | `ui-conversation/src/submission-settings.ts:12`, `:18` | missing | — | No queue and no steer (C-140). |
+| P-138 | The slash menu is a combobox: focus never leaves the textarea, rows pick on mousedown. | `ui-input-trigger/src/client/MenuView.tsx:129-136` | deliberately different | — | No slash menu (P-101). |
+| P-139 | Slash-menu group titles come from a dictionary keyed by source name. | `ui-input-trigger/src/client/MenuView.tsx:141-146` | missing | `crates/epsilon-desktop/src/app.rs:846-871` | No group titles; rows carry a per-row hint instead (P-110). |
+| P-140 | Focus rings are a 2 px outline in the business-primary alias, suppressed for pointer input on non-editable controls. | `ui-theme/src/styles/focus.css:1-21` | partial | `crates/epsilon-desktop/src/app.rs:2050-2079` | 2 px ring, held to the 3:1 state floor (`crates/epsilon-desktop/src/theme.rs:91`). Pointer-modality suppression is missing, as in S-164. |
+| P-141 | Automatic focus entry and modal return-focus suppress the ring until Tab or an arrow key resumes normal styling. | `ui-primitives/src/focus.ts:12-28` | missing | — | No modal layer (P-146). |
+| P-142 | A three-state inline indicator shows Disconnected / Reconnecting / Connected; outage and retry are one button. | `ui-primitives/src/ConnectionIndicator.tsx:6-13` | missing | — | As S-130: no connection to lose. |
+| P-143 | Retries back off with 50-100 % jitter under caps 500 ms to 10 s; a slow handshake warns at 3 s and aborts at 15 s. | `connection/src/client/connection.ts:139-147` | missing | — | As P-142. |
+| P-144 | Browser `offline` suspends automatic attempts and publishes Disconnected. | `connection/src/client/connection.ts:127-137` | missing | — | As P-142. |
+| P-145 | Toasts are a top-centre banner that holds 3000 ms, fades 1000 ms, then calls `onDone`. | `ui-primitives/src/Toast.tsx:8-10` | missing | — | No toast surface. This window's substitute is **stronger on purpose**: refusals and failures go into the transcript and the status bar, where they persist until the condition clears (`app.rs:4103-4119`, `:5080-5096`), because `AGENTS.md` §2.7 forbids a bound control that does nothing and this repository treats a message that can vanish before it is read as the same failure. |
+| P-146 | Modals own top-layer Escape and Tab: only the foreground dialog responds, focus is trapped, the invoking control is restored on close. | `ui-primitives/src/useModalLayer.ts:8-32` | partial | `crates/epsilon-desktop/src/app.rs:879-956` | The palette is a layer that owns Escape and Enter and is drawn last so it is above every pane (`app.rs:2995-2997`). There is no focus trap, no Tab ring and no restore-to-invoking-control beyond returning to the agent pane. |
+| P-147 | A shared state dot encodes done/warning/ongoing/error/idle, and every visible loader rotates in phase. | `ui-primitives/src/StateDot.tsx:9`, `:19-34` | missing | `crates/epsilon-desktop/src/app.rs:4930-4956` | There are no spinners and no state dots. A tool row's state is a **marker glyph** and a colour chosen from the row's own kind (`app.rs:4943-4956`), with the outcome repeated in words in the accessible name so it is never carried by shape or colour alone (`app.rs:4930-4942`). |
+| P-148 | One shared ranker orders every `/`-menu query; it is the palette's only ranking. | `ui-primitives/src/rank-by-name.ts:70-93` | partial | `crates/epsilon-desktop/src/app.rs:846-871` | There is one filter for commands (`app.rs:861`) and one for files (`app.rs:850`), and they are substring rather than ranked (P-102). |
+| P-149 | The slot registry has four kinds and one a-priori `root` slot; undeclared or doubly-declared slots throw at plugin load. | `ui-slots/src/index.ts:101` | missing | — | No slot registry. |
+| P-150 | A dock tab strip is a WAI-ARIA tablist with manual activation: left/right wrap, Home/End jump, Enter/Space select; only the selected chip is in the tab order. | `ui-dockkit/src/components/TabPanel.tsx:109-124` | partial | `crates/epsilon-desktop/src/app.rs:3952-4014` | The editor's tab strip draws real `egui::Button`s, so egui builds a real node for each, and the selected one is marked selected (`app.rs:3997`). There is no arrow-key traversal, no Home/End, and no roving tab order. Covered by `two_open_files_draw_a_tab_strip_and_mark_the_one_being_shown`, `clicking_a_tab_switches_the_editor_to_that_file` and `every_open_tab_stays_inside_the_pane_however_many_are_open`. |
+| P-151 | Dock undo/redo is linear, and a run of consecutive focus-only moves steps back as one entry. | `ui-dockkit/src/engine/sequence.ts:44` | missing | — | No undo/redo in the editor or the pane layout. |
+| P-152 | A floating dock panel stays at least 20 px below the Windows caption. | `ui-dockkit/src/components/FloatLayer.tsx:91-95` | missing | — | No floating panel. |
+| P-153 | The official brand mark and name occupy two sidebar slots and register only under the `official` build profile. | `ui-brand-official/src/client/index.ts:17-22` | missing | — | No brand surface, and no name or logo taken from the reference — `AGENTS.md` §10. |
+| P-154 | Snapshot stores publish a stable reference between changes and batch notifications either synchronously or once per animation frame. | `store/src/index.ts:67-69` | deliberately different | `crates/epsilon-desktop/src/app.rs:1229-1272` | There is no store layer: the window borrows the same `Agent` the terminal drives and caches the three expensive reads itself — the markdown parse cache, the row-height prefix sum and the goal view — each refreshed at the two places its value can change. That is the same discipline the reference's store applies, arrived at by measurement rather than by porting a snapshot library. |
+---
+
+## F. Layout, sidebars, files tree, terminal, browser, document preview, workspaces, sessions
+
+`L-101`–`L-165`. This is where the two products look most alike and differ most in mechanism. DSH
+solves the frame in CSS grid and solves it **well** — the evidence file records that the JS solve
+makes only the discrete decisions and leaves sizing to CSS grid on purpose, because doing the
+arithmetic elsewhere produces two-frame jitter (`ui-layout/src/client/AppFrame.tsx:233-241`). This
+window solves the frame as a pure function of `(available rect, Preferences)` in
+`crates/epsilon-desktop/src/layout.rs`, with every degradation rule given a test, because a layout
+computed while drawing is a layout nobody can test.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| L-101 | The window is one three-column grid `sidebar \| centre \| rightbar`; the centre declares a **400 px** protected minimum. | `ui-layout/src/client/AppFrame.tsx:265-266`, `ui-layout/src/client/columns.ts:11` | partial | `crates/epsilon-desktop/src/layout.rs:75-77`, `crates/epsilon-desktop/src/layout.rs:367-394` | Four regions rather than three: activity bar, sidebar, editor, agent panel, with an explicit floor for each (`CENTER_MIN` 340, `AGENT_MIN` 320). The agent panel is the product and takes the whole body below 680 points (`layout.rs:381-383`); the editor yields when the sidebar is present and there is not room for both (`layout.rs:392`). |
+| L-102 | Sidebar drags between **264 px and 420 px**, defaults to **280 px**, and collapses to a **56 px** rail; on macOS desktop and Windows Electron the collapsed width is **0**. | `ui-layout/src/client/columns.ts:13-19`, `ui-layout/src/client/AppFrame.tsx:168-170` | partial | `crates/epsilon-desktop/src/layout.rs:69-73`, `crates/epsilon-desktop/src/layout.rs:381-394` | The **range is identical** — 264 to 420 (`layout.rs:69`, `:73`) — and the default is 264 rather than 280 (`layout.rs:69`). There is no 56-point rail: the sidebar folds to nothing, which is what the reference itself does on macOS and Windows. |
+| L-103 | Below a **1024 px** viewport the sidebar auto-collapses; a manual toggle below that flips a separate `narrowExpanded` override. | `ui-layout/src/client/columns.ts:23`, `ui-layout/src/client/stores.ts:108-112` | partial | `crates/epsilon-desktop/src/layout.rs:56`, `crates/epsilon-desktop/src/layout.rs:384` | The threshold is **860**, not 1024, and the number is derived rather than round: the sum of the activity bar, the sidebar floor, the editor floor, the agent floor and the gutters (`layout.rs:51-56`). A manual toggle changes `sidebar_visible` and leaves the width preference untouched (`app.rs:3319-3322`), which is the asymmetry the reference is protecting. |
+| L-104 | The right panel opens at **45 %** of the frame the first time, keeps that pixel preference across closes and resizes. | `ui-layout/src/client/columns.ts:25-29`, `ui-layout/src/client/stores.ts:123-136` | missing | — | No right panel. |
+| L-105 | When there is not enough room for 300 px of right panel beside a 400 px centre, the right column loses its track entirely rather than stealing from the centre. | `ui-layout/src/client/columns.ts:52-58` | partial | `crates/epsilon-desktop/src/layout.rs:381-394` | The protection is real and the mechanism differs: the editor pane loses its track when the sidebar and editor cannot both fit (`layout.rs:392`), and the agent panel takes the whole body below the narrow threshold (`layout.rs:381-383`). Neither yields to the other silently. |
+| L-106 | Panel geometry is transient: a reload restores the sidebar to its 280 px default and the right panel to hidden. | `ui-layout/src/client/stores.ts:80-92` | deliberately different | `crates/epsilon-desktop/src/layout.rs:209-295`, `crates/epsilon-desktop/src/app.rs:1786` | The window **persists** the sidebar's width and visibility, per workspace, in a file of its own rather than in the shared config, and writes it at the end of a gesture rather than during it. The reference forgets on purpose; we remember on purpose, and the reason — a monorepo wants a wide sidebar and a dotfiles repository does not — is written at `layout.rs:145-159`. Covered by `what_the_window_wrote_is_what_the_next_window_starts_from`. |
+| L-107 | Three root-scoped frame seats exist outside the three columns: `shell.bottom`, `shell.overlay`, and a window-chrome seat. | `ui-layout/src/client/AppFrame.tsx:289-299` | deliberately different | `crates/epsilon-desktop/src/app.rs:2959-2998` | There is no slot host. The overlay role is filled by the palette, which is drawn last and therefore above every pane (`app.rs:2995-2997`), and the window-chrome role by the title-bar fold control (`app.rs:2956-2958`). |
+| L-108 | Column drags capture the pointer, are rAF-throttled, freeze their base at the rendered width for the whole gesture, and run transition-free. | `ui-layout/src/client/AppFrame.tsx:58-117` | partial | `crates/epsilon-desktop/src/app.rs:3345-3396` | The window uses egui's own gesture — `Sense::drag()` plus `drag_delta`, which is what `egui::containers::Resize` does for its own corner — so the behaviour matches every other egui window by construction (`app.rs:3327-3330`). The clamp is applied through one rule on every frame of the drag, so a drag past either end stops at the end (`app.rs:3361-3368`). The handle is 6 points wide because it sits in the gutter the carve already left (`layout.rs:95-106`). |
+| L-109 | A dock pane splits only when each half would still hold the strip's controls plus one minimum chip, and the strip plus a 48 px body. | `ui-dockkit/src/engine/geometry.ts:105`, `:127-138` | missing | — | No pane splitting (S-111). |
+| L-110 | Collapsing the sidebar crossfades content at its current width for **150 ms**, then unmounts the wide content and slides the upper controls into the rail. | `ui-sidebar/src/client/SidebarRoot.tsx:31`, `:106-113` | deliberately different | `crates/epsilon-desktop/src/app.rs:3319-3322` | There is no transition at all: the fold is instant. That answers the row's reduced-motion clause by construction — nothing animates, so nothing can be animated against a reader's preference — but the crossfade itself is not reproduced. |
+| L-111 | Sidebar scrollbars are a *pointer* affordance: the bar hides when the pointer leaves and stays drawn for 2 s. | `ui-sidebar/src/client/SidebarRoot.tsx:39`, `:154-170` | missing | — | egui's own scrollbars, with their own behaviour. |
+| L-112 | A complete build stacks a code badge under the brand name formatted `version[-commit][-dirty]`. | `ui-sidebar/src/client/SidebarRoot.tsx:42-49` | missing | — | No build badge. |
+| L-113 | On the expanded sidebar the brand row *is* the New Session button — except on macOS desktop. | `ui-sidebar/src/client/SidebarRoot.tsx:216-256` | missing | — | No brand row and no New Session button (S-103). |
+| L-114 | The New Session button shows its effective keybinding as trailing grey text on hover or keyboard focus. | `ui-sidebar/src/client/SidebarRoot.tsx:259-277` | missing | `crates/epsilon-desktop/src/app.rs:2864-2877` | As S-103 there is no button — but the window does name the chords it has, in the status bar's hint region and on the fold control's own accessible name (`app.rs:2864-2877`, `:3193-3198`), and it prints them **only while they work** (`app.rs:2919-2927`). |
+| L-115 | On macOS desktop a fully collapsed sidebar reappears as two window-chrome buttons mounted beside the traffic lights. | `ui-sidebar/src/client/HeaderLeadingControls.tsx:26-54` | deliberately different | `crates/epsilon-desktop/src/app.rs:3248-3265` | The fold control lives in the **title bar at every window size above `COMPACT`** (`app.rs:2956-2958`), because a control placed on the sidebar cannot put the sidebar back — a one-way door. So it never needs a macOS-specific reappearance. |
+| L-116 | An open Workspace shows **5** idle, non-blank Sessions; each **Show more** adds 5. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:55`, `:58-70` | missing | `crates/epsilon-desktop/src/app.rs:3636-3698` | The sessions pane lists everything stored for the workspace (`app.rs:3613`, `:3528`) with no pagination. |
+| L-117 | **View options** is one menu with Group by, Order by and Filter by choices. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:106-167` | missing | — | No view options; the session list is newest-first with no filter. |
+| L-118 | Switching to **Manual** freezes the then-current order; new ordinary forks are inserted before their source. | `ui-workspace/src/client/stores.ts:94-98`, `:120-126` | missing | — | No manual ordering and no drag reordering. |
+| L-119 | Pinning a Session moves it to the front of **every** saved order. | `ui-workspace/src/client/navigation.ts:281-289` | missing | — | No pinning. |
+| L-120 | **Workspace Tree** nests each Workspace under its nearest registered ancestor folder. | `ui-workspace/src/client/tree.ts:636-648` | missing | — | One workspace per window (`lib.rs:81`); there is no multi-workspace browser. |
+| L-121 | Hovering a Session row crawls a title wider than its cell at **0.03 px/ms** and rests at the far edge. | `ui-workspace/src/client/rows/Rows.tsx:54`, `:102-134` | missing | `crates/epsilon-desktop/src/app.rs:3657-3661` | No marquee. A row too wide for the pane is **marked as cut** with an ellipsis, which is this project's rule everywhere a value does not fit (`app.rs:3657-3661`; `fit` at `app.rs:1348`). Covered by `a_long_session_name_is_shown_as_cut_rather_than_clipped` and `a_cut_row_never_ends_in_half_a_character`. |
+| L-122 | Typing in the collapsed search header replaces either browsing mode with one flat list, with a 250 ms debounced host request, a 500-unit query cap and 20 results. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:51`, `:73-81` | missing | — | No session search (S-104). The window's only filter is the **file** tree's (`app.rs:3782-3809`), which is local and instant. |
+| L-123 | Archived Sessions stay in their positions but are not openable — clicking one raises an explanation. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:902-908` | missing | — | No archive state (S-108). |
+| L-124 | Archiving a **quiet** Session commits with no dialog; a Session with running work is the only case that asks first. | `ui-workspace/src/client/session-actions/ArchiveSession.tsx:159-170` | missing | — | No archive (S-108). |
+| L-125 | A successful archive raises a **6-second** success toast carrying **Undo**. | `ui-workspace/src/client/session-actions/RowActionToast.tsx:14`, `:29-46` | missing | — | No archive, and no toast surface (P-145). |
+| L-126 | The Session row's menu and hover buttons are slot lists stepping by 100. | `ui-workspace/src/client/index.ts:285-294` | missing | — | A session row is a `selectable_label` plus an age line (`app.rs:3662-3676`); it has no menu. |
+| L-127 | Add Workspace is unavailable — with a reason — unless a directory-picker package has filled a slot. | `ui-workspace/src/client/shortcuts.ts:75-77`, `:92-96` | missing | — | As D-046. |
+| L-128 | **Files** is a page tab type; `workspace.files` defaults to Mod+P on Desktop. | `ui-sidebar-files/src/client/definition.tsx:25-39` | partial | `crates/epsilon-desktop/src/app.rs:3399-3411`, `crates/epsilon-desktop/src/app.rs:846-871` | Files is an activity-bar view with its own id salt, named and counted (`app.rs:3407`, `:3641-3658`), and it is the **first section of the palette** (`app.rs:846-859`) — so the keyboard route exists, on a different chord and mixed with commands. The reference's region model (page, editable, terminal) has no counterpart here. |
+| L-129 | Each level is listed lazily on first expansion, directories first, then natural case-insensitive name. | `ui-sidebar-files/src/client/FilesBody.tsx:48-53`, `:87-91` | partial | `crates/epsilon-desktop/src/workspace.rs:33`, `crates/epsilon-desktop/src/workspace.rs:79-89` | The tree is walked **once**, at load, under a 5,000-row budget and the project's ignore set (`workspace.rs:33`, `:79-89`) — not lazily per level. Ordering comes from the walk. Covered by `the_window_draws_the_workspaces_own_files`, which also pins that build output is absent from the tree. |
+| L-130 | A level renders one of `loading`, `empty`, a truncation marker, a failure line, or its rows. | `ui-sidebar-files/src/client/FilesBody.tsx:106-111`, `:118-136` | partial | `crates/epsilon-desktop/src/app.rs:3760-3770`, `crates/epsilon-desktop/src/app.rs:3833-3855` | The **truncation** state is real and is named twice — in the pane's accessible name ("N or more, list is partial") and in a footer that says the list is partial rather than ending silently (`app.rs:3766-3770`, `:3714-3724`). The empty and failure states are per-pane rather than per-level, and there is no loading state because the walk is synchronous. |
+| L-131 | Reload refreshes root and expanded levels in place; a reload that discovers a deleted directory prunes that subtree's cached levels. | `ui-sidebar-files/src/client/store.ts:124-138` | partial | `crates/epsilon-desktop/src/app.rs:966-968` | `tree.reload` rebuilds the whole tree from disk (`app.rs:966-968`), which prunes anything deleted and re-reads everything — correct, and coarser than the reference's incremental path. Reachable from the palette; no chord. |
+| L-132 | Switching sidebar tabs and back remounts the tree with its levels and scroll offset intact. | `ui-sidebar-files/src/client/FilesBody.tsx:151-167` | partial | `crates/epsilon-desktop/src/app.rs:3399-3411`, `crates/epsilon-desktop/src/app.rs:3825-3827` | The tree is a single value that survives a view switch — `workspace_pane` dispatches to a different pane and the files value is only replaced by `tree.reload` or at construction — so the property holds by construction. It is not pinned by a test, which is why it is `partial` rather than `done`. |
+| L-133 | `terminal.new` defaults to Ctrl+` and is blocked with a reason when no Session is on screen. | `ui-sidebar-terminal/src/client/index.ts:55-69` | missing | — | No terminal pane (S-116). The window shows what the harness's shell tool printed instead, bounded to a 40-line tail (`app.rs:5024-5045`, `session.rs:67`), which is a different answer to a different question. |
+| L-134 | The guide card's main button opens the remembered shell; the chevron opens an installed-shell menu. | `ui-sidebar-terminal/src/client/TerminalGuide.tsx:40-54` | missing | — | As L-133. |
+| L-135 | Double-clicking a terminal tab chip title renames it in place, max 120 chars. | `ui-sidebar-terminal/src/client/TerminalTitle.tsx:24-31` | missing | — | As L-133. |
+| L-136 | The status line reports Loading / Creating / Connecting / Disconnected / exited-with-exit-code, and offers **Take control** when another page owns input. | `ui-sidebar-terminal/src/client/terminal.tsx:46-65` | missing | — | As L-133. |
+| L-137 | xterm is opened at `minimumContrastRatio: 4.5` with a 13 px monospace font, and the DOM cursor is recoloured to keep 3:1 against the actual cell background. | `ui-sidebar-terminal/src/client/terminal.tsx:90`, `ui-sidebar-terminal/src/client/terminal-cursor.ts:14-36` | missing | `crates/epsilon-desktop/src/theme.rs:55-91` | No terminal, and no cursor to recolour. The contrast discipline the row names is nonetheless implemented for everything the window does draw: three separate floors — 3:1 for text roles, a surface floor for bands, and 3:1 again for **state** roles compared against each other rather than only against the page (`theme.rs:55-91`, `:307-324`). |
+| L-138 | `browser.new` defaults to Mod+T on Desktop and the type declares `multiple: true`. | `ui-sidebar-browser/src/client/index.ts:48-65` | deliberately different | `AGENTS.md` §2.3 | No browser tab, and there will not be one: an embedded browser engine is exactly what [`AGENTS.md`](../../AGENTS.md) §2.3 forbids in this window, and L-139 to L-142 are its consequences. |
+| L-139 | The address bar accepts HTTP and HTTPS only. | `ui-sidebar-browser/src/client/browser/url.ts:4`, `:25-45` | missing | — | As L-138. |
+| L-140 | History is application-known only, max **100** entries. | `ui-sidebar-browser/src/client/browser/BrowserNavigation.ts:6` | missing | — | As L-138. |
+| L-141 | A per-tab sandbox toggle flips the frame's sandbox, is temporary, and is not persisted. | `ui-sidebar-browser/src/client/view/BrowserBody.tsx:102-111` | missing | — | As L-138. |
+| L-142 | After a restart the tab shows the saved title and URL behind an explicit **Restore** card. | `ui-sidebar-browser/src/client/view/BrowserBody.tsx:118-128` | missing | — | As L-138. |
+| L-143 | The text viewer is the fallback claimant for file addresses, accepts only Session-scoped addresses, and titles the chip with the decoded basename. | `ui-sidebar-documentpreview/src/client/definition.ts:45-53` | partial | `crates/epsilon-desktop/src/app.rs:4039-4058`, `crates/epsilon-desktop/src/app.rs:3979-4013` | A file opens in a read-only editor pane and the tab is titled with the file's **stem**, which is the same naming rule (`app.rs:3983-3986`). Two files with one name in different directories are two tabs, because the tab strip keys on the path (`app.rs:4051-4052`; covered by `a_file_row_is_named_by_its_path_so_two_of_the_same_name_differ`). There is no renderer registry and no address scheme. |
+| L-144 | The viewer dropdown appears only when more than one renderer matches. | `ui-sidebar-documentpreview/src/client/document/registry.ts:36-49` | missing | — | One viewer: plain text, read-only (`app.rs:3858`). |
+| L-145 | Paged text loads page 1 and requests the next page at the bottom; **Load more** appears until eof. | `ui-sidebar-documentpreview/src/client/TextPreview.tsx:328-341` | missing | — | No paging. The editor scrolls whatever it was given. |
+| L-146 | A read failure with content already loaded keeps the content and adds a Retry line. | `ui-sidebar-documentpreview/src/client/TextPreview.tsx:353-389` | partial | `crates/epsilon-desktop/src/app.rs:4039-4058` | A file that cannot be opened produces a sentence in the transcript rather than nothing (`app.rs:4054-4057`), which is the "a click that appears to do nothing" state this window is built to avoid. There is no retry control and no content-preserving partial load. |
+| L-147 | A known binary container suffix with no registered renderer shows an unsupported-preview message **without issuing a read**. | `ui-sidebar-documentpreview/src/client/document/unviewable.ts:10-37` | missing | — | No binary detection and no unsupported-preview message. |
+| L-148 | PDF and image previews share one floating zoom control; on fine pointers it hides and slides up when the pointer enters the bottom 72 px. | `ui-sidebar-documentpreview/src/client/zoom/ZoomControls.tsx:8-11` | missing | `crates/epsilon-desktop/src/app.rs:2669-2683` | No PDF or image viewer. The window does have text zoom, and it is bound to the chords every editor uses — `Ctrl`+`+`, `Ctrl`+`-`, `Ctrl`+`0` — with egui owning the clamping so there is one rule and not two (`app.rs:2656-2683`). |
+| L-149 | Each PDF page bitmap is capped at 16,777,216 pixels; the spreadsheet limits are declared as configuration fields. | `ui-sidebar-documentpreview/src/client/pdf/document.ts:56`, `ui-sidebar-documentpreview/src/config.ts:31-40` | missing | — | No PDF, no spreadsheet, no document conversion cache. |
+| L-150 | A yellow warning appears before Reload when the current Office preview has missing fonts. | `ui-sidebar-documentpreview/src/client/office/FontNotice.tsx:37-64` | missing | — | As L-149. |
+| L-151 | A leading YAML frontmatter block renders as a key/value list above the Markdown body; code previews show line numbers by default. | `ui-sidebar-documentpreview/src/client/markdown/frontmatter.ts:9-21`, `ui-sidebar-documentpreview/src/client/code/CodeBody.tsx:20-33` | partial | `crates/epsilon-desktop/src/app.rs:3864-3951` | The editor draws **every line on its own line** — covered by `each_line_of_an_open_file_gets_its_own_line` and `editor_lines_are_drawn_inside_the_editor_pane` — but it does not parse frontmatter, does not number lines, and does not render the Markdown. The file is shown as it is. |
+| L-152 | Pending interactions are **process-local projections** with a deterministic cross-domain precedence, published per `(sessionId, key)`. | `ui-session/src/client/index.ts:116-149`, `:391-410` | partial | `crates/epsilon-desktop/src/session.rs:168-174` | The client-side half is real: an answered approval id is kept in a set so it stops being offered while the transcript row stays as the record of what was asked and decided (`session.rs:168-174`). The cross-domain precedence rule is a reference behaviour this window has one domain of and does not implement. |
+| L-153 | A completion is marked unread only when the Session was observed running and is not the main-view Session. | `ui-session/src/client/index.ts:483-491` | missing | — | No unread marking anywhere; the Subagents pane names states and models but carries no badge (`app.rs:3412-3473`). |
+| L-154 | The right sidebar has two presentations sharing one content tree; below 768 px the fullscreen presentation is derived from width. | `ui-sidebar-right/src/client/shell/SidebarRight.tsx:359-367` | missing | — | No right sidebar (L-104). |
+| L-155 | The guide tab standing as the only docked tab draws no close control; any other tab alone closes with the column in one history entry. | `ui-sidebar-right/src/client/stores.ts:69-72` | partial | `crates/epsilon-desktop/src/app.rs:4039-4058` | There is no close-tab control, by decision: the tab strip and the file tree are the two ways back from a change, and opening any file ends a review (`app.rs:4039-4044`), so a second "close" control would be chrome answering a question nobody asked. |
+| L-156 | While expanded, an intent never leaves an empty pane: emptied side panes merge and an emptied root pane is seeded with the default page. | `ui-sidebar-right/src/client/stores.ts:189-202` | missing | — | No right sidebar. |
+| L-157 | The panel's layout, tab identities, selection and split ratios persist per Session as JSON. | `ui-sidebar-right/src/client/persistence.ts:7`, `:27-79` | missing | `crates/epsilon-desktop/src/layout.rs:259-295` | No per-session layout store. The window persists one window's sidebar preference per workspace (`layout.rs:259-295`); the open-file list is not persisted across launches. |
+| L-158 | While the panel is hidden, the only way back in is one button in the conversation header's corner seat. | `ui-sidebar-right/src/client/shell/ExpandButton.tsx:33-52` | partial | `crates/epsilon-desktop/src/app.rs:3248-3265` | Same property, different seat: while the sidebar is folded the only way back is the title-bar control (`app.rs:3265-3322`), and it renders nothing when there is no room for it — a case the window handles by printing the chord in the status bar rather than advertising a control it cannot draw (`app.rs:792-798`, `:2756-2769`). |
+| L-159 | The guide page is a muted compass over one capsule per registered guide entry; picking a capsule opens that type in the guide tab's place. | `ui-sidebar-right/src/client/tabs/guide/GuideBody.tsx:45`, `:81` | partial | `crates/epsilon-desktop/src/app.rs:3174-3246` | The activity bar is the analogous doorway: three named, focusable, roled `Button`s with an accessible name per view and a `Navigation` landmark on the strip (`app.rs:3193-3245`), and choosing one changes what the sidebar shows. There is no guide page and no descriptions-under-four-entries rule. |
+| L-160 | The tab strip follows the WAI-ARIA tabs pattern with **manual activation**: Left/Right move and wrap, Home/End jump, Enter/Space select. | `ui-dockkit/src/components/TabPanel.tsx:109-124` | partial | `crates/epsilon-desktop/src/app.rs:3997-4012` | As P-150: real buttons, selected state marked, click to switch, no keyboard traversal of the strip. |
+| L-161 | The tab chip box is the strip's only shrinking part: chips shrink to a floor then scroll with no scrollbar, and the box fades its chips over 24 px. | `ui-dockkit/src/components/TabPanel.tsx:201`, `:350-365` | partial | `crates/epsilon-desktop/src/app.rs:3979-4012` | Every tab stays inside the pane however many are open, and each label is shortened through the same `fit` budget as everything else (`app.rs:3989`; covered by `every_open_tab_stays_inside_the_pane_however_many_are_open`). There is no fade band. |
+| L-162 | Splitting is blocked — with a distinct, focusable explanation — for a floating pane, a collapsed column, an empty pane, the two-pane budget, or insufficient width. | `ui-sidebar-right/src/client/service.ts:602-612` | missing | — | No splitting (S-111). |
+| L-163 | A floating panel is a pane whose host is `float`, draggable out and resizable down to 220x140. | `ui-dockkit/src/engine/constraints.ts:16`, `ui-dockkit/src/components/FloatLayer.tsx:139-147` | missing | — | No floating panel (P-152). |
+| L-164 | The theme presenter writes `color-scheme`, the theme's alias tokens and a content font size as inline body variables, plus one meta `theme-color`. | `ui-layout/src/client/theme-presenter.ts:53-70` | partial | `crates/epsilon-desktop/src/app.rs:5518-5520`, `crates/epsilon-desktop/src/theme.rs:190-269` | The window sets egui's `Visuals` from the palette on every frame (`app.rs:5518-5520`), and the palette is twenty-four named roles converted from the terminal's, with three contrast floors applied on top (`theme.rs:190-269`, `:292-326`). There is no CSS custom property, no `color-scheme` declaration and no meta theme colour, because there is no DOM for them to write to. |
+| L-165 | The window title is `<session title> — <product title>` while the Conversation is the selected main panel. | `ui-layout/src/client/DocumentTitle.tsx:18-27` | partial | `crates/epsilon-desktop/src/lib.rs:149-153`, `crates/epsilon-desktop/src/app.rs:2767-2798` | The **title bar** carries the workspace name, the model the launch resolved and the context/token/cost figures, all budgeted against the width (`app.rs:2767-2798`; covered by `the_title_bar_names_the_workspace_and_the_figures_it_drew`). The OS **window** title is the workspace directory name (`lib.rs:149-153`) and does not change with the selected session. |
+---
+
+## G. Approvals, questions, schedule, jobs, goal, plan, subagents, deliverables, feedback, attachments, models
+
+`I-101`–`I-150`. The reference packs five whole subsystems into this range — a user-question
+card with its own draft store, a schedule manager, a background-jobs panel, a plan-mode control,
+a subagent lineage header, a change-deliverables review surface, message feedback, an attachment
+rail and a model picker. **This window implements the approval path, the goal band and the change
+review**, and one of the three is complete. The rest are recorded as gaps, not as differences of
+opinion.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| I-101 | A pending approval **takes over the chat input seat** and shows a warning dot with the strip "Waiting for approval". | `ui-approval/src/client/index.ts:91-95` | partial | `crates/epsilon-desktop/src/app.rs:2705-2713`, `crates/epsilon-desktop/src/app.rs:4890-4906` | The ask is drawn **in the transcript** with its two answer buttons beside it, and it is painted before anything else can want a key — the comment at `app.rs:2705-2710` records that this ordering was a defect once (`approve_pending` existed, was correct, had a test, and had no caller). The composer is not replaced; it stays available and the status bar counts what is waiting (`app.rs:4105-4115`). Covered by `a_pending_permission_ask_is_drawn_once`, which also pins that the same ask is drawn **once**, not as a bare row plus a prompt. |
+| I-102 | The prompt offers **exactly two buttons, "Reject" and "Allow once"** — no "always allow", no remember-choice. | `ui-approval/src/client/contract/slots.ts:66` | done | `crates/epsilon-desktop/src/app.rs:4890-4906` | The row draws exactly `Allow` and `Refuse`, mapping to `AllowOnce` and `Deny`. The evidence file is explicit that adding an "allow always" checkbox would be a parity defect; this window does not have one. Covered by `a_permission_gate_is_answered_by_pressing_enter_in_the_window`. |
+| I-103 | **Enter grants, Escape denies**, with the detail region focused. | `ui-approval/src/client/ApprovalPanel.tsx:57`, `ui-approval/src/client/index.ts:82` | done | `crates/epsilon-desktop/src/app.rs:5528-5537` | Same code path as D-072 and S-120. Covered by the two gate tests. |
+| I-104 | Enter on the focused **Reject** button keeps its native reject action. | `ui-approval/src/client/ApprovalPanel.tsx:51` | partial | `crates/epsilon-desktop/src/app.rs:2705-2713` | As D-073: the window answers the gate from a global unmodified-Enter read that runs before any widget, so Enter means "allow" wherever focus happens to be. Recorded as a divergence, not smoothed over. |
+| I-105 | Both buttons disable **synchronously** on press and re-enable only if the answer failed and the request is still answerable. | `ui-approval/src/client/ApprovalPanel.tsx:37-44` | partial | `crates/epsilon-desktop/src/app.rs:5528-5534` | As D-075: one press resolves the ask and consumes the key, so a double press cannot answer twice. The re-enable-on-failure half is not implemented. |
+| I-106 | With no reason supplied the headline falls back to **"Tool {toolName} requests privileged execution"**; the detail region is a focusable group. | `ui-approval/src/client/ApprovalPanel.tsx:74`, `:70-72` | partial | `crates/epsilon-desktop/src/app.rs:4364-4391` | The window shows the capability and the **whole request**, not the rule's pattern — `allow bash echo epsilon-ready?` rather than `allow bash echo?` — because `request.pattern` is the first whitespace token, which is what a *rule* matches on (`app.rs:4349-4351`; covered by `a_pending_permission_ask_is_drawn_once`, which asserts the second word appears). It also **refuses outright** to offer approval for an ask carrying a display-steering character, saying so in words rather than cleaning the string and asking the reader to agree to something not fully seen (`app.rs:4352-4359`, `:4263-4270`). |
+| I-107 | **A dropped responder resolves to deny.** No composed answerer, a throwing answerer and a rogue non-vocabulary return all normalise to `unavailable`; the `never` policy rejects before dispatch. | `packages/interaction/user-approval/src/index.ts:283`, `:291`, `:288`, `:275` | done | `crates/epsilon-safety/src/channel_ui.rs:120`, `:128` | The same resolution as **D-078**, and for the same reason: the writing pass had opened `crates/epsilon-desktop` only and would not infer a security row. The engine resolves a dropped responder to `Deny` and pins it with `dropped_ask_denies_fail_closed` (`channel_ui.rs:186-195`). |
+| I-108 | Choosing **Full access** or **Auto review** raises a `RiskConfirmation` whose confirm button is **disabled until an acknowledgement checkbox is ticked**. | `ui-primitives/src/RiskConfirmation.tsx:59`, `ui-permission-presets/src/client/PermissionSelect.tsx:132-136` | missing | — | As D-081: no permission presets and no risk confirmation. |
+| I-109 | Typing `/permission auto` **bypasses** the experimental confirmation. | `ui-permission-presets/README.md:83` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | There is no `/permission` to type. The window refuses it by name and says where it works, which is a cleaner answer than the reference's inconsistency — and is credited only for the refusal, not for a gate it does not have. |
+| I-110 | A pending question card **replaces the composer**, capped at `min(60vh, 520px)` with header and footer fixed. | `ui-user-questions/src/client/index.ts:382-393` | missing | — | No question card. |
+| I-111 | The **countdown is owned by the card object, not the widget** — closing and reopening the panel keeps it ticking. | `ui-user-questions/src/client/contract/slots.ts:211-213` | missing | — | As I-110. |
+| I-112 | Focusing anything inside the answer surface **pauses a pristine countdown**; the first mutation makes the wait indefinite. | `ui-user-questions/src/client/contract/slots.ts:464-482` | missing | — | As I-110. |
+| I-113 | At zero the card **rejects with `ASK_TIMED_OUT`** and *stays on screen* without a countdown. | `ui-user-questions/src/client/contract/slots.ts:499-509` | missing | — | As I-110. |
+| I-114 | **Close is not an answer.** A card keyed to a tool call sends nothing; an unnamed card rejects as `ASK_CANCELLED`. | `ui-user-questions/src/client/contract/slots.ts:287`, `:548-555` | missing | — | As I-110. |
+| I-115 | In the plan-review card `Request changes` sends no approval and there is **no refusal button**. | `ui-user-questions/src/client/PlanReviewPanel.tsx:74-79` | missing | — | No plan review. |
+| I-116 | **Enter on a focused option submits the batch without selecting that option**; an incomplete batch bounces to the first incomplete question. | `ui-user-questions/src/client/QuestionComposer.tsx:511-515` | missing | — | As I-110. |
+| I-117 | A first option labelled "… (Recommended)" starts checked and badged — but is still an unsubmitted draft. | `ui-user-questions/src/client/QuestionComposer.tsx:35-46` | missing | — | As I-110. |
+| I-118 | A settled call reopens **read-only marked `Answered`**: all controls disabled, Skip and submit removed. | `ui-user-questions/src/client/contract/slots.ts:237-243` | missing | — | As I-110. |
+| I-119 | Drafts persist per session and per request; a stored batch that no longer matches the question count is ignored whole. | `ui-user-questions/src/client/draft-store.ts:43-63` | missing | — | As I-110. |
+| I-120 | Deleting a task raises a modal whose body is **only the task title**. | `ui-schedule/src/client/TaskDetail.tsx:904-920` | missing | — | No schedule subsystem. |
+| I-121 | The delete confirmation puts focus on **Cancel, not Confirm deletion**. | `ui-schedule/src/client/TaskDetail.tsx:438-440`, `:913` vs `:914` | missing | — | No schedule subsystem. The evidence file calls this the most important data-loss row in the package and it is worth porting when there is one. |
+| I-122 | The session-header popover's Delete button has **no confirmation at all**, unlike the detail path. | `ui-schedule/src/client/ScheduleCatalogAction.tsx:181-183` | missing | — | No schedule subsystem. |
+| I-123 | Every deletion path reports into one app-wide banner, keyed by a monotonic sequence. | `ui-schedule/src/client/DeleteToast.tsx:58-62` | missing | — | No schedule subsystem, and no toast surface (P-145). |
+| I-124 | Confirming a delete closes the detail immediately but the row stays until an authoritative re-read removes it. | `ui-schedule/src/client/TaskDetail.tsx:686-692` | missing | — | No schedule subsystem. |
+| I-125 | An **Inactive (ended) task is fully read-only**. | `ui-schedule/src/client/TaskDetail.tsx:816-817` | missing | — | No schedule subsystem. |
+| I-126 | The save bar appears **only while the draft differs from the stored task**. | `ui-schedule/src/client/TaskDetail.tsx:896-902` | missing | — | No schedule subsystem. |
+| I-127 | Opening **Records** lazily requests the newest **20** saved records; the paging button appends and de-duplicates by `messageId`. | `ui-schedule/src/client/TaskDetail.tsx:872-880`, `ui-schedule/src/client/DeliveryHistory.tsx:85` | missing | — | No schedule subsystem. |
+| I-128 | The **Repeat** row is a menu of exactly **eight** entries. | `ui-schedule/src/client/TaskDetail.tsx:45-47`, `:1616-1640` | missing | — | No schedule subsystem. |
+| I-129 | An open Session shows an **icon-only clock button** among the header utilities only once it has something to open. | `ui-schedule/src/client/ScheduleCatalogAction.tsx:72-76` | missing | — | No schedule subsystem. |
+| I-130 | The session header grows a "N background job(s) running" button as soon as the session has at least one job, and it disappears when the last leaves. | `ui-jobs/src/client/JobListAction.tsx:460`, `:462-465` | missing | — | No background-jobs surface. |
+| I-131 | Stopping a running job needs **two presses**: the first arms the button, the second within 3,000 ms kills. | `ui-jobs/src/client/JobListAction.tsx:52-53`, `:441-458` | missing | — | No jobs surface. The pattern — a destructive control that cannot be fired by one reflexive click — is one this project would want; see D-081 and [Open rows](#open-rows). |
+| I-132 | Settled jobs fold under a "Finished {n}" heading collapsed while anything is live. | `ui-jobs/src/client/JobListAction.tsx:352`, `:535-553` | missing | — | No jobs surface. |
+| I-133 | The goal strip renders **nothing at all** while loading, while no goal is set, or once the goal is `complete`. | `ui-goal/src/client/GoalBar.tsx:86`, `ui-goal/src/client/index.ts:95` | partial | `crates/epsilon-desktop/src/app.rs:4652-4661` | No goal and no agent means no band: `draw_goal_band` returns on `self.goal.clone()?` before it draws anything (`app.rs:4661`), so the transcript gets the space back. Covered by `no_goal_draws_no_goal_band` and `an_agent_less_window_draws_without_a_goal_band`. Whether a **completed** goal also hides the band is not something this pass read in the goal view's contract, so the third state is unverified. |
+| I-134 | **Clear (trash) has no confirmation dialog** — it calls the mutation directly, and only hides the strip after the RPC succeeds. | `ui-goal/src/client/GoalBar.tsx:167`, `:80-83` | partial | `crates/epsilon-desktop/src/app.rs:1003`, `crates/epsilon-desktop/src/app.rs:1030`, `crates/epsilon-desktop/src/app.rs:4661` | The same shape as D-084, from the other side: `goal: clear` calls the mutation with no dialog, a refusal is announced rather than swallowed (`app.rs:1030`), and the band disappears because the cache no longer holds a goal. The evidence file flags this asymmetry as something to decide deliberately rather than copy silently; **this port currently agrees with the reference by default, not by decision**, and that is worth saying in [Deliberately different](#deliberately-different). |
+| I-135 | The composer shows a "Plan" chip only while plan mode is the *effective target*. | `ui-plan/src/client/PlanModeControl.tsx:32-34` | missing | — | No plan mode in this window. `/plan` is a head the parser knows and the window refuses by name. |
+| I-136 | Clicking the chip executes the literal command `/plan off`; a rejected command prints an inline failure line. | `ui-plan/src/client/PlanModeControl.tsx:36-49` | missing | — | As I-135. |
+| I-137 | The header shows a descendant-count trigger only when the direct catalog is loaded non-empty **or failed to load**. | `ui-subagent/src/client/SubagentHeaderLineage.tsx:599-604` | partial | `crates/epsilon-desktop/src/app.rs:3459-3473` | Subagents are counted and the pane names itself with the count (`app.rs:3468-3473`), and it reads `Agent::task_snapshots()` live rather than keeping a copy, so a child finishing is reflected on the next frame. There is no per-row trigger and no lineage view. Covered by `the_activity_bar_switches_the_sidebar_and_the_change_is_on_screen`. |
+| I-138 | Opening a subagent conversation **replaces the composer with a read-only notice** for a one-shot child. | `ui-subagent/src/client/index.ts:37-49` | missing | — | The window cannot open a subagent's conversation at all; it can see the subagent, not its transcript. |
+| I-139 | The "Edited N files" card only appears when the **Coding Tools** preference is on **and** the host still serves a non-empty summary. | `ui-deliverables/src/client/index.ts:70`, `ui-deliverables/src/client/Deliverables.tsx:79` | partial | `crates/epsilon-desktop/src/diff.rs:178-200`, `crates/epsilon-desktop/src/app.rs:5057-5077` | A changed file produces a row carrying its path and both counts, and the row is a real, named, roled link that opens the change for review. Nothing gates it: the surface is always on, and a call that changed no file produces **no** row rather than an empty one — covered by `a_tool_call_that_changes_nothing_produces_no_change_row`, whose stated reason is that a review pane full of "no changes" is a review pane nobody reads. |
+| I-140 | A changed-files list longer than **4 rows** folds behind an "All {N} files" control; a comparison stops at 5,000 lines. | `ui-deliverables/src/client/ChangedFiles.tsx:18`, `ui-deliverables/src/client/FileDiff.tsx:14` | missing | `crates/epsilon-desktop/src/session.rs:202-206` | No fold and no line cap. The change list is bounded at 200 entries, chosen against the transcript's own row cap (`session.rs:202-206`), which bounds the list but does not fold it. |
+| I-141 | The review tab offers split/unified, line-wrap and open-whole-file, **defaulting to split on and wrap off**. | `ui-deliverables/src/client/review-store.ts:60`, `ui-deliverables/src/client/ReviewTab.tsx:131-146` | partial | `crates/epsilon-desktop/src/app.rs:3858-3951` | There is a review view — the change's lines, each on its own line, in the editor pane, with the pane **named as a change under review rather than as a file** — but it is one presentation with no modes. Covered by `a_change_under_review_draws_its_lines_on_separate_lines` and `the_editor_pane_names_a_change_under_review_as_a_change`. |
+| I-142 | A file's native open / reveal fires on one click with no confirmation. | `ui-deliverables/src/client/present-open.ts:8-10`, `:136` | partial | `crates/epsilon-desktop/src/app.rs:4039-4058` | Clicking a changed row opens it for review in place, and clicking any file opens it read-only (`app.rs:4039-4044`; covered by `clicking_a_changed_row_opens_the_change_for_review`). What is missing is the *external* half — nothing here reveals a file in Explorer or Finder, so the reference's one irreversible host-affecting action has no counterpart. See U-013. |
+| I-143 | Like and Dislike **never record anything by themselves** — both open the dialog, which records only on Submit. | `ui-message-feedback/src/client/index.ts:98-113` | missing | — | No message feedback. |
+| I-144 | The feedback dialog warns that the submission includes the conversation log — but only as a **textarea placeholder**. | `ui-message-feedback/src/client/locales.ts:46`, `ui-message-feedback/src/client/FeedbackDialog.tsx:120` | missing | — | As I-143. The evidence file is right that this disclosure is fragile by construction; this port has no reason to reproduce it, and `AGENTS.md` §8 would argue for persistent copy if one were built. |
+| I-145 | There is **no Cancel button** in the feedback dialog footer; dismissal discards the typed draft with no confirmation. | `ui-message-feedback/src/client/FeedbackDialog.tsx:92-101`, `:90` | missing | — | As I-143. |
+| I-146 | Dragging a file anywhere over the page shows a **full-viewport drop invitation**. | `ui-attachment/src/client/drop-events.ts:51-56` | missing | — | No attachment intake. |
+| I-147 | The draft rail is one non-wrapping strip **64 px** tall that pans on vertical wheel. | `ui-attachment/src/AttachmentRail.module.css:27` | missing | — | As I-146. |
+| I-148 | A draft file card shows a determinate progress bar while uploading and becomes a retry button on failure. | `ui-attachment/src/client/FileCard.tsx:46-78` | missing | — | As I-146. |
+| I-149 | The composer's model menu shows a **search field only when the catalog holds more than 4 models**. | `ui-model-selection/src/client/ModelSelect.tsx:106` | missing | `crates/epsilon-desktop/src/app.rs:4067-4078` | No model picker in the window. The model is named from the launch and changing it means relaunching; `/model` is a head the window refuses by name (`commands.rs:449-451`). |
+| I-150 | Each session resolves one shared model directory; the catalog refreshes on adapter, settings and credential events. | `ui-model-selection/src/client/service.ts:50-57` | missing | `crates/epsilon-desktop/src/lib.rs:135-147` | No catalog in the window; model resolution happens once, before it opens, through the same resolver the CLI uses. |
+---
+
+## H. The reference's un-numbered cited rows
+
+The evidence file carries **two tables of cited rows that it did not number**
+(`audit/evidence/parity-dsh-desktop-reference.md` §4.3.1 and §4.5.1). They are reference rows
+like any other and are carried here. Ids `U-###` are **minted by this document**, because the
+reference evidence left them unnamed; they are numbered in the order the evidence file lists them
+and are stable from here. The evidence file records the total as "~35 un-numbered"; the two
+tables it actually contains hold **30** rows, and all 30 are carried.
+
+### H.1 The shipped slash-command set (`D-###` evidence §4.3.1)
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| U-001 | `/compact` is a host command with no input claim: it compacts older history. | `packages/compaction/command-compact/src/index.ts:101-106`, `ui-commands/src/client/resolution.ts:10` | done | `crates/epsilon-desktop/src/commands.rs:117-120`, `crates/epsilon-desktop/src/app.rs:2450-2470` | One of the seven heads the window answers. It spawns onto the runtime rather than awaiting on the paint thread, and reports back through a channel because the reducer folds neither compaction event — the reason is written at `app.rs:2442-2449`. Covered by `compact_from_the_typed_line_compacts_and_reports`, which holds a runtime context for the spawn and waits for the transcript to say `compact`. |
+| U-002 | `/plan` takes a leading input claim, hints `[off\|message]`, and **accepts attachments**. | `packages/plan/plan-mode/src/index.ts:230-234`, `ui-commands/src/client/resolution.ts:8` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | Refused by name: "`/plan` — not in this window; it works in the terminal". Covered by `every_command_head_the_window_lacks_is_refused_by_name`, which drives every refused head through the window and asserts both that it is refused and that the refusal names it. |
+| U-003 | `/goal` takes a leading input claim, hints `[<objective>\|clear\|edit <objective>\|pause\|resume]`, and accepts attachments. | `packages/goal/command-goal/src/index.ts:191-195`, `ui-commands/src/client/resolution.ts:7` | partial | `crates/epsilon-desktop/src/commands.rs:198-261` | `/goal` is one of the seven heads the window answers, and its argument is parsed by `epsilon_runtime::goal_command` — **not** by a second parser in this crate, which is the point of `AGENTS.md` §2.1 (`commands.rs:194-197`). The verbs the window actually drives from its own palette are create, pause, resume and clear (`app.rs:833-836`). Attachments are missing (C-136), and `/goal edit gate`, `/goal blocked` and `/goal complete` are reachable by typing but not by palette. Covered by `a_gate_declared_by_typing_it_lands_on_the_goal_band`, `a_malformed_goal_verb_says_why_instead_of_doing_something`, `creating_a_goal_from_the_window_uses_the_typed_objective` and `creating_a_goal_with_no_objective_refuses_in_words`. |
+| U-004 | `/feedback` is a host command with a client dialog decoration. | `packages/feedback/command-feedback/src/index.ts:119-126`, `ui-message-feedback/src/client/index.ts:135-141` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | Refused by name; no feedback surface exists (I-143 to I-145). |
+| U-005 | `/permission` is a host command with a client popup decoration; bare `/permission` opens the preset picker. | `packages/interaction/permission-presets/src/index.ts:256-260`, `ui-permission-presets/src/client/index.ts:176-191` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | Refused by name; no permission presets (D-080). |
+| U-006 | `/export` downloads the session log as a ZIP; supplying a path is an error. | `packages/session-query/session-log-export/src/index.ts:79-86`, `ui-commands/src/client/resolution.ts:12` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | Refused by name; no export surface. |
+| U-007 | `/model` is a client contribution with no host descriptor at all. | `ui-model-selection/src/client/index.ts:129-164` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | Refused by name; no model picker (I-149). |
+| U-008 | `/file` is a client action that opens the OS file picker and submits nothing. | `ui-conversation/src/client/apply.ts:273-279` | missing | `crates/epsilon-desktop/src/commands.rs:185`, `:449-451` | Refused by name. |
+
+### H.2 Agent presets, open-in-app, skills, workflow, file upload, directory picker (evidence §4.5.1)
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| U-009 | The preset chip lives on the **new-session screen, not the composer**, because the host refuses to swap a session's tools once a turn has run. | `ui-agent-preset/src/client/AgentPresetSeat.tsx:5-9`, `:140` | missing | — | No agent presets. The placement rule is worth keeping in mind when they arrive: the reference moved the chip for a reason this window would hit the same way. |
+| U-010 | A refused preset switch raises a warning Toast held **8 000 ms**, keyed by a sequence. | `ui-agent-preset/src/client/AgentPresetSeat.tsx:58`, `:205-217` | missing | — | As U-009. |
+| U-011 | With Coding Tools off the menu hides exactly two presets. | `ui-agent-preset/src/client/AgentPresetSeat.tsx:105-108` | missing | — | As U-009. |
+| U-012 | The one-shot "introduce" cue is skipped entirely under `prefers-reduced-motion: reduce`. | `ui-agent-preset/src/client/AgentPresetSeat.tsx:127`, `:52-55` | deliberately different | — | No cue, no animation (S-165). Reduced motion is honoured here by the absence of any motion. |
+| U-013 | The shared split button's primary action is the host's default application; reveal is always last. | `ui-open-in-app/src/client/OpenTargetButton.tsx:90-95`, `:101-102` | missing | `crates/epsilon-desktop/src/app.rs:4039-4058` | The window opens a file **inside itself**, read-only, and says so (`app.rs:3858`, `:3920`). It never hands a path to another application — no editor, no Explorer, no Finder. That is the whole of "open in an external app" here, and it is absent. |
+| U-014 | **30** application names are recognised with fixed product labels. | `ui-open-in-app/src/client/locales.ts:7-38`, `:74-77` | missing | — | As U-013. |
+| U-015 | If the host cannot be reached, desktop availability reads as *no desktop* and the preview renders **no path control at all**. | `ui-open-in-app/src/client/open-path.ts:3`, `:90-93` | missing | — | As U-013. |
+| U-016 | File associations are **shared and reference-counted** across every mounted control. | `ui-open-in-app/src/client/file-applications.ts:22-54` | missing | — | As U-013. |
+| U-017 | The `skill` tool row is a compact disclosure with an expandable body and an "Inspect" button, and announces its state in a visually-hidden status string. | `ui-skill/src/client/SkillRow.tsx:102-111`, `:113-135` | partial | `crates/epsilon-desktop/src/session.rs:96-120`, `crates/epsilon-desktop/src/app.rs:4943-4956` | A skill invocation arrives as an ordinary tool row: named, marked from its own kind, with the outcome in the accessible name rather than only in colour (`app.rs:4943-4956`, `:4857-4868`; covered by `a_tool_row_names_its_tool_and_marks_it_with_a_drawable_glyph`). There is no skill-specific disclosure, body or inspect button. |
+| U-018 | An interrupted skill shows "Skill load stopped" and a failed one shows the **first physical line** of the error. | `ui-skill/src/client/SkillRow.tsx:61-65`, `:70` | missing | — | No skill-specific summary. Tool output is shown as it streamed, bounded to 40 lines (`session.rs:67`). |
+| U-019 | The workflow run panel is **read-only** — a run disclosure over per-phase disclosures, with **no stop, cancel or retry control anywhere**. | `ui-workflow-run/src/client/WorkflowRunPanel.tsx:203-219` | missing | — | No workflow run panel. |
+| U-020 | A member row is navigable only while the member is running and its child session is live. | `ui-workflow-run/src/client/WorkflowRunPanel.tsx:183-201` | missing | — | As U-019. |
+| U-021 | A phase summary prints only **active** statuses and falls back to the completed count alone. | `ui-workflow-run/src/client/WorkflowRunPanel.tsx:170-181` | missing | — | As U-019. |
+| U-022 | The upload route admits **only** `POST` + `application/octet-stream`. | `packages/client/file-upload/src/http-route.ts:23`, `:27`, `:32` | deliberately different | — | There is no upload route and no HTTP surface in this window: it is a native application holding an agent in its own process (`AGENTS.md` §2.3, §2.1). The evidence file also records that the route has **no size limit and no MIME allow-list**, which is a useful thing to know before anyone copies the shape. |
+| U-023 | Business failures come back as **HTTP 200** with a structured error body. | `packages/client/file-upload/src/http-route.ts:47-66` | deliberately different | — | As U-022: no wire. |
+| U-024 | An upload addressed to a subagent conversation is refused **before any byte is stored**. | `packages/client/file-upload/src/index.ts:222-230`, `:180`, `:248-254` | deliberately different | — | As U-022. |
+| U-025 | Progress differs by carrier; uploads are **never resumable**. | `packages/client/file-upload/src/client/runtime.ts:91-97` | deliberately different | — | As U-022. |
+| U-026 | The native picker is chosen by the **presence** of a global, not by a platform string check. | `ui-directory-picker-native/src/client/index.ts:21-24`, `src/client/flow.ts:27` | missing | `crates/epsilon-desktop/src/lib.rs:81` | No picker exists in this window; the workspace arrives as a launch argument. See D-046. |
+| U-027 | A settlement that lands after the flow unmounted is discarded entirely; there is **no per-request abort**. | `ui-directory-picker-browse/src/client/flow.ts:39-45` | missing | — | As U-026. |
+| U-028 | A `Show hidden files` footer toggle reveals dot-hidden entries **client-side only** and resets on every open; `New folder` sends the name **untrimmed**. | `ui-directory-picker-browse/src/client/DirectoryBrowser.tsx:292`, `:582`, `:201-218` | missing | — | As U-026. |
+| U-029 | Browse failures stay **inside** the dialog: `role="alert"`, a truncation line, and a `Loading…` pill after 300 ms. | `ui-directory-picker-browse/src/client/DirectoryBrowser.tsx:75-82`, `:960-961` | missing | — | As U-026. |
+| U-030 | The inline path editor is seeded with a **trailing separator**, follows typing on a 250 ms debounce and prefix-filters the last pane. | `ui-directory-picker-browse/src/client/DirectoryBrowser.tsx:845-876` | missing | — | As U-026. |
+---
+
+## Deliberately different
+
+For this port this category is large, and it deserves an argument rather than a tag on each row.
+The rows are listed by group below with the reason each group is a decision rather than a gap.
+
+### Group 1 — The reference has a browser and this window does not
+
+**Rows:** D-002, D-003, D-004, D-005, D-006, D-010, D-011, D-015, D-016, D-023, D-048, D-049,
+D-050, D-051, D-065, D-067, C-152, C-153, C-170, C-174, L-138, P-127, S-135, S-154, U-022,
+U-023, U-024, U-025.
+
+DSH Desktop is an Electron shell around a Chromium-rendered web application whose user interface
+lives in roughly sixty client packages. A great deal of its row count is therefore about a
+capability a browser has and a native window does not: sandbox flags, navigation handlers, window
+openers, `<webview>` guests, CSS containment, browser find-in-page, an in-app origin that can be
+navigated away from.
+
+Epsilon is one native binary — egui/eframe over winit and wgpu, rendered natively — and
+[`AGENTS.md`](../../AGENTS.md) §2.3 forbids a webview, an embedded browser, or "render the web
+frontend in a window". That is not a deferral. A window that embedded a browser engine would be
+the web application with a native border, which is a different product with a different
+distribution story: the reference ships an Electron runtime, a sixty-package web client and an
+installer; this ships a binary with no runtime to install and nothing to download.
+
+So for these rows the honest answer is that the concern cannot arise, not that the feature is
+unbuilt. D-004's sandbox flags have nothing to sandbox. C-153's `overflow-y: clip` has no
+stylesheet to apply it to. U-022's upload route describes an HTTP surface this window does not
+expose. Each of those rows would be dishonest if marked `missing`, because `missing` means "we
+have not built it yet", and nobody is going to.
+
+### Group 2 — There is no second process, so there is no second process's lifecycle
+
+**Rows:** D-023. The neighbouring rows this group also touches — D-024 to D-036, S-130,
+P-142, P-143, P-144 — are **`missing`**, not differences, and the text below says why.
+
+DSH Desktop runs two processes: the Electron shell and a private Node-mode host
+(`apps/desktop-host/package.json:3`) that owns the profile, the session and the agent loop. That
+split is why the reference has a tray icon, a hide-on-close rule, a first-hide confirmation, a
+single-instance lock, a quit inspection that asks the host what it would interrupt, and a
+connection indicator with a retry backoff.
+
+This window runs one. The agent runtime is built inside `run` and owned by the `IdeSession` in this
+process (`crates/epsilon-desktop/src/lib.rs:125-147`). There is no host to disconnect from, so
+there is nothing for a connection pill to report; no host to interrogate before quitting, so there
+is nothing for the quit confirmation to ask; no second launcher, so there is nothing for a
+single-instance lock to arbitrate.
+
+**This is the group where "deliberately different" is doing less work than it looks, and the
+matrix should say so.** The reference's quit rules are a genuine improvement on closing a window
+mid-turn, and nothing about a single-process design makes them unnecessary — it only makes them
+ours to build instead of inherited. D-031 to D-036 are therefore recorded as `missing`, not as
+differences, and they appear at the top of [Open rows](#open-rows). The tray and the connection
+indicator are genuinely moot.
+
+### Group 3 — The window's own keyboard and overlay model
+
+**Rows:** P-101, P-114, P-138, C-140, S-118, S-127, L-110, P-154.
+
+DSH Desktop offers six command surfaces: the slash menu, the popup-select panel, the `@` quick-open
+menu, the composer `+` menu, the application menu and the caption menu. This window has one
+overlay, the palette on `Ctrl+P`, and it carries files and commands together.
+
+The reason is a difference in what there is to carry. The window answers **7 of 37** command
+heads and refuses the other 30 by name
+(`crates/epsilon-desktop/src/commands.rs:449`, `:410`). A grouped popup menu over seven verbs,
+with claims and popup-select modes and localized spellings, would be more machinery than the
+verbs justify — and the property the reference is protecting is preserved in a stronger form: a
+slash line is *never* downgraded to a plain prompt, and an unbuilt command is **refused by name
+and says where it lives** rather than swallowed (`commands.rs:296-301`). That is row P-104, and
+it is `done`.
+
+Similarly, the reference stops a turn with two Escapes inside a 500 ms window, which exists to
+avoid stopping a turn by accident while also protecting queued messages. This window has no
+queue — a second send during a turn is refused in words — so one Escape is the whole rule, and it
+is the rule its own hint prints.
+
+### Group 4 — Presentation decisions where the reference's answer is worse for a native window
+
+**Rows:** L-106, L-107, L-115, C-127, S-165, U-012. **Related, and recorded as `partial` rather
+than as a decision:** D-084 and I-134, below.
+
+Four of these are places where the port did not copy the reference and should say why in the
+matrix rather than let the difference look like an omission.
+
+- **L-106 — panel geometry persists.** The reference forgets the sidebar width on close and
+  remembers the right panel's. This window remembers one sidebar width and visibility, per
+  workspace, and writes it at the end of a gesture rather than during it. A monorepo wants a wide
+  sidebar and a dotfiles repository does not; a reader who had to re-drag the sidebar in every
+  repository is a reader who stops trusting the window to remember anything
+  (`crates/epsilon-desktop/src/layout.rs:145-159`).
+- **C-127 — tool output is capped at 40 lines.** The reference leaves terminal output uncapped in
+  a chat row while capping read and search cards at 8 and diffs at 9. Here a row's output is a
+  delta-streamed tail, and an unbounded one would grow a row nobody can scroll in a view that is
+  itself capped. The number is the terminal frontend's, deliberately: one number, two front ends,
+  rather than two that drift (`crates/epsilon-desktop/src/session.rs:61-80`).
+- **L-110 and S-165, U-012 — no animation at all.** The reference crossfades the sidebar over
+  150 ms and asks the browser to stop its spinners under reduced motion. This window has no
+  transition to suppress, so reduced motion is honoured by construction rather than by a media
+  query. The rows are `missing` or `deliberately different` honestly; if animation is ever added,
+  the obligation arrives with it.
+- **D-084 and I-134 — the goal Clear action has no confirmation.** The evidence file is right that
+  this is an asymmetry worth a deliberate decision: every delete in the reference's schedule asks
+  first, and the goal strip's Clear does not. **This port currently agrees with the reference by
+  default rather than by decision**, and the row says so. `AGENTS.md` §6 would argue the other
+  way. It is written down here so that it becomes a decision instead of an inherited accident.
+
+---
+
+## Open rows
+
+Every row that is not `done` and not `deliberately different`, by id. **This is the most-read part
+of the document**, so it lists ids rather than paraphrasing cells — the cell is the authority.
+
+### Partial — code exists, and this is what is not exercised
+
+| area | partial rows |
+|---|---|
+| Electron shell | D-001, D-021, D-030, D-045, D-058, D-061, D-062, D-064, D-066 |
+| Approvals and presets | D-073, D-074, D-075, D-076, D-083, D-084 |
+| Transcript and tool cards | C-107, C-109, C-120, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
+| Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-159, S-164 |
+| Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
+| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164, L-165 |
+| Approvals through models | I-101, I-104, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142 |
+| Un-numbered reference rows | U-003, U-017 |
+
+**The four partials worth acting on first**, because each is a place where a reader could be misled
+rather than merely underserved:
+
+- **D-073 / I-104 — Enter means "allow" wherever focus is.** The window answers the permission
+  gate from a global unmodified-Enter read that runs before any widget, so Enter aimed at the
+  **Refuse** button still allows. The reference's whole row exists to prevent exactly that. The
+  two outcomes are right and the disambiguation is wrong.
+- **P-133 — a held Enter, now closed.** It was the second bullet here while the row was `partial`
+  and the question was open. It is `done`: the window adds no `repeat` guard, so the question was
+  whether a repeat can send twice, and it cannot — `send_draft` returns early on a running session
+  and on an empty draft, and a successful send clears the draft, so the second repeat finds
+  nothing to send. The residual is cosmetic: a held Enter repeats a sentence, not a turn.
+- **C-123 — the editor starts at line 1.** A `read` row's offset landing is deliberately not
+  implemented; the in-crate test names the current behaviour. It should be read as a recorded
+  decision with a cost, not as a parity row that happens to be half done.
+- **L-132 — the tree survives a view switch by construction.** The property holds because the
+  value is only replaced by `tree.reload` or at construction, and nothing pins it. A green matrix
+  should not depend on a reader noticing that.
+
+### Missing — nothing here yet
+
+| area | missing rows |
+|---|---|
+| Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-031, D-032, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
+| Approvals and presets | D-077, D-079, D-080, D-081, D-082 |
+| Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-110, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
+| Keyboard and settings | S-101, S-102, S-103, S-104, S-105, S-106, S-107, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-126, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
+| Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
+| Layout and panes | L-104, L-109, L-111, L-112, L-113, L-114, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
+| Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-149, I-150 |
+| Un-numbered reference rows | U-002, U-004, U-005, U-006, U-007, U-008, U-009, U-010, U-011, U-013, U-014, U-015, U-016, U-018, U-019, U-020, U-021, U-026, U-027, U-028, U-029, U-030 |
+
+### The five highest-priority missing rows
+
+**Two entries have left this list since it was first written, and one has moved down.** D-078 and
+I-107 — the approval channel failing closed — were first here and are now `done`: the integrator
+opened `crates/epsilon-safety` after this pass and found the rule stronger than the reference's,
+pinned by `dropped_ask_denies_fail_closed`
+(`crates/epsilon-safety/src/channel_ui.rs:186-195`). The writing pass had refused to infer a
+security property from "the window does not contradict it", and that refusal is what sent the row
+to the engine to be checked rather than quietly marked `done`. Then the keybinding registry, which
+was first here, was largely closed by M315 — it is now **second**, and the reason is below.
+
+1. **D-031 to D-036 — quitting with work in flight.** Closing the window while a turn is running
+   ends the process. The reference asks what would be interrupted, treats an unknown answer as
+   "running tasks", defaults to the safe choice and makes Cancel the focused button. The durable
+   session file means little is lost, but a reader who has not pressed `/clear` and does not know
+   that is not protected. **This moved to first** when the registry below it was mostly closed:
+   it is the one remaining gap here that touches `AGENTS.md` §6's "never lose a user's work", and
+   it is wholly `missing` rather than half done.
+2. **The keybinding registry, now two rows short of closed — the recorder and the write half.**
+   [`AGENTS.md`](../../AGENTS.md) §2.4 says slash commands, palette entries **and keybindings** are
+   "declared once and read by every front end, with per-front-end capability declared as data".
+   The mechanism is now in place and shared: `crates/epsilon-contracts/src/keybind.rs` holds the
+   grammar, the window reads the same `keybindings.json` the terminal reads, and a conflict check
+   that the reference performs at save time is a **test** here
+   (`no_chord_is_bound_to_two_ids_in_the_terminal_table`). **What is left is the two surfaces.**
+   *The recorder* — S-122, with S-123, S-124 and S-126 following from it: a user can hand-write a
+   binding into a file but cannot record one with a keystroke, cannot be told two commands want
+   the same chord, and has nothing to restore. S-122 is the largest single missing surface left.
+   *The write half* — S-125: nothing writes the file, so it is neither atomic nor `0600` because
+   nothing writes it, and a binding set in a UI would not survive a restart. D-063 follows from
+   the recorder: with no chords being captured there are no two-key chords whose press and release
+   would need the reference's split treatment. Everything in this entry is `missing` or, for
+   S-125, `partial`; none of it is the mechanism, which exists.
+3. **D-046 and S-105 — adding a workspace from inside the window.** A window is launched with a
+   workspace and has no way to change or add one. Every related row (L-120, L-127, U-026 to U-030,
+   S-103) is downstream of this one.
+4. **D-080 to D-082 — privilege-raising actions without a risk gate.** The
+   window has no permission presets, so there is nothing to gate today. The moment a
+   privilege-raising control lands, `AGENTS.md` §6 and the reference's `RiskConfirmation` shape
+   both demand that it cannot be taken by a reflexive Enter. The same applies to any destructive
+   action, which is the pattern behind I-121 and I-131.
+5. **S-103, S-106 to S-108 — no session-management verbs in the window.** A reader cannot start a
+   new session, rename, fork or archive one from here; every one of those heads is refused by name
+   (`commands.rs:446-451`, which says why `/new` in particular is not mapped onto the nearest thing
+   that exists). The sessions pane can *resume* a stored session (`app.rs:3679-3697`) and nothing
+   else, so the window is a reader of sessions rather than an editor of them.
+
+---
+
+## Not inventoried
+
+Carried from the reference evidence file's §6 "Not yet inventoried", unchanged in substance, so
+that a gap in *this* matrix is never confused with a gap in the inventory the matrix was built
+from. **A row absent from this document is not a row that was found and dismissed.**
+
+### From `apps/desktop/**`
+
+- `apps/desktop/scripts/**` — the entire packaging, signing, notarisation, installer and
+  local-updater-qualification toolchain (30+ scripts). Build infrastructure, not UI.
+- `apps/desktop/installer/**` — the NSIS installer UI. User-visible on first install only.
+- `apps/desktop/src/`: `update-coordinator.ts`, `update-dialog.ts`, `mandatory-update-window.ts`,
+  `mandatory-update-overlay.ts`, `mandatory-update-policy.ts`, `browser-guests.ts`,
+  `preload-browser.ts`, `preload-windows.ts`, `preload-platform*.ts`, `crash-report.ts`,
+  `project-manager.ts`, `host-process.ts`, `backend-controller.ts`, `runtime-tree.ts`,
+  `web-document.ts`, `locale.ts` (21 KB dictionary), `command-installation.ts`, `ipc.ts`.
+- `apps/desktop/tests/**` — roughly 40 spec files and the verification record.
+
+### From the shared client
+
+- **`ui-sidebar-documentpreview`** — the largest gap: the Excel subtree, the HTML Blob-iframe
+  sandboxing limits, the Office LRU cache and PDF page sequencing. Only its configuration constants
+  and README claims are cited.
+- **`ui-sidebar-browser`** — the Electron `<webview>` carrier: `BrowserController.ts`,
+  `BrowserPage.ts`, `store.ts`, `ElectronWebViewImpl.ts`, `ElectronWebviewPresentation.ts`,
+  `pages.ts`, `workspace.ts`, `IframePresentation.ts`, `types.ts`. The native history, retained
+  pages, per-workspace storage partitions and popup policy of that carrier are not inventoried —
+  which is part of why L-138 to L-142 here are thinner than the subject deserves.
+- **`ui-sidebar-right` and `ui-dockkit`** — `focus.ts`, `tab-domain.ts`, `tab-info.ts`,
+  `tab-inventory.ts`, `session-view(s).ts`, `contract/slots.ts`, `RightbarRoot.tsx`,
+  `GuideTitle.tsx`; and `engine/{operations,planner,tree,controller,initial}.ts`,
+  `components/{PaneTree,TabMenu,TabTitle,DockSurface,pointer,render,measure}.tsx|ts`,
+  `dockkit.module.css`.
+- **`ui-workspace`** — parts of `WorkspaceBrowser.tsx` and `Rows.tsx`, plus `AnimatedRows.tsx`,
+  `WorkspacePicker.tsx`, `contract/slots.ts`, `locales.ts`, `RenameSession.tsx`,
+  `ForkSession.tsx`, `derived.ts`, `pin-order.ts`. **The directory-picking flow, the rename
+  dialog's prefill rule and the AnimatedRows animation are not inventoried.**
+- **`ui-chat`, `ui-conversation`, `ui-trajectory`, `ui-tool` internals** — the
+  `conversation-nodes/` builders, `ContextBody.tsx`, `use-chat-viewport.ts`, `input/facade.ts`,
+  `conversation/assembler.ts`, `location-index.ts`, `locales.ts` (35 KB, ~60 keys read),
+  `TrajectoryTable.tsx` (133 KB — constants, tab selection and dispatch only), `layout.ts`, and
+  several `models/*.ts` files.
+- **`ui-primitives`** — every component except `Toast`, `Modal`, `RiskConfirmation`,
+  `ConnectionIndicator`, `StateDot`, `focus.ts`, `useModalLayer.ts`, `rank-by-name.ts` and a
+  grepped `Menu.tsx`; plus `src/markdown/**` and `src/settings-form/**`.
+- **`shortcuts` and `ui-theme`** — the DOM and Electron dispatch adapters, conflict reporting, the
+  IPC surface and every test file in `shortcuts`; `ui-theme/src/styles/*.css` other than
+  `focus.css`, `boot-theme.ts`, `client/styles.ts`.
+- **Other** — `locale/src/client/index.ts` lines 1-519 and the `en`/`zh`/`common` locale files;
+  `connection/src/**` beyond `client/connection.ts` and `recovery-config.ts`, with the auth surface
+  unread; `store/src/index.ts` beyond lines 55-134; the whole `ui-renderer` React binding layer;
+  `ui-slots/src/{renderer,store}.ts`; and every `README.zh.md` and `README.i18n.yaml`.
+
+### Not determined in the reference
+
+- Whether any Tauri or wry dependency exists — **not found**.
+- The product renderer's UI framework identity beyond React.
+- A user-facing **feature catalogue** for DSH Desktop — **not found**; `docs/user/guide/` covers
+  Web only.
+- An **accessibility conformance statement** — **not found**. No ARIA audit, no screen-reader
+  walkthrough, no contrast table. This is why no row in this document is a WCAG claim about the
+  reference.
+- The Linux desktop shell's tray behaviour — **not determined**; the tray is constructed only under
+  `process.platform === 'win32'`.
+- The `desktop-host` quit-inspection deadline — stated in the README, not read in code.
+
+---
+
+## What this document does not claim
+
+- **It is not a diff of the source**, and does not compare implementations line by line.
+- **It is not a quality ranking.** Where our behaviour is better — the by-name refusal, the
+  display-steering refusal on the permission prompt, persisting the sidebar width, bounding tool
+  output, naming an activity-bar button for a screen reader — the row still says `partial` or
+  `done`, and the note says why we diverge. Neither product is being scored.
+- **It is not current.** It was written by reading the two trees, not by running the reference.
+  Anything about the reference that this pass did not open is in "Not inventoried" above.
+- **It contains no claim about the reference's accessibility conformance.** The evidence file
+  records that none exists to claim.
+- **A `missing` is not always "we did not get to it."** Some are that. The ones that are not are
+  marked `deliberately different` and argued above, which is the only difference between the two
+  things this document is allowed to say.
+
+## Reproducing the claims
+
+Every `verified` cell names a test in
+[`crates/epsilon-desktop/tests/window.rs`](../../crates/epsilon-desktop/tests/window.rs) or an
+in-crate frame test, or a key sequence a person can press. The 49 end-to-end tests in
+`tests/window.rs` compose a real agent through `epsilon_runtime::resolve_launch`, attach the real
+bridge, submit a real turn to the offline scripted provider, pump real frames and assert on
+`FrameSummary` — never on state alone. `tests/frame_cost.rs` covers frame cost, the accessibility
+tree the window publishes, and where transcript milliseconds go.
+
+Run them with:
+
+```sh
+cargo test -p epsilon-desktop
+```
+
+Nothing in this document was produced by running that command during this pass; it was produced by
+reading the source named in each cell. The counts in the summary table were measured from the
+tables below it, not estimated.

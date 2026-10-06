@@ -1,0 +1,925 @@
+# Pi interactive terminal mode — parity matrix
+
+## What this document compares
+
+**The reference.** [Pi](https://github.com/earendil-works/pi) is an agent harness; `@earendil-works/pi-coding-agent`
+is its interactive coding-agent CLI, and `@earendil-works/pi-tui` is the terminal widget layer it draws with. This
+matrix covers **Pi 1.0.0**'s interactive terminal mode — the screen a person gets when they run `pi` and talk to it
+— read from the vendored tree at [`../../references/pi-1.0.0/`](../../references/). Pi's own LICENSE states
+**MIT License, Copyright (c) 2025 Mario Zechner**. Epsilon began as a port of Pi; nothing was copied. Behaviour and
+structure were reimplemented, and [`../references/README.md`](../references/README.md) records why.
+
+**Our side.** `crates/epsilon-tui` (ratatui + crossterm) and `crates/epsilon-cli`, reading the one command registry
+in `crates/epsilon-contracts/src/command.rs`.
+
+**This is a comparison of behaviour, not of pixels.** A row asks *does the same thing happen, in the same way, at
+the same moment*. Two programs that both have a footer are not the same; two programs whose footers answer different
+questions are not different either, if each answers its own program's question well. Where a row says `missing`, it
+means nobody has established the behaviour on our side — not that the design argues against it. Where a row says
+`deliberately different`, it means the two designs answer to different goals and the difference is written down
+rather than left to whichever front end you happen to open.
+
+### The row shape
+
+| Column | What it holds |
+|---|---|
+| **id** | `P-###` for Pi (P-001 … P-323), `L-###` for Pi's inherited `tui.*` keybinding table, `T-###` for Pi's text-measurement core. Ids are stable and never reused. |
+| **behaviour** | One sentence, as a person at the terminal would notice it. |
+| **reference** | A `path:line` into [`../../references/pi-1.0.0/`](../../references/), copied from the reference evidence row. Paths are relative to that directory. |
+| **status** | `done`, `partial`, `missing`, `deliberately different`. |
+| **ours** | A `path:line` into `crates/`, copied from the `E-###` row that establishes the same behaviour, or an honest statement that none does. |
+| **verified** | The test in the tree that pins it, or the screen a reader can look at. |
+
+### How `done` is decided
+
+**`done` means exercised, not written** ([`../../AGENTS.md`](../../AGENTS.md) §5). A row is `done` only where an
+`E-###` row names a test that exists in the tree and pins that behaviour; for behaviour a person *sees*, the test
+must drive the production draw path and read the frame back. Concretely:
+
+- **`done`** — the paired `E-` row names a test that pins the behaviour (a `frame` test wherever the behaviour is
+  visual).
+- **`partial`** — an `E-` row covers it but does not finish it: the `E-` row records `Test: **none found**`, or the
+  test asserts on state only while the behaviour is visual, or only one half of Pi's row is implemented. The reason
+  is always in the row.
+- **`missing`** — no `E-` row establishes the behaviour. **This is not a hunt through `crates/`.** Where a binding
+  id or a file exists but no `E-` row establishes the behaviour, the row says so and names the id — that is a gap in
+  the inventory, not a claim that nothing is there.
+- **`deliberately different`** — the two designs differ on purpose, and both sides carry a citation.
+
+An `E-` row that says `Test: **none found**` can never make a matrix row `done`.
+
+### Where the evidence lives
+
+| File | What it is |
+|---|---|
+| [`../../audit/evidence/parity-pi-tui-reference.md`](../../audit/evidence/parity-pi-tui-reference.md) | Pi read from source: 356 rows — 323 `P-`, 4 `L-`, 12 `T-`, 10 `Y-` (out of scope), 7 `AA-` (not inventoried) — 613 machine-validated citations. |
+| [`../../audit/evidence/parity-epsilon-tui.md`](../../audit/evidence/parity-epsilon-tui.md) | Epsilon read from source: 110 rows `E-001` … `E-110`, plus the command tables, the 24 binding ids and the open findings. 697 citations. |
+
+Both inventories were re-derived from source rather than transcribed from a summary, and neither reports a green
+test run — the integrator owns the build. A `frame` label there means the test drives `draw` and reads the screen
+back; it is a reading of the test's source, not a report of a run.
+
+**Reference sources are vendored read-only. Never edit, move or delete anything under
+[`../../references/`](../../references/).**
+
+## Summary by area
+
+**339 rows** are paired here: Pi's 323 `P-###` behaviours, the 4 `L-###` rows of its inherited `tui.*` keybinding
+table, and the 12 `T-###` rows of its text-measurement core. Every one carries a reference citation; 320 of them
+carry an `ours` citation and 19 do not, and those 19 say so. The counts below are the rows **actually written in
+this document**, tallied from its own tables — not a projection.
+
+| area | rows | done | partial | missing | deliberately different |
+|---|---|---|---|---|---|
+| 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
+| 2. Layout and renderer | 10 | 2 | 2 | 5 | 1 |
+| 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
+| 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
+| 5. Transcript and streaming | 35 | 7 | 5 | 23 | 0 |
+| 6. Model picker and thinking | 9 | 0 | 2 | 7 | 0 |
+| 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
+| 8. Sessions | 17 | 1 | 9 | 7 | 0 |
+| 9. Themes | 18 | 0 | 6 | 8 | 4 |
+| 10. Settings | 22 | 1 | 9 | 11 | 1 |
+| 11. Project trust | 4 | 1 | 2 | 0 | 1 |
+| 12. Tool cards | 16 | 2 | 7 | 6 | 1 |
+| 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
+| 14. Diffs | 6 | 3 | 1 | 2 | 0 |
+| 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
+| 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
+| 17. Footer | 12 | 3 | 4 | 3 | 2 |
+| 18. Selector and overlay components | 79 | 7 | 25 | 41 | 6 |
+| **Total** | **339** | **39** | **121** | **161** | **18** |
+
+A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
+scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
+of this document, because a row that is silently dropped is how a rule goes unowned.
+
+The shape of that table is the honest shape of a port from a 356-row inventory to a 110-row one: **161 rows have no
+counterpart established on our side, 121 are half-built, 39 are exercised, and 18 are decisions.** The 161 are not
+39/339 failures; most of them sit in Pi's extension, settings-overlay, mermaid, image and tree-navigation surface,
+much of which Epsilon deliberately does not have. Read [Open rows](#open-rows) before reading the table.
+
+## The deliberate differences
+
+Three classes of divergence are decisions, not gaps. They are called out here so nobody reads the rest of this
+document and concludes that Epsilon fell short in three places.
+
+### 1. Pi has no permission system; Epsilon has one, and gates every side-effecting call
+
+Pi's own README says so in its own words — *"Pi does not include a built-in permission system for restricting
+filesystem, process, network, or credential access"* — and documents containerisation or an extension-provided
+sandbox as the remedy (`references/pi-1.0.0/README.md:42`, `references/pi-1.0.0/README.md:44-48`). That is a
+deliberate boundary: Pi is a harness you contain, not a harness that contains itself.
+
+Epsilon answers the same problem from the other end. Every side-effecting tool call passes a permission gate, an
+unknown capability is `Ask` rather than `Allow`, a deny rule is evaluated **before** the session's "always allow"
+memory so a policy can tighten mid-run, and a dropped responder resolves to deny so a UI that disappears cannot
+leave work hanging (`crates/epsilon-safety/src/gate.rs:85`, `crates/epsilon-safety/src/channel_ui.rs:128`). The ask
+arrives as a modal painted over everything, names the capability and one summarised "what" line, and is the only
+dialog that can answer keys (`crates/epsilon-tui/src/app/event.rs:281`, `crates/epsilon-tui/src/app/panels.rs:835`,
+`crates/epsilon-tui/src/app/keys.rs:550`).
+
+This is a capability Epsilon adds, not a gap in one. The single trust gate Pi does have — *project* trust, which
+decides whether `.pi` resources load at all — is covered separately below.
+
+### 2. Pi carries some state by colour alone; Epsilon never does
+
+A tool card's state in Pi is a background: pending while partial, red on error, green once settled, with **no
+glyph and no word** distinguishing them (`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/tool-execution.ts:307`).
+The footer's context-pressure indicator is likewise colour alone — error above 90%, warning above 70%
+(`references/pi-1.0.0/packages/coding-agent/src/modes/interactive/components/footer.ts:205`).
+
+[`../../AGENTS.md`](../../AGENTS.md) §8 sets **WCAG 2.2 AA as the floor** and says *never rely on colour alone to
+carry meaning*, which applies "to the terminal as far as a terminal can". So parity here means diverging. Epsilon's
+tool card carries its state as a **word** in the title (`crates/epsilon-tui/src/ui/card.rs:213`), every transcript
+role carries a **gutter glyph** so seven roles stay apart on a colourless console (`crates/epsilon-tui/src/ui/transcript.rs:70`),
+and a notice deliberately carries no filled band so it cannot be mistaken for a tool call even at 16 colours
+(`crates/epsilon-tui/src/state.rs:971`). The two thresholds Pi uses at 70% and 90% are kept
+(`crates/epsilon-tui/src/ui/metrics.rs:186`); the *sole* channel is not.
+
+### 3. Text measurement: same intent, different mechanism, and the gap is written down
+
+Pi measures every width in grapheme clusters, counts a tab as three columns, strips CSI/OSC/APC before measuring,
+and — the part a port gets wrong — closes any open OSC 8 hyperlink and appends a reset at **every** truncation and
+wrap boundary, so a clipped styled string never bleeds its style into the next line
+(`references/pi-1.0.0/packages/tui/src/utils.ts:250-310`, `:187`, `:273-292`, `:1121-1257`, `:155-175`).
+
+Epsilon reaches the same guarantee by never building the string that would need closing: it wraps into `Span`s and
+hands them to ratatui, resolves colour roles **per frame** rather than baking them into a stored string
+(`crates/epsilon-tui/src/ui/theme.rs:1062`), drops whole measurement parts at a span boundary when a row narrows
+(`crates/epsilon-tui/src/ui/header.rs:160`), and keeps a re-measure backstop for the case where its own width table
+disagrees with ratatui's (`crates/epsilon-tui/src/ui/layout.rs:407`). The observable behaviour Pi spends
+`truncateToWidth` on — a truncated link stops at the cut, a background does not bleed one cell short — is therefore
+held without the same primitive. That is a real equivalence of outcome and a real difference of mechanism, and the
+`T-###` rows below say so row by row. Two places where the equivalence is **not** established are called out as
+`partial`, not waved through: Epsilon's own tab normalisation (three spaces, matching Pi's value) has **no test**,
+and nothing in our inventory establishes a terminal-derived palette whose contrast Pi's solver would have to
+constrain.
+
+---
+
+## 1. Startup, header and resources
+
+Pi's first screen is a header built lazily so a theme change recolours it without rebuilding, a loaded-resource
+listing grouped by scope, and a set of diagnostics for anything the loader found broken. Epsilon's first screen is
+a fixed five-band frame (`crates/epsilon-tui/src/ui/layout.rs:84`) whose body carries a welcome panel until a
+conversation exists (`crates/epsilon-tui/src/ui/transcript.rs:234`), and whose startup information arrives as
+transcript notices pushed **before** the first frame so it survives the alternate screen taking the display
+(`crates/epsilon-tui/src/app/event.rs:88`). Epsilon has no logo animation, no managed-tool download and no
+`quietStartup` third state; those rows are `missing`, not argued.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-001 | A header draws the Pi logo, `v<version>` and a one-line key hint; terminals that cannot draw the logo get a `Pi vX` wordmark | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:996`, `:1001-1006`, `:1051-1057` | partial | `crates/epsilon-tui/src/ui/transcript.rs:234` — a welcome panel with wordmark, one instruction and the three composer prefixes; **no version, and the key hints live in the footer (E-082), not the header** | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
+| P-002 | `Ctrl+O` expands the startup help from one compact line to a ~20-line instruction list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1036-1043`, `:1011-1035`, `:4470-4472` | missing | none — Epsilon has no compact/expanded startup hint; its `Ctrl+O` is the external editor (`crates/epsilon-tui/src/keybindings.rs:149`) | — |
+| P-003 | Clicking the first two logo columns starts the logo animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:254-263`, `:1058` | missing | none — mouse capture is deliberately off (`crates/epsilon-tui/src/app.rs:1412`) | — |
+| P-004 | `quietStartup` has three states: hide everything, header only, or both | `packages/coding-agent/src/core/settings-manager.ts:1089-1092`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1410-1417` | missing | none | — |
+| P-005 | The model scope is printed to stdout at startup so it scrolls away in the terminal's own scrollback | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:940-953` | missing | none — no `E-` row prints a model scope at startup; the scope itself exists only as a command (`crates/epsilon-contracts/src/command.rs:544`) | — |
+| P-006 | `[Context]` / `[Skills]` / `[Prompts]` / `[Extensions]` blocks list what loaded, grouped into project / user / path | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1759-1953`, `:1648-1680` | partial | `crates/epsilon-tui/src/app/commands.rs:1458` — one summary line (`1 skill(s) + 1 agent(s) loaded`), no scope grouping or abbreviation rules | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame) |
+| P-007 | Duplicate or broken skills, prompts, extensions and themes render as `[Skill conflicts]` / `[Extension issues]` blocks with ✓ and ✗ | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1706-1757`, `:1901-1952` | partial | `crates/epsilon-tui/src/app/commands.rs:1409` — an **unreadable** root is named with its reason; a **duplicate** skill is not reported | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame), `an_agents_root_reload_cannot_read_is_named_on_the_frame` (frame) |
+| P-008 | An extension command whose name collides with a built-in is reported, not silently dropped | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:699-712`, `:784-791` | missing | none | — |
+| P-009 | A bordered `What's New` block appears once per version, never on a resumed session, never on a fresh install | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:832-860`, `:1319-1344` | missing | none — `/changelog` exists as a command but has no startup path | — |
+| P-010 | A project with untrusted `.pi` resources gets a warning line telling the user to run `/trust` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4145-4164`, `:4134` | done | `crates/epsilon-tui/src/app.rs:786`, `:835` — the review line lands in the transcript and every submit is bounced until `trust` or `trust no` | `trust_review_holds_submits_until_answered` (frame), `trust_gate_blocks_palette_and_stages_initial_task` |
+| P-011 | The system theme queries the terminal's reported colours (OSC 10/11) and renders grayscale until they arrive | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:991-993`, `packages/coding-agent/src/cli/startup-ui.ts:88-89` | missing | none — Epsilon reads `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` from the environment and never queries the terminal (`crates/epsilon-tui/src/ui/theme.rs:1086`) | — |
+| P-012 | `fd` and `rg` are downloaded after the TUI is already drawing, with progress in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:987`, `:1075-1079`, `:3742-3753` | missing | none — no `E-` row covers a managed-tool download; Epsilon's `grep` is a native tool with its own renderer (`crates/epsilon-tui/src/renderers/mod.rs:39`) | — |
+| P-059 | Managed-tool download progress renders as one contiguous group with a leading spacer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3742-3753` | missing | none | — |
+| P-086 | Shutdown is ordered — drain pending input, stop the TUI, dispose the runtime, then exit — so nothing repaints a dying frame | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4233-4249`, `:4211-4231` | partial | `crates/epsilon-tui/src/app.rs:1410`, `:1433` — the restore guard is armed before anything that can panic and every step is idempotent; there is no input drain and no in-process extension teardown to order against | `the_terminal_guard_restore_is_reachable_and_idempotent` |
+| P-087 | `EIO`/`EPIPE`/`ENOTCONN` trigger an emergency exit 129; an uncaught exception restores the terminal, prints the crash and exits 1 | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:290-298`, `:4252-4259`, `:4272-4294` | partial | `crates/epsilon-tui/src/app.rs:1391`, `:1392`, `:1359` — the hook restores before it prints and survives every payload shape; there is no dead-terminal classification and no crash persisted for a later report | `the_panic_hook_survives_both_payload_shapes`, `the_terminal_guard_restore_is_reachable_and_idempotent` |
+| P-088 | Under tmux, Pi queries `extended-keys` and warns if the configuration will break modified Enter keys | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1268-1313`, `:1167-1172` | missing | none | — |
+| P-089 | An `Update Available` block and a `Package Updates Available` block render as bordered blocks | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4548-4578`, `:4580-4598` | missing | none | — |
+| P-119 | A throwing extension prints `Extension "<path>" error: …` with its stack indented and dimmed, first stack line skipped | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2989-3002` | missing | none | — |
+| P-120 | First run may show a two-step setup dialog (theme, then analytics opt-in), gated on four conditions | `packages/coding-agent/src/cli/startup-ui.ts:131-148`, `packages/coding-agent/src/modes/interactive/components/first-time-setup.ts:64-70`, `:71-88` | partial | `crates/epsilon-cli/src/main.rs:1342` — the palette resolves most-explicit-first from flags, env and config with no dialog; there is no analytics opt-in because there is no analytics | `the_light_flag_selects_the_light_palette_regardless_of_the_environment` |
+| P-216 | The version rides on the logo's first line and the first key hint on its second | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1004`, `:1005` | missing | none — the welcome panel carries no version (`crates/epsilon-tui/src/ui/transcript.rs:419-424`) | — |
+
+## 2. Layout and renderer
+
+Pi has **two** renderers and the default is the second one: `regular` is a main screen that cooperates with the
+terminal's own scrollback, `fullscreen` owns the whole screen and adds search, selection and copy. Epsilon has one
+renderer — the alternate screen — and buys its stability with a fixed five-band layout in which the transcript is
+the only band with a floor (`Constraint::Min(1)`, because `Fill` hands the body a zero-height rectangle on a short
+screen). Below 44×10 the frame stops composing at all and says so. That is one deliberate divergence (P-014) and
+then agreement about what a body should do when space runs out.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-014 | Two renderers: a main screen that leaves the terminal's scrollback alone, and a fullscreen alt screen that owns the display | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:22-50` | deliberately different | `crates/epsilon-tui/src/app.rs:1401` — one renderer, always the alternate screen; Pi's default is `fullscreen`, and the regular screen exists so native scrollback survives. Epsilon has no scrollback to protect because the layout owns the whole frame | `the_binary_starts_a_tui_and_draws_its_chrome` (frame, real pty) |
+| P-015 | TUI mode is switchable live, and refused while an overlay is open | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:879-930`, `:5029-5038` | missing | none — there is no second mode to switch to | — |
+| P-016 | Fullscreen is a scrolling transcript plus a fixed input dock that stacks pending messages, status, widgets, the editor and the footer | `packages/coding-agent/src/modes/interactive/chat-viewport.ts:22-45`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:957-970` | done | `crates/epsilon-tui/src/ui/layout.rs:84`, `:81` — five bands in a fixed order; the composer is capped at `min(8, height/3)` rows so a pasted document cannot claim the conversation's space | `the_shell_shows_a_header_a_body_and_a_footer_at_every_supported_size` (frame), `a_long_transcript_never_pushes_the_composer_off_the_screen` (frame) |
+| P-017 | The terminal title tracks the session name and the cwd basename | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1119-1127`, `:3429-3433` | missing | none — `/name` sets the name (`crates/epsilon-tui/src/app/commands.rs:1281`) but nothing sets the terminal title | — |
+| P-020 | An extension can place persistent content above or below the composer, capped at ten lines | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2350-2390`, `:2438` | missing | none | — |
+| P-021 | An extension can replace the header, the footer or the editor wholesale, and `undefined` restores the built-in one | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2476-2498`, `:2503-2542`, `:2816-2891` | missing | none | — |
+| P-217 | Scrolled away from the bottom, a pill offers to jump to the latest message | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:30`, `:32` | partial | `crates/epsilon-tui/src/ui/footer.rs:77` — the affordance is a footer position badge (`↑ 12/40`) plus the key back to live, not a pill inside the viewport | `the_jump_to_live_key_returns_the_view_to_the_tail` (frame), `a_live_frame_never_advertises_the_frozen_position` (frame) |
+| P-218 | Search matches are underlined; the current match is bold and inverse | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:26`, `:27`, `:29` | partial | `crates/epsilon-tui/src/app.rs:1744` — the search panel names the query and the current match (`3 of 7`); there is no in-transcript match highlight, because the transcript is paged by row offset rather than re-rendered with styled spans | `an_open_search_reports_itself_and_the_matches_it_found` (frame) |
+| P-219 | A failed copy returns the error **message** to the caller rather than throwing | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:39`, `:44` | done | `crates/epsilon-tui/src/app/commands.rs:2351`, `:2364` — the outcome is a transcript notice naming which path ran, and with no assistant row nothing is put on the wire at all (an empty OSC 52 payload would *clear* the user's clipboard) | `copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path` |
+| P-220 | Components hold a proxy that forwards to whichever renderer is active, so a renderer can be swapped at runtime | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:53`, `:61` | missing | none — with one renderer there is no swap for a component to survive | — |
+
+## 3. Composer and editor
+
+Pi's composer is a single component that owns a surprising amount: bash-mode detection from the first character,
+a four-way Escape, two different submission keys with two different semantics, a pending-input queue, an external
+editor hand-off, and an inherited keybinding table of 47 entries. Epsilon's composer is smaller and, in two places,
+different on purpose: the mode that decides which keys mean what is announced as a word in the footer
+(`crates/epsilon-tui/src/ui/footer.rs:357`) rather than as a border colour, and submission during a run is a single
+destination — steering — rather than steer-or-follow-up chosen by key.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-013 | Text typed and submitted before startup finishes is kept, with a `Startup is still in progress` line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3135-3138`, `:980-983` | missing | none — Epsilon has no deferred startup window; the key handlers are installed before the first frame (`crates/epsilon-tui/src/app.rs:1410`) | — |
+| P-022 | The editor border recolours the moment the text starts with `!`, and again encodes the thinking level otherwise | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3064-3070`, `:4429-4438` | partial | `crates/epsilon-tui/src/app.rs:856` — `!` is recognised on submit, but nothing signals it before you press Enter; the mode word in the footer is the channel (`crates/epsilon-tui/src/ui/footer.rs:357`) | none — no test types `!` in the composer |
+| P-023 | `!cmd` runs a shell command in the transcript; `!!cmd` keeps its result out of model context | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3287-3303`, `:6917-7008` | partial | `crates/epsilon-tui/src/app.rs:856` — both spellings route to the real `BashTool`, and `!!` marks the result excluded from context | none — no test types `!` or `!!`; the row is pinned by the source only |
+| P-025 | Escape has a four-way priority: abort the stream (restoring queued text), abort bash, leave bash mode, then arm a double-Escape timer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3011-3037` | partial | `crates/epsilon-tui/src/app/keys.rs:1369` — Escape aborts a run and disarms the goal, and quits when idle; there is no bash-command abort, no bash-mode exit and no double-Escape arm | `a_rebound_interrupt_key_is_the_key_that_interrupts`, `aborting_a_run_disarms_the_goal_without_touching_it` (frame) |
+| P-027 | `Ctrl+C` clears the composer; a second one inside 500 ms quits | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4189-4197`, `packages/coding-agent/src/core/keybindings.ts:94` | partial | `crates/epsilon-tui/src/app/keys.rs:649` — `app.clear` is `ctrl+c`; the exit chord is `ctrl+q` (`crates/epsilon-tui/src/keybindings.rs:37`), so there is no two-stage clear-then-quit | `/hotkeys` reaches the table through `no_slash_command_panics_when_typed`; the two-stage timing is unpinned |
+| P-028 | `Ctrl+D` quits only when the composer is empty, and the enforcement lives in the editor component | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4199-4202` | partial | `crates/epsilon-tui/src/app/editing.rs:85` — `Ctrl+D` is unconditionally delete-forward and guarded past the end; exit is `ctrl+q` | `ctrl_d_forward_deletes_and_alt_backspace_kills_word` |
+| P-029 | `Ctrl+Z` suspends with `SIGTSTP` and restarts on `SIGCONT`; on Windows it prints that it is unsupported | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4351-4386`, `packages/coding-agent/src/core/keybindings.ts:96-99` | missing | none — Epsilon's `Ctrl+Z` is undo (`crates/epsilon-tui/src/keybindings.rs:142`) | — |
+| P-030 | `Alt+Enter` queues a follow-up that waits for the turn; when idle it is plain Enter | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4388-4418`, `packages/coding-agent/src/core/keybindings.ts:134-137` | partial | `crates/epsilon-tui/src/app.rs:881` — one queue destination (steer), reached with the submit key; there is no separate follow-up chord | `none found` per E-037 |
+| P-031 | Enter while streaming steers the running turn rather than queueing behind it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3317-3326` | partial | `crates/epsilon-tui/src/app.rs:881`, `:882` — the queue decision and its transcript notice are both in the source | `none found` per E-037 — a core behaviour with no test pinning it |
+| P-032 | Enter during compaction queues into a separate list, flushed in order when compaction ends | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3306-3315`, `:4676-4682`, `:4694-4771` | missing | none — `/compact` is queued behind a live turn (`crates/epsilon-tui/src/app/commands.rs:1561`), which is the reverse direction | — |
+| P-033 | One key pulls every queued message back into the composer and reports the count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4420-4427`, `:4655-4674` | missing | none | — |
+| P-034 | `Ctrl+X` copies the live selection in fullscreen, otherwise the last assistant message; the confirmation is a flash in fullscreen and a status line in regular mode | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6556-6585`, `packages/coding-agent/src/core/settings-manager.ts:1379-1381` | partial | `crates/epsilon-tui/src/app/commands.rs:2351`; chord `f4` at `crates/epsilon-tui/src/keybindings.rs:140` — the last-assistant-message half is done; the selection half is a deliberate divergence (mouse capture is off so drag-select still copies, `crates/epsilon-tui/src/app.rs:1412`) | `the_copy_key_reaches_the_clipboard_path`, `copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path` |
+| P-035 | One paste key tries clipboard **file paths**, then a clipboard **image**, then clipboard **text** | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3093-3133` | partial | `crates/epsilon-tui/src/app/keys.rs:1755`; `crates/epsilon-tui/src/app.rs:775` — text paste works and a large paste becomes a `[paste #N …]` marker expanded on submit; no clipboard file or image path | `paste_marker_expands_to_payload_on_submit` |
+| P-036 | `Ctrl+G` stops the TUI, opens `$EDITOR` on the composer text, and replaces it only on a zero exit | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4509-4525`, `packages/coding-agent/src/modes/interactive/external-editor.ts:14-45` | partial | `crates/epsilon-tui/src/app/session.rs:218`, `crates/epsilon-tui/src/app/editor.rs:36`, `:56` — same resolution order (config, `$VISUAL`, `$EDITOR`) and the same rule that a non-zero exit leaves the draft alone; the chord is `Ctrl+O` / `Alt+E` | `external_editor_keeps_the_draft_when_the_editor_fails`, `editor_command_prefers_config_then_visual_then_editor` — all five tests run the spawner seam; the alternate-screen hand-off is asserted on no frame |
+| P-209 | Escape reaches the app as "interrupt" only when the autocomplete popup is closed; with the popup open it cancels the popup | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:104`, `:113` | partial | `crates/epsilon-tui/src/app/completion.rs:161` — Esc dismisses the popup and keeps the text | none — `slash_popup_opens_and_arrows_move_selection` is state only and does not press Esc |
+| P-210 | `Ctrl+D` falls through to delete-forward when the composer is not empty | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:119`, `:124` | partial | `crates/epsilon-tui/src/app/editing.rs:85` — the fall-through half holds; the empty-editor exit it falls through *from* does not exist (exit is `ctrl+q`) | `ctrl_d_forward_deletes_and_alt_backspace_kills_word` |
+| P-211 | Explicit history bindings beat application actions on the same key | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:130`, `:133` | missing | none — Epsilon has no prompt-history navigation | — |
+| P-212 | Extension shortcuts are consulted before every built-in binding | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:90`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2233-2246` | missing | none | — |
+| P-213 | An extension editor mirrors the main editor's keys and the same `$EDITOR` resolution | `packages/coding-agent/src/modes/interactive/components/extension-editor.ts:71`, `:92`, `:83` | missing | none | — |
+| P-214 | An extension input accepts a `placeholder` argument and discards it | `packages/coding-agent/src/modes/interactive/components/extension-input.ts:38`, `:37` | missing | none — and worth stating as a rule rather than a gap: [`../../AGENTS.md`](../../AGENTS.md) invariant 7 forbids accepting an argument and doing nothing with it | — |
+| L-000 | The `tui.*` table: 47 editor, input, select and fullscreen-navigation bindings spread into the app table | `packages/tui/src/keybindings.ts:71-210`, `packages/coding-agent/src/core/keybindings.ts:76` | partial | `crates/epsilon-tui/src/keybindings.rs:27` — Epsilon declares 24 ids in one table and reads every key through it; the editor motions exist (`Ctrl+A`/`Ctrl+E`/Home/End at `crates/epsilon-tui/src/app/keys.rs:1523`, `Ctrl+J` newline at `:1777`) but there is no `tui.select.*` or `tui.altScreen.*` half | `a_rebound_submit_key_is_the_key_that_submits`, `no_chord_is_bound_to_two_ids_by_default` |
+| L-001 | Six shipped actions have handlers but **no default key**, so they do nothing until the user binds them | `packages/tui/src/keybindings.ts:74-81`, `:168-183` | partial | `crates/epsilon-tui/src/keybindings.rs:93-122` — `app.transcript.halfUp` / `halfDown` ship unbound with the reason written down (three chords were tried and each is already the composer's); two rather than six, and a different set | `no_chord_is_bound_to_two_ids_by_default` |
+| L-002 | In fullscreen, `PageUp`, `PageDown`, `Home` and `End` scroll the transcript instead of moving the composer cursor | `packages/tui/src/keybindings.ts:159`, `:160-166` | partial | `crates/epsilon-tui/src/app/keys.rs:1699`, `:1725` — the page chords scroll the transcript (E-101), but bare `Home`/`End` still drive the composer caret and only `Ctrl+Home`/`Ctrl+End` scroll | `the_advertised_scroll_key_scrolls_the_real_frame` (frame) |
+| L-003 | A user `[]` disables a binding outright, and two ids claiming one key produce a recorded conflict rather than an error | `packages/tui/src/keybindings.ts:265`, `:257-261` | partial | `crates/epsilon-tui/src/app/commands.rs:1990` — rebinding is read from the user's own `keybindings.json` and every chord resolves through one table; the empty-list-disables and conflict-collection rules are not established by an `E-` row | `a_rebound_submit_key_is_the_key_that_submits`, `no_chord_is_bound_to_two_ids_by_default` |
+
+## 4. Slash commands and autocomplete
+
+The command surface is where the two programs differ most in *shape* rather than in behaviour. Pi ships 24 built-in
+slash commands; Epsilon ships 43 offered items over 37 heads (`crates/epsilon-contracts/src/command.rs:47`,
+`:383`), the difference being mostly Epsilon's own additions (`restore`, `goal`, `tasks`, `search`, `sessions`,
+`branch`, `skills`, `templates`, `editor`, `help`). The parser is one hand-written `match`, and an unrecognised
+`/word` is corrected in the transcript rather than sent to the model — which is the behaviour a reader most notices.
+The four easter eggs at the end of this area are listed for completeness; none is a parity target.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-041 | 24 built-in slash commands are offered from one table that also drives conflict detection | `packages/coding-agent/src/core/slash-commands.ts:19-44`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3140-3338` | done | `crates/epsilon-contracts/src/command.rs:47`, `:383` — 43 items over 37 heads, with the desktop's capability derived by subtraction rather than a second list | `no_slash_command_panics_when_typed` (drives every head through the real key path), `every_offered_command_is_reachable_from_slash_items`, `every_head_in_command_heads_is_parsed` |
+| P-042 | `/debug`, `/arminsayshi` and `/dementedelves` work but appear in no list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3261-3275`, `:6860-6891` | missing | none | — |
+| P-043 | The `/` menu merges built-ins, prompt templates, extension commands and `/skill:<name>` in one list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:776-811` | partial | `crates/epsilon-tui/src/app/completion.rs:23` — the popup is built from `slash_items`; skills and templates exist as commands (`crates/epsilon-tui/src/app/commands.rs:321`, `:1900`) but no `/skill:` entries or extension commands are composed into the menu | `slash_popup_opens_and_arrows_move_selection` (state only) |
+| P-044 | `/model`, `/thinking` and `/login` each complete their own arguments | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:722-773` | partial | `crates/epsilon-tui/src/app/keys.rs:1325` — the picker and the tree read the composer buffer as their filter; there is no per-command argument completer | `filtered_results_are_ranked_by_fuzzy_score_best_first`, `two_stage_picker_descends_and_applies_model` |
+| P-045 | Non-built-in completion descriptions are prefixed with a bracketed scope tag (`[u]`, `[p]`, `p:git:…`) | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:665-689`, `:691-697` | missing | none — descriptions are drawn dim and right-aligned (`crates/epsilon-tui/src/app/panels.rs:796`), but carry no source tag | — |
+| P-046 | `/model provider/id` switches immediately; only on a miss does it refresh the catalogs and open a pre-filled selector | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5116-5138`, `:5140-5172` | partial | `crates/epsilon-tui/src/app/keys.rs:1170` — an exact id applies instantly and pushes a notice; there is no refresh-then-open-picker fallback and no degradation message | `slash_model_direct_applies_instantly` |
+| P-047 | `/scoped-models` is a searchable checklist that rescopes the cycle list live and persists on `Ctrl+S` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5302-5422`, `packages/coding-agent/src/core/keybindings.ts:186-209` | partial | `crates/epsilon-tui/src/app/commands.rs` (head `/scoped-models`, `crates/epsilon-contracts/src/command.rs:544`) — the head parses and runs; no `E-` row establishes the overlay | `no_slash_command_panics_when_typed` |
+| P-083 | `/hotkeys` prints a bordered table of the **resolved** bindings, not the defaults | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6728-6843` | done | `crates/epsilon-tui/src/app/commands.rs:1978`, `:1990` — a `bindings (effective — ~/.config/epsilon/keybindings.json):` header and one line per id, so a user who rebinds a key sees their chord | `no_slash_command_panics_when_typed`, `an_unbound_key_produces_a_visible_response` |
+| P-084 | `/changelog` renders every entry, newest first | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6693-6712` | partial | `crates/epsilon-tui/src/app/commands.rs` (head at `crates/epsilon-contracts/src/command.rs:540`) — driven only by the all-heads sweep | `no_slash_command_panics_when_typed` |
+| P-221 | `/arminsayshi` plays a 31×36 half-block animated portrait with one of seven reveal effects | `packages/coding-agent/src/modes/interactive/components/armin.ts:2` | missing | none — not a parity target | — |
+| P-222 | Selecting an `opencode` model whose id contains `kimi-k2.5` fires a portrait automatically, from three call sites | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6911-6915` | missing | none — not a parity target | — |
+| P-223 | Clicking the header logo plays a full-screen braille-dust overlay animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1058`, `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts:778` | missing | none — and mouse capture is off in any case (`crates/epsilon-tui/src/app.rs:1412`) | — |
+| P-224 | `/dementedelves` appends an accent-bordered announcement card with a bundled PNG | `packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts:32`, `:13` | missing | none — not a parity target | — |
+
+## 5. Transcript and streaming
+
+Pi's transcript is a list of components that each decide their own spacing, their own truncation and their own
+error text, assembled by a host that coalesces back-to-back status lines. Epsilon's is a list of typed rows behind
+a two-column gutter, wrapped once per width and cached, with a live tail painted every frame below the cached
+window. The differences that matter to a reader are: a card's state is a **word**, not a background; a run's answer
+and its reasoning are separated by a **gutter glyph**; and untrusted text is stripped at the boundary rather than
+in each component.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-049 | Streaming assistant text updates one component in place rather than appending rows | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3448-3461`, `:3464-3468` | done | `crates/epsilon-tui/src/app/panels.rs:401` — the live tail is wrapped and painted below the cached rows every frame; the reducer replaces the fields wholesale because the event carries the message so far (`crates/epsilon-tui/src/state.rs:1194-1195`) | `streaming_updates_replace_then_commit_on_end`, `a_bidi_override_in_streaming_model_output_never_reaches_the_frame` (frame) |
+| P-039 | One key flips a single expansion flag applied to every expandable transcript row | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4470-4490` | done | `crates/epsilon-tui/src/render_cache.rs:72` — `ctrl+x` flips the global toggle **and** records the newest card's own state, so a hand-opened card stays open after the toggle goes back off; key path and draw path read the same rule | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame), `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer` |
+| P-040 | `Ctrl+T` hides thinking blocks across the transcript and persists the choice globally | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4502-4507`, `:4493-4500` | missing | none — Epsilon's reasoning is always visible as its own row (`crates/epsilon-tui/src/state.rs:1208`) and there is no toggle and no setting | — |
+| P-050 | A tool card is created when the model calls the tool, before it runs, and re-used by the execution event | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3469-3493`, `:3545-3569` | done | `crates/epsilon-tui/src/ui/card.rs:213` — one card; the result settles the call's own card rather than adding a second | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame), `a_completed_tool_call_is_drawn_once_on_a_real_frame` (frame) |
+| P-051 | An aborted or errored turn retro-fits every in-flight tool card with one error line and suggests `/bug` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3514-3525`, `:3499-3511` | missing | none | — |
+| P-052 | A cache miss is explained: `Cache miss: 18.2K tokens re-billed (~$0.42)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4100-4126` | missing | none — Epsilon marks an incomplete cost with a trailing `+` (`crates/epsilon-tui/src/ui/cost.rs:138`) but does not price a miss separately | — |
+| P-053 | Anthropic's silently dropped thinking blocks are reported with a delta-based count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4070-4098`, `:4054-4068` | missing | none | — |
+| P-054 | Compaction rebuilds the transcript and inserts a summary card plus a billed-cost line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3623-3673`, `:4041-4052` | partial | `crates/epsilon-tui/src/state.rs:1445` — a rule reading `── context compacted · ↑84k ↓1.2k · 92k re-read ──`; there is no summary card and no billed-cost line | `a_compaction_row_reports_the_same_tokens_it_records` |
+| P-056 | A skill invocation renders as its own collapsible card, separate from the remaining user text | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3857-3876` | missing | none — skills are listed and toggled (`crates/epsilon-tui/src/app/commands.rs:321`) but an invocation has no card | — |
+| P-057 | Two status messages back to back update the same line instead of appending | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3761-3781` | missing | none — and the shape argues against it: a notice is a durable transcript row (`crates/epsilon-tui/src/state.rs:971`), so there is nothing to coalesce onto | — |
+| P-058 | Errors render as `Error: …` and warnings as `Warning: …` in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4536-4546` | partial | `crates/epsilon-tui/src/state.rs:971`, `:972` — runtime messages are transcript rows; the fixed prefixes are not a convention, each notice carries its own wording | `retry_notices_land_in_the_transcript_and_the_status_line` |
+| P-060 | Extension-supplied entries and messages render through registered renderers, inserted **above** a streaming component | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3783-3803`, `:3794-3800`, `:3821-3834` | missing | none | — |
+| P-121 | Assistant prose is markdown indented by `outputPad`, with no vertical padding of its own | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:114`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3893-3900` | partial | `crates/epsilon-tui/src/render_cache.rs:159` — committed as one markdown-carrying row behind a fixed two-column gutter (`crates/epsilon-tui/src/ui/transcript.rs:149`); there is no `outputPad` setting | `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
+| P-122 | A blank line precedes an assistant block only when it has visible content | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:102` | missing | none | — |
+| P-123 | Consecutive thinking blocks render as one joined block | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:118`, `:147` | done | `crates/epsilon-tui/src/state.rs:1208` — one reasoning row per reply, committed from the single reasoning field, so the blocks never appear separately | `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
+| P-124 | A hidden thinking block becomes a dim italic `Thinking...` label | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:145`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:484` | missing | none — there is no hidden-thinking state | — |
+| P-125 | A thinking block toggles individually on left-click | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:163`, `:143` | missing | none — mouse capture is off (`crates/epsilon-tui/src/app.rs:1412`) | — |
+| P-126 | Thinking is followed by a blank line only when more assistant content follows | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:138`, `:171` | missing | none | — |
+| P-127 | A reply that hit the token limit appends `Response was truncated before completion.` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:182` | missing | none | — |
+| P-128 | An aborted reply shows its message or `Operation aborted`; an errored one shows `Error: …` | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:188`, `:195` | partial | `crates/epsilon-tui/src/state.rs:971` — an aborted run produces a harness-authored system row, not text on the answer's own row | `retry_notices_land_in_the_transcript_and_the_status_line` |
+| P-129 | Abort/error text is suppressed on the assistant block when the message contains tool calls | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:180` | missing | none | — |
+| P-130 | A theme change rebuilds assistant markdown from the cached **source**, not a rendered string | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:51` | done | `crates/epsilon-tui/src/app/commands.rs:1532` — `/theme` clears the transcript render cache so rows already drawn do not survive in the old colours | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
+| P-131 | The markdown chain is told `assistant` vs `assistant-thinking`; thinking is italic with its own token | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:115`, `:156` | done | `crates/epsilon-tui/src/ui/transcript.rs:70` — the two carry different gutter glyphs, so they stay apart under `NO_COLOR` as well as on colour | `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
+| P-132 | Assistant and user blocks are wrapped in OSC 133 prompt zones; a block **with tool calls** is left unwrapped | `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:80`, `packages/coding-agent/src/modes/interactive/components/user-message.ts:61` | missing | none | — |
+| P-133 | User text is markdown tinted on a background that fills the whole block, not a box around it | `packages/coding-agent/src/modes/interactive/components/user-message.ts:48`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3869-3884` | done | `crates/epsilon-tui/src/ui/transcript.rs:149` — a banded row's fill runs to the right edge; under `NO_COLOR` the fill and the trailing blanks go and the margin stays | `a_user_turn_carries_its_gutter_and_band_on_a_real_frame` (frame) |
+| P-134 | User markdown preserves ordered-list markers and backslash escapes that the assistant renderer normalises away | `packages/coding-agent/src/modes/interactive/components/user-message.ts:53`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3878` | missing | none — user text is committed through the same markdown path (`crates/epsilon-tui/src/app/editing.rs:349`) and no `E-` row establishes a separate user transform | — |
+| P-135 | A user block's markdown transformer is always told the message is not streaming | `packages/coding-agent/src/modes/interactive/components/user-message.ts:55` | missing | none | — |
+| P-178 | An extension message with no renderer gets a bold `[customType]` label and its text on the custom-message background | `packages/coding-agent/src/modes/interactive/components/custom-message.ts:92`, `:107` | missing | none | — |
+| P-179 | A registered message renderer owns the entire block; returning nothing or throwing falls back to the default box | `packages/coding-agent/src/modes/interactive/components/custom-message.ts:69`, `:79` | missing | none | — |
+| P-180 | A custom message without `display` is not rendered at all, and is not drawn just because it exists | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3822-3823` | missing | none | — |
+| P-181 | A custom session entry is added only if its renderer produces content; the host still owns the leading spacer | `packages/coding-agent/src/modes/interactive/components/custom-entry.ts:54`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3790-3792` | missing | none | — |
+| P-182 | An entry renderer that throws is the one extension renderer that surfaces the error, as a boxed `[customType] renderer failed:` | `packages/coding-agent/src/modes/interactive/components/custom-entry.ts:47`, `:50` | missing | none | — |
+| P-183 | A compaction entry collapses to `Compacted from N tokens (KEY to expand)` and expands to a header plus markdown | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:49`, `:51`, `:42` | partial | `crates/epsilon-tui/src/state.rs:1445` — a single rule carrying the token counts; it is not a collapsible card | `a_compaction_row_reports_the_same_tokens_it_records` |
+| P-184 | Branch and skill cards have their own collapsed wording, and only compaction shows a count | `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:50`, `:41`, `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:49-50`, `:41` | missing | none | — |
+| P-185 | Compaction, branch and skill cards each toggle on a left click | `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:61`, `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:60` | missing | none — mouse capture is off (`crates/epsilon-tui/src/app.rs:1412`) | — |
+
+## 6. Model picker and thinking
+
+Pi's model surface is two commands and two selectors, and it is careful about three things: a cached list paints
+immediately while a refresh runs behind it, the current model is first and the default is second, and typing resets
+the cursor to the best match. Epsilon's is one two-stage picker — providers, then that provider's models — driven
+by the composer buffer, with favourites as a starred column. The thinking surface on Pi's side (`/thinking`, the
+selector, the per-model override submenu) has no counterpart here; `app.thinking.cycle` is declared as an id, which
+is recorded in the rows below as a gap in the inventory rather than a claim that nothing exists.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-037 | `Shift+Tab` steps the thinking level and reports it; a model with no reasoning support says so | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4440-4449`, `packages/coding-agent/src/core/keybindings.ts:100-103` | missing | none — the id `app.thinking.cycle` is declared at `crates/epsilon-tui/src/keybindings.rs:41` with a handler at `crates/epsilon-tui/src/app/keys.rs:1435`, but no `E-` row establishes the behaviour, so this is `missing` rather than `partial` | — |
+| P-038 | `Ctrl+P` / `Ctrl+Shift+P` cycle models and print `Switched to <name> (thinking: <level>)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4451-4468`, `packages/coding-agent/src/core/keybindings.ts:108-115` | missing | none — `app.model.cycleForward` / `cycleBackward` are declared at `crates/epsilon-tui/src/keybindings.rs:42-43` with handlers at `crates/epsilon-tui/src/app/keys.rs:1459-1460`, but no `E-` row establishes the behaviour | — |
+| P-048 | `/thinking <level>` sets it for this session; bare `/thinking` opens a picker that can also persist a default | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5067-5082`, `:5095-5114` | partial | `crates/epsilon-contracts/src/command.rs:495` — the `/think` head parses an optional argument and runs without panicking; no `E-` row establishes the argument form or a picker | `no_slash_command_panics_when_typed`, `commands_parse_with_optional_args_and_case` |
+| P-262 | The thinking panel is searchable, annotates each level (`Maximum reasoning`) and marks the default | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:78`, `:119`, `:23`, `:72` | missing | none | — |
+| P-263 | Filtering the thinking list re-selects the surviving value rather than dropping to row 0 | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:125`, `:123` | missing | none | — |
+| P-264 | `Ctrl+S` in the thinking panel persists the level as the default; without a save callback the chord is typed into the search box | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:131`, `:114` | missing | none | — |
+| P-265 | The thinking panel advertises the cycle key, resolved live | `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts:80`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5070` | missing | none | — |
+| P-272 | Per-model thinking is a two-step submenu that **loops** back to step 1 after each save | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:609`, `:701`, `:649`, `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:226-227` | partial | `crates/epsilon-tui/src/app/commands.rs:2025` — `/settings` reports the current thinking level; there is no per-model override submenu | `no_slash_command_panics_when_typed` |
+| P-273 | An existing override gains a `(clear override)` entry described as a revert to the global default | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:666`, `:686`, `:188` | missing | none | — |
+
+## 7. Auth, login and permissions
+
+Pi's login is a three-step overlay chain — auth method, provider, then a dialog that renders auth URLs, device
+codes, progress and free text — with `onBack` threaded so cancelling a child reopens the parent. Epsilon's is one
+command and one modal: `/login <provider> <key>` writes straight to the store without a prompt, and
+`/login <provider>` opens a masked panel that never shows the key. Permissions sit at the end of this area as the
+first deliberate difference, because Pi has none to pair with.
+
+Epsilon's approval dialog is worth naming as one unit, since it has no Pi counterpart at all: the ask is polled as
+one arm of the run loop and the very next frame paints a centred `permission required` modal over the transcript and
+every overlay (`crates/epsilon-tui/src/app/event.rs:281`, `crates/epsilon-tui/src/app.rs:1719`); its body is exactly
+two labelled rows, `cap` and a summarised `what` line, with the raw JSON never shown
+(`crates/epsilon-tui/src/app.rs:153`); four decision keys are handled in one place (`y`, `a`, `n`/`Esc`, and `e` for
+deny-with-guidance, `crates/epsilon-tui/src/app/keys.rs:486`); any other key is refused with a notice naming the
+ones that work rather than doing nothing (`:512`); the dialog owns the keyboard ahead of the picker, the palette
+and the search (`:550`); and a second parked ask is seated but **unanswerable until a frame has painted it**, so no
+key can authorise work the user never saw (`crates/epsilon-tui/src/app.rs:1714`).
+
+One thing is reported rather than reconciled: Epsilon writes a saved key to a JSON file in the config dir
+(`crates/epsilon-llm/src/auth.rs:6`), which [`../../AGENTS.md`](../../AGENTS.md) §6 does not permit. That is a
+credential-store decision for a maintainer, recorded in the evidence file's open findings; it is not a parity row
+against Pi, which stores credentials by its own design.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-061 | A subscription Anthropic credential warns once that third-party harness use is billed per token | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:317-322`, `:5184-5212` | missing | none | — |
+| P-062 | `/login` walks auth type → provider → dialog, and cancelling a dialog reopens the selector it came from | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5809-5883`, `:5885-5928`, `:5798` | partial | `crates/epsilon-tui/src/app/commands.rs:598` — `/login <provider>` opens one masked modal directly; there is no auth-type selector, no provider list and no `onBack` chain | `oauth_need_code_opens_the_overlay_and_done_closes_it` — and no test renders the panel |
+| P-063 | After login Pi selects the provider's default model, or says which of four specific failures happened | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5990-6085` | missing | none | — |
+| P-064 | The login dialog renders four event kinds: auth URL, device code, info message, progress | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6227-6238`, `:6203-6225` | partial | `crates/epsilon-tui/src/app/panels.rs:1028` — the masked free-text prompt is one of the kinds; no URL, device-code or progress rendering | `oauth_need_code_opens_the_overlay_and_done_closes_it`; E-059 records that nothing renders this panel |
+| P-065 | The `amazon-bedrock` API-key dialog adds a hint about AWS profiles, IAM keys and role credentials | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6129-6135` | missing | none | — |
+| P-066 | Logging in to Radius offers to configure its MCP server in the global `mcp.json` and reloads | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6296-6343` | missing | none | — |
+| P-067 | `/logout` removes the chosen stored credential and, with none stored, says explicitly that env vars and `models.json` are untouched | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5930-5988`, `:5966-5978` | partial | `crates/epsilon-tui/src/app/commands.rs:635` — three outcomes (removed / nothing-to-remove / error), so "nothing happened" is never reported as success | `no_slash_command_panics_when_typed` covers only the bare usage line; E-060 records that no test types `/logout <provider>` in the TUI |
+| P-068 | Pi has **no** permission system: every side-effecting tool runs with the permissions of the user that launched it, and the documented remedy is containerisation or an extension sandbox | `README.md:42`, `README.md:44-48` | deliberately different | `crates/epsilon-safety/src/gate.rs:85` (a deny rule is evaluated **before** the session "always allow" memory), `crates/epsilon-safety/src/channel_ui.rs:128` (a dropped responder resolves to deny), `crates/epsilon-tui/src/app/event.rs:281` (the ask reaches the screen) | `memory_promotion_cannot_override_a_fresh_deny`, `dropped_ask_denies_fail_closed`, `bash_defaults_to_ask_and_deny_carries_no_access`, `a_pending_approval_is_drawn_over_the_timeline` (frame) |
+
+## 8. Sessions
+
+Pi's session commands are a tree of files with a picker over them, and each destructive one is careful: `/import`
+asks before replacing anything, `/tree` asks before summarising a branch, and the picker refuses to delete the
+session you are in. Epsilon's session surface is deliberately smaller — `/new`, `/sessions`, `/fork`, `/clone`,
+`/export`, `/import`, `/resume`, `/name`, `/session`, `/tree` — and it moves the safety properties into the store
+rather than into dialogs: a fork writes a **new** session file with a fresh header id rather than copying a file, and
+`/restore` will not overwrite anything until the word `yes` is the **last** token of the command.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-026 | Double-Escape inside 500 ms opens `/tree` (the default) or `/fork`, and `none` disables it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3021-3035`, `packages/coding-agent/src/core/settings-manager.ts:1446-1448` | missing | none — Epsilon has no double-Escape arm; Escape aborts a run and quits when idle (`crates/epsilon-tui/src/app/keys.rs:1369`) | — |
+| P-055 | Opening a session whose history contains compactions prints `Session compacted N times` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4128-4143` | missing | none | — |
+| P-069 | `/new` starts a fresh session and confirms in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6845-6858`, `:3245-3249` | done | `crates/epsilon-tui/src/app/commands.rs:1341`, `:1343` — creates a brand-new `.jsonl` beside the existing ones, attaches it, and refuses while a run is in flight | `new_command_starts_a_new_session_file_and_keeps_the_old_one`, `new_command_refuses_while_a_run_is_in_flight` |
+| P-070 | `/resume` opens a picker that can widen to all directories, rename in place, and offer a quit action | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5632-5673` | partial | `crates/epsilon-tui/src/picker.rs:751` — the browser lists this workspace's sessions newest-first with `age · size · [task child] · [in use] · <file>` and Enter resumes; there is no cross-directory scope, no rename panel and no delete | `sessions_command_browses_and_enter_switches_the_session`, `session_rows_list_newest_first_and_mark_the_current_file` |
+| P-071 | Resuming a session whose saved cwd is gone asks for a fallback directory; declining cancels | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2707-2713`, `:5691-5707`, `:6508-6521` | missing | none | — |
+| P-072 | Selecting a tree node asks `Summarize branch?` before navigating, and cancelling re-opens the tree on the same node | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5513-5541` | partial | `crates/epsilon-tui/src/app/keys.rs:797` — the tree picker opens on the leaf and Enter navigates the store to the selected row's own id; there is no branch-summarisation prompt | `timeline_picker_opens_and_enter_jumps`, `tree_and_timeline_open_one_picker_and_say_which_one_ran` |
+| P-073 | A branch summary shows its own status row with Escape bound to abort it, restored in a `finally` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5557-5569`, `:5577-5582`, `:5598-5603` | missing | none | — |
+| P-074 | `/fork` lists earlier user messages, newest pre-selected, and puts the typed text back into the composer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5424-5460` | partial | `crates/epsilon-tui/src/app/commands.rs:1161`, `:1169` — forks the **current leaf** into a new session file with a fresh header id; there is no message picker and the composer is not refilled | `fork_creates_a_distinct_session_and_not_a_file_copy` |
+| P-075 | `/clone` duplicates the session at the current position and says `Nothing to clone yet` when empty | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5462-5481` | partial | `crates/epsilon-tui/src/app/commands.rs:1161` — `/fork` and `/clone` both call `fork_branch_at` on the current leaf and differ only in the word used | `fork_creates_a_distinct_session_and_not_a_file_copy`; E-064 records that no test drives `/clone` |
+| P-076 | `/name <name>` sets and shows the name, and says so when the stored value was normalised | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6587-6610` | partial | `crates/epsilon-tui/src/app/commands.rs:1281` — sets the name in memory, appends a non-LLM `session_name` entry to the file, and distinguishes a persisted write from a refused one | `none found` per E-069 — no test types `/name` |
+| P-077 | `/session` prints name, file, id, message counts, a token breakdown with cache hit-rate and cache-warming status, and a per-model cost breakdown | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6612-6691` | partial | `crates/epsilon-tui/src/app/commands.rs:1075` — file, leaf id, branch entry count, token totals, model, cache-attribution lines and a cost breakdown; there is no cache-warming status and no per-model split | `session_command_reports_cache_attribution_beside_the_totals`, `session_command_shows_where_the_money_went_not_just_how_much` |
+| P-078 | `/export` writes HTML, or JSONL when the path ends `.jsonl` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6439-6455`, `:6457-6484` | partial | `crates/epsilon-tui/src/app/commands.rs:2186`, `:2215` — HTML by default to `.epsilon/exports/`, `html`/`json`/`jsonl` explicit, a bare path inferred from a `.json`/`.jsonl` suffix | `export_writes_html_and_json` asserts the two writers directly, **not** the format inference or the default destination |
+| P-079 | `/import <path>` asks `Replace current session with …?` before doing anything | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6486-6528` | partial | `crates/epsilon-tui/src/app/commands.rs:1357`, `:1377` — refuses while a run is in flight and reports a missing file, but there is no confirmation before the swap | `none found` per E-066 — no test in the tree types `/resume` or `/import` |
+| P-080 | `/share` prefers Radius, else renders HTML and shells out to `gh gist create --public=false` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6530-6539`, `packages/coding-agent/src/modes/interactive/session-share.ts:57-96`, `:175` | missing | none — the `/share` head exists (`crates/epsilon-contracts/src/command.rs:533`) and is driven only by the all-heads sweep | — |
+| P-081 | `/bug` is a consented multi-step report: what is included, transcript choice, model summary, then Upload / Export as Zip / Cancel | `packages/coding-agent/src/modes/interactive/bug-report.ts:50-105`, `:107-147`, `:44-47` | missing | none | — |
+| P-082 | `/reload` re-reads keybindings, extensions, skills, prompts, themes and context files, and refuses while streaming or compacting | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6349-6437`, `:6350-6357` | partial | `crates/epsilon-tui/src/app/commands.rs:1401`, `:1403`, `:1414`, `:1450-1452` — skills roots, agent-def roots, prompt templates and `keybindings.json` are re-read in the running process; `config.toml` deliberately is not, and there are no extensions or themes to reload | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame), `an_agents_root_reload_cannot_read_is_named_on_the_frame` (frame) |
+| P-085 | On exit, a persisted session prints `To resume this session: pi --session <id>` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4244-4247`, `:335-348` | missing | none — `/fork` names the `--session <path>` that opens the fork, but nothing prints it on exit | — |
+
+## 9. Themes
+
+Pi's theme system is a *file* system: two built-in JSON palettes, a palette generated from the terminal's own
+reported colours with a contrast solver holding body text to 4.5:1, a light/dark pair mode that follows the
+terminal's notification, and a debounced watcher on the active file. Epsilon's is a *table* system: three palettes
+resolved most-explicit-first, a measured contrast floor rather than a solver, and no file to watch — which means
+several Pi rows have nothing to pair with at all, and are recorded that way rather than approximated.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-090 | The default theme is `system`, generated from the terminal's reported colours | `packages/coding-agent/src/modes/interactive/theme/theme.ts:757`, `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:175` | deliberately different | `crates/epsilon-tui/src/ui/theme.rs:102`, `crates/epsilon-tui/src/app/commands.rs:1536` — three named palettes and no generated one; an unrecognised theme value falls back to **dark**, not to a terminal-derived palette, because there is no such thing to fall back to | `an_unrecognised_theme_value_falls_back_to_dark_not_to_the_config` |
+| P-091 | Exactly two theme files ship: `dark.json` and `light.json`; everything else is user- or package-supplied | `packages/coding-agent/src/modes/interactive/theme/theme.ts:445-456`, `packages/coding-agent/src/modes/interactive/theme/dark.json:3-4` | partial | `crates/epsilon-tui/src/ui/theme.rs:936` — dark, light and a third `high-contrast` palette; nothing is loaded from a file, so there is no "everything else" | `the_high_contrast_palette_clears_the_aaa_floor_on_black` |
+| P-092 | A theme name of exactly `light/dark` is a pair chosen by the terminal's appearance | `packages/coding-agent/src/modes/interactive/theme/theme.ts:652-667`, `:669-680` | missing | none — Epsilon has no appearance detection to choose between a pair | — |
+| P-093 | The generated system theme solves per-token contrast so body text keeps 4.5:1 on whatever background it lands on | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:350`, `:49-64`, `:510-520`, `:620-635` | partial | `crates/epsilon-tui/src/ui/theme.rs:936`, `:955` — contrast is **measured** rather than solved, and asserted at 7:1 — but only the high-contrast palette has a measured floor in the tree; the dark and light palettes' contrast is not asserted by any test | `the_high_contrast_palette_clears_the_aaa_floor_on_black` (walks every role against 7:1, with the dark palette's own `text_faint` as the control) |
+| P-094 | Light-vs-dark is decided from the terminal's reported foreground, then background contrast, then its report, then `COLORFGBG`, defaulting to dark | `packages/coding-agent/src/modes/interactive/theme/system-theme.ts:416-431`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:702-710`, `:689-695` | missing | none — Epsilon reads `COLORTERM` / `WT_SESSION` / `TERM_PROGRAM` for colour **depth** (`crates/epsilon-tui/src/ui/theme.rs:1086`), never for appearance | — |
+| P-095 | In automatic mode Pi follows the terminal's colour-scheme notification and repaints live | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:225-229`, `:241-247` | missing | none | — |
+| P-096 | Custom themes load from three places; editing the active one repaints within a debounce, and a broken file leaves the last good theme on screen | `packages/coding-agent/src/core/resource-loader.ts:1042`, `packages/coding-agent/src/config.ts:571-573`, `packages/coding-agent/src/modes/interactive/theme/theme.ts:831-861` | missing | none — there is no theme file to load or watch | — |
+| P-097 | A theme that fails to load keeps rendering in system colours and only shows the error when asked; the remembered name resets | `packages/coding-agent/src/modes/interactive/theme/theme.ts:764-769`, `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:182-184` | partial | `crates/epsilon-tui/src/app/commands.rs:1537` — an unrecognised name is refused by name with the options listed and the palette left exactly as it was, rather than reverting silently | `theme_command_toggles_and_names_the_palette`, `the_palette_is_selected_by_name_and_survives_a_bad_one` |
+| P-098 | A theme missing a required colour token is rejected naming the tokens, not with a stack trace | `packages/coding-agent/src/modes/interactive/theme/theme-json.ts:105-138`, `packages/coding-agent/src/modes/interactive/theme/theme-schema.json:43-95`, `:322` | missing | none | — |
+| P-099 | `""` means the terminal's own default foreground or background, and tokens are slot-strict | `packages/coding-agent/src/modes/interactive/theme/theme.ts:290-299`, `:119-126`, `:216-219` | partial | `crates/epsilon-tui/src/ui/theme.rs:1090` — on a 16-colour terminal body text becomes `Color::Reset`, which is the same effect at the cell; there is no theme-token language with slot strictness or optional-with-fallback tokens | `no_color_still_distinguishes_roles_by_attribute`, `bands_are_withheld_when_the_terminal_cannot_do_them` |
+| P-100 | The active theme lives on a `globalThis` symbol so extensions loaded through a second module instance share it | `packages/coding-agent/src/modes/interactive/theme/theme.ts:722-733`, `:735-738`, `:730` | deliberately different | `crates/epsilon-tui/src/ui/theme.rs:1062` — no global registry is needed in one binary; roles resolve per frame and no repaint call is made, which is the *behaviour* Pi's sharing trick exists to produce | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
+| P-101 | Moving the highlight in `/settings` → Theme live-previews the candidate; cancelling restores | `packages/coding-agent/src/modes/interactive/theme/theme-controller.ts:146-153`, `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:454-457` | missing | none — Epsilon has no theme list to preview from | — |
+| P-102 | `terminal.trueColor`, `terminal.images` and `terminal.hyperlinks` override what Pi detected | `packages/coding-agent/src/core/settings-manager.ts:1278-1286`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:599`, `:2040` | partial | `crates/epsilon-cli/src/main.rs:465`, `crates/epsilon-tui/src/ui/theme.rs:481` — the ASCII repertoire is overridable in **both** directions by `EPSILON_ASCII`; colour depth and image support are not overridable | `the_repertoire_default_is_ascii_on_a_legacy_windows_console`, `ascii_glyphs_are_seven_bit_only` |
+| P-215 | The logo's brand colours are fixed across themes | `packages/coding-agent/src/modes/interactive/components/pi-logo.ts:19`, `:23` | deliberately different | `crates/epsilon-tui/src/ui/transcript.rs:419-424` — the welcome wordmark follows the palette, and Epsilon takes no third party's logo, mascot or brand ([`../../AGENTS.md`](../../AGENTS.md) §10) | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
+| P-269 | Choosing Theme opens a submenu in place; `automatic` switches it into split mode | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:752`, `:313`, `:221`, `:216` | partial | `crates/epsilon-tui/src/app/commands.rs:1533` — a palette is chosen by name on the command line; there is no submenu and no `automatic` entry | `every_palette_the_description_advertises_is_one_the_product_has` |
+| P-270 | Automatic light/dark gets its own four-row submenu (`Light theme`, `Dark theme`, `Apply`, `Change mode`) | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:332`, `:446`, `:407`, `:338` | missing | none | — |
+| P-271 | Cancelling the theme submenu restores whatever was active when it opened | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:325`, `:454`, `:326`, `:355` | missing | none | — |
+| P-322 | A theme-list component exists with a live preview but **no production caller** — the picker the user actually sees is a submenu elsewhere | `packages/coding-agent/src/modes/interactive/components/theme-selector.ts:31`, `:54`, `packages/coding-agent/src/modes/interactive/components/index.ts:31` | deliberately different | `crates/epsilon-tui/src/app/commands.rs:1537` — Epsilon ships one reachable theme path, `/theme`; invariant 7 says a control nothing opens must not be advertised, and nothing is | `the_palette_is_selected_by_name_and_survives_a_bad_one` |
+
+## 10. Settings
+
+Pi edits roughly thirty settings from a searchable in-TUI list, with capability-gated rows, enum-by-label values,
+nested submenus and two-step loops. Epsilon does not: `/settings` opens no overlay and prints where configuration
+lives, what is currently set, and which file to edit — a recorded decision with its `ponytail:` note in the source
+(`crates/epsilon-tui/src/app/commands.rs:1997`). That is the largest single structural divergence on the settings
+surface, and it is why most rows below are `missing` rather than `partial`: there is no list to hold them.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-266 | `/settings` opens a bordered, type-to-search list of about thirty settings, each row showing its value | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:868`, `:983`, `:866`, `:987` | deliberately different | `crates/epsilon-tui/src/app/commands.rs:1997`, `:2004` — `/settings` pushes the resolved global and project config paths, the current model and thinking level, recents and favourites, and tells the reader to edit the TOML and run `/reload` | `no_slash_command_panics_when_typed` |
+| P-267 | `Show images` and `Image width` appear only when the terminal reports image support; the sending rows always appear | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:469`, `:758`, `:767` | missing | none | — |
+| P-268 | The always-present toggles and their offered ranges: auto-resize, block images, skill commands, hardware cursor, editor padding, output padding, autocomplete height, clear-on-shrink, terminal progress | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:777`, `:838`, `:786`, `:796`, `:806`, `:816`, `:826`, `:836`, `:846`, `:856` | missing | none | — |
+| P-103 | `outputPad` is exactly 0 or 1 (anything else coerces to 1) and `editorPaddingX` clamps to 0–3 | `packages/coding-agent/src/core/settings-manager.ts:1488-1490`, `:1482-1486` | missing | none — the gutter is a constant two columns (`crates/epsilon-tui/src/ui/transcript.rs:149`) and the composer inset is fixed | — |
+| P-104 | The autocomplete row count is configurable, clamped to 3–20, default 5 | `packages/coding-agent/src/core/settings-manager.ts:1502-1506`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:639` | partial | `crates/epsilon-tui/src/app/panels.rs:771` — the popup is a fixed eight rows; there is no setting and no clamp | `an_ascii_frame_draws_no_character_a_legacy_console_cannot` (frame) paints the popup but asserts only the CP437 repertoire |
+| P-105 | Mermaid fences render live, at the end, or never, with `off`/`final` honoured and anything else falling back to streaming | `packages/coding-agent/src/core/settings-manager.ts:1512-1515`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:513-516` | missing | none — Epsilon has no mermaid renderer | — |
+| P-106 | Four distinct image settings: render inline, on-screen width, downscale before sending, block sending | `packages/coding-agent/src/core/settings-manager.ts:1288-1290`, `:1301-1307`, `:1403-1405`, `:1416-1418` | missing | none — Epsilon draws no inline images in the transcript | — |
+| P-107 | A project's settings override the user's key by key with nested objects merged, unless the project is untrusted — then it contributes nothing and writes are refused | `packages/coding-agent/src/core/settings-manager.ts:413`, `:474-476`, `:662-666` | partial | `crates/epsilon-tui/src/trust_store.rs:132`, `crates/epsilon-tui/src/app.rs:742` — a changed project config raises a review, and project roots (prompt templates) are skipped while it holds; there is no layered merge in either direction | `trust_review_holds_submits_until_answered` (frame), `empty_store_asks_set_get_clear_roundtrip` |
+| P-108 | Keybindings live in a separate file and legacy short ids migrate on load | `packages/coding-agent/src/core/keybindings.ts:379-383`, `:240-300`, `:320-340` | partial | `crates/epsilon-tui/src/app/commands.rs:1450-1452` — `keybindings.json` is a separate file re-read by `/reload`, and every id is declared once; there is no migration table and a malformed value is not silently dropped by a migration pass | `a_rebound_submit_key_is_the_key_that_submits` |
+| P-109 | One predicate decides the Windows-flavoured defaults: `win32`, or Linux with `WSL_DISTRO_NAME`/`WSL_INTEROP` set | `packages/coding-agent/src/core/keybindings.ts:62-67`, `:73` | partial | `crates/epsilon-tui/src/ui/theme.rs:462`, `:481` — a Windows predicate exists for the **glyph repertoire**, not for chords; no binding is rebound per platform | `the_repertoire_default_is_ascii_on_a_legacy_windows_console` |
+| P-110 | Pi declares 44 app-level actions plus the `tui.*` set, four of which have no default key at all | `packages/coding-agent/src/core/keybindings.ts:75-238`, `:146-149` | partial | `crates/epsilon-tui/src/keybindings.rs:27` — 24 ids, every one with a `keybindings.matches(...)` arm; two more ids have handlers and deliberately no chord | `no_chord_is_bound_to_two_ids_by_default`, `a_hint_label_parses_back_to_the_chord_it_names` |
+| P-111 | Every outbound warning is individually switchable under `warnings`, and the whole object is editable in `/settings` | `packages/coding-agent/src/core/settings-manager.ts:90-92`, `:1524`, `:716-729` | missing | none | — |
+| P-112 | Steering and follow-up delivery are one-at-a-time by default, each switchable to deliver all at once | `packages/coding-agent/src/core/settings-manager.ts:830-832`, `:840-842` | missing | none — Epsilon has one queue destination and no setting (`crates/epsilon-tui/src/app.rs:881`) | — |
+| P-113 | Cache warming is readable only from the **global** settings layer, because a cache refresh costs money | `packages/coding-agent/src/core/settings-manager.ts:1023-1026`, `:182` | missing | none | — |
+| P-114 | The startup tool set is four tools, and a settings layer listing only `+name`/`-name` **modifies** the inherited set; an empty array means "no tools" | `packages/coding-agent/src/core/settings-manager.ts:215`, `:236-247`, `:225-230` | missing | none | — |
+| P-274 | With no configured providers the per-model list shows one actionable entry naming the next step, not a bare emptiness | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:634`, `:636` | partial | `crates/epsilon-tui/src/app/commands.rs:1895` — `/templates` with nothing installed names the two directories to drop files into, which is the same actionable-empty-state rule applied somewhere else | `templates_command_explains_where_to_put_files_when_empty` |
+| P-275 | A `Warnings` row opens a nested list of toggles, displaying the literal word `configure` as its value | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:594`, `:156`, `:593` | missing | none | — |
+| P-276 | Enum settings are edited by label and mapped back to values; an unmapped label is silently ignored | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:558`, `:923-924`, `:929`, `:931` | partial | `crates/epsilon-tui/src/app/commands.rs:1533`, `:1536` — one enum is edited by name (case-insensitive, `_` standing in for `-`) and a miss is refused with the options listed rather than silently ignored | `every_palette_the_description_advertises_is_one_the_product_has`, `theme_command_toggles_and_names_the_palette` |
+| P-277 | Fullscreen-only settings are listed with descriptions saying they have no effect in regular mode | `packages/coding-agent/src/modes/interactive/components/settings-selector.ts:712`, `:739`, `:722`, `:850` | missing | none | — |
+| P-278 | A submenu renders a title, an optional description and a list capped at ten rows, with a footer naming Enter and Esc | `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:88`, `:95`, `:120`, `:134` | partial | `crates/epsilon-tui/src/app/panels.rs:58` — overlays are titled and their capacity is **measured from the frame** rather than a fixed ten, so a page grows on a tall terminal and shrinks on a short one | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame, renders 100×44 and 100×14) |
+| P-279 | With `searchable: true`, typing fuzzy-filters on label + description and the rebuilt list has an empty preselect | `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:110`, `:115`, `:120` | done | `crates/epsilon-tui/src/app/keys.rs:1325` — a printable character goes into the editor buffer, which the picker reads as its filter, and the highlight resets | `two_stage_picker_descends_and_applies_model`, `filtered_results_are_ranked_by_fuzzy_score_best_first` |
+| P-280 | A multi-step submenu prefixes each description with `Step N/M` and Esc walks back one step, deleting that step's selection | `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts:204`, `:149`, `:234`, `:236` | partial | `crates/epsilon-tui/src/app/keys.rs:1151` — Esc walks back a stage and clears the filter; the stage is named by the panel title (`models — deepseek: filter ''`) rather than by a `Step N/M` prefix | `two_stage_picker_descends_and_applies_model` (covers both Esc steps) |
+
+## 11. Project trust
+
+Project trust is Pi's only gate, and it decides something narrower than it is often assumed to: whether the
+project's `.pi` resources and packages load at all — not whether a tool may run. Epsilon's trust review is keyed on
+a **hash of the project configuration**, so a directory that never changes never asks twice, and it answers in the
+composer with `trust` / `trust no` rather than in a dialog. It takes effect in the running process; there is nothing
+to restart.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-115 | `/trust` lists `Trust`, `Trust parent folder (<path>)`, `Do not trust`, and session-only variants, showing the cwd, the saved decision and the current session's state | `packages/coding-agent/src/core/trust-manager.ts:67-97`, `packages/coding-agent/src/modes/interactive/components/trust-selector.ts:52-70` | partial | `crates/epsilon-tui/src/trust_store.rs:55`, `:160` — answering writes the accepted hash to `<workspace>/.epsilon/trust.json` and the accepted path to the global store, and trusting a parent covers every child; there is no dialog and no session-only variant | `empty_store_asks_set_get_clear_roundtrip`, `nearest_ancestor_wins_and_child_overrides` |
+| P-116 | Trust is inherited from the nearest ancestor that has a decision, walking to the filesystem root | `packages/coding-agent/src/core/trust-manager.ts:45-59`, `packages/coding-agent/src/modes/interactive/components/trust-selector.ts:21-30` | done | `crates/epsilon-tui/src/trust_store.rs:160` — `get` walks to the nearest ancestor entry and a child overrides it | `nearest_ancestor_wins_and_child_overrides` |
+| P-117 | Exactly eight resource kinds under `.pi/` make a project trust-requiring; a directory with only a README never prompts | `packages/coding-agent/src/core/trust-manager.ts:30-39`, `:186-208` | partial | `crates/epsilon-core/src/config.rs:230` — the trigger is a **changed configuration hash**, not the presence of one of eight named resource kinds | `empty_store_asks_set_get_clear_roundtrip`, `trust_review_holds_submits_until_answered` |
+| P-118 | Saving a trust decision says `Restart pi for this to take effect`; the session's own state is separate | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5240-5263`, `packages/coding-agent/src/modes/interactive/components/trust-selector.ts:68` | deliberately different | `crates/epsilon-tui/src/app.rs:786` — the gate is a flag in the running process, so typing `trust` clears it immediately and there is no restart to ask for; the divergence follows from the mechanism, and both sides are cited | `trust_no_quits_instead_of_running_against_unreviewed_config`, `trust_gate_blocks_palette_and_stages_initial_task` |
+
+## 12. Tool cards
+
+Pi's tool card is a component that draws a box, decides its own spacing, carries its arguments as `key=value`
+when collapsed and `key: value` lines when expanded, and truncates to the **first** ten lines with a hint naming the
+expansion key. Epsilon's card is a title row — the tool's name, a per-tool headline, its status **as a word** — over
+a body capped at twelve visible rows with `… N more lines (ctrl+x to open)` beneath. It is deliberately a
+different shape: the state channel is a word, not a background, and `Ctrl+X` in Epsilon is expand-all rather than
+copy (E-076 uses `F4`).
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-136 | A blank line precedes every tool block | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:100`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3965` | partial | `crates/epsilon-tui/src/ui/card.rs:213` — spacing is per-turn with a shared two-column gutter, not a blank line before each card | `a_completed_tool_call_is_drawn_once_on_a_real_frame` (frame) |
+| P-137 | The card's background is pending / red / green, and colour is the **only** state channel | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:307`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3574`, `:3583` | deliberately different | `crates/epsilon-tui/src/ui/card.rs:213` (state as a word in the title), `crates/epsilon-tui/src/ui/transcript.rs:70` (role glyph), `crates/epsilon-tui/src/state.rs:971` (a notice carries no band) — [`../../AGENTS.md`](../../AGENTS.md) §8 forbids colour alone | `a_tool_call_and_a_notice_are_distinguishable_on_a_real_frame_without_colour` (frame, `NO_COLOR`), `an_answer_and_its_reasoning_are_distinguishable_on_a_real_frame_without_colour` (frame) |
+| P-138 | A tool with a registered definition renders in a padded bordered box; one without renders bare, dumping pretty-printed JSON args | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:110`, `:369`, `:421` | partial | `crates/epsilon-tui/src/renderers/mod.rs:79` — every tool renders the same card; a tool with nothing sayable falls back to its name plus the first non-blank output line rather than a JSON dump | `a_tool_with_nothing_sayable_falls_back_to_the_first_output_line`, `a_card_with_no_headline_still_renders_its_name` |
+| P-139 | A renderer may declare `renderShell: "self"` and draw its own lines with no box, after one blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:131`, `:269`, `:277-281` | missing | none | — |
+| P-140 | A tool whose renderers produce nothing collapses to zero lines rather than an empty box | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:412`, `:265` | partial | `crates/epsilon-tui/src/app/view.rs:71` — a card with no body still shows its title row; `is_open(id, has_body)` gates the body, not the card | `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer` |
+| P-141 | A throwing `renderCall` / `renderResult` falls back silently to generic text | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:333`, `:359` | missing | none | — |
+| P-142 | The generic fallback truncates to the **first** 10 lines and prints `... (N more lines, KEY to expand)` | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:40`, `:166` | partial | `crates/epsilon-tui/src/ui/card.rs:70`, `:246` — `BODY_ROWS = 12`, not ten; whether the head or the tail is kept is not established by an `E-` row | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
+| P-143 | Left-clicking a card toggles that card alone, layered on top of the global flag | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:175-177` | partial | `crates/epsilon-tui/src/render_cache.rs:72` — a card records an explicit per-card open/closed state that the global toggle can override, but nothing sets it: mouse capture is off (`crates/epsilon-tui/src/app.rs:1412`) | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
+| P-144 | One global flag expands every expandable row at once | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4474-4490` | done | `crates/epsilon-tui/src/render_cache.rs:72` — see P-039; Epsilon's flag is `ctrl+x` and the per-card exception is a superset of Pi's behaviour | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame) |
+| P-145 | Collapsed arguments are space-separated `key=value` pairs truncated to 100 characters; expanded they are one indented `key: value` per line | `packages/coding-agent/src/core/tools/render-utils.ts:78`, `:93` | missing | none — arguments collapse into a single per-tool headline (`crates/epsilon-tui/src/renderers/mod.rs:39`) and are never listed as pairs | — |
+| P-146 | The card's argument display updates as the model streams them, before the tool starts | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:183`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3490` | partial | `crates/epsilon-tui/src/ui/card.rs:213` — the card exists from the call, but its arguments are not re-rendered as they arrive; the live tail carries assistant text and reasoning (`crates/epsilon-tui/src/app/panels.rs:401`) | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame) |
+| P-147 | `setArgsComplete()` at `message_end` is what triggers the edit tool's asynchronous diff computation | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:194`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3527-3530` | partial | `crates/epsilon-tui/src/state.rs:847` — the diff arrives as `details.diff` on the result and is parsed at commit, so there are no partial arguments to guard against | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame), `the_diff_is_not_run_through_the_markdown_parser` (frame) |
+| P-148 | Execution beginning flips the card to its pending appearance — "card exists" and "card is running" are different states | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:188`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3566` | done | `crates/epsilon-tui/src/ui/card.rs:213` — the title carries `bash $ cargo test · pending` while running | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame), `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame) |
+| P-149 | Image blocks inside a tool result render inline, each after a blank line | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:384`, `:397` | missing | none | — |
+| P-150 | On the kitty protocol a non-PNG image is converted asynchronously and swapped in, cached by source bytes plus mime type | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:214`, `:395` | missing | none | — |
+| P-151 | Without image support an image block degrades to a text line giving its mime type and dimensions | `packages/coding-agent/src/modes/interactive/components/tool-execution.ts:389`, `packages/coding-agent/src/core/tools/render-utils.ts:51` | missing | none — Epsilon draws no inline images, so there is nothing to degrade | — |
+
+## 13. Bash cards
+
+A `!` command in Pi is a card with a literal `$ <command>` header and three different truncation policies across the
+transcript — first-10 for a generic tool, last-20 for a `!` card, last-5 for the bash **tool**. Epsilon has one
+shell tool and one card, capped at twelve visible rows with the live chord named. Where Epsilon defers bash output
+while streaming, or names the file holding truncated output, those rows are `missing`: preserving the user's work
+is required of both programs, and Epsilon's evidence does not yet show a full-output file being written.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-152 | A `!` command renders as a card whose bold header is the literal command prefixed with `$` | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:51`, `:44` | done | `crates/epsilon-tui/src/renderers/mod.rs:39` — `shell`/`bash`/`run` open with `$ <command>`, and a multi-line `bash -c` script collapses to its first line | `a_shell_card_reads_like_a_command_line`, `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame) |
+| P-153 | A `!!` command's border is dimmed to mark exclusion from model context | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:37`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6939` | partial | `crates/epsilon-tui/src/app.rs:856` — the exclusion is implemented and threaded into the tool; nothing marks the card so a reader cannot tell `!` from `!!` afterwards | none — no test types `!!` |
+| P-154 | While running, the card shows `Running... (KEY to cancel)` in muted colour, with the key resolved live | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:59`, `:171` | partial | `crates/epsilon-tui/src/ui/header.rs:79`, `:86` — the run state is a spinner and `running 12s` in the header, with `run` as the footer mode word (`crates/epsilon-tui/src/ui/footer.rs:357`); there is no per-card cancellable line | `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame) |
+| P-155 | Streamed output is ANSI-stripped, `\r\n`/`\r` normalised, and an unterminated chunk joined onto the previous line | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:83`, `:89` | partial | `crates/epsilon-tui/src/ui/card.rs:782` — tabs become three spaces and a lone CR is deleted before the row is measured; ANSI stripping and unterminated-chunk joining are not established by an `E-` row | `none found` per E-017 — the normalisation is pinned by the source only |
+| P-156 | Collapsed bash output keeps the **last** 20 wrapped visual lines, recomputed when the width changes | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:131`, `:156` | partial | `crates/epsilon-tui/src/ui/card.rs:246`, `:70` — twelve visible rows; which end is kept is not established by an `E-` row | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
+| P-157 | The hidden-lines hint names the expansion key live and flips wording between expand and collapse | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:177`, `:184` | done | `crates/epsilon-tui/src/ui/card.rs:290` — `… 29 more lines (ctrl+x to open)`, carrying the true count and the live text of the binding; an expanded card prints no affordance | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
+| P-158 | A cancelled command shows `(cancelled)` and a failed one `(exit N)` | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:189`, `:192` | partial | `crates/epsilon-tui/src/ui/card.rs:213` — status is a word in the title; the exit **number** is not on the card | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame) |
+| P-159 | When output was truncated for context but a full copy was saved, the card names the file | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:196`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6991-6997` | missing | none — [`../../AGENTS.md`](../../AGENTS.md) §6 requires the recoverable copy, so this is a gap on our side and not a licence | — |
+| P-160 | The card shows at most what the model saw, truncated to the bash tool's own limits | `packages/coding-agent/src/modes/interactive/components/bash-execution.ts:122-124` | missing | none | — |
+| P-024 | Bash output started while the agent is streaming is deferred above the composer and moved into the transcript on the next submission | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6966-6976`, `:4774-4780`, `:3330` | missing | none | — |
+| P-177 | The bash **tool** prints an elapsed/duration line and its own truncation warning with `... (N earlier lines, KEY to expand)` | `packages/coding-agent/src/core/tools/renderers/bash.ts:98`, `:104`, `:18`, `:72` | partial | `crates/epsilon-tui/src/state.rs:265` — a duration appears on a finished card as `ended - started`, and sub-second work reads as `412ms` rather than `0s`; there is no byte- or line-limit warning | `only_a_finished_card_carries_a_duration`, `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame) |
+
+## 14. Diffs
+
+Pi's diff renderer parses line numbers out of the header and re-emits them, expands tabs to three spaces before
+computing or drawing, and prints removals before additions inside a hunk. Epsilon parses the unified diff into a
+structured card body and renders it as a diff rather than as prose — which is the single most important property in
+this area, because a diff run through a markdown renderer looks correct and reads as an essay.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-161 | Context lines are dim, removals red, additions green, and every line carries its number | `packages/coding-agent/src/modes/interactive/components/diff.ts:89`, `:129`, `:8`, `:124` | done | `crates/epsilon-tui/src/ui/card.rs:367` — `@@` headers in the accent colour, `+`/`-` before the line number, a coloured gutter | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame) |
+| P-162 | Intra-line highlighting appears only for a one-line-for-one-line replacement | `packages/coding-agent/src/modes/interactive/components/diff.ts:115`, `:26` | missing | none | — |
+| P-163 | Leading whitespace is excluded from the intra-line highlight | `packages/coding-agent/src/modes/interactive/components/diff.ts:39-41` | missing | none | — |
+| P-164 | Tabs are expanded to **three** spaces before both the diff computation and the rendering | `packages/coding-agent/src/modes/interactive/components/diff.ts:17`, `:120` | partial | `crates/epsilon-tui/src/ui/card.rs:782` — the same three-space value, applied in the card's row normaliser rather than in the diff computation | `none found` per E-017 — the value matches, the test does not exist |
+| P-165 | Removals are emitted before additions, and lines outside the diff grammar pass through verbatim in the dim context colour | `packages/coding-agent/src/modes/interactive/components/diff.ts:127-131`, `:88-89` | done | `crates/epsilon-tui/src/ui/card.rs:367` — a line the format does not define, such as `\ No newline at end of file`, is kept and printed rather than dropped | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame), `the_diff_is_not_run_through_the_markdown_parser` (frame) |
+| P-166 | The edit tool renders preview and result through the same diff function | `packages/coding-agent/src/core/tools/renderers/edit.ts:110`, `:146` | done | `crates/epsilon-tui/src/state.rs:847` — one diff card path, reached from one parse | `the_split_diff_draws_both_sides_at_a_wide_frame` (frame) |
+
+## 15. Markdown, mermaid and truncation
+
+This is the area where an overstatement is easy, so the rule here is narrow: where Epsilon achieves Pi's outcome by
+a different mechanism, the row says so and names the mechanism; where equivalence is merely plausible, the row is
+`partial`. Mermaid has no counterpart at all — Epsilon renders no diagrams — and the extension transformer chain,
+with its contract about message type, streaming flag and available width, has no counterpart either.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-167 | Every markdown block passes a transformer chain told the message type, the streaming flag and the **available** width | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:9`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2186-2188` | missing | none — markdown rendering exists (`crates/epsilon-tui/src/markdown.rs`) but no `E-` row establishes a transform contract | — |
+| P-168 | A transformer returning a non-string is ignored and one that throws is skipped; the rest still run | `packages/coding-agent/src/modes/interactive/components/markdown-transform.ts:21-22`, `:24-26` | missing | none | — |
+| P-169 | A ```` ```mermaid ```` fence is replaced by a Unicode box diagram | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:60`, `:75` | missing | none | — |
+| P-170 | A diagram wider than the terminal is left as the original code block rather than clipped | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:76`, `:74` | missing | none | — |
+| P-171 | Each mermaid span class maps to a named theme colour, so a diagram follows the theme | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:38`, `:49` | missing | none | — |
+| P-172 | Each diagram row is an inline code span with a fence sized past the longest backtick run, and a non-breaking space for a blank row | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:22`, `:33` | missing | none — and worth stating as a rule: if a diagram renderer is ever added, drawing straight to terminal lines must not then be run through a markdown renderer that collapses whitespace | — |
+| P-173 | Mermaid never renders inside a thinking block, and during streaming draws only in `streaming` mode | `packages/coding-agent/src/modes/interactive/components/mermaid.ts:63`, `:65` | missing | none | — |
+| P-174 | Collapsed output is limited by **wrapped** lines at the current width, so one long minified line cannot flood the screen | `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:41`, `:43`, `:47-48` | done | `crates/epsilon-tui/src/ui/card.rs:246`, `:290` — the cap counts visible rows after wrapping, so a 41-row diff is twelve rows plus a marker | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
+| P-175 | The truncation preview caches its rendered lines per width | `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:78-79` | done | `crates/epsilon-tui/src/render_cache.rs:377` — each line is wrapped once per width and cached by its monotonic id, so a frame binary-searches the window and clones only visible rows; a width change invalidates everything wholesale | `width_change_invalidates_everything`, `a_restaled_card_is_rebuilt_when_named_and_kept_when_not` |
+| P-176 | The `... (N more lines)` hint is placed on the side that keeps the relevant content | `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:84-85` | partial | `crates/epsilon-tui/src/ui/card.rs:290` — the marker follows the body it abbreviates; there is no keep-last mode to place it on the other side | `a_long_diff_is_capped_and_says_which_key_opens_it` (frame) |
+
+### Text measurement — the `T-###` rows
+
+Pi's TUI package measures width in grapheme clusters, counts a tab as three columns, strips CSI/OSC/APC before
+measuring, and closes any open hyperlink and appends a reset at every truncation and wrap boundary. Epsilon reaches
+the same visible outcome without ever building the styled string that would need closing: it wraps into `Span`s,
+resolves colour roles per frame, and drops whole measurement parts at a span boundary. Two rows below are `partial`
+rather than `done` precisely because the inventory does not establish the equivalence — Epsilon's own tab
+normalisation has **no test**, and nothing establishes a central strip for every boundary. That is the honest
+reading, and it is the one a future reader should re-check first.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| T-001 | Width is computed by segmenting into grapheme clusters and summing per-cluster cells | `packages/tui/src/utils.ts:250-310`, `:182-245` | done | `crates/epsilon-tui/src/app/keys.rs:1590` — each caret motion is exactly one extended grapheme cluster, and the composer wraps one cluster per decision (`crates/epsilon-tui/src/app.rs:1830`) | `ctrl_b_ctrl_f_move_cursor_by_char`, `word_and_line_nav_snaps_off_cluster_interior`, `long_unicode_draft_wraps_and_places_caret_in_display_columns` (frame) |
+| T-002 | A literal tab is measured as **3** columns, not advanced to a tab stop | `packages/tui/src/utils.ts:187`, `:271`, `:441` | partial | `crates/epsilon-tui/src/ui/card.rs:782` — the same value (`text.replace('\t', "   ")`) because a tab is one `char` and up to eight columns, and a width computed over raw text wraps rows | `none found` per E-017 — the constant matches Pi's and no test in the tree contains a literal tab |
+| T-003 | CSI, OSC (hyperlinks and prompt markers) and APC sequences are all stripped before measuring | `packages/tui/src/utils.ts:273-292`, `:452-462`, `:313-327` | partial | `crates/epsilon-tui/src/app/golden.rs:2660` — panel rows are stripped before they are drawn, and the OSC 52 clipboard bytes are deliberately parked and written after the frame rather than drawn (`crates/epsilon-tui/src/app.rs:1500`) | `a_panel_row_is_stripped_before_it_is_drawn` (frame), `the_sequence_is_written_at_the_frame_boundary_and_only_once` |
+| T-004 | `truncateToWidth` measures, clips by grapheme, appends an ellipsis, **closes an open OSC 8 hyperlink** and appends a reset | `packages/tui/src/utils.ts:1121-1257`, `:155-175` | partial | `crates/epsilon-tui/src/ui/header.rs:160`, `crates/epsilon-tui/src/ui/layout.rs:407` — Epsilon never truncates a styled string: roles resolve per frame (`crates/epsilon-tui/src/ui/theme.rs:1062`), a narrowing row drops whole parts at a span boundary, and a re-measure backstop covers a width table that disagrees with ratatui's. The observable outcome Pi spends this function on — a cut link stops at the cut — is held, but by a different mechanism, and the residual obligation is the backstop rather than the hyperlink close | `nothing_is_drawn_past_the_row_width` (frame), `a_narrow_terminal_drops_whole_gauges_rather_than_cutting_one` (frame) |
+| T-005 | `sliceByColumn` slices a styled line by visible column, keeping the codes active at the boundary, with a `strict` flag | `packages/tui/src/utils.ts:1263-1265`, `:1268-1316`, `:1300` | partial | `crates/epsilon-tui/src/ui/header.rs:160` — the header drops whole measurements from the tail (the model name and its `offline` qualifier are pinned and go last) rather than slicing a styled line at a column; no column-slice primitive is established by an `E-` row | `a_narrow_terminal_drops_whole_gauges_rather_than_cutting_one` (frame), `the_position_badge_is_never_half_written_at_any_width` (frame) |
+| T-006 | Wrapping carries active styling across a break and across a literal newline, re-emitting codes per continuation line | `packages/tui/src/utils.ts:900-923`, `:925-1004`, `:913` | partial | `crates/epsilon-tui/src/app.rs:1830`, `crates/epsilon-tui/src/render_cache.rs:377` — style is per-`Span` by construction, so no styled string is ever cut; Pi's underline-only reset at a wrap point has no counterpart because there is no background to preserve | `wrapped_draft_grows_composer_at_supported_widths` (frame), `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
+| T-007 | A token wider than the line — a URL, a long path — is broken by grapheme, not by character | `packages/tui/src/utils.ts:947-967`, `:1022-1045` | done | `crates/epsilon-tui/src/app.rs:1830` — `if !newline && col + cells > width` breaks at cluster boundaries, preserving typed spaces | `wrapped_draft_grows_composer_at_supported_widths` (frame), `long_unicode_draft_wraps_and_places_caret_in_display_columns` (frame) |
+| T-008 | `visibleWidth` short-circuits printable ASCII and caches everything else in a bounded 512-entry FIFO | `packages/tui/src/utils.ts:255-261`, `:430-450`, `:50-52`, `:301-307` | partial | `crates/epsilon-tui/src/render_cache.rs:377` — a stronger property in one direction (whole rows cached by width, cost per frame O(visible)) but no ASCII fast path and no bounded width cache is established by an `E-` row | `width_change_invalidates_everything` |
+| T-009 | A background fill is applied **after** padding, to the padded string, so the fill covers the full width | `packages/tui/src/utils.ts:1099-1108` | done | `crates/epsilon-tui/src/ui/transcript.rs:149` — a banded row's fill runs to the right edge, and an unbanded row is deliberately left unpadded | `a_user_turn_carries_its_gutter_and_band_on_a_real_frame` (frame), `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
+| T-010 | Precomposed Thai/Lao `AM` vowels are decomposed before output, because those terminals render them inconsistently during differential repaint | `packages/tui/src/utils.ts:383-393`, `:394-416`, `:391-392` | missing | none — and stated as an open question rather than assumed: whether ratatui or any dependency performs this normalisation was **not measured** by our inventory, and saying so is more useful than claiming parity | — |
+| T-011 | Han, Hiragana, Katakana, Hangul and Bopomofo are word characters, so autocomplete does not break inside CJK | `packages/tui/src/utils.ts:54-55`, `:57-63` | partial | `crates/epsilon-tui/src/app/keys.rs:1581`, `crates/epsilon-tui/src/app/completion.rs:42` — word motion and the `@`-word filter exist; the pinned test covers Greek, and nothing establishes CJK letters as word characters for completion | `word_nav_respects_boundaries_and_unicode` |
+| T-012 | The OSC 8 hyperlink covering a visible column can be recovered, which is how clicks map to URLs | `packages/tui/src/utils.ts:359-381`, `:335-356` | missing | none | — |
+
+## 16. Status indicators
+
+Pi draws its working, retry, compaction and branch-summary status **inside the composer's top border**, with a
+three-step degradation ladder when it does not fit, and scopes clearing by kind so a late `clear("compaction")`
+cannot wipe a retry that has just started. Epsilon gives the run state its own band in the header — one row, always
+present, reading `idle` or a spinner with `running 12s · streaming…` — which is why the border ladder has no
+counterpart here and why the kind-scoped clear is not needed.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-018 | With `showTerminalProgress` on, Pi sets the terminal's progress state on turn start, compaction start and streaming, and clears it at the end | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3365-3368`, `:3590-3593`, `packages/coding-agent/src/core/settings-manager.ts:1335-1337` | partial | `crates/epsilon-tui/src/ui/header.rs:79`, `:86` — progress is signalled by a drawn spinner and elapsed seconds, not by the terminal's own progress state | `a_running_call_shows_its_time_in_the_header_not_on_the_card` (frame), `idle_and_running_read_differently` (frame) |
+| P-019 | `clearOnShrink` decides whether a residual idle row is left under the last message | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2277-2296`, `:2039-2066`, `:2055` | missing | none — Epsilon's header states the run condition permanently (`crates/epsilon-tui/src/ui/header.rs:79`), so there is no residual status row to clear and no setting to decide it | — |
+| P-186 | Four status kinds exist and clearing by kind only clears a matching indicator | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:7`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2277-2280` | partial | `crates/epsilon-tui/src/ui/header.rs:79` — one run-state slot, so there is no kind for a late clear to wipe the wrong thing | `idle_and_running_read_differently` (frame) |
+| P-187 | The status is drawn inside the composer's top border, so it costs no height | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2257-2275`, `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:41` | deliberately different | `crates/epsilon-tui/src/ui/layout.rs:84`, `crates/epsilon-tui/src/ui/header.rs:86` — the run state lives in the one-row header band, which is part of Epsilon's fixed five-band rule; it costs a row and never has to degrade | `the_shell_shows_a_header_a_body_and_a_footer_at_every_supported_size` (frame), `idle_and_running_read_differently` (frame) |
+| P-188 | The embedded status degrades through four steps — spinner glyph, status only, width-fitted spinner — as the border narrows | `packages/coding-agent/src/modes/interactive/components/custom-editor.ts:45`, `:57`, `:51`, `:71` | partial | `crates/epsilon-tui/src/ui/header.rs:160` — the header's right half drops whole gauges from the tail, so no half-written measurement reaches the screen; the ladder itself has no counterpart because the status is not in the border | `a_narrow_terminal_drops_whole_gauges_rather_than_cutting_one` (frame) |
+| P-189 | A retry shows `Retrying (attempt/max) in Ns... (KEY to cancel)` with a live whole-second countdown | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:56`, `:64`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3681-3683` | partial | `crates/epsilon-tui/src/state.rs:971` — a retry lands as a transcript notice and the header shows the run's elapsed seconds; there is no per-second countdown and no cancel key in the countdown | `retry_notices_land_in_the_transcript_and_the_status_line` |
+| P-190 | The compaction indicator reads differently for manual, auto-threshold and overflow starts | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:88`, `:91`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3618` | partial | `crates/epsilon-tui/src/ui/header.rs:93`, `crates/epsilon-tui/src/state.rs:1196` — the header phase reads `compacting context…`; the manual / auto / overflow wording split is absent | `run_lifecycle_renders_in_order` |
+| P-191 | A branch summary is its own status kind, so clearing compaction will not remove it | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:109`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3715` | missing | none — Epsilon does not summarise branches (P-072) | — |
+| P-192 | `renderInBorder` renders the loader at `width + 2` and takes line 1, because the loader always prepends a blank line | `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:25`, `packages/tui/src/components/loader.ts:44` | missing | none — with no border-embedded status there is no such coupling to get wrong | — |
+| P-193 | An embedded working indicator takes the editor's border colour so spinner and border agree | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2298-2311`, `packages/coding-agent/src/modes/interactive/components/status-indicator.ts:43` | missing | none — the header's spinner is drawn in the accent role (`crates/epsilon-tui/src/ui/header.rs:86`), and the thinking level is not encoded in a border | — |
+| P-194 | An extension loader is wrapped in borders with a `cancel` hint, omitted when the operation is not cancellable | `packages/coding-agent/src/modes/interactive/components/bordered-loader.ts:36`, `:39`, `:25`, `:46` | missing | none | — |
+| P-195 | A dynamic border emits exactly `width` dashes with a floor of one, so it re-fits on every resize | `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts:23` | done | `crates/epsilon-tui/src/app.rs:1596`, `:1597` — ratatui composes borders per frame and the cache key includes the width, so a resize invalidates every cached row wholesale | `resizing_mid_session_keeps_every_row_inside_the_new_width` (frame, renders 120×30, 50×14, 120×30, 44×10 on one app) |
+| P-196 | A themed text line rebuilds from a callback on invalidate, so a theme change repaints it | `packages/coding-agent/src/modes/interactive/components/themed-text.ts:26`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3749` | done | `crates/epsilon-tui/src/ui/theme.rs:1062` — roles resolve per frame and no repaint call is made, so a stored styled string cannot go stale | `switching_the_palette_redraws_the_transcript_and_not_just_the_chrome` (frame) |
+
+## 17. Footer
+
+Pi's footer is two lines — cwd and git branch, then token totals and the model name — plus a third whenever an
+extension sets a status. Its most useful property is that **no hint anywhere hard-codes a key**: every hint resolves
+through the live keybinding table at render time, so a rebind changes every hint in the transcript at once.
+Epsilon's footer is one row, and it leads with a one-word mode badge, because the same chord means different things
+per mode (`insert` · `enter send` against `run` · `enter queue`) and a bare chord is a promise the UI has to keep.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-197 | `alt` is displayed as `option` on macOS | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:13` | missing | none | — |
+| P-198 | A hint for a binding id is resolved at render time, so a rebind changes every hint at once; an unbound id yields an empty hint rather than an error | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:35` | done | `crates/epsilon-tui/src/ui/footer.rs:284`, `:285` — hints are drawn from the live table, and the truncation marker on a card carries the same live text (`crates/epsilon-tui/src/ui/card.rs:290`) | `a_hint_label_parses_back_to_the_chord_it_names`, `a_long_diff_is_capped_and_says_which_key_opens_it` (frame), `the_advertised_scroll_key_scrolls_the_real_frame` (frame) |
+| P-199 | The footer is two lines, plus a third whenever an extension sets a status | `packages/coding-agent/src/modes/interactive/components/footer.ts:287`, `:297`, `:292` | deliberately different | `crates/epsilon-tui/src/ui/footer.rs:411` — one row by construction (the five-band layout), because the mode badge has to lead it and the hints have to be budgeted before the layout runs | `no_footer_row_ever_prints_half_a_hint_or_touches_the_location` (frame, sweeps 20…120 columns) |
+| P-200 | The cwd is shortened to `~` only inside `$HOME`, with the git branch in parentheses and the session name after a `•` | `packages/coding-agent/src/modes/interactive/components/footer.ts:33`, `:44`, `:170`, `:176` | partial | `crates/epsilon-tui/src/ui/footer.rs:425` — the workspace path and git branch are shown and are pinned to survive any narrowing; the `~` substitution and the `• session-name` segment are not established by an `E-` row | `the_location_survives_a_narrow_terminal` (frame), `no_footer_row_ever_prints_half_a_hint_or_touches_the_location` (frame) |
+| P-201 | Token totals read `↑in ↓out Rread Wwrite`, each omitted when zero, with a cache-hit percentage appended only when there was cache traffic | `packages/coding-agent/src/modes/interactive/components/footer.ts:181`, `:184`, `:130` | done | `crates/epsilon-tui/src/ui/metrics.rs:272`, `:291` — `↑12k ↓3.4k` beside `ctx 42%/200k`, and the cache gauge `R18k W2.0k CH 75%` distinguishes `CH n/a`, `CH —` and a measured `0%` | `a_provider_that_cannot_report_cache_never_prints_a_percentage`, `cache_rate_is_about_the_latest_prompt_not_the_session`, `the_context_figure_is_the_session_and_not_the_last_prompt` (frame) |
+| P-202 | The context percentage is coloured as an error above 90% and a warning above 70%, reads `?` when unknown, and gains ` (auto)` when auto-compaction is on | `packages/coding-agent/src/modes/interactive/components/footer.ts:205`, `:208`, `:162`, `:200` | deliberately different | `crates/epsilon-tui/src/ui/metrics.rs:186`, `:246` — the same two thresholds, `?` when unmeasured, and the gauge written in a measured-contrast role set (`crates/epsilon-tui/src/ui/theme.rs:936`); colour is never the only channel for a role, because every role also carries a gutter glyph | `a_narrow_terminal_keeps_the_model_and_the_context_gauge` (frame), `the_high_contrast_palette_clears_the_aaa_floor_on_black` |
+| P-203 | The model name is right-aligned, reads `no-model` when unset, carries the thinking level, and disambiguates a routed model with ` → <id>` | `packages/coding-agent/src/modes/interactive/components/footer.ts:220`, `:238`, `:244`, `:241` | partial | `crates/epsilon-tui/src/ui/header.rs:160` — the model name is pinned and survives every width; the routed-model `→ <id>` disambiguation and the provider parenthetical are not established by an `E-` row | `a_narrow_terminal_keeps_the_model_and_the_context_gauge` (frame) |
+| P-204 | Footer truncation measures **visible** columns on already-styled strings, and dims stats and right side separately so a colour reset cannot clear an outer dim | `packages/coding-agent/src/modes/interactive/components/footer.ts:225`, `:282`, `:284` | done | `crates/epsilon-tui/src/ui/layout.rs:407`, `crates/epsilon-tui/src/ui/header.rs:160` — Epsilon never truncates a styled string; whole spans are dropped at a boundary and a re-measure backstop covers the case where its own width table disagrees with ratatui's, which is the same failure a naive `chars().take(n)` produces | `nothing_is_drawn_past_the_row_width` (frame), `no_footer_row_ever_prints_half_a_hint_or_touches_the_location` (frame) |
+| P-205 | Footer statistics are recomputed only when the session, id, leaf, entry count or context-window model changes | `packages/coding-agent/src/modes/interactive/components/footer.ts:109`, `:143`, `:124` | partial | `crates/epsilon-tui/src/render_cache.rs:377` — cached rows make a frame O(visible) regardless of transcript length; the footer's own recompute trigger is not separately established by an `E-` row | `width_change_invalidates_everything` |
+| P-206 | The branch is read by parsing `.git/HEAD` and walking up, following `gitdir:` and `commondir`; a detached HEAD renders `detached` | `packages/coding-agent/src/core/footer-data-provider.ts:22`, `:242`, `:245`, `:259` | partial | `crates/epsilon-tui/src/ui/footer.rs:425` — a branch is shown (`crates/epsilon-tui/src/git.rs`); that it is read without spawning `git` is not established by an `E-` row | `the_location_survives_a_narrow_terminal` (frame) |
+| P-207 | Branch watching watches the HEAD **directory**, debounces at 500 ms, polls under WSL on a Windows drive, adds reftable watchers, and tears down and retries on error | `packages/coding-agent/src/core/footer-data-provider.ts:313`, `:101`, `:91`, `:344`, `:302` | missing | none | — |
+| P-208 | With `PI_EXPERIMENTAL=1` a bold warning-coloured `xp` marker is appended to the footer stats | `packages/coding-agent/src/modes/interactive/components/footer.ts:214`, `packages/coding-agent/src/core/experimental.ts:2` | missing | none | — |
+
+## 18. Selector and overlay components
+
+Pi's overlays share a small amount of machinery — one at a time, with a token guard so a stale callback cannot
+restore the composer twice, a separate focus target each, a border that re-fits on resize, and hints from the live
+table — and then diverge per selector: three navigation policies (clamp, clamp-and-keep-position, wrap), three sort
+modes, five tree filters, substring search in one component and fuzzy in the rest. Epsilon has one overlay
+mechanism and a consistent navigation policy, which shows up as agreement on the mechanism rows and divergence on
+the per-selector ones.
+
+| id | behaviour | reference | status | ours | verified |
+|---|---|---|---|---|---|
+| P-225 | Opening a selector clears the composer and disposes any previous one; closing restores it behind a token guard | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4797-4820`, `:4804` | done | `crates/epsilon-tui/src/app/keys.rs:1429` — the draft is stashed on open and restored on close, and only one overlay is ever live | `ctrl_m_opens_picker_without_typing_slash`, `two_stage_picker_descends_and_applies_model` |
+| P-226 | Each overlay carries a distinct focus target — the inner list, not the container — so an IME places its cursor correctly | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5458`, `:5063`, `packages/coding-agent/docs/tui.md:48-50` | partial | `crates/epsilon-tui/src/ui/composer.rs:118` — when an overlay owns the keyboard no terminal cursor is placed at all, which is the visible half of the problem; a per-overlay focus target is not established by an `E-` row | `long_unicode_draft_wraps_and_places_caret_in_display_columns` (frame) |
+| P-227 | Every bordered overlay re-renders its border as `"─" × width` on each frame | `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts:23`, `packages/coding-agent/src/modes/interactive/components/model-selector.ts:100`, `:151` | done | `crates/epsilon-tui/src/app.rs:1596`; capacity measured per frame at `crates/epsilon-tui/src/app/panels.rs:79` | `resizing_mid_session_keeps_every_row_inside_the_new_width` (frame), `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
+| P-228 | The same physical chord means different things in different overlays (`Ctrl+S` sorts, saves models, saves a default) | `packages/coding-agent/src/core/keybindings.ts:186`, `:210`, `:199`, `:178` | partial | `crates/epsilon-tui/src/keybindings.rs:27` — every chord is declared **once** (invariant 4) and scoped by state in one handler (`crates/epsilon-tui/src/app/keys.rs:550`); the mode badge names which keyboard is live (`crates/epsilon-tui/src/ui/footer.rs:357`) | `approval_preempts_palette_and_picker_without_changing_filter` |
+| P-229 | Overlay hints are generated from the current keybindings and follow a rebind | `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts:34` | done | `crates/epsilon-tui/src/ui/footer.rs:284`; the search panel ships its own key row inside the panel (`crates/epsilon-tui/src/app.rs:1781`) | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `idle_hints_name_only_keys_that_do_something` (frame) |
+| P-230 | Tab toggles the session picker between current-folder and all sessions | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:144`, `:1031` | missing | none — Epsilon's browser covers this workspace only (`crates/epsilon-tui/src/picker.rs:751`) | — |
+| P-231 | `Ctrl+S` cycles Threaded → Recent → Fuzzy, with the header label matching | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:566`, `:1009`, `:134`, `:714` | partial | `crates/epsilon-tui/src/picker.rs:751` — newest-first is fixed; there is no sort cycle | `session_rows_list_newest_first_and_mark_the_current_file` |
+| P-232 | `Ctrl+N` filters the list to named sessions only | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:571`, `:1017` | missing | none | — |
+| P-233 | `Ctrl+P` toggles a column showing each session's file path | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:577`, `:479` | partial | `crates/epsilon-tui/src/app/panels.rs:204` — the file name is in every row's meta string and is always present; there is no toggle | `session_rows_list_newest_first_and_mark_the_current_file`, `sessions_command_browses_and_enter_switches_the_session` |
+| P-234 | Deleting a session takes over the overlay and swallows every other key while confirming | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:158`, `:402`, `:556` | missing | none — Epsilon's browser cannot delete | — |
+| P-235 | `Ctrl+Backspace` deletes only when the search box is empty, because some terminals cannot distinguish it from Backspace | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:600-601`, `:583` | missing | none | — |
+| P-236 | The active session cannot be deleted; the refusal is shown for three seconds | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:407`, `:836`, `:415` | partial | `crates/epsilon-tui/src/app/panels.rs:204` — the current file is marked `you are here`; there is no delete to protect | `session_rows_list_newest_first_and_mark_the_current_file` |
+| P-237 | Deletion prefers the system trash and falls back to unlink; success says which happened | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:659`, `:857`, `:862`, `:675` | missing | none | — |
+| P-238 | `Ctrl+R` replaces the list with a prefilled rename panel; Enter saves, Esc returns | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:590`, `:885`, `:904`, `:918` | partial | `crates/epsilon-tui/src/app/commands.rs:1281` — renaming exists as `/name`, outside the picker | `none found` per E-069 |
+| P-239 | With Threaded sort and an empty query, sessions render as a parent/child tree | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:530`, `:209`, `:380-392` | missing | none — the browser is a flat list; `/tree` (E-068) shows entries, not sessions | — |
+| P-240 | Typing fuzzy-matches session id, name, **all message text** and cwd | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:26`, `packages/coding-agent/src/modes/interactive/components/session-selector.ts:642` | deliberately different | `crates/epsilon-tui/src/search.rs:72` — `/search` covers the **rendered transcript**, not the session log on disk, and that scope is pinned by name | `search_command_now_searches_the_transcript_and_not_the_session_log` |
+| P-241 | A quoted segment is an exact substring match; a `re:` prefix switches to regular expressions | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:136`, `:75`, `:46` | partial | `crates/epsilon-tui/src/search.rs:93`, `:102` — plain matching over the rendered transcript, wrapping in both directions; no phrase or regex mode | `an_open_search_reports_itself_and_the_matches_it_found` (frame), `next_and_previous_wrap_rather_than_stop` |
+| P-242 | In Fuzzy sort results are ordered by match score ascending with newest-first tie-breaks; in Recent the query filters but preserves order | `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts:180`, `:171`, `:125` | missing | none | — |
+| P-243 | An empty list names the exact key to press (`No named sessions in current folder. Press <Ctrl+N>…`) | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:429`, `:443`, `:431` | missing | none — no `E-` row establishes an empty-state message for the session browser | — |
+| P-244 | The header shows `Loading n/total` while sessions are read, and a stale load cannot overwrite a fast one | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:142`, `:956`, `:955` | missing | none | — |
+| P-245 | A failed load is shown for 4000 ms with an empty list | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:1003-1004` | missing | none | — |
+| P-246 | Each row ends with a message count and a relative age (`now` / `5m` / `3h` / `2d` / `2w`), with the active session accent-coloured | `packages/coding-agent/src/modes/interactive/components/session-selector.ts:35`, `:494`, `:515` | partial | `crates/epsilon-tui/src/picker.rs:751` — `age · size · [task child] · [in use] · <file name>`; there is no message count | `session_rows_list_newest_first_and_mark_the_current_file` |
+| P-247 | `Ctrl+L` or `/model <text>` opens the model selector with the argument already in its search box | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:117`, `:118`, `:155` | partial | `crates/epsilon-tui/src/app/keys.rs:1429` — a chord opens the picker and typing filters it; `/model <text>` applies immediately instead of opening a pre-filled selector | `ctrl_m_opens_picker_without_typing_slash`, `slash_model_direct_applies_instantly` |
+| P-248 | Tab switches between all models and the cycling scope, with a warning in place of the line when nothing is scoped | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:248`, `:364`, `:94` | missing | none — the picker has two stages, providers then models, and no scope toggle (`crates/epsilon-tui/src/app/keys.rs:1176`) | — |
+| P-249 | The list puts the current model first, the default second, then sorts by provider, marking `✓` and ` · default` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:231`, `:323`, `:329` | partial | `crates/epsilon-tui/src/app/panels.rs:294` — the active row carries `●` and the favourite star; there is no default-second ordering | `ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking` |
+| P-250 | The model selector ranks over `provider provider/id provider id name`; the scoped selector uses the opposite order, id first | `packages/coding-agent/src/modes/interactive/model-search.ts:17`, `:7-11`, `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:222` | missing | none — Epsilon has one picker over one haystack (`crates/epsilon-tui/src/picker.rs:1083`) | — |
+| P-251 | Typing any prefix of `default` moves all default models to the top — even a single `d` | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:262`, `:285` | missing | none | — |
+| P-252 | Entering a query resets the selection to row 0 so the best match is highlighted | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:301` | done | `crates/epsilon-tui/src/app/keys.rs:1325` — a printable character filters and the highlight resets | `two_stage_picker_descends_and_applies_model` |
+| P-253 | The selector paints the cached snapshot immediately, refreshes behind it, and reports success, timeout or per-provider failure | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:154`, `:185`, `:196`, `:216` | partial | `crates/epsilon-tui/src/app/keys.rs:1431` — opening starts a **silent** live listing fetch and `Ctrl+G` forces a refresh (`crates/epsilon-tui/src/app/keys.rs:1320`); there is no outcome line | `a_panel_row_is_stripped_before_it_is_drawn` (frame) — E-045 records that `Ctrl+G` is never pressed by any test |
+| P-254 | Enter applies to the session, `Ctrl+S` applies **and** writes settings, Esc cancels and aborts the refresh | `packages/coding-agent/src/modes/interactive/components/model-selector.ts:399`, `:387`, `:394`, `:137` | partial | `crates/epsilon-tui/src/app/keys.rs:1170`, `:1301` — Enter applies through `apply_model` and Esc cancels; there is no `Ctrl+S` "save as default" | `two_stage_picker_descends_and_applies_model`, `ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking` |
+| P-255 | The scoped-models overlay says `Session-only. Ctrl+S to save to settings.` and applies every edit immediately | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:137`, `:86-89` | missing | none | — |
+| P-256 | Enter toggles a model and "all enabled" materialises into an explicit list on the first toggle | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:320`, `:30`, `:26` | missing | none | — |
+| P-257 | `Ctrl+A` and `Ctrl+X` act only on the filtered rows when the search box has text | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:332`, `:342`, `:48` | missing | none | — |
+| P-258 | `Ctrl+P` enables every model of the highlighted row's provider, or clears them if already enabled | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:352`, `:357` | missing | none | — |
+| P-259 | `Alt+Up` / `Alt+Down` reorder the enabled list, disabled until the selection is an explicit list | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:298`, `:309`, `:301` | missing | none | — |
+| P-260 | Unsaved state is marked, a model absent from the catalog renders struck through with `[unavailable]`, and the footer counts them | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:211`, `:369`, `:253`, `:272`, `:201` | missing | none | — |
+| P-261 | `Ctrl+C` in the scoped-models overlay clears the search box first and exits only when it is empty — matched past the keybinding table | `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts:377`, `:388` | missing | none — and invariant 4 would require routing such keys through the registry rather than hard-coding them | — |
+| P-281 | `pi config` is a three-level resource hierarchy over Global Resources, with per-type subheaders | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:209`, `:299`, `:166` | missing | none — and note this is a **CLI command in Pi, not a slash command**; adding it to the composer would change the command surface | — |
+| P-282 | Space or Enter writes a `+pattern` / `-pattern` entry into the settings array for that resource type | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:505`, `:557`, `:552` | partial | `crates/epsilon-tui/src/app/commands.rs:693` — one skill at a time by name; there is no resource-hierarchy overlay and no settings-array rewriting | `none found` per E-099 |
+| P-283 | A package resource toggles a pattern inside that package's entry, collapsing back to a bare source string when empty | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:586`, `:631`, `:869` | missing | none | — |
+| P-284 | Tab flips Global ↔ Project scope and the hint changes to `space cycle inherit/+/−` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:501`, `:942`, `:211` | missing | none | — |
+| P-285 | In project scope Space cycles inherit → load → unload, choosing the next state from the inherited value | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:739`, `:645`, `:648-650` | missing | none | — |
+| P-286 | Resources inherited from global settings render dim and their group header gains ` · inherited global` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:423`, `:663`, `:667` | missing | none — worth noting that this is where Pi communicates "inherited" without colour alone, which is the standard Epsilon holds itself to | — |
+| P-287 | `Ctrl+C` inside `pi config` calls `onExit`, which the CLI host wires to `process.exit(0)`, hard-coded past the keybinding registry | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:493`, `:497`, `packages/coding-agent/src/cli/config-selector.ts:49` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:512` — a key an overlay does not act on is refused with a notice naming the ones that do, and the terminal guard (`crates/epsilon-tui/src/app.rs:1410`) means no UI path exits the process; [`../../AGENTS.md`](../../AGENTS.md) invariant 6 forbids reproducing it | `an_unbound_key_on_a_permission_ask_says_so_and_names_the_ones_that_work`, `the_terminal_guard_restore_is_reachable_and_idempotent` |
+| P-288 | Paging skips header rows to the next resource, and the visible row count is `max(5, height − 8)` | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:471`, `:315`, `:463`, `:467` | partial | `crates/epsilon-tui/src/app/panels.rs:79` — capacity is derived from the frame the list actually drew, so it is never a magic constant that silently clips when the chrome changes | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
+| P-289 | `pi config` search is substring, case-insensitive, where every other selector fuzzy-matches | `packages/coding-agent/src/modes/interactive/components/config-selector.ts:341`, `:450` | deliberately different | `crates/epsilon-tui/src/picker.rs:1083` — Epsilon's overlays fuzzy-match and rank by score, one policy everywhere | `filtered_results_are_ranked_by_fuzzy_score_best_first` |
+| P-290 | `/tree` opens on the current leaf, or on the nearest visible ancestor of it under the active filter | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:144`, `:153`, `:176` | done | `crates/epsilon-tui/src/app/keys.rs:797` — both `/tree` and `/timeline` build one picker from `SessionStore::tree()` and land the highlight on the leaf | `timeline_picker_opens_and_enter_jumps` |
+| P-291 | Every entry kind has its own prefix: `user:`, `assistant:`, `[bash]: cmd`, `[read: path:1-20]`, `[grep: /pat/ in dir]`, `[compaction: Nk tokens]`, … | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:780`, `:946`, `:802`, `:980`, `:998`, `:959` | partial | `crates/epsilon-tui/src/app/panels.rs:642` — rows read `#[seq] [kind] snippet`; Pi's per-tool detail (`read: path:offset-limit`, the bash command, the grep pattern) is not established | `timeline_picker_opens_and_enter_jumps`, `tree_and_timeline_open_one_picker_and_say_which_one_ran` |
+| P-292 | Every entry on the path from root to the leaf is prefixed `• `, alongside `›` for the cursor and a dim tree prefix | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:742`, `:180`, `:694` | partial | `crates/epsilon-tui/src/app/panels.rs:642` — off-lane rows carry a `·` and the current lane a blank gutter; the active-path marker and the nesting prefix are not established | `tree_and_timeline_open_one_picker_and_say_which_one_ran` |
+| P-293 | Five filter modes on direct keys: `Ctrl+D` sets the default, `Ctrl+T`/`Ctrl+U`/`Ctrl+L`/`Ctrl+A` toggle; a filter change clears folded branches | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1047`, `:1052`, `:359`, `:374`, `:1049` | partial | `crates/epsilon-tui/src/app/panels.rs:582` — the tree filter is a typed substring shown in the panel title; there are no five filter modes | `timeline_picker_opens_and_enter_jumps` |
+| P-294 | `Ctrl+O` cycles filters forward and `Shift+Ctrl+O` backward through default → no-tools → user-only → labeled-only → all | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1079`, `:1072`, `:1074` | missing | none — Epsilon's `ctrl+x` is expand-all (`crates/epsilon-tui/src/keybindings.rs:44`) | — |
+| P-295 | The status line names the filter with a bracketed tag, and `(n/total)` | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:647`, `:765`, `:674` | partial | `crates/epsilon-tui/src/app/panels.rs:582` — the panel title names the filter verbatim (`timeline · <filter>`); there is no `(n/total)` count | `timeline_picker_opens_and_enter_jumps` |
+| P-296 | `Shift+L` opens an inline label input whose empty value removes the label and its timestamp | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1092`, `:1322`, `:1412` | missing | none — Epsilon has no entry labels | — |
+| P-297 | `Shift+T` toggles label timestamps in three date formats keyed on recency | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1097`, `:862`, `:641` | missing | none | — |
+| P-298 | Tree search drops characters below 0x20, `0x7f` and `0x80-0x9f` as they are typed | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1099`, `:1086` | done | `crates/epsilon-tui/src/state.rs:1194` — Epsilon strips at the state boundary with `display_safe`, which also removes bidi overrides, and strips again before a panel row is drawn (`crates/epsilon-tui/src/app/golden.rs:2660`); that is a stronger guarantee than a per-component filter | `a_panel_row_is_stripped_before_it_is_drawn` (frame), `a_bidi_override_in_streaming_model_output_never_reaches_the_frame` (frame) |
+| P-299 | Esc clears the search query and all folded branches first; a second Esc exits | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1039-1043` | partial | `crates/epsilon-tui/src/app/keys.rs:1151` — two-stage Esc exists in the two-stage model picker (back a stage, then close and unstash); the tree has one stage, so there is nothing to clear first | `two_stage_picker_descends_and_applies_model` |
+| P-300 | `Ctrl+Left` folds a foldable branch and otherwise jumps to the previous segment start; `Ctrl+Right` unfolds or jumps forward | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1010`, `:1018`, `:1117`, `:1139` | missing | none | — |
+| P-301 | A folded branch renders `⊞` and an expanded one `⊟`; the glyph, not the count, is the only collapsed indicator | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:726`, `:738`, `:727` | partial | `crates/epsilon-tui/src/app/panels.rs:642` — the panel draws the forest with lane markers; no fold glyph is established by an `E-` row | `tree_and_timeline_open_one_picker_and_say_which_one_ran` |
+| P-302 | The tree has a horizontal viewport that shifts row bodies left only when the selected anchor nears the right edge, never clipping the two-column gutter | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:62`, `:75`, `:85`, `:71-79` | partial | `crates/epsilon-tui/src/ui/transcript.rs:149` — rows wrap rather than scroll horizontally, and the gutter is never clipped; there is no column-clipping primitive to protect | `a_wrapped_banded_message_keeps_every_row_inside_the_frame` (frame) |
+| P-303 | The subtree containing the current leaf sorts first at every level | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:245`, `:274`, `:217-240` | partial | `crates/epsilon-tui/src/app/keys.rs:797` — the picker shows the whole forest with off-lane marks; the ordering guarantee is not established by an `E-` row | `tree_and_timeline_open_one_picker_and_say_which_one_ran` |
+| P-304 | Indentation grows only at branch points and is recomputed against the visible tree after a filter | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:288`, `:436`, `:448`, `:479` | missing | none | — |
+| P-305 | A tool-only assistant message with a normal stop reason is dropped from the tree unless it is the leaf or carries an error | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:344`, `:351`, `:341`, `:792`, `:798` | partial | `crates/epsilon-tui/src/app/panels.rs:642` — the picker projects the session's forest, not a filtered transcript; the drop rules are not established | `timeline_picker_opens_and_enter_jumps` |
+| P-306 | Left and Right page the tree as well as `PageUp`/`PageDown`, and this selector wraps at the ends | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1026`, `:1029`, `:1007`, `:1009` | missing | none — Epsilon's arrows step one row and clamp at both ends (`crates/epsilon-tui/src/app/keys.rs:1228`) | — |
+| P-307 | `Ctrl+X` copies the selected entry's **full** text, not the 200-character preview on screen | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1037`, `:904`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5616-5627` | missing | none — Epsilon's `ctrl+x` is expand-all; copying is `F4` and copies the last assistant message (`crates/epsilon-tui/src/app/keys.rs:1684`) | — |
+| P-308 | A tree with no entries cancels itself after 100 ms | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1395`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5488-5491` | missing | none | — |
+| P-309 | The tree footer lists every binding, rewriting `pageUp`→`pgup` and merging chords that share a prefix | `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1254`, `:1263` | partial | `crates/epsilon-tui/src/ui/footer.rs:284` — the footer names the keys that work right now, including overlay keys, with the mode badge leading (`crates/epsilon-tui/src/ui/footer.rs:357`); a tree-specific list is not established | `idle_hints_name_only_keys_that_do_something` (frame) |
+| P-310 | `/fork` opens `Fork from Message` with an explanation and the cursor on the most recent message | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:123`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5427` | missing | none — Epsilon forks at the current leaf (`crates/epsilon-tui/src/app/commands.rs:1161`) | — |
+| P-311 | Each fork row is three lines with a `Message N of M` caption, ten visible | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:54`, `:42`, `:73`, `:19` | missing | none | — |
+| P-312 | Fork-picker navigation wraps at both ends, where the auth selector clamps | `packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:84`, `:88`, contrasted with `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:198` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:1228` — Epsilon's overlays clamp at both ends and keep their position after filtering, one policy rather than three | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame), `two_stage_picker_descends_and_applies_model` |
+| P-313 | Provider rows carry `• not configured`, `✓ configured`, `✓ env: NAME`, or a warning when the stored credential's type differs | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:36`, `:47`, `:49-52`, `:42-46` | done | `crates/epsilon-tui/src/app/panels.rs:244`, `:315` — the picker draws an auth/key badge column and marks the active row `●` | `two_stage_picker_descends_and_applies_model`, `a_panel_row_is_stripped_before_it_is_drawn` (frame) |
+| P-314 | The `[api key]` / `[subscription]` / `[account]` tag appears only when the list mixes auth types | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:92`, `:160`, `:32` | missing | none | — |
+| P-315 | Three distinct auth empty states: no providers available, none logged in, no matching providers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:182`, `:186` | partial | `crates/epsilon-tui/src/app/commands.rs:635` — `/logout` distinguishes removed from nothing-to-remove and says which; there is no provider-selector overlay to have an empty state | `no_slash_command_panics_when_typed` |
+| P-316 | The `Sign in with Radius` option shimmers through four brand colours, only while selected | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:11`, `:18`, `:72` | missing | none — no Radius provider | — |
+| P-317 | The shimmer is a post-render string patch that finds the rendered line and replaces it, and disappears silently if the line wrapped | `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts:78`, `:81`, `:41-44` | missing | none — if an animated row is ever added it must be a widget that honours reduced motion ([`../../AGENTS.md`](../../AGENTS.md) §8), not a string substitution | — |
+| P-318 | The OAuth dialog replaces the composer with a panel that opens the browser **without a keypress** | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:96`, `:111`, `:102`, `:124` | missing | none | — |
+| P-319 | The device-code flow shows the verification URI and a code and does **not** open a browser | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:118`, `:128`, `:152-153` | missing | none | — |
+| P-320 | A submitted login input is replaced in place with `> value`; Esc aborts and reports `Login cancelled` | `packages/coding-agent/src/modes/interactive/components/login-dialog.ts:77`, `:83`, `:225`, `:65` | deliberately different | `crates/epsilon-tui/src/app/panels.rs:1028` — Epsilon renders one bullet glyph per character and never the value, not even an echo of the digits; the path is named instead | `cancelling_a_key_entry_says_what_was_kept`, `auth_file_is_owner_only_on_unix` |
+| P-321 | The auth selector clamps and keeps its position after filtering, where the model selector resets — three navigation policies across three pickers | `packages/coding-agent/src/modes/interactive/components/oauth-selector.ts:198`, `:204`, `:139`, `:146` | deliberately different | `crates/epsilon-tui/src/app/keys.rs:1228` — one policy everywhere (see P-312): clamp at both ends, reset the highlight only on a new query | `a_page_key_moves_by_the_window_the_list_actually_drew` (frame) |
+| P-323 | A `Show images` Yes/No selector exists with no production caller; the reachable setting is a row in `/settings` | `packages/coding-agent/src/modes/interactive/components/show-images-selector.ts:19`, `:31`, `packages/coding-agent/src/modes/interactive/components/index.ts:29` | missing | none — Epsilon draws no inline transcript images, so there is no setting to gate | — |
+
+## 19. Epsilon rows with no Pi counterpart — ours, not a port
+
+These are behaviours Epsilon has that Pi does not. They are **not** gaps in the port and they are **not** defects in
+Pi: Pi's objective is to build on Pi's extensibility, and these are what building on it looks like from our side.
+A row here has no `P-` partner, so it appears in no area table above.
+
+| ours | behaviour | evidence | verified |
+|---|---|---|---|
+| E-004 | Below 44×10 the frame stops being a layout and says so — one centred warning naming the required and current size, no header, no composer, no partial transcript, and a pending approval still named so a blocked run is not mistaken for a hang | `crates/epsilon-tui/src/ui/layout.rs:112`, `crates/epsilon-tui/src/app.rs:1605` | `a_screen_below_the_floor_says_so_and_draws_nothing_else` (frame), `below_the_floor_the_frame_says_so_instead_of_drawing_a_broken_layout` (frame) |
+| E-005 | The draft is wrapped to the width the composer actually draws at, computed once and used for both the wrap and the caret, so the caret sits in the column the typed text occupies | `crates/epsilon-tui/src/ui/shell.rs:133` | `the_composer_width_matches_what_the_composer_draws` (frame) |
+| E-035 | Submitting an empty or whitespace-only draft does nothing at all — no command, no shell command, no user message, nothing written to the transcript or to history | `crates/epsilon-tui/src/app.rs:780` | `none found` — `submit_editor` was read in full and every Enter press in the suite uses non-empty text |
+| E-070 | `/restore <path>` describes the checkpoint and changes nothing; only a trailing `yes` — the **last** whitespace-separated word, so a file literally named `yes` is still a file — reverts, and a file that changed since the capture is refused with the file untouched | `crates/epsilon-tui/src/app/commands.rs:1719`, `:1725` | `a_confirmed_restore_reverts_the_file_and_the_frame_says_so` (frame, at 80×24 and 100×30) |
+| E-090 | `/goal <objective>` writes a goal to the session log, arms continuation in this process, and spends round 1 at once; the footer grows a `● goal 1/256` badge, filled only while armed and active | `crates/epsilon-tui/src/app/commands.rs:776`, `crates/epsilon-tui/src/ui/footer.rs:377` | `goal_creates_records_and_renders_the_badge` (frame) |
+| E-091 | `/goal`'s verbs move it through its phases — `edit`, `pause`, `resume`, `complete`, `blocked <code> <reason>`, `clear` — and a verb is a verb only when it is the **whole** argument, so `/goal clear the failing gates` creates a goal | `crates/epsilon-runtime/src/lib.rs:4257`, `crates/epsilon-tui/src/app/commands.rs:801` | `the_verbs_move_the_goal_through_its_phases` (frame), `every_verb_reaches_its_operation` |
+| E-092 | A goal round is spent at turn end, echoes a harness-authored `Continuing the session goal` prompt into the transcript, and runs its declared gates first on their own task — a failing gate's bounded output *is* the round's prompt, and the round is spent either way | `crates/epsilon-runtime/src/lib.rs:1467`, `crates/epsilon-tui/src/app/commands.rs:944` | `a_failing_gate_becomes_the_continuation_prompt` |
+| E-093 | The goal is durable state in the session log and nowhere else, so a session with no store refuses `/goal` outright; Esc during a run stops the run **and** disarms continuation without spending a round | `crates/epsilon-tui/src/app/keys.rs:1369`, `crates/epsilon-tui/src/app/view.rs:433` | `aborting_a_run_disarms_the_goal_without_touching_it` (frame) |
+
+---
+
+## Open rows
+
+The most-read part of this document. **Every** `missing` and every `partial` row, so the shape of the gap is
+visible without scanning eighteen tables. `missing` means no `E-` row establishes the behaviour; `partial` means one
+does and something is not finished. Where a binding id or a module exists but no row establishes the behaviour, the
+row says so — that is a gap in the inventory, and closing it is cheap.
+
+### Open by area — the counts, first
+
+| area | rows | done | partial | missing | deliberately different |
+|---|---|---|---|---|---|
+| 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
+| 2. Layout and renderer | 10 | 2 | 2 | 5 | 1 |
+| 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
+| 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
+| 5. Transcript and streaming | 35 | 7 | 5 | 23 | 0 |
+| 6. Model picker and thinking | 9 | 0 | 2 | 7 | 0 |
+| 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
+| 8. Sessions | 17 | 1 | 9 | 7 | 0 |
+| 9. Themes | 18 | 0 | 6 | 8 | 4 |
+| 10. Settings | 22 | 1 | 9 | 11 | 1 |
+| 11. Project trust | 4 | 1 | 2 | 0 | 1 |
+| 12. Tool cards | 16 | 2 | 7 | 6 | 1 |
+| 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
+| 14. Diffs | 6 | 3 | 1 | 2 | 0 |
+| 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
+| 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
+| 17. Footer | 12 | 3 | 4 | 3 | 2 |
+| 18. Selector and overlay components | 79 | 7 | 25 | 41 | 6 |
+| **Total** | **339** | **39** | **121** | **161** | **18** |
+
+### The `missing` rows — 161
+
+Every row below has **no** `E-` row establishing the behaviour. Nothing here was found by browsing `crates/`, and
+nothing here is a claim that the behaviour cannot be built.
+
+| area | ids |
+|---|---|
+| Startup, header and resources (13) | P-002, P-003, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
+| Layout and renderer (5) | P-015, P-017, P-020, P-021, P-220 |
+| Composer and editor (8) | P-013, P-029, P-032, P-033, P-211, P-212, P-213, P-214 |
+| Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
+| Transcript and streaming (23) | P-040, P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-127, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
+| Model picker and thinking (7) | P-037, P-038, P-262, P-263, P-264, P-265, P-273 |
+| Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
+| Sessions (7) | P-026, P-055, P-071, P-073, P-080, P-081, P-085 |
+| Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
+| Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
+| Tool cards (6) | P-139, P-141, P-145, P-149, P-150, P-151 |
+| Bash cards (3) | P-024, P-159, P-160 |
+| Diffs (2) | P-162, P-163 |
+| Markdown, mermaid and truncation (9) | P-167, P-168, P-169, P-170, P-171, P-172, P-173, T-010, T-012 |
+| Status indicators (5) | P-019, P-191, P-192, P-193, P-194 |
+| Footer (3) | P-197, P-207, P-208 |
+| Selector and overlay components (41) | P-230, P-232, P-234, P-235, P-237, P-239, P-242, P-243, P-244, P-245, P-248, P-250, P-251, P-255, P-256, P-257, P-258, P-259, P-260, P-261, P-281, P-283, P-284, P-285, P-286, P-294, P-296, P-297, P-300, P-304, P-306, P-307, P-308, P-310, P-311, P-314, P-316, P-317, P-318, P-319, P-323 |
+
+### The `partial` rows — 121
+
+An `E-` row covers these and something is not finished. The reason column is the shortest honest statement of what.
+
+| area | ids | why it is partial |
+|---|---|---|
+| Startup, header and resources (6) | P-001, P-006, P-007, P-086, P-087, P-120 | no version in the welcome panel; resources reported as one summary line, not scope-grouped; unreadable roots named but duplicates not; no input drain, no dead-terminal classification, no persisted crash; no first-run dialog |
+| Layout and renderer (2) | P-217, P-218 | the jump affordance is a footer badge, not a pill in the viewport; matches are counted, not highlighted in the transcript |
+| Composer and editor (16) | P-022, P-023, P-025, P-027, P-028, P-030, P-031, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022/P-023 have no test typing `!`; P-030/P-031 are pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 24 ids, not 47 entries |
+| Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
+| Transcript and streaming (5) | P-054, P-058, P-121, P-128, P-183 | a compaction rule instead of a summary card and cost line; notices have no fixed `Error:`/`Warning:` prefix; no `outputPad` setting; abort text lands on a system row, not the answer; the compaction row is not collapsible |
+| Model picker and thinking (2) | P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu |
+| Auth, login and permissions (3) | P-062, P-064, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned |
+| Sessions (9) | P-070, P-072, P-074, P-075, P-076, P-077, P-078, P-079, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; `/name` and `/import` unpinned; no cache-warming status; export format inference asserted on the writers, not the inference; reload covers four resource kinds, not six |
+| Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
+| Settings (9) | P-104, P-107, P-108, P-109, P-110, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 24 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M` |
+| Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
+| Tool cards (7) | P-136, P-138, P-140, P-142, P-143, P-146, P-147 | spacing per turn, not per card; a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card explicit state that nothing sets (no mouse); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
+| Bash cards (6) | P-153, P-154, P-155, P-156, P-158, P-177 | `!!` is implemented but not marked on the card; the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the exit **number** is not on the card; duration yes, truncation warning no |
+| Diffs (1) | P-164 | three-space tab expansion matches, in the card's row normaliser, with **no test** |
+| Markdown, mermaid and truncation (8) | P-176, T-002, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; tab width matches with no test; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
+| Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
+| Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
+| Selector and overlay components (25) | P-226, P-228, P-231, P-233, P-236, P-238, P-241, P-246, P-247, P-249, P-253, P-254, P-282, P-288, P-291, P-292, P-293, P-295, P-299, P-301, P-302, P-303, P-305, P-309, P-315 | per-overlay focus targets; no overlay-scoped id space; fixed sort, path always shown, current session marked not protected, rename outside the picker, no phrase/regex search, no message count, no pre-filled picker, no default-second row, no refresh outcome line, no save-as-default, no resource overlay, capacity derived, per-tool entry detail, active-path marker, five filter modes, no `n/total`, one-stage Esc in the tree, no fold glyph, wrap not clip, ordering guarantee unestablished, tree drop rules unestablished, no tree-specific key list, no provider-selector empty state |
+
+### Four gaps that are not about features at all
+
+Worth separating out, because they are cheap to close and they are not design questions:
+
+- **P-031 (steer while streaming)** and **P-037 / P-038 (thinking and model cycling)** are behaviours our source
+  establishes — `agent.steer(msg)`, `app.thinking.cycle`, `app.model.cycleForward` — with **no test pinning any of
+  them**. One test each would move three rows.
+- **E-017's tab normalisation (T-002, P-164)**: the value matches Pi's three spaces and no test string anywhere in
+  the crate contains a literal tab.
+- **`/resume`, `/import` and `/name`** (P-076, P-079) have no test typing them at all, because typing `/logout
+  <provider>` or `/login <provider> <key>` would touch the developer's real store — a decision recorded in
+  [`docs/milestones/`](../../docs/milestones/) and worth revisiting with an injected store.
+- **`AA-001`** is the largest gap in the *reference* side: Pi's `packages/tui` editor, key parsing, alt-screen and
+  terminal files were never read. Most of our `missing` rows in the composer, layout and selector areas sit directly
+  under it, which is exactly why they are written as *not established* rather than *not built*.
+
+---
+
+## Out of scope by design — the `Y-###` rows
+
+These ship in the same package as Pi's interactive mode but are **headless or programmatic**, so they are not
+terminal-UI behaviour and a port is not measured against them. They are listed so a reader does not mistake one for
+a missing screen. Epsilon does have equivalents for several of them — a headless mode, an HTTP/SSE front end, a
+stdio-RPC mode — but they are a different matrix question and are not counted in the table above.
+
+| id | what it is | why it is out of scope | where |
+|---|---|---|---|
+| Y-001 | Print mode (`-p` / `--print`): send prompts, print, exit | no screen, no keybindings, no components | `packages/coding-agent/src/modes/print-mode.ts:1-6`, `packages/coding-agent/src/cli/args.ts:167` |
+| Y-002 | JSON event streaming on stdout for `--mode json` | a wire contract; the shape exists because a partial `toolcall_start` cannot be serialised | `packages/coding-agent/src/modes/json-event.ts:20`, `packages/coding-agent/src/modes/print-mode.ts:13` |
+| Y-003 | RPC mode over newline-delimited JSON with a client | Pi's embedding surface for another process | `packages/coding-agent/src/rpc-entry.ts:13`, `packages/coding-agent/src/modes/rpc/rpc-types.ts` |
+| Y-004 | The SDK surface (`packages/coding-agent/src/core/sdk.ts` and the public exports) | programmatic, no frame; the TUI reaches the same behaviour through `AgentSession` | `packages/coding-agent/src/core/sdk.ts:420`, `packages/coding-agent/src/index.ts` |
+| Y-005 | The CLI flag surface (`--theme`, `--model`, `--session`, `--export`, `--mode`, …) | configures the session the TUI then draws; the flags with a visible effect appear as their settings rows above | `packages/coding-agent/src/cli/args.ts:11`, `:95-105`, `:187-202` |
+| Y-006 | The experimental client/server/coordinator, including a **second** TUI | a remote-execution architecture, not the interactive mode; not inventoried (see AA-003) | `packages/coding-agent/src/experimental/client-tui.ts` |
+| Y-007 | HTML export rendering in a browser | the `/export` **command** is a TUI feature (P-078); the HTML renderer is not | `packages/coding-agent/src/core/export-html/index.ts`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6447-6449` |
+| Y-008 | The package-manager CLI and the credential printer | separate entry points outside the TUI; not inventoried | `packages/coding-agent/src/package-manager-cli.ts`, `packages/coding-agent/src/cli/credential-print.ts` |
+| Y-009 | Trust and login prompts at startup, on a separate startup TUI | a different renderer instance with a different lifecycle; the one interactive row is P-120 | `packages/coding-agent/src/cli/startup-ui.ts:85-95`, `:150-179`, `:182-219`, `:221-252` |
+| Y-010 | Model runtime, auth storage, provider composer, telemetry, the `packages/ai` catalogue | services the TUI drives but draws nothing of beyond the status and warning lines already inventoried | `packages/coding-agent/src/core/model-runtime.ts`, `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/telemetry.ts:1` |
+
+---
+
+## Not inventoried — the `AA-###` rows
+
+Carried forward so nothing is silently dropped. These are the places the reference inventory did **not** read, and
+a porter reading this matrix should not conclude the behaviour does not exist — only that nobody looked.
+
+| id | what was not read | what survives it |
+|---|---|---|
+| AA-001 | **`packages/tui/` in depth — partially done, the delegation failed.** Never read at all: `editor.ts` (2112 lines — cursor, prompt history, undo, the autocomplete popup, bracketed paste, IME), `keys.ts` (1286), `tui-alt-screen.ts` (1634 — search, text selection, overlays, copy-on-select, wheel), `tui-main-screen.ts` (589) and `tui.ts` (1337) — differential rendering, focus, resize, title, progress, `terminal.ts` (479) and `terminal-colors.ts` (81) — capability detection and the colour query behind P-011, `terminal-image.ts` (628) behind P-149/P-150, `markdown.ts` (897) and `latex.ts` (1428), `autocomplete.ts` (740) and `fuzzy.ts` (111) behind P-043–P-045, and `scroll-view.ts`, `select-list.ts`, `settings-list.ts`, `image.ts`, `loader.ts`, `box.ts`. What did survive: the complete `TUI_KEYBINDINGS` table (L-000–L-003) and the text-measurement core (T-001–T-012), both read directly afterwards. **This is the largest single gap in the reference side of this matrix**, and it sits under exactly the rows this document calls `missing`. | re-run the delegation with `utils.ts` and `keybindings.ts` removed from scope, asking for `editor.ts`, `keys.ts`, `terminal.ts` and `tui-alt-screen.ts` specifically |
+| AA-002 | The middles of `armin.ts`, `daxnuts.ts` and the 1209-line `pi-logo-animation.ts` | one row each (P-221, P-222, P-223, P-224); only entry and exit paths of the animation were read. Deliberately not a parity target |
+| AA-003 | `src/experimental/` | not inventoried; `client-tui.ts` is a second, separate TUI belonging to the remote-client architecture. If Epsilon adopts a remote-execution model, that tree needs its own inventory |
+| AA-004 | `src/core/agent-session.ts` (158 kB) | read only where the interactive mode calls into it. Its event catalogue, queue semantics and compaction behaviour are inventoried **as the TUI observes them** (P-030–P-033, P-049–P-055, P-186–P-192), not as core behaviour |
+| AA-005 | **Untrusted-text sanitisation, exhaustively.** Control characters are stripped in two places read (`packages/coding-agent/src/modes/interactive/components/session-selector.ts:470`, `packages/coding-agent/src/modes/interactive/components/tree-selector.ts:1086`) and not in a sibling (`packages/coding-agent/src/modes/interactive/components/user-message-selector.ts:54`), and no single central sanitiser was found — but an exhaustive grep was not run, so this is *not* a claim that Pi lacks one, only that the component behaviour read is inconsistent. Epsilon's side is the opposite and stronger: `display_safe` at the state boundary (`crates/epsilon-tui/src/state.rs:1194`) and again before a panel row is drawn (`crates/epsilon-tui/src/app/golden.rs:2660`), removing control **and** bidi characters as [`../../AGENTS.md`](../../AGENTS.md) §6 requires | verify before relying on either side |
+| AA-006 | Unreachable code inside inventoried files — `SessionSelectorComponent.canRename` written and never read, `SessionList.onExit` assigned but never called, `ThemeSelectorComponent` and `ShowImagesSelectorComponent` with no production caller (P-322, P-323), `ExtensionInputComponent`'s discarded `placeholder` (P-214), and `bash-execution.ts` honouring `excludeFromContext` in its constructor but not on rebuild (P-153) | reported so a porter does not port them as features; invariant 7 says a control nothing opens must not be advertised |
+| AA-007 | Reference defects found and recorded rather than copied — P-153, P-214, P-232, P-287, P-251, P-306, P-245, and P-137/P-202 (colour alone) | each is cited in its row. Epsilon has declined the last pair, on the record, under *The deliberate differences* above |
+
+### Two limits on this matrix, stated rather than papered over
+
+1. **No test was run to produce it.** Both inventories were read from source. A `frame` label means the test drives
+   the production draw path and reads the screen back — a reading of the test's source, not a report of a green run.
+   The integrator owns the build.
+2. **`crates/epsilon-tui` has no golden files.** `golden.rs` drives the production `draw` through a `TestBackend` and
+   asserts **structure** — the frame is exactly the terminal size, no row is wider than the terminal, a role is
+   distinguishable without colour — and says why (`crates/epsilon-tui/src/app/golden.rs:17-19`): a golden test that
+   pins every character fails on every deliberate copy change and gets rewritten without being read. The only
+   byte-level frame corpus is [`../../audit/evidence/tui-frames-2026-10-04-m312/`](../../audit/evidence/),
+   which is M312's tree.
+
+---
+
+## How to re-derive this
+
+A row in this matrix is only worth reading if its two citations still resolve. Both evidence files are the source;
+this document is the verdict on them, and it was built by pairing the two inventories row by row rather than by a
+fresh survey. To re-derive:
+
+1. Open [`../../audit/evidence/parity-pi-tui-reference.md`](../../audit/evidence/parity-pi-tui-reference.md) and find
+   the row's id. Copy its `evidence:` line into the **reference** column — do not re-type a line number from memory.
+2. Open [`../../audit/evidence/parity-epsilon-tui.md`](../../audit/evidence/parity-epsilon-tui.md) and find the `E-`
+   row that establishes the same behaviour. Copy its `Evidence:` line into the **ours** column, and its `Test:` line
+   into **verified**.
+3. If no `E-` row establishes it, the status is `missing` and the **ours** column says so. **Do not go looking
+   through `crates/` for a plausible location.**
+4. If the `E-` row records `Test: **none found**`, or its only test asserts on state while the behaviour is visual,
+   the status is `partial` and the reason goes in the row.
+5. Never mark `done` on the strength of the reference alone.
+
+Every citation in this document was machine-checked to point at a real line in the tree, which proves it *points*
+and not that it *says* what the row claims. Re-open the lines before relying on a row.
+
+**Reference sources are vendored read-only. Never edit, move or delete anything under
+[`../../references/`](../../references/).**
