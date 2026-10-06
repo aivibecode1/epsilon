@@ -3207,10 +3207,8 @@ async fn at_file_popup_opens_and_tab_inserts_path() {
 }
 
 #[tokio::test]
-async fn export_writes_html_and_json() {
+async fn export_command_writes_html_and_json() {
     let ws = tempfile::tempdir().unwrap();
-    let dest_html = ws.path().join("out.html");
-    let dest_json = ws.path().join("out.json");
     let (mut app, agent, _) = test_app();
     app.workspace_root = ws.path().to_path_buf();
     let backing = std::sync::Arc::new(std::sync::Mutex::new(
@@ -3234,15 +3232,23 @@ async fn export_writes_html_and_json() {
             })
             .unwrap();
     }
-    let n = write_export_html(&agent, &dest_html, ws.path()).unwrap();
-    assert_eq!(n, 1);
-    let html = std::fs::read_to_string(&dest_html).unwrap();
+    // Through the real command path, not the export functions directly: this
+    // is what covers the arm's wiring (read entries, pick format, name the
+    // default file) after the rendering moved to `epsilon_session::export`.
+    assert!(!type_and_enter(&mut app, &agent, "/export out.html"));
+    let html = std::fs::read_to_string(ws.path().join("out.html")).unwrap();
     assert!(html.contains("<html"), "html export must contain html tag");
     assert!(html.contains("hello"), "html must contain message text");
-    let n2 = write_export_json(&agent, &dest_json).unwrap();
-    assert_eq!(n2, 1);
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("exported html")),
+        "the run reports what it wrote: {texts:?}"
+    );
+
+    assert!(!type_and_enter(&mut app, &agent, "/export json out.json"));
     let j: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&dest_json).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(ws.path().join("out.json")).unwrap())
+            .unwrap();
     assert!(j.is_array(), "json export must be an array");
     let _ = app;
 }

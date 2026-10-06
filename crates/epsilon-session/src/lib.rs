@@ -6,6 +6,9 @@
 //! summarize (DSH's surface-shadowing principle over pi's entry format).
 
 pub mod discover;
+/// Session export rendering (HTML/JSON writers over read entries), shared by
+/// every front end that offers `/export` or `/share`.
+pub mod export;
 /// Importing a current (v2/v3) pi session file into a new Epsilon session file, as a copy.
 pub mod import;
 mod lease;

@@ -62,6 +62,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 27. **Full-port round 11 — the palette offers every verb the window answers** | The palette's command list was a third hand-written list next to `SUPPORTED` and the dispatch arms: 12 answered verbs, 8 offered rows. Verb rows are now derived from `SUPPORTED` (labels teach the `/head` spelling), running through the same dispatch the composer sends through — a fourth list almost happened (`Box::leak` per palette open) and was reverted before commit. Two tests, RED first: every head offered, and choosing one runs it. No matrix row covers the palette's offering, so no row moves; the plan-025 §2.D direction (capability derived, not listed) is one list shorter. Battery `port-r11` (2,108), green first time. |
 | (10-06) | 28. **Full-port round 12 — `Ctrl+N` starts a session, `Ctrl+Alt+F` forks it** | S-103 and S-107 move to `done`: two rows in the shared keybinding tables (`window.session.new`, `window.session.fork`), read below the palette guard in `pane_keys`, running the same helpers the `/new` and `/fork` heads run. Both tests drive real key events with real modifiers through the real draw — the defect class is chords that parse and never fire. DSH counts move to **13 / 89 / 289** in the summary and here; ADR-031 amended (the machinery's first real users arrived through the front door). Battery `port-r12` (2,110), green first time. |
 | (10-06) | 29. **Full-port round 13 — the picker warns on dead OAuth logins** | P-313's last gap, closed at the logic level: a stored OAuth pair with no login flow and no refresh endpoint reads `! oauth login unused` in the auth picker, sourced from `catalog::oauth_credential_unused`. Proven safe first (stored pairs are consumed only via refresh endpoints; API keys always resolve), then pinned with 6 injected cases plus a no-false-warning frame assertion. Stated limit: the suffix pixels have no frame (stored logins untouchable in tests) — logic pinned, wiring reviewed. P-313 stays `partial` by the project's own bar (a seen behaviour needs a seen frame). Battery `port-r13` (2,111), green first time. |
+| (10-06) | 30. **Full-port round 14 — export rendering moves to the session crate** | Foundation for the window's `/export`: `write_html`/`write_json` now live in `epsilon-session::export` over read entries (plus 3 unit tests incl. escaping and empty), and the TUI's `/export` + `/share` arms read-then-call through one shape. Zero behaviour change — a pure move, reviewable as one — except the TUI test, which became an end-to-end command test covering the rewired arms. The move deleted 53 lines from the TUI app file, shifting 19 matrix citations; all re-pointed by the measured offset and verified byte-identical. Battery `port-r14` (2,114), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -209,11 +210,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r13-2026-10-06.txt`](../audit/evidence/gate-port-r13-2026-10-06.txt),
+**Latest green battery: [`gate-port-r14-2026-10-06.txt`](../audit/evidence/gate-port-r14-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,111 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r12`: the dead-login warning test. (`cargo fmt
---check` ran before launching.)
+**2,114 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r13`: the session export unit tests (the TUI
+test became an end-to-end command test). (`cargo fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

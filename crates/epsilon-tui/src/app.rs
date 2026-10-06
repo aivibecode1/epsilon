@@ -1248,59 +1248,6 @@ impl App {
     }
 }
 
-fn write_export_html(
-    agent: &std::sync::Arc<epsilon_core::Agent>,
-    dest: &std::path::Path,
-    _workspace: &std::path::Path,
-) -> Result<usize, String> {
-    let Some(store) = agent.session_store() else {
-        return Err("no session store attached".to_string());
-    };
-    let entries = store
-        .lock()
-        .map_err(|_| "store unavailable".to_string())?
-        .read_all()
-        .map_err(|e| format!("{e}"))?;
-    let n = entries.len();
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
-    }
-    let mut html = String::new();
-    html.push_str("<!doctype html><html><head><meta charset=\"utf-8\"><title>epsilon export</title></head><body><pre>\n");
-    for e in &entries {
-        let line = serde_json::to_string(e).unwrap_or_else(|_| "{}".into());
-        let esc = line
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;");
-        html.push_str(&esc);
-        html.push('\n');
-    }
-    html.push_str("</pre></body></html>\n");
-    std::fs::write(dest, html).map_err(|e| format!("{e}"))?;
-    Ok(n)
-}
-fn write_export_json(
-    agent: &std::sync::Arc<epsilon_core::Agent>,
-    dest: &std::path::Path,
-) -> Result<usize, String> {
-    let Some(store) = agent.session_store() else {
-        return Err("no session store attached".to_string());
-    };
-    let entries = store
-        .lock()
-        .map_err(|_| "store unavailable".to_string())?
-        .read_all()
-        .map_err(|e| format!("{e}"))?;
-    let n = entries.len();
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
-    }
-    let pretty = serde_json::to_string_pretty(&entries).map_err(|e| format!("{e}"))?;
-    std::fs::write(dest, pretty).map_err(|e| format!("{e}"))?;
-    Ok(n)
-}
-
 /// Fresh sender for [`App::over_ui`]; the matching receiver is dropped immediately.
 fn inert_channel<T>() -> tokio::sync::mpsc::UnboundedSender<T> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();

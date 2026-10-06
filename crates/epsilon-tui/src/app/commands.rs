@@ -2210,7 +2210,12 @@ impl App {
                     }
                 };
                 if fmt == "html" {
-                    match write_export_html(agent, &dest, &self.workspace_root) {
+                    let result = (|| -> Result<usize, String> {
+                        let store = agent.session_store().ok_or("no session store attached")?;
+                        let guard = store.lock().map_err(|_| "store unavailable")?;
+                        epsilon_session::export::write_html(&guard, &dest)
+                    })();
+                    match result {
                         Ok(n) => self.ui.push_notice(format!(
                             "exported html → {} ({} entries)",
                             dest.display(),
@@ -2219,7 +2224,12 @@ impl App {
                         Err(e) => self.ui.push_notice(format!("export failed: {e}")),
                     }
                 } else {
-                    match write_export_json(agent, &dest) {
+                    let result = (|| -> Result<usize, String> {
+                        let store = agent.session_store().ok_or("no session store attached")?;
+                        let guard = store.lock().map_err(|_| "store unavailable")?;
+                        epsilon_session::export::write_json(&guard, &dest)
+                    })();
+                    match result {
                         Ok(n) => self.ui.push_notice(format!(
                             "exported json → {} ({} entries)",
                             dest.display(),
@@ -2271,7 +2281,11 @@ impl App {
                     .join(".epsilon")
                     .join("exports")
                     .join(format!("share-{}.html", epsilon_contracts::new_id("share")));
-                match write_export_html(agent, &share_dest, &self.workspace_root) {
+                match (|| -> Result<usize, String> {
+                    let store = agent.session_store().ok_or("no session store attached")?;
+                    let guard = store.lock().map_err(|_| "store unavailable")?;
+                    epsilon_session::export::write_html(&guard, &share_dest)
+                })() {
                     Ok(n) => {
                         let gh_attempt = std::process::Command::new("gh")
                             .args(["gist", "create", "--public=false"])
