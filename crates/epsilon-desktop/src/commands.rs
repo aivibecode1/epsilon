@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is eight names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is nine names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -127,6 +127,12 @@ impl IdeApp {
                 self.set_sidebar_view(crate::app::SidebarView::Sessions);
                 Outcome::Ran("sessions — click one to resume it".to_string())
             }
+            // **`/new` starts a session file and switches to it (full-port round 6).**
+            // Same act as the terminal's (M221): a file beside the others, handed
+            // over through `switch_session` — the path the sidebar's clicks already
+            // take. Refuses while a run is in flight, like the terminal's
+            // "new: busy".
+            Command::New => self.run_new_session(),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -338,6 +344,56 @@ impl IdeApp {
         parts.push(self.run_state().to_string());
         parts.join("  ·  ")
     }
+
+    /// Start a new session file and switch to it.
+    ///
+    /// The terminal's `/new` (M221) as a window act: name a file beside the
+    /// others with the runtime's own [`epsilon_runtime::fresh_session_file`] —
+    /// not a second naming rule — create it under a lease, and hand over through
+    /// [`IdeApp::switch_session`], the path the sidebar's clicks already take.
+    /// Refuses while a run is in flight: switching under a running turn would
+    /// orphan its writes into the fresh file. The terminal refuses the same
+    /// case the same way ("new: busy").
+    fn run_new_session(&mut self) -> Outcome {
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("new session: no agent attached to this window".to_string());
+        };
+        if session.running() {
+            return Outcome::Ran(
+                "new: busy — wait for the current run to finish, then /new again".to_string(),
+            );
+        }
+        // The window's own workspace, not the agent's copy of it: the new file
+        // must sit beside the sessions the sidebar lists, and the sidebar
+        // lists `self.opts.workspace` — a file named under a differently
+        // spelled root lands in a different per-copy directory and the pane
+        // never shows it (proven by the test failing exactly that way).
+        let workspace = self.workspace().to_path_buf();
+        let rel = epsilon_runtime::fresh_session_file(
+            epsilon_runtime::now_millis(),
+            &epsilon_contracts::new_id("ses"),
+            &workspace,
+        );
+        let path = workspace.join(rel);
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            return Outcome::Ran(format!("new session: {}: {e}", parent.display()));
+        }
+        // Create under a lease, then drop the handle: `switch_session` opens
+        // the same file again, and holding both would wait on our own lease
+        // (the terminal's `/new` documents the same dance).
+        if let Err(e) = epsilon_session::SessionStore::open_in(&path, &workspace).map(|_| ()) {
+            return Outcome::Ran(format!("new session: {}: {e}", path.display()));
+        }
+        match self.switch_session(&path) {
+            Ok(_) => Outcome::Ran(format!(
+                "new session — {} (the previous one is kept; /sessions lists both)",
+                path.display()
+            )),
+            Err(e) => Outcome::Ran(format!("new session failed: {e}")),
+        }
+    }
 }
 
 /// The head the reader typed, for the refusal.
@@ -457,7 +513,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "compact", "goal", "help", "session", "sessions", "tasks", "theme",
+    "clear", "compact", "goal", "help", "new", "session", "sessions", "tasks", "theme",
 ];
 
 #[cfg(test)]
@@ -722,6 +778,7 @@ mod tests {
             Command::Compact,
             Command::Goal(None),
             Command::Help,
+            Command::New,
             Command::Session,
             Command::Sessions,
             Command::Tasks,

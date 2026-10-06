@@ -2414,6 +2414,12 @@ exists — `Ctrl+P` opens the command palette, which lists every file and every 
 answers, so it is the window's honest equivalent of the terminal's command reference. 8 of 37, up
 from the seven above (plus `/compact`, `/goal` and `/theme`, which landed alongside).
 
+**Amendment (full-port round 6).** `/new` joins under the same criterion: naming the file reuses
+the runtime's own `fresh_session_file`, and switching reuses `switch_session` — the path the
+sidebar's clicks already take. 9 of 37. Two things this amendment does not change: the busy refusal
+(switching under a running turn would orphan its writes), and the no-agent answer (a file with no
+session to switch is half a verb, so the window names what's missing).
+
 ---
 
 ---

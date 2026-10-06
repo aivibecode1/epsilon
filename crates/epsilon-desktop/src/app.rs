@@ -6958,7 +6958,14 @@ mod tests {
         let (ws, _keep) = scratch_workspace("sessions-keys");
 
         // A second, older session with a message in it, so `Enter` has somewhere to go.
-        let older = ws.join("older.jsonl");
+        // It lives in the sessions root — the flat legacy half of the discovery
+        // union — because no session has ever lived directly in a workspace root,
+        // and a fixture anywhere else would pass against a listing that cannot
+        // see real files (proven when the root fix turned this green by moving
+        // nothing else).
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let older = sessions_root.join("older.jsonl");
         let mut store =
             epsilon_session::SessionStore::open_in(older.clone(), &ws).expect("a store opens");
         store
@@ -7321,6 +7328,112 @@ mod tests {
             palette_has(&opened, "reload tree"),
             "and the opened palette lists the window's commands.\n{}",
             opened.describe()
+        );
+    }
+
+    /// `/new` starts a session file and switches to it.
+    ///
+    /// Same act as the terminal's (M221): a file beside the others, created
+    /// under a lease, handed over through `switch_session` — the path the
+    /// sidebar's clicks already take. The previous session is kept, not
+    /// replaced. Refuses while a run is in flight, like the terminal's
+    /// "new: busy" (which is itself unpinned there — this guard mirrors it
+    /// rather than re-proving it).
+    #[test]
+    fn slash_new_starts_a_session_file_and_switches_to_it() {
+        let (ws, _keep) = scratch_workspace("slash-new");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        let before = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("the attached session holds a file");
+        let listed_before = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+
+        let outcome = h.app.try_command("/new");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/new must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("new session"),
+            "the answer names what happened: {said:?}"
+        );
+
+        let after = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("still attached after the switch");
+        assert_ne!(before, after, "/new must move to a new file, not stay put");
+        assert!(
+            after.exists(),
+            "the new session file exists: {}",
+            after.display()
+        );
+        let listed_after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+        assert!(
+            listed_after > listed_before,
+            "the previous session is kept: {listed_before} -> {listed_after}"
+        );
+    }
+
+    /// `/new` with no agent names what's missing instead of doing half the verb.
+    ///
+    /// Creating the file without a session to switch would leave a lease nobody
+    /// holds and a file nobody opens — half a verb. The `/session` command's
+    /// precedent ("no durable session file attached") is the shape: name the
+    /// missing piece in words.
+    #[test]
+    fn slash_new_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-new-no-agent");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/new");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/new without an agent must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
+
+    /// The sessions pane lists the stored session — it did not, until the root fix.
+    ///
+    /// `IdeSession::sessions` passed the workspace root where
+    /// `list_sessions_for_cwd` needs the sessions root, so it read a directory
+    /// that never exists and the pane always showed "none stored for this
+    /// workspace yet" — with real sessions on disk. The `/new` test pins the
+    /// API count; this pins the visible symptom, through the real draw path.
+    #[test]
+    fn the_sessions_pane_lists_the_stored_session() {
+        let (ws, _keep) = scratch_workspace("sessions-list");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        let frame = h.paint();
+        let rows = frame.region("sessions").join(" ");
+        assert!(
+            rows.contains("1 stored"),
+            "the pane must count the stored session.\n{}",
+            frame.describe()
+        );
+        assert!(
+            !rows.contains("none stored"),
+            "and not show the empty state alongside it.\n{}",
+            frame.describe()
         );
     }
 

@@ -747,8 +747,14 @@ fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
     let ws = tempfile::tempdir().expect("a workspace");
 
     // A real session file, written by a real store with a real message in it.
+    // It lives in the sessions root — no session has ever lived directly in a
+    // workspace root, and a fixture there passes only against a listing that
+    // reads a directory that does not exist.
+    let sessions_root = epsilon_runtime::sessions_root(ws.path());
+    std::fs::create_dir_all(&sessions_root).expect("sessions root");
     let mut store =
-        epsilon_session::SessionStore::open_in(ws.path().join("older.jsonl"), ws.path()).unwrap();
+        epsilon_session::SessionStore::open_in(sessions_root.join("older.jsonl"), ws.path())
+            .unwrap();
     store
         .append(epsilon_contracts::session_entry::EntryKind::Message {
             message: assistant_markdown("a memorable line from last time"),
@@ -772,7 +778,7 @@ fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
     );
 
     let restored = app
-        .switch_session(&ws.path().join("older.jsonl"))
+        .switch_session(&sessions_root.join("older.jsonl"))
         .expect("an unlocked session resumes");
     assert!(restored >= 1, "it had a message in it");
 
@@ -819,9 +825,15 @@ fn a_long_session_name_is_shown_as_cut_rather_than_clipped() {
     let ws = tempfile::tempdir().expect("a workspace");
     // A name long enough that it cannot fit a 264-point sidebar.
     let long = "x".repeat(200);
-    let mut store =
-        epsilon_session::SessionStore::open_in(ws.path().join(format!("{long}.jsonl")), ws.path())
-            .expect("the session file");
+    // Sessions root: the pane reads discovery, and discovery never scans the
+    // workspace root — a fixture there would pass vacuously (no row to cut).
+    let sessions_root = epsilon_runtime::sessions_root(ws.path());
+    std::fs::create_dir_all(&sessions_root).expect("sessions root");
+    let mut store = epsilon_session::SessionStore::open_in(
+        sessions_root.join(format!("{long}.jsonl")),
+        ws.path(),
+    )
+    .expect("the session file");
     store
         .append(epsilon_contracts::session_entry::EntryKind::Message {
             message: assistant_markdown("hello"),
@@ -854,8 +866,14 @@ fn a_long_session_name_is_shown_as_cut_rather_than_clipped() {
 #[test]
 fn a_session_row_says_when_it_ran() {
     let ws = tempfile::tempdir().expect("a workspace");
+    // Sessions root, not workspace root — see the note on the older.jsonl
+    // fixture above: a file directly under the workspace is invisible to the
+    // discovery this pane reads.
+    let sessions_root = epsilon_runtime::sessions_root(ws.path());
+    std::fs::create_dir_all(&sessions_root).expect("sessions root");
     let mut store =
-        epsilon_session::SessionStore::open_in(ws.path().join("older.jsonl"), ws.path()).unwrap();
+        epsilon_session::SessionStore::open_in(sessions_root.join("older.jsonl"), ws.path())
+            .unwrap();
     store
         .append(epsilon_contracts::session_entry::EntryKind::Message {
             message: assistant_markdown("something said once"),

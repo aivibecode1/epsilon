@@ -805,8 +805,19 @@ impl IdeSession {
     }
 
     /// Every session stored under the workspace for `cwd`, newest first.
+    ///
+    /// `root` here is the **sessions root**, not the workspace: since M217 a launch
+    /// writes into `root/--<cwd>--/` and older sessions sit in `root` itself, so
+    /// this reads [`epsilon_runtime::sessions_root`], the one string every reader
+    /// takes rather than composing `.epsilon/sessions` itself. Passing the
+    /// workspace root reads `<workspace>/--<cwd>--/`, a directory that does not
+    /// exist — and the Sessions pane lists nothing, forever, with no error.
+    /// Found because a `/new` test counted the list before and after: 0 -> 0.
     pub fn sessions(&self, cwd: &std::path::Path) -> Vec<epsilon_session::SessionSummary> {
-        epsilon_session::list_sessions_for_cwd(self.agent.workspace_root(), cwd)
+        epsilon_session::list_sessions_for_cwd(
+            &epsilon_runtime::sessions_root(self.agent.workspace_root()),
+            cwd,
+        )
     }
 
     /// The session file this agent currently holds.
