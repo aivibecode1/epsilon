@@ -1183,11 +1183,20 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     }
                 }
             }
-            KeyCode::Up | KeyCode::Down | KeyCode::Char('f' | 'F')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                unreachable!("handled by guarded arms below")
-            }
+            // `Ctrl+F`, `Ctrl+Up` and `Ctrl+Down` are **not** intercepted here.
+            //
+            // This used to carry
+            //   `KeyCode::Up | KeyCode::Down | KeyCode::Char('f' | 'F')
+            //      if key.modifiers.contains(CONTROL) => { unreachable!(...) }`
+            // on the claim that "guarded arms below" handle them. They do — the
+            // favourite toggle is the `Char('f' | 'F')` arm of the *second* match,
+            // below — but this arm sits **before** that match, so it fired first and
+            // the three chords reached a panic in every profile, `Ctrl+F` included,
+            // and `Ctrl+F` is advertised by `/help` and by the picker's hint row.
+            //
+            // A guard in front of the code it guards is not a guard. The correct way
+            // to say "these keys are handled later" is to not match them here, so
+            // the second match is the only reader and there is one answer per chord.
             _ => {}
         }
         if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
@@ -1321,7 +1330,20 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
     }
 
     match key.code {
-        KeyCode::Esc => {
+        // `app.interrupt`, read from the table rather than written as a literal.
+        //
+        // This arm used to be `KeyCode::Esc`, which made the binding decorative:
+        // `app.interrupt` is in `DEFAULTS`, `/hotkeys` prints it from `effective()`
+        // and the footer prints it through `key_text`, so a user who moved it was
+        // shown **their** key beside "stop" — and pressing it did nothing, while Esc
+        // kept working anyway. That is `AGENTS.md` §2.7: nothing a UI advertises may
+        // be a no-op, and a footer hint that names a key the handler ignores is
+        // worse than no hint.
+        //
+        // Behaviour under the default table is unchanged: `specs_for` yields
+        // `escape` with **no** modifiers and `key_matches` compares modifiers for
+        // equality, so bare Esc matches and `Shift+Esc` still does not.
+        _ if app.keybindings.matches("app.interrupt", &key) => {
             // M17b: Esc first dismisses the slash popup (pi prompt.autocomplete.hide);
             // then aborts a run; only when idle+quiet does it quit.
             if app.slash_open {
@@ -1374,7 +1396,18 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                 true
             }
         }
-        KeyCode::Enter if app.keybindings.matches("tui.input.submit", &key) => {
+        // Submit is the **binding**, not the `Enter` keycode.
+        //
+        // This was `KeyCode::Enter if app.keybindings.matches("tui.input.submit",
+        // &key)`: a guard that re-derived the answer the pattern in front of it had
+        // already given, so the table was read and then not obeyed. A user who bound
+        // `tui.input.submit` to anything else — `/hotkeys` prints that binding from
+        // the same table — lost submit entirely: Enter fell through to the
+        // "not bound here" notice and the new chord did nothing.
+        //
+        // Dropping the pattern is what makes one table the truth. Under the defaults
+        // (`enter`, no modifiers) this is the same arm as before.
+        _ if app.keybindings.matches("tui.input.submit", &key) => {
             if app.at_open {
                 app.apply_at_selection(true);
                 return false;

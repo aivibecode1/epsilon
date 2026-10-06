@@ -1753,6 +1753,172 @@ fn remapped_quit_via_keybindings_manager() {
     ));
 }
 
+/// `Ctrl+F` in the model picker must toggle a favourite, not panic.
+///
+/// **Found by reading the key path, not by a failing test.** `app/keys.rs` had this
+/// inside the `if app.picker_open` block:
+///
+/// ```ignore
+/// KeyCode::Up | KeyCode::Down | KeyCode::Char('f' | 'F')
+///     if key.modifiers.contains(KeyModifiers::CONTROL) =>
+/// { unreachable!("handled by guarded arms below") }
+/// ```
+///
+/// It is placed **before** the arms it claims to defer to, and nothing above it
+/// intercepts `Ctrl+F`, `Ctrl+Up` or `Ctrl+Down`. So the arm fired, and the three
+/// chords reached a panic — in a release binary too, because `unreachable!` panics
+/// in every profile. `Ctrl+F` is advertised in `/help` (`app/commands.rs`) and in the
+/// picker's own hint row, and the handler it was protecting (`toggle_favorite`) was
+/// unreachable code.
+///
+/// The existing `Ctrl+F` test runs with the picker **closed**, which is why 2,061
+/// green tests never saw it. A guard placed in front of the code it guards is not a
+/// guard; it is a tripwire pointed the wrong way.
+#[tokio::test]
+async fn ctrl_f_in_the_model_picker_toggles_a_favorite_instead_of_panicking() {
+    let (mut app, agent, (_f, _n)) = test_app();
+    // Open the picker, then descend into the highlighted provider so stage 2 (a
+    // model list) is what the key acts on.
+    assert!(!handle_key(&mut app, &agent, ctrl(KeyCode::Char('m'))));
+    assert!(app.picker_open);
+    handle_key(&mut app, &agent, key(KeyCode::Enter));
+    assert!(
+        app.picker_provider.is_some(),
+        "Enter on stage 1 descends into the provider"
+    );
+
+    // The advertised chord. Before the fix this unwound the run.
+    handle_key(&mut app, &agent, ctrl(KeyCode::Char('f')));
+
+    // **Asserted without touching the user's config, deliberately.**
+    //
+    // `toggle_favorite` writes `<config dir>/config.toml`, and a test that writes
+    // there changes the machine rather than the tree. That is not hypothetical: an
+    // earlier version of this test asserted on the favourite it had just starred,
+    // and the next run of the suite failed in
+    // `f2_cycles_favorites_and_guides_when_empty`, which reads the *same* global
+    // file and expects an empty list. That test is not the broken one — this is.
+    //
+    // The discriminator that does not need the filesystem: with the arm removed,
+    // `Ctrl+F` falls through to the last arm of that match, `Char(c) => insert_char`,
+    // so the **filter** would gain an `f`. Reaching the favourite handler means it
+    // did not.
+    assert!(
+        !app.input.contains('f'),
+        "ctrl+f fell through to the filter instead of the favourite handler: {:?}",
+        app.input
+    );
+    assert!(
+        app.picker_open,
+        "and the picker is still the picker: {:?}",
+        app.picker_open
+    );
+
+    // The other two chords the deleted arm claimed, because they were named in it.
+    handle_key(&mut app, &agent, ctrl(KeyCode::Up));
+    handle_key(&mut app, &agent, ctrl(KeyCode::Down));
+    assert!(app.picker_open, "the picker survives a navigation chord");
+}
+
+/// A rebound `app.interrupt` must be the key that interrupts.
+///
+/// **This is `AGENTS.md` §2.7 in the shape §2.7 names: a bound key the UI does not
+/// act on.** `app.interrupt` has been in `DEFAULTS` since the binding table was
+/// written, and the footer prints its chord through `key_text("app.interrupt", …)` —
+/// so a user who rebinds it in `keybindings.json` is shown *their* key beside "stop".
+/// The handler, meanwhile, was a literal `KeyCode::Esc` arm, so the new chord did
+/// nothing at all and the footer was advertising a key that only worked if you did not
+/// rebind it.
+///
+/// Idle `interrupt` and `exit` are the same key, so the observable is the one the
+/// existing `remapped_quit_via_keybindings_manager` test already uses: idle, `Esc`
+/// quits. Rebound, that moves to the new chord **and** stops being true of `Esc`.
+#[tokio::test]
+async fn a_rebound_interrupt_key_is_the_key_that_interrupts() {
+    let (mut app, agent, _rx) = test_app();
+    let mut map = std::collections::HashMap::new();
+    map.insert("app.interrupt".into(), vec!["ctrl+y".into()]);
+    app.keybindings = crate::keybindings::KeybindingsManager::from_map(map);
+
+    // The advertised chord is the one that works.
+    assert_eq!(
+        app.keybindings.key_text("app.interrupt").as_deref(),
+        Some("ctrl+y"),
+        "the footer would print this chord"
+    );
+    assert!(
+        handle_key(
+            &mut app,
+            &agent,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        ),
+        "the rebound chord must be the key that interrupts"
+    );
+
+    // And the old literal is no longer privileged: it now says it is not bound,
+    // which is the same truth the footer is no longer contradicting.
+    let (mut app2, agent2, (_ftx_rx, mut notice_rx)) = test_app();
+    let mut map2 = std::collections::HashMap::new();
+    map2.insert("app.interrupt".into(), vec!["ctrl+y".into()]);
+    app2.keybindings = crate::keybindings::KeybindingsManager::from_map(map2);
+    assert!(
+        !handle_key(&mut app2, &agent2, key(KeyCode::Esc)),
+        "esc is unbound once app.interrupt moves, and must not still quit"
+    );
+    let said = notice_rx.try_recv().expect(
+        "a key that now does nothing must say so rather than looking like a hang \
+         (the same rule the permission dialog's unbound-key test holds)",
+    );
+    assert!(
+        said.to_lowercase().contains("esc") && said.contains("not bound"),
+        "the notice must name the key, so the reader can tell 'not bound' from \
+         'bound to something else': {said:?}"
+    );
+}
+
+/// A rebound `tui.input.submit` must be the key that submits.
+///
+/// The same shape as the interrupt binding above, and worse: `tui.input.submit` is
+/// printed by `/hotkeys` from the same `effective()` table, so a user who binds it
+/// to anything but Enter was told their chord sends — and pressing it did nothing,
+/// while pressing Enter sent anyway. The arm was `KeyCode::Enter if
+/// keybindings.matches("tui.input.submit", &key)`: a guard that re-derived the very
+/// answer the pattern in front of it already gave, so the table was read and not
+/// obeyed.
+#[tokio::test]
+async fn a_rebound_submit_key_is_the_key_that_submits() {
+    let (mut app, agent, _rx) = test_app();
+    let mut map = std::collections::HashMap::new();
+    map.insert("tui.input.submit".into(), vec!["ctrl+y".into()]);
+    app.keybindings = crate::keybindings::KeybindingsManager::from_map(map);
+    for c in "hello".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+
+    assert!(
+        !handle_key(&mut app, &agent, key(KeyCode::Enter)),
+        "enter is unbound once tui.input.submit moves"
+    );
+    assert_eq!(
+        app.input, "hello",
+        "an unbound Enter must leave the draft alone rather than send it"
+    );
+
+    assert!(
+        !handle_key(
+            &mut app,
+            &agent,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        ),
+        "submitting is not quitting"
+    );
+    assert!(
+        app.input.is_empty(),
+        "the rebound chord must submit and clear the draft; draft was {:?}",
+        app.input
+    );
+}
+
 /// The two halves of the per-card convention must answer the same question.
 ///
 /// `RenderState::is_open` decides what is **drawn**; `App::card_is_open` decides
@@ -2347,9 +2513,24 @@ async fn favorites_section_orders_above_recents_and_marks_stars() {
 #[tokio::test]
 async fn f2_cycles_favorites_and_guides_when_empty() {
     let (mut app, agent, (_f, _n)) = test_app();
+    // **Both mirrors are cleared here, and this line is the fix for a test that failed
+    // twice on a machine that had run the product.** The first half of this test is
+    // "what does F2 do with nothing to cycle through", but `test_app()` loads
+    // `favorites` and `recents` from the user's **real** `<config dir>/config.toml`, so
+    // "nothing" meant "nothing on a machine that had never launched Epsilon". On this
+    // one, `recents` held four ids and F2 cycled to `gpt-4` — a real behaviour, answering
+    // a different question than the one asked.
+    //
+    // It bit twice: once through this test, and once through a test of my own that
+    // starred a favourite while asserting on it. **A test that reads the user's config
+    // answers a question about the user.** Seeding both mirrors makes this one hermetic,
+    // and it is the same thing the second half already does for `favorites` — the author
+    // knew the mirror was what F2 owns and simply did not seed the first half.
+    app.favorites.clear();
+    app.recents.clear();
     // Empty list: guidance, no crash, model unchanged.
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
-    assert_eq!(app.model_id, "faux-1");
+    assert_eq!(app.model_id, "faux-1", "nothing to cycle through");
 
     app.favorites = vec!["faux-1".into(), "deepseek-chat".into()];
     handle_key(&mut app, &agent, key(KeyCode::F(2)));
@@ -5425,6 +5606,77 @@ fn a_bidirectional_override_never_reaches_the_screen() {
     assert_eq!(
         line.hidden.bidi, 1,
         "and the reader is told one was removed"
+    );
+}
+
+/// **A bidi override in model output must never reach the screen — while it is
+/// still arriving.**
+///
+/// [`a_bidirectional_override_never_reaches_the_screen`] above pins the rule for a
+/// committed line. It passed, and was true, because `push_line` strips on the way
+/// in. **The live tail does not go through `push_line`**: `apply` assigns
+/// `streaming_text` and `streaming_thinking` raw, and `panels.rs` draws them every
+/// frame. So for the whole duration of every answer — the moment a hostile file, a
+/// hostile tool result or a hostile README is most able to speak — the same bytes
+/// that the commit path strips were on screen, and then vanished at commit.
+///
+/// That is `AGENTS.md` §6 stated as a promise and not kept on one path, and it is
+/// invisible to the existing tests because they all push a finished line.
+///
+/// Asserted on the **frame**, not on `streaming_text()`, because the frame is what
+/// the reader sees and the field is one call away from it.
+#[tokio::test]
+async fn a_bidi_override_in_streaming_model_output_never_reaches_the_frame() {
+    let (mut app, ..) = test_app();
+    let hostile = "running ls\u{202E} -R /tmp now";
+    let message = Message::Assistant(epsilon_contracts::message::AssistantMessage {
+        id: "msg_stream_tail".into(),
+        timestamp_ms: 0,
+        provider: "faux".into(),
+        model_id: "faux-1".into(),
+        content: vec![
+            epsilon_contracts::content::ContentBlock::Thinking {
+                text: format!("checking {hostile}"),
+                signature: None,
+            },
+            epsilon_contracts::content::ContentBlock::text(hostile.to_string()),
+        ],
+        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+        error_message: None,
+        usage: epsilon_contracts::message::Usage::default(),
+    });
+    // One `MessageUpdate` — the streaming state, before `MessageEnd` commits it.
+    app.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageUpdate {
+            message: Box::new(message),
+        });
+
+    let rows = render_rows(&mut app, 80, 24);
+    let screen = rows.join("\n");
+    // **The half that bites, and the reason it is here.**
+    //
+    // The frame was *already* clean before the fix, and that is the part worth
+    // recording: ratatui discards a zero-width format character on its way into a
+    // cell, so the raw bytes in `streaming_text` never reached the terminal. What
+    // was missing was the guarantee. `AGENTS.md` §6 strips untrusted text **before
+    // it reaches a screen**, and "a renderer happened to drop it" is not that — it
+    // is a property of a third-party layout crate that a dependency bump can take
+    // away. So the assertion is on the **stored field**, where the fix is, and the
+    // frame assertion below is the reader-visible half that was already true.
+    assert!(
+        !app.ui.streaming_thinking().contains('\u{202E}')
+            && !app.ui.streaming_text().contains('\u{202E}'),
+        "the live tail stored a bidi override: thinking={:?} text={:?}",
+        app.ui.streaming_thinking(),
+        app.ui.streaming_text()
+    );
+    assert!(
+        !screen.contains('\u{202E}'),
+        "the live tail drew a bidi override: {screen:?}"
+    );
+    assert!(
+        screen.contains("ls -R /tmp"),
+        "and the rest of the text is untouched, or nothing was drawn at all: {screen:?}"
     );
 }
 

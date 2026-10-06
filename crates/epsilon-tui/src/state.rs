@@ -1172,8 +1172,27 @@ impl UiState {
             }
             AgentEvent::MessageUpdate { message } => {
                 if let Message::Assistant(a) = &**message {
-                    self.streaming_thinking = thinking_of(a);
-                    self.streaming_text = a.text();
+                    // The live tail is model output reaching a screen, so it is
+                    // stripped here for the same reason `push_line` strips a
+                    // committed line: `AGENTS.md` §6 says untrusted text is
+                    // stripped *before* it reaches a screen, and this field is
+                    // model output drawn every frame by `panels::draw_transcript`.
+                    //
+                    // **Measured, because the obvious conclusion was wrong.** Before
+                    // this, the field held the raw bytes and the *frame* still came
+                    // out clean — ratatui drops a zero-width format character on its
+                    // way into a cell, so a bidi override in the live tail never
+                    // reached the terminal anyway. That is an incidental property of
+                    // a third-party layout crate, not a guarantee this repository
+                    // makes, and it is not what §6 asks for: the rule is about
+                    // stripping on the way in, not about what a renderer happens to
+                    // discard. `display_safe` borrows when there is nothing to
+                    // remove, so the common path costs a scan and no allocation.
+                    self.streaming_thinking = crate::text_safety::display_safe(&thinking_of(a))
+                        .0
+                        .into_owned();
+                    self.streaming_text =
+                        crate::text_safety::display_safe(&a.text()).0.into_owned();
                     self.status = "streaming…".into();
                 }
             }

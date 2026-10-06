@@ -14,201 +14,67 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// A parsed `KeyId` — one chord (modifiers + base key).
+/// A parsed `KeyId` — one chord (modifiers + base key), in crossterm's vocabulary.
+///
+/// **The grammar is shared; only this conversion is not.**
+/// `epsilon_contracts::keybind::Chord::parse` is the one function that decides what
+/// `"ctrl+shift+f2"` means, so a binding a user writes means the same in both front ends.
+/// Converting to `KeyCode`/`KeyModifiers` here, rather than parsing the string a second
+/// time, is what keeps that true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct KeySpec {
     code: KeyCode,
     modifiers: KeyModifiers,
 }
 
-/// Built-in defaults (subset of pi's `KEYBINDINGS` that epsilon actually
-/// handles). The id strings are kept identical to pi where they overlap so
-/// a user migrating from pi can reuse the same file.
-const DEFAULTS: &[(&str, &[&str])] = &[
-    ("app.interrupt", &["escape"]),
-    // epsilon keeps ctrl+d for forward-delete (tui.editor.deleteCharForward), so
-    // `app.exit` is not on ctrl+d as pi puts it.
-    // `app.clear` owns ctrl+c and `app.exit` keeps ctrl+q, matching pi's separation
-    // (`app.clear` = ctrl+c "Clear editor", `app.exit` = ctrl+d "Exit when editor is
-    // empty"). Epsilon keeps ctrl+d for forward-delete, so exit is bound to ctrl+q
-    // alone: two actions on one chord is not a remap, it is a coin toss decided by
-    // handler order, and `/hotkeys` prints both. `app.clear` is matched first in
-    // `app/keys.rs`, so ctrl+c empties the draft; ctrl+q is the way out.
-    ("app.exit", &["ctrl+q"]),
-    ("app.clear", &["ctrl+c"]),
-    ("app.model.select", &["ctrl+m"]),
-    ("app.palette", &["ctrl+p"]),
-    ("app.thinking.cycle", &["ctrl+t"]),
-    ("app.model.cycleForward", &["f2"]),
-    ("app.model.cycleBackward", &["shift+f2"]),
-    ("app.tools.expand", &["ctrl+x"]),
-    // Transcript scrolling. These were the two hardcoded `KeyCode::PageUp/Down`
-    // arms in the composer's key handler, which meant the footer could not name
-    // them without hardcoding the same literal a second time — and a user who
-    // wanted `ctrl+u`/`ctrl+d` had no way to ask. The handler matches these ids
-    // now, so the key in the footer is the key that scrolls.
-    ("app.transcript.pageUp", &["pageup"]),
-    ("app.transcript.pageDown", &["pagedown"]),
-    // Jump to the previous/next PROMPT rather than the previous/next ten rows.
-    // pi's chords, read from `tui/src/keybindings.ts:184-192`:
-    // `ctrl+up` / `ctrl+shift+up` and `ctrl+down` / `ctrl+shift+down`. The
-    // one-modifier form is listed first because a terminal often cannot
-    // distinguish the two, and a binding that only fires when a terminal
-    // supports shift is a binding most users never discover.
-    ("app.transcript.prevPrompt", &["ctrl+up", "ctrl+shift+up"]),
-    (
-        "app.transcript.nextPrompt",
-        &["ctrl+down", "ctrl+shift+down"],
-    ),
-    // Jump to live: the other end of the same journey. `G` is vim's
-    // end-of-buffer, but the reader pressing it here means "the newest rows",
-    // and that is what "live" names — the view following the run again. Two
-    // chords, primary first, because `g` is the one the footer can afford to
-    // print and `G` is the one a vim user's hand reaches for; `matches` compares
-    // characters case-insensitively, so the binding covers both.
-    //
-    // It fires only while the view is frozen. A bare letter that stopped typing
-    // its own character would take `g` out of every draft, which is the M13
-    // lesson (a bare `x` for expand made the letter untypable).
-    ("app.transcript.live", &["G", "g"]),
-    // Half-page and the two ends.
-    //
-    // pi gives half-page NO default (`tui/src/keybindings.ts:168-170` is
-    // `defaultKeys: []`) and binds top/bottom to `home`/`end`.
-    //
-    // **Ctrl-modified, and on chords that are actually free.** Two attempts:
-    //
-    // 1. bare `u`/`d`/`H`/`L` -- correct about the keys, completely wrong about
-    //    the editor. A bare letter is TEXT, and the composer is where a user is
-    //    typing most of the time. Four unrelated tests failed.
-    // 2. `ctrl+u`/`ctrl+d`, which read like readline's page keys -- and are
-    //    **already bound to kill-to-start and delete-forward in the composer**
-    //    (`keys.rs:1509`, `:1354`). A test caught that too, by asserting the
-    //    scroll saturated at zero and finding it unmoved.
-    //
-    // 3. `ctrl+k`/`ctrl+j` -- free in the binding TABLE, and `ctrl+j` is
-    //    **newline in the composer** (`tests.rs:1395`), so the table and the
-    //    handler disagreed and the test caught it.
-    //
-    // **So the half page gets NO default key, which is exactly what pi does**:
-    // `tui.altScreen.halfPageUp` is `defaultKeys: []`
-    // (`tui/src/keybindings.ts:168-170`). Three chords were tried and each is
-    // already the composer's: bare letters are text, `ctrl+u`/`ctrl+d` are
-    // kill-line, `ctrl+j` is newline. A user who wants one sets it in
-    // `keybindings.json`; a default that steals a key is worse than a default
-    // that does not exist, and the whole point of the ids is that the footer can
-    // name whatever the user chose.
-    //
-    // `top`/`bottom` do get defaults. `home`/`end` were rejected because they
-    // already drive the composer cursor -- the same key meaning two things
-    // depending on focus is worse than not having the binding -- so they take
-    // `ctrl+home`/`ctrl+end`, which are free.
-    //
-    // A half page is the MEASURED viewport halved, not a fixed ten rows, which is
-    // what makes it a half PAGE. The pageUp/pageDown bindings above stay a fixed
-    // ten because they are also the footer hint.
-    // **No half-page defaults, and that is the invariant rather than an
-    // oversight.** Every id in DEFAULTS must have a printable chord, because the
-    // footer prints chords and a binding it cannot name is a binding a user
-    // cannot find (`a_hint_label_parses_back_to_the_chord_it_names`). An empty
-    // default fails that test -- correctly.
-    //
-    // Three chords were tried and each is the composer's: bare letters are TEXT,
-    // `ctrl+u`/`ctrl+d` are kill-to-start and delete-forward, `ctrl+j` is newline.
-    // pi leaves the same key unbound for the same reason
-    // (`tui/src/keybindings.ts:168-170` is `defaultKeys: []`). The HANDLER still
-    // exists, so a user who sets `app.transcript.halfUp` in `keybindings.json`
-    // gets a half page; what is missing is only a default, which is the one thing
-    // that cannot be had here.
-    ("app.transcript.top", &["ctrl+home", "ctrl+shift+home"]),
-    ("app.transcript.bottom", &["ctrl+end", "ctrl+shift+end"]),
-    // Copy the last assistant message. pi binds this to `ctrl+x`
-    // (`core/keybindings.ts:130-133`) -- but `ctrl+x` is `app.tools.expand` here,
-    // and the two are not the same gesture: one shows more of a tool result, the
-    // other takes text to the clipboard.
-    //
-    // **The chord was chosen by reading the composer's claims, not by taste.**
-    // Every one of these is already bound in the key handler: ctrl+a home,
-    // ctrl+b back-char, ctrl+d delete-forward, ctrl+e line-end, ctrl+f
-    // move-forward, ctrl+k kill-to-line-end, ctrl+o (oauth), ctrl+u kill-to-start,
-    // ctrl+v paste, ctrl+w kill-word, ctrl+y yank. ctrl+y was the obvious pick
-    // and it is taken.
-    //
-    // What is left is the F-keys, and `grep -c 'KeyCode::F('` over the handler is
-    // **0** -- nothing in the TUI claims one. `ctrl+y` was also tried first and
-    // caught, the same way `ctrl+u`/`ctrl+j`/`ctrl+k` were for the half page.
-    ("app.message.copy", &["f4"]),
-    ("app.live.refresh", &["ctrl+g"]),
-    ("tui.editor.undo", &["ctrl+z"]),
-    ("tui.editor.redo", &["ctrl+."]),
-    ("tui.input.newLine", &["ctrl+j"]),
-    ("tui.input.submit", &["enter"]),
-    ("app.clipboard.paste", &["ctrl+v", "shift+insert"]),
-    // M59: pi's `app.editor.external` (pi defaults to ctrl+g, which this TUI
-    // already uses for `app.live.refresh`) — two defaults so either habit works.
-    ("app.editor.external", &["ctrl+o", "alt+e"]),
-];
+/// The built-in defaults, **moved to `epsilon-contracts` (M315)**.
+///
+/// This table used to live here. It is now `epsilon_contracts::keybind::TERMINAL` because
+/// `AGENTS.md` §2.4 requires keybindings to be declared once and read by every front end, and
+/// the desktop window had seventeen literal `consume_key` reads with no table at all. The
+/// reasons individual chords were chosen moved with the entries, unchanged.
+use epsilon_contracts::keybind::TERMINAL as DEFAULTS;
 
+/// Turn a shared [`Chord`] into crossterm's vocabulary.
+///
+/// **This is a conversion, not a parser.** The decision about what `"ctrl+shift+f2"` means
+/// was made once, in `epsilon_contracts::keybind`; a second grammar here would be a second
+/// answer to the same question, and the two would eventually disagree about something.
 fn parse_key_id(raw: &str) -> Option<KeySpec> {
-    let raw = raw.trim().to_ascii_lowercase();
-    if raw.is_empty() {
-        return None;
-    }
-    let parts: Vec<&str> = raw.split('+').map(str::trim).collect();
-    let (mods_parts, key_part) = parts.split_at(parts.len().saturating_sub(1));
-    let key_str = *key_part.first()?;
-    let mut mods = KeyModifiers::empty();
-    for m in mods_parts {
-        match *m {
-            "ctrl" | "control" => mods |= KeyModifiers::CONTROL,
-            "shift" => mods |= KeyModifiers::SHIFT,
-            "alt" | "meta" => mods |= KeyModifiers::ALT,
-            "super" | "win" | "cmd" => mods |= KeyModifiers::SUPER,
-            "" => {}
-            _ => return None,
-        }
-    }
-    let code = match key_str {
-        "escape" | "esc" => KeyCode::Esc,
-        "enter" | "return" => KeyCode::Enter,
-        "tab" => KeyCode::Tab,
-        "space" => KeyCode::Char(' '),
-        "backspace" => KeyCode::Backspace,
-        "delete" | "del" => KeyCode::Delete,
-        "insert" | "ins" => KeyCode::Insert,
-        "home" => KeyCode::Home,
-        "end" => KeyCode::End,
-        "pageup" => KeyCode::PageUp,
-        "pagedown" => KeyCode::PageDown,
-        "up" => KeyCode::Up,
-        "down" => KeyCode::Down,
-        "left" => KeyCode::Left,
-        "right" => KeyCode::Right,
-        "f1" => KeyCode::F(1),
-        "f2" => KeyCode::F(2),
-        "f3" => KeyCode::F(3),
-        "f4" => KeyCode::F(4),
-        "f5" => KeyCode::F(5),
-        "f6" => KeyCode::F(6),
-        "f7" => KeyCode::F(7),
-        "f8" => KeyCode::F(8),
-        "f9" => KeyCode::F(9),
-        "f10" => KeyCode::F(10),
-        "f11" => KeyCode::F(11),
-        "f12" => KeyCode::F(12),
-        s if s.len() == 1 => {
-            let ch = s.chars().next().unwrap();
-            KeyCode::Char(ch)
-        }
-        "." => KeyCode::Char('.'),
-        ">" => KeyCode::Char('>'),
-        "," => KeyCode::Char(','),
-        _ => return None,
+    let chord = epsilon_contracts::keybind::Chord::parse(raw)?;
+    let code = match chord.key {
+        epsilon_contracts::keybind::Key::Char(c) => KeyCode::Char(c),
+        epsilon_contracts::keybind::Key::Esc => KeyCode::Esc,
+        epsilon_contracts::keybind::Key::Enter => KeyCode::Enter,
+        epsilon_contracts::keybind::Key::Tab => KeyCode::Tab,
+        epsilon_contracts::keybind::Key::Space => KeyCode::Char(' '),
+        epsilon_contracts::keybind::Key::Backspace => KeyCode::Backspace,
+        epsilon_contracts::keybind::Key::Delete => KeyCode::Delete,
+        epsilon_contracts::keybind::Key::Insert => KeyCode::Insert,
+        epsilon_contracts::keybind::Key::Home => KeyCode::Home,
+        epsilon_contracts::keybind::Key::End => KeyCode::End,
+        epsilon_contracts::keybind::Key::PageUp => KeyCode::PageUp,
+        epsilon_contracts::keybind::Key::PageDown => KeyCode::PageDown,
+        epsilon_contracts::keybind::Key::Up => KeyCode::Up,
+        epsilon_contracts::keybind::Key::Down => KeyCode::Down,
+        epsilon_contracts::keybind::Key::Left => KeyCode::Left,
+        epsilon_contracts::keybind::Key::Right => KeyCode::Right,
+        epsilon_contracts::keybind::Key::F(n) => KeyCode::F(n),
     };
-    Some(KeySpec {
-        code,
-        modifiers: mods,
-    })
+    let mut modifiers = KeyModifiers::empty();
+    if chord.mods.ctrl {
+        modifiers |= KeyModifiers::CONTROL;
+    }
+    if chord.mods.shift {
+        modifiers |= KeyModifiers::SHIFT;
+    }
+    if chord.mods.alt {
+        modifiers |= KeyModifiers::ALT;
+    }
+    if chord.mods.command {
+        modifiers |= KeyModifiers::SUPER;
+    }
+    Some(KeySpec { code, modifiers })
 }
 
 fn specs_for(id: &str, user: &HashMap<String, Vec<String>>) -> Vec<KeySpec> {

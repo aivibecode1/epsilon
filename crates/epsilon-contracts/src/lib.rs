@@ -13,6 +13,7 @@ pub mod content;
 pub mod diagnostics;
 pub mod goal;
 pub mod ids;
+pub mod keybind;
 pub mod lagged_notice;
 pub mod message;
 pub mod prompt_template;
@@ -30,6 +31,7 @@ pub use goal::{
     GoalRef, GoalSnapshot, GoalStatus, GoalView,
 };
 pub use ids::{MessageId, SessionId, ToolCallId, new_id};
+pub use keybind::{Chord, Key, Mods, TERMINAL, WINDOW};
 pub use lagged_notice::LaggedNotice;
 pub use message::{
     AssistantMessage, CustomMessage, Message, StopReason, ThinkingLevel, ToolResultMessage, Usage,
