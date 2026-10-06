@@ -7410,6 +7410,175 @@ mod tests {
         );
     }
 
+    /// `/resume <path>` switches to that session file.
+    ///
+    /// Same act as the terminal's path form: refuse while busy, name a path
+    /// with no file in words, otherwise hand over through `switch_session` —
+    /// the path the sidebar's clicks already take. Resume is a handover, not
+    /// a replacement: the previous session stays stored.
+    #[test]
+    fn slash_resume_with_a_path_switches_to_that_file() {
+        let (ws, _keep) = scratch_workspace("slash-resume");
+        // A second session with a message in it, in the sessions root where
+        // discovery reads (flat legacy half).
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("other.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m-other".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "a line from the other session",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        drop(store);
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command(&format!("/resume {}", other.display()));
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/resume <path> must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("resumed"),
+            "the answer names what happened: {said:?}"
+        );
+        let after = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("still attached after the switch");
+        assert_eq!(
+            after.file_name(),
+            other.file_name(),
+            "resume moves to the named file"
+        );
+        assert!(after.exists(), "and that file exists: {}", after.display());
+    }
+
+    /// Bare `/resume` opens the sessions browser — the path form's partner.
+    ///
+    /// The terminal's bare form opens its session browser; here the browser is
+    /// the sessions sidebar, so bare `/resume` is `/sessions` by another
+    /// spelling. It needs no agent: the pane paints its own attached-or-not
+    /// state.
+    #[test]
+    fn slash_resume_bare_opens_the_sessions_browser() {
+        let (ws, _keep) = scratch_workspace("slash-resume-bare");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let outcome = h.app.try_command("/resume");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("bare /resume must run: {outcome:?}");
+        };
+        assert!(
+            said.contains("sessions"),
+            "the answer names where to look: {said:?}"
+        );
+        assert!(
+            matches!(h.app.sidebar, SidebarView::Sessions),
+            "bare /resume shows the sessions browser"
+        );
+    }
+
+    /// `/resume` on the session already open says so instead of rebuilding it.
+    ///
+    /// The click path skips a resume of the current file — "a needless rebuild
+    /// the reader did not ask for" — and the typed command follows it, but says
+    /// so: a typed line that silently does nothing is the state this UI refuses.
+    #[test]
+    fn slash_resume_on_the_current_session_says_so() {
+        let (ws, _keep) = scratch_workspace("slash-resume-current");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let current = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("the attached session holds a file");
+
+        let outcome = h.app.try_command(&format!("/resume {}", current.display()));
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/resume <current> must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("already in"),
+            "the answer names the no-op: {said:?}"
+        );
+        let still = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("still attached");
+        assert_eq!(still, current, "and nothing moved");
+    }
+
+    /// `/resume` at a path with no file names it rather than attempting it.
+    ///
+    /// The terminal's wording ("no file at ... — check the path"), because a
+    /// reader who mistyped wants the path they typed, not a lease error about
+    /// a file that was never there.
+    #[test]
+    fn slash_resume_at_a_missing_file_names_it() {
+        let (ws, _keep) = scratch_workspace("slash-resume-missing");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        let before = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("the attached session holds a file");
+
+        let outcome = h.app.try_command("/resume nope.jsonl");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/resume <missing> must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("no file at") && said.contains("nope.jsonl"),
+            "the answer names the path that is not there: {said:?}"
+        );
+        let still = h
+            .app
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .expect("still attached");
+        assert_eq!(still, before, "and nothing moved");
+    }
+
+    /// `/resume <path>` with no agent names what's missing.
+    #[test]
+    fn slash_resume_with_a_path_and_no_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-resume-no-agent");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/resume some.jsonl");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/resume <path> without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
+
     /// The sessions pane lists the stored session — it did not, until the root fix.
     ///
     /// `IdeSession::sessions` passed the workspace root where

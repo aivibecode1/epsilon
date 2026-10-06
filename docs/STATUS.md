@@ -55,6 +55,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 20. **Full-port round 4 — the window answers `/help`** | First desktop verb beyond the M312–M315 seven: `/help` opens the command palette (the window's honest equivalent of the terminal's command reference — the palette lists every file and command the window answers), under ADR-029's own criterion that the effect already exists (`Ctrl+P`). RED first (refused by name), then `open_palette` + arm + `SUPPORTED`, 8 of 37; the guard test's third list (`implemented`) caught the missing entry before the suite did. Count updates everywhere it was live (matrix prose, `commands.rs` module doc, plan 025); the correction ledger and the dated review keep their history. Battery `port-r4` (2,091). |
 | (10-06) | 21. **Full-port round 5 — two `missing` rows become `partial` on tests that already existed** | P-037 (thinking cycle) and P-038 (model cycle) both said "no row establishes the behaviour" while `ctrl_t_cycles_the_thinking_ladder` and `f2_cycles_favorites_and_guides_when_empty` pinned exactly those behaviours — the inventory, not the product, was behind. Both move to `partial` with the chord divergences written down (`ctrl+t`, F2-over-favorites) and the genuinely absent halves named: no reasoning-support message exists anywhere (and the catalog has no reasoning flag to source one from — guessing per provider would lie). The F2 test additionally asserts the `model switched to` report now. Pi counts move to **38 done / 124 partial / 159 missing** in both summaries and here; the `commands.rs` module doc's split (which still listed `/new` as window-level) matches `SUPPORTED` again. Battery `port-r5` (2,091, no new tests). |
 | (10-06) | 22. **Full-port round 6 — the window answers `/new`, and the Sessions pane lists for the first time** | `/new` names a file with the runtime's `fresh_session_file`, creates it under a lease, and hands over through `switch_session` — 9 of 37, under ADR-029's criterion. RED first (both new tests failed with the honest refusal), then the arm. **Writing the test found the bigger defect:** `IdeSession::sessions` passed the workspace root where `list_sessions_for_cwd` needs the sessions root, so it read a directory that never exists — the Sessions pane could never list anything, in production, with no error (M217 prescribed sessions-root for every reader; this reader was missed). One-line fix; the pane test fails `none stored` without it. Three integration fixtures that created session files directly in the workspace root — a place no session has ever lived — moved to the sessions root. Batteries `port-r6`/`port-r6b` failed on my fmt, my collapsible-`if`, and those fixtures; `port-r6c` green (2,094). |
+| (10-06) | 23. **Full-port round 7 — the window answers `/resume`** | Bare opens the sessions browser (the view `/sessions` shows — no agent needed); a path hands over through `switch_session`, with the terminal's busy refusal and missing-file wording kept word for word, and same-path resumes saying so rather than rebuilding silently (following the click path). Five tests, all RED first with the honest refusal: switch, bare, same-file, missing-file, no-agent. 10 of 37; counts updated everywhere live. Battery `port-r7b` (2,099); `port-r7` failed `fmt` on a long line of mine. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -202,12 +203,12 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r6c-2026-10-06.txt`](../audit/evidence/gate-port-r6c-2026-10-06.txt),
+**Latest green battery: [`gate-port-r7b-2026-10-06.txt`](../audit/evidence/gate-port-r7b-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,094 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — three more than `gate-port-r5`: two `/new` tests and the sessions-pane
-listing test. (`gate-port-r6` failed `fmt`, a collapsible-`if`, and one lib test;
-`gate-port-r6b` failed two integration tests — all four mine or my fixture's, all caught by gates.)
+**2,099 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — five more than `gate-port-r6c`: the `/resume` tests.
+(`gate-port-r7` failed `fmt --check` on a long `format!` line — mine; rustfmt collapsed it, and
+this is the re-run.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

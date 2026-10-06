@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is nine names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is ten names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -133,6 +133,13 @@ impl IdeApp {
             // take. Refuses while a run is in flight, like the terminal's
             // "new: busy".
             Command::New => self.run_new_session(),
+            // **`/resume` opens the browser bare, switches by path (full-port round 7).**
+            // Bare is `/sessions` by another spelling, exactly as the terminal's
+            // bare form opens its browser; a path is `switch_session` — the path
+            // the sidebar's clicks already take. Same-path resumes say so rather
+            // than rebuilding silently, because a typed line that does nothing
+            // and says nothing is the state this UI refuses.
+            Command::Resume(path) => self.run_resume_session(path),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -394,6 +401,55 @@ impl IdeApp {
             Err(e) => Outcome::Ran(format!("new session failed: {e}")),
         }
     }
+
+    /// Resume a session: open the browser bare, switch by path.
+    ///
+    /// The terminal's `/resume` as a window act. Bare opens the sessions
+    /// sidebar — the browser this window has, the same one `/sessions` shows —
+    /// and needs no agent. A path is resolved against the window's workspace
+    /// exactly as the terminal resolves against its own, refused while a run
+    /// is in flight ("resume: busy", the terminal's words), named when no file
+    /// is there ("no file at ... — check the path", also the terminal's), and
+    /// handed over through [`IdeApp::switch_session`] otherwise. Resuming the
+    /// session already open says so rather than rebuilding it, following the
+    /// click path, which skips it for the same reason.
+    fn run_resume_session(&mut self, path: String) -> Outcome {
+        let p = path.trim();
+        if p.is_empty() {
+            self.set_sidebar_view(crate::app::SidebarView::Sessions);
+            return Outcome::Ran("sessions — click one to resume it".to_string());
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("resume: no agent attached to this window".to_string());
+        };
+        if session.running() {
+            return Outcome::Ran(
+                "resume: busy — wait for the current run to finish, then /resume again".to_string(),
+            );
+        }
+        let raw = std::path::PathBuf::from(p);
+        let abs = if raw.is_absolute() {
+            raw
+        } else {
+            self.workspace().join(raw)
+        };
+        if !abs.exists() {
+            return Outcome::Ran(format!(
+                "resume: no file at '{}' — check the path",
+                abs.display()
+            ));
+        }
+        if session.session_path().as_deref() == Some(abs.as_path()) {
+            return Outcome::Ran(format!("already in {} — nothing to resume", abs.display()));
+        }
+        match self.switch_session(&abs) {
+            Ok(count) => Outcome::Ran(format!(
+                "resumed {count} messages from {} (history restored, store swapped)",
+                abs.display()
+            )),
+            Err(e) => Outcome::Ran(format!("resume failed: {e}")),
+        }
+    }
 }
 
 /// The head the reader typed, for the refusal.
@@ -513,7 +569,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "compact", "goal", "help", "new", "session", "sessions", "tasks", "theme",
+    "clear", "compact", "goal", "help", "new", "resume", "session", "sessions", "tasks", "theme",
 ];
 
 #[cfg(test)]
@@ -779,6 +835,7 @@ mod tests {
             Command::Goal(None),
             Command::Help,
             Command::New,
+            Command::Resume(String::new()),
             Command::Session,
             Command::Sessions,
             Command::Tasks,

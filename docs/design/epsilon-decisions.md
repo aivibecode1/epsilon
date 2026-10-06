@@ -2420,6 +2420,13 @@ sidebar's clicks already take. 9 of 37. Two things this amendment does not chang
 (switching under a running turn would orphan its writes), and the no-agent answer (a file with no
 session to switch is half a verb, so the window names what's missing).
 
+**Amendment (full-port round 7).** `/resume` joins under the same criterion: bare opens the
+sessions sidebar (the browser this window has — the same view `/sessions` shows), and a path hands
+over through `switch_session`, the clicks' path. Same-path resumes say so rather than rebuilding
+silently, following the click path, which skips them for the same reason. 10 of 37. The busy
+refusal and the missing-file wording ("no file at ... — check the path") are the terminal's, kept
+word for word so the two front ends cannot disagree about what went wrong.
+
 ---
 
 ---
