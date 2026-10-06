@@ -2437,6 +2437,12 @@ to get there: the HTML/JSON rendering now lives in `epsilon-session::export`, sh
 terminal's `/export` and `/share` (which call it since this round), and the argument spelling
 lives in `split_export_arg`, shared with the terminal's arm. 13 of 37.
 
+**Amendment (full-port round 20).** `/model` joins for its argument half: an id runs the shared
+`Agent::set_model_id` — session record included — with the terminal's words and key warning,
+but not its machine-wide default save (that file is the terminal's default for new sessions;
+a window action does not rewrite it behind the terminal's back). Bare names the running
+model; the picker half stays refused until a picker exists. 14 of 37.
+
 ---
 
 ---

@@ -8000,6 +8000,80 @@ mod tests {
         );
     }
 
+    /// `/model <id>` switches through the shared `set_model_id` — the same
+    /// machinery as the terminal, session record included (M303).
+    ///
+    /// Bare names the current model; the picker half stays honestly out of
+    /// reach (there is no model picker in this window yet, and a bare
+    /// `/model` that opened nothing would be the silent no-op). RED first:
+    /// the honest refusal.
+    #[test]
+    fn slash_model_switches_and_names() {
+        let (ws, _keep) = scratch_workspace("slash-model");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let current = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().model_id())
+            .unwrap_or_default();
+
+        let outcome = h.app.try_command("/model");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("bare /model must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains(&current),
+            "bare /model names the model that is running: {said:?}"
+        );
+
+        let outcome = h.app.try_command("/model zzz-test-model");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/model <id> must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("zzz-test-model"),
+            "the answer names what it switched to: {said:?}"
+        );
+        let after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().model_id())
+            .unwrap_or_default();
+        assert_eq!(
+            after, "zzz-test-model",
+            "the agent runs the named model afterwards"
+        );
+
+        let outcome = h.app.try_command("/model zzz-test-model");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("repeating the model must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("already"),
+            "switching to the running model says so: {said:?}"
+        );
+    }
+
+    /// `/model` with no agent answers rather than refusing.
+    #[test]
+    fn slash_model_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-model-no-agent");
+        let mut h = Harness::new(ws);
+        for line in ["/model", "/model zzz-test-model"] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} without an agent must answer: {outcome:?}");
+            };
+            assert!(
+                said.contains("no agent"),
+                "names the missing piece: {said:?}"
+            );
+        }
+    }
+
     /// `/fork` on an empty session names it rather than branching nothing.
     ///
     /// The terminal's words ("nothing to fork — session is empty"), because a

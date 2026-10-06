@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirteen names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is fourteen names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -154,6 +154,17 @@ impl IdeApp {
             // shared (`epsilon_session::export`) — this arm is only the window's
             // half (workspace root, notices) around both.
             Command::Export(arg) => self.run_export_session(arg),
+            // **`/model` names the current model bare, switches with an id
+            // (full-port round 20).** An id runs the same `set_model_id` the
+            // terminal's `/model <id>` runs — session record included (M303),
+            // and deliberately *only* that: the terminal additionally saves a
+            // machine-wide default, which a window action must not rewrite
+            // behind the terminal's back. The picker half stays honestly out
+            // of reach: there is no model picker in this window yet, and a
+            // bare `/model` that opened nothing would be the silent no-op, so
+            // bare names what is running instead.
+            Command::Models => self.run_model_argument(None),
+            Command::Model(id) => self.run_model_argument(Some(id)),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -564,6 +575,34 @@ impl IdeApp {
             Err(e) => Outcome::Ran(format!("export failed: {e}")),
         }
     }
+
+    /// Name the running model bare, switch it with an id.
+    ///
+    /// An id runs the terminal's act through the shared [`epsilon_core::Agent::set_model_id`]
+    /// — the session record happens inside, for every front end (M303) — and
+    /// carries the terminal's words (`model already …`, `model switched to …`)
+    /// and its key warning, but not its machine-wide default save: that file
+    /// is the terminal's default for *new* sessions, and a window action does
+    /// not rewrite it behind the terminal's back.
+    fn run_model_argument(&mut self, arg: Option<String>) -> Outcome {
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("model: no agent attached to this window".to_string());
+        };
+        let agent = session.agent();
+        let current = agent.model_id();
+        let Some(id) = arg.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            return Outcome::Ran(format!("model {current}"));
+        };
+        if id == current {
+            return Outcome::Ran(format!("model already {id}"));
+        }
+        agent.set_model_id(id);
+        let mut said = format!("model switched to {id}");
+        if !epsilon_llm::catalog::credentials_ready(id) {
+            said.push_str(" (no key yet)");
+        }
+        Outcome::Ran(said)
+    }
 }
 
 /// The head the reader typed, for the refusal.
@@ -683,8 +722,8 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "clone", "compact", "export", "fork", "goal", "help", "new", "resume", "session",
-    "sessions", "tasks", "theme",
+    "clear", "clone", "compact", "export", "fork", "goal", "help", "model", "new", "resume",
+    "session", "sessions", "tasks", "theme",
 ];
 
 #[cfg(test)]
@@ -952,6 +991,7 @@ mod tests {
             Command::Fork,
             Command::Goal(None),
             Command::Help,
+            Command::Models,
             Command::New,
             Command::Resume(String::new()),
             Command::Session,
