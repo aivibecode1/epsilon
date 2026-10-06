@@ -58,6 +58,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 23. **Full-port round 7 — the window answers `/resume`** | Bare opens the sessions browser (the view `/sessions` shows — no agent needed); a path hands over through `switch_session`, with the terminal's busy refusal and missing-file wording kept word for word, and same-path resumes saying so rather than rebuilding silently (following the click path). Five tests, all RED first with the honest refusal: switch, bare, same-file, missing-file, no-agent. 10 of 37; counts updated everywhere live. Battery `port-r7b` (2,099); `port-r7` failed `fmt` on a long line of mine. |
 | (10-06) | 24. **Full-port round 8 — the window answers `/fork` and `/clone`** | Both run through the store's `fork_branch_at` (not a file copy) through one helper differing only in the verb it reports — the terminal's shape exactly; neither switches (moving is `/resume`'s job). Four tests, all RED first: branch-and-stay, the second spelling, empty-session, no-agent. The clone test caught `"clone" + "ed"`: the helper takes the past tense explicitly now. 12 of 37; counts updated everywhere live. Battery `port-r8b` (2,103); `port-r8` failed `fmt` on a long line of mine. |
 | (10-06) | 25. **Full-port round 9 — the auth picker names the env var behind the credential** | Half of P-313's remaining gap, closed: providers authenticated purely from the environment now read `key (env: NAME)` in the auth picker, sourced from `catalog::env_credential_name` (stored-wins, blank-keys-count-absent, empty keys never named) with 7 injected cases that touch neither `$HOME` nor process env. The draw change is three lines; a frame test pins the unconfigured branch on a custom provider with a unique unset variable. Stated limit: setting process env is unavailable (edition 2024 made `set_var` unsafe; the workspace forbids it), so no frame shows the suffix pixels — the precedence is pinned, the format line is reviewed. Also recorded: this machine holds a DeepSeek credential, so hermetic tests must never assert on bundled providers. P-313 stays `partial` (no type-mismatch warning anywhere). Battery `port-r9b` (2,105); `port-r9` failed `fmt` twice over. |
+| (10-06) | 26. **Full-port round 10 — a New session button in the sessions pane** | L-113's missing verb now has a door: a real button atop the sessions list (Tab-reachable, screen-reader-named, rect recorded), running the same `run_new_session` the `/new` head runs — one act, two doors. RED first (no rect, no node), then the button plus a `pub(crate)` widening. L-113 moves to `partial` (action exists; no brand row, deliberately — the action lives where the sessions are). DSH counts move to **11 / 89 / 291** in the summary and here. Battery `port-r10` (2,106), green first time — `fmt --check` ran before launch. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -150,7 +151,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 38 | 124 | 159 | 18 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 11 | 88 | 292 | 42 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 11 | 89 | 291 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -205,12 +206,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r9b-2026-10-06.txt`](../audit/evidence/gate-port-r9b-2026-10-06.txt),
+**Latest green battery: [`gate-port-r10-2026-10-06.txt`](../audit/evidence/gate-port-r10-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Ten legs, all `[exit=0]`, `GATE PASS`.
-**2,105 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r8b`: the credential-source precedence test and
-the auth-picker frame test. (`gate-port-r9` failed `fmt --check` on two long lines — mine, the
-third round in a row; the checklist now says `cargo fmt --check` before launching a battery.)
+**2,106 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r9b`: the New-session button click test. (And
+`cargo fmt --check` ran *before* launching for the first time — the round-9 checklist fix held.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

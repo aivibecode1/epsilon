@@ -3766,6 +3766,21 @@ impl IdeApp {
             &format!("Sessions · {stored} stored"),
             egui::accesskit::Role::Region,
         );
+        // **New session, beside the list it extends (L-113).** The reference puts
+        // it on the brand row; this window has none, so it lives where the
+        // sessions are. A real button, not painted text: Tab reaches it, a
+        // screen reader names it, and the click runs the same `run_new_session`
+        // the `/new` head runs — one act, two doors.
+        let new = ui.button("New session");
+        summary.row_rects.push(("sessions-new".into(), new.rect));
+        if new.clicked() {
+            match self.run_new_session() {
+                crate::commands::Outcome::Ran(said) | crate::commands::Outcome::Refused(said) => {
+                    self.transcript.push_notice(&said)
+                }
+                crate::commands::Outcome::Send(_) => {}
+            }
+        }
         if sessions.is_empty() {
             let line = "none stored for this workspace yet";
             ui.colored_label(theme.dim, line);
@@ -7769,6 +7784,53 @@ mod tests {
             !rows.contains("none stored"),
             "and not show the empty state alongside it.\n{}",
             frame.describe()
+        );
+    }
+
+    /// Clicking New session starts a session file — the `/new` head behind a button.
+    ///
+    /// The reference puts it on the brand row; this window has none, so it
+    /// lives atop the sessions list. A real button, not painted text: Tab
+    /// reaches it, a screen reader names it, and the click runs the same
+    /// `run_new_session` the `/new` head runs — one act, two doors. RED first:
+    /// no button, no rect, no node.
+    #[test]
+    fn clicking_new_session_starts_a_session_file() {
+        let (ws, _keep) = scratch_workspace("sessions-new-button");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        let before = h.paint();
+        let rect = before
+            .row_rects
+            .iter()
+            .find(|(region, _)| region == "sessions-new")
+            .map(|(_, rect)| *rect)
+            .expect("the New session button records where it was drawn");
+        assert!(
+            h.node_named("New session").starts_with("New session"),
+            "a screen reader must reach the button by its name.\n{}",
+            before.describe()
+        );
+
+        let listed_before = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+        let after = h.click(rect.center());
+        let listed_after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.sessions(&ws).len())
+            .unwrap_or(0);
+        assert_eq!(
+            listed_after,
+            listed_before + 1,
+            "clicking New session stores one branch file beside the others.\n{}",
+            after.describe()
         );
     }
 

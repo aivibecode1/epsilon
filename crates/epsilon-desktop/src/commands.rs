@@ -369,7 +369,10 @@ impl IdeApp {
     /// Refuses while a run is in flight: switching under a running turn would
     /// orphan its writes into the fresh file. The terminal refuses the same
     /// case the same way ("new: busy").
-    fn run_new_session(&mut self) -> Outcome {
+    ///
+    /// Shared by the `/new` head and the sessions pane's New session button:
+    /// one act, two doors. `pub(crate)` for the pane; the head owns the words.
+    pub(crate) fn run_new_session(&mut self) -> Outcome {
         let Some(session) = self.session.as_ref() else {
             return Outcome::Ran("new session: no agent attached to this window".to_string());
         };

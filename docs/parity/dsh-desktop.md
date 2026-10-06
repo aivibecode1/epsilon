@@ -117,10 +117,10 @@ measurements taken here at all.
 | Transcript, streaming and tool cards | 82 | 1 | 18 | 57 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 1 | 8 | 54 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
-| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 21 | 39 | 5 |
+| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 22 | 38 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 10 | 37 | 0 |
 | Un-numbered reference rows | 30 | 1 | 2 | 22 | 5 |
-| **Total** | **433** | **11** | **88** | **292** | **42** |
+| **Total** | **433** | **11** | **89** | **291** | **42** |
 
 ---
 
@@ -497,7 +497,7 @@ computed while drawing is a layout nobody can test.
 | L-110 | Collapsing the sidebar crossfades content at its current width for **150 ms**, then unmounts the wide content and slides the upper controls into the rail. | `ui-sidebar/src/client/SidebarRoot.tsx:31`, `:106-113` | deliberately different | `crates/epsilon-desktop/src/app.rs:3319-3322` | There is no transition at all: the fold is instant. That answers the row's reduced-motion clause by construction — nothing animates, so nothing can be animated against a reader's preference — but the crossfade itself is not reproduced. |
 | L-111 | Sidebar scrollbars are a *pointer* affordance: the bar hides when the pointer leaves and stays drawn for 2 s. | `ui-sidebar/src/client/SidebarRoot.tsx:39`, `:154-170` | missing | — | egui's own scrollbars, with their own behaviour. |
 | L-112 | A complete build stacks a code badge under the brand name formatted `version[-commit][-dirty]`. | `ui-sidebar/src/client/SidebarRoot.tsx:42-49` | missing | — | No build badge. |
-| L-113 | On the expanded sidebar the brand row *is* the New Session button — except on macOS desktop. | `ui-sidebar/src/client/SidebarRoot.tsx:216-256` | missing | — | No brand row and no New Session button (S-103). |
+| L-113 | On the expanded sidebar the brand row *is* the New Session button — except on macOS desktop. | `ui-sidebar/src/client/SidebarRoot.tsx:216-256` | partial | `crates/epsilon-desktop/src/app.rs` sessions pane — a real "New session" button atop the list (Tab-reachable, screen-reader-named), running the same `run_new_session` the `/new` head runs; no brand row, deliberately (a native window has none — the action lives where the sessions are) | `clicking_new_session_starts_a_session_file` (button rect recorded, a11y name asserted, click stores one more file) |
 | L-114 | The New Session button shows its effective keybinding as trailing grey text on hover or keyboard focus. | `ui-sidebar/src/client/SidebarRoot.tsx:259-277` | missing | `crates/epsilon-desktop/src/app.rs:2864-2877` | As S-103 there is no button — but the window does name the chords it has, in the status bar's hint region and on the fold control's own accessible name (`app.rs:2864-2877`, `:3193-3198`), and it prints them **only while they work** (`app.rs:2919-2927`). |
 | L-115 | On macOS desktop a fully collapsed sidebar reappears as two window-chrome buttons mounted beside the traffic lights. | `ui-sidebar/src/client/HeaderLeadingControls.tsx:26-54` | deliberately different | `crates/epsilon-desktop/src/app.rs:3248-3265` | The fold control lives in the **title bar at every window size above `COMPACT`** (`app.rs:2956-2958`), because a control placed on the sidebar cannot put the sidebar back — a one-way door. So it never needs a macOS-specific reappearance. |
 | L-116 | An open Workspace shows **5** idle, non-blank Sessions; each **Show more** adds 5. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:55`, `:58-70` | missing | `crates/epsilon-desktop/src/app.rs:3636-3698` | The sessions pane lists everything stored for the workspace (`app.rs:3613`, `:3528`) with no pagination. |
