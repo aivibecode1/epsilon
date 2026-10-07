@@ -1060,6 +1060,7 @@ impl IdeApp {
                 &provider,
                 &picker.query,
                 &current,
+                &self.favorites,
                 &self.live_cache,
                 &customs,
             )
@@ -1068,6 +1069,14 @@ impl IdeApp {
                 let mut label = r.label.clone();
                 if r.id == current {
                     label.push_str(" (active)");
+                }
+                // Words, not ★: ★ (U+2605, Miscellaneous Symbols) is not
+                // in the audited set (M312 covered Geometric Shapes like
+                // `▸`, plus `±◨›` — Dingbats and Arrows are missing, and
+                // Misc Symbols was never checked), and "(favorite)" reads
+                // the same to a screen reader either way.
+                if r.is_favorite {
+                    label.push_str(" (favorite)");
                 }
                 ModelPickerEntry {
                     label,
@@ -1116,6 +1125,87 @@ impl IdeApp {
     fn close_model_picker(&mut self) {
         self.model_picker = None;
         self.focus = FocusTarget::Agent;
+    }
+
+    /// Star or unstar a model id.
+    ///
+    /// The terminal's act through the same shared store, so a star in
+    /// either front end reads in both — including the thinking memory the
+    /// terminal cycles back. The flip writes the global store and is
+    /// reviewed, not driven; the no-agent guard below it is driven.
+    fn toggle_favorite_model(&mut self, id: &str) {
+        let Some(session) = self.session.as_ref() else {
+            self.transcript
+                .push_notice("favorite: no agent attached to this window");
+            return;
+        };
+        let agent = session.agent();
+        match epsilon_core::config::toggle_favorite_model(id) {
+            Ok(now_favorite) => {
+                let level = epsilon_core::config::set_favorite_thinking(
+                    id,
+                    if now_favorite {
+                        Some(agent.thinking_level().as_str())
+                    } else {
+                        None
+                    },
+                );
+                if let Err(e) = level {
+                    self.transcript
+                        .push_notice(&format!("thinking memory not saved: {e}"));
+                }
+                self.favorites = epsilon_core::config::load_favorite_models();
+                if now_favorite {
+                    self.transcript.push_notice(&format!(
+                        "favorited {id} at think:{} (Ctrl+M picks, F2 cycles favorites)",
+                        agent.thinking_level().as_str()
+                    ));
+                } else {
+                    self.transcript.push_notice(&format!("unfavorited {id}"));
+                }
+            }
+            Err(e) => self
+                .transcript
+                .push_notice(&format!("favorite not saved: {e}")),
+        }
+    }
+
+    /// Step to the next (or previous) favorite and switch to it.
+    ///
+    /// Pi semantics, like the terminal: current-not-in-list enters at the
+    /// forward end, a single-entry list goes nowhere. Switches through the
+    /// same `run_model_argument` the head uses, so the key and the command
+    /// cannot report different things.
+    fn cycle_favorite(&mut self, direction: isize) {
+        if self.favorites.is_empty() {
+            self.transcript.push_notice(
+                "no favorites yet — star one in the picker (open Ctrl+M, Ctrl+F on a model)",
+            );
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            self.transcript
+                .push_notice("favorites: no agent attached to this window");
+            return;
+        };
+        let current = session.agent().model_id();
+        let len = self.favorites.len() as isize;
+        let next = match self
+            .favorites
+            .iter()
+            .position(|f| f.eq_ignore_ascii_case(&current))
+        {
+            Some(i) => self.favorites[((i as isize + direction).rem_euclid(len)) as usize].clone(),
+            None if direction > 0 => self.favorites[0].clone(),
+            None => self.favorites[(len - 1) as usize].clone(),
+        };
+        if next.eq_ignore_ascii_case(&current) {
+            return;
+        }
+        let crate::commands::Outcome::Ran(said) = self.run_model_argument(Some(next)) else {
+            return;
+        };
+        self.transcript.push_notice(&said);
     }
 
     /// Record a completed live fetch: merge into the cache.
@@ -1968,6 +2058,19 @@ impl IdeApp {
         {
             self.choose_model_entry(entry.clone());
         }
+        // Star the highlighted model (stage two only — providers are not
+        // models and cannot be starred). The flip writes the global store
+        // and is reviewed, not driven; reading the row is the driven half.
+        if stage2.is_some() && self.keys.take(ctx, "window.model.favorite") {
+            let highlighted = self
+                .model_picker
+                .as_ref()
+                .and_then(|p| entries.get(p.selected))
+                .map(|e| e.id.clone());
+            if let Some(id) = highlighted {
+                self.toggle_favorite_model(&id);
+            }
+        }
     }
 
     /// Act on a chosen model-picker row: drill into providers, apply models.
@@ -2314,6 +2417,13 @@ pub struct IdeApp {
     /// the binary sets it from there, `for_workspace` leaves it off so tests
     /// stay hermetic regardless of the machine's config file.
     hide_thinking: bool,
+    /// Starred model ids (round 57).
+    ///
+    /// Same store the terminal reads (`load_favorite_models`), loaded
+    /// once at startup; the toggle rewrites it and reloads, so a star in
+    /// either front end reads in both. `pub(crate)` for tests that seed it
+    /// without touching the global file.
+    pub(crate) favorites: Vec<String>,
     /// Show full tool output instead of the tail (round 54).
     ///
     /// `/expand` flips it; the rows retain everything either way (the
@@ -2828,6 +2938,7 @@ impl IdeApp {
             goal_round_rx,
             goal_round_pending: false,
             hide_thinking,
+            favorites: epsilon_core::config::load_favorite_models(),
             expand_tool_output: false,
             live,
             live_cache: Vec::new(),
@@ -2924,6 +3035,7 @@ impl IdeApp {
             goal_round_rx,
             goal_round_pending: false,
             hide_thinking,
+            favorites: epsilon_core::config::load_favorite_models(),
             expand_tool_output: false,
             live,
             live_cache: Vec::new(),
@@ -3134,6 +3246,14 @@ impl IdeApp {
         // every key.
         if self.keys.take(ctx, "window.search") {
             self.open_search(String::new());
+        }
+        // **Cycle favorites (round 57).** Below the palette guard with the
+        // other chords, for the same reason. F2 steps forward, Shift+F2
+        // steps back — the terminal's gestures, one per direction.
+        if self.keys.take(ctx, "window.model.cycle_favorite") {
+            self.cycle_favorite(1);
+        } else if self.keys.take(ctx, "window.model.cycle_favorite_back") {
+            self.cycle_favorite(-1);
         }
         // **`Shift` first, and that is no longer a workaround.** It used to be needed
         // because `InputState::consume_key` matches modifiers *logically* — extra shift and
@@ -16823,6 +16943,110 @@ mod tests {
         assert!(
             said.contains("no agent"),
             "names the missing piece: {said:?}"
+        );
+    }
+
+    /// Starred models float first and read as favorites (round 57).
+    ///
+    /// Seeded in memory (no global write): the shared builders mark and
+    /// float them, the window words them. RED first: the honest refusal.
+    #[test]
+    fn starred_models_float_first_and_read_as_favorites() {
+        let (ws, _keep) = scratch_workspace("picker-favorites");
+        let mut h = Harness::new(ws);
+        h.app.favorites = vec!["deepseek-v4-pro".to_string()];
+        h.app.open_model_picker();
+        h.app.model_picker.as_mut().expect("open").provider = Some("deepseek".to_string());
+
+        let entries = h.app.model_picker_entries();
+        let first = entries.first().expect("deepseek has models");
+        assert_eq!(
+            first.id, "deepseek-v4-pro",
+            "the starred model must float to the top"
+        );
+        assert!(
+            first.label.contains("(favorite)"),
+            "and read as one in words, not a glyph: {:?}",
+            first.label
+        );
+    }
+
+    /// F2 steps through the starred set and switches (round 57).
+    ///
+    /// Seeded in memory; the switch runs the same head `/model <id>` runs,
+    /// so the key and the command cannot report different things.
+    #[test]
+    fn f2_cycles_favorites_and_switches() {
+        let (ws, _keep) = scratch_workspace("cycle-favorites");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.app.favorites = vec!["fav-a".to_string(), "fav-b".to_string()];
+
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::NONE, egui::Key::F2);
+        assert_eq!(
+            h.app.session.as_ref().expect("session").agent().model_id(),
+            "fav-a",
+            "current-not-in-list enters at the forward end"
+        );
+        let _ = h.chord(egui::Modifiers::NONE, egui::Key::F2);
+        assert_eq!(
+            h.app.session.as_ref().expect("session").agent().model_id(),
+            "fav-b",
+            "and steps on"
+        );
+        let _ = h.chord(egui::Modifiers::NONE, egui::Key::F2);
+        assert_eq!(
+            h.app.session.as_ref().expect("session").agent().model_id(),
+            "fav-a",
+            "and wraps around"
+        );
+    }
+
+    /// `/scoped_models` opens onto the starred set — or says none (round 57).
+    #[test]
+    fn slash_scoped_models_opens_or_names_absence() {
+        let (ws, _keep) = scratch_workspace("slash-scoped");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        // Cleared in memory: the machine's own global favorites must not
+        // decide what this test sees (one lived here and broke it).
+        h.app.favorites.clear();
+
+        let outcome = h.app.try_command("/scoped_models");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/scoped_models must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no favorites yet") && said.contains("Ctrl+F"),
+            "empty teaches starring: {said:?}"
+        );
+        assert!(
+            h.app.model_picker.is_none(),
+            "and opens nothing without stars"
+        );
+
+        h.app.favorites = vec!["fav-a".to_string()];
+        let outcome = h.app.try_command("/scoped_models");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/scoped_models must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("1 favorite") && h.app.model_picker.is_some(),
+            "starred opens the picker on them: {said:?}"
+        );
+    }
+
+    /// Starring without an agent answers; the flip itself writes globally.
+    #[test]
+    fn favorite_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("favorite-no-agent");
+        let mut h = Harness::new(ws);
+        h.app.toggle_favorite_model("fav-a");
+        let screen = h.paint().region("agent").join("\n");
+        assert!(
+            screen.contains("favorite: no agent"),
+            "names the missing piece.\n{screen}"
         );
     }
 }

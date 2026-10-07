@@ -235,6 +235,9 @@ fn draw_picker_stage2(f: &mut Frame<'_>, app: &App, outer: Rect, provider: &str)
         provider,
         &app.input,
         &app.model_id,
+        // No favorites in the drilldown (preserves current rows; the
+        // starred section lives in the flat picker).
+        &[],
         &app.live_cache,
         &app.customs,
     );

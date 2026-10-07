@@ -2562,6 +2562,13 @@ order, through the shared expander). Discovery is stateless and gated
 on project trust — untrusted project text reaching the composer is
 prompt injection with a file path. 35 of 37.
 
+**Amendment (full-port round 57).** `/scoped_models` opens the picker on
+the starred set, `Ctrl+F` stars in the picker, `F2`/`Shift+F2` cycle it:
+the terminal's gestures over the same store, the starred rows floated by
+the shared builders (single comparator, `&[]` provably identical). The
+flip writes globally and is reviewed; display, cycle, and guards driven.
+36 of 37 — one refusal left (`/editor`, a terminal concept).
+
 ---
 
 ---

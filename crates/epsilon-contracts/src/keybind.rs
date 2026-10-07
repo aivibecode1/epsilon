@@ -431,6 +431,13 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.timeline.submit", &["enter"]),
     ("window.timeline.next", &["down"]),
     ("window.timeline.previous", &["up"]),
+    // Star the highlighted model, and step through the starred set (round
+    // 57): the terminal's Ctrl+F and F2/Shift+F2, one gesture in both front
+    // ends. F2 is no one's editing key, so unlike Ctrl+X there is nothing
+    // to steal from text fields.
+    ("window.model.favorite", &["ctrl+f"]),
+    ("window.model.cycle_favorite", &["f2"]),
+    ("window.model.cycle_favorite_back", &["shift+f2"]),
     ("window.focus.next", &["f6"]),
     ("window.focus.previous", &["shift+f6"]),
     ("window.tree.next", &["down"]),

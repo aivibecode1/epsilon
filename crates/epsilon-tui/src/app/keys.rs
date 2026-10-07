@@ -1157,6 +1157,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                         provider,
                         &app.input,
                         &app.model_id,
+                        // No favorites in the drilldown (preserves current rows).
+                        &[],
                         &app.live_cache,
                         &app.customs,
                     );
@@ -1214,6 +1216,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     provider,
                     &app.input,
                     &app.model_id,
+                    // No favorites in the drilldown (preserves current rows).
+                    &[],
                     &app.live_cache,
                     &app.customs,
                 )
@@ -1257,6 +1261,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                     stage2.as_deref().unwrap_or(""),
                     &app.input,
                     &app.model_id,
+                    // No favorites in the drilldown (preserves current rows).
+                    &[],
                     &app.live_cache,
                     &app.customs,
                 )
@@ -1287,6 +1293,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                                         &provider,
                                         &app.input,
                                         &app.model_id,
+                                        // No favorites in the drilldown (preserves current rows).
+                                        &[],
                                         &app.live_cache,
                                         &app.customs,
                                     )
@@ -1304,6 +1312,8 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
                             app.picker_provider.as_deref().unwrap_or(""),
                             &app.input,
                             &app.model_id,
+                            // No favorites in the drilldown (preserves current rows).
+                            &[],
                             &app.live_cache,
                             &app.customs,
                         );

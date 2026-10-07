@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-five names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-six names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -294,6 +294,22 @@ impl IdeApp {
                 Some(said) => Outcome::Ran(said),
                 None => Outcome::Ran("tree — pick an entry, Enter jumps".to_string()),
             },
+            // **`/scoped_models` opens the picker on the starred set (full-port
+            // round 57).** Same store both front ends read; empty stays a
+            // notice naming the starring gesture. The starred rows float to
+            // the top through the shared builders, so opening *is* the
+            // seeding — no second filter to drift.
+            Command::ScopedModels => {
+                if self.favorites.is_empty() {
+                    Outcome::Ran("scoped-models: no favorites yet — open Ctrl+M and press Ctrl+F on a model to star it, then F2 cycles favorites".to_string())
+                } else {
+                    self.open_model_picker();
+                    Outcome::Ran(format!(
+                        "scoped-models: {} favorite(s) — cycling favorites · open Ctrl+M to pick, Ctrl+F to star/unstar",
+                        self.favorites.len()
+                    ))
+                }
+            }
             // **`/templates` lists prompt templates (full-port round 56).**
             // The terminal's list with its words — name, description, and
             // argument hint per row — over the same stateless discovery the
@@ -1445,6 +1461,7 @@ pub const SUPPORTED: &[&str] = &[
     "reload",
     "restore",
     "resume",
+    "scoped_models",
     "search",
     "session",
     "sessions",
@@ -1749,6 +1766,7 @@ mod tests {
             Command::Reload,
             Command::Restore(String::new()),
             Command::Resume(String::new()),
+            Command::ScopedModels,
             Command::Search(String::new()),
             Command::Session,
             Command::Sessions,

@@ -2238,6 +2238,8 @@ async fn typing_a_query_resets_the_picker_selection_to_row_zero() {
         app.picker_provider.as_deref().unwrap_or(""),
         &app.input,
         &app.model_id,
+        // No favorites in the drilldown (preserves current rows).
+        &[],
         &app.live_cache,
         &app.customs,
     );

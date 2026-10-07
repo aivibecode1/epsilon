@@ -459,10 +459,15 @@ pub fn provider_env_key(provider: &str, customs: &[CustomProvider]) -> Option<St
 /// missing from the bundled catalog are merged on top (M20 auto-fetch).
 /// M28: for a declared custom provider, one guidance row (`<name>/`) is offered —
 /// select it, append the model name, Enter applies the full id.
+///
+/// `favorites` marks starred rows and floats them under the current model
+/// (empty: no marking, and the comparator falls through to the old order —
+/// so every existing caller passing `&[]` sees byte-identical rows).
 pub fn build_models_for_provider(
     provider: &str,
     filter: &str,
     current: &str,
+    favorites: &[String],
     live: &[(String, Vec<String>)],
     customs: &[CustomProvider],
 ) -> Vec<PickerRow> {
@@ -517,13 +522,23 @@ pub fn build_models_for_provider(
             }
         }
     }
+    // Starred rows carry the flag the pickers draw, whichever front end
+    // asked. Empty favorites: no flag ever set, and the comparator below
+    // falls through to the old order — byte-identical rows.
+    for (_, row) in scored.iter_mut() {
+        row.is_favorite = favorites.iter().any(|f| f.eq_ignore_ascii_case(&row.id));
+    }
     if needle.is_empty() {
-        // No filter: current floats to top (stable, pi's sortModels semantics).
+        // No filter: current floats to top, then favorites (stable, pi's
+        // sortModels semantics with the starred set next).
         scored.sort_by(|a, b| {
             let a_cur = a.1.id == current;
             let b_cur = b.1.id == current;
+            let a_fav = a.1.is_favorite;
+            let b_fav = b.1.is_favorite;
             b_cur
                 .cmp(&a_cur)
+                .then(b_fav.cmp(&a_fav))
                 .then(a.0.cmp(&b.0))
                 .then(a.1.id.cmp(&b.1.id))
         });
@@ -993,7 +1008,7 @@ mod tests {
             "deepseek".to_string(),
             vec!["deepseek-v4-pro".to_string(), "brand-new-model".to_string()],
         )];
-        let rows = build_models_for_provider("deepseek", "", "", &live, &[]);
+        let rows = build_models_for_provider("deepseek", "", "", &[], &live, &[]);
         assert!(
             rows.iter().any(|r| r.id == "brand-new-model" && r.is_live),
             "unknown live id must surface in stage 2"
@@ -1009,6 +1024,7 @@ mod tests {
             "anthropic",
             "",
             "",
+            &[],
             &[("openai".to_string(), vec!["gpt-fake-live".to_string()])],
             &[],
         );
@@ -1030,7 +1046,7 @@ mod tests {
         assert!(lm.is_some(), "custom provider visible in stage 1");
         assert_eq!(lm.unwrap().model_count, 0);
 
-        let stage2 = build_models_for_provider("lmstudio", "", "", &[], &customs);
+        let stage2 = build_models_for_provider("lmstudio", "", "", &[], &[], &customs);
         assert!(
             stage2
                 .iter()
@@ -1038,7 +1054,7 @@ mod tests {
         );
 
         // Typing past the prefix offers the full id directly.
-        let typed = build_models_for_provider("lmstudio", "lmstudio/qwen", "", &[], &customs);
+        let typed = build_models_for_provider("lmstudio", "lmstudio/qwen", "", &[], &[], &customs);
         assert!(
             typed.iter().any(|r| r.id == "lmstudio/qwen"),
             "filter text becomes an applicable custom id row"
@@ -1075,8 +1091,8 @@ mod tests {
         let b = build_rows("deep", "", &[], &[]);
         assert_eq!(a, b, "same filter must produce identical row order");
 
-        let s1 = build_models_for_provider("deepseek", "pro", "", &[], &[]);
-        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[]);
+        let s1 = build_models_for_provider("deepseek", "pro", "", &[], &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[], &[]);
         assert_eq!(s1, s2, "stage2 deterministic too");
     }
 
@@ -1091,7 +1107,7 @@ mod tests {
             );
         }
         // Stage2 also token-aware
-        let s2 = build_models_for_provider("deepseek", "deep pro", "", &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "deep pro", "", &[], &[], &[]);
         assert!(
             s2.iter().any(|r| r.id == "deepseek-v4-pro"),
             "stage2 multi-token must find deepseek-v4-pro"
@@ -1125,15 +1141,17 @@ mod tests {
         }
         // Empty filter still deterministic (already covered), but stage2 with filter
         // must also be scored — "pro" within deepseek provider should win.
-        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[]);
+        let s2 = build_models_for_provider("deepseek", "pro", "", &[], &[], &[]);
         assert_eq!(
             s2.first().map(|r| r.id.as_str()),
             Some("deepseek-v4-pro"),
             "stage2 ranking: pro top"
         );
         // Empty stage2 still puts current first (stable when no query).
-        let s2_empty_a = build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[]);
-        let s2_empty_b = build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[]);
+        let s2_empty_a =
+            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[], &[]);
+        let s2_empty_b =
+            build_models_for_provider("deepseek", "", "deepseek-v4-pro", &[], &[], &[]);
         assert_eq!(s2_empty_a, s2_empty_b);
         assert_eq!(
             s2_empty_a.first().map(|r| r.id.as_str()),

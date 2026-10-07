@@ -104,6 +104,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-07) | 69. **Full-port round 54 — the window answers `/expand`** | Rows retain full tool output (same trade as the terminal's cards); the pane shows the shared 40-line tail with a marker until this flips — no chord, since Ctrl+X is cut in text fields. Three tests (toggle, capped-then-full draw, reducer retention rewritten to full) with a control removing the arm. 32 of 37, under ADR-029's criterion, amended. Battery `port-r54` (2,196), green first time. |
 | (10-07) | 70. **Full-port round 55 — the window answers `/branch` and `/tree`** | Same overlay, the label the only difference: the store's branch forest flattened, landing on the active leaf; Enter navigates and the agent re-projects (a file re-read would load every lane — caught by the jump test). Three tests (both labels list, jump lands + abandoned leaves, empty/no-agent) with a control removing both arms; the first battery caught an integration test still driving `/timeline` as refused. 34 of 37, under ADR-029's criterion, amended. Battery `port-r55b` (2,199), green on the second attempt. |
 | (10-07) | 71. **Full-port round 56 — the window answers `/templates`** | The terminal's list with its words, plus composer expansion before slash parsing through the shared expander (end-to-end: sent text arrives expanded, invocation never leaks). Discovery stateless and trust-gated (untrusted project text is prompt injection). Three tests (list, expand, empty/no-agent) with controls removing the arm and the hook. 35 of 37, under ADR-029's criterion, amended. Battery `port-r56` (2,202), green first time. |
+| (10-07) | 72. **Full-port round 57 — the window answers `/scoped_models`** | Same store both front ends read: Ctrl+F stars in the picker, F2/Shift+F2 cycle the set, the head opens onto it; starred rows floated by the shared builders (single comparator, `&[]` provably identical at every TUI site). Flip reviewed (global write), display/cycle/guards driven; four tests with a control removing the arm. One refusal left (`/editor`). 36 of 37, under ADR-029's criterion, amended. Battery `port-r57` (2,206), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -251,10 +252,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r56-2026-10-07.txt`](../audit/evidence/gate-port-r56-2026-10-07.txt),
+**Latest green battery: [`gate-port-r57-2026-10-07.txt`](../audit/evidence/gate-port-r57-2026-10-07.txt),
 2026-10-07 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,202 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — three more than `gate-port-r55b`: the template tests.
+**2,206 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — four more than `gate-port-r56`: the favorites tests.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
