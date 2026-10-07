@@ -61,6 +61,9 @@ epsilon-tui = { path = "../epsilon-tui" }
 ratatui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+# The live-fetcher constructor in `src/main.rs` mirrors the terminal binary's
+# and must name the shared `LiveFetcher` future type.
+futures-util = { workspace = true }
 # The markdown parser the terminal frontend already uses. Only the *drawing* differs
 # between the two frontends — `epsilon_tui::markdown` emits ratatui `Line`s coupled to
 # a width-aware table layout, which is not portable; the parse is.

@@ -1001,7 +1001,7 @@ impl IdeApp {
                 &provider,
                 &picker.query,
                 &current,
-                &[],
+                &self.live_cache,
                 &customs,
             )
             .into_iter()
@@ -1034,6 +1034,18 @@ impl IdeApp {
         self.shortcuts_open = false;
         self.settings_open = false;
         self.model_picker = Some(ModelPicker::default());
+        // M20 auto-fetch, like the terminal's: the highlighted provider
+        // starts refreshing immediately, so by the time the reader descends
+        // the rows are current. Silent by design (see `request_live_for`).
+        let highlighted = self
+            .model_picker_entries()
+            .into_iter()
+            .next()
+            .filter(|e| e.is_provider)
+            .map(|e| e.id);
+        if let Some(provider) = highlighted {
+            self.request_live_for(&provider);
+        }
     }
     /// Close the model picker and hand the keyboard back to the agent pane.
     ///
@@ -1043,6 +1055,80 @@ impl IdeApp {
     fn close_model_picker(&mut self) {
         self.model_picker = None;
         self.focus = FocusTarget::Agent;
+    }
+
+    /// Record a completed live fetch: merge into the cache.
+    ///
+    /// The event-loop half of the spawn below. A provider that fails keeps
+    /// its bundled rows — the merge is a bonus, and a bonus that shouts
+    /// about failing would be noise on every picker open.
+    fn record_live_result(&mut self, provider: String, result: Result<Vec<String>, String>) {
+        if self.fetching.as_deref() == Some(provider.as_str()) {
+            self.fetching = None;
+        }
+        if let Ok(names) = result {
+            match self.live_cache.iter_mut().find(|(p, _)| *p == provider) {
+                Some((_, ids)) => *ids = names,
+                None => self.live_cache.push((provider.clone(), names)),
+            }
+            self.live_fetched.insert(provider);
+        }
+    }
+
+    /// Drain completed live fetches into the cache. Once per frame, before
+    /// the picker draws, so merged rows reach the screen they were fetched
+    /// for.
+    fn drain_live_results(&mut self) {
+        while let Ok((provider, result)) = self.fetched_rx.try_recv() {
+            self.record_live_result(provider, result);
+        }
+    }
+
+    /// Fetch one provider's live listing in the background, unless there is a
+    /// reason not to.
+    ///
+    /// The terminal's `request_live` as a window act, minus the talking: no
+    /// provider capability means nothing to fetch, no credential means the
+    /// request would fail, an earlier fetch means the cache is current, and
+    /// a fetch in flight means wait. All four stay silent — the bundled rows
+    /// are the product, live rows the bonus.
+    fn request_live_for(&mut self, provider: &str) {
+        let Some(fetcher) = self.live.clone() else {
+            return;
+        };
+        if !epsilon_llm::catalog::live_listing_available(provider) {
+            return;
+        }
+        if epsilon_llm::catalog::resolve_api_key(provider).is_none() {
+            return;
+        }
+        if self.live_fetched.contains(provider) {
+            return;
+        }
+        if self.fetching.is_some() {
+            return;
+        }
+        self.spawn_fetch(fetcher, provider);
+    }
+
+    /// Spawn the fetch `request_live_for` approved. Split so tests can drive
+    /// the async seam without the guards: the guards are decided above, the
+    /// runtime is decided here.
+    fn spawn_fetch(&mut self, fetcher: epsilon_tui::LiveFetcher, provider: &str) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            // No runtime (tests, headless paint): the fetch cannot run, and
+            // the bundled rows stand. The guard stays clear so the next open
+            // retries rather than wedging on a fetch that never lands.
+            return;
+        };
+        let provider = provider.to_string();
+        let tx = self.fetched_tx.clone();
+        let fut = fetcher(provider.clone());
+        self.fetching = Some(provider.clone());
+        handle.spawn(async move {
+            let result = fut.await;
+            tx.send((provider, result)).ok();
+        });
     }
     /// Read the palette's keys, and act on one.
     ///
@@ -1409,8 +1495,12 @@ impl IdeApp {
             self.model_picker = Some(ModelPicker {
                 query: String::new(),
                 selected: 0,
-                provider: Some(entry.id),
+                provider: Some(entry.id.clone()),
             });
+            // Descending fetches the drilled provider, like opening fetched
+            // the highlighted one: the rows the reader is about to read
+            // should be current. Silent by design.
+            self.request_live_for(&entry.id);
             return;
         }
         if let crate::commands::Outcome::Ran(said) = self.run_model_argument(Some(entry.id)) {
@@ -1701,6 +1791,20 @@ pub struct IdeApp {
     settings_selected: usize,
     /// Row rectangles of the last drawn settings frame, for clicks.
     settings_rects: Vec<(usize, egui::Rect)>,
+    /// Live provider-listing fetcher for the model picker (`None` without the
+    /// `real` feature). The same constructor the terminal's binary uses.
+    live: Option<epsilon_tui::LiveFetcher>,
+    /// Merged live listings (provider → model ids), like the terminal's
+    /// `live_cache`: bundled rows underneath, live rows on top.
+    live_cache: Vec<(String, Vec<String>)>,
+    /// Providers already live-fetched this launch: fetched once, not on every
+    /// open.
+    live_fetched: std::collections::BTreeSet<String>,
+    /// Provider with a fetch in flight, if any: one at a time.
+    fetching: Option<String>,
+    /// Live-fetch results ride here from the spawned task to the next frame.
+    fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
+    fetched_rx: tokio::sync::mpsc::UnboundedReceiver<(String, Result<Vec<String>, String>)>,
     /// Hide thinking blocks from the transcript (P-040, window half).
     ///
     /// Shared with the terminal through config `[display] hide_thinking`:
@@ -2177,6 +2281,9 @@ impl IdeApp {
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
+        let live = opts.live.clone();
+        let (fetched_tx, fetched_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, Result<Vec<String>, String>)>();
         let mut app = Self {
             opts,
             theme,
@@ -2204,6 +2311,12 @@ impl IdeApp {
             goal_round_rx,
             goal_round_pending: false,
             hide_thinking,
+            live,
+            live_cache: Vec::new(),
+            live_fetched: std::collections::BTreeSet::new(),
+            fetching: None,
+            fetched_tx,
+            fetched_rx,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             row_layout: std::cell::RefCell::new(RowLayout::default()),
             goal: None,
@@ -2246,6 +2359,9 @@ impl IdeApp {
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
+        let live = opts.live.clone();
+        let (fetched_tx, fetched_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, Result<Vec<String>, String>)>();
         // A keybindings file that could not be used names itself at startup
         // (S-126), like `new` does above.
         let keys = window_keys();
@@ -2281,6 +2397,12 @@ impl IdeApp {
             goal_round_rx,
             goal_round_pending: false,
             hide_thinking,
+            live,
+            live_cache: Vec::new(),
+            live_fetched: std::collections::BTreeSet::new(),
+            fetching: None,
+            fetched_tx,
+            fetched_rx,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             row_layout: std::cell::RefCell::new(RowLayout::default()),
             goal: None,
@@ -3441,6 +3563,10 @@ impl IdeApp {
         if let Some(s) = self.session.clone() {
             approve_pending(&s, &self.keys, ui.ctx());
         }
+        // Live-fetch results land here, before any overlay draws: merged
+        // rows must reach the screen on the frame they arrive, not the one
+        // after. (The drain is a queue read; an empty channel costs nothing.)
+        self.drain_live_results();
         // The palette reads Enter and Escape, so it goes before the composer — which takes
         // both unconditionally, to send and to abort.
         self.palette_keys(ui.ctx());
@@ -14275,6 +14401,144 @@ mod tests {
                 .starts_with("models of "),
             "stage two says which list it filters: {:?}",
             stage2.placeholder()
+        );
+    }
+
+    /// Canned live models for any provider, no network. The fetcher type is
+    /// shared with the terminal, so the fake has its exact shape.
+    fn fake_live() -> epsilon_tui::LiveFetcher {
+        std::sync::Arc::new(|provider: String| {
+            Box::pin(async move {
+                Ok(vec![
+                    format!("{provider}-live-1"),
+                    format!("{provider}-live-2"),
+                ])
+            }) as futures_util::future::BoxFuture<'static, Result<Vec<String>, String>>
+        })
+    }
+
+    /// Live-fetch guards stay silent: no capability, already fetched, or a
+    /// fetch in flight all mean no fetch. (No credential is the fourth guard;
+    /// it reads the machine's env, so no hermetic test can pin it — the logic
+    /// mirrors the terminal's line for line.)
+    #[test]
+    fn live_guards_stay_silent() {
+        let (ws, _keep) = scratch_workspace("live-guards");
+        let mut h = Harness::new(ws);
+        h.app.live = Some(fake_live());
+
+        // Unknown providers have no live endpoint.
+        h.app.request_live_for("zzz-no-such-provider");
+        assert!(
+            h.app.fetching.is_none() && h.app.live_cache.is_empty(),
+            "no endpoint, no fetch"
+        );
+
+        // Already fetched means current.
+        h.app.live_fetched.insert("openai".to_string());
+        h.app.request_live_for("openai");
+        assert!(
+            h.app.fetching.is_none() && h.app.live_cache.is_empty(),
+            "fetched once, not on every open"
+        );
+
+        // One fetch in flight means wait.
+        h.app.live_fetched.clear();
+        h.app.fetching = Some("openai".to_string());
+        h.app.request_live_for("openai");
+        assert!(
+            h.app.live_cache.is_empty(),
+            "a second fetch must not start while one is in flight"
+        );
+        h.app.fetching = None;
+
+        // No fetcher at all (faux builds, tests by default).
+        h.app.live = None;
+        h.app.request_live_for("openai");
+        assert!(
+            h.app.fetching.is_none() && h.app.live_cache.is_empty(),
+            "without a fetcher nothing happens"
+        );
+    }
+
+    /// A completed live fetch merges into the cache and reaches the screen.
+    #[test]
+    fn live_results_merge_into_rows() {
+        let (ws, _keep) = scratch_workspace("live-merge");
+        let mut h = Harness::new(ws);
+        h.app
+            .record_live_result("faux".to_string(), Ok(vec!["faux-live-9".to_string()]));
+        assert!(
+            h.app
+                .live_cache
+                .iter()
+                .any(|(p, ids)| p == "faux" && ids.contains(&"faux-live-9".to_string())),
+            "the cache must hold the merged ids"
+        );
+
+        // A failed fetch keeps the bundled rows and clears the guard.
+        h.app.fetching = Some("faux".to_string());
+        h.app
+            .record_live_result("faux".to_string(), Err("boom".to_string()));
+        assert!(
+            h.app.fetching.is_none(),
+            "failure must release the in-flight guard"
+        );
+
+        // Through the draw path: the live id reaches the picker.
+        let _ = h.app.try_command("/model");
+        let _ = h.paint();
+        h.type_text("faux");
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        let frame = h.paint();
+        let rows = frame.region("models").join("\n");
+        assert!(
+            rows.contains("faux-live-9"),
+            "a merged live id must reach the screen.\n{rows}"
+        );
+    }
+
+    /// The async seam works: a spawned fake fetch lands in the cache.
+    ///
+    /// `spawn_fetch` is split from the guards exactly so this drives the
+    /// runtime without them. Bounded polling, not sleep-and-hope: the fake
+    /// resolves immediately, so the first drain ends it.
+    #[test]
+    fn live_fetch_lands_through_a_fake() {
+        let (ws, _keep) = scratch_workspace("live-fake");
+        let mut h = Harness::new(ws);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a test runtime");
+        let _guard = runtime.enter();
+        h.app.spawn_fetch(fake_live(), "zzz-test");
+        assert_eq!(
+            h.app.fetching.as_deref(),
+            Some("zzz-test"),
+            "the guard names the flight"
+        );
+        runtime.block_on(async {
+            for _ in 0..100 {
+                h.app.drain_live_results();
+                if h.app.live_cache.iter().any(|(p, _)| p == "zzz-test") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        });
+        assert!(
+            h.app
+                .live_cache
+                .iter()
+                .any(|(p, ids)| p == "zzz-test" && ids.len() == 2),
+            "the fake's two models must land: {:?}",
+            h.app.live_cache
+        );
+        assert!(
+            h.app.fetching.is_none(),
+            "landing clears the in-flight guard"
         );
     }
 }

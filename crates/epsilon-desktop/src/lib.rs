@@ -77,7 +77,11 @@ pub use theme::IdeTheme;
 pub use workspace::{FileTree, OpenFile, Row as TreeRow};
 
 /// How the desktop window is opened.
-#[derive(Debug, Clone)]
+///
+/// `Clone` but not `Debug`: the live fetcher is a closure, and a debug
+/// rendering of a function pointer would be noise pretending to be
+/// information.
+#[derive(Clone)]
 pub struct Options {
     /// Workspace root the agent is bound to.
     pub workspace: std::path::PathBuf,
@@ -93,6 +97,10 @@ pub struct Options {
     /// config `[display] hide_thinking` and both front ends honor the same
     /// key; the binary sets it from there, tests leave it off.
     pub hide_thinking: bool,
+    /// Live provider-listing fetcher for the model picker (`None` without the
+    /// `real` feature or in tests). The same constructor the terminal's binary
+    /// uses, so both front ends merge the same live rows.
+    pub live: Option<epsilon_tui::LiveFetcher>,
 }
 
 impl Options {
@@ -104,6 +112,7 @@ impl Options {
             session: None,
             model_id: None,
             hide_thinking: false,
+            live: None,
         }
     }
 }

@@ -2448,8 +2448,17 @@ model; the picker half stays refused until a picker exists. 14 of 37.
 (`build_provider_rows`, `build_models_for_provider`), so the two front ends cannot disagree
 about what a provider holds. Bare `/model` opens it (the terminal's shape, current marked
 active); choosing a model runs the same `run_model_argument` the head runs. Customs flow
-through the shared loader; live listings do not (the fetch is async, the paint thread is
-not) — stated, not silent.
+through the shared loader.
+
+**Amendment (full-port round 37).** Live listings flow now too: the window builds
+the same fetcher the terminal's binary builds (same endpoint, same auth),
+auto-fetches the highlighted provider on open and the drilled one on descent
+under the terminal's guards (capability, credential, already-fetched,
+in-flight), drains into the same `live_cache` shape, and renders through the
+same `build_models_for_provider`. Silent where the terminal speaks — the window
+has no force-refresh key, and a background bonus must not transcript-spam — so
+failures keep bundled rows with no announcement. The old "live listings do not"
+is struck.
 
 **Amendment (full-port round 30).** `/think` joins for both halves at once: bare reads
 `agent.thinking_level`, an id parses and sets through the shared `ThinkingLevel` with the

@@ -85,6 +85,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 50. **Full-port round 34 — triage: three keys to a new model** | `ux-triage` on the overlays with a keyboard-only persona whose one task was switching the model: full-spell 9 keys, fuzzy 5 (`m` alone ranks `/model` first — measured, not reasoned), Esc unwinds cleanly at both picker stages, focus and notices hold. Rant filtered to two GREENs: (1) no picker chord — fixed this round as `window.model` on `Ctrl+M`, mirroring the terminal's `app.model.select` (RED-first test, 3 keys now); (2) the picker shows no credential state, so keyless users pick dead models — RECANTED in round 35 (erratum below): the `· key` badge renders in both pickers and announces in the node tree; the persona was reading summary text, not pixels. No REDs; the "scenic" settings route and full spelling are WHITE. Battery `port-r34` (2,158), green first time. |
 | (10-06) | 51. **Full-port round 35 — two triage errata and a guard** | A nodes-only walk with a screen-reader persona first *confirmed* the `· key` badges announce in the node tree (round 34's GREEN (2) recanted — the persona had read summary text, not pixels). It then flagged both overlay searches as unnamed — but the first battery refused: the palette's box is *pinned* unlabelled (a label over a static hint announces twice), and the model box is the same shape. Both additions reverted; the round ships the correction plus a guard test pinning the model search's hint-announcement on both stages, so the next well-meaning pass cannot "fix" it either. Remaining YELLOW: overlay opens that move no focus announce nothing (needs a focus strategy, not scheduled). Battery `port-r35b` (2,159), green on the second attempt after the revert. |
 | (10-06) | 52. **Full-port round 36 — resume names a foreign directory** | The recorded cwd was read and discarded (`let _ = cwd` in RPC switch; never read in `live_resume`), so resuming elsewhere silently reinterpreted relative paths. Now a shared core note names the mismatch (and gone-ness) in both front ends; the launch stays put. Three tests (core matrix, both resumes incl. same-dir silence) with controls on the helper and the shared reader; building them caught a real ordering rule (hydrate clears rows — notices go after, like the usage bills). P-071 stays `missing` (it asks for a fallback *prompt*; this is the notice half). Battery `port-r36` (2,162), green first time. |
+| (10-06) | 53. **Full-port round 37 — live listings reach the window picker** | The ADR-stated gap since round 21, closed: the window builds the terminal's fetcher (same endpoint/auth), auto-fetches highlighted-on-open and drilled-on-descend under the same four guards, drains into the same cache shape, renders through the same builder — silent where the terminal speaks (no force key; background bonuses must not spam). Three tests (guards incl. failure path, merge-to-screen, async seam via fake + bounded poll) with a control on the merge; the no-key guard untestable hermetically (reads machine env — stated). ADR-029's "live listings do not" struck. Battery `port-r37` (2,165), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -232,13 +233,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r36-2026-10-06.txt`](../audit/evidence/gate-port-r36-2026-10-06.txt),
+**Latest green battery: [`gate-port-r37-2026-10-06.txt`](../audit/evidence/gate-port-r37-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
-**2,162 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — three more than `gate-port-r35b`: the resume-notice tests (core matrix
-plus both front ends). (`cargo fmt --check` ran before launching.) The first attempt under
-`port-r35` failed its test leg on the pinned palette-search design and is preserved alongside
-as [`gate-port-r35-attempt1-FAILED-2026-10-06.txt`](../audit/evidence/gate-port-r35-attempt1-FAILED-2026-10-06.txt).
+**2,165 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r36`: the live-listing tests. (`cargo fmt
+--check` ran before launching.) The first attempt under `port-r35` failed its test leg on the
+pinned palette-search design and is preserved alongside as
+[`gate-port-r35-attempt1-FAILED-2026-10-06.txt`](../audit/evidence/gate-port-r35-attempt1-FAILED-2026-10-06.txt).
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

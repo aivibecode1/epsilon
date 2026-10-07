@@ -66,11 +66,32 @@ fn main() -> std::process::ExitCode {
         model_id,
         // Shared with the terminal (P-040): one preference, both front ends.
         hide_thinking: epsilon_core::config::load_hide_thinking(),
+        // Live provider listings for the model picker, built exactly as the
+        // terminal's binary builds them (same endpoint, same auth).
+        live: live_fetcher(),
     };
 
     match epsilon_desktop::run(opts) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => fail(&format!("could not open the Epsilon window: {e}")),
+    }
+}
+
+/// Live provider-listing capability for the model picker: present only when
+/// built with `--features real`; the fetch is a plain authenticated GET
+/// against the provider's models endpoint. Built exactly as the terminal's
+/// binary builds it, so both front ends merge the same live rows.
+fn live_fetcher() -> Option<epsilon_tui::LiveFetcher> {
+    #[cfg(feature = "real")]
+    {
+        Some(std::sync::Arc::new(|hint: String| {
+            Box::pin(async move { epsilon_llm::catalog::live_models(&hint).await })
+                as futures_util::future::BoxFuture<'static, Result<Vec<String>, String>>
+        }))
+    }
+    #[cfg(not(feature = "real"))]
+    {
+        None
     }
 }
 

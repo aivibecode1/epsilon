@@ -1411,6 +1411,7 @@ dependencies = [
  "epsilon-session",
  "epsilon-tools",
  "epsilon-tui",
+ "futures-util",
  "png",
  "pulldown-cmark",
  "ratatui",
