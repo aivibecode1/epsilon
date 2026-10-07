@@ -90,6 +90,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 55. **Full-port round 39 — double-Esc judged, not built (P-026)** | Read pi's implementation before touching ours: pi quits with double-`Ctrl+C`/empty `Ctrl+D` and its Esc never quits, so double-Esc is free there; here Esc aborts and quits when idle (M17b, pinned), so the first Esc of any double already exits — mutually exclusive on one key. Second leg: pi opens a message selector for the fork value, while this tree forks at the leaf immediately (P-310 missing) — a double-Esc that silently branches. Deliberately different, both legs recorded with revisit conditions. Pi counts move to **42 / 125 / 153 / 19**. Battery `port-r39` (2,168), green first time. |
 | (10-06) | 56. **Full-port round 40 — the window answers `/hotkeys` and `/copy`** | `/hotkeys` opens the shortcuts reference (the living equivalent — printing a frozen cheat sheet beside it would be a second source of truth); `/copy` takes the last assistant row through the platform clipboard with the terminal's words (`egui` writes it, no new dependency). The frame lends commands their context; the harness discards output, so no test touches the real clipboard. Three tests (reference opens, copy lands, empty answer) with a control removing both arms. The first battery failed on the refusal bound the window itself outgrew (17 refused < 20 answered — the round-38 tripwire working as designed): non-empty in both twins, attempt preserved. 20 of 37, under ADR-029's criterion, amended. Battery `port-r40b` (2,171), green on the second attempt. |
 | (10-06) | 57. **Full-port round 41 — the window answers `/exit`** | The terminal exits; the window asks first through the same quit guard the platform close raises (closing is the reader's decision, pinned) — `/quit` and `/q` take the same door. One test (both spellings raise the dialog, dialog reaches the screen) with a control removing the arm. 21 of 37, under ADR-029's criterion, amended. Battery `port-r41` (2,172), green first time. |
+| (10-06) | 58. **Full-port round 42 — the window answers `/reload`** | Same shared skills discovery landing on the shared agent, plus a keybindings re-read through the constructors' own loader (a fixed file applies without restart) — minus prompt templates and agent defs, which have no window reader. Read-only throughout, so driving it writes nothing. Two tests (rediscovers onto the agent, no-agent names it) with a control removing the arm; building the first caught the skill-validation rule (descriptions required). 22 of 37, under ADR-029's criterion, amended. Battery `port-r42` (2,174), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -237,10 +238,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r41-2026-10-06.txt`](../audit/evidence/gate-port-r41-2026-10-06.txt),
+**Latest green battery: [`gate-port-r42-2026-10-06.txt`](../audit/evidence/gate-port-r42-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
-**2,172 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r40b`: the exit test. (`cargo fmt --check`
+**2,174 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r41`: the reload tests. (`cargo fmt --check`
 ran before launching.) The `port-r40` attempt failed its test leg when the window answered
 its twentieth head and inverted the round-38 tripwire; preserved as
 [`gate-port-r40-attempt1-FAILED-2026-10-06.txt`](../audit/evidence/gate-port-r40-attempt1-FAILED-2026-10-06.txt).

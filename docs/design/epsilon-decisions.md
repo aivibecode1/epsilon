@@ -2493,6 +2493,12 @@ context, which the harness discards, so no test touches the real clipboard.
 opens the quit guard instead of exiting: the terminal exits, the window asks
 first, and the dialog it opens is the one the platform close raises. 21 of 37.
 
+**Amendment (full-port round 42).** `/reload` re-reads skills and keybindings
+from disk: same shared discovery landing on the shared agent, same loader
+the constructors use — minus the parts this window does not manage (prompt
+templates, agent defs). Read-only throughout, so driving it writes nothing.
+22 of 37.
+
 ---
 
 ---

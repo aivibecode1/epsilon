@@ -821,7 +821,10 @@ const SIDEBAR_TOGGLE_HOTSPOT: &str = "sidebar-toggle";
 /// Now: `Ctrl`+`B` is the convention every other IDE uses for "toggle the primary side bar" —
 /// VS Code, Sublime and Atom all bind it there — so a reader arriving at this window has the
 /// binding in their hands before they read it, and a reader who wants it elsewhere can now say so.
-fn window_keys() -> crate::keys::KeyBindings {
+///
+/// `pub(crate)` for `/reload`, which re-reads through the same loader the
+/// constructors use rather than a second copy of the global-dir fallback.
+pub(crate) fn window_keys() -> crate::keys::KeyBindings {
     match epsilon_core::config::global_dir() {
         Some(dir) => crate::keys::KeyBindings::load(&dir),
         None => crate::keys::KeyBindings::defaults(),
@@ -1944,7 +1947,9 @@ pub struct IdeApp {
     /// was a literal `consume_key` and every on-screen hint was a hand-written string, so
     /// `keybindings.json` could not touch a single one of them — while the terminal's could.
     /// `AGENTS.md` §2.4 says one table; this is the half that was missing.
-    keys: crate::keys::KeyBindings,
+    ///
+    /// `pub(crate)` for `/reload`, which swaps in a freshly read table.
+    pub(crate) keys: crate::keys::KeyBindings,
     /// What a close request would interrupt, once one has been caught.
     ///
     /// **`AGENTS.md` §6: never lose a user's work.** Closing the window used to end the
@@ -14765,6 +14770,60 @@ mod tests {
         assert!(
             agent.contains("Close this window?"),
             "the dialog must reach the screen.\n{agent}"
+        );
+    }
+
+    /// `/reload` re-reads skills and keybindings (round 42).
+    ///
+    /// Same shared discovery as the terminal's, landing on the shared agent;
+    /// read-only throughout, so driving it writes nothing anywhere. A skill
+    /// written to the workspace must be on the agent afterwards. RED first:
+    /// the honest refusal.
+    #[test]
+    fn slash_reload_rediscovers_skills() {
+        let (ws, _keep) = scratch_workspace("slash-reload");
+        let dir = ws.join(".agents").join("skills").join("zzz-reload");
+        std::fs::create_dir_all(&dir).expect("skill dir");
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: zzz-reload\ndescription: reload me\n---\nreload me",
+        )
+        .expect("skill file");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/reload");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/reload must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("skill(s)"),
+            "must report what it reloaded: {said:?}"
+        );
+        let names: Vec<String> = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().skills().iter().map(|k| k.name.clone()).collect())
+            .unwrap_or_default();
+        assert!(
+            names.contains(&"zzz-reload".to_string()),
+            "the workspace skill must be on the agent afterwards: {names:?}"
+        );
+    }
+
+    /// `/reload` with no agent answers rather than refusing.
+    #[test]
+    fn slash_reload_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-reload-no-agent");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/reload");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/reload without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
         );
     }
 }

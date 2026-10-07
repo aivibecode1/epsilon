@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-one names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-two names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -205,6 +205,15 @@ impl IdeApp {
                 self.ask_quit();
                 Outcome::Ran("quit — confirm in the dialog".to_string())
             }
+            // **`/reload` re-reads skills and keybindings from disk (full-port
+            // round 42).** The terminal's `/reload` minus the parts this
+            // window does not manage (prompt templates, agent defs — both load
+            // at composition and have no window reader): skills re-discover
+            // through the shared `discover_with_notices` and land on the
+            // shared agent, keybindings re-read so a fixed file applies
+            // without a restart. Discovery lines forward verbatim (they name
+            // root and reason); the summary names the counts.
+            Command::Reload => self.run_reload(),
             // **`/login` stores a pasted provider key, `/logout` removes one
             // (full-port round 38).** The same shared store the terminal
             // uses (`epsilon_llm::auth`), so a key saved in either front end
@@ -756,6 +765,43 @@ impl IdeApp {
         Outcome::Ran(format!("copied {chars} chars to the clipboard"))
     }
 
+    /// Re-read skills and keybindings from disk.
+    ///
+    /// The terminal's `/reload` minus the parts this window does not manage
+    /// (prompt templates, agent defs — both load at composition and have no
+    /// window reader): skills re-discover through the shared
+    /// `discover_with_notices` and land on the shared agent, keybindings
+    /// re-read so a fixed file applies without a restart. Discovery lines
+    /// forward verbatim (they name root and reason); the summary names the
+    /// counts. Read-only throughout — discovery opens directories, never
+    /// writes — so this is safe to drive in tests.
+    fn run_reload(&mut self) -> Outcome {
+        let agent = match self.session.as_ref() {
+            Some(session) => session.agent(),
+            None => {
+                return Outcome::Ran("reload: no agent attached to this window".to_string());
+            }
+        };
+        let mut roots = Vec::new();
+        if let Some(dir) = epsilon_core::config::global_dir() {
+            roots.push(dir.join("skills"));
+        }
+        roots.push(self.workspace().join(".agents").join("skills"));
+        roots.push(self.workspace().join(".epsilon").join("skills"));
+        let found = epsilon_core::skills::discover_with_notices(&roots);
+        let n = found.skills.len();
+        agent.set_skills(found.skills);
+        let mut lines: Vec<String> = found.notices;
+        lines.push(format!("reload: {n} skill(s)"));
+        self.keys = crate::app::window_keys();
+        if let Some(warning) = self.keys.load_warning() {
+            lines.push(warning.to_string());
+        } else {
+            lines.push("keybindings re-read".to_string());
+        }
+        Outcome::Ran(lines.join("\n"))
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -908,8 +954,8 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
     "clear", "clone", "compact", "copy", "exit", "export", "fork", "goal", "help", "hotkeys",
-    "login", "logout", "model", "new", "resume", "session", "sessions", "settings", "tasks",
-    "theme", "think",
+    "login", "logout", "model", "new", "reload", "resume", "session", "sessions", "settings",
+    "tasks", "theme", "think",
 ];
 
 #[cfg(test)]
@@ -1193,6 +1239,7 @@ mod tests {
             Command::Logout(String::new()),
             Command::Models,
             Command::New,
+            Command::Reload,
             Command::Resume(String::new()),
             Command::Session,
             Command::Sessions,
