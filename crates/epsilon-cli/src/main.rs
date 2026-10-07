@@ -1572,6 +1572,33 @@ fn admitted_run_failure(
 }
 
 /// Interactive ratatui frontend (M9b).
+///
+/// The exit-time resume hint (P-085): after the TUI tears down, name the
+/// command that reopens this session — but only when the session file exists,
+/// so a launch that never persisted anything prints nothing. Fresh and
+/// explicit-`--resume` launches name their file; `--continue` does not (its
+/// target is resolved inside composition, and re-resolving it here could name
+/// a file this run created rather than the one it continued).
+fn resume_hint(
+    workspace: &std::path::Path,
+    session_file: &str,
+    resume_path: Option<&std::path::Path>,
+) -> Option<String> {
+    let (mut path, _) =
+        epsilon_cli::runtime::session_path_for(workspace, session_file, resume_path);
+    if path.is_relative() {
+        path = workspace.join(path);
+    }
+    if !path.exists() {
+        return None;
+    }
+    Some(format!(
+        "To resume this session: epsilon --resume {}",
+        path.display()
+    ))
+}
+
+/// Interactive ratatui frontend (M9b).
 async fn tui_mode(
     shared: &SharedRun,
     initial_task: Option<String>,
@@ -1583,16 +1610,23 @@ async fn tui_mode(
     // goal round driver needs it (M253) - resolving a second one here is what the tools
     // crate's header forbids.
     let mut notices = Vec::new();
+    // Captured for the exit-time resume hint (P-085): the file this launch
+    // writes, or the explicit `--resume` target it reopens.
+    let session_file = epsilon_cli::runtime::fresh_session_file(
+        epsilon_cli::runtime::now_millis(),
+        &epsilon_contracts::new_id("ses"),
+        &shared.workspace,
+    );
+    let resume_path: Option<&std::path::Path> = match &shared.resume {
+        Resume::Path(p) => Some(p.as_path()),
+        _ => None,
+    };
     let composed = build_runtime_and_gate_runner(RunParams {
         workspace: &shared.workspace,
         stream_fn: Arc::clone(&shared.stream_fn),
         approvals: Arc::clone(&approvals) as Arc<dyn ApprovalUi>,
         mcp_servers: &shared.mcp_servers,
-        session_file: epsilon_cli::runtime::fresh_session_file(
-            epsilon_cli::runtime::now_millis(),
-            &epsilon_contracts::new_id("ses"),
-            &shared.workspace,
-        ),
+        session_file: session_file.clone(),
         confinement: &shared.confinement,
         lsp: shared.lsp,
         model_id: &shared.model_id,
@@ -1617,7 +1651,7 @@ async fn tui_mode(
             if let Some(waited) = lease_wait_summary(lease_wait_millis()) {
                 startup_notices.push(waited);
             }
-            epsilon_tui::run(epsilon_tui::TuiConfig {
+            let code = epsilon_tui::run(epsilon_tui::TuiConfig {
                 agent,
                 gate_runner,
                 approvals,
@@ -1633,7 +1667,13 @@ async fn tui_mode(
                 // model id instead of this decision.
                 offline: shared.offline,
             })
-            .await
+            .await;
+            // P-085, after teardown so it survives in scrollback: name the
+            // command that reopens this session, when it persisted one.
+            if let Some(hint) = resume_hint(&shared.workspace, &session_file, resume_path) {
+                eprintln!("{hint}");
+            }
+            code
         }
         Err(e) => {
             eprintln!("{e}");
@@ -1888,6 +1928,48 @@ fn render_demo_event(ev: &Arc<AgentEvent>) {
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
+
+    /// The exit-time resume hint names a persisted session and stays silent
+    /// otherwise (P-085): a fresh file that exists, an explicit `--resume`
+    /// target that exists, and nothing when neither does.
+    #[test]
+    fn resume_hint_names_persisted_sessions_only() {
+        let ws = tempfile::tempdir().unwrap();
+        let live = ws.path().join("live.jsonl");
+        std::fs::write(&live, "{}\n").unwrap();
+
+        // Fresh session file that was persisted: hint with an absolute path.
+        let hint = resume_hint(ws.path(), ".epsilon/sessions/fresh.jsonl", None);
+        assert!(hint.is_none(), "a file never written must stay silent");
+
+        std::fs::create_dir_all(ws.path().join(".epsilon").join("sessions")).unwrap();
+        std::fs::write(ws.path().join(".epsilon/sessions/fresh.jsonl"), "{}\n").unwrap();
+        let hint = resume_hint(ws.path(), ".epsilon/sessions/fresh.jsonl", None)
+            .expect("a persisted fresh session must hint");
+        assert!(
+            hint.contains("epsilon --resume"),
+            "the hint names the reopen command: {hint:?}"
+        );
+        assert!(
+            hint.contains("fresh.jsonl"),
+            "the hint names the file: {hint:?}"
+        );
+
+        // Explicit `--resume` target: the target, not the fresh file.
+        let hint = resume_hint(ws.path(), ".epsilon/sessions/fresh.jsonl", Some(&live))
+            .expect("a persisted resume target must hint");
+        assert!(
+            hint.contains("live.jsonl"),
+            "the hint names the resumed file: {hint:?}"
+        );
+
+        // Missing target: silent even with an explicit path.
+        let gone = ws.path().join("gone.jsonl");
+        assert!(
+            resume_hint(ws.path(), ".epsilon/sessions/fresh.jsonl", Some(&gone)).is_none(),
+            "a missing file must stay silent"
+        );
+    }
 
     #[tokio::test]
     async fn plan_mode_preserves_project_read_deny() {

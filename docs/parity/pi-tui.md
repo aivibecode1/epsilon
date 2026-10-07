@@ -78,7 +78,7 @@ this document**, tallied from its own tables — not a projection.
 | 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
-| 8. Sessions | 17 | 2 | 9 | 6 | 0 |
+| 8. Sessions | 17 | 3 | 9 | 5 | 0 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **40** | **124** | **157** | **18** |
+| **Total** | **339** | **41** | **124** | **156** | **18** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -404,7 +404,7 @@ rather than into dialogs: a fork writes a **new** session file with a fresh head
 | P-080 | `/share` prefers Radius, else renders HTML and shells out to `gh gist create --public=false` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6530-6539`, `packages/coding-agent/src/modes/interactive/session-share.ts:57-96`, `:175` | missing | none — the `/share` head exists (`crates/epsilon-contracts/src/command.rs:533`) and is driven only by the all-heads sweep | — |
 | P-081 | `/bug` is a consented multi-step report: what is included, transcript choice, model summary, then Upload / Export as Zip / Cancel | `packages/coding-agent/src/modes/interactive/bug-report.ts:50-105`, `:107-147`, `:44-47` | missing | none | — |
 | P-082 | `/reload` re-reads keybindings, extensions, skills, prompts, themes and context files, and refuses while streaming or compacting | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6349-6437`, `:6350-6357` | partial | `crates/epsilon-tui/src/app/commands.rs:1401`, `:1403`, `:1414`, `:1450-1452` — skills roots, agent-def roots, prompt templates and `keybindings.json` are re-read in the running process; `config.toml` deliberately is not, and there are no extensions or themes to reload | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame), `an_agents_root_reload_cannot_read_is_named_on_the_frame` (frame) |
-| P-085 | On exit, a persisted session prints `To resume this session: pi --session <id>` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4244-4247`, `:335-348` | missing | none — `/fork` names the `--session <path>` that opens the fork, but nothing prints it on exit | — |
+| P-085 | On exit, a persisted session prints `To resume this session: pi --session <id>` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4244-4247`, `:335-348` | done | `crates/epsilon-cli/src/main.rs` — `tui_mode` prints `To resume this session: epsilon --resume <path>` after teardown (so it survives in scrollback) when the session file exists, resolved through the shared `session_path_for`; `--continue` is out of scope by design (re-resolving its target here could name a file the run created). Fresh and explicit-`--resume` launches covered | `resume_hint_names_persisted_sessions_only` (persisted fresh, persisted target, missing stays silent; negative control run) |
 
 ## 9. Themes
 
@@ -769,7 +769,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
-| 8. Sessions | 17 | 2 | 9 | 6 | 0 |
+| 8. Sessions | 17 | 3 | 9 | 5 | 0 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **40** | **124** | **157** | **18** |
+| **Total** | **339** | **41** | **124** | **156** | **18** |
 
 ### The `missing` rows — 161
 
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Transcript and streaming (22) | P-040, P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (7) | P-037, P-038, P-262, P-263, P-264, P-265, P-273 |
 | Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
-| Sessions (6) | P-026, P-071, P-073, P-080, P-081, P-085 |
+| Sessions (5) | P-026, P-071, P-073, P-080, P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Tool cards (6) | P-139, P-141, P-145, P-149, P-150, P-151 |
