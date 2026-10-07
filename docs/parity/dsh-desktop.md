@@ -117,10 +117,10 @@ measurements taken here at all.
 | Transcript, streaming and tool cards | 82 | 2 | 18 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
-| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 1 | 22 | 37 | 5 |
+| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **16** | **93** | **282** | **42** |
+| **Total** | **433** | **17** | **92** | **282** | **42** |
 
 ---
 
@@ -498,7 +498,7 @@ computed while drawing is a layout nobody can test.
 | L-111 | Sidebar scrollbars are a *pointer* affordance: the bar hides when the pointer leaves and stays drawn for 2 s. | `ui-sidebar/src/client/SidebarRoot.tsx:39`, `:154-170` | missing | — | egui's own scrollbars, with their own behaviour. |
 | L-112 | A complete build stacks a code badge under the brand name formatted `version[-commit][-dirty]`. | `ui-sidebar/src/client/SidebarRoot.tsx:42-49` | missing | — | No build badge. |
 | L-113 | On the expanded sidebar the brand row *is* the New Session button — except on macOS desktop. | `ui-sidebar/src/client/SidebarRoot.tsx:216-256` | partial | `crates/epsilon-desktop/src/app.rs` sessions pane — a real "New session" button atop the list (Tab-reachable, screen-reader-named), running the same `run_new_session` the `/new` head runs; no brand row, deliberately (a native window has none — the action lives where the sessions are) | `clicking_new_session_starts_a_session_file` (button rect recorded, a11y name asserted, click stores one more file) |
-| L-114 | The New Session button shows its effective keybinding as trailing grey text on hover or keyboard focus. | `ui-sidebar/src/client/SidebarRoot.tsx:259-277` | partial | The sessions pane has a real "New session" button since round 10, and since round 16 it carries its chord both ways the reference asks: hover tooltip (`New session (ctrl+n)`) and the renamed accesskit node (`New session · ctrl+n`), both read from the binding table so a rebound chord is announced rebound. What it does not draw is trailing grey text beside the label on keyboard focus — the sighted-keyboard case hears nothing new, and that half stays open | `new_session_button_names_its_chord` (node name carries the chord; RED first) |
+| L-114 | The New Session button shows its effective keybinding as trailing grey text on hover or keyboard focus. | `ui-sidebar/src/client/SidebarRoot.tsx:259-277` | done | The sessions pane "New session" button carries its chord three ways, all read from the binding table: hover tooltip, renamed accesskit node, and dimmed trailing text beside the label (always-visible rather than hover/focus-conditional — same information, no state). A `LayoutJob`, because one `RichText` is one colour and these are two | `new_session_button_names_its_chord` (node name plus the drawn suffix; draw+record removal control) |
 | L-115 | On macOS desktop a fully collapsed sidebar reappears as two window-chrome buttons mounted beside the traffic lights. | `ui-sidebar/src/client/HeaderLeadingControls.tsx:26-54` | deliberately different | `crates/epsilon-desktop/src/app.rs:3248-3265` | The fold control lives in the **title bar at every window size above `COMPACT`** (`app.rs:2956-2958`), because a control placed on the sidebar cannot put the sidebar back — a one-way door. So it never needs a macOS-specific reappearance. |
 | L-116 | An open Workspace shows **5** idle, non-blank Sessions; each **Show more** adds 5. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:55`, `:58-70` | missing | `crates/epsilon-desktop/src/app.rs:3636-3698` | The sessions pane lists everything stored for the workspace (`app.rs:3613`, `:3528`) with no pagination. |
 | L-117 | **View options** is one menu with Group by, Order by and Filter by choices. | `ui-workspace/src/client/rows/WorkspaceBrowser.tsx:106-167` | missing | — | No view options; the session list is newest-first with no filter. |
@@ -788,7 +788,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 | Transcript and tool cards | C-107, C-109, C-120, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
-| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-114, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
+| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
 | Approvals through models | I-101, I-104, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
 | Un-numbered reference rows | U-003, U-006, U-017 |
 

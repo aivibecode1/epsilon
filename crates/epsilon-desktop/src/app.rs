@@ -5730,16 +5730,44 @@ impl IdeApp {
         // **The chord comes from the table (L-114)**, so a reader who rebinds
         // it is told their own chord here, not the default below: the tooltip
         // reaches a pointer, and the renamed node reaches a screen reader
-        // (egui never writes a tooltip onto the node).
+        // (egui never writes a tooltip onto the node). The chord also reads
+        // beside the label, dimmed — the reference shows it on hover or
+        // keyboard focus, and always-visible is the same information with no
+        // state to track. A `LayoutJob`, because one `RichText` is one
+        // colour and these are two.
         let session_chord = self
             .keys
             .label("window.session.new")
             .unwrap_or_else(|| "ctrl+n".into());
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            "New session ",
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(13.0 * scale),
+                color: theme.text,
+                ..Default::default()
+            },
+        );
+        job.append(
+            &session_chord,
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(11.0 * scale),
+                color: theme.dim,
+                ..Default::default()
+            },
+        );
         let new = ui
-            .button("New session")
+            .button(job)
             .on_hover_text(format!("New session ({session_chord})"));
         name_node(&new, &format!("New session · {session_chord}"));
         summary.row_rects.push(("sessions-new".into(), new.rect));
+        // The drawn words, for the frame: a button is a widget, not a row,
+        // so nothing else records what it says.
+        summary
+            .rows
+            .push(("sessions".into(), format!("New session · {session_chord}")));
         if new.clicked() {
             let outcome = self.run_new_session();
             self.notice_outcome(outcome);
@@ -11025,8 +11053,11 @@ mod tests {
     /// L-114: the reference shows the effective keybinding as trailing text on
     /// hover or keyboard focus. The tooltip reaches a pointer; the renamed
     /// accesskit node reaches a screen reader (egui never writes a tooltip
-    /// onto the node). Both read the chord from the binding table, so a
-    /// rebound chord is announced rebound. RED first: "New session" alone.
+    /// onto the node); and the chord reads beside the label, dimmed —
+    /// always-visible rather than hover/focus-conditional, the same
+    /// information with no state to track. All three read the chord from
+    /// the binding table, so a rebound chord is announced rebound.
+    /// RED first: "New session" alone.
     #[test]
     fn new_session_button_names_its_chord() {
         let (ws, _keep) = scratch_workspace("sessions-new-chord");
@@ -11037,6 +11068,11 @@ mod tests {
         assert!(
             h.node_named("New session").contains("ctrl+n"),
             "the accessible name must carry the effective chord.\n{}",
+            frame.describe()
+        );
+        assert!(
+            frame.region("sessions").join(" ").contains("ctrl+n"),
+            "and the drawn button must show it beside the label.\n{}",
             frame.describe()
         );
     }
