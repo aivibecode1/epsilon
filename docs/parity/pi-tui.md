@@ -78,7 +78,7 @@ this document**, tallied from its own tables — not a projection.
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
-| 8. Sessions | 17 | 3 | 9 | 5 | 0 |
+| 8. Sessions | 17 | 3 | 9 | 4 | 1 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **42** | **125** | **154** | **18** |
+| **Total** | **339** | **42** | **125** | **153** | **19** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -388,7 +388,7 @@ rather than into dialogs: a fork writes a **new** session file with a fresh head
 
 | id | behaviour | reference | status | ours | verified |
 |---|---|---|---|---|---|
-| P-026 | Double-Escape inside 500 ms opens `/tree` (the default) or `/fork`, and `none` disables it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3021-3035`, `packages/coding-agent/src/core/settings-manager.ts:1446-1448` | missing | none — Epsilon has no double-Escape arm; Escape aborts a run and quits when idle (`crates/epsilon-tui/src/app/keys.rs:1369`) | — |
+| P-026 | Double-Escape inside 500 ms opens `/tree` (the default) or `/fork`, and `none` disables it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3021-3035`, `packages/coding-agent/src/core/settings-manager.ts:1446-1448` | deliberately different | Two independent blockers, both structural. (1) The trigger is occupied: pi quits with double-`Ctrl+C`/empty `Ctrl+D` and its Esc never quits, so double-Esc is free there; here `Esc` aborts a run and quits when idle (M17b, pinned by `esc_dismisses_popup_before_quitting_or_aborting`), so the first Esc of any double already exits — the two cannot share one key. (2) The fork value has no safe surface: pi opens a message selector (`showUserMessageSelector`), while this tree forks at the current leaf immediately (P-310 missing) — a double-Esc that silently branches on a shaky finger. Revisit if either changes: a fork message selector would make the fork value safe, but the trigger conflict stands while M17b does. | — |
 | P-055 | Opening a session whose history contains compactions prints `Session compacted N times` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4128-4143` | done | `crates/epsilon-tui/src/app/session.rs` — `switch_session_file` counts `EntryKind::Compaction` from the store after hydration (compactions are entries, not messages, so hydration cannot see them — the M144/F22 pattern) and reports `Session compacted N times` when N > 0, silent otherwise | `resume_names_compactions` (real `/resume` path: twice-compacted file reports, plain file stays silent; negative control run) |
 | P-069 | `/new` starts a fresh session and confirms in the transcript | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6845-6858`, `:3245-3249` | done | `crates/epsilon-tui/src/app/commands.rs:1341`, `:1343` — creates a brand-new `.jsonl` beside the existing ones, attaches it, and refuses while a run is in flight | `new_command_starts_a_new_session_file_and_keeps_the_old_one`, `new_command_refuses_while_a_run_is_in_flight` |
 | P-070 | `/resume` opens a picker that can widen to all directories, rename in place, and offer a quit action | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5632-5673` | partial | `crates/epsilon-tui/src/picker.rs:751` — the browser lists this workspace's sessions newest-first with `age · size · [task child] · [in use] · <file>` and Enter resumes; there is no cross-directory scope, no rename panel and no delete | `sessions_command_browses_and_enter_switches_the_session`, `session_rows_list_newest_first_and_mark_the_current_file` |
@@ -769,7 +769,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
-| 8. Sessions | 17 | 3 | 9 | 5 | 0 |
+| 8. Sessions | 17 | 3 | 9 | 4 | 1 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **42** | **125** | **154** | **18** |
+| **Total** | **339** | **42** | **125** | **153** | **19** |
 
 ### The `missing` rows — 161
 
@@ -796,7 +796,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Transcript and streaming (21) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (7) | P-037, P-038, P-262, P-263, P-264, P-265, P-273 |
 | Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
-| Sessions (5) | P-026, P-071, P-073, P-080, P-081 |
+| Sessions (4) | P-071, P-073, P-080, P-081 |
 | Themes (8) | P-092, P-094, P-095, P-096, P-098, P-101, P-270, P-271 |
 | Settings (11) | P-103, P-105, P-106, P-111, P-112, P-113, P-114, P-267, P-268, P-275, P-277 |
 | Tool cards (6) | P-139, P-141, P-145, P-149, P-150, P-151 |

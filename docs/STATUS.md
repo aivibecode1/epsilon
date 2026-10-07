@@ -87,6 +87,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 52. **Full-port round 36 — resume names a foreign directory** | The recorded cwd was read and discarded (`let _ = cwd` in RPC switch; never read in `live_resume`), so resuming elsewhere silently reinterpreted relative paths. Now a shared core note names the mismatch (and gone-ness) in both front ends; the launch stays put. Three tests (core matrix, both resumes incl. same-dir silence) with controls on the helper and the shared reader; building them caught a real ordering rule (hydrate clears rows — notices go after, like the usage bills). P-071 stays `missing` (it asks for a fallback *prompt*; this is the notice half). Battery `port-r36` (2,162), green first time. |
 | (10-06) | 53. **Full-port round 37 — live listings reach the window picker** | The ADR-stated gap since round 21, closed: the window builds the terminal's fetcher (same endpoint/auth), auto-fetches highlighted-on-open and drilled-on-descend under the same four guards, drains into the same cache shape, renders through the same builder — silent where the terminal speaks (no force key; background bonuses must not spam). Three tests (guards incl. failure path, merge-to-screen, async seam via fake + bounded poll) with a control on the merge; the no-key guard untestable hermetically (reads machine env — stated). ADR-029's "live listings do not" struck. Battery `port-r37` (2,165), green first time. |
 | (10-06) | 54. **Full-port round 38 — the window answers `/login` and `/logout`** | Pasted-key login and key removal through the shared credential store (a key saved in either front end works in both), with the terminal's words; ceremonies and bare/keyless forms refused by name with the way through. The typed line is never echoed (commands answer; only prompts echo) — proven through the real composer path. Three tests (shapes, ceremony, no-echo, logout usage) with a control removing both arms; the save/remove arms write the real store and are reviewed, not driven (favorites-toggles precedent). The first two batteries refused on the same absolute refusal bound in twin tests — made relative (the ADR-029 subset discipline), both preserved. 18 of 37, under ADR-029's criterion, amended. Battery `port-r38c` (2,168), green on the third attempt. |
+| (10-06) | 55. **Full-port round 39 — double-Esc judged, not built (P-026)** | Read pi's implementation before touching ours: pi quits with double-`Ctrl+C`/empty `Ctrl+D` and its Esc never quits, so double-Esc is free there; here Esc aborts and quits when idle (M17b, pinned), so the first Esc of any double already exits — mutually exclusive on one key. Second leg: pi opens a message selector for the fork value, while this tree forks at the leaf immediately (P-310 missing) — a double-Esc that silently branches. Deliberately different, both legs recorded with revisit conditions. Pi counts move to **42 / 125 / 153 / 19**. Battery `port-r39` (2,168), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -178,7 +179,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 42 | 125 | 154 | 18 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 42 | 125 | 153 | 19 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 15 | 94 | 282 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -234,11 +235,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r38c-2026-10-06.txt`](../audit/evidence/gate-port-r38c-2026-10-06.txt),
+**Latest green battery: [`gate-port-r39-2026-10-06.txt`](../audit/evidence/gate-port-r39-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
 **2,168 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — three more than `gate-port-r37`: the login/logout tests. (`cargo fmt
---check` ran before launching.) The two earlier attempts failed their test legs on the same
+`test result:` lines — same as `gate-port-r38c`: a verdict round adds no tests. (`cargo fmt
+--check` ran before launching.) The two `port-r38` attempts failed their test legs on the same
 absolute refusal bound in twin tests (unit, then integration) and are preserved alongside as
 [`gate-port-r38-attempt1-FAILED-2026-10-06.txt`](../audit/evidence/gate-port-r38-attempt1-FAILED-2026-10-06.txt)
 and [`gate-port-r38b-FAILED-2026-10-06.txt`](../audit/evidence/gate-port-r38b-FAILED-2026-10-06.txt).
