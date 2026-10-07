@@ -71,6 +71,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 36. **Full-port round 20 — the window answers `/model` (by id, not by picker)** | An id runs the shared `set_model_id` — session record included — with the terminal's words and key warning, but not its machine-wide default save (a window action does not rewrite the terminal's defaults behind its back). Bare names the running model; the picker half stays honestly refused until a picker exists. Two tests, RED first with the honest refusal. 14 of 37, under ADR-029's criterion, amended. Battery `port-r20` (2,127), green first time. |
 | (10-06) | 37. **Full-port round 21 — the window grows a model picker** | Bare `/model` opens it now (the terminal's shape): providers, then models, over the terminal's builders — same data, native pixels. Four new chords (separate ids so rebinding never moves the palette), mouse clicks, Escape-back-out, screen-reader-named rows, apply through the same switch `/model <id>` runs. Six tests (list, filter, drill, apply, escape, a11y); the filter test caught a real focus-ordering defect mid-round (text typed before the first painted frame lands nowhere). Stated limits: no live listings (async fetch, not paint thread), customs via the shared loader. I-149 moves to `partial`; DSH counts move to **13 / 93 / 285**. Battery `port-r21` (2,133), green first time. |
 | (10-06) | 38. **Full-port round 22 — matrix citations become a gate leg** | Plan 025 §2.B, banked: `scripts/check-parity-citations.py` verifies all 464 backticked workspace citations (`:line`, `:start-end`) across both matrices resolve to real files and in-range lines — reference-side paths excluded like `check-links` excludes `references/`. Proven by breaking six citations and watching it name every one, then restored byte-identically. Wired into both gate scripts (eleven legs from here); proposal 11 filed for the locked §4 list, noting the partial overlap with proposal 10. No Rust changes, no rows move. Battery `port-r22` (2,133), green first time. |
+| (10-06) | 39. **Full-port round 23 — resumed sessions name their compactions (P-055)** | Opening a session whose history contains compactions now reports `Session compacted N times` (proper singular), counted from the store in `switch_session_file` — compactions are entries, not messages, so hydration cannot see them (the M144/F22 pattern); read failures stay silent (a count no action can follow is not worth noise). One end-to-end test through real `/resume` (twice-compacted reports, plain stays silent), RED first with a control on the wording. P-055 moves to `done`; Pi counts move to **40 / 124 / 157**. Battery `port-r23` (2,134), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -162,7 +163,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 39 | 124 | 158 | 18 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 40 | 124 | 157 | 18 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 93 | 285 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -218,11 +219,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r22-2026-10-06.txt`](../audit/evidence/gate-port-r22-2026-10-06.txt),
-2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS` — the
-first battery with `check-parity-citations` wired in.
-**2,133 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — unchanged from `gate-port-r21`: no Rust changes this round. (`cargo fmt
+**Latest green battery: [`gate-port-r23-2026-10-06.txt`](../audit/evidence/gate-port-r23-2026-10-06.txt),
+2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
+**2,134 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r22`: the resume-compactions test. (`cargo fmt
 --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10

@@ -3253,6 +3253,86 @@ async fn export_command_writes_html_and_json() {
     let _ = app;
 }
 
+/// Resuming a session whose history contains compactions says so (P-055).
+///
+/// A resumed conversation reads differently when parts of it are summaries,
+/// and nothing else on screen names that. Through the real `/resume` path:
+/// a file with two compactions reports "2 times", and a plain file reports
+/// nothing — the second half is the control that the notice comes from the
+/// count, not from resuming as such.
+#[tokio::test]
+async fn resume_names_compactions() {
+    use epsilon_contracts::session_entry::EntryKind;
+    let ws = tempfile::tempdir().unwrap();
+    let compacted = ws.path().join("compacted.jsonl");
+    let plain = ws.path().join("plain.jsonl");
+    for (path, compactions) in [(&compacted, 2), (&plain, 0)] {
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            epsilon_core::SessionStore::open(path).unwrap(),
+        ));
+        {
+            let mut guard = store.lock().unwrap();
+            guard
+                .append(EntryKind::Message {
+                    message: epsilon_contracts::message::Message::User(
+                        epsilon_contracts::message::UserMessage {
+                            id: "m1".into(),
+                            timestamp_ms: 1,
+                            content: vec![epsilon_contracts::content::UserContent::Text {
+                                text: "hello".into(),
+                            }],
+                        },
+                    ),
+                    api_request_sha256: None,
+                })
+                .unwrap();
+            for _ in 0..compactions {
+                guard
+                    .append(EntryKind::Compaction {
+                        summary: "earlier work".into(),
+                        tokens_before: 1000,
+                        retained_tail: vec![],
+                        details: None,
+                        usage: None,
+                        model_id: None,
+                    })
+                    .unwrap();
+            }
+        }
+    }
+    let (mut app, agent, _) = test_app();
+    app.workspace_root = ws.path().to_path_buf();
+    let backing = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(ws.path().join("t.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&backing));
+
+    assert!(!type_and_enter(
+        &mut app,
+        &agent,
+        &format!("/resume {}", compacted.display())
+    ));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("Session compacted 2 times")),
+        "a twice-compacted session must say so: {texts:?}"
+    );
+
+    assert!(!type_and_enter(
+        &mut app,
+        &agent,
+        &format!("/resume {}", plain.display())
+    ));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        !texts.iter().any(|t| t.contains("compacted")),
+        "a plain session must not claim compactions: {texts:?}"
+    );
+    let _ = app;
+}
+
 // ---- OSC 52: `/copy` over a terminal that has no local clipboard ------------
 //
 // The defect: `/copy` called `arboard` and printed "copied N chars to clipboard"

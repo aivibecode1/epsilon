@@ -258,6 +258,34 @@ impl App {
                     ),
                 }
             }
+            // P-055: opening a session whose history contains compactions says
+            // so — a resumed conversation reads differently when parts of it
+            // are summaries, and nothing else on screen names that. Counted
+            // from the store like the bills above (compactions are entries,
+            // not messages, so hydration cannot see them). A read failure is
+            // silent: the transcript already hydrated, and a count no action
+            // can follow is not worth noise.
+            if let Some(store) = agent.session_store()
+                && let Ok(st) = store.lock()
+                && let Ok(entries) = st.read_all()
+            {
+                let n = entries
+                    .iter()
+                    .filter(|e| {
+                        matches!(
+                            e.kind,
+                            epsilon_contracts::session_entry::EntryKind::Compaction { .. }
+                        )
+                    })
+                    .count();
+                if n > 0 {
+                    self.ui.push_notice(format!(
+                        "Session compacted {} time{}",
+                        n,
+                        if n == 1 { "" } else { "s" }
+                    ));
+                }
+            }
             if let Some(shown) = typed.filter(|s| !s.is_empty()) {
                 self.history.push_back(shown.to_string());
                 while self.history.len() > HISTORY_MAX {
