@@ -1103,6 +1103,14 @@ impl UiState {
                             "Response was truncated before completion.",
                         ));
                     }
+                    if a.stop_reason == StopReason::Aborted {
+                        // C-110, resume path: a replayed reply the reader stopped
+                        // says so too, or a resumed half answer reads as whole.
+                        self.push_line(TranscriptLine::plain(
+                            LineKind::System,
+                            "Response was stopped before completion.",
+                        ));
+                    }
                     self.tokens_in += a.usage.input;
                     self.tokens_out += a.usage.output;
                     self.cache_read += a.usage.cache_read;
@@ -1264,6 +1272,14 @@ impl UiState {
                         self.push_line(TranscriptLine::plain(
                             LineKind::System,
                             "Response was truncated before completion.",
+                        ));
+                    }
+                    if a.stop_reason == StopReason::Aborted {
+                        // C-110, live path: a reply the reader stopped says so,
+                        // or the cut-off answer reads as a complete one.
+                        self.push_line(TranscriptLine::plain(
+                            LineKind::System,
+                            "Response was stopped before completion.",
                         ));
                     }
                     self.tokens_in += a.usage.input;

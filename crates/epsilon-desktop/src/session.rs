@@ -284,6 +284,15 @@ impl Transcript {
                             "Response was truncated before completion.".to_string(),
                         );
                     }
+                    if a.stop_reason == StopReason::Aborted {
+                        // C-110, window half, history path: a replayed reply the
+                        // reader stopped says so too, or a resumed half answer
+                        // reads whole.
+                        t.push(
+                            RowKind::Notice,
+                            "Response was stopped before completion.".to_string(),
+                        );
+                    }
                 }
                 Message::ToolResult(r) => {
                     let text: String = r
@@ -483,6 +492,16 @@ impl Transcript {
                     self.push(
                         RowKind::Notice,
                         "Response was truncated before completion.".to_string(),
+                    );
+                }
+                // C-110, window half, live path: a reply the reader stopped
+                // says so for the same reason.
+                if let Message::Assistant(a) = &**message
+                    && a.stop_reason == StopReason::Aborted
+                {
+                    self.push(
+                        RowKind::Notice,
+                        "Response was stopped before completion.".to_string(),
                     );
                 }
             }
@@ -1626,6 +1645,59 @@ mod tests {
                 .iter()
                 .any(|r| r.kind == RowKind::Notice && r.text.contains("Response was truncated")),
             "a replayed cut-off answer must carry its notice: {:?}",
+            t.rows()
+        );
+    }
+
+    /// A stopped reply adds a notice row (C-110, window half).
+    ///
+    /// Same hole as truncation, other cause: without the line, an answer cut
+    /// short by the reader reads as a whole one. The EndTurn message is the
+    /// control: two replies, one notice. RED first: no row carries it.
+    #[test]
+    fn a_stopped_reply_adds_a_notice_row() {
+        fn stopped(text: &str, stop: StopReason) -> Message {
+            let mut m = assistant(text);
+            if let Message::Assistant(a) = &mut m {
+                a.stop_reason = stop;
+            }
+            m
+        }
+        let mut t = transcript();
+        for (text, stop) in [
+            ("the answer so far", StopReason::Aborted),
+            ("the whole answer", StopReason::EndTurn),
+        ] {
+            t.apply(&AgentEvent::MessageEnd {
+                message: Box::new(stopped(text, stop)),
+            });
+        }
+        let notices: Vec<&Row> = t
+            .rows()
+            .iter()
+            .filter(|r| r.kind == RowKind::Notice && r.text.contains("Response was stopped"))
+            .collect();
+        assert_eq!(
+            notices.len(),
+            1,
+            "exactly one stopped notice for one stopped reply: {:?}",
+            t.rows()
+        );
+    }
+
+    /// Replayed history carries the stopped notice too (C-110, window half).
+    #[test]
+    fn replayed_history_carries_the_stopped_notice() {
+        let mut m = assistant("the stopped half");
+        if let Message::Assistant(a) = &mut m {
+            a.stop_reason = StopReason::Aborted;
+        }
+        let t = Transcript::from_messages(&[m]);
+        assert!(
+            t.rows()
+                .iter()
+                .any(|r| r.kind == RowKind::Notice && r.text.contains("Response was stopped")),
+            "a replayed stopped answer must carry its notice: {:?}",
             t.rows()
         );
     }

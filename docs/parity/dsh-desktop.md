@@ -114,13 +114,13 @@ measurements taken here at all.
 |---|---|---|---|---|---|
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
 | Approvals and permission presets | 14 | 3 | 6 | 5 | 0 |
-| Transcript, streaming and tool cards | 82 | 1 | 18 | 57 | 6 |
+| Transcript, streaming and tool cards | 82 | 2 | 18 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 3 | 8 | 52 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 23 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **13** | **93** | **285** | **42** |
+| **Total** | **433** | **14** | **93** | **284** | **42** |
 
 ---
 
@@ -246,7 +246,7 @@ answers to the same question, and where this window has an answer the row says s
 | C-107 | The **Think** row is collapsed by default and shows a preview of the reasoning's first line in Standard, Detailed and Verbose. | `ui-chat/src/client/chat/ReasoningRow.tsx:56-59` | partial | `crates/epsilon-desktop/src/session.rs:94`, `crates/epsilon-desktop/src/app.rs:4946` | Reasoning exists as its own row kind and is drawn in the quieter `thinking` role, which is the part this port wanted. There is no collapse and no preview line. |
 | C-108 | While reasoning streams, the preview shows the first line of the latest paragraph that is already newline-terminated. | `ui-chat/src/client/chat/ReasoningRow.tsx:16-32` | missing | — | No reasoning preview. The row is drawn as a whole line of text. |
 | C-109 | While the Session runs, a **whale tail with a shimmering elapsed clock** sits at the bottom of the transcript and ticks once a second. | `ui-chat/src/client/chat/RunningStatus.tsx:20-39` | partial | `crates/epsilon-desktop/src/app.rs:4090-4096`, `crates/epsilon-desktop/src/app.rs:4103-4116` | The window does report that it is running — `run_state` is the single function both the status bar and the bar's accessible name call, so the two cannot disagree — and it reports how many approvals are waiting. It has no elapsed timer and no run-tail decoration. Covered by `the_status_bar_names_the_state_it_is_in`. |
-| C-110 | An Assistant message frozen by a stop renders a **"Stopped"** marker under its partial text. | `ui-chat/src/client/chat/AssistantMarkdown.tsx:146-148` | missing | — | No stop marker on an aborted answer. |
+| C-110 | An Assistant message frozen by a stop renders a **"Stopped"** marker under its partial text. | `ui-chat/src/client/chat/AssistantMarkdown.tsx:146-148` | done | Both front ends append `Response was stopped before completion.` on `StopReason::Aborted` — the terminal in both assistant paths (`state.rs`), the window as a `Notice` row in both reducer paths (`session.rs`) — under the partial text, where the reference puts its marker | `a_stopped_reply_says_so`, `a_resumed_stopped_reply_says_so` (frames; TUI) + `a_stopped_reply_adds_a_notice_row`, `replayed_history_carries_the_stopped_notice`, `a_resumed_stopped_reply_reaches_the_screen` (window; negative control run) |
 | C-111 | Submitting shows your message **immediately as a local echo** in its final position. | `ui-chat/src/client/chat/ChatView.tsx:187-208` | done | `crates/epsilon-desktop/src/app.rs:5258` | `send_draft` pushes the reader's own words into the transcript at the moment of the send, not when the model answers — the reason is written at `app.rs:5252-5258`. Covered by `typing_reaches_the_composer_and_sending_puts_the_words_on_screen` and `a_real_turn_runs_to_completion_through_a_permission_ask`, both of which assert the words are on the frame. |
 | C-112 | Steered text renders as a bubble visually identical to the eventual durable steering message. | `ui-chat/src/client/chat/MessageItem.tsx:242-263` | missing | — | No steering: a second send during a turn is refused with a sentence, not queued (`app.rs:5218-5234`). |
 | C-113 | A **model retry** appears as a shimmering row counting down the host-scheduled delay. | `ui-chat/src/client/chat/MessageItem.tsx:61-127` | missing | — | Retry lives in the provider layer; the window has no retry row. |
@@ -817,7 +817,7 @@ rather than merely underserved:
 |---|---|
 | Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-032, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079, D-080, D-081, D-082 |
-| Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-110, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
+| Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
 | Keyboard and settings | S-101, S-102, S-103, S-104, S-105, S-106, S-107, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-126, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
 | Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
 | Layout and panes | L-104, L-109, L-111, L-112, L-113, L-114, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |

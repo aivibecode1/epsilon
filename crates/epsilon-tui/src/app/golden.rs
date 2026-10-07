@@ -3047,3 +3047,79 @@ fn a_resumed_truncated_reply_says_so() {
         "a replayed cut-off answer must carry its notice: {rows:#?}"
     );
 }
+
+/// A stopped reply says so on screen (C-110, live path).
+///
+/// Same honesty hole as truncation, other cause: without the line, an answer
+/// cut short by the reader reads as a whole one. The EndTurn message is the
+/// control: one stopped reply, one whole one, exactly one notice.
+#[test]
+fn a_stopped_reply_says_so() {
+    let mut app = bench_app(UiState::new());
+    for (id, text, stop) in [
+        (
+            "msg-stop",
+            "the answer so far",
+            epsilon_contracts::message::StopReason::Aborted,
+        ),
+        (
+            "msg-whole",
+            "the whole answer",
+            epsilon_contracts::message::StopReason::EndTurn,
+        ),
+    ] {
+        app.ui
+            .apply(&epsilon_contracts::agent_event::AgentEvent::MessageEnd {
+                message: Box::new(Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: id.into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(text)],
+                        stop_reason: stop,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                )),
+            });
+    }
+
+    let rows = render_rows(&mut app, 80, 24);
+    let hits: Vec<_> = rows
+        .iter()
+        .filter(|r| r.contains("Response was stopped before completion."))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "exactly one stopped notice for one stopped reply: {rows:#?}"
+    );
+}
+
+/// A resumed stopped reply says so too (C-110, history path).
+#[test]
+fn a_resumed_stopped_reply_says_so() {
+    let mut app = bench_app(UiState::new());
+    app.ui.hydrate_from_history(&[Message::Assistant(
+        epsilon_contracts::message::AssistantMessage {
+            id: "msg-resumed-stop".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![epsilon_contracts::content::ContentBlock::text(
+                "the stopped half",
+            )],
+            stop_reason: epsilon_contracts::message::StopReason::Aborted,
+            error_message: None,
+            usage: Default::default(),
+        },
+    )]);
+
+    let rows = render_rows(&mut app, 80, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("Response was stopped before completion.")),
+        "a replayed stopped answer must carry its notice: {rows:#?}"
+    );
+}
