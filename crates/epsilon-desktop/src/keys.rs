@@ -184,6 +184,13 @@ pub fn neutral_key(key: egui::Key) -> epsilon_contracts::keybind::Key {
         egui::Key::Plus => K::Char('+'),
         egui::Key::Equals => K::Char('='),
         egui::Key::Minus => K::Char('-'),
+        // Punctuation the tables bind (`ctrl+/` for the shortcuts reference):
+        // egui names these words (`Slash`), and the word is not a character the
+        // grammar could name — so they are mapped explicitly rather than left
+        // to the name recovery below, which would make them unboundable.
+        egui::Key::Slash => K::Char('/'),
+        egui::Key::Period => K::Char('.'),
+        egui::Key::Comma => K::Char(','),
         egui::Key::Num0 => K::Char('0'),
         other => {
             // egui names letters `A`…`Z` and digits `Num0`…`Num9`, and prints them as the

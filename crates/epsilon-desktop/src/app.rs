@@ -1004,6 +1004,7 @@ impl IdeApp {
     /// prevent.
     pub fn open_model_picker(&mut self) {
         self.palette = None;
+        self.shortcuts_open = false;
         self.model_picker = Some(ModelPicker::default());
     }
     /// Close the model picker and hand the keyboard back to the agent pane.
@@ -1026,9 +1027,12 @@ impl IdeApp {
         if self.keys.take(ctx, "window.palette") {
             // Toggling rather than only opening, because the chord people press twice
             // because it did not seem to work must not need a different one.
+            // One overlay at a time: opening here closes the other two.
             if self.palette.is_some() {
                 self.close_palette();
             } else {
+                self.model_picker = None;
+                self.shortcuts_open = false;
                 self.palette = Some(Palette::default());
             }
         }
@@ -1090,6 +1094,52 @@ impl IdeApp {
         }
     }
 
+    /// Read the shortcuts reference's keys: toggle anywhere, close while open.
+    ///
+    /// After the palette and the model picker — an open overlay owns every
+    /// key — and before the panes, for the same reason both do.
+    fn shortcuts_keys(&mut self, ctx: &egui::Context) {
+        if self.keys.take(ctx, "window.shortcuts") {
+            // Toggling rather than only opening, like the palette: the chord
+            // people press twice because it did not seem to work must not need
+            // a different one. One overlay at a time, same rule as the model
+            // picker.
+            if self.shortcuts_open {
+                self.close_shortcuts();
+            } else {
+                self.palette = None;
+                self.model_picker = None;
+                self.shortcuts_open = true;
+            }
+            return;
+        }
+        if self.shortcuts_open && self.keys.take(ctx, "window.shortcuts.close") {
+            self.close_shortcuts();
+        }
+    }
+
+    /// Close the shortcuts reference and hand the keyboard back to the agent pane.
+    ///
+    /// The same two halves as [`Self::close_palette`], for the same reason.
+    fn close_shortcuts(&mut self) {
+        self.shortcuts_open = false;
+        self.focus = FocusTarget::Agent;
+    }
+
+    /// Every window binding with its effective chord, in table order.
+    ///
+    /// Effective, not default: a reader who rebound a chord is shown their own
+    /// here, like the status bar and the renamed nodes do. Falls back to the
+    /// table default when the id has no binding left at all.
+    fn shortcut_rows(&self) -> Vec<(String, String)> {
+        epsilon_contracts::keybind::WINDOW
+            .iter()
+            .map(|(id, defaults)| {
+                let chords = self.keys.label(id).unwrap_or_else(|| defaults.join(" "));
+                (id.to_string(), chords)
+            })
+            .collect()
+    }
     /// Read the model picker's keys, and act on one.
     ///
     /// After `palette_keys` — an open palette owns every key — and before the
@@ -1452,6 +1502,8 @@ pub struct IdeApp {
     palette: Option<Palette>,
     /// The model picker, open while it is `Some`. See [`ModelPicker`].
     model_picker: Option<ModelPicker>,
+    /// Whether the shortcuts reference overlay is open (S-101).
+    shortcuts_open: bool,
     /// Row rectangles of the last drawn model-picker frame, for clicks.
     model_rects: Vec<(usize, egui::Rect)>,
     /// A gate-checked goal round, from the task that ran the gates back to the draw path.
@@ -1949,6 +2001,7 @@ impl IdeApp {
             palette_rects: Vec::new(),
             model_picker: None,
             model_rects: Vec::new(),
+            shortcuts_open: false,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2012,6 +2065,7 @@ impl IdeApp {
             palette_rects: Vec::new(),
             model_picker: None,
             model_rects: Vec::new(),
+            shortcuts_open: false,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2148,7 +2202,7 @@ impl IdeApp {
     /// is up; `AGENTS.md` §2.7 would call the alternative a silent no-op in the
     /// direction that matters.
     fn pane_keys(&mut self, ctx: &egui::Context) {
-        if self.palette.is_some() || self.model_picker.is_some() {
+        if self.palette.is_some() || self.model_picker.is_some() || self.shortcuts_open {
             return;
         }
         // **The window's two layout keys, before every pane key.** They are read here
@@ -2448,6 +2502,8 @@ impl IdeApp {
     /// A test that has to drive a chord to open one field would be testing the
     /// input system instead — the same reason [`Self::set_sidebar_view`] exists.
     pub fn open_palette(&mut self) {
+        self.model_picker = None;
+        self.shortcuts_open = false;
         self.palette = Some(Palette::default());
     }
     /// Say what a command did, in the transcript.
@@ -3122,6 +3178,9 @@ impl IdeApp {
         // The model picker reads the same keys for the same reason, after the
         // palette (an open palette owns every key) and before the composer.
         self.model_keys(ui.ctx());
+        // The shortcuts reference reads two keys — toggle and close — after
+        // both pickers, for the same ownership reason.
+        self.shortcuts_keys(ui.ctx());
         // Pane focus, and the keys that act inside the focused pane. **After the
         // palette**, which owns those keys while it is open, and **before every pane is
         // drawn**, because the composer consumes Enter and Escape unconditionally and a
@@ -3418,6 +3477,9 @@ impl IdeApp {
         // The model picker draws beside the palette, same layer: only one of
         // the two is ever open (opening either closes the other).
         self.draw_model_picker(ui, &mut summary, scale);
+        // The shortcuts reference draws on the same layer, under the same
+        // one-overlay rule.
+        self.draw_shortcuts(ui, &mut summary, scale);
         // **The quit dialog is above the palette, not beside it.** A close request arrives
         // from outside the window — from a button the reader pressed without touching the
         // application — so it cannot be queued behind whatever the application happens to
@@ -3736,6 +3798,92 @@ impl IdeApp {
         summary
             .rows
             .push(("models".into(), "esc backs out · enter chooses".into()));
+    }
+
+    /// The shortcuts reference: every window binding with its effective chord.
+    ///
+    /// A read-only overlay in the palette's position — the eye goes to the top
+    /// for a thing you opened to read. Rows come straight from the binding
+    /// table (see [`Self::shortcut_rows`]), so a rebound chord is shown
+    /// rebound. No cap and no filter: a reference that hides rows is an index
+    /// with pages torn out.
+    fn draw_shortcuts(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
+        if !self.shortcuts_open {
+            return;
+        }
+        let rows = self.shortcut_rows();
+
+        let screen = ui.ctx().content_rect();
+        let width = (screen.width() * 0.6).clamp(240.0, 720.0);
+        let height = ((28.0 + rows.len() as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.9);
+        let box_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
+            egui::vec2(width, height),
+        );
+        let theme = self.theme;
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        paint_text(
+            &painter,
+            summary,
+            "shortcuts",
+            box_rect.left_top() + egui::vec2(12.0, 18.0 * scale),
+            egui::Align2::LEFT_CENTER,
+            "Keyboard shortcuts".to_string(),
+            egui::FontId::proportional(13.0 * scale),
+            theme.title,
+        );
+        summary
+            .rows
+            .push(("shortcuts".into(), "Keyboard shortcuts".into()));
+
+        let mut y = box_rect.top() + 32.0 * scale;
+        for (id, chords) in &rows {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(box_rect.left() + 8.0, y),
+                egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
+            );
+            paint_text(
+                &painter,
+                summary,
+                "shortcuts",
+                row.left_top() + egui::vec2(4.0, 14.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                id.clone(),
+                egui::FontId::proportional(13.0 * scale),
+                theme.text,
+            );
+            paint_text(
+                &painter,
+                summary,
+                "shortcuts",
+                row.right_top() - egui::vec2(4.0, 14.0 * scale),
+                egui::Align2::RIGHT_CENTER,
+                chords.clone(),
+                egui::FontId::proportional(11.0 * scale),
+                theme.dim,
+            );
+            summary.rows.push(("shortcuts".into(), id.clone()));
+            // **Named rows, like the palette's.** Painted text reaches no
+            // screen reader on its own; the salt is the binding id, which is
+            // stable whatever the table order becomes.
+            name_region(
+                ui,
+                row,
+                &format!("epsilon-shortcut-row-{id}"),
+                &format!("Shortcut · {id} · {chords}"),
+                egui::accesskit::Role::Region,
+            );
+            y += 22.0 * scale;
+        }
+        summary.rows.push(("shortcuts".into(), "esc closes".into()));
     }
     /// The icon strip that chooses what the sidebar shows.
     ///
@@ -8658,6 +8806,74 @@ mod tests {
         let frame = h.paint();
         assert!(
             h.node_named("Model row").starts_with("Model row"),
+            "a screen reader must reach the rows by name.\n{}",
+            frame.describe()
+        );
+    }
+
+    /// `Ctrl+/` opens the shortcuts reference, and again closes it (S-101).
+    ///
+    /// The window's chords live in tooltips and status hints; nothing lists
+    /// them all. RED first: no overlay, no rows.
+    #[test]
+    fn control_slash_toggles_the_shortcuts_reference() {
+        let (ws, _keep) = scratch_workspace("shortcuts-toggle");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::Slash);
+        assert!(
+            h.app.shortcuts_open,
+            "Ctrl+/ must open the shortcuts reference"
+        );
+        let frame = h.paint();
+        let rows = frame.region("shortcuts").join("\n");
+        assert!(
+            rows.contains("window.palette"),
+            "the reference must list the window's bindings.\n{rows}"
+        );
+        // The chord rides the accessibility node (summary rows carry ids, as
+        // the palette's do) — which is also the stronger claim: a screen
+        // reader hears the effective chord.
+        let chord = h.app.keys.label("window.palette").unwrap_or_default();
+        assert!(
+            !chord.is_empty(),
+            "the palette binding must have an effective chord"
+        );
+        let named = h.node_named("Shortcut · window.palette");
+        assert!(
+            named.contains(&chord),
+            "the node must carry the effective chord, not a hardcoded one.\n{named}"
+        );
+
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::Slash);
+        assert!(
+            !h.app.shortcuts_open,
+            "a second Ctrl+/ must close it when already in front"
+        );
+    }
+
+    /// Escape closes the shortcuts reference.
+    #[test]
+    fn escape_closes_the_shortcuts_reference() {
+        let (ws, _keep) = scratch_workspace("shortcuts-escape");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::Slash);
+        assert!(h.app.shortcuts_open, "precondition: open");
+        let _ = h.press(egui::Key::Escape);
+        assert!(!h.app.shortcuts_open, "Escape must close the reference");
+    }
+
+    /// Shortcut rows are named for screen readers.
+    #[test]
+    fn shortcut_rows_are_named_for_screen_readers() {
+        let (ws, _keep) = scratch_workspace("shortcuts-a11y");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::Slash);
+        let frame = h.paint();
+        assert!(
+            h.node_named("Shortcut").starts_with("Shortcut"),
             "a screen reader must reach the rows by name.\n{}",
             frame.describe()
         );

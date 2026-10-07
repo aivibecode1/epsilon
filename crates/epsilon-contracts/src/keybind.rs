@@ -394,6 +394,9 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.model.submit", &["enter"]),
     ("window.model.next", &["down"]),
     ("window.model.previous", &["up"]),
+    // The shortcuts reference: toggled, and closed when already in front.
+    ("window.shortcuts", &["ctrl+/"]),
+    ("window.shortcuts.close", &["escape"]),
     ("window.focus.next", &["f6"]),
     ("window.focus.previous", &["shift+f6"]),
     ("window.tree.next", &["down"]),

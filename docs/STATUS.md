@@ -75,6 +75,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 40. **Full-port round 24 — the exit names the way back (P-085)** | After teardown the TUI prints `To resume this session: epsilon --resume <path>` when the session file exists — resolved through the shared `session_path_for`, absolutized for pasteability; `--continue` out of scope by design (re-resolving its target here could name a file the run created). One unit test (persisted fresh, persisted target, missing stays silent) with a control on the existence gate. P-085 moves to `done`; Pi counts move to **41 / 124 / 156**. Battery `port-r24` (2,135), green first time. |
 | (10-06) | 41. **Full-port round 25 — the terminal title tracks the session (P-017)** | `epsilon - {name} - {base}`, base alone without a name, refreshed on switch (name re-hydrated), rename, and startup. Control characters stripped via the shared `display_safe` — the name is user-typed, and a hostile BEL/ESC in it would break the OSC sequence; pinned by tests, proven by a control that drops the stripping. Stated limit: the OSC emission itself is reviewed, not asserted. P-017 moves to `done`; Pi counts move to **42 / 124 / 155**. Battery `port-r25` (2,137), green first time. |
 | (10-06) | 42. **Full-port round 26 — stopped answers say so (C-110), both front ends** | P-127's sibling for aborts: `Response was stopped before completion.` on `StopReason::Aborted` in all four transcript paths (TUI live + history, window `MessageEnd` + `from_messages`). Five tests, RED first: 2 TUI frames (one with an EndTurn control), 2 desktop reducer tests, 1 resume-to-screen — with controls on the history arm and the live arm. C-110 moves to `done`; DSH counts move to **14 / 93 / 284**. Battery `port-r26` (2,142), green first time. |
+| (10-06) | 43. **Full-port round 27 — a shortcuts reference (S-101), and a dead-chord fix** | `Ctrl+/` toggles a read-only overlay listing every window binding with its effective chord (rebound shows rebound), Escape closes, screen-reader-named rows, one overlay at a time. Building it exposed that `Key::Slash` (and `.`/`Comma`) mapped to a null char — punctuation chords could never fire — fixed with explicit mappings. Three tests (toggle, escape, a11y) with a control on the open. S-101 moves to `done`; DSH counts move to **15 / 93 / 283**; round-12 debt repaid (S-103/S-107 were still in the missing list). Battery `port-r27` (2,145), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -167,7 +168,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 42 | 124 | 155 | 18 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 14 | 93 | 284 | 42 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 15 | 93 | 283 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -222,11 +223,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r26-2026-10-06.txt`](../audit/evidence/gate-port-r26-2026-10-06.txt),
+**Latest green battery: [`gate-port-r27-2026-10-06.txt`](../audit/evidence/gate-port-r27-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
-**2,142 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — five more than `gate-port-r25`: the stopped-marker tests (2 TUI frames,
-2 desktop reducer, 1 resume-to-screen). (`cargo fmt --check` ran before launching.)
+**2,145 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r26`: the shortcuts-reference tests. (`cargo
+fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
