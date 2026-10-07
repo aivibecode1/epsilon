@@ -408,6 +408,10 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.settings.submit", &["enter"]),
     ("window.settings.next", &["down"]),
     ("window.settings.previous", &["up"]),
+    // Open the model picker directly (round-34 triage): the terminal binds
+    // `app.model.select` to the same chord, so one gesture works in both
+    // front ends and a model change stops costing palette-spelling.
+    ("window.model", &["ctrl+m"]),
     // Hide thinking blocks (P-040, window half): Alt+T like the terminal
     // (`Ctrl+T` is free here, but one gesture in both front ends beats two).
     ("window.thinking.toggle", &["alt+t"]),

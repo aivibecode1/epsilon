@@ -2463,6 +2463,12 @@ impl IdeApp {
         if self.keys.take(ctx, "window.thinking.toggle") {
             self.toggle_thinking();
         }
+        // **Open the model picker directly (round-34 triage).** Below the
+        // palette guard with the other chords: an open overlay owns every
+        // key, so this fires only when nothing is already up.
+        if self.keys.take(ctx, "window.model") {
+            self.open_model_picker();
+        }
         // **`Shift` first, and that is no longer a workaround.** It used to be needed
         // because `InputState::consume_key` matches modifiers *logically* — extra shift and
         // alt are ignored — so a `NONE` match also swallowed `Shift+F6` and cycled forward
@@ -14166,6 +14172,31 @@ mod tests {
             hint.contains(&toggle) && !hint.contains("left/right"),
             "with the sidebar folded there is nothing to resize, so the arrows are not \
              printed: {hint:?}"
+        );
+    }
+
+    /// `Ctrl+M` opens the model picker (round-34 triage).
+    ///
+    /// The terminal binds `app.model.select` to `Ctrl+M`; the window had no
+    /// chord, so changing the model was palette-spelling every time. A
+    /// keyboard-only triage counted the full-spell path at nine keys and the
+    /// fuzzy one at five — this chord makes it three. RED first: nothing
+    /// opens.
+    #[test]
+    fn control_m_opens_the_model_picker() {
+        let (ws, _keep) = scratch_workspace("control-m-picker");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::M);
+        assert!(
+            h.app.model_picker.is_some(),
+            "Ctrl+M must open the model picker, like the terminal's Ctrl+M"
+        );
+        let frame = h.paint();
+        assert!(
+            !frame.region("models").is_empty(),
+            "and providers must reach the screen.\n{}",
+            frame.describe()
         );
     }
 }
