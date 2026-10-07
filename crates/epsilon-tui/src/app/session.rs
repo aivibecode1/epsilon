@@ -247,9 +247,17 @@ impl App {
         typed: Option<&str>,
     ) -> Result<usize, String> {
         let count = agent.live_resume(path)?;
+        // Read now, push after hydration below clears the rows: a recorded
+        // directory the run does not share silently reinterprets relative
+        // paths, and a recorded directory that no longer exists makes it
+        // certain (round 36).
+        let cwd_note = epsilon_core::Agent::resume_cwd_note(path, &self.workspace_root);
         {
             let history = agent.history();
             self.ui.hydrate_from_history(&history);
+            if let Some(note) = cwd_note {
+                self.ui.push_notice(note);
+            }
             // M144/F22: summarization bills are not messages, so `live_resume`'s history
             // does not contain them and `hydrate_from_history` cannot see them. They are
             // read from the store and folded in *after* hydration, which clears the rows —

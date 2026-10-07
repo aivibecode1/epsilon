@@ -3334,6 +3334,58 @@ async fn resume_names_compactions() {
     let _ = app;
 }
 
+/// Resuming a session recorded elsewhere names the directory.
+///
+/// Relative paths in the file were written against the recorded directory;
+/// tools run in the running one. The launch stays put — this names the fact
+/// so the reader decides. RED first: silence.
+#[tokio::test]
+async fn resume_from_elsewhere_names_the_directory() {
+    let ws = tempfile::tempdir().expect("tmp");
+    let elsewhere = tempfile::tempdir().expect("elsewhere");
+    let file = ws.path().join("foreign.jsonl");
+    drop(
+        epsilon_session::SessionStore::open_in(&file, elsewhere.path())
+            .expect("a session recorded elsewhere"),
+    );
+
+    let (mut app, agent, _) = test_app();
+    app.workspace_root = ws.path().to_path_buf();
+    let backing = std::sync::Arc::new(std::sync::Mutex::new(
+        epsilon_core::SessionStore::open(ws.path().join("t.jsonl")).unwrap(),
+    ));
+    agent.attach_session_store(std::sync::Arc::clone(&backing));
+
+    assert!(!type_and_enter(
+        &mut app,
+        &agent,
+        &format!("/resume {}", file.display())
+    ));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("recorded in")
+            && t.contains(&elsewhere.path().to_string_lossy().into_owned())),
+        "must name the recorded directory: {texts:?}"
+    );
+
+    // Same directory stays silent.
+    let home = ws.path().join("home.jsonl");
+    drop(
+        epsilon_session::SessionStore::open_in(&home, ws.path()).expect("a session recorded here"),
+    );
+    assert!(!type_and_enter(
+        &mut app,
+        &agent,
+        &format!("/resume {}", home.display())
+    ));
+    let texts: Vec<String> = app.ui.lines().iter().map(|l| l.text.clone()).collect();
+    assert!(
+        !texts.iter().any(|t| t.contains("recorded in")),
+        "no mismatch, no notice: {texts:?}"
+    );
+    let _ = app;
+}
+
 // ---- OSC 52: `/copy` over a terminal that has no local clipboard ------------
 //
 // The defect: `/copy` called `arboard` and printed "copied N chars to clipboard"

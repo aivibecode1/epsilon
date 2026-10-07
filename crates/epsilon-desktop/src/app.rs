@@ -8687,6 +8687,36 @@ mod tests {
         );
     }
 
+    /// Resuming a session recorded elsewhere names the directory (round 36).
+    ///
+    /// Same shared note as the terminal's: relative paths were written
+    /// against the recorded directory, tools run in this one. RED first:
+    /// the bare resume sentence.
+    #[test]
+    fn resume_from_elsewhere_names_the_directory() {
+        let (ws, _keep) = scratch_workspace("resume-elsewhere");
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("foreign.jsonl");
+        drop(
+            epsilon_session::SessionStore::open_in(&other, elsewhere.path())
+                .expect("a session recorded elsewhere"),
+        );
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command(&format!("/resume {}", other.display()));
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/resume <path> must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("recorded in")
+                && said.contains(&elsewhere.path().to_string_lossy().into_owned()),
+            "must name the recorded directory: {said:?}"
+        );
+    }
+
     /// Bare `/resume` opens the sessions browser — the path form's partner.
     ///
     /// The terminal's bare form opens its session browser; here the browser is

@@ -476,10 +476,20 @@ impl IdeApp {
             return Outcome::Ran(format!("already in {} — nothing to resume", abs.display()));
         }
         match self.switch_session(&abs) {
-            Ok(count) => Outcome::Ran(format!(
-                "resumed {count} messages from {} (history restored, store swapped)",
-                abs.display()
-            )),
+            Ok(count) => {
+                // Name a recorded-vs-running directory mismatch (round 36),
+                // in the same sentence as the resume: a session resumed from
+                // elsewhere silently reinterprets relative paths.
+                let mut said = format!(
+                    "resumed {count} messages from {} (history restored, store swapped)",
+                    abs.display()
+                );
+                if let Some(note) = epsilon_core::Agent::resume_cwd_note(&abs, self.workspace()) {
+                    said.push_str("; ");
+                    said.push_str(&note);
+                }
+                Outcome::Ran(said)
+            }
             Err(e) => Outcome::Ran(format!("resume failed: {e}")),
         }
     }

@@ -427,6 +427,47 @@ fn looks_like_context_overflow(msg: &str) -> bool {
 }
 
 #[cfg(test)]
+mod cwd_note_tests {
+    use super::Agent;
+
+    /// Empty recording stays silent; the same directory stays silent (even
+    /// spelled with a trailing separator); a different live directory names
+    /// both; a gone directory says so. RED first: no such helper.
+    #[test]
+    fn recorded_vs_running_names_mismatches_only() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let here = tmp.path();
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        let gone = here.join("gone-zzz");
+
+        assert!(Agent::cwd_mismatch_note("", here).is_none());
+        assert!(Agent::cwd_mismatch_note("   ", here).is_none());
+        assert!(Agent::cwd_mismatch_note(&here.to_string_lossy(), here).is_none());
+
+        let trailing = format!("{}{}", here.display(), std::path::MAIN_SEPARATOR);
+        assert!(
+            Agent::cwd_mismatch_note(&trailing, here).is_none(),
+            "a trailing separator is not a mismatch"
+        );
+
+        let note = Agent::cwd_mismatch_note(&elsewhere.path().to_string_lossy(), here)
+            .expect("a different live directory must be named");
+        assert!(
+            note.contains(&elsewhere.path().to_string_lossy().into_owned())
+                && note.contains(&here.to_string_lossy().into_owned()),
+            "names both directories: {note:?}"
+        );
+
+        let gone_note = Agent::cwd_mismatch_note(&gone.to_string_lossy(), here)
+            .expect("a gone directory must be named");
+        assert!(
+            gone_note.contains("no longer exists"),
+            "says the directory is gone: {gone_note:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod overflow_classifier_tests {
     use super::looks_like_context_overflow;
 
@@ -1143,6 +1184,71 @@ impl Agent {
         let count = msgs.len();
         self.restore_history(msgs);
         Ok(count)
+    }
+
+    /// Name a recorded-vs-running directory mismatch, if there is one.
+    ///
+    /// Resuming (or switching into) a session recorded in another directory
+    /// silently reinterprets every relative path against the running one —
+    /// and a recorded directory that no longer exists makes it certain. The
+    /// launch stays where it is (moving the process is not on offer); this
+    /// names the fact so the reader, not the tooling, decides what it means.
+    /// Empty recording (headerless v1 files) stays silent: no information,
+    /// no noise.
+    pub fn cwd_mismatch_note(recorded: &str, current: &std::path::Path) -> Option<String> {
+        let recorded = recorded.trim();
+        if recorded.is_empty() {
+            return None;
+        }
+        if Self::same_directory(std::path::Path::new(recorded), current) {
+            return None;
+        }
+        if !std::path::Path::new(recorded).is_dir() {
+            return Some(format!(
+                "session was recorded in {recorded}, which no longer exists — tools run in {}",
+                current.display()
+            ));
+        }
+        Some(format!(
+            "session was recorded in {recorded} — tools run in {}",
+            current.display()
+        ))
+    }
+
+    /// Read `path`'s recorded cwd and name a mismatch against `current`.
+    ///
+    /// The one call both front ends make after a resume lands: headerless or
+    /// unreadable headers stay silent (no information, no noise), everything
+    /// else goes through [`Self::cwd_mismatch_note`].
+    pub fn resume_cwd_note(path: &std::path::Path, current: &std::path::Path) -> Option<String> {
+        let recorded = epsilon_session::discover::read_session_header(path)?.cwd;
+        Self::cwd_mismatch_note(&recorded, current)
+    }
+
+    /// Whether two paths name the same directory.
+    ///
+    /// Canonicalized comparison when both exist (which settles separators,
+    /// case, and symlinks on every platform); a normalized string fallback
+    /// when they do not, so a gone directory still compares sanely.
+    fn same_directory(a: &std::path::Path, b: &std::path::Path) -> bool {
+        if let (Ok(ca), Ok(cb)) = (a.canonicalize(), b.canonicalize()) {
+            return ca == cb;
+        }
+        fn norm(p: &std::path::Path) -> String {
+            let mut s = p.to_string_lossy().into_owned();
+            while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
+                s.pop();
+            }
+            #[cfg(windows)]
+            {
+                s.to_ascii_lowercase()
+            }
+            #[cfg(not(windows))]
+            {
+                s
+            }
+        }
+        norm(a) == norm(b)
     }
 
     /// Whether a run is currently active (for in-TUI gate on live resume).
