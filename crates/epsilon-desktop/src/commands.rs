@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-four names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-five names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -224,6 +224,12 @@ impl IdeApp {
             // moving it is a refactor for a second consumer to force.
             Command::Skills => self.run_skills_list(),
             Command::Skill(arg) => self.run_skill_toggle(arg),
+            // **`/changelog` shows the workspace changelog's head (full-port
+            // round 44).** The terminal's read (workspace `CHANGELOG.md`,
+            // else `docs/CHANGELOG.md`, first ~120 lines) as one answer:
+            // header, lines, overflow line — or the honest absence.
+            // Read-only, so safe to drive in tests.
+            Command::Changelog => self.run_changelog(),
             // **`/login` stores a pasted provider key, `/logout` removes one
             // (full-port round 38).** The same shared store the terminal
             // uses (`epsilon_llm::auth`), so a key saved in either front end
@@ -890,6 +896,51 @@ impl IdeApp {
         }
     }
 
+    /// Show the workspace changelog's head.
+    ///
+    /// The terminal's read with its words: workspace `CHANGELOG.md`, else
+    /// `docs/CHANGELOG.md`, header line plus the first ~120 lines and an
+    /// overflow line — or the honest absence. One answer, joined: the
+    /// transcript shows the lines, the file keeps the history.
+    fn run_changelog(&mut self) -> Outcome {
+        let candidates = [
+            self.workspace().join("CHANGELOG.md"),
+            self.workspace().join("docs").join("CHANGELOG.md"),
+        ];
+        let mut found: Option<(std::path::PathBuf, String)> = None;
+        for candidate in candidates {
+            if let Ok(raw) = std::fs::read_to_string(&candidate)
+                && !raw.trim().is_empty()
+            {
+                found = Some((candidate, raw));
+                break;
+            }
+        }
+        let Some((path, raw)) = found else {
+            return Outcome::Ran(
+                "changelog: no CHANGELOG.md in workspace (see docs/milestones/ for milestone logs)"
+                    .to_string(),
+            );
+        };
+        let lines: Vec<&str> = raw.lines().collect();
+        let take = lines.len().min(120);
+        let mut out = vec![format!(
+            "changelog: {} ({} lines, showing {} — see file for full history)",
+            path.display(),
+            lines.len(),
+            take
+        )];
+        out.extend(lines[..take].iter().map(|s| s.to_string()));
+        if lines.len() > take {
+            out.push(format!(
+                "… {} more lines in {}",
+                lines.len() - take,
+                path.display()
+            ));
+        }
+        Outcome::Ran(out.join("\n"))
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -1041,9 +1092,31 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "clone", "compact", "copy", "exit", "export", "fork", "goal", "help", "hotkeys",
-    "login", "logout", "model", "new", "reload", "resume", "session", "sessions", "settings",
-    "skill", "skills", "tasks", "theme", "think",
+    "changelog",
+    "clear",
+    "clone",
+    "compact",
+    "copy",
+    "exit",
+    "export",
+    "fork",
+    "goal",
+    "help",
+    "hotkeys",
+    "login",
+    "logout",
+    "model",
+    "new",
+    "reload",
+    "resume",
+    "session",
+    "sessions",
+    "settings",
+    "skill",
+    "skills",
+    "tasks",
+    "theme",
+    "think",
 ];
 
 #[cfg(test)]
@@ -1310,6 +1383,7 @@ mod tests {
     #[test]
     fn the_window_runs_exactly_the_heads_it_declares_supported() {
         let implemented: Vec<&'static str> = [
+            Command::Changelog,
             Command::Clear,
             Command::Clone,
             Command::Compact,

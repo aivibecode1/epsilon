@@ -14900,4 +14900,64 @@ mod tests {
             );
         }
     }
+
+    /// `/changelog` shows the workspace changelog's head (round 44).
+    ///
+    /// Same read as the terminal's (workspace file, else docs/, first ~120
+    /// lines) with its words — or the honest absence. Read-only throughout,
+    /// so the workspace file doubles as the hermetic fixture. RED first: the
+    /// honest refusal.
+    #[test]
+    fn slash_changelog_shows_the_head() {
+        let (ws, _keep) = scratch_workspace("slash-changelog");
+        std::fs::write(
+            ws.join("CHANGELOG.md"),
+            "# Log\n\n## 1.0 — first\n\n- hello\n",
+        )
+        .expect("changelog fixture");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/changelog");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/changelog must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("CHANGELOG.md") && said.contains("## 1.0 — first"),
+            "must name the file and show its lines: {said:?}"
+        );
+    }
+
+    /// `/changelog` caps long files and names the absence.
+    #[test]
+    fn slash_changelog_caps_and_absent() {
+        let (ws, _keep) = scratch_workspace("slash-changelog-long");
+        let long = (0..130)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(ws.join("CHANGELOG.md"), long).expect("long fixture");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/changelog");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/changelog must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("more lines in"),
+            "must cap with an overflow line: {said:?}"
+        );
+        assert!(
+            !said.contains("line 129"),
+            "must not emit past the cap: {said:?}"
+        );
+
+        let (ws2, _keep2) = scratch_workspace("slash-changelog-absent");
+        let mut h2 = Harness::new(ws2);
+        let outcome = h2.app.try_command("/changelog");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/changelog must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no CHANGELOG.md"),
+            "must name the absence: {said:?}"
+        );
+    }
 }

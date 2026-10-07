@@ -2506,6 +2506,11 @@ row formatting is duplicated from the terminal, not shared (ten TUI-local
 lines; moving them is a refactor for a second consumer to force). The flip
 itself writes the global store and is reviewed, not driven. 24 of 37.
 
+**Amendment (full-port round 44).** `/changelog` shows the workspace
+changelog's head: the terminal's read (workspace file, else docs/, first
+~120 lines) with its words — or the honest absence. Read-only, so safe to
+drive in tests. 25 of 37.
+
 ---
 
 ---
