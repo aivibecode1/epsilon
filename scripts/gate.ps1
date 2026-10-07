@@ -203,6 +203,11 @@ $gates = @(
     # records (ADR amendments, the STATUS log) are excluded by design — see
     # the script.
     @{ Name = "check-verb-counts"; Exe = "python"; Args = @("scripts/check-verb-counts.py", "--quiet") },
+    # Matrix summaries, totals, open-row lists and embedded heading counts are
+    # hand-maintained; stale ids sat in a missing list two rounds after going
+    # done. Per-section placement is verified for pi-tui only (dsh-desktop
+    # uses three namings; see the script).
+    @{ Name = "check-parity-counts"; Exe = "python"; Args = @("scripts/check-parity-counts.py", "--quiet") },
     # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises
     # on commit), and it breaks every source-parsing test in the tree in a way that
     # reports something else entirely -- M231 lost a battery to a dispatcher

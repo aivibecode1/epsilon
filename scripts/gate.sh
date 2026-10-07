@@ -70,6 +70,10 @@ run "check-parity-citations" python scripts/check-parity-citations.py --quiet ||
 # verb round; four rounds running each missed at least one site. Dated
 # records are excluded by design -- see the script.
 run "check-verb-counts" python scripts/check-verb-counts.py --quiet || overall=1
+# Matrix summaries, totals, open-row lists and embedded heading counts are
+# hand-maintained; stale ids sat in a missing list two rounds after going
+# done. Per-section placement is verified for pi-tui only -- see the script.
+run "check-parity-counts" python scripts/check-parity-counts.py --quiet || overall=1
 # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises on
 # commit) and breaks every source-parsing test in the tree while reporting
 # something else entirely -- M231 lost a battery to a dispatcher reported as

@@ -783,14 +783,14 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 
 | area | partial rows |
 |---|---|
-| Electron shell | D-001, D-021, D-030, D-045, D-058, D-061, D-062, D-064, D-066 |
+| Electron shell | D-001, D-021, D-030, D-031, D-045, D-058, D-061, D-062, D-064, D-066 |
 | Approvals and presets | D-073, D-074, D-075, D-076, D-083, D-084 |
 | Transcript and tool cards | C-107, C-109, C-120, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
-| Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-159, S-164 |
+| Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
-| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164, L-165 |
-| Approvals through models | I-101, I-104, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142 |
-| Un-numbered reference rows | U-003, U-017 |
+| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-114, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164, L-165 |
+| Approvals through models | I-101, I-104, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
+| Un-numbered reference rows | U-003, U-006, U-017 |
 
 **The four partials worth acting on first**, because each is a place where a reader could be misled
 rather than merely underserved:
@@ -820,7 +820,7 @@ rather than merely underserved:
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
 | Keyboard and settings | S-102, S-104, S-105, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
 | Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
-| Layout and panes | L-104, L-109, L-111, L-112, L-113, L-114, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
+| Layout and panes | L-104, L-109, L-111, L-112, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
 | Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-150 |
 | Un-numbered reference rows | U-002, U-004, U-005, U-007, U-008, U-009, U-010, U-011, U-013, U-014, U-015, U-016, U-018, U-019, U-020, U-021, U-026, U-027, U-028, U-029, U-030 |
 
