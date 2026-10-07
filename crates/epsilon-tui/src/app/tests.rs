@@ -6238,3 +6238,109 @@ async fn enter_while_streaming_steers_rather_than_queueing() {
         "and the steer must land in the queue the agent reads"
     );
 }
+
+/// `/clone` duplicates the session and says so when empty (P-075).
+///
+/// Mirrors the `/fork` test: same `fork_branch_at` machinery, differing
+/// only in the word reported — which is exactly what this pins. The empty
+/// case names itself rather than forking nothing.
+#[test]
+fn clone_duplicates_the_session_and_names_empty() {
+    let (mut app, agent, _rx) = test_app();
+    let dir = seed_branch(&agent, &["first", "second"]);
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/clone").expect("/clone parses"),
+    );
+
+    let source = dir.path().join("session.jsonl");
+    let siblings: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    let cloned: Vec<_> = siblings.iter().filter(|p| **p != source).cloned().collect();
+    assert_eq!(
+        cloned.len(),
+        1,
+        "exactly one new session file must appear; found {cloned:?}"
+    );
+    let source_id = header_id(&std::fs::read_to_string(&source).expect("read source"));
+    let clone_id = header_id(&std::fs::read_to_string(&cloned[0]).expect("read clone"));
+    assert_ne!(
+        source_id, clone_id,
+        "a clone is a new session: it must carry its own id, not the source's"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("cloned session")),
+        "and it must say so: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// `/clone` with nothing to clone says so (P-075, empty half).
+#[test]
+fn clone_with_no_messages_says_nothing_to_clone() {
+    let (mut app, agent, _rx) = test_app();
+    let _dir = seed_branch(&agent, &[]);
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/clone").expect("/clone parses"),
+    );
+
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("nothing to clone")),
+        "empty stays honest: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// `/name` sets, shows, and says which happened (P-076).
+///
+/// Without a store the name lives for the run and says so; bare reads
+/// back what was set. The persisted half is the window's `/name` test
+/// (same entry, other front end) — this pins the terminal's words.
+#[test]
+fn name_sets_shows_and_says_which_happened() {
+    let (mut app, agent, _rx) = test_app();
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/name tabby").expect("/name parses"),
+    );
+    assert_eq!(
+        app.session_name.as_deref(),
+        Some("tabby"),
+        "the name must land in memory"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("session named 'tabby'")),
+        "and report that it was not saved: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/name").expect("bare /name parses"),
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("session name: 'tabby'")),
+        "bare must read back what was set: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}

@@ -78,7 +78,7 @@ this document**, tallied from its own tables — not a projection.
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
-| 8. Sessions | 17 | 3 | 9 | 3 | 2 |
+| 8. Sessions | 17 | 5 | 7 | 3 | 2 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **45** | **122** | **151** | **21** |
+| **Total** | **339** | **47** | **120** | **151** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -396,8 +396,8 @@ rather than into dialogs: a fork writes a **new** session file with a fresh head
 | P-072 | Selecting a tree node asks `Summarize branch?` before navigating, and cancelling re-opens the tree on the same node | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5513-5541` | partial | `crates/epsilon-tui/src/app/keys.rs:797` — the tree picker opens on the leaf and Enter navigates the store to the selected row's own id; there is no branch-summarisation prompt | `timeline_picker_opens_and_enter_jumps`, `tree_and_timeline_open_one_picker_and_say_which_one_ran` |
 | P-073 | A branch summary shows its own status row with Escape bound to abort it, restored in a `finally` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5557-5569`, `:5577-5582`, `:5598-5603` | missing | none | — |
 | P-074 | `/fork` lists earlier user messages, newest pre-selected, and puts the typed text back into the composer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5424-5460` | partial | `crates/epsilon-tui/src/app/commands.rs:1161`, `:1169` — forks the **current leaf** into a new session file with a fresh header id; there is no message picker and the composer is not refilled | `fork_creates_a_distinct_session_and_not_a_file_copy` |
-| P-075 | `/clone` duplicates the session at the current position and says `Nothing to clone yet` when empty | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5462-5481` | partial | `crates/epsilon-tui/src/app/commands.rs:1161` — `/fork` and `/clone` both call `fork_branch_at` on the current leaf and differ only in the word used | `fork_creates_a_distinct_session_and_not_a_file_copy`; E-064 records that no test drives `/clone` |
-| P-076 | `/name <name>` sets and shows the name, and says so when the stored value was normalised | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6587-6610` | partial | `crates/epsilon-tui/src/app/commands.rs:1281` — sets the name in memory, appends a non-LLM `session_name` entry to the file, and distinguishes a persisted write from a refused one | `none found` per E-069 — no test types `/name` |
+| P-075 | `/clone` duplicates the session at the current position and says `Nothing to clone yet` when empty | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5462-5481` | done | `crates/epsilon-tui/src/app/commands.rs:1161` — `/fork` and `/clone` both call `fork_branch_at` on the current leaf and differ only in the word used | `clone_duplicates_the_session_and_names_empty` (mirrors the fork test: new file, new id, notice), `clone_with_no_messages_says_nothing_to_clone` |
+| P-076 | `/name <name>` sets and shows the name, and says so when the stored value was normalised | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6587-6610` | done | `crates/epsilon-tui/src/app/commands.rs:1281` — sets the name in memory, appends a non-LLM `session_name` entry to the file, and distinguishes a persisted write from a refused one | `name_sets_shows_and_says_which_happened` (memory, unsaved notice, bare read-back; notice-mutation controls) |
 | P-077 | `/session` prints name, file, id, message counts, a token breakdown with cache hit-rate and cache-warming status, and a per-model cost breakdown | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6612-6691` | partial | `crates/epsilon-tui/src/app/commands.rs:1075` — file, leaf id, branch entry count, token totals, model, cache-attribution lines and a cost breakdown; there is no cache-warming status and no per-model split | `session_command_reports_cache_attribution_beside_the_totals`, `session_command_shows_where_the_money_went_not_just_how_much` |
 | P-078 | `/export` writes HTML, or JSONL when the path ends `.jsonl` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6439-6455`, `:6457-6484` | partial | `crates/epsilon-tui/src/app/commands.rs:2186`, `:2215` — HTML by default to `.epsilon/exports/`, `html`/`json`/`jsonl` explicit, a bare path inferred from a `.json`/`.jsonl` suffix | `export_writes_html_and_json` asserts the two writers directly, **not** the format inference or the default destination |
 | P-079 | `/import <path>` asks `Replace current session with …?` before doing anything | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6486-6528` | partial | `crates/epsilon-tui/src/app/commands.rs:1357`, `:1377` — refuses while a run is in flight and reports a missing file, but there is no confirmation before the swap | `none found` per E-066 — no test in the tree types `/resume` or `/import` |
@@ -769,7 +769,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
-| 8. Sessions | 17 | 3 | 9 | 3 | 2 |
+| 8. Sessions | 17 | 5 | 7 | 3 | 2 |
 | 9. Themes | 18 | 0 | 6 | 8 | 4 |
 | 10. Settings | 22 | 1 | 9 | 11 | 1 |
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **45** | **122** | **151** | **21** |
+| **Total** | **339** | **47** | **120** | **151** | **21** |
 
 ### The `missing` rows — 161
 
@@ -820,7 +820,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Transcript and streaming (6) | P-040, P-054, P-058, P-121, P-128, P-183 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; a compaction rule instead of a summary card and cost line; notices have no fixed `Error:`/`Warning:` prefix; no `outputPad` setting; abort text lands on a system row, not the answer; the compaction row is not collapsible |
 | Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |
 | Auth, login and permissions (3) | P-062, P-064, P-067 | one masked modal instead of an auth-type → provider → dialog chain with `onBack`; one of four dialog event kinds; the TUI path for `/logout <provider>` is unpinned |
-| Sessions (9) | P-070, P-072, P-074, P-075, P-076, P-077, P-078, P-079, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; `/name` and `/import` unpinned; no cache-warming status; export format inference asserted on the writers, not the inference; reload covers four resource kinds, not six |
+| Sessions (7) | P-070, P-072, P-074, P-077, P-078, P-079, P-082 | no cross-directory scope / rename / delete in the picker; no branch summarisation; fork is at the leaf, not at a chosen message; `/import` unpinned; no cache-warming status; export format inference asserted on the writers, not the inference; reload covers four resource kinds, not six |
 | Themes (6) | P-091, P-093, P-097, P-099, P-102, P-269 | three palettes and no file-loaded themes; the measured contrast floor is asserted for `high-contrast` only; an unknown name is refused rather than silently reverted; no theme-token language; the ASCII repertoire is overridable but colour depth is not; no theme submenu |
 | Settings (9) | P-104, P-107, P-108, P-109, P-110, P-274, P-276, P-278, P-280 | a fixed eight-row popup; a trust review rather than a layered merge; no keybinding migration; a Windows predicate for glyphs, not chords; 23 ids against 44+; empty states live in transcript notices; one enum edited by name; capacity measured rather than a ten-row cap; the stage is named by the title, not `Step N/M` |
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |

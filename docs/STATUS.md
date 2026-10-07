@@ -107,6 +107,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-07) | 72. **Full-port round 57 — the window answers `/scoped_models`** | Same store both front ends read: Ctrl+F stars in the picker, F2/Shift+F2 cycle the set, the head opens onto it; starred rows floated by the shared builders (single comparator, `&[]` provably identical at every TUI site). Flip reviewed (global write), display/cycle/guards driven; four tests with a control removing the arm. One refusal left (`/editor`). 36 of 37, under ADR-029's criterion, amended. Battery `port-r57` (2,206), green first time. |
 | (10-07) | 73. **Full-port round 58 — two test-only closes, and raster declared broken here** | P-023 was already tested (row stale; now `done` with the two bang tests named). P-031 got its first test (Enter steers via a `running` seam + steer-queue assert, flag-off control). Pi now 44 / 123 / 152. Also: re-attempting the quit-dialog render crashed like the baseline (Intel UHD 620 Vulkan access-violation, Dx12 hangs) — offscreen frames cannot be produced on this machine at all; visual QA must happen where the raster works. Battery `port-r58` (2,207), green first time. |
 | (10-07) | 74. **Full-port round 59 — batch closes and a brand verdict** | P-164 got its tab test (value asserted, not just absence); P-003 went deliberately different (mouse off by design + the mark is Pi's brand, which CREDITS forbids taking); D-007/D-008 record why no menu can exist on egui 0.36's public API. Pi now 45 / 122 / 151. The counts checker caught my own section arithmetic mid-round. Battery `port-r59` (2,208), green first time. |
+| (10-07) | 75. **Full-port round 60 — batch closes for `/clone` and `/name`** | Both behaviors existed with no tests pinning them: `/clone` mirrors the fork test (new file, new id, notice) plus the empty honest case; `/name` pins memory, the unsaved notice, and bare read-back — with notice-mutation controls on both. Pi now 47 / 120 / 151. Battery `port-r60` (2,211), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -198,7 +199,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 45 | 122 | 151 | 21 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 47 | 120 | 151 | 21 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 15 | 94 | 282 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -254,10 +255,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r59-2026-10-07.txt`](../audit/evidence/gate-port-r59-2026-10-07.txt),
+**Latest green battery: [`gate-port-r60-2026-10-07.txt`](../audit/evidence/gate-port-r60-2026-10-07.txt),
 2026-10-07 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,208 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r58`: the tab test.
+**2,211 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r59`: the clone and name tests.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
