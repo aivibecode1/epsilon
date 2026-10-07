@@ -402,6 +402,12 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // The shortcuts reference: toggled, and closed when already in front.
     ("window.shortcuts", &["ctrl+/"]),
     ("window.shortcuts.close", &["escape"]),
+    // The settings browser walks like the pickers (separate ids so rebinding
+    // one never moves the others).
+    ("window.settings.close", &["escape"]),
+    ("window.settings.submit", &["enter"]),
+    ("window.settings.next", &["down"]),
+    ("window.settings.previous", &["up"]),
     // Hide thinking blocks (P-040, window half): Alt+T like the terminal
     // (`Ctrl+T` is free here, but one gesture in both front ends beats two).
     ("window.thinking.toggle", &["alt+t"]),

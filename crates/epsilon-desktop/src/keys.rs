@@ -64,6 +64,12 @@ impl KeyBindings {
         self.load_warning.as_deref()
     }
 
+    /// How many binding ids the user file overrides. The settings browser
+    /// shows the count rather than the table.
+    pub fn user_count(&self) -> usize {
+        self.user.len()
+    }
+
     /// Test seam: inject a user map directly.
     pub fn from_map(user: HashMap<String, Vec<String>>) -> Self {
         Self {

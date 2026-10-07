@@ -2455,6 +2455,12 @@ not) — stated, not silent.
 `agent.thinking_level`, an id parses and sets through the shared `ThinkingLevel` with the
 terminal's words. No picker half exists to refuse — seven names, typed. 15 of 37.
 
+**Amendment (full-port round 33).** `/settings` opens a browser, not an editor: every
+settable thing with its live value, actions where they exist (model picker, theme flip,
+thinking toggle, shortcuts reference) through the same helpers the chords and heads run,
+plain reporting where they do not (workspace, session, thinking level). Same shape as the
+terminal's guidance-only `/settings`, which also reports rather than edits. 16 of 37.
+
 ---
 
 ---

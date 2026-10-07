@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is fifteen names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is sixteen names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -178,6 +178,14 @@ impl IdeApp {
             // exists to refuse — the level is one of seven names, and typing
             // one is the whole interface.
             Command::Think(arg) => self.run_think_argument(arg),
+            // **`/settings` opens the settings browser (full-port round 33).**
+            // Every settable thing with its live value; rows with an action
+            // run it through the same helpers the chords and heads run, rows
+            // without one report (workspace, session, thinking level).
+            Command::Settings => {
+                self.open_settings();
+                Outcome::Ran("settings — values update live; Enter acts".to_string())
+            }
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -215,23 +223,7 @@ impl IdeApp {
             // write config**, because a cosmetic change must not quietly rewrite a file the user
             // may have under version control. Bare flips brightness and leaves high contrast
             // alone (`flipped()` is dark↔light by design); a name selects any of the three.
-            Command::Theme(argument) => {
-                use epsilon_tui::ui::theme::ThemeMode;
-                let next = match argument.as_deref().map(str::trim) {
-                    None | Some("") => self.theme().palette.flipped(),
-                    Some(name) => match ThemeMode::from_name(name) {
-                        Some(mode) => mode,
-                        None => {
-                            return Outcome::Ran(format!(
-                                "unknown palette '{name}' — use `dark`, `light` or \
-                                 `high-contrast`, or bare `/theme` to flip"
-                            ));
-                        }
-                    },
-                };
-                let was = self.set_palette(next).palette;
-                Outcome::Ran(format!("palette: {} → {}", was.name(), next.name()))
-            }
+            Command::Theme(argument) => self.run_theme_argument(argument),
 
             // ---- everything else is the terminal's, and saying so is the feature ----
             //
@@ -620,6 +612,28 @@ impl IdeApp {
         Outcome::Ran(said)
     }
 
+    /// Flip the palette bare, select it by name.
+    ///
+    /// Extracted from the `/theme` arm unchanged so the settings browser can
+    /// offer the same act: one flip, two doors.
+    pub(crate) fn run_theme_argument(&mut self, argument: Option<String>) -> Outcome {
+        use epsilon_tui::ui::theme::ThemeMode;
+        let next = match argument.as_deref().map(str::trim) {
+            None | Some("") => self.theme().palette.flipped(),
+            Some(name) => match ThemeMode::from_name(name) {
+                Some(mode) => mode,
+                None => {
+                    return Outcome::Ran(format!(
+                        "unknown palette '{name}' — use `dark`, `light` or \
+                         `high-contrast`, or bare `/theme` to flip"
+                    ));
+                }
+            },
+        };
+        let was = self.set_palette(next).palette;
+        Outcome::Ran(format!("palette: {} → {}", was.name(), next.name()))
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -772,7 +786,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
     "clear", "clone", "compact", "export", "fork", "goal", "help", "model", "new", "resume",
-    "session", "sessions", "tasks", "theme", "think",
+    "session", "sessions", "settings", "tasks", "theme", "think",
 ];
 
 #[cfg(test)]
@@ -1045,6 +1059,7 @@ mod tests {
             Command::Resume(String::new()),
             Command::Session,
             Command::Sessions,
+            Command::Settings,
             Command::Tasks,
             Command::Theme(None),
             Command::Think(None),

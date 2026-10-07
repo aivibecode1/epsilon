@@ -617,6 +617,33 @@ struct ModelPicker {
     provider: Option<String>,
 }
 
+/// One drawable settings row.
+///
+/// `Clone` for the same reason as `PaletteAction`: the chosen row is read
+/// after the borrow that produced it has ended.
+#[derive(Clone)]
+struct SettingsEntry {
+    /// What the setting is.
+    label: String,
+    /// Its current value, in words.
+    value: String,
+    /// What choosing the row does. `None` rows report; they do not act.
+    action: Option<SettingsAction>,
+}
+
+/// What a settings row does when it is chosen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsAction {
+    /// Open the model picker.
+    PickModel,
+    /// Flip the palette (what bare `/theme` does).
+    FlipTheme,
+    /// Flip thinking visibility (what `Alt+T` does).
+    ToggleThinking,
+    /// Open the shortcuts reference.
+    OpenShortcuts,
+}
+
 /// One drawable model-picker row, either stage.
 ///
 /// `Clone` for the same reason as `PaletteAction`: the chosen row is read
@@ -1005,6 +1032,7 @@ impl IdeApp {
     pub fn open_model_picker(&mut self) {
         self.palette = None;
         self.shortcuts_open = false;
+        self.settings_open = false;
         self.model_picker = Some(ModelPicker::default());
     }
     /// Close the model picker and hand the keyboard back to the agent pane.
@@ -1109,6 +1137,7 @@ impl IdeApp {
             } else {
                 self.palette = None;
                 self.model_picker = None;
+                self.settings_open = false;
                 self.shortcuts_open = true;
             }
             return;
@@ -1139,6 +1168,168 @@ impl IdeApp {
                 (id.to_string(), chords)
             })
             .collect()
+    }
+
+    /// The settings browser's rows: every settable thing with its value.
+    ///
+    /// Values are read live, so the browser never shows a stale preference —
+    /// a row that cached its value would lie after the action it offers runs
+    /// two frames later. Rows without an action report (workspace, session,
+    /// thinking level); rows with one act through the same helpers the chords
+    /// and heads run.
+    fn settings_entries(&self) -> Vec<SettingsEntry> {
+        let model = self
+            .session
+            .as_ref()
+            .map(|s| s.agent().model_id())
+            .unwrap_or_else(|| "—".to_string());
+        let level = self
+            .session
+            .as_ref()
+            .map(|s| s.agent().thinking_level().as_str().to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let session = self
+            .session
+            .as_ref()
+            .and_then(|s| s.session_path())
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "—".to_string());
+        let keys = self.keys.user_count();
+        vec![
+            SettingsEntry {
+                label: "Model".to_string(),
+                value: model,
+                action: Some(SettingsAction::PickModel),
+            },
+            SettingsEntry {
+                label: "Theme".to_string(),
+                value: self.theme.palette.name().to_string(),
+                action: Some(SettingsAction::FlipTheme),
+            },
+            SettingsEntry {
+                label: "Thinking".to_string(),
+                value: if self.hide_thinking {
+                    "hidden".to_string()
+                } else {
+                    "shown".to_string()
+                },
+                action: Some(SettingsAction::ToggleThinking),
+            },
+            SettingsEntry {
+                label: "Thinking level".to_string(),
+                value: level,
+                action: None,
+            },
+            SettingsEntry {
+                label: "Keybindings".to_string(),
+                value: if keys == 0 {
+                    "defaults".to_string()
+                } else {
+                    format!("{keys} custom")
+                },
+                action: Some(SettingsAction::OpenShortcuts),
+            },
+            SettingsEntry {
+                label: "Workspace".to_string(),
+                value: self.workspace().display().to_string(),
+                action: None,
+            },
+            SettingsEntry {
+                label: "Session".to_string(),
+                value: session,
+                action: None,
+            },
+        ]
+    }
+    /// Open the settings browser, closing the other overlays.
+    ///
+    /// One overlay at a time, same rule as the model picker.
+    pub fn open_settings(&mut self) {
+        self.palette = None;
+        self.model_picker = None;
+        self.shortcuts_open = false;
+        self.settings_open = true;
+        self.settings_selected = 0;
+    }
+    /// Close the settings browser and hand the keyboard back to the agent pane.
+    ///
+    /// The same two halves as [`Self::close_palette`], for the same reason.
+    fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.focus = FocusTarget::Agent;
+    }
+
+    /// Read the settings browser's keys, and act on one.
+    ///
+    /// After the pickers — an open overlay owns every key — and before the
+    /// panes, for the same reason they read before the composer.
+    fn settings_keys(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let closed = self.keys.take(ctx, "window.settings.close");
+        let mut submitted = false;
+        if !closed {
+            submitted = self.keys.take(ctx, "window.settings.submit");
+        }
+        let mut step: i32 = 0;
+        if self.keys.take(ctx, "window.settings.next") {
+            step += 1;
+        } else if self.keys.take(ctx, "window.settings.previous") {
+            step -= 1;
+        }
+        if closed {
+            self.close_settings();
+            return;
+        }
+        let entries = self.settings_entries();
+        // Clicks, resolved against last frame's rectangles like every other
+        // overlay: a row that acts must act for the mouse too.
+        let (any_click, at) = ctx.input(|i| (i.pointer.any_click(), i.pointer.interact_pos()));
+        if any_click
+            && let Some(at) = at
+            && let Some((index, _)) = self
+                .settings_rects
+                .iter()
+                .find(|(_, r)| r.contains(at))
+                .copied()
+            && let Some(entry) = entries.get(index)
+        {
+            let entry = entry.clone();
+            self.choose_settings_entry(entry);
+            return;
+        }
+        if step != 0 {
+            let last = entries.len().saturating_sub(1) as i32;
+            self.settings_selected = (self.settings_selected as i32 + step).clamp(0, last) as usize;
+        }
+        if submitted
+            && let Some(entry) =
+                entries.get(self.settings_selected.min(entries.len().saturating_sub(1)))
+        {
+            let entry = entry.clone();
+            self.choose_settings_entry(entry);
+        }
+    }
+
+    /// Act on a chosen settings row, through the same helpers the chords and
+    /// heads run — one act per setting, however many doors.
+    fn choose_settings_entry(&mut self, entry: SettingsEntry) {
+        match entry.action {
+            None => {}
+            Some(SettingsAction::PickModel) => self.open_model_picker(),
+            Some(SettingsAction::FlipTheme) => {
+                let outcome = self.run_theme_argument(None);
+                self.notice_outcome(outcome);
+            }
+            Some(SettingsAction::ToggleThinking) => self.toggle_thinking(),
+            Some(SettingsAction::OpenShortcuts) => {
+                self.palette = None;
+                self.model_picker = None;
+                self.settings_open = false;
+                self.shortcuts_open = true;
+            }
+        }
     }
     /// Read the model picker's keys, and act on one.
     ///
@@ -1504,6 +1695,12 @@ pub struct IdeApp {
     model_picker: Option<ModelPicker>,
     /// Whether the shortcuts reference overlay is open (S-101).
     shortcuts_open: bool,
+    /// Whether the settings browser overlay is open.
+    settings_open: bool,
+    /// Index into the settings rows.
+    settings_selected: usize,
+    /// Row rectangles of the last drawn settings frame, for clicks.
+    settings_rects: Vec<(usize, egui::Rect)>,
     /// Hide thinking blocks from the transcript (P-040, window half).
     ///
     /// Shared with the terminal through config `[display] hide_thinking`:
@@ -2017,6 +2214,9 @@ impl IdeApp {
             model_picker: None,
             model_rects: Vec::new(),
             shortcuts_open: false,
+            settings_open: false,
+            settings_selected: 0,
+            settings_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2091,6 +2291,9 @@ impl IdeApp {
             model_picker: None,
             model_rects: Vec::new(),
             shortcuts_open: false,
+            settings_open: false,
+            settings_selected: 0,
+            settings_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2227,7 +2430,11 @@ impl IdeApp {
     /// is up; `AGENTS.md` §2.7 would call the alternative a silent no-op in the
     /// direction that matters.
     fn pane_keys(&mut self, ctx: &egui::Context) {
-        if self.palette.is_some() || self.model_picker.is_some() || self.shortcuts_open {
+        if self.palette.is_some()
+            || self.model_picker.is_some()
+            || self.shortcuts_open
+            || self.settings_open
+        {
             return;
         }
         // **The window's two layout keys, before every pane key.** They are read here
@@ -2254,22 +2461,7 @@ impl IdeApp {
         // best-effort with a notice. Below the palette guard with the other
         // session chords, for the same reason.
         if self.keys.take(ctx, "window.thinking.toggle") {
-            self.hide_thinking = !self.hide_thinking;
-            match epsilon_core::config::save_hide_thinking(self.hide_thinking) {
-                Ok(_) => self.transcript.push_notice(if self.hide_thinking {
-                    "thinking hidden (saved)"
-                } else {
-                    "thinking shown (saved)"
-                }),
-                Err(e) => self.transcript.push_notice(&format!(
-                    "thinking {} for this run, but not saved: {e}",
-                    if self.hide_thinking {
-                        "hidden"
-                    } else {
-                        "shown"
-                    }
-                )),
-            }
+            self.toggle_thinking();
         }
         // **`Shift` first, and that is no longer a workaround.** It used to be needed
         // because `InputState::consume_key` matches modifiers *logically* — extra shift and
@@ -2551,6 +2743,7 @@ impl IdeApp {
     pub fn open_palette(&mut self) {
         self.model_picker = None;
         self.shortcuts_open = false;
+        self.settings_open = false;
         self.palette = Some(Palette::default());
     }
     /// Say what a command did, in the transcript.
@@ -2564,6 +2757,29 @@ impl IdeApp {
                 self.transcript.push_notice(&said)
             }
             crate::commands::Outcome::Send(_) => {}
+        }
+    }
+    /// Flip thinking visibility and persist the choice.
+    ///
+    /// Extracted from the `Alt+T` chord unchanged so the settings browser can
+    /// offer the same act: one toggle, two doors. Memory wins; disk is
+    /// best-effort with a notice, like every other display preference.
+    fn toggle_thinking(&mut self) {
+        self.hide_thinking = !self.hide_thinking;
+        match epsilon_core::config::save_hide_thinking(self.hide_thinking) {
+            Ok(_) => self.transcript.push_notice(if self.hide_thinking {
+                "thinking hidden (saved)"
+            } else {
+                "thinking shown (saved)"
+            }),
+            Err(e) => self.transcript.push_notice(&format!(
+                "thinking {} for this run, but not saved: {e}",
+                if self.hide_thinking {
+                    "hidden"
+                } else {
+                    "shown"
+                }
+            )),
         }
     }
     /// Switch the window's palette (M312).
@@ -3228,6 +3444,9 @@ impl IdeApp {
         // The shortcuts reference reads two keys — toggle and close — after
         // both pickers, for the same ownership reason.
         self.shortcuts_keys(ui.ctx());
+        // The settings browser reads four keys after the shortcuts
+        // reference, for the same reason.
+        self.settings_keys(ui.ctx());
         // Pane focus, and the keys that act inside the focused pane. **After the
         // palette**, which owns those keys while it is open, and **before every pane is
         // drawn**, because the composer consumes Enter and Escape unconditionally and a
@@ -3527,6 +3746,8 @@ impl IdeApp {
         // The shortcuts reference draws on the same layer, under the same
         // one-overlay rule.
         self.draw_shortcuts(ui, &mut summary, scale);
+        // The settings browser draws on the same layer, under the same rule.
+        self.draw_settings(ui, &mut summary, scale);
         // **The quit dialog is above the palette, not beside it.** A close request arrives
         // from outside the window — from a button the reader pressed without touching the
         // application — so it cannot be queued behind whatever the application happens to
@@ -3931,6 +4152,105 @@ impl IdeApp {
             y += 22.0 * scale;
         }
         summary.rows.push(("shortcuts".into(), "esc closes".into()));
+    }
+
+    /// The settings browser: every setting with its value, and actions where
+    /// they exist.
+    ///
+    /// A read-only overlay in the palette's position, like the shortcuts
+    /// reference — except rows with an action also answer clicks and Enter,
+    /// through the same helpers the chords and heads run. Values are read
+    /// live, so the browser never shows a stale preference.
+    fn draw_settings(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
+        if !self.settings_open {
+            return;
+        }
+        self.settings_rects.clear();
+        let selected = self.settings_selected;
+        let entries = self.settings_entries();
+
+        let screen = ui.ctx().content_rect();
+        let width = (screen.width() * 0.6).clamp(240.0, 720.0);
+        let height =
+            ((28.0 + entries.len() as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.9);
+        let box_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
+            egui::vec2(width, height),
+        );
+        let theme = self.theme;
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        paint_text(
+            &painter,
+            summary,
+            "settings",
+            box_rect.left_top() + egui::vec2(12.0, 18.0 * scale),
+            egui::Align2::LEFT_CENTER,
+            "Settings".to_string(),
+            egui::FontId::proportional(13.0 * scale),
+            theme.title,
+        );
+        summary.rows.push(("settings".into(), "Settings".into()));
+
+        let mut y = box_rect.top() + 32.0 * scale;
+        for (index, entry) in entries.iter().enumerate() {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(box_rect.left() + 8.0, y),
+                egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
+            );
+            if index == selected {
+                painter.rect_filled(row, 3.0, theme.selection_focus);
+            }
+            let color = if index == selected {
+                theme.title
+            } else {
+                theme.text
+            };
+            paint_text(
+                &painter,
+                summary,
+                "settings",
+                row.left_top() + egui::vec2(4.0, 14.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                entry.label.clone(),
+                egui::FontId::proportional(13.0 * scale),
+                color,
+            );
+            paint_text(
+                &painter,
+                summary,
+                "settings",
+                row.right_top() - egui::vec2(4.0, 14.0 * scale),
+                egui::Align2::RIGHT_CENTER,
+                entry.value.clone(),
+                egui::FontId::proportional(11.0 * scale),
+                theme.dim,
+            );
+            summary.rows.push(("settings".into(), entry.label.clone()));
+            summary.row_rects.push(("settings".into(), row));
+            self.settings_rects.push((index, row));
+            // **Named rows, like every other overlay.** Salted by the setting
+            // label, which is stable; the value moves, so it names but does
+            // not salt.
+            name_region(
+                ui,
+                row,
+                &format!("epsilon-settings-row-{}", entry.label),
+                &format!("Setting · {} · {}", entry.label, entry.value),
+                egui::accesskit::Role::Region,
+            );
+            y += 22.0 * scale;
+        }
+        summary
+            .rows
+            .push(("settings".into(), "esc closes · enter acts".into()));
     }
     /// The icon strip that chooses what the sidebar shows.
     ///
@@ -9081,6 +9401,105 @@ mod tests {
             "a screen reader must reach the rows by name.\n{}",
             frame.describe()
         );
+    }
+
+    /// `/settings` opens the settings browser with live values.
+    ///
+    /// Every settable thing with what it is right now; rows with an action
+    /// act, rows without one report. RED first: the honest refusal.
+    #[test]
+    fn slash_settings_opens_the_browser() {
+        let (ws, _keep) = scratch_workspace("slash-settings");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let outcome = h.app.try_command("/settings");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/settings must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(h.app.settings_open, "the browser must be open afterwards");
+        let frame = h.paint();
+        let rows = frame.region("settings").join("\n");
+        for label in [
+            "Model",
+            "Theme",
+            "Thinking",
+            "Keybindings",
+            "Workspace",
+            "Session",
+        ] {
+            assert!(
+                rows.contains(label),
+                "the browser must name {label}.\n{rows}"
+            );
+        }
+        let _ = said;
+    }
+
+    /// Choosing the Model row opens the model picker.
+    #[test]
+    fn settings_model_row_opens_the_picker() {
+        let (ws, _keep) = scratch_workspace("settings-model");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/settings");
+        let _ = h.paint();
+        // Model is the first row; Enter chooses the highlighted one.
+        let _ = h.press(egui::Key::Enter);
+        assert!(
+            h.app.model_picker.is_some(),
+            "choosing Model must open the model picker"
+        );
+        assert!(!h.app.settings_open, "and the browser must give way to it");
+    }
+
+    /// Choosing the Theme row flips the palette.
+    #[test]
+    fn settings_theme_row_flips_the_palette() {
+        let (ws, _keep) = scratch_workspace("settings-theme");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/settings");
+        let _ = h.paint();
+        let before = h.app.theme().palette;
+        let _ = h.press(egui::Key::ArrowDown);
+        let _ = h.press(egui::Key::Enter);
+        assert_ne!(
+            h.app.theme().palette,
+            before,
+            "choosing Theme must flip the palette"
+        );
+    }
+
+    /// Choosing the Keybindings row opens the shortcuts reference.
+    #[test]
+    fn settings_keybindings_row_opens_shortcuts() {
+        let (ws, _keep) = scratch_workspace("settings-keys");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/settings");
+        let _ = h.paint();
+        for _ in 0..4 {
+            let _ = h.press(egui::Key::ArrowDown);
+        }
+        let _ = h.press(egui::Key::Enter);
+        assert!(
+            h.app.shortcuts_open,
+            "choosing Keybindings must open the shortcuts reference"
+        );
+        assert!(!h.app.settings_open, "and the browser must give way to it");
+    }
+
+    /// Escape closes the settings browser; rows are named for readers.
+    #[test]
+    fn settings_escape_and_names() {
+        let (ws, _keep) = scratch_workspace("settings-esc");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/settings");
+        let frame = h.paint();
+        assert!(
+            h.node_named("Setting").starts_with("Setting"),
+            "a screen reader must reach the rows by name.\n{}",
+            frame.describe()
+        );
+        let _ = h.press(egui::Key::Escape);
+        assert!(!h.app.settings_open, "Escape must close the browser");
     }
 
     /// `/fork` on an empty session names it rather than branching nothing.
