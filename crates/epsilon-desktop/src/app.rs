@@ -1221,10 +1221,7 @@ impl IdeApp {
             if self.shortcuts_open {
                 self.close_shortcuts();
             } else {
-                self.palette = None;
-                self.model_picker = None;
-                self.settings_open = false;
-                self.shortcuts_open = true;
+                self.open_shortcuts();
             }
             return;
         }
@@ -1239,6 +1236,17 @@ impl IdeApp {
     fn close_shortcuts(&mut self) {
         self.shortcuts_open = false;
         self.focus = FocusTarget::Agent;
+    }
+
+    /// Open the shortcuts reference, closing the other overlays.
+    ///
+    /// One overlay at a time, same rule as the model picker. Extracted from
+    /// the toggle so heads and rows can open it without restating the rule.
+    pub fn open_shortcuts(&mut self) {
+        self.palette = None;
+        self.model_picker = None;
+        self.settings_open = false;
+        self.shortcuts_open = true;
     }
 
     /// Every window binding with its effective chord, in table order.
@@ -1409,12 +1417,7 @@ impl IdeApp {
                 self.notice_outcome(outcome);
             }
             Some(SettingsAction::ToggleThinking) => self.toggle_thinking(),
-            Some(SettingsAction::OpenShortcuts) => {
-                self.palette = None;
-                self.model_picker = None;
-                self.settings_open = false;
-                self.shortcuts_open = true;
-            }
+            Some(SettingsAction::OpenShortcuts) => self.open_shortcuts(),
         }
     }
     /// Read the model picker's keys, and act on one.
@@ -1805,6 +1808,14 @@ pub struct IdeApp {
     /// Live-fetch results ride here from the spawned task to the next frame.
     fetched_tx: tokio::sync::mpsc::UnboundedSender<(String, Result<Vec<String>, String>)>,
     fetched_rx: tokio::sync::mpsc::UnboundedReceiver<(String, Result<Vec<String>, String>)>,
+    /// The painting context, refreshed every frame.
+    ///
+    /// Commands run without a `Ui` in hand (composer submit, palette submit,
+    /// tests) but some acts need the context — `/copy` writes the clipboard
+    /// through it. `egui::Context` is cheap to clone (an `Arc` inside), so
+    /// the frame lends its own rather than the command taking one as a
+    /// parameter through every caller.
+    pub(crate) ctx: Option<egui::Context>,
     /// Hide thinking blocks from the transcript (P-040, window half).
     ///
     /// Shared with the terminal through config `[display] hide_thinking`:
@@ -2317,6 +2328,7 @@ impl IdeApp {
             fetching: None,
             fetched_tx,
             fetched_rx,
+            ctx: None,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             row_layout: std::cell::RefCell::new(RowLayout::default()),
             goal: None,
@@ -2403,6 +2415,7 @@ impl IdeApp {
             fetching: None,
             fetched_tx,
             fetched_rx,
+            ctx: None,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             row_layout: std::cell::RefCell::new(RowLayout::default()),
             goal: None,
@@ -3483,6 +3496,9 @@ impl IdeApp {
     /// can paint into an off-screen `egui::Context` at any size, with no window.
     pub fn paint(&mut self, ui: &mut egui::Ui) -> FrameSummary {
         let ctx = ui.ctx();
+        // Lend the frame's context to commands that run without a `Ui` (see
+        // the `ctx` field): refreshed every frame, so it is never stale.
+        self.ctx = Some(ctx.clone());
         // **A close request is caught here, before anything is drawn.** egui flags a close
         // the *platform* raised (`ViewportInfo::close_requested`) and waits for the frame to
         // end; `ViewportCommand::CancelClose` is how the application says "not yet". DSH does
@@ -14615,6 +14631,100 @@ mod tests {
         assert!(
             said.contains("usage: /logout <provider>"),
             "must teach its shape: {said:?}"
+        );
+    }
+
+    /// `/hotkeys` opens the shortcuts reference (round 40).
+    ///
+    /// The terminal prints its cheat sheet; the window's living equivalent
+    /// is the reference overlay. RED first: the honest refusal.
+    #[test]
+    fn slash_hotkeys_opens_the_reference() {
+        let (ws, _keep) = scratch_workspace("slash-hotkeys");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/hotkeys");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/hotkeys must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            h.app.shortcuts_open,
+            "the reference must be open afterwards"
+        );
+        let frame = h.paint();
+        let rows = frame.region("shortcuts").join("\n");
+        assert!(
+            rows.contains("window.palette"),
+            "the reference must list the bindings.\n{rows}"
+        );
+        let _ = said;
+    }
+
+    /// `/copy` copies the last assistant message (round 40).
+    ///
+    /// Same source as the terminal's (the last assistant row) through the
+    /// platform clipboard, with the terminal's words. The frame lends the
+    /// context, so a paint comes before the command; the harness discards
+    /// output, so no test touches the real clipboard. RED first: the honest
+    /// refusal.
+    #[test]
+    fn slash_copy_copies_the_last_answer() {
+        let (ws, _keep) = scratch_workspace("slash-copy");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("answer.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m-copy".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "the answer aloud",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        drop(store);
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command(&format!("/resume {}", other.display()));
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/resume <path> must run: {outcome:?}");
+        };
+        let _ = h.paint();
+        let outcome = h.app.try_command("/copy");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/copy must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("copied") && said.contains("to the clipboard"),
+            "must report the copy: {said:?}"
+        );
+    }
+
+    /// `/copy` with no answer says so.
+    #[test]
+    fn slash_copy_without_an_answer_says_so() {
+        let (ws, _keep) = scratch_workspace("slash-copy-empty");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        let outcome = h.app.try_command("/copy");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/copy must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("no assistant message to copy"),
+            "must name the missing answer: {said:?}"
         );
     }
 }

@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is eighteen names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -178,6 +178,23 @@ impl IdeApp {
             // exists to refuse — the level is one of seven names, and typing
             // one is the whole interface.
             Command::Think(arg) => self.run_think_argument(arg),
+            // **`/hotkeys` opens the shortcuts reference (full-port round 40).**
+            // The terminal prints its cheat sheet; the window's living
+            // equivalent is the reference overlay (same table, effective
+            // chords, screen-reader names) — printing a frozen copy beside it
+            // would be the second source of truth the reference exists to
+            // prevent.
+            Command::Hotkeys => {
+                self.open_shortcuts();
+                Outcome::Ran("shortcuts — every binding with its effective chord".to_string())
+            }
+            // **`/copy` copies the last assistant message (full-port round
+            // 40).** The terminal's act through the platform clipboard
+            // (`egui` writes it; no new dependency): same source (the last
+            // assistant row), same words. The context comes from the frame
+            // (see the `ctx` field) — in a test harness the output is
+            // discarded, so no test touches the real clipboard.
+            Command::Copy => self.run_copy(),
             // **`/login` stores a pasted provider key, `/logout` removes one
             // (full-port round 38).** The same shared store the terminal
             // uses (`epsilon_llm::auth`), so a key saved in either front end
@@ -704,6 +721,31 @@ impl IdeApp {
         }
     }
 
+    /// Copy the last assistant message to the clipboard.
+    ///
+    /// The terminal's source (the last assistant row) through the platform
+    /// clipboard, with the terminal's words. No clipboard without a painted
+    /// frame — the context the frame lent (see the `ctx` field) — and no
+    /// assistant message without an answer that says so.
+    fn run_copy(&mut self) -> Outcome {
+        let Some(text) = self
+            .transcript
+            .rows()
+            .iter()
+            .rev()
+            .find(|r| r.kind == crate::session::RowKind::Assistant)
+            .map(|r| r.text.clone())
+        else {
+            return Outcome::Ran("copy: no assistant message to copy".to_string());
+        };
+        let Some(ctx) = self.ctx.clone() else {
+            return Outcome::Ran("copy: no window context to copy through".to_string());
+        };
+        let chars = text.chars().count();
+        ctx.copy_text(text);
+        Outcome::Ran(format!("copied {chars} chars to the clipboard"))
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -855,8 +897,9 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "clone", "compact", "export", "fork", "goal", "help", "login", "logout", "model",
-    "new", "resume", "session", "sessions", "settings", "tasks", "theme", "think",
+    "clear", "clone", "compact", "copy", "export", "fork", "goal", "help", "hotkeys", "login",
+    "logout", "model", "new", "resume", "session", "sessions", "settings", "tasks", "theme",
+    "think",
 ];
 
 #[cfg(test)]
@@ -879,14 +922,15 @@ mod tests {
     #[test]
     fn every_refused_head_is_refused_by_name() {
         let refused = refused_heads();
-        // Relative, not absolute: every answered head used to drop this
-        // count by one against a fixed bound, which is how `/login` broke
-        // it. What matters is the subset discipline (ADR-029) — the terminal
-        // still has more than the window answers — and that fails loudly the
-        // day the window nears parity instead of rotting silently.
+        // Non-empty, not relative: the window answered its twentieth head in
+        // round 40, so "the terminal has more" inverted and the relative
+        // bound failed loudly as designed. What must hold is that the window
+        // does not answer *everything* — the day it does, the refusal
+        // machinery (and this test) retires. The loop below still checks
+        // every refused head is refused by name.
         assert!(
-            refused.len() > SUPPORTED.len(),
-            "the terminal has far more commands than the window: {refused:?}"
+            !refused.is_empty(),
+            "the window answers every head; retire the refusal path"
         );
         for head in refused {
             for typed in both_spellings(head) {
@@ -1125,10 +1169,12 @@ mod tests {
             Command::Clear,
             Command::Clone,
             Command::Compact,
+            Command::Copy,
             Command::Export(None),
             Command::Fork,
             Command::Goal(None),
             Command::Help,
+            Command::Hotkeys,
             Command::Login {
                 provider: String::new(),
                 key: String::new(),

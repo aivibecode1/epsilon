@@ -2480,6 +2480,15 @@ and no file but the store itself. The save arm writes the real store and is
 reviewed, not driven — the same reason no test drives the favorites toggle.
 18 of 37.
 
+**Amendment (full-port round 40).** `/hotkeys` opens the shortcuts reference
+and `/copy` copies the last assistant message. The terminal prints its cheat
+sheet; the window's living equivalent is the reference overlay — printing a
+frozen copy beside it would be the second source of truth the reference
+exists to prevent. Copy runs through the platform clipboard (`egui` writes
+it; no new dependency) with the terminal's words; the frame lends the
+context, which the harness discards, so no test touches the real clipboard.
+20 of 37.
+
 ---
 
 ---
