@@ -2470,6 +2470,16 @@ thinking toggle, shortcuts reference) through the same helpers the chords and he
 plain reporting where they do not (workspace, session, thinking level). Same shape as the
 terminal's guidance-only `/settings`, which also reports rather than edits. 16 of 37.
 
+**Amendment (full-port round 38).** `/login` stores a pasted key and `/logout`
+removes one, both through the shared credential store with the terminal's
+words — a key saved in either front end works in both. What the window cannot
+do it refuses by name: ceremonies need the terminal's browser flow, bare and
+keyless forms need its picker and masked prompt. The typed line is never
+echoed (commands answer; only prompts echo), so the key reaches no transcript
+and no file but the store itself. The save arm writes the real store and is
+reviewed, not driven — the same reason no test drives the favorites toggle.
+18 of 37.
+
 ---
 
 ---

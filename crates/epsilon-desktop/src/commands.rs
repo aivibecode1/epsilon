@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is sixteen names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is eighteen names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -178,6 +178,16 @@ impl IdeApp {
             // exists to refuse — the level is one of seven names, and typing
             // one is the whole interface.
             Command::Think(arg) => self.run_think_argument(arg),
+            // **`/login` stores a pasted provider key, `/logout` removes one
+            // (full-port round 38).** The same shared store the terminal
+            // uses (`epsilon_llm::auth`), so a key saved in either front end
+            // works in both; the terminal's words throughout. What the window
+            // cannot do it refuses by name: subscription (OAuth) ceremonies
+            // need the terminal's browser flow, and bare or keyless forms
+            // need its picker and masked prompt — the usage names the shape
+            // that works here.
+            Command::Login { provider, key } => self.run_login(provider, key),
+            Command::Logout(provider) => self.run_logout(provider),
             // **`/settings` opens the settings browser (full-port round 33).**
             // Every settable thing with its live value; rows with an action
             // run it through the same helpers the chords and heads run, rows
@@ -644,6 +654,56 @@ impl IdeApp {
         Outcome::Ran(format!("palette: {} → {}", was.name(), next.name()))
     }
 
+    /// Store a pasted provider key; refuse what needs the terminal.
+    ///
+    /// The terminal's act through the shared [`epsilon_llm::auth::save_credential`]
+    /// — same file, same words — minus its overlays: subscription ceremonies
+    /// need the browser flow, and bare or keyless forms need its picker and
+    /// masked prompt. The usage names the shape that works here. The typed
+    /// line is never echoed (commands answer; only prompts echo), so the key
+    /// reaches no transcript and no file but the credential store itself.
+    fn run_login(&mut self, provider: String, key: String) -> Outcome {
+        let provider = provider.trim().to_string();
+        if !provider.is_empty() && epsilon_llm::oauth_login::is_oauth_ceremony_arg(&key) {
+            return Outcome::Ran(format!(
+                "subscription login for '{provider}' needs the terminal — run `epsilon auth login {provider}` there"
+            ));
+        }
+        if provider.is_empty() {
+            return Outcome::Ran(
+                "usage: /login <provider> <key> — e.g. /login anthropic sk-ant-...".to_string(),
+            );
+        }
+        if key.trim().is_empty() {
+            return Outcome::Ran(format!(
+                "usage: /login {provider} <key> — paste the key after the provider id"
+            ));
+        }
+        match epsilon_llm::auth::save_credential(&provider, key.trim()) {
+            Ok(path) => Outcome::Ran(format!(
+                "saved key for '{provider}' → {}  (next request uses it)",
+                path.display()
+            )),
+            Err(e) => Outcome::Ran(format!("not saved for '{provider}': {e}")),
+        }
+    }
+
+    /// Remove a stored provider key, with the terminal's words.
+    ///
+    /// Same shared store as the login above: a key removed in either front
+    /// end is gone in both.
+    fn run_logout(&mut self, provider: String) -> Outcome {
+        let provider = provider.trim().to_string();
+        if provider.is_empty() {
+            return Outcome::Ran("usage: /logout <provider> — e.g. /logout anthropic".to_string());
+        }
+        match epsilon_llm::auth::remove_credential(&provider) {
+            Ok(true) => Outcome::Ran(format!("removed stored key for '{provider}'")),
+            Ok(false) => Outcome::Ran(format!("no stored key for '{provider}' (nothing removed)")),
+            Err(e) => Outcome::Ran(format!("not removed for '{provider}': {e}")),
+        }
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -795,8 +855,8 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "clone", "compact", "export", "fork", "goal", "help", "model", "new", "resume",
-    "session", "sessions", "settings", "tasks", "theme", "think",
+    "clear", "clone", "compact", "export", "fork", "goal", "help", "login", "logout", "model",
+    "new", "resume", "session", "sessions", "settings", "tasks", "theme", "think",
 ];
 
 #[cfg(test)]
@@ -819,8 +879,13 @@ mod tests {
     #[test]
     fn every_refused_head_is_refused_by_name() {
         let refused = refused_heads();
+        // Relative, not absolute: every answered head used to drop this
+        // count by one against a fixed bound, which is how `/login` broke
+        // it. What matters is the subset discipline (ADR-029) — the terminal
+        // still has more than the window answers — and that fails loudly the
+        // day the window nears parity instead of rotting silently.
         assert!(
-            refused.len() > 20,
+            refused.len() > SUPPORTED.len(),
             "the terminal has far more commands than the window: {refused:?}"
         );
         for head in refused {
@@ -1064,6 +1129,11 @@ mod tests {
             Command::Fork,
             Command::Goal(None),
             Command::Help,
+            Command::Login {
+                provider: String::new(),
+                key: String::new(),
+            },
+            Command::Logout(String::new()),
             Command::Models,
             Command::New,
             Command::Resume(String::new()),

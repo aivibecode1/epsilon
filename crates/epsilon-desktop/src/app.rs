@@ -14541,4 +14541,80 @@ mod tests {
             "landing clears the in-flight guard"
         );
     }
+
+    /// `/login` teaches its shape without touching storage (round 38).
+    ///
+    /// Bare, keyless, and ceremony forms never reach the credential store —
+    /// only a pasted key does, and a test must never write the real one (the
+    /// same reason no test drives the favorites toggle). The save arm itself
+    /// mirrors the terminal line for line and is reviewed, not driven.
+    #[test]
+    fn slash_login_teaches_its_shape() {
+        let (ws, _keep) = scratch_workspace("slash-login");
+        let mut h = Harness::new(ws);
+        for (line, want) in [
+            ("/login", "usage: /login <provider> <key>"),
+            ("/login anthropic", "usage: /login anthropic <key>"),
+            ("/auth", "usage: /login <provider> <key>"),
+        ] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} must answer, not refuse or send: {outcome:?}");
+            };
+            assert!(said.contains(want), "{line} must teach its shape: {said:?}");
+            assert!(
+                !said.contains("saved key"),
+                "{line} must not touch storage: {said:?}"
+            );
+        }
+
+        let outcome = h.app.try_command("/login anthropic oauth");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/login oauth must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("needs the terminal"),
+            "ceremonies name the way through: {said:?}"
+        );
+    }
+
+    /// A `/login` line is never echoed — not even its refusal.
+    ///
+    /// Commands answer; only prompts echo. Driven through the real composer
+    /// path with a ceremony refusal (which saves nothing), so a pasted key
+    /// would take the same silent road. If the typed text reached the
+    /// transcript, the key would too.
+    #[test]
+    fn slash_login_never_echoes() {
+        let (ws, _keep) = scratch_workspace("slash-login-echo");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        h.app.draft = "/login anthropic oauth".to_string();
+        let _ = h.app.send_draft();
+        let frame = h.paint();
+        let agent = frame.region("agent").join("\n");
+        assert!(
+            agent.contains("needs the terminal"),
+            "the refusal must reach the screen.\n{agent}"
+        );
+        assert!(
+            !agent.contains("/login anthropic oauth"),
+            "the typed line must not be echoed.\n{agent}"
+        );
+    }
+
+    /// `/logout` teaches its shape without touching storage.
+    #[test]
+    fn slash_logout_teaches_its_shape() {
+        let (ws, _keep) = scratch_workspace("slash-logout");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/logout");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/logout must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("usage: /logout <provider>"),
+            "must teach its shape: {said:?}"
+        );
+    }
 }

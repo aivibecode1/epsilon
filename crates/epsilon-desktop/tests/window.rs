@@ -1747,8 +1747,11 @@ fn compact_from_the_typed_line_compacts_and_reports() {
 #[test]
 fn every_command_head_the_window_lacks_is_refused_by_name() {
     let refused = epsilon_desktop::commands::refused_heads();
+    // Relative, not absolute — same fix as the unit twin in `commands.rs`:
+    // every answered head drops this count, so a fixed bound rots. The
+    // subset discipline (ADR-029) is what must hold.
     assert!(
-        refused.len() > 20,
+        refused.len() > epsilon_desktop::commands::SUPPORTED.len(),
         "the terminal has far more commands than the window: {refused:?}"
     );
     for head in &refused {
