@@ -896,4 +896,17 @@ mod tests {
             "**and the two must not be run together** — that is the defect this is about: {joined}"
         );
     }
+
+    /// Tabs expand to three spaces, like the reference (P-164).
+    ///
+    /// The value matches; what was missing was the test. A tab is one
+    /// `char` and up to eight columns, so a width computed over raw text
+    /// is wrong in the direction that wraps rows — and a two-space or
+    /// eight-space expansion would pass a test that only checked "no tabs".
+    #[test]
+    fn tabs_expand_to_three_spaces_before_anything_measures() {
+        assert_eq!(super::sanitize("\tindented"), "   indented");
+        assert_eq!(super::sanitize("a\tb"), "a   b");
+        assert_eq!(super::sanitize("no tabs"), "no tabs");
+    }
 }

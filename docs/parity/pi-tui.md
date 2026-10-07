@@ -71,7 +71,7 @@ this document**, tallied from its own tables — not a projection.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
+| 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 2 | 14 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
@@ -84,12 +84,12 @@ this document**, tallied from its own tables — not a projection.
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 2 | 7 | 6 | 1 |
 | 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
-| 14. Diffs | 6 | 3 | 1 | 2 | 0 |
+| 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **44** | **123** | **152** | **20** |
+| **Total** | **339** | **45** | **122** | **151** | **21** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -173,7 +173,7 @@ transcript notices pushed **before** the first frame so it survives the alternat
 |---|---|---|---|---|---|
 | P-001 | A header draws the Pi logo, `v<version>` and a one-line key hint; terminals that cannot draw the logo get a `Pi vX` wordmark | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:996`, `:1001-1006`, `:1051-1057` | partial | `crates/epsilon-tui/src/ui/transcript.rs:234` — a welcome panel with wordmark, one instruction and the three composer prefixes; **no version, and the key hints live in the footer (E-082), not the header** | `an_empty_session_gets_the_first_run_screen_inside_a_well_formed_frame` (frame) |
 | P-002 | `Ctrl+O` expands the startup help from one compact line to a ~20-line instruction list | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1036-1043`, `:1011-1035`, `:4470-4472` | missing | none — Epsilon has no compact/expanded startup hint; its `Ctrl+O` is the external editor (`crates/epsilon-contracts/src/keybind.rs:364`) | — |
-| P-003 | Clicking the first two logo columns starts the logo animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:254-263`, `:1058` | missing | none — mouse capture is deliberately off (`crates/epsilon-tui/src/app.rs:1359`) | — |
+| P-003 | Clicking the first two logo columns starts the logo animation | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:254-263`, `:1058` | deliberately different | Mouse capture is deliberately off (`crates/epsilon-tui/src/app.rs:1359`), so there is no click to animate from — and the mark would be Pi's, not this product's (CREDITS: never take a name, logo or brand) | — |
 | P-004 | `quietStartup` has three states: hide everything, header only, or both | `packages/coding-agent/src/core/settings-manager.ts:1089-1092`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1410-1417` | missing | none | — |
 | P-005 | The model scope is printed to stdout at startup so it scrolls away in the terminal's own scrollback | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:940-953` | missing | none — no `E-` row prints a model scope at startup; the scope itself exists only as a command (`crates/epsilon-contracts/src/command.rs:544`) | — |
 | P-006 | `[Context]` / `[Skills]` / `[Prompts]` / `[Extensions]` blocks list what loaded, grouped into project / user / path | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1759-1953`, `:1648-1680` | partial | `crates/epsilon-tui/src/app/commands.rs:1458` — one summary line (`1 skill(s) + 1 agent(s) loaded`), no scope grouping or abbreviation rules | `a_skill_root_reload_cannot_read_is_named_on_the_frame` (frame) |
@@ -545,7 +545,7 @@ this area, because a diff run through a markdown renderer looks correct and read
 | P-161 | Context lines are dim, removals red, additions green, and every line carries its number | `packages/coding-agent/src/modes/interactive/components/diff.ts:89`, `:129`, `:8`, `:124` | done | `crates/epsilon-tui/src/ui/card.rs:367` — `@@` headers in the accent colour, `+`/`-` before the line number, a coloured gutter | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame) |
 | P-162 | Intra-line highlighting appears only for a one-line-for-one-line replacement | `packages/coding-agent/src/modes/interactive/components/diff.ts:115`, `:26` | missing | none | — |
 | P-163 | Leading whitespace is excluded from the intra-line highlight | `packages/coding-agent/src/modes/interactive/components/diff.ts:39-41` | missing | none | — |
-| P-164 | Tabs are expanded to **three** spaces before both the diff computation and the rendering | `packages/coding-agent/src/modes/interactive/components/diff.ts:17`, `:120` | partial | `crates/epsilon-tui/src/ui/card.rs:782` — the same three-space value, applied in the card's row normaliser rather than in the diff computation | `none found` per E-017 — the value matches, the test does not exist |
+| P-164 | Tabs are expanded to **three** spaces before both the diff computation and the rendering | `packages/coding-agent/src/modes/interactive/components/diff.ts:17`, `:120` | done | `crates/epsilon-tui/src/ui/card.rs:782` — the same three-space value, applied in the card's row normaliser rather than in the diff computation | `tabs_expand_to_three_spaces_before_anything_measures` (asserts the count, not just the absence of tabs) |
 | P-165 | Removals are emitted before additions, and lines outside the diff grammar pass through verbatim in the dim context colour | `packages/coding-agent/src/modes/interactive/components/diff.ts:127-131`, `:88-89` | done | `crates/epsilon-tui/src/ui/card.rs:367` — a line the format does not define, such as `\ No newline at end of file`, is kept and printed rather than dropped | `an_edits_diff_is_drawn_with_a_coloured_gutter_not_as_prose` (frame), `the_diff_is_not_run_through_the_markdown_parser` (frame) |
 | P-166 | The edit tool renders preview and result through the same diff function | `packages/coding-agent/src/core/tools/renderers/edit.ts:110`, `:146` | done | `crates/epsilon-tui/src/state.rs:847` — one diff card path, reached from one parse | `the_split_diff_draws_both_sides_at_a_wide_frame` (frame) |
 
@@ -762,7 +762,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
+| 1. Startup, header and resources | 20 | 1 | 6 | 12 | 1 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 2 | 14 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
@@ -775,12 +775,12 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 11. Project trust | 4 | 1 | 2 | 0 | 1 |
 | 12. Tool cards | 16 | 2 | 7 | 6 | 1 |
 | 13. Bash cards | 11 | 2 | 6 | 3 | 0 |
-| 14. Diffs | 6 | 3 | 1 | 2 | 0 |
+| 14. Diffs | 6 | 4 | 0 | 2 | 0 |
 | 15. Markdown, mermaid and truncation | 22 | 5 | 8 | 9 | 0 |
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **44** | **123** | **152** | **20** |
+| **Total** | **339** | **45** | **122** | **151** | **21** |
 
 ### The `missing` rows — 161
 
@@ -789,7 +789,7 @@ nothing here is a claim that the behaviour cannot be built.
 
 | area | ids |
 |---|---|
-| Startup, header and resources (13) | P-002, P-003, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
+| Startup, header and resources (12) | P-002, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
 | Composer and editor (8) | P-013, P-029, P-032, P-033, P-211, P-212, P-213, P-214 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
@@ -826,7 +826,6 @@ An `E-` row covers these and something is not finished. The reason column is the
 | Project trust (2) | P-115, P-117 | a hash-triggered review answered in the composer, not a five-option dialog naming parent-folder trust; the trigger is a changed config hash, not one of eight named resource kinds |
 | Tool cards (7) | P-136, P-138, P-140, P-142, P-143, P-146, P-147 | spacing per turn, not per card; a named headline instead of bare JSON for an unregistered tool; a title row survives an empty body; twelve rows rather than ten; per-card explicit state that nothing sets (no mouse); arguments not re-rendered as they stream; the diff arrives as a result field, so there is no partial-args guard |
 | Bash cards (6) | P-153, P-154, P-155, P-156, P-158, P-177 | `!!` is implemented but not marked on the card; the run state is in the header, not a cancellable card line; tab/CR normalisation pinned by source only; twelve rows and which end is kept is unestablished; the exit **number** is not on the card; duration yes, truncation warning no |
-| Diffs (1) | P-164 | three-space tab expansion matches, in the card's row normaliser, with **no test** |
 | Markdown, mermaid and truncation (8) | P-176, T-002, T-003, T-004, T-005, T-006, T-008, T-011 | hint placement has no keep-last mode; tab width matches with no test; stripping established at two boundaries, not one central measure; hyperlink/reset closing held by a different mechanism with a re-measure backstop; span-dropping, not column slicing; style is per-`Span`, so no reset ladder; row caching, but no ASCII fast path or bounded width cache; CJK as a word character unestablished for completion |
 | Status indicators (5) | P-018, P-186, P-188, P-189, P-190 | a drawn spinner rather than the terminal's progress state; one run-state slot rather than four kinds; whole-gauge dropping rather than a four-step border ladder; a retry notice and elapsed seconds rather than a cancelable countdown; one compaction wording rather than three |
 | Footer (4) | P-200, P-203, P-205, P-206 | no `~` substitution and no `• session-name` segment; no routed-model `→ id`; the footer's own recompute trigger unestablished; the no-spawn `.git/HEAD` read unestablished |
