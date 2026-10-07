@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-seven names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-eight names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -262,6 +262,12 @@ impl IdeApp {
                 self.open_settings();
                 Outcome::Ran("settings — values update live; Enter acts".to_string())
             }
+            // **`/import` switches the session file live (full-port round 48).**
+            // The terminal's shape — usage on bare (no browser here, unlike
+            // `/resume`), same busy and missing guards, same switch through
+            // `switch_session` — with its own words ("imported", not
+            // "resumed"): the state-changing core is shared, the verb is not.
+            Command::Import(path) => self.run_import_session(path),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -567,6 +573,48 @@ impl IdeApp {
                 Outcome::Ran(said)
             }
             Err(e) => Outcome::Ran(format!("resume failed: {e}")),
+        }
+    }
+
+    /// Import a session file: switch to it live, no restart.
+    ///
+    /// The terminal's shape with its words — usage on bare (no browser here,
+    /// unlike `/resume`), same busy and missing guards — handed over through
+    /// the same [`IdeApp::switch_session`] `/resume` uses. The state-changing
+    /// core is shared; only the verb ("imported") differs.
+    fn run_import_session(&mut self, path: String) -> Outcome {
+        let p = path.trim();
+        if p.is_empty() {
+            return Outcome::Ran(
+                "usage: /import <path> — switches session live, no restart needed (same as /resume)".to_string(),
+            );
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("import: no agent attached to this window".to_string());
+        };
+        if session.running() {
+            return Outcome::Ran(
+                "import: busy — wait for the current run to finish, then /import again".to_string(),
+            );
+        }
+        let raw = std::path::PathBuf::from(p);
+        let abs = if raw.is_absolute() {
+            raw
+        } else {
+            self.workspace().join(raw)
+        };
+        if !abs.exists() {
+            return Outcome::Ran(format!(
+                "import: no file at '{}' — check the path",
+                abs.display()
+            ));
+        }
+        match self.switch_session(&abs) {
+            Ok(count) => Outcome::Ran(format!(
+                "imported {count} messages from {} (store swapped)",
+                abs.display()
+            )),
+            Err(e) => Outcome::Ran(format!("import failed: {e}")),
         }
     }
 
@@ -1198,6 +1246,7 @@ pub const SUPPORTED: &[&str] = &[
     "goal",
     "help",
     "hotkeys",
+    "import",
     "login",
     "logout",
     "model",
@@ -1491,6 +1540,7 @@ mod tests {
             Command::Goal(None),
             Command::Help,
             Command::Hotkeys,
+            Command::Import(String::new()),
             Command::Login {
                 provider: String::new(),
                 key: String::new(),

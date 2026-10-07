@@ -2522,6 +2522,11 @@ checkpoints: the terminal's two shared calls with its words and its guards
 (usage, busy, trailing-`yes` confirmation). Asking for the plan never
 carries the power to act on it. 27 of 37.
 
+**Amendment (full-port round 48).** `/import` switches the session file live:
+the terminal's shape with its words (usage on bare — no browser here, unlike
+`/resume`), same busy and missing guards, same switch. The state-changing
+core is shared; only the verb differs. 28 of 37.
+
 ---
 
 ---

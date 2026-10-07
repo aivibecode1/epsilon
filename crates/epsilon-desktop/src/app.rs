@@ -15112,4 +15112,93 @@ mod tests {
             "a file with no checkpoint must still answer as restore: {said:?}"
         );
     }
+
+    /// `/import` switches the session file live (round 48).
+    ///
+    /// Same switch as `/resume <path>` through the same `switch_session`,
+    /// with the terminal's words ("imported", usage on bare). RED first: the
+    /// honest refusal.
+    #[test]
+    fn slash_import_switches_live() {
+        let (ws, _keep) = scratch_workspace("slash-import");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("imported.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m-imp".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![epsilon_contracts::content::ContentBlock::text(
+                            "the imported line",
+                        )],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        drop(store);
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command(&format!("/import {}", other.display()));
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/import <path> must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("imported") && said.contains(&other.display().to_string()),
+            "must report the import: {said:?}"
+        );
+        let frame = h.paint();
+        let agent = frame.region("agent").join("\n");
+        assert!(
+            agent.contains("the imported line"),
+            "the imported conversation must reach the screen.\n{agent}"
+        );
+    }
+
+    /// `/import` teaches its shape, names missing files, and needs an agent.
+    #[test]
+    fn slash_import_usage_missing_and_no_agent() {
+        let (ws, _keep) = scratch_workspace("slash-import-usage");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/import");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/import must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("usage: /import <path>"),
+            "bare must teach: {said:?}"
+        );
+
+        let outcome = h.app.try_command("/import nope.jsonl");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/import missing must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no file at"),
+            "a missing file must be named: {said:?}"
+        );
+
+        let (ws2, _keep2) = scratch_workspace("slash-import-no-agent");
+        let mut bare = Harness::new(ws2);
+        let outcome = bare.app.try_command("/import some.jsonl");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/import without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
 }
