@@ -2389,6 +2389,12 @@ pub struct IdeApp {
     timeline: Option<TimelineView>,
     /// Row rectangles of the last drawn timeline frame, for clicks.
     timeline_rects: Vec<(usize, egui::Rect)>,
+    /// Pending `/import` target (P-079): the path, held while the reader
+    /// confirms. `None` means no question is open. Answered in
+    /// `send_draft`, like the terminal's trust gate: a swap drops the
+    /// current context from view, so it asks first. `pub(crate)` for the
+    /// command arm and the tests, like `keys`.
+    pub(crate) pending_import: Option<std::path::PathBuf>,
     /// Live provider-listing fetcher for the model picker (`None` without the
     /// `real` feature). The same constructor the terminal's binary uses.
     live: Option<epsilon_tui::LiveFetcher>,
@@ -2967,6 +2973,7 @@ impl IdeApp {
             pending_jump: None,
             timeline: None,
             timeline_rects: Vec::new(),
+            pending_import: None,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -3064,6 +3071,7 @@ impl IdeApp {
             pending_jump: None,
             timeline: None,
             timeline_rects: Vec::new(),
+            pending_import: None,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -7866,6 +7874,18 @@ impl IdeApp {
         }
         let text = self.draft.trim().to_string();
         if text.is_empty() {
+            return None;
+        }
+        // A pending `/import` owns the next submit (P-079): `yes` swaps,
+        // `no` cancels, anything else repeats the question. Answered here —
+        // after the running guard (never swap mid-run), before templates
+        // and commands (the answer is not a prompt) — like the terminal.
+        if self.pending_import.is_some() {
+            let answer = text.clone();
+            self.draft.clear();
+            if let Some(said) = self.answer_pending_import(&answer) {
+                self.transcript.push_notice(&said);
+            }
             return None;
         }
         // **A command is not a prompt.** Before this, anything starting with `/` went
@@ -16293,11 +16313,11 @@ mod tests {
         );
     }
 
-    /// `/import` switches the session file live (round 48).
+    /// `/import` asks before switching, and only `yes` switches (round 61;
+    /// round 48 built the immediate swap).
     ///
-    /// Same switch as `/resume <path>` through the same `switch_session`,
-    /// with the terminal's words ("imported", usage on bare). RED first: the
-    /// honest refusal.
+    /// A swap drops the current context from view, so it asks first —
+    /// same words as the terminal. `no` cancels, anything else repeats.
     #[test]
     fn slash_import_switches_live() {
         let (ws, _keep) = scratch_workspace("slash-import");
@@ -16334,14 +16354,35 @@ mod tests {
             panic!("/import <path> must run, not refuse or send: {outcome:?}");
         };
         assert!(
-            said.contains("imported") && said.contains(&other.display().to_string()),
-            "must report the import: {said:?}"
+            said.contains("Replace current session with"),
+            "must ask before doing anything: {said:?}"
         );
+
+        // Anything but yes/no repeats the question and keeps it open.
+        h.app.draft = "maybe later".to_string();
+        let _ = h.app.send_draft();
+        assert!(
+            h.app.pending_import.is_some(),
+            "a non-answer must not resolve the gate"
+        );
+
+        // No cancels.
+        h.app.draft = "no".to_string();
+        let _ = h.app.send_draft();
+        assert!(h.app.pending_import.is_none(), "no must close the question");
+
+        // Yes swaps.
+        let outcome = h.app.try_command(&format!("/import {}", other.display()));
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/import <path> must ask again: {outcome:?}");
+        };
+        h.app.draft = "yes".to_string();
+        let _ = h.app.send_draft();
         let frame = h.paint();
         let agent = frame.region("agent").join("\n");
         assert!(
-            agent.contains("the imported line"),
-            "the imported conversation must reach the screen.\n{agent}"
+            agent.contains("imported") && agent.contains("the imported line"),
+            "yes must swap and read back.\n{agent}"
         );
     }
 

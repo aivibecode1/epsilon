@@ -174,6 +174,11 @@ pub(crate) struct App {
     /// M22 / DIRECTION-01: set when the project config changed since trust;
     /// blocks submits until the user answers (`trust` / `trust no`).
     trust_review_pending: bool,
+    /// Pending `/import` target (P-079): the path, held while the reader
+    /// confirms. `None` means no question is open. Answered in
+    /// `submit_editor`, next to the trust gate, for the same reason: a
+    /// session swap drops the current context from view, so it asks first.
+    pending_import: Option<(std::path::PathBuf, String)>,
     guidance_mode: bool,
     scroll_from_bottom: usize,
 
@@ -834,6 +839,36 @@ impl App {
                     self.ui.push_notice(
                         "config review pending - type `trust` to accept or `trust no` to quit",
                     );
+                }
+            }
+            return false;
+        }
+        // P-079: a pending `/import` holds ALL submits until answered, like
+        // the trust gate above. Only the two answers are accepted; anything
+        // else is bounced with the question repeated (the gate must not eat
+        // a prompt the reader meant to send).
+        if let Some((abs, name)) = self.pending_import.clone() {
+            match text.trim().to_ascii_lowercase().as_str() {
+                "yes" | "y" => {
+                    self.pending_import = None;
+                    match self.switch_session_file(agent, &abs, Some(&name)) {
+                        Ok(count) => self.ui.push_notice(format!(
+                            "imported {count} messages from {} (store swapped)",
+                            abs.display()
+                        )),
+                        Err(e) => self.ui.push_notice(format!("import failed: {e}")),
+                    }
+                }
+                "no" | "n" => {
+                    self.pending_import = None;
+                    self.ui
+                        .push_notice("import cancelled — still on the current session");
+                }
+                _ => {
+                    self.ui.push_notice(format!(
+                        "Replace current session with '{}'? (yes/no)",
+                        abs.display()
+                    ));
                 }
             }
             return false;

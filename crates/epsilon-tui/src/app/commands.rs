@@ -2246,14 +2246,14 @@ impl App {
                             abs.display()
                         ));
                     } else {
-                        match self.switch_session_file(agent, &abs, Some(p)) {
-                            Ok(count) => self.ui.push_notice(format!(
-                                "imported {} messages from {} (store swapped)",
-                                count,
-                                abs.display()
-                            )),
-                            Err(e) => self.ui.push_notice(format!("import failed: {e}")),
-                        }
+                        // Ask first (P-079): a swap drops the current
+                        // context from view. Answered in `submit_editor`,
+                        // next to the trust gate.
+                        self.pending_import = Some((abs.clone(), p.to_string()));
+                        self.ui.push_notice(format!(
+                            "Replace current session with '{}'? (yes/no)",
+                            abs.display()
+                        ));
                     }
                 }
             }

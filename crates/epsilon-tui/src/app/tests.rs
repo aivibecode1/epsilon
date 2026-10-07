@@ -11,7 +11,7 @@ use crate::app::commands::{timeline_kind_tag, timeline_snip};
 // so the tests that drive them name the module rather than a re-export.
 use super::keys::{begin_auth_key_prompt, handle_key};
 // Frame helpers and the wired app are shared with `golden.rs`.
-use super::tests_support::{render_rows, test_app, test_app_with_bash};
+use super::tests_support::{render_rows, test_app, test_app_with_bash, test_app_with_store};
 use crossterm::event::KeyEventState;
 use epsilon_contracts::agent_event::{PermissionDecision, PermissionRequest};
 use epsilon_contracts::message::UserMessage;
@@ -6341,6 +6341,114 @@ fn name_sets_shows_and_says_which_happened() {
             .iter()
             .any(|l| l.text.contains("session name: 'tabby'")),
         "bare must read back what was set: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// `/import` asks before swapping, and only `yes` swaps (P-079).
+///
+/// A swap drops the current context from view, so it asks first. `no`
+/// cancels, anything else repeats the question without eating the line
+/// (the gate must not swallow a prompt the reader meant to send).
+#[test]
+fn import_asks_before_swapping_and_only_yes_swaps() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let target = dir.path().join("other.jsonl");
+    let mut store =
+        epsilon_session::SessionStore::open_in(target.clone(), dir.path()).expect("a store opens");
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m-imp".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text {
+                        text: "the imported line".into(),
+                    }],
+                },
+            ),
+            api_request_sha256: None,
+        })
+        .expect("the message lands");
+    drop(store);
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command(&format!("/import {}", target.display()))
+            .expect("/import parses"),
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("Replace current session with")),
+        "must ask before doing anything: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    assert!(app.pending_import.is_some(), "and hold the question open");
+
+    // Anything but yes/no repeats the question and keeps it open.
+    app.input = "maybe later".to_string();
+    app.submit_editor(&agent);
+    assert!(
+        app.pending_import.is_some(),
+        "a non-answer must not resolve the gate"
+    );
+
+    // No cancels.
+    app.input = "no".to_string();
+    app.submit_editor(&agent);
+    assert!(app.pending_import.is_none(), "no must close the question");
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("import cancelled")),
+        "and say so: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// `yes` on a pending import swaps the store (P-079, proceed half).
+#[test]
+fn import_yes_swaps_the_store() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let target = dir.path().join("other.jsonl");
+    let mut store =
+        epsilon_session::SessionStore::open_in(target.clone(), dir.path()).expect("a store opens");
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m-imp".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text {
+                        text: "the imported line".into(),
+                    }],
+                },
+            ),
+            api_request_sha256: None,
+        })
+        .expect("the message lands");
+    drop(store);
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command(&format!("/import {}", target.display()))
+            .expect("/import parses"),
+    );
+    app.input = "yes".to_string();
+    app.submit_editor(&agent);
+    assert!(
+        app.pending_import.is_none(),
+        "yes must resolve the question"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("imported") && l.text.contains("store swapped")),
+        "and report the swap: {:?}",
         app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
     );
 }

@@ -687,12 +687,41 @@ impl IdeApp {
                 abs.display()
             ));
         }
-        match self.switch_session(&abs) {
-            Ok(count) => Outcome::Ran(format!(
-                "imported {count} messages from {} (store swapped)",
+        // Ask first (P-079): a swap drops the current context from view.
+        // Answered in `send_draft`, next to the terminal's trust gate.
+        self.pending_import = Some(abs.clone());
+        Outcome::Ran(format!(
+            "Replace current session with '{}'? (yes/no)",
+            abs.display()
+        ))
+    }
+
+    /// Answer a pending `/import`: `yes` swaps, `no` cancels, anything
+    /// else repeats the question (the gate must not eat a prompt).
+    ///
+    /// Called from `send_draft` before anything else, like the terminal.
+    /// Returns the sentence, or `None` when no question is open.
+    pub(crate) fn answer_pending_import(&mut self, text: &str) -> Option<String> {
+        let abs = self.pending_import.clone()?;
+        match text.trim().to_ascii_lowercase().as_str() {
+            "yes" | "y" => {
+                self.pending_import = None;
+                Some(match self.switch_session(&abs) {
+                    Ok(count) => format!(
+                        "imported {count} messages from {} (store swapped)",
+                        abs.display()
+                    ),
+                    Err(e) => format!("import failed: {e}"),
+                })
+            }
+            "no" | "n" => {
+                self.pending_import = None;
+                Some("import cancelled — still on the current session".to_string())
+            }
+            _ => Some(format!(
+                "Replace current session with '{}'? (yes/no)",
                 abs.display()
             )),
-            Err(e) => Outcome::Ran(format!("import failed: {e}")),
         }
     }
 
