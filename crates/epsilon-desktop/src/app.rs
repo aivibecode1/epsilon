@@ -4924,11 +4924,12 @@ impl IdeApp {
             };
             // Name first, timestamp second: the name is what a reader recognises, and
             // the timestamp is what they check afterwards.
-            let name = entry
-                .path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| entry.path.display().to_string());
+            //
+            // The summary's title, not the file stem: a `/name` display name,
+            // else the first user message, else the stem — so a name set in
+            // either front end reads here. Stems are timestamps no one
+            // recognises; showing them was the list hiding what it knew.
+            let name = entry.title();
             let shown = fit(
                 &format!("{marker}{name}"),
                 rect.width() - 16.0,
@@ -8174,7 +8175,7 @@ mod tests {
             before
                 .region("sessions")
                 .iter()
-                .any(|t| t.contains("older")),
+                .any(|t| t.contains("memorable")),
             "the stored session must be listed before the keyboard is asked to move.\n{}",
             before.describe()
         );
@@ -14958,6 +14959,86 @@ mod tests {
         assert!(
             said.contains("no CHANGELOG.md"),
             "must name the absence: {said:?}"
+        );
+    }
+
+    /// `/name` sets and shows the session display name (round 46).
+    ///
+    /// Same custom entry both front ends read, persisted beside the session;
+    /// no in-memory copy, so the file is the truth. RED first: the honest
+    /// refusal.
+    #[test]
+    fn slash_name_sets_and_shows() {
+        let (ws, _keep) = scratch_workspace("slash-name");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/name");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("bare /name must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("usage: /name"),
+            "unnamed stays usage: {said:?}"
+        );
+
+        let outcome = h.app.try_command("/name tabby");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/name <id> must run: {outcome:?}");
+        };
+        assert!(
+            said.contains("session name set to 'tabby'"),
+            "must confirm the set: {said:?}"
+        );
+
+        let outcome = h.app.try_command("/name");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("bare /name must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("session name: 'tabby'"),
+            "must read back what was set: {said:?}"
+        );
+    }
+
+    /// `/name` with no agent answers rather than refusing.
+    #[test]
+    fn slash_name_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-name-no-agent");
+        let mut h = Harness::new(ws);
+        for line in ["/name", "/name tabby"] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} without an agent must answer: {outcome:?}");
+            };
+            assert!(
+                said.contains("no agent"),
+                "names the missing piece: {said:?}"
+            );
+        }
+    }
+
+    /// The sessions pane lists titles, not file stems (round 46).
+    ///
+    /// Stems are timestamps no one recognises; the summary already knows the
+    /// display name, the first message, and the stem in that order. A name
+    /// set in either front end must read here.
+    #[test]
+    fn sessions_pane_lists_titles() {
+        let (ws, _keep) = scratch_workspace("sessions-titles");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let outcome = h.app.try_command("/name tabby");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/name must run: {outcome:?}");
+        };
+
+        h.app.set_sidebar_view(SidebarView::Sessions);
+        let frame = h.paint();
+        let rows = frame.region("sessions").join("\n");
+        assert!(
+            rows.contains("tabby"),
+            "the named session must list by name.\n{rows}"
         );
     }
 }

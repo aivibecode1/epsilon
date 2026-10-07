@@ -2511,6 +2511,12 @@ changelog's head: the terminal's read (workspace file, else docs/, first
 ~120 lines) with its words — or the honest absence. Read-only, so safe to
 drive in tests. 25 of 37.
 
+**Amendment (full-port round 46).** `/name` shows and sets the session
+display name over the same `session_name` custom entry both front ends read
+— bare reads the persisted tail, setting persists beside it, no in-memory
+copy. The sessions pane lists titles (name, else first message, else stem)
+instead of file stems, so a name set anywhere reads here. 26 of 37.
+
 ---
 
 ---

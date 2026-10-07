@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-five names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-six names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -230,6 +230,13 @@ impl IdeApp {
             // header, lines, overflow line — or the honest absence.
             // Read-only, so safe to drive in tests.
             Command::Changelog => self.run_changelog(),
+            // **`/name` shows and sets the session display name (full-port
+            // round 46).** The terminal's act with its words, over the same
+            // `session_name` custom entry: bare reads the persisted tail
+            // (the read discovery uses for every listed row), setting
+            // persists beside it and says which of the two happened. No
+            // in-memory copy — the file is the truth, in both front ends.
+            Command::Name(arg) => self.run_name_argument(arg),
             // **`/login` stores a pasted provider key, `/logout` removes one
             // (full-port round 38).** The same shared store the terminal
             // uses (`epsilon_llm::auth`), so a key saved in either front end
@@ -941,6 +948,49 @@ impl IdeApp {
         Outcome::Ran(out.join("\n"))
     }
 
+    /// Show the session display name bare, set it with an id.
+    ///
+    /// The terminal's act with its words over the same `session_name` custom
+    /// entry: bare reads the persisted tail (the read discovery uses for
+    /// every listed row), setting persists beside it. No in-memory copy —
+    /// the file is the truth, so a name set in either front end reads in
+    /// both, and the notice says which of the two happened (set, or named
+    /// for this run only).
+    fn run_name_argument(&mut self, arg: Option<String>) -> Outcome {
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("name: no agent attached to this window".to_string());
+        };
+        let name = arg.as_deref().unwrap_or("").trim();
+        if name.is_empty() {
+            let shown = session
+                .session_path()
+                .and_then(|p| epsilon_session::discover::display_name(&p));
+            return match shown {
+                Some(n) => Outcome::Ran(format!("session name: '{n}'")),
+                None => Outcome::Ran(
+                    "usage: /name <display name> — sets session display name".to_string(),
+                ),
+            };
+        }
+        let agent = session.agent();
+        let persisted = (|| -> Result<(), String> {
+            let store = agent.session_store().ok_or("no session store attached")?;
+            let mut st = store.lock().map_err(|_| "store lock".to_string())?;
+            st.append(epsilon_contracts::session_entry::EntryKind::Custom {
+                custom_type: "session_name".into(),
+                data: Some(serde_json::json!({"name": name})),
+            })
+            .map_err(|e| format!("{e}"))?;
+            Ok(())
+        })();
+        match persisted {
+            Ok(()) => Outcome::Ran(format!("session name set to '{name}'")),
+            Err(why) => Outcome::Ran(format!(
+                "session named '{name}' for this run, but not saved: {why}"
+            )),
+        }
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -1106,6 +1156,7 @@ pub const SUPPORTED: &[&str] = &[
     "login",
     "logout",
     "model",
+    "name",
     "new",
     "reload",
     "resume",
@@ -1400,6 +1451,7 @@ mod tests {
             },
             Command::Logout(String::new()),
             Command::Models,
+            Command::Name(None),
             Command::New,
             Command::Reload,
             Command::Resume(String::new()),

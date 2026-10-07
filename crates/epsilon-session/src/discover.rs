@@ -135,7 +135,11 @@ fn first_user_message(path: &Path) -> Option<String> {
 
 /// The last `session_name` custom entry, read from the tail (the entry can be
 /// written anywhere in the file; the newest one wins).
-fn display_name(path: &Path) -> Option<String> {
+///
+/// `pub` for the desktop's `/name`: it reads the current session's name the
+/// same way discovery reads every listed session's, rather than a third copy
+/// of the tail scan.
+pub fn display_name(path: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();

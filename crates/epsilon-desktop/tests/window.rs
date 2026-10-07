@@ -771,8 +771,8 @@ fn switching_to_a_stored_session_puts_its_conversation_on_the_screen() {
         before
             .region("sessions")
             .iter()
-            .any(|t| t.contains("older")),
-        "the stored session must be listed. Note that the empty state says 'none stored', so\n\
+            .any(|t| t.contains("memorable")),
+        "the stored session must be listed by its title. Note that the empty state says 'none stored', so\n\
          an assertion on the word 'stored' would pass for the wrong reason.\n{}",
         before.describe()
     );
@@ -888,8 +888,8 @@ fn a_session_row_says_when_it_ran() {
 
     let pane = frame.region("sessions").join("\n");
     assert!(
-        pane.contains("older"),
-        "the session must be listed.\n{}",
+        pane.contains("said once"),
+        "the session must be listed by its title.\n{}",
         frame.describe()
     );
     assert!(
