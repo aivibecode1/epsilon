@@ -9038,13 +9038,21 @@ mod tests {
         let (dir, _keep) = scratch_workspace("palette-verbs");
         let mut h = Harness::new(dir);
         let _ = h.paint();
-        let opened = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::P);
+        // Reached by filter, not by opening: the palette caps its rows
+        // (PALETTE_LIMIT) with a "keep typing" note, so the thirty-first
+        // verb is not on the unfiltered screen — and typing its name is
+        // how a reader meets it. Each head filters to itself.
         for head in SUPPORTED {
             let label = format!("/{head}");
+            if let Some(palette) = h.app.palette.as_mut() {
+                palette.query = head.to_string();
+            }
+            let filtered = h.paint();
             assert!(
-                palette_has(&opened, &label),
+                palette_has(&filtered, &label),
                 "the palette must offer {label}.\n{}",
-                opened.describe()
+                filtered.describe()
             );
         }
     }
@@ -15993,5 +16001,94 @@ mod tests {
             .filter_map(|e| e.ok())
             .any(|e| e.path().extension().is_some_and(|x| x == "html"));
         assert!(landed, "the HTML file must be on disk");
+    }
+
+    /// Write a project config into the scratch workspace for trust tests.
+    fn write_project_config(ws: &std::path::Path, body: &str) {
+        let dir = ws.join(".epsilon");
+        std::fs::create_dir_all(&dir).expect("config dir");
+        std::fs::write(dir.join("config.toml"), body).expect("config file");
+    }
+
+    /// `/trust` reports config trust without writing (round 53).
+    ///
+    /// Bare over four states (absent, untrusted, trusted, changed) plus
+    /// `no` and usage — all read-only. The `yes` arm writes the global
+    /// trust store and is reviewed, not driven. RED first: the refusal.
+    #[test]
+    fn slash_trust_reports_without_writing() {
+        let (ws, _keep) = scratch_workspace("slash-trust");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+
+        let outcome = h.app.try_command("/trust");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/trust must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no project config"),
+            "absent stays honest: {said:?}"
+        );
+
+        write_project_config(&ws, "[project]\nname = \"t\"\n");
+        let outcome = h.app.try_command("/trust");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/trust must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("not yet trusted"),
+            "untrusted stays honest: {said:?}"
+        );
+
+        let hash =
+            epsilon_core::config::current_project_config_hash_in(&ws).expect("a config hashes");
+        epsilon_core::config::accept_project_config_hash_in(&ws, &hash)
+            .expect("accept writes the workspace file");
+        let outcome = h.app.try_command("/trust");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/trust must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("is trusted"),
+            "accepted stays accepted: {said:?}"
+        );
+
+        write_project_config(&ws, "[project]\nname = \"changed\"\n");
+        let outcome = h.app.try_command("/trust");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/trust must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("config changed"),
+            "an edit must show: {said:?}"
+        );
+
+        for (line, want) in [
+            ("/trust no", "not accepted"),
+            ("/trust maybe", "usage: /trust"),
+        ] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} must answer: {outcome:?}");
+            };
+            assert!(said.contains(want), "{line} must say {want:?}: {said:?}");
+        }
+    }
+
+    /// `/trust` with no agent answers rather than refusing.
+    #[test]
+    fn slash_trust_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-trust-no-agent");
+        let mut h = Harness::new(ws);
+        for line in ["/trust", "/trust yes"] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} without an agent must answer: {outcome:?}");
+            };
+            assert!(
+                said.contains("no agent"),
+                "names the missing piece: {said:?}"
+            );
+        }
     }
 }

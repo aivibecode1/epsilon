@@ -2539,6 +2539,12 @@ upload off the paint thread with an in-between notice, and `gh` missing
 is guidance (the file is already on disk). The spawn is reviewed, not
 driven; the export and every sentence shape are pinned. 30 of 37.
 
+**Amendment (full-port round 53).** `/trust` reports and accepts
+project-config trust: the terminal's words over the config hash and the
+remembered path decision (same global store both front ends read). Bare
+and `no` never write; `yes` writes both, so that arm is reviewed, not
+driven. 31 of 37.
+
 ---
 
 ---

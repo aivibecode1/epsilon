@@ -47,6 +47,13 @@ WORDS = {
     "twenty-eight": 28,
     "twenty-nine": 29,
     "thirty": 30,
+    "thirty-one": 31,
+    "thirty-two": 32,
+    "thirty-three": 33,
+    "thirty-four": 34,
+    "thirty-five": 35,
+    "thirty-six": 36,
+    "thirty-seven": 37,
 }
 
 
@@ -94,17 +101,17 @@ def main() -> int:
             f"dsh-desktop.md says {m.group(1)} refused; {total} - {have} = "
             f"{total - have}",
         )
-    for m in re.finditer(r"over (twenty[a-z-]*) verbs", parity):
+    for m in re.finditer(r"over ((?:twenty|thirty)[a-z-]*) verbs", parity):
         check(
             WORDS.get(m.group(1)) == have,
             f"dsh-desktop.md says '{m.group(1)} verbs'; SUPPORTED holds {have}",
         )
-    for m in re.finditer(r"is one of the (twenty[a-z-]*) heads", parity):
+    for m in re.finditer(r"is one of the ((?:twenty|thirty)[a-z-]*) heads", parity):
         check(
             WORDS.get(m.group(1)) == have,
             f"dsh-desktop.md says 'one of the {m.group(1)}'; SUPPORTED holds {have}",
         )
-    for m in re.finditer(r"SUPPORTED.* is (twenty[a-z-]*) names", desktop):
+    for m in re.finditer(r"SUPPORTED.* is ((?:twenty|thirty)[a-z-]*) names", desktop):
         check(
             WORDS.get(m.group(1)) == have,
             f"commands.rs doc says '{m.group(1)} names'; SUPPORTED holds {have}",

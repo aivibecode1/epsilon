@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-one names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -273,6 +273,13 @@ impl IdeApp {
                 let said = self.run_share();
                 Outcome::Ran(said)
             }
+            // **`/trust` reports and accepts project-config trust (full-port
+            // round 53).** The terminal's words over the same two mechanisms:
+            // the config hash (per-file integrity, workspace-local) and the
+            // remembered path decision (global store). Bare and `no` never
+            // write; `yes` writes both, so that arm is reviewed, not driven
+            // — a driven test would flip real global trust.
+            Command::Trust(arg) => self.run_trust_argument(arg),
             // **`/search` finds text in the transcript (full-port round 51).**
             // An overlay over the live rows with the query pre-filled, so
             // refining it never means leaving and retyping; choosing a match
@@ -1061,6 +1068,102 @@ impl IdeApp {
         }
     }
 
+    /// Report project-config trust bare, accept it on `yes`.
+    ///
+    /// The terminal's words over the same two mechanisms: the config hash
+    /// (workspace-local integrity) and the remembered path decision (same
+    /// global store both front ends read — `epsilon_tui::trust_store` is
+    /// shared code that happens to live in the TUI crate, and moving it to
+    /// the core is a refactor for its third consumer to force). Bare and
+    /// `no` never write; `yes` writes both, so that arm is reviewed, not
+    /// driven. The window holds no pending-review flag to clear.
+    fn run_trust_argument(&mut self, arg: Option<String>) -> Outcome {
+        if self.session.is_none() {
+            return Outcome::Ran("trust: no agent attached to this window".to_string());
+        }
+        let answer = arg.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+        if answer.is_empty() {
+            return match epsilon_core::config::current_project_config_hash_in(self.workspace()) {
+                None => Outcome::Ran(
+                    "trust: no project config (.epsilon/config.toml not found) — nothing to trust"
+                        .to_string(),
+                ),
+                Some(hash) => {
+                    let trust_path = self.workspace().join(".epsilon").join("trust.json");
+                    match std::fs::read_to_string(&trust_path) {
+                        Ok(raw) => {
+                            let prev = serde_json::from_str::<serde_json::Value>(&raw)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("config_sha256")
+                                        .and_then(|h| h.as_str())
+                                        .map(|s| s.to_string())
+                                });
+                            match prev {
+                                Some(prev) if prev == hash => Outcome::Ran(format!(
+                                    "trust: config is trusted (hash {}…)",
+                                    &hash[..8.min(hash.len())]
+                                )),
+                                Some(prev) => Outcome::Ran(format!(
+                                    "trust: config changed (prev {}… current {}…) — /trust yes to accept, /trust no to keep untrusted",
+                                    &prev[..8.min(prev.len())],
+                                    &hash[..8.min(hash.len())]
+                                )),
+                                None => Outcome::Ran(
+                                    "trust: trust file unreadable — /trust yes to accept"
+                                        .to_string(),
+                                ),
+                            }
+                        }
+                        Err(_) => Outcome::Ran(format!(
+                            "trust: config present (hash {}…) but not yet trusted — /trust yes to accept",
+                            &hash[..8.min(hash.len())]
+                        )),
+                    }
+                }
+            };
+        }
+        if answer == "yes" || answer == "y" {
+            // Both halves report, like the terminal's two notices: a store
+            // sentence that failed must not swallow the hash answer. No
+            // owned copy: the workspace is only ever borrowed here, and a
+            // `.clone()` on its reference would clone the reference.
+            let mut said = Vec::new();
+            if let Some(store) = epsilon_tui::trust_store::ProjectTrustStore::open() {
+                match store.set(self.workspace(), Some(true)) {
+                    Ok(()) => {
+                        said.push("project path trusted (remembered for future runs)".to_string())
+                    }
+                    Err(e) => said.push(format!("trust store note: {e}")),
+                }
+            }
+            match epsilon_core::config::current_project_config_hash_in(self.workspace()) {
+                Some(hash) => {
+                    match epsilon_core::config::accept_project_config_hash_in(
+                        self.workspace(),
+                        &hash,
+                    ) {
+                        Ok(path) => said.push(format!(
+                            "trust accepted — hash {}… saved to {}",
+                            &hash[..8.min(hash.len())],
+                            path.display()
+                        )),
+                        Err(e) => said.push(format!("trust accept failed: {e}")),
+                    }
+                }
+                None => said.push("trust: no config file to accept".to_string()),
+            }
+            return Outcome::Ran(said.join("\n"));
+        }
+        if answer == "no" || answer == "n" {
+            return Outcome::Ran(
+                "trust: not accepted — config stays untrusted (edits still require /trust yes)"
+                    .to_string(),
+            );
+        }
+        Outcome::Ran("usage: /trust [yes|no]".to_string())
+    }
+
     /// Show the session display name bare, set it with an id.
     ///
     /// The terminal's act with its words over the same `session_name` custom
@@ -1285,6 +1388,7 @@ pub const SUPPORTED: &[&str] = &[
     "tasks",
     "theme",
     "think",
+    "trust",
 ];
 
 #[cfg(test)]
@@ -1584,6 +1688,7 @@ mod tests {
             Command::Tasks,
             Command::Theme(None),
             Command::Think(None),
+            Command::Trust(None),
         ]
         .iter()
         .filter_map(|command| head_of(command))
