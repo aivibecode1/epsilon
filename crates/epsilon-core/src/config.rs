@@ -525,6 +525,65 @@ pub fn set_favorite_thinking(model_id: &str, level: Option<&str>) -> Result<Path
     set_favorite_thinking_in(&dir, model_id, level)
 }
 
+// ---- display preferences (P-040; thinking visibility) ---------------------
+
+/// Whether thinking blocks are hidden from the transcript (`[display]
+/// hide_thinking`).
+///
+/// Off (visible) when unset or unreadable — hiding is the choice that must be
+/// made, not the default, and a corrupt config must not blank the transcript.
+pub fn load_hide_thinking_in(config_dir: &Path) -> bool {
+    let path = config_dir.join("config.toml");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(table) = toml::from_str::<toml::Table>(&raw) else {
+        return false;
+    };
+    table
+        .get("display")
+        .and_then(|d| d.get("hide_thinking"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Set `[display] hide_thinking`, preserving every other key. Persists
+/// immediately; returns the file written.
+pub fn save_hide_thinking_in(config_dir: &Path, hide: bool) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("create {}: {e}", config_dir.display()))?;
+    let path = config_dir.join("config.toml");
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| toml::from_str(&raw).ok())
+        .unwrap_or_default();
+
+    table
+        .entry("display")
+        .or_insert(toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[display] exists but is not a table".to_string())?
+        .insert("hide_thinking".into(), toml::Value::Boolean(hide));
+
+    let serialized =
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// [`load_hide_thinking_in`] against the resolved global directory.
+pub fn load_hide_thinking() -> bool {
+    global_dir()
+        .map(|d| load_hide_thinking_in(&d))
+        .unwrap_or(false)
+}
+
+/// [`save_hide_thinking_in`] against the resolved global directory.
+pub fn save_hide_thinking(hide: bool) -> Result<PathBuf, String> {
+    let dir = global_dir().ok_or_else(|| "no home directory resolved".to_string())?;
+    save_hide_thinking_in(&dir, hide)
+}
+
 /// Recently used model ids from `config_dir/config.toml` (newest first, capped).
 pub fn load_recent_models_in(config_dir: &Path) -> Vec<String> {
     let raw = match std::fs::read_to_string(config_dir.join("config.toml")) {
@@ -808,6 +867,38 @@ mod tests {
         assert!(toggle_favorite_model_in(dir, "  ").is_err());
         let empty = tempfile::tempdir().unwrap();
         assert!(load_favorite_models_in(empty.path()).is_empty());
+    }
+
+    #[test]
+    fn hide_thinking_round_trips_and_leaves_other_keys_alone() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+
+        // Unset reads visible; corrupt reads visible.
+        assert!(!load_hide_thinking_in(dir));
+        std::fs::write(dir.join("config.toml"), "not = [valid").unwrap();
+        assert!(!load_hide_thinking_in(dir));
+
+        // Set true, read back true; set false, read back false.
+        save_hide_thinking_in(dir, true).unwrap();
+        assert!(load_hide_thinking_in(dir));
+        save_hide_thinking_in(dir, false).unwrap();
+        assert!(!load_hide_thinking_in(dir));
+
+        // Coexists with other tables: favorites survive a hide write and back.
+        toggle_favorite_model_in(dir, "deepseek-chat").unwrap();
+        save_hide_thinking_in(dir, true).unwrap();
+        assert!(load_hide_thinking_in(dir));
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["deepseek-chat".to_string()]
+        );
+        save_hide_thinking_in(dir, false).unwrap();
+        assert_eq!(
+            load_favorite_models_in(dir),
+            vec!["deepseek-chat".to_string()],
+            "unhiding must not clobber favorites either"
+        );
     }
 
     #[test]

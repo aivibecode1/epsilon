@@ -46,6 +46,11 @@ pub struct RenderState<'a> {
     /// not "the only way to expand": a card the user opened individually stays
     /// open when this is off.
     pub expand_all: bool,
+    /// Whether thinking lines are hidden from the transcript (P-040). Part of
+    /// the cache key like everything else a row depends on: a row cached while
+    /// visible and served while hidden is the stale-cache failure this key
+    /// exists to make impossible.
+    pub hide_thinking: bool,
     /// Ids of cards the user opened individually; ids the user closed individually
     /// while [`Self::expand_all`] was on live in [`Self::collapsed`].
     pub expanded: &'a [(u64, bool)],
@@ -254,6 +259,7 @@ fn style_for(kind: LineKind, theme: &Theme) -> Style {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CacheKey {
     expand_all: bool,
+    hide_thinking: bool,
     open_cards: Vec<(u64, bool)>,
     more_key: Option<String>,
     /// The palette every cached row was rendered under.
@@ -274,6 +280,7 @@ impl CacheKey {
     fn of(state: &RenderState<'_>, theme: &Theme) -> Self {
         Self {
             expand_all: state.expand_all,
+            hide_thinking: state.hide_thinking,
             open_cards: state.expanded.to_vec(),
             more_key: state.more_key.map(str::to_string),
             palette: theme.palette(),
@@ -373,6 +380,22 @@ impl RenderCache {
         theme: &Theme,
         restale: &HashSet<u64>,
     ) {
+        // P-040: hidden thinking never reaches the cache. The key change above
+        // already invalidated everything, so this rebuild starts from the
+        // filtered sequence — and unhiding rebuilds from the full one. The
+        // caller's lines are untouched: hiding drops no data, so unhiding
+        // restores every block.
+        let owned: Vec<TranscriptLine>;
+        let lines: &[TranscriptLine] = if state.hide_thinking {
+            owned = lines
+                .iter()
+                .filter(|l| l.kind != crate::state::LineKind::Thinking)
+                .cloned()
+                .collect();
+            &owned
+        } else {
+            lines
+        };
         let key = CacheKey::of(state, theme);
         let invalidate_all = width != self.width || self.state.as_ref() != Some(&key);
         if invalidate_all {
@@ -576,6 +599,7 @@ pub fn snapshot_rows_with_kinds(
     let mut cache = RenderCache::new();
     let state = RenderState {
         expand_all: expand_outputs,
+        hide_thinking: false,
         expanded: &[],
         more_key: None,
     };
@@ -606,6 +630,7 @@ mod tests {
     fn state(expand_all: bool) -> RenderState<'static> {
         RenderState {
             expand_all,
+            hide_thinking: false,
             expanded: &[],
             more_key: Some("ctrl+x"),
         }
@@ -622,6 +647,7 @@ mod tests {
             line,
             RenderState {
                 expand_all: false,
+                hide_thinking: false,
                 expanded: open,
                 more_key: Some("ctrl+x"),
             },
@@ -782,6 +808,7 @@ mod tests {
             60,
             &RenderState {
                 expand_all: false,
+                hide_thinking: false,
                 expanded: &[(id, true)],
                 more_key: Some("ctrl+x"),
             },

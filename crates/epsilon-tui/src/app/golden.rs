@@ -3123,3 +3123,82 @@ fn a_resumed_stopped_reply_says_so() {
         "a replayed stopped answer must carry its notice: {rows:#?}"
     );
 }
+
+/// Thinking blocks hide when toggled, and come back on untoggle (P-040).
+///
+/// Gone — not dimmed, not collapsed — with the flag set, across the whole
+/// transcript including already-committed lines, because the gate is at
+/// render rather than at push. Unhiding restores every block: hiding drops
+/// no data. Both the committed path (history) and the live tail are covered:
+/// a hidden transcript that still streams reasoning is not hidden.
+/// (The chord arm itself is untested by design: it saves to the global
+/// config, and a test must never write the real one — the same reason no
+/// test drives the favorites toggle. Config round-trips are pinned in
+/// `config.rs` against tempdirs instead.)
+#[test]
+fn thinking_blocks_hide_when_toggled() {
+    use epsilon_contracts::content::ContentBlock;
+    let thinking = || {
+        Message::Assistant(epsilon_contracts::message::AssistantMessage {
+            id: "msg-think".into(),
+            timestamp_ms: 0,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            content: vec![
+                ContentBlock::Thinking {
+                    text: "pondering quietly".into(),
+                    signature: None,
+                },
+                ContentBlock::text("the answer aloud"),
+            ],
+            stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+            error_message: None,
+            usage: Default::default(),
+        })
+    };
+
+    // Committed lines, through history.
+    let mut app = bench_app(UiState::new());
+    app.ui.hydrate_from_history(&[thinking()]);
+    let shown = render_rows(&mut app, 80, 24);
+    assert!(
+        shown.iter().any(|r| r.contains("pondering quietly")),
+        "thinking is visible by default: {shown:#?}"
+    );
+
+    app.ui.hide_thinking = true;
+    let hidden = render_rows(&mut app, 80, 24);
+    assert!(
+        !hidden.iter().any(|r| r.contains("pondering quietly")),
+        "hidden thinking must leave no pixels: {hidden:#?}"
+    );
+    assert!(
+        hidden.iter().any(|r| r.contains("the answer aloud")),
+        "prose stays while thinking hides: {hidden:#?}"
+    );
+
+    app.ui.hide_thinking = false;
+    let back = render_rows(&mut app, 80, 24);
+    assert!(
+        back.iter().any(|r| r.contains("pondering quietly")),
+        "unhiding restores every block: {back:#?}"
+    );
+
+    // The live tail, mid-stream.
+    let mut live = bench_app(UiState::new());
+    live.ui
+        .apply(&epsilon_contracts::agent_event::AgentEvent::MessageUpdate {
+            message: Box::new(thinking()),
+        });
+    let streaming = render_rows(&mut live, 80, 24);
+    assert!(
+        streaming.iter().any(|r| r.contains("pondering quietly")),
+        "the live tail shows while streaming: {streaming:#?}"
+    );
+    live.ui.hide_thinking = true;
+    let quiet = render_rows(&mut live, 80, 24);
+    assert!(
+        !quiet.iter().any(|r| r.contains("pondering quietly")),
+        "hiding must quiet the live tail too: {quiet:#?}"
+    );
+}

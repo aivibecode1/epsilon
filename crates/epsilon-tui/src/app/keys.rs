@@ -1439,6 +1439,28 @@ pub(crate) fn handle_key(app: &mut App, agent: &Arc<Agent>, key: KeyEvent) -> bo
             app.set_thinking(agent, next);
             false
         }
+        _ if app.keybindings.matches("app.thinking.toggle", &key) => {
+            // Hide thinking blocks from the transcript (P-040), persisted
+            // globally. Memory wins; disk is best-effort with a notice, like
+            // every other display preference.
+            app.ui.hide_thinking = !app.ui.hide_thinking;
+            match epsilon_core::config::save_hide_thinking(app.ui.hide_thinking) {
+                Ok(_) => app.ui.push_notice(if app.ui.hide_thinking {
+                    "thinking hidden (saved)"
+                } else {
+                    "thinking shown (saved)"
+                }),
+                Err(e) => app.ui.push_notice(format!(
+                    "thinking {} for this run, but not saved: {e}",
+                    if app.ui.hide_thinking {
+                        "hidden"
+                    } else {
+                        "shown"
+                    }
+                )),
+            }
+            false
+        }
         _ if app.keybindings.matches("app.palette", &key) => {
             // M16c: command palette (opencode prompt.palette).
             // M22: not while the trust review holds — palette commands bypass

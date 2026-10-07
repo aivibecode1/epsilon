@@ -29,8 +29,14 @@ impl App {
     ) -> Self {
         let workspace_root =
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        // Thinking visibility is UI state, not app state: the push sites that
+        // must skip are `UiState` methods, and a flag anywhere else would be a
+        // second source of truth to keep in sync. Loaded once here like the
+        // other display preferences; flipped by `app.thinking.toggle`.
+        let mut ui = UiState::new();
+        ui.hide_thinking = epsilon_core::config::load_hide_thinking();
         Self {
-            ui: UiState::new(),
+            ui,
             input: String::new(),
             cursor_chars: 0,
             history: VecDeque::new(),

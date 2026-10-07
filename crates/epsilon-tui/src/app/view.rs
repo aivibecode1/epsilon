@@ -62,6 +62,9 @@ impl App {
     pub(super) fn card_is_open(&self, id: u64, has_body: bool) -> bool {
         crate::render_cache::RenderState {
             expand_all: self.prefs.expand_outputs,
+            // Unread by `is_open`: this decides card openness, not row
+            // visibility.
+            hide_thinking: false,
             expanded: &self.card_open,
             // The key text is the renderer's business, not the rule's: it is
             // `None` here because nothing in this decision reads it, and a
@@ -503,6 +506,7 @@ impl App {
         let more_key = self.expand_key();
         let state = crate::render_cache::RenderState {
             expand_all: self.prefs.expand_outputs,
+            hide_thinking: self.ui.hide_thinking,
             expanded: &self.card_open,
             more_key: more_key.as_deref(),
         };
@@ -633,8 +637,16 @@ impl App {
     /// slices removes the copies; the count is now bounded by the answer's length
     /// in *characters scanned* rather than in heap allocations.
     fn streaming_tail_rows(&self, body_width: usize) -> usize {
+        // P-040: hidden thinking takes no rows either — the count must agree
+        // with what the draw shows, or the footer reports rows that are not
+        // there.
+        let thinking_tail = if self.ui.hide_thinking {
+            ""
+        } else {
+            self.ui.streaming_thinking()
+        };
         [
-            (self.ui.streaming_thinking(), self.theme.thinking()),
+            (thinking_tail, self.theme.thinking()),
             (self.ui.streaming_text(), self.theme.assistant()),
         ]
         .into_iter()

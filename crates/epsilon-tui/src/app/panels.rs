@@ -360,12 +360,16 @@ pub(super) fn draw_transcript(
     // The tail is not a transcript line yet, so its kind is decided here: it is
     // the assistant's own prose (or its reasoning) arriving token by token.
     let mut tail_rows: Vec<(LineKind, Line<'static>)> = Vec::new();
+    // P-040: the live thinking tail obeys the hide flag like committed
+    // Thinking lines do — a hidden transcript that still streams reasoning
+    // is not hidden.
+    let thinking_tail = if app.ui.hide_thinking {
+        ""
+    } else {
+        app.ui.streaming_thinking()
+    };
     for (text, style, kind) in [
-        (
-            app.ui.streaming_thinking(),
-            app.theme.thinking(),
-            LineKind::Thinking,
-        ),
+        (thinking_tail, app.theme.thinking(), LineKind::Thinking),
         (
             app.ui.streaming_text(),
             app.theme.assistant(),

@@ -75,7 +75,7 @@ this document**, tallied from its own tables — not a projection.
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
+| 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 3 | 9 | 5 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **42** | **124** | **155** | **18** |
+| **Total** | **339** | **42** | **125** | **154** | **18** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -288,7 +288,7 @@ in each component.
 |---|---|---|---|---|---|
 | P-049 | Streaming assistant text updates one component in place rather than appending rows | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3448-3461`, `:3464-3468` | done | `crates/epsilon-tui/src/app/panels.rs:401` — the live tail is wrapped and painted below the cached rows every frame; the reducer replaces the fields wholesale because the event carries the message so far (`crates/epsilon-tui/src/state.rs:1194-1195`) | `streaming_updates_replace_then_commit_on_end`, `a_bidi_override_in_streaming_model_output_never_reaches_the_frame` (frame) |
 | P-039 | One key flips a single expansion flag applied to every expandable transcript row | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4470-4490` | done | `crates/epsilon-tui/src/render_cache.rs:72` — `ctrl+x` flips the global toggle **and** records the newest card's own state, so a hand-opened card stays open after the toggle goes back off; key path and draw path read the same rule | `ctrl_x_opens_the_newest_card_and_leaves_the_others_alone` (frame), `the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer` |
-| P-040 | `Ctrl+T` hides thinking blocks across the transcript and persists the choice globally | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4502-4507`, `:4493-4500` | missing | none — Epsilon's reasoning is always visible as its own row (`crates/epsilon-tui/src/state.rs:1208`) and there is no toggle and no setting | — |
+| P-040 | `Ctrl+T` hides thinking blocks across the transcript and persists the choice globally | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4502-4507`, `:4493-4500` | partial | `Alt+T` (`app.thinking.toggle` — `Ctrl+T` cycles generation level here, and the nearby `Ctrl` letters are terminal-dangerous) flips `UiState::hide_thinking`, persisted globally in config `[display] hide_thinking`; the render cache filters Thinking lines under a cache key that covers the flag, so hiding is instant and unhiding restores — plus the live tail, which the same flag quiets. Not `Ctrl+T`, and not the reference's exact affordance shape | `hide_thinking_round_trips_and_leaves_other_keys_alone` (config) + `thinking_blocks_hide_when_toggled` (frame: committed history and live tail hide; unhide restores; negative control run). The chord arm itself is untested by design (it writes the global config; cf. the favorites toggle) |
 | P-050 | A tool card is created when the model calls the tool, before it runs, and re-used by the execution event | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3469-3493`, `:3545-3569` | done | `crates/epsilon-tui/src/ui/card.rs:213` — one card; the result settles the call's own card rather than adding a second | `a_tool_result_is_a_card_whose_title_carries_name_status_and_duration` (frame), `a_completed_tool_call_is_drawn_once_on_a_real_frame` (frame) |
 | P-051 | An aborted or errored turn retro-fits every in-flight tool card with one error line and suggests `/bug` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3514-3525`, `:3499-3511` | missing | none | — |
 | P-052 | A cache miss is explained: `Cache miss: 18.2K tokens re-billed (~$0.42)` | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4100-4126` | missing | none — Epsilon marks an incomplete cost with a trailing `+` (`crates/epsilon-tui/src/ui/cost.rs:138`) but does not price a miss separately | — |
@@ -766,7 +766,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
-| 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
+| 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
 | 7. Auth, login and permissions | 8 | 0 | 3 | 4 | 1 |
 | 8. Sessions | 17 | 3 | 9 | 5 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **42** | **124** | **155** | **18** |
+| **Total** | **339** | **42** | **125** | **154** | **18** |
 
 ### The `missing` rows — 161
 
@@ -793,7 +793,7 @@ nothing here is a claim that the behaviour cannot be built.
 | Layout and renderer (4) | P-015, P-020, P-021, P-220 |
 | Composer and editor (8) | P-013, P-029, P-032, P-033, P-211, P-212, P-213, P-214 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
-| Transcript and streaming (22) | P-040, P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
+| Transcript and streaming (21) | P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |
 | Model picker and thinking (7) | P-037, P-038, P-262, P-263, P-264, P-265, P-273 |
 | Auth, login and permissions (4) | P-061, P-063, P-065, P-066 |
 | Sessions (5) | P-026, P-071, P-073, P-080, P-081 |

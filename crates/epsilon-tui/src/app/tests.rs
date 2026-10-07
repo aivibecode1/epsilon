@@ -1972,6 +1972,7 @@ async fn the_drawn_and_recorded_answers_to_an_open_card_are_the_same_answer() {
             // which no branch of the rule reads.
             let drawn = crate::render_cache::RenderState {
                 expand_all: app.prefs.expand_outputs,
+                hide_thinking: false,
                 expanded: &app.card_open,
                 more_key: None,
             };

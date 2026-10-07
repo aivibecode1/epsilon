@@ -590,6 +590,15 @@ pub struct UiState {
     /// Mirrored with the figure itself, from the same call, so the two cannot describe
     /// different moments — the same discipline the number itself is built on.
     pub(crate) context_estimated: bool,
+    /// Whether thinking blocks are hidden from the transcript (P-040).
+    ///
+    /// Set once at construction from config `[display] hide_thinking` and
+    /// flipped by `app.thinking.toggle` (which saves). Lives here rather than
+    /// on the app because the push sites that must skip are this struct's
+    /// methods — a flag anywhere else would be a second source of truth.
+    /// `UiState::new` leaves it off so tests stay hermetic regardless of the
+    /// machine's config file.
+    pub(crate) hide_thinking: bool,
     /// `true` once the session has been compacted and no fresh count has arrived,
     /// cleared by the first reply that reports one.
     ///

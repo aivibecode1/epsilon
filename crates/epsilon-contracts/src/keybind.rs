@@ -254,6 +254,11 @@ pub const TERMINAL: &[(&str, &[&str])] = &[
     ("app.model.select", &["ctrl+m"]),
     ("app.palette", &["ctrl+p"]),
     ("app.thinking.cycle", &["ctrl+t"]),
+    // Hide thinking blocks from the transcript (P-040), persisted globally.
+    // `alt+t` because `ctrl+t` cycles generation level and the ctrl+letters
+    // near it are terminal-dangerous (`ctrl+h` is Backspace, `ctrl+s` is flow
+    // control); alt has no such trap.
+    ("app.thinking.toggle", &["alt+t"]),
     ("app.model.cycleForward", &["f2"]),
     ("app.model.cycleBackward", &["shift+f2"]),
     ("app.tools.expand", &["ctrl+x"]),
