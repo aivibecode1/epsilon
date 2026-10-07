@@ -2556,6 +2556,12 @@ terminal). Rows are the store's branch forest flattened; Enter
 navigates there and the agent re-projects (a file re-read would load
 every lane). 34 of 37.
 
+**Amendment (full-port round 56).** `/templates` lists prompt templates
+and the composer expands them before slash parsing (the terminal's
+order, through the shared expander). Discovery is stateless and gated
+on project trust — untrusted project text reaching the composer is
+prompt injection with a file path. 35 of 37.
+
 ---
 
 ---

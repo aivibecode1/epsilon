@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-four names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-five names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -294,6 +294,13 @@ impl IdeApp {
                 Some(said) => Outcome::Ran(said),
                 None => Outcome::Ran("tree — pick an entry, Enter jumps".to_string()),
             },
+            // **`/templates` lists prompt templates (full-port round 56).**
+            // The terminal's list with its words — name, description, and
+            // argument hint per row — over the same stateless discovery the
+            // composer expands through. Descriptions, not just names: a
+            // template's whole purpose is that you can forget its body but
+            // not want to forget what it does.
+            Command::Templates => self.run_templates_list(),
             // **`/expand` shows all tool output — or tails again (full-port
             // round 54).** Rows retain everything (same trade as the
             // terminal's cards); the pane shows the shared 40-line tail with
@@ -1096,6 +1103,36 @@ impl IdeApp {
         }
     }
 
+    /// List discovered prompt templates with their descriptions.
+    ///
+    /// The terminal's list with its words: one `/name — description` line
+    /// per template (plus argument hints where they apply), or the honest
+    /// absence. Read-only throughout — discovery opens files, never writes
+    /// — so this is safe to drive in tests.
+    fn run_templates_list(&mut self) -> Outcome {
+        let templates = match self.session.as_ref() {
+            Some(_) => self.discover_templates(),
+            None => {
+                return Outcome::Ran("templates: no agent attached to this window".to_string());
+            }
+        };
+        if templates.is_empty() {
+            return Outcome::Ran(
+                "no prompt templates — drop .md files into .epsilon/prompts/ or .agents/prompts/"
+                    .to_string(),
+            );
+        }
+        let mut out: Vec<String> = Vec::new();
+        for t in &templates {
+            let mut line = format!("/{} — {}", t.name, t.description);
+            if let Some(hint) = &t.argument_hint {
+                line.push_str(&format!(" (takes {hint})"));
+            }
+            out.push(line);
+        }
+        Outcome::Ran(format!("prompt templates: {}", out.join(" · ")))
+    }
+
     /// Report project-config trust bare, accept it on `yes`.
     ///
     /// The terminal's words over the same two mechanisms: the config hash
@@ -1416,6 +1453,7 @@ pub const SUPPORTED: &[&str] = &[
     "skill",
     "skills",
     "tasks",
+    "templates",
     "theme",
     "think",
     "tree",
@@ -1719,6 +1757,7 @@ mod tests {
             Command::Skill(String::new()),
             Command::Skills,
             Command::Tasks,
+            Command::Templates,
             Command::Theme(None),
             Command::Think(None),
             Command::Tree,

@@ -866,6 +866,14 @@ impl IdeSession {
         self.agent.session_path()
     }
 
+    /// Whether the project layer is trusted (round 56).
+    ///
+    /// Carried on the launch, like everything composition decided: prompt
+    /// templates gate project roots on it, the same rule the terminal uses.
+    pub fn project_trusted(&self) -> bool {
+        self.launch.project_trusted
+    }
+
     /// Compose an agent for `launch` on `runtime` and start listening to it.
     ///
     /// Called before the window exists: nothing here needs the render thread, and building

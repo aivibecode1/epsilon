@@ -1669,6 +1669,53 @@ impl IdeApp {
         self.focus = FocusTarget::Agent;
     }
 
+    /// Discover prompt templates with the terminal's trust rule.
+    ///
+    /// User templates always load; project templates load only when the
+    /// project is trusted — untrusted project text reaching the composer
+    /// is prompt injection with a file path. Stateless (computed on every
+    /// use): a new template file works without a reload, and there is no
+    /// cache to go stale behind the trust decision.
+    pub(crate) fn discover_templates(
+        &self,
+    ) -> Vec<epsilon_contracts::prompt_template::PromptTemplate> {
+        use epsilon_contracts::prompt_template as pt;
+        let mut user = Vec::new();
+        if let Some(dir) = epsilon_core::config::global_dir() {
+            user = pt::load_from_dir(&dir.join("prompts"), pt::TemplateScope::User);
+        }
+        let trusted = self
+            .session
+            .as_ref()
+            .map(|s| s.project_trusted())
+            .unwrap_or(false);
+        let project = if trusted {
+            [
+                pt::load_from_dir(
+                    &self.workspace().join(".agents").join("prompts"),
+                    pt::TemplateScope::Project,
+                ),
+                pt::load_from_dir(
+                    &self.workspace().join(".epsilon").join("prompts"),
+                    pt::TemplateScope::Project,
+                ),
+            ]
+            .concat()
+        } else {
+            Vec::new()
+        };
+        pt::merge(user, project, Vec::new())
+    }
+
+    /// Expand a leading `/template` against the discovered templates.
+    ///
+    /// The shared expander both front ends read: a text naming neither
+    /// template nor command comes back unchanged (`None`), so every
+    /// existing path below is untouched when no templates are installed.
+    fn expand_template(&self, text: &str) -> Option<String> {
+        epsilon_contracts::prompt_template::expand_prompt_template(text, &self.discover_templates())
+    }
+
     /// Read the timeline's keys, and act on one.
     ///
     /// After search — an open overlay owns every key — and before the
@@ -7707,6 +7754,18 @@ impl IdeApp {
         // window did, and the third outcome — refused *by name* — is the one that matters:
         // a window with three commands is smaller, but one that forwards the rest silently is
         // lying. See `crate::commands`.
+        //
+        // Prompt templates expand BEFORE slash parsing, and that order is
+        // the feature: a repository can ship a `review` template, and it
+        // must be able to do something the built-in commands cannot.
+        // Expanding afterwards would make every template name a candidate
+        // for a command name. A text naming no template comes back
+        // unchanged, so every path below is untouched when none are
+        // installed.
+        let text = match self.expand_template(&text) {
+            Some(expanded) => expanded,
+            None => text,
+        };
         match self.try_command(&text) {
             crate::commands::Outcome::Send(text) => {
                 self.refusal = self.session.as_ref().and_then(|s| s.submit(&text).err());
@@ -16682,5 +16741,88 @@ mod tests {
                 "names the missing piece: {said:?}"
             );
         }
+    }
+
+    /// Write a prompt template into the scratch workspace for template tests.
+    fn write_template(ws: &std::path::Path, name: &str, body: &str) {
+        let dir = ws.join(".agents").join("prompts");
+        std::fs::create_dir_all(&dir).expect("prompts dir");
+        std::fs::write(
+            dir.join(format!("{name}.md")),
+            format!("---\ndescription: {name} the things\n---\n{body}"),
+        )
+        .expect("template file");
+    }
+
+    /// `/templates` lists discovered templates with descriptions (round 56).
+    ///
+    /// Same read the composer expands through, with the terminal's words —
+    /// or the honest absence. RED first: the honest refusal.
+    #[test]
+    fn slash_templates_lists_with_descriptions() {
+        let (ws, _keep) = scratch_workspace("slash-templates");
+        write_template(&ws, "zzz-review", "review this: $ARGUMENTS");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/templates");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/templates must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("/zzz-review") && said.contains("zzz-review the things"),
+            "must name the template with its description: {said:?}"
+        );
+    }
+
+    /// A sent `/template` expands before dispatch (round 56).
+    ///
+    /// The terminal's order (expand, then parse): the composer sends the
+    /// expanded text, not the invocation. End to end through `send_draft`.
+    #[test]
+    fn sent_template_expands_before_dispatch() {
+        let (ws, _keep) = scratch_workspace("template-expand");
+        write_template(&ws, "zzz-review", "review this: $ARGUMENTS");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        h.app.draft = "/zzz-review the parser".to_string();
+        let _ = h.app.send_draft();
+        let screen = h.paint().region("agent").join("\n");
+        assert!(
+            screen.contains("review this: the parser"),
+            "the expanded text must reach the transcript.\n{screen}"
+        );
+        assert!(
+            !screen.contains("/zzz-review the parser"),
+            "the invocation must not leak through raw.\n{screen}"
+        );
+    }
+
+    /// `/templates` empty and without an agent answers.
+    #[test]
+    fn slash_templates_empty_and_no_agent() {
+        let (ws, _keep) = scratch_workspace("slash-templates-empty");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let outcome = h.app.try_command("/templates");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/templates must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no prompt templates"),
+            "empty stays an invitation: {said:?}"
+        );
+
+        let (ws2, _keep2) = scratch_workspace("slash-templates-no-agent");
+        let mut bare = Harness::new(ws2);
+        let outcome = bare.app.try_command("/templates");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/templates without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
     }
 }
