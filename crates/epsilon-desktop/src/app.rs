@@ -14199,4 +14199,52 @@ mod tests {
             frame.describe()
         );
     }
+
+    /// The model search announces itself through its hint, like the palette's.
+    ///
+    /// Round 35 tried to name both search boxes and the battery refused: the
+    /// palette's box is pinned unlabelled (`the_palette_names_every_row_it_offers`
+    /// — a label on top of a hint announces twice), and this box is the same
+    /// shape with the same static hints. This pins the sibling so the next
+    /// well-meaning pass cannot "fix" it either: no label, hint intact, on
+    /// both stages.
+    #[test]
+    fn the_model_search_announces_through_its_hint() {
+        let (ws, _keep) = scratch_workspace("model-search-hint");
+        let mut h = Harness::new(ws);
+        let _ = h.app.try_command("/model");
+        let _ = h.paint();
+        let stage1 = h
+            .node_for(model_input_id())
+            .expect("egui builds a node for every TextEdit, the picker's search included");
+        assert_eq!(
+            stage1.label(),
+            None,
+            "a label on top of the hint announces the box twice"
+        );
+        assert_eq!(
+            stage1.placeholder(),
+            Some("providers"),
+            "the hint is what the box says about itself"
+        );
+
+        let _ = h.press(egui::Key::Enter);
+        let _ = h.paint();
+        let stage2 = h
+            .node_for(model_input_id())
+            .expect("the search box survives descending a level");
+        assert_eq!(
+            stage2.label(),
+            None,
+            "a label on top of the hint announces the box twice"
+        );
+        assert!(
+            stage2
+                .placeholder()
+                .unwrap_or_default()
+                .starts_with("models of "),
+            "stage two says which list it filters: {:?}",
+            stage2.placeholder()
+        );
+    }
 }
