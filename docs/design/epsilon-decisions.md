@@ -2499,6 +2499,13 @@ the constructors use — minus the parts this window does not manage (prompt
 templates, agent defs). Read-only throughout, so driving it writes nothing.
 22 of 37.
 
+**Amendment (full-port round 43).** `/skills` lists discovered skills and
+`/skill` switches one: the terminal's list with its words (name, description,
+state per row) and its toggle through the shared disabled-skills store. The
+row formatting is duplicated from the terminal, not shared (ten TUI-local
+lines; moving them is a refactor for a second consumer to force). The flip
+itself writes the global store and is reviewed, not driven. 24 of 37.
+
 ---
 
 ---

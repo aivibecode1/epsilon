@@ -14826,4 +14826,78 @@ mod tests {
             "names the missing piece: {said:?}"
         );
     }
+
+    /// `/skills` lists discovered skills with their state (round 43).
+    ///
+    /// Same list as the terminal's, through a chained `/reload`: a skill
+    /// written to the workspace must appear with its description. RED first:
+    /// the honest refusal.
+    #[test]
+    fn slash_skills_lists_discovered_skills() {
+        let (ws, _keep) = scratch_workspace("slash-skills");
+        let dir = ws.join(".agents").join("skills").join("zzz-list");
+        std::fs::create_dir_all(&dir).expect("skill dir");
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: zzz-list\ndescription: list me\n---\nlist me",
+        )
+        .expect("skill file");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let reload = h.app.try_command("/reload");
+        assert!(
+            matches!(reload, crate::commands::Outcome::Ran(_)),
+            "/reload must run first: {reload:?}"
+        );
+        let outcome = h.app.try_command("/skills");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/skills must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("zzz-list") && said.contains("list me"),
+            "must name the skill with its description: {said:?}"
+        );
+        assert!(
+            said.contains("/skill <name>"),
+            "must teach the toggle: {said:?}"
+        );
+    }
+
+    /// `/skills` with nothing discovered says so; `/skill` teaches its shape
+    /// and names unknown skills — all without touching storage.
+    #[test]
+    fn slash_skill_usage_and_unknowns() {
+        let (ws, _keep) = scratch_workspace("slash-skill-usage");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/skills");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/skills must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no skills discovered"),
+            "empty stays an invitation: {said:?}"
+        );
+
+        for (line, want) in [
+            ("/skill", "usage: /skill <name> on|off"),
+            ("/skill zzz-list", "usage: /skill <name> on|off"),
+            (
+                "/skill zzz-no-such-skill off",
+                "no skill named 'zzz-no-such-skill'",
+            ),
+        ] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} must answer: {outcome:?}");
+            };
+            assert!(said.contains(want), "{line} must say {want:?}: {said:?}");
+            assert!(
+                !said.contains("takes effect"),
+                "{line} must not touch storage: {said:?}"
+            );
+        }
+    }
 }

@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-two names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-four names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -214,6 +214,16 @@ impl IdeApp {
             // without a restart. Discovery lines forward verbatim (they name
             // root and reason); the summary names the counts.
             Command::Reload => self.run_reload(),
+            // **`/skills` lists discovered skills, `/skill` switches one
+            // (full-port round 43).** The terminal's list with its words —
+            // name, description, and state per row, plus the toggle hint —
+            // and its toggle through the shared disabled-skills store, so a
+            // switch in either front end holds in both. The row formatting is
+            // duplicated from the terminal's `skill_lines` (ten lines, tested
+            // there) rather than shared: it lives in the TUI crate, and
+            // moving it is a refactor for a second consumer to force.
+            Command::Skills => self.run_skills_list(),
+            Command::Skill(arg) => self.run_skill_toggle(arg),
             // **`/login` stores a pasted provider key, `/logout` removes one
             // (full-port round 38).** The same shared store the terminal
             // uses (`epsilon_llm::auth`), so a key saved in either front end
@@ -802,6 +812,84 @@ impl IdeApp {
         Outcome::Ran(lines.join("\n"))
     }
 
+    /// List discovered skills with their state.
+    ///
+    /// The terminal's list with its words: one `name — description` line per
+    /// skill (plus `(manual only)` and `[off]` where they apply), then the
+    /// enabled count and the toggle hint. Empty stays an invitation, not a
+    /// blank.
+    fn run_skills_list(&mut self) -> Outcome {
+        let skills = match self.session.as_ref() {
+            Some(session) => session.agent().skills(),
+            None => {
+                return Outcome::Ran("skills: no agent attached to this window".to_string());
+            }
+        };
+        if skills.is_empty() {
+            return Outcome::Ran(
+                "no skills discovered — drop SKILL.md dirs into .epsilon/skills/".to_string(),
+            );
+        }
+        let disabled = epsilon_core::config::load_disabled_skills();
+        let mut lines: Vec<String> = skills
+            .iter()
+            .map(|s| {
+                let mut line = format!("{} — {}", s.name, s.description);
+                if s.disable_model_invocation {
+                    line.push_str(" (manual only)");
+                }
+                if disabled.iter().any(|d| d == &s.name) {
+                    line.push_str(" [off]");
+                }
+                line
+            })
+            .collect();
+        let on = skills.len().saturating_sub(disabled.len());
+        lines.push(format!(
+            "{on} of {} enabled · toggle one with `/skill <name> off|on`",
+            skills.len()
+        ));
+        Outcome::Ran(lines.join("\n"))
+    }
+
+    /// Switch one skill off or on.
+    ///
+    /// The terminal's parse and words through the shared disabled-skills
+    /// store: unknown names and bad shapes never reach storage. Flipping a
+    /// real switch writes the global store, so that arm is reviewed, not
+    /// driven — the same reason no test drives the favorites toggle.
+    fn run_skill_toggle(&mut self, arg: String) -> Outcome {
+        let arg = arg.trim();
+        let (name, want_off) = match arg.rsplit_once(char::is_whitespace) {
+            Some((n, "off")) | Some((n, "disable")) => (n.trim(), true),
+            Some((n, "on")) | Some((n, "enable")) => (n.trim(), false),
+            _ => {
+                return Outcome::Ran(
+                    "usage: /skill <name> on|off — `/skills` lists what is available".to_string(),
+                );
+            }
+        };
+        if name.is_empty() {
+            return Outcome::Ran("usage: /skill <name> on|off".to_string());
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("skill: no agent attached to this window".to_string());
+        };
+        let known = session.agent().skills().iter().any(|s| s.name == name);
+        if !known {
+            return Outcome::Ran(format!(
+                "no skill named '{name}' — `/skills` lists what is available"
+            ));
+        }
+        match epsilon_core::config::set_skill_disabled(name, want_off) {
+            Ok(_) => Outcome::Ran(format!(
+                "{name} {} — takes effect on the next turn",
+                if want_off { "off" } else { "on" }
+            )),
+            Err(e) => Outcome::Ran(format!("could not change {name}: {e}")),
+        }
+    }
+
     /// Show the thinking level bare, set it with an id.
     ///
     /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
@@ -955,7 +1043,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 pub const SUPPORTED: &[&str] = &[
     "clear", "clone", "compact", "copy", "exit", "export", "fork", "goal", "help", "hotkeys",
     "login", "logout", "model", "new", "reload", "resume", "session", "sessions", "settings",
-    "tasks", "theme", "think",
+    "skill", "skills", "tasks", "theme", "think",
 ];
 
 #[cfg(test)]
@@ -1244,6 +1332,8 @@ mod tests {
             Command::Session,
             Command::Sessions,
             Command::Settings,
+            Command::Skill(String::new()),
+            Command::Skills,
             Command::Tasks,
             Command::Theme(None),
             Command::Think(None),
