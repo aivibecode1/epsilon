@@ -423,6 +423,14 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     ("window.search.submit", &["enter"]),
     ("window.search.next", &["down"]),
     ("window.search.previous", &["up"]),
+    // The branch/tree overlay walks like search (separate ids so rebinding
+    // one never moves the other). No open chord: heads and palette carry
+    // it, like `/copy` and `/expand` — and the terminal opens its timeline
+    // from heads, not from a key.
+    ("window.timeline.close", &["escape"]),
+    ("window.timeline.submit", &["enter"]),
+    ("window.timeline.next", &["down"]),
+    ("window.timeline.previous", &["up"]),
     ("window.focus.next", &["f6"]),
     ("window.focus.previous", &["shift+f6"]),
     ("window.tree.next", &["down"]),

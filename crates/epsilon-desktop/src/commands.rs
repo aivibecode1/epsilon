@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-two names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-four names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -280,6 +280,20 @@ impl IdeApp {
             // write; `yes` writes both, so that arm is reviewed, not driven
             // — a driven test would flip real global trust.
             Command::Trust(arg) => self.run_trust_argument(arg),
+            // **`/branch` and `/tree` open the timeline overlay (full-port
+            // round 55).** The same view — the label is the only difference
+            // that survives, like the terminal. Rows are the store's
+            // branch forest, flattened; Enter navigates there and reloads.
+            // No chord: the terminal opens its timeline from heads, and
+            // heads plus palette carry it here too.
+            Command::Timeline => match self.open_timeline("branch") {
+                Some(said) => Outcome::Ran(said),
+                None => Outcome::Ran("branch — pick an entry, Enter jumps".to_string()),
+            },
+            Command::Tree => match self.open_timeline("tree") {
+                Some(said) => Outcome::Ran(said),
+                None => Outcome::Ran("tree — pick an entry, Enter jumps".to_string()),
+            },
             // **`/expand` shows all tool output — or tails again (full-port
             // round 54).** Rows retain everything (same trade as the
             // terminal's cards); the pane shows the shared 40-line tail with
@@ -1372,6 +1386,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
+    "branch",
     "changelog",
     "clear",
     "clone",
@@ -1403,6 +1418,7 @@ pub const SUPPORTED: &[&str] = &[
     "tasks",
     "theme",
     "think",
+    "tree",
     "trust",
 ];
 
@@ -1670,6 +1686,7 @@ mod tests {
     #[test]
     fn the_window_runs_exactly_the_heads_it_declares_supported() {
         let implemented: Vec<&'static str> = [
+            Command::Timeline,
             Command::Changelog,
             Command::Clear,
             Command::Clone,
@@ -1704,6 +1721,7 @@ mod tests {
             Command::Tasks,
             Command::Theme(None),
             Command::Think(None),
+            Command::Tree,
             Command::Trust(None),
         ]
         .iter()

@@ -102,6 +102,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-07) | 67. **Full-port round 52 — the window answers `/share`** | Export on the arm, `gh` upload off the paint thread with an in-between notice, `gh` missing as guidance (the file is already on disk). Split for testability (ExitStatus has no test constructor): export + every sentence shape pinned, no-runtime wiring driven, spawn reviewed. Three tests with a control removing the arm; the first two batteries failed clippy (useless-format, needless-borrow). 30 of 37, under ADR-029's criterion, amended. Battery `port-r52c` (2,192), green on the third attempt. |
 | (10-07) | 68. **Full-port round 53 — the window answers `/trust`** | The terminal's words over the config hash and the remembered path decision (same global store both front ends read); bare and `no` never write, `yes` writes both so that arm is reviewed, not driven. Two tests (four bare states + no/usage, no-agent) with a control removing the arm; the first battery failed clippy (clone-of-reference) and the palette test (31 verbs overflow the 40-row cap — verbs now reached by filter). Also widened the verb-count checker's number-words past thirty. 31 of 37, under ADR-029's criterion, amended. Battery `port-r53b` (2,194), green on the second attempt. |
 | (10-07) | 69. **Full-port round 54 — the window answers `/expand`** | Rows retain full tool output (same trade as the terminal's cards); the pane shows the shared 40-line tail with a marker until this flips — no chord, since Ctrl+X is cut in text fields. Three tests (toggle, capped-then-full draw, reducer retention rewritten to full) with a control removing the arm. 32 of 37, under ADR-029's criterion, amended. Battery `port-r54` (2,196), green first time. |
+| (10-07) | 70. **Full-port round 55 — the window answers `/branch` and `/tree`** | Same overlay, the label the only difference: the store's branch forest flattened, landing on the active leaf; Enter navigates and the agent re-projects (a file re-read would load every lane — caught by the jump test). Three tests (both labels list, jump lands + abandoned leaves, empty/no-agent) with a control removing both arms; the first battery caught an integration test still driving `/timeline` as refused. 34 of 37, under ADR-029's criterion, amended. Battery `port-r55b` (2,199), green on the second attempt. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -249,13 +250,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r54-2026-10-07.txt`](../audit/evidence/gate-port-r54-2026-10-07.txt),
+**Latest green battery: [`gate-port-r55b-2026-10-07.txt`](../audit/evidence/gate-port-r55b-2026-10-07.txt),
 2026-10-07 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,196 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r53b`: the expand tests.
-(`cargo fmt --check` ran before launching.) The first `port-r53` attempt failed its clippy leg
-and the palette-verbs test; preserved as
-[`gate-port-r53-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r53-attempt1-FAILED-2026-10-07.txt).
+**2,199 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — three more than `gate-port-r54`: the timeline tests.
+(`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
+on an integration test driving `/timeline` as refused; preserved as
+[`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

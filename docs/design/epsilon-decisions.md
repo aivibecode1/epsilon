@@ -2550,6 +2550,12 @@ tails again: rows retain everything (same trade as the terminal's cards),
 the pane shows the shared 40-line tail with a marker until this flips.
 No chord (`Ctrl+X` is cut in text fields). 32 of 37.
 
+**Amendment (full-port round 55).** `/branch` and `/tree` open the
+timeline overlay: same view, the label the only difference (like the
+terminal). Rows are the store's branch forest flattened; Enter
+navigates there and the agent re-projects (a file re-read would load
+every lane). 34 of 37.
+
 ---
 
 ---

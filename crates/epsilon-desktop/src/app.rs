@@ -634,6 +634,29 @@ enum ShareUpload {
     TaskFailed(String),
 }
 
+/// One flattened branch-tree row for the timeline overlay.
+struct TimelineRow {
+    /// Entry id (what `navigate_to` takes).
+    id: String,
+    /// File-assigned sequence (what the jumped notice names).
+    seq: u64,
+    /// Depth in the tree (what the indent shows).
+    depth: usize,
+    /// One-line summary of the entry.
+    summary: String,
+    /// On the session's current lane.
+    on_active: bool,
+}
+
+/// The branch/tree overlay: which head opened it, its flattened rows, and
+/// where the highlight sits. `/branch` and `/tree` open the same view —
+/// the label is the only difference that survives, like the terminal.
+struct TimelineView {
+    label: String,
+    rows: Vec<TimelineRow>,
+    selected: usize,
+}
+
 /// The transcript search overlay: what was typed, which rows match, where
 /// the highlight sits, and how many rows the match was computed against (so
 /// a transcript that grows under it invalidates the indices rather than
@@ -1070,6 +1093,7 @@ impl IdeApp {
         self.shortcuts_open = false;
         self.settings_open = false;
         self.search = None;
+        self.timeline = None;
         self.model_picker = Some(ModelPicker::default());
         // M20 auto-fetch, like the terminal's: the highlighted provider
         // starts refreshing immediately, so by the time the reader descends
@@ -1284,6 +1308,7 @@ impl IdeApp {
         self.model_picker = None;
         self.settings_open = false;
         self.search = None;
+        self.timeline = None;
         self.shortcuts_open = true;
     }
 
@@ -1390,6 +1415,7 @@ impl IdeApp {
         self.model_picker = None;
         self.shortcuts_open = false;
         self.search = None;
+        self.timeline = None;
         self.settings_open = true;
         self.settings_selected = 0;
     }
@@ -1411,6 +1437,7 @@ impl IdeApp {
         self.model_picker = None;
         self.shortcuts_open = false;
         self.settings_open = false;
+        self.timeline = None;
         self.search = Some(SearchView {
             query,
             matches: Vec::new(),
@@ -1534,6 +1561,231 @@ impl IdeApp {
             self.pending_jump = Some(target);
         }
         self.close_search();
+    }
+
+    /// One-line summary of a session entry for the timeline.
+    ///
+    /// Messages show their text head; anything else names its kind — a
+    /// branch row must say what the entry was, not its id.
+    fn timeline_summary(entry: &epsilon_contracts::session_entry::SessionEntry) -> String {
+        use epsilon_contracts::session_entry::EntryKind;
+        let head_of = |text: String| {
+            let head: String = text.lines().next().unwrap_or("").chars().take(64).collect();
+            if head.trim().is_empty() {
+                "(empty message)".to_string()
+            } else {
+                head
+            }
+        };
+        match &entry.kind {
+            EntryKind::Message { message, .. } => head_of(message.text()),
+            EntryKind::ModelChange {
+                provider, model_id, ..
+            } => {
+                format!("model → {provider}/{model_id}")
+            }
+            EntryKind::ThinkingLevelChange { .. } => "(thinking level)".to_string(),
+            EntryKind::ActiveToolsChange { .. } => "(tools changed)".to_string(),
+            EntryKind::Compaction { .. } => "(compacted)".to_string(),
+            EntryKind::BranchSummary { .. } => "(branch summary)".to_string(),
+            EntryKind::Custom { custom_type, .. } => format!("({custom_type})"),
+            EntryKind::TurnEnd { .. } => "(turn end)".to_string(),
+            EntryKind::Label { .. } => "(label)".to_string(),
+            EntryKind::SessionInfo { .. } => "(session info)".to_string(),
+            EntryKind::Goal { .. } => "(goal)".to_string(),
+            EntryKind::Unknown { .. } => "(unknown entry)".to_string(),
+        }
+    }
+
+    /// Open the branch/tree overlay, closing the other overlays.
+    ///
+    /// One overlay at a time, same rule as the rest. `/branch` and `/tree`
+    /// open the same view — the label is the only difference that
+    /// survives, like the terminal. Rows land on the active leaf (where
+    /// the conversation is), not on the forest's last row.
+    pub fn open_timeline(&mut self, label: &str) -> Option<String> {
+        self.palette = None;
+        self.model_picker = None;
+        self.shortcuts_open = false;
+        self.settings_open = false;
+        self.search = None;
+        let Some(session) = self.session.as_ref() else {
+            return Some(format!("{label}: no agent attached to this window"));
+        };
+        let agent = session.agent();
+        let store = agent.session_store()?;
+        let guard = store.lock().ok()?;
+        let forest = guard.tree().ok()?;
+        if forest.is_empty() {
+            return Some(format!("{label}: session is empty"));
+        }
+        let active: std::collections::HashSet<String> = guard
+            .branch_entries()
+            .map(|entries| entries.iter().map(|e| e.id.clone()).collect())
+            .unwrap_or_default();
+        let mut rows = Vec::new();
+        Self::flatten_timeline(&forest, 0, &active, &mut rows);
+        if rows.is_empty() {
+            return Some(format!("{label}: session is empty"));
+        }
+        let selected = rows
+            .iter()
+            .rposition(|r: &TimelineRow| r.on_active)
+            .unwrap_or(rows.len() - 1);
+        self.timeline = Some(TimelineView {
+            label: label.to_string(),
+            rows,
+            selected,
+        });
+        self.timeline_rects.clear();
+        None
+    }
+
+    /// Flatten the branch forest into indented rows, pi order (timestamp
+    /// ascending at every level — which is the order `tree()` returns).
+    fn flatten_timeline(
+        nodes: &[epsilon_contracts::session_entry::SessionTreeNode],
+        depth: usize,
+        active: &std::collections::HashSet<String>,
+        out: &mut Vec<TimelineRow>,
+    ) {
+        for node in nodes {
+            out.push(TimelineRow {
+                id: node.entry.id.clone(),
+                seq: node.entry.seq,
+                depth,
+                summary: Self::timeline_summary(&node.entry),
+                on_active: active.contains(&node.entry.id),
+            });
+            Self::flatten_timeline(&node.children, depth + 1, active, out);
+        }
+    }
+
+    /// Close the timeline and hand the keyboard back to the agent pane.
+    ///
+    /// The same two halves as [`Self::close_palette`], for the same reason.
+    fn close_timeline(&mut self) {
+        self.timeline = None;
+        self.focus = FocusTarget::Agent;
+    }
+
+    /// Read the timeline's keys, and act on one.
+    ///
+    /// After search — an open overlay owns every key — and before the
+    /// panes, for the same reason they read before the composer.
+    fn timeline_keys(&mut self, ctx: &egui::Context) {
+        if self.timeline.is_none() {
+            return;
+        }
+        if self.keys.take(ctx, "window.timeline.close") {
+            self.close_timeline();
+            return;
+        }
+        let mut submitted = false;
+        // Submit jumps to the highlighted entry; clicks resolve below.
+        if self.keys.take(ctx, "window.timeline.submit") {
+            submitted = true;
+        }
+        let mut step: i32 = 0;
+        if self.keys.take(ctx, "window.timeline.next") {
+            step += 1;
+        } else if self.keys.take(ctx, "window.timeline.previous") {
+            step -= 1;
+        }
+        let count = self.timeline.as_ref().map(|v| v.rows.len()).unwrap_or(0);
+        if step != 0
+            && count > 0
+            && let Some(view) = self.timeline.as_mut()
+        {
+            view.selected = (view.selected as i32 + step).clamp(0, count as i32 - 1) as usize;
+        }
+        let (any_click, at) = ctx.input(|i| (i.pointer.any_click(), i.pointer.interact_pos()));
+        if any_click
+            && let Some(at) = at
+            && let Some((index, _)) = self
+                .timeline_rects
+                .iter()
+                .find(|(_, r)| r.contains(at))
+                .copied()
+        {
+            self.jump_to_entry(index);
+            return;
+        }
+        if submitted {
+            let selected = self.timeline.as_ref().map(|v| v.selected).unwrap_or(0);
+            self.jump_to_entry(selected);
+        }
+    }
+
+    /// Navigate the store to a timeline row and reload the transcript.
+    ///
+    /// The leaf moves first, then the agent re-projects to it and the
+    /// transcript rebuilds from that history — moving the leaf without
+    /// re-reading would leave the reader on a conversation that no longer
+    /// describes the session (which is why a file re-read cannot follow:
+    /// it would load every lane). Closes the overlay either way: the jump
+    /// landed or it did not, and the notice says which.
+    fn jump_to_entry(&mut self, index: usize) {
+        let Some(row) = self
+            .timeline
+            .as_ref()
+            .and_then(|v| v.rows.get(index))
+            .map(|r| (r.id.clone(), r.seq))
+        else {
+            self.close_timeline();
+            return;
+        };
+        let label = self
+            .timeline
+            .as_ref()
+            .map(|v| v.label.clone())
+            .unwrap_or_default();
+        let navigated = match self
+            .session
+            .as_ref()
+            .and_then(|s| s.agent().session_store())
+        {
+            Some(store) => match store.lock() {
+                Ok(mut guard) => guard.navigate_to(&row.0).is_ok(),
+                Err(_) => false,
+            },
+            None => false,
+        };
+        if !navigated {
+            self.transcript
+                .push_notice(&format!("{label}: could not jump to #{}", row.1));
+            self.close_timeline();
+            return;
+        }
+        // Re-project like the terminal: moving the store's leaf without
+        // this leaves the reader on a conversation that no longer
+        // describes the session — which is why a re-read of the file
+        // (`switch_session`) cannot follow here. It would load every lane.
+        let agent = self
+            .session
+            .as_ref()
+            .map(|s| std::sync::Arc::clone(s.agent()));
+        match agent {
+            Some(agent) => match agent.reproject_current_branch() {
+                Ok(_) => {
+                    let history = agent.history();
+                    let count = history.len();
+                    self.transcript = Transcript::from_messages(&history);
+                    self.refresh_metrics();
+                    self.transcript.push_notice(&format!(
+                        "jumped to #{} · {count} messages on this branch",
+                        row.1
+                    ));
+                }
+                Err(e) => self.transcript.push_notice(&format!(
+                    "{label}: jumped, but the transcript did not follow: {e}"
+                )),
+            },
+            None => self
+                .transcript
+                .push_notice(&format!("{label}: no agent attached")),
+        }
+        self.close_timeline();
     }
 
     /// Read the settings browser's keys, and act on one.
@@ -1983,6 +2235,10 @@ pub struct IdeApp {
     search_rects: Vec<(usize, egui::Rect)>,
     /// Transcript row index to scroll to, consumed by the next draw.
     pending_jump: Option<usize>,
+    /// The branch/tree overlay, open while it is `Some`.
+    timeline: Option<TimelineView>,
+    /// Row rectangles of the last drawn timeline frame, for clicks.
+    timeline_rects: Vec<(usize, egui::Rect)>,
     /// Live provider-listing fetcher for the model picker (`None` without the
     /// `real` feature). The same constructor the terminal's binary uses.
     live: Option<epsilon_tui::LiveFetcher>,
@@ -2551,6 +2807,8 @@ impl IdeApp {
             search: None,
             search_rects: Vec::new(),
             pending_jump: None,
+            timeline: None,
+            timeline_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2645,6 +2903,8 @@ impl IdeApp {
             search: None,
             search_rects: Vec::new(),
             pending_jump: None,
+            timeline: None,
+            timeline_rects: Vec::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2786,6 +3046,7 @@ impl IdeApp {
             || self.shortcuts_open
             || self.settings_open
             || self.search.is_some()
+            || self.timeline.is_some()
         {
             return;
         }
@@ -3109,6 +3370,7 @@ impl IdeApp {
         self.shortcuts_open = false;
         self.settings_open = false;
         self.search = None;
+        self.timeline = None;
         self.palette = Some(Palette::default());
     }
     /// Say what a command did, in the transcript.
@@ -3961,6 +4223,8 @@ impl IdeApp {
         // Transcript search reads five keys after the settings browser, for
         // the same reason.
         self.search_keys(ui.ctx());
+        // The timeline reads four keys after search, for the same reason.
+        self.timeline_keys(ui.ctx());
         // Pane focus, and the keys that act inside the focused pane. **After the
         // palette**, which owns those keys while it is open, and **before every pane is
         // drawn**, because the composer consumes Enter and Escape unconditionally and a
@@ -4264,6 +4528,8 @@ impl IdeApp {
         self.draw_settings(ui, &mut summary, scale);
         // Transcript search draws on the same layer, under the same rule.
         self.draw_search(ui, &mut summary, scale);
+        // The timeline draws on the same layer, under the same rule.
+        self.draw_timeline(ui, &mut summary, scale);
         // **The quit dialog is above the palette, not beside it.** A close request arrives
         // from outside the window — from a button the reader pressed without touching the
         // application — so it cannot be queued behind whatever the application happens to
@@ -5744,6 +6010,110 @@ impl IdeApp {
         summary
             .rows
             .push(("search".into(), "esc closes · enter jumps".into()));
+    }
+
+    /// The branch/tree overlay: the forest, indented, with the jump.
+    ///
+    /// Same position and manners as every other overlay. Rows show depth
+    /// as indent plus the entry summary, the active lane marked; choosing
+    /// one navigates the store there and reloads. Values read live: the
+    /// rows are the store's, not a copy.
+    fn draw_timeline(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
+        let Some(view) = self.timeline.as_ref() else {
+            return;
+        };
+        let title = format!("{} — jump to an entry", view.label);
+        let selected = view.selected;
+        let rows: Vec<(usize, usize, String, bool)> = view
+            .rows
+            .iter()
+            .map(|r| (r.depth, r.seq as usize, r.summary.clone(), r.on_active))
+            .collect();
+        self.timeline_rects.clear();
+
+        let screen = ui.ctx().content_rect();
+        let width = (screen.width() * 0.6).clamp(240.0, 720.0);
+        let shown = rows.len().min(16);
+        let height = ((28.0 + shown as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.9);
+        let box_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
+            egui::vec2(width, height),
+        );
+        let theme = self.theme;
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        paint_text(
+            &painter,
+            summary,
+            "timeline",
+            box_rect.left_top() + egui::vec2(12.0, 18.0 * scale),
+            egui::Align2::LEFT_CENTER,
+            title.clone(),
+            egui::FontId::proportional(13.0 * scale),
+            theme.title,
+        );
+        summary.rows.push(("timeline".into(), title));
+
+        // Window the list around the selection so the highlight is always
+        // the reader's — same reason the search list windows.
+        let start = selected
+            .saturating_sub(8)
+            .min(rows.len().saturating_sub(16));
+        let mut y = box_rect.top() + 28.0 * scale;
+        for (position, (depth, seq, text, on_active)) in
+            rows.iter().enumerate().skip(start).take(16)
+        {
+            // Pixel indent for the sighted; depth in words for the
+            // screen-reader name below — spaces in the text would read as
+            // pauses, and a visual-only hierarchy hides structure.
+            let indent = (*depth).min(6) as f32 * 14.0;
+            let marker = if *on_active { "● " } else { "○ " };
+            let line = format!("{marker}#{seq} {text}");
+            let head: String = line.chars().take(72).collect();
+            let row = egui::Rect::from_min_size(
+                egui::pos2(box_rect.left() + 8.0, y),
+                egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
+            );
+            if position == selected {
+                painter.rect_filled(row, 3.0, theme.selection_focus);
+            }
+            let color = if position == selected {
+                theme.title
+            } else {
+                theme.text
+            };
+            paint_text(
+                &painter,
+                summary,
+                "timeline",
+                row.left_top() + egui::vec2(4.0 + indent, 14.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                head.clone(),
+                egui::FontId::proportional(12.0 * scale),
+                color,
+            );
+            summary.rows.push(("timeline".into(), head.clone()));
+            summary.row_rects.push(("timeline".into(), row));
+            self.timeline_rects.push((position, row));
+            name_region(
+                ui,
+                row,
+                &format!("epsilon-timeline-row-{position}"),
+                &format!("Timeline row · depth {depth} · {head}"),
+                egui::accesskit::Role::Region,
+            );
+            y += 22.0 * scale;
+        }
+        summary
+            .rows
+            .push(("timeline".into(), "esc closes · enter jumps".into()));
     }
 
     /// The strip **records where each tab went** and the click is applied by
@@ -16197,5 +16567,120 @@ mod tests {
             !full.contains("more lines — /expand shows all"),
             "expanded, the marker must go away.\n{full}"
         );
+    }
+
+    /// Append a user message to the session store (timeline fixtures).
+    fn push_store_message(session: &crate::session::IdeSession, id: &str, text: &str) {
+        session
+            .agent()
+            .session_store()
+            .expect("a store is attached")
+            .lock()
+            .expect("unlocked")
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::User(
+                    epsilon_contracts::message::UserMessage {
+                        id: id.into(),
+                        timestamp_ms: 0,
+                        content: vec![epsilon_contracts::content::UserContent::Text {
+                            text: text.into(),
+                        }],
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+    }
+
+    /// `/branch` and `/tree` open the timeline (round 55).
+    ///
+    /// Same view, two labels — the only difference that survives, like the
+    /// terminal. RED first: the honest refusal.
+    #[test]
+    fn slash_branch_and_tree_open_the_timeline() {
+        let (ws, _keep) = scratch_workspace("slash-timeline");
+        let (session, notices) = faux_session(&ws);
+        push_store_message(&session, "m-t1", "first thing said");
+        push_store_message(&session, "m-t2", "second thing said");
+        let mut h = Harness::with_session(ws, session, notices);
+
+        for (line, label) in [("/branch", "branch"), ("/tree", "tree")] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} must answer, not refuse or send: {outcome:?}");
+            };
+            assert!(h.app.timeline.is_some(), "{line} must open the overlay");
+            let frame = h.paint();
+            let rows = frame.region("timeline").join("\n");
+            assert!(
+                rows.contains(&format!("{label} — jump")) && rows.contains("first thing said"),
+                "{line} must list the branch under its label.\n{rows}"
+            );
+            let _ = said;
+            let _ = h.press(egui::Key::Escape);
+            assert!(h.app.timeline.is_none(), "{line} must close on Esc");
+        }
+    }
+
+    /// Choosing a timeline row navigates the store there (round 55).
+    ///
+    /// Two messages, back to the first: the notice names the jump and the
+    /// transcript follows the leaf — moving the leaf without re-reading
+    /// would leave a conversation that no longer describes the session.
+    #[test]
+    fn timeline_enter_jumps_to_the_entry() {
+        let (ws, _keep) = scratch_workspace("timeline-jump");
+        let (session, notices) = faux_session(&ws);
+        push_store_message(&session, "m-j1", "the early line");
+        push_store_message(&session, "m-j2", "the later line");
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/branch");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/branch must open: {outcome:?}");
+        };
+        h.app.timeline.as_mut().expect("open").selected = 0;
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        assert!(h.app.timeline.is_none(), "the overlay must close on jump");
+        let frame = h.paint();
+        let agent = frame.region("agent").join("\n");
+        assert!(
+            agent.contains("jumped to #") && agent.contains("the early line"),
+            "the jump must land and read back.\n{agent}"
+        );
+        assert!(
+            !agent.contains("the later line"),
+            "the abandoned branch must leave the screen.\n{agent}"
+        );
+    }
+
+    /// `/branch` on an empty session and without an agent answers.
+    #[test]
+    fn slash_branch_empty_and_no_agent() {
+        let (ws, _keep) = scratch_workspace("slash-branch-empty");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let outcome = h.app.try_command("/branch");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/branch must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("session is empty"),
+            "empty stays honest: {said:?}"
+        );
+
+        let (ws2, _keep2) = scratch_workspace("slash-branch-no-agent");
+        let mut bare = Harness::new(ws2);
+        for line in ["/branch", "/tree"] {
+            let outcome = bare.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} without an agent must answer: {outcome:?}");
+            };
+            assert!(
+                said.contains("no agent"),
+                "names the missing piece: {said:?}"
+            );
+        }
     }
 }

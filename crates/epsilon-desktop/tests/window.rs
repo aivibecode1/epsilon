@@ -1591,13 +1591,14 @@ fn a_command_the_window_lacks_is_refused_and_never_sent_to_the_model() {
     let ws = tempfile::tempdir().expect("a workspace");
     let (ctx, mut app) = wire(ws.path());
 
-    // `/timeline` walks the session tree and draws it in a terminal overlay. There is no such
-    // thing here, and the honest answer is that rather than forwarding it.
-    let outcome = app.try_command("/timeline");
+    // `/editor` opens the reader's `$EDITOR` in a terminal. There is no such
+    // thing here (this window has its own editor pane and no terminal to
+    // open), and the honest answer is that rather than forwarding it.
+    let outcome = app.try_command("/editor");
     match &outcome {
         Outcome::Refused(refusal) => {
             assert!(
-                refusal.contains("/timeline"),
+                refusal.contains("/editor"),
                 "an unbuilt command must be refused by name, got {refusal:?}"
             );
             assert!(
@@ -1609,7 +1610,7 @@ fn a_command_the_window_lacks_is_refused_and_never_sent_to_the_model() {
     }
 
     // And through the route a reader actually uses.
-    app.set_draft("/timeline");
+    app.set_draft("/editor");
     assert!(
         app.send_draft().is_none(),
         "a refused command must not be submitted"
@@ -1618,7 +1619,7 @@ fn a_command_the_window_lacks_is_refused_and_never_sent_to_the_model() {
     let frame = paint_once(&ctx, &mut app, 1440.0, 900.0);
     let screen = frame.describe();
     assert!(
-        screen.contains("/timeline"),
+        screen.contains("/editor"),
         "the refusal must be on screen and must name the command:\n{screen}"
     );
     assert!(
@@ -1656,7 +1657,7 @@ fn a_line_that_is_not_a_command_is_still_sent() {
 /// A `/word` **nobody** has is a typo, and says so — rather than sending the reader to the
 /// terminal for something that is not there either.
 ///
-/// The two refusals are different facts and the window has to tell them apart: `/timeline` is
+/// The two refusals are different facts and the window has to tell them apart: `/editor` is
 /// a gap in *this product* and works in the terminal; `/timelin` is nobody's.
 #[test]
 fn an_unknown_slash_word_says_unknown_rather_than_not_in_this_window() {
