@@ -64,6 +64,8 @@ fn main() -> std::process::ExitCode {
         theme,
         session,
         model_id,
+        // Shared with the terminal (P-040): one preference, both front ends.
+        hide_thinking: epsilon_core::config::load_hide_thinking(),
     };
 
     match epsilon_desktop::run(opts) {

@@ -1504,6 +1504,12 @@ pub struct IdeApp {
     model_picker: Option<ModelPicker>,
     /// Whether the shortcuts reference overlay is open (S-101).
     shortcuts_open: bool,
+    /// Hide thinking blocks from the transcript (P-040, window half).
+    ///
+    /// Shared with the terminal through config `[display] hide_thinking`:
+    /// the binary sets it from there, `for_workspace` leaves it off so tests
+    /// stay hermetic regardless of the machine's config file.
+    hide_thinking: bool,
     /// Row rectangles of the last drawn model-picker frame, for clicks.
     model_rects: Vec<(usize, egui::Rect)>,
     /// A gate-checked goal round, from the task that ran the gates back to the draw path.
@@ -1966,6 +1972,8 @@ impl IdeApp {
         // *count*, which `begin_goal_round` moves before it sends anything.
         let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Copied before `opts` moves into the struct below.
+        let hide_thinking = opts.hide_thinking;
         let mut app = Self {
             opts,
             theme,
@@ -1992,6 +2000,7 @@ impl IdeApp {
             goal_round_tx,
             goal_round_rx,
             goal_round_pending: false,
+            hide_thinking,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             row_layout: std::cell::RefCell::new(RowLayout::default()),
             goal: None,
@@ -2029,6 +2038,8 @@ impl IdeApp {
         // Bound once, as in `new` — see there for why this used to be two channels.
         let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Copied before `opts` moves into the struct below.
+        let hide_thinking = opts.hide_thinking;
         // The same load as `new`, for the same reason — see the field below.
         let prefs = Preferences::load_from(&opts.workspace, None);
         Self {
@@ -2056,6 +2067,7 @@ impl IdeApp {
             goal_round_tx,
             goal_round_rx,
             goal_round_pending: false,
+            hide_thinking,
             markdown: std::cell::RefCell::new(crate::markup::Cache::default()),
             row_layout: std::cell::RefCell::new(RowLayout::default()),
             goal: None,
@@ -2223,6 +2235,28 @@ impl IdeApp {
         if self.keys.take(ctx, "window.session.fork") {
             let outcome = self.run_fork_session("fork", "forked");
             self.notice_outcome(outcome);
+        }
+        // **Hide thinking blocks (P-040, window half).** Same preference as
+        // the terminal, through the same config key: memory wins, disk is
+        // best-effort with a notice. Below the palette guard with the other
+        // session chords, for the same reason.
+        if self.keys.take(ctx, "window.thinking.toggle") {
+            self.hide_thinking = !self.hide_thinking;
+            match epsilon_core::config::save_hide_thinking(self.hide_thinking) {
+                Ok(_) => self.transcript.push_notice(if self.hide_thinking {
+                    "thinking hidden (saved)"
+                } else {
+                    "thinking shown (saved)"
+                }),
+                Err(e) => self.transcript.push_notice(&format!(
+                    "thinking {} for this run, but not saved: {e}",
+                    if self.hide_thinking {
+                        "hidden"
+                    } else {
+                        "shown"
+                    }
+                )),
+            }
         }
         // **`Shift` first, and that is no longer a workaround.** It used to be needed
         // because `InputState::consume_key` matches modifiers *logically* — extra shift and
@@ -5573,6 +5607,21 @@ impl IdeApp {
             .map(|s| s.pending_approvals())
             .unwrap_or_default();
         let rows = self.transcript.rows();
+        // P-040, window half: hidden thinking never reaches the pane — one
+        // filtered slice for measure and draw alike, so the virtualized
+        // offsets cannot disagree about which rows exist. The rows themselves
+        // are untouched: unhiding restores every block.
+        let hidden: Vec<crate::session::Row>;
+        let rows: &[crate::session::Row] = if self.hide_thinking {
+            hidden = rows
+                .iter()
+                .filter(|r| r.kind != RowKind::Thinking)
+                .cloned()
+                .collect();
+            &hidden
+        } else {
+            rows
+        };
         if rows.is_empty() && pending.is_empty() {
             let line = match self.session {
                 None => "no agent attached",
@@ -8227,6 +8276,75 @@ mod tests {
         assert!(
             agent.contains("Response was stopped"),
             "the notice must reach the screen, not just the rows.\n{agent}"
+        );
+    }
+
+    /// Thinking blocks hide when set, and come back on untoggle (P-040, pixels).
+    ///
+    /// The reducer keeps every row (unhiding restores); the pane filters one
+    /// slice for measure and draw alike. RED first: thinking reaches the
+    /// screen.
+    #[test]
+    fn thinking_blocks_hide_when_set() {
+        let (ws, _keep) = scratch_workspace("thinking-hide");
+        let sessions_root = epsilon_runtime::sessions_root(&ws);
+        std::fs::create_dir_all(&sessions_root).expect("sessions root");
+        let other = sessions_root.join("thinking.jsonl");
+        let mut store =
+            epsilon_session::SessionStore::open_in(other.clone(), &ws).expect("a store opens");
+        store
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::Assistant(
+                    epsilon_contracts::message::AssistantMessage {
+                        id: "m-think".into(),
+                        timestamp_ms: 0,
+                        provider: "faux".into(),
+                        model_id: "faux-1".into(),
+                        content: vec![
+                            epsilon_contracts::content::ContentBlock::Thinking {
+                                text: "pondering quietly".into(),
+                                signature: None,
+                            },
+                            epsilon_contracts::content::ContentBlock::text("the answer aloud"),
+                        ],
+                        stop_reason: epsilon_contracts::message::StopReason::EndTurn,
+                        error_message: None,
+                        usage: Default::default(),
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        drop(store);
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command(&format!("/resume {}", other.display()));
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/resume <path> must run, not refuse or send: {outcome:?}");
+        };
+        let shown = h.paint().region("agent").join("\n");
+        assert!(
+            shown.contains("pondering quietly"),
+            "thinking is visible by default.\n{shown}"
+        );
+
+        h.app.hide_thinking = true;
+        let hidden = h.paint().region("agent").join("\n");
+        assert!(
+            !hidden.contains("pondering quietly"),
+            "hidden thinking must leave no pixels.\n{hidden}"
+        );
+        assert!(
+            hidden.contains("the answer aloud"),
+            "prose stays while thinking hides.\n{hidden}"
+        );
+
+        h.app.hide_thinking = false;
+        let back = h.paint().region("agent").join("\n");
+        assert!(
+            back.contains("pondering quietly"),
+            "unhiding restores every block.\n{back}"
         );
     }
 

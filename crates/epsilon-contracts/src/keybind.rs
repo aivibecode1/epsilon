@@ -402,6 +402,9 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // The shortcuts reference: toggled, and closed when already in front.
     ("window.shortcuts", &["ctrl+/"]),
     ("window.shortcuts.close", &["escape"]),
+    // Hide thinking blocks (P-040, window half): Alt+T like the terminal
+    // (`Ctrl+T` is free here, but one gesture in both front ends beats two).
+    ("window.thinking.toggle", &["alt+t"]),
     ("window.focus.next", &["f6"]),
     ("window.focus.previous", &["shift+f6"]),
     ("window.tree.next", &["down"]),

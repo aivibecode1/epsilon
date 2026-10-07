@@ -89,6 +89,10 @@ pub struct Options {
     pub session: Option<std::path::PathBuf>,
     /// Model to run on. `None` resolves through the same precedence the CLI uses.
     pub model_id: Option<String>,
+    /// Hide thinking blocks from the transcript. The terminal persists this in
+    /// config `[display] hide_thinking` and both front ends honor the same
+    /// key; the binary sets it from there, tests leave it off.
+    pub hide_thinking: bool,
 }
 
 impl Options {
@@ -99,6 +103,7 @@ impl Options {
             theme: None,
             session: None,
             model_id: None,
+            hide_thinking: false,
         }
     }
 }
