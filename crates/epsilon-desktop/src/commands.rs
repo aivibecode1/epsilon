@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-eight names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-nine names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -261,6 +261,15 @@ impl IdeApp {
             Command::Settings => {
                 self.open_settings();
                 Outcome::Ran("settings — values update live; Enter acts".to_string())
+            }
+            // **`/search` finds text in the transcript (full-port round 51).**
+            // An overlay over the live rows with the query pre-filled, so
+            // refining it never means leaving and retyping; choosing a match
+            // scrolls the transcript there through the row offsets. Same
+            // overlay manners as the rest (one at a time, Esc closes).
+            Command::Search(query) => {
+                self.open_search(query);
+                Outcome::Ran("search — type, Enter jumps".to_string())
             }
             // **`/import` switches the session file live (full-port round 48).**
             // The terminal's shape — usage on bare (no browser here, unlike
@@ -1255,6 +1264,7 @@ pub const SUPPORTED: &[&str] = &[
     "reload",
     "restore",
     "resume",
+    "search",
     "session",
     "sessions",
     "settings",
@@ -1552,6 +1562,7 @@ mod tests {
             Command::Reload,
             Command::Restore(String::new()),
             Command::Resume(String::new()),
+            Command::Search(String::new()),
             Command::Session,
             Command::Sessions,
             Command::Settings,

@@ -617,6 +617,22 @@ struct ModelPicker {
     provider: Option<String>,
 }
 
+/// The transcript search overlay: what was typed, which rows match, where
+/// the highlight sits, and how many rows the match was computed against (so
+/// a transcript that grows under it invalidates the indices rather than
+/// jumping somewhere the match no longer is).
+struct SearchView {
+    query: String,
+    /// Indices into the *visible* rows (thinking-hidden already applied).
+    matches: Vec<usize>,
+    selected: usize,
+    rows_seen: usize,
+    hidden: bool,
+    /// The query the matches were computed for: typing mutates `query` in
+    /// place, so length and flag checks alone would serve stale indices.
+    matched: String,
+}
+
 /// One drawable settings row.
 ///
 /// `Clone` for the same reason as `PaletteAction`: the chosen row is read
@@ -1036,6 +1052,7 @@ impl IdeApp {
         self.palette = None;
         self.shortcuts_open = false;
         self.settings_open = false;
+        self.search = None;
         self.model_picker = Some(ModelPicker::default());
         // M20 auto-fetch, like the terminal's: the highlighted provider
         // starts refreshing immediately, so by the time the reader descends
@@ -1249,6 +1266,7 @@ impl IdeApp {
         self.palette = None;
         self.model_picker = None;
         self.settings_open = false;
+        self.search = None;
         self.shortcuts_open = true;
     }
 
@@ -1338,6 +1356,15 @@ impl IdeApp {
             },
         ]
     }
+    /// Whether a transcript row reaches the agent pane — and the search.
+    ///
+    /// One predicate for measure, draw, and find alike: three readers that
+    /// must agree about which rows exist, or jumps land on the wrong
+    /// conversation.
+    fn row_visible(&self, row: &crate::session::Row) -> bool {
+        !(self.hide_thinking && row.kind == RowKind::Thinking)
+    }
+
     /// Open the settings browser, closing the other overlays.
     ///
     /// One overlay at a time, same rule as the model picker.
@@ -1345,6 +1372,7 @@ impl IdeApp {
         self.palette = None;
         self.model_picker = None;
         self.shortcuts_open = false;
+        self.search = None;
         self.settings_open = true;
         self.settings_selected = 0;
     }
@@ -1354,6 +1382,141 @@ impl IdeApp {
     fn close_settings(&mut self) {
         self.settings_open = false;
         self.focus = FocusTarget::Agent;
+    }
+
+    /// Open transcript search, closing the other overlays.
+    ///
+    /// One overlay at a time, same rule as the rest. The query starts as
+    /// given (`/search text` pre-fills) so refining it never means leaving
+    /// and retyping.
+    pub fn open_search(&mut self, query: String) {
+        self.palette = None;
+        self.model_picker = None;
+        self.shortcuts_open = false;
+        self.settings_open = false;
+        self.search = Some(SearchView {
+            query,
+            matches: Vec::new(),
+            selected: 0,
+            rows_seen: usize::MAX,
+            hidden: !self.hide_thinking,
+            matched: String::new(),
+        });
+        self.search_rects.clear();
+    }
+
+    /// Close transcript search and hand the keyboard back to the agent pane.
+    ///
+    /// The same two halves as [`Self::close_palette`], for the same reason.
+    fn close_search(&mut self) {
+        self.search = None;
+        self.focus = FocusTarget::Agent;
+    }
+
+    /// Recompute search matches when the query, the transcript, or the
+    /// visibility flag moved under them. Stale indices would jump somewhere
+    /// the match no longer is — the same reason the offsets exist.
+    fn refresh_search(&mut self) {
+        let query = self
+            .search
+            .as_ref()
+            .map(|v| v.query.clone())
+            .unwrap_or_default();
+        let hide = self.hide_thinking;
+        let rows = self.transcript.rows();
+        let stale = match self.search.as_ref() {
+            None => return,
+            Some(v) => v.matched != query || v.rows_seen != rows.len() || v.hidden != hide,
+        };
+        if !stale {
+            return;
+        }
+        let needle = query.trim().to_lowercase();
+        let matches = if needle.is_empty() {
+            Vec::new()
+        } else {
+            rows.iter()
+                .filter(|r| !(hide && r.kind == RowKind::Thinking))
+                .enumerate()
+                .filter(|(_, r)| r.text.to_lowercase().contains(&needle))
+                .map(|(i, _)| i)
+                .collect()
+        };
+        if let Some(view) = self.search.as_mut() {
+            if view.selected >= matches.len() && !matches.is_empty() {
+                view.selected = matches.len() - 1;
+            }
+            if matches.is_empty() {
+                view.selected = 0;
+            }
+            view.matches = matches;
+            view.rows_seen = rows.len();
+            view.hidden = hide;
+            view.matched = query;
+        }
+    }
+
+    /// Read the transcript search's keys, and act on one.
+    ///
+    /// After the settings browser — an open overlay owns every key — and
+    /// before the panes, for the same reason they read before the composer.
+    /// The box's own typing never reaches here: the `TextEdit` eats text,
+    /// and these are the chords around it.
+    fn search_keys(&mut self, ctx: &egui::Context) {
+        if self.search.is_none() {
+            return;
+        }
+        self.refresh_search();
+        if self.keys.take(ctx, "window.search.close") {
+            self.close_search();
+            return;
+        }
+        let submitted = self.keys.take(ctx, "window.search.submit");
+        let mut step: i32 = 0;
+        if self.keys.take(ctx, "window.search.next") {
+            step += 1;
+        } else if self.keys.take(ctx, "window.search.previous") {
+            step -= 1;
+        }
+        let count = self.search.as_ref().map(|v| v.matches.len()).unwrap_or(0);
+        if step != 0
+            && count > 0
+            && let Some(view) = self.search.as_mut()
+        {
+            view.selected = (view.selected as i32 + step).clamp(0, count as i32 - 1) as usize;
+        }
+        let (any_click, at) = ctx.input(|i| (i.pointer.any_click(), i.pointer.interact_pos()));
+        if any_click
+            && let Some(at) = at
+            && let Some((index, _)) = self
+                .search_rects
+                .iter()
+                .find(|(_, r)| r.contains(at))
+                .copied()
+        {
+            self.jump_to_match(index);
+            return;
+        }
+        if submitted {
+            let selected = self.search.as_ref().map(|v| v.selected).unwrap_or(0);
+            self.jump_to_match(selected);
+        }
+    }
+
+    /// Jump the transcript to a match and close the search.
+    ///
+    /// The scroll itself happens in the transcript draw (`pending_jump`),
+    /// because only the draw knows the row's rect: setting pixels here
+    /// would be a second layout.
+    fn jump_to_match(&mut self, index: usize) {
+        let target = self
+            .search
+            .as_ref()
+            .and_then(|v| v.matches.get(index).copied());
+        if let Some(target) = target {
+            self.pending_jump = Some(target);
+        }
+        self.close_search();
     }
 
     /// Read the settings browser's keys, and act on one.
@@ -1797,6 +1960,12 @@ pub struct IdeApp {
     settings_selected: usize,
     /// Row rectangles of the last drawn settings frame, for clicks.
     settings_rects: Vec<(usize, egui::Rect)>,
+    /// The transcript search overlay, open while it is `Some`.
+    search: Option<SearchView>,
+    /// Row rectangles of the last drawn search frame, for clicks.
+    search_rects: Vec<(usize, egui::Rect)>,
+    /// Transcript row index to scroll to, consumed by the next draw.
+    pending_jump: Option<usize>,
     /// Live provider-listing fetcher for the model picker (`None` without the
     /// `real` feature). The same constructor the terminal's binary uses.
     live: Option<epsilon_tui::LiveFetcher>,
@@ -2347,6 +2516,9 @@ impl IdeApp {
             settings_open: false,
             settings_selected: 0,
             settings_rects: Vec::new(),
+            search: None,
+            search_rects: Vec::new(),
+            pending_jump: None,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2434,6 +2606,9 @@ impl IdeApp {
             settings_open: false,
             settings_selected: 0,
             settings_rects: Vec::new(),
+            search: None,
+            search_rects: Vec::new(),
+            pending_jump: None,
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2574,6 +2749,7 @@ impl IdeApp {
             || self.model_picker.is_some()
             || self.shortcuts_open
             || self.settings_open
+            || self.search.is_some()
         {
             return;
         }
@@ -2608,6 +2784,12 @@ impl IdeApp {
         // key, so this fires only when nothing is already up.
         if self.keys.take(ctx, "window.model") {
             self.open_model_picker();
+        }
+        // **Find in the transcript (round 51).** Below the palette guard
+        // with the other chords, for the same reason: an open overlay owns
+        // every key.
+        if self.keys.take(ctx, "window.search") {
+            self.open_search(String::new());
         }
         // **`Shift` first, and that is no longer a workaround.** It used to be needed
         // because `InputState::consume_key` matches modifiers *logically* — extra shift and
@@ -2890,6 +3072,7 @@ impl IdeApp {
         self.model_picker = None;
         self.shortcuts_open = false;
         self.settings_open = false;
+        self.search = None;
         self.palette = Some(Palette::default());
     }
     /// Say what a command did, in the transcript.
@@ -3600,6 +3783,9 @@ impl IdeApp {
         // The settings browser reads four keys after the shortcuts
         // reference, for the same reason.
         self.settings_keys(ui.ctx());
+        // Transcript search reads five keys after the settings browser, for
+        // the same reason.
+        self.search_keys(ui.ctx());
         // Pane focus, and the keys that act inside the focused pane. **After the
         // palette**, which owns those keys while it is open, and **before every pane is
         // drawn**, because the composer consumes Enter and Escape unconditionally and a
@@ -3901,6 +4087,8 @@ impl IdeApp {
         self.draw_shortcuts(ui, &mut summary, scale);
         // The settings browser draws on the same layer, under the same rule.
         self.draw_settings(ui, &mut summary, scale);
+        // Transcript search draws on the same layer, under the same rule.
+        self.draw_search(ui, &mut summary, scale);
         // **The quit dialog is above the palette, not beside it.** A close request arrives
         // from outside the window — from a button the reader pressed without touching the
         // application — so it cannot be queued behind whatever the application happens to
@@ -5218,6 +5406,171 @@ impl IdeApp {
     /// The tab strip: every open file, and which one is showing.
     ///
     /// A tab strip drawn as painted text is a picture of a tab strip, so these are buttons.
+    /// The transcript search overlay: a box, the matches, and the jump.
+    ///
+    /// Same position and manners as every other overlay. Match rows show the
+    /// row's text fitted to the box; choosing one (Enter, click) scrolls the
+    /// transcript there through `pending_jump` and closes. Values read live,
+    /// like the settings browser: the count line never goes stale.
+    fn draw_search(&mut self, ui: &mut egui::Ui, summary: &mut FrameSummary, scale: f32) {
+        if self.search.is_none() {
+            return;
+        }
+        self.refresh_search();
+        self.search_rects.clear();
+        let selected = self.search.as_ref().map(|v| v.selected).unwrap_or(0);
+        let query = self
+            .search
+            .as_ref()
+            .map(|v| v.query.clone())
+            .unwrap_or_default();
+        let matches = self
+            .search
+            .as_ref()
+            .map(|v| v.matches.clone())
+            .unwrap_or_default();
+
+        let screen = ui.ctx().content_rect();
+        let width = (screen.width() * 0.6).clamp(240.0, 720.0);
+        let shown = matches.len().min(12);
+        let height =
+            ((28.0 + 26.0 + shown as f32 * 22.0 + 12.0) * scale).min(screen.height() * 0.9);
+        let box_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.center().x - width / 2.0, screen.top() + 48.0),
+            egui::vec2(width, height),
+        );
+        let theme = self.theme;
+        let painter = ui.painter().with_clip_rect(screen);
+        painter.rect_filled(box_rect, 6.0, theme.panel);
+        painter.rect_stroke(
+            box_rect,
+            6.0,
+            egui::Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+
+        paint_text(
+            &painter,
+            summary,
+            "search",
+            box_rect.left_top() + egui::vec2(12.0, 18.0 * scale),
+            egui::Align2::LEFT_CENTER,
+            "Find in transcript".to_string(),
+            egui::FontId::proportional(13.0 * scale),
+            theme.title,
+        );
+        summary
+            .rows
+            .push(("search".into(), "Find in transcript".into()));
+
+        // The box. Unnamed by the same rule that pins both pickers' boxes:
+        // a static purpose-hint ("words in the transcript") announces
+        // itself, and a label over it would announce twice. (The composer
+        // carries a name because its hint changes with state; this one's
+        // does not.)
+        let search_box = egui::Rect::from_min_size(
+            box_rect.left_top() + egui::vec2(8.0, 28.0 * scale),
+            egui::vec2(box_rect.width() - 16.0, 24.0 * scale),
+        );
+        if let Some(view) = self.search.as_mut() {
+            let response = ui.put(
+                search_box,
+                egui::TextEdit::singleline(&mut view.query).hint_text("words in the transcript"),
+            );
+            response.request_focus();
+            summary.hotspots.push(("search-box".into(), response.rect));
+        }
+
+        let count_line = if query.trim().is_empty() {
+            "type to search".to_string()
+        } else if matches.is_empty() {
+            "no matches".to_string()
+        } else {
+            format!("match {} of {}", selected + 1, matches.len())
+        };
+        paint_text(
+            &painter,
+            summary,
+            "search",
+            box_rect.left_top() + egui::vec2(12.0, 58.0 * scale),
+            egui::Align2::LEFT_CENTER,
+            count_line.clone(),
+            egui::FontId::proportional(11.0 * scale),
+            theme.dim,
+        );
+        summary.rows.push(("search".into(), count_line));
+
+        // Owned heads before any `&mut self` below: the rows borrow ends
+        // here, so rects, regions and nodes can build without fighting it.
+        // First line only: a match row names where, not the whole row. The
+        // list windows around the selection so the highlight is always the
+        // reader's — a selection scrolled out of a capped list is a cursor
+        // nobody can see.
+        let start = selected
+            .saturating_sub(6)
+            .min(matches.len().saturating_sub(12));
+        let heads: Vec<(usize, String)> = matches
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(12)
+            .map(|(position, row_index)| {
+                let head: String = self
+                    .transcript
+                    .rows()
+                    .get(*row_index)
+                    .map(|r| r.text.clone())
+                    .unwrap_or_default()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(64)
+                    .collect();
+                (position, head)
+            })
+            .collect();
+        let mut y = box_rect.top() + 66.0 * scale;
+        for (position, head) in &heads {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(box_rect.left() + 8.0, y),
+                egui::vec2((box_rect.width() - 16.0).max(8.0), 20.0 * scale),
+            );
+            if *position == selected {
+                painter.rect_filled(row, 3.0, theme.selection_focus);
+            }
+            let color = if *position == selected {
+                theme.title
+            } else {
+                theme.text
+            };
+            paint_text(
+                &painter,
+                summary,
+                "search",
+                row.left_top() + egui::vec2(4.0, 14.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                head.clone(),
+                egui::FontId::proportional(12.0 * scale),
+                color,
+            );
+            summary.rows.push(("search".into(), head.clone()));
+            summary.row_rects.push(("search".into(), row));
+            self.search_rects.push((*position, row));
+            name_region(
+                ui,
+                row,
+                &format!("epsilon-search-match-{position}"),
+                &format!("Search match · {head}"),
+                egui::accesskit::Role::Region,
+            );
+            y += 22.0 * scale;
+        }
+        summary
+            .rows
+            .push(("search".into(), "esc closes · enter jumps".into()));
+    }
+
     /// The strip **records where each tab went** and the click is applied by
     /// [`IdeApp::pressed_tab`] *before* this runs — egui only knows a button was pressed once
     /// it has been drawn, so a strip that reacted to its own answer could not also redraw
@@ -5828,7 +6181,11 @@ impl IdeApp {
             );
             let out = egui::ScrollArea::vertical()
                 .id_salt("epsilon-agent-transcript")
-                .stick_to_bottom(true)
+                // A queued jump owns this frame's scroll: `stick_to_bottom`
+                // applies at the end of the pass and would yank a jump back
+                // down. Off only while a jump is pending (consumed in
+                // `draw_rows` below), so following still follows.
+                .stick_to_bottom(self.pending_jump.is_none())
                 .max_height(body.height())
                 .show(&mut body_ui, |ui| {
                     ui.set_width(body.width());
@@ -6081,7 +6438,7 @@ impl IdeApp {
     /// `clip.max.y - max_rect.min.y` the first invisible one. `max_rect.min.y` is where
     /// this cursor starts, which is the origin every offset below is counted from.
     fn draw_rows(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         summary: &mut FrameSummary,
         scale: f32,
@@ -6097,12 +6454,13 @@ impl IdeApp {
         // P-040, window half: hidden thinking never reaches the pane — one
         // filtered slice for measure and draw alike, so the virtualized
         // offsets cannot disagree about which rows exist. The rows themselves
-        // are untouched: unhiding restores every block.
+        // are untouched: unhiding restores every block. Search reads through
+        // the same predicate, so jumps land where the pane draws.
         let hidden: Vec<crate::session::Row>;
         let rows: &[crate::session::Row] = if self.hide_thinking {
             hidden = rows
                 .iter()
-                .filter(|r| r.kind != RowKind::Thinking)
+                .filter(|r| self.row_visible(r))
                 .cloned()
                 .collect();
             &hidden
@@ -6128,8 +6486,40 @@ impl IdeApp {
         // width, and the row widths are measured against it.
         let origin = ui.max_rect().min.y;
         let clip = ui.clip_rect();
+        // Taken before the shared borrows below: a queued jump is consumed
+        // exactly once, on the frame that draws it.
+        let jump = self.pending_jump.take();
         let offsets = self.row_offsets(ui, rows, scale);
         let span = offsets.span(clip.min.y - origin, clip.max.y - origin);
+        // A queued jump lands the transcript on the match: the offsets know
+        // every row's pixel, so this is arithmetic, not a second layout.
+        // Placed here — not in keys — because `scroll_to_rect` must run
+        // inside the scroll content, and this is the one place that is.
+        if let Some(target) = jump
+            && target < rows.len()
+        {
+            let top = offsets.at(target);
+            let bottom = offsets.at(target + 1);
+            // The row's rect in the content ui's own space: rows are laid
+            // from `origin` (this ui's top at frame start) plus the
+            // virtualized offsets. Screen-space it is — and must be,
+            // because `scroll_to_rect` reads the same ui's `min_rect`.
+            // (A 0-based guess sailed nowhere; the animation default
+            // froze the first attempt so the coords took the blame.)
+            //
+            // Instant, not animated: the default animation lerps over
+            // real time, which a test's back-to-back paints never
+            // advance — and a find that glides past the match is
+            // orientation nobody asked for.
+            ui.scroll_to_rect_animation(
+                egui::Rect::from_min_size(
+                    egui::pos2(clip.min.x, origin + top),
+                    egui::vec2(clip.width(), (bottom - top).max(1.0)),
+                ),
+                Some(egui::Align::Center),
+                egui::style::ScrollAnimation::none(),
+            );
+        }
         // The two spacers. `add_space` advances the cursor by exactly what it is given
         // (`Layout::advance_cursor`, `egui-0.36.2/src/layout.rs:674`), and a widget's
         // allocation adds `item_spacing.y` **after** it rather than before
@@ -15199,6 +15589,117 @@ mod tests {
         assert!(
             said.contains("no agent"),
             "names the missing piece: {said:?}"
+        );
+    }
+
+    /// `/search` opens the finder with live matches (round 51).
+    ///
+    /// The query is set directly rather than typed: egui owns text
+    /// delivery, and what is under test is matching, listing, and jumping —
+    /// not the framework's event routing. RED first: the honest refusal.
+    #[test]
+    fn slash_search_opens_with_matches() {
+        let (ws, _keep) = scratch_workspace("slash-search");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.app.transcript.push_user("a needle worth finding");
+        h.app.transcript.push_user("plain hay");
+
+        let outcome = h.app.try_command("/search");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/search must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(h.app.search.is_some(), "the finder must be open");
+        h.app
+            .search
+            .as_mut()
+            .expect("open")
+            .query
+            .push_str("needle");
+        let frame = h.paint();
+        let rows = frame.region("search").join("\n");
+        assert!(
+            rows.contains("needle worth finding"),
+            "the match must be listed.\n{rows}"
+        );
+        assert!(
+            rows.contains("match 1 of 1"),
+            "the count must read live.\n{rows}"
+        );
+        let _ = said;
+    }
+
+    /// `/search text` pre-fills the query.
+    #[test]
+    fn slash_search_prefills_the_query() {
+        let (ws, _keep) = scratch_workspace("slash-search-prefill");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/search haystack");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/search text must answer: {outcome:?}");
+        };
+        assert_eq!(
+            h.app
+                .search
+                .as_ref()
+                .map(|v| v.query.clone())
+                .unwrap_or_default(),
+            "haystack",
+            "the head must seed the box"
+        );
+    }
+
+    /// `Ctrl+F` opens search; Escape closes it.
+    #[test]
+    fn control_f_toggles_search() {
+        let (ws, _keep) = scratch_workspace("control-f-search");
+        let mut h = Harness::new(ws);
+        let _ = h.paint();
+        let _ = h.chord(egui::Modifiers::CTRL, egui::Key::F);
+        assert!(h.app.search.is_some(), "Ctrl+F must open search");
+        let _ = h.press(egui::Key::Escape);
+        assert!(h.app.search.is_none(), "Escape must close it");
+    }
+
+    /// Choosing a match scrolls the transcript to it (round 51).
+    ///
+    /// A needle buried under 150 filler rows is off-screen under
+    /// `stick_to_bottom`; after Enter on its match it must be drawn. Two
+    /// paints: the jump is consumed on the first, the scroll lands for the
+    /// second to show — the same two-frame shape the scrolling tests pin.
+    #[test]
+    fn search_enter_jumps_to_the_match() {
+        let (ws, _keep) = scratch_workspace("search-jump");
+        let mut h = Harness::new(ws);
+        h.app.transcript.push_user("the needle up top");
+        for i in 0..150 {
+            h.app.transcript.push_user(&format!("filler row {i}"));
+        }
+        let _ = h.paint();
+        let before = h.paint().region("agent").join("\n");
+        assert!(
+            !before.contains("needle up top"),
+            "precondition: the needle starts off-screen.\n{before}"
+        );
+
+        let _ = h.app.try_command("/search");
+        h.app
+            .search
+            .as_mut()
+            .expect("open")
+            .query
+            .push_str("needle");
+        let _ = h.paint();
+        let _ = h.press(egui::Key::Enter);
+        assert!(
+            h.app.pending_jump.is_none(),
+            "the jump must be consumed, not queued forever"
+        );
+        let _ = h.paint();
+        let after = h.paint().region("agent").join("\n");
+        assert!(
+            after.contains("needle up top"),
+            "the jumped-to row must reach the screen.\n{after}"
         );
     }
 }

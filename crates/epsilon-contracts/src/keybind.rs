@@ -415,6 +415,14 @@ pub const WINDOW: &[(&str, &[&str])] = &[
     // Hide thinking blocks (P-040, window half): Alt+T like the terminal
     // (`Ctrl+T` is free here, but one gesture in both front ends beats two).
     ("window.thinking.toggle", &["alt+t"]),
+    // Find in the transcript (round 51): Ctrl+F, the convention everywhere.
+    // Separate submit/next/previous ids so rebinding one never moves the
+    // others, like every other overlay.
+    ("window.search", &["ctrl+f"]),
+    ("window.search.close", &["escape"]),
+    ("window.search.submit", &["enter"]),
+    ("window.search.next", &["down"]),
+    ("window.search.previous", &["up"]),
     ("window.focus.next", &["f6"]),
     ("window.focus.previous", &["shift+f6"]),
     ("window.tree.next", &["down"]),

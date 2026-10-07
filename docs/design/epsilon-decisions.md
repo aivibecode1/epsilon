@@ -2527,6 +2527,12 @@ the terminal's shape with its words (usage on bare — no browser here, unlike
 `/resume`), same busy and missing guards, same switch. The state-changing
 core is shared; only the verb differs. 28 of 37.
 
+**Amendment (full-port round 51).** `/search` finds text in the transcript:
+an overlay over the live rows with the query pre-filled, choosing a match
+scrolls there through the row offsets. The jump runs instant and
+content-spaced (the default animation freezes under test paints; screen
+space sailed past the match once). 29 of 37.
+
 ---
 
 ---
