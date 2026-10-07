@@ -115,12 +115,12 @@ measurements taken here at all.
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
 | Approvals and permission presets | 14 | 3 | 6 | 5 | 0 |
 | Transcript, streaming and tool cards | 82 | 2 | 18 | 56 | 6 |
-| Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 8 | 51 | 5 |
+| Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 23 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **15** | **93** | **283** | **42** |
+| **Total** | **433** | **15** | **94** | **282** | **42** |
 
 ---
 
@@ -363,7 +363,7 @@ chords, all literals.** See **ED-001**.
 | S-123 | A saved combination occupied by another command is refused with both command names. | `shortcuts/src/configuration.ts:147`, `ui-shortcuts/src/client/Editor.tsx:68` | missing | — | As S-122: no recorder to refuse anything. The conflict check the reference has is a **test** here (`no_chord_is_bound_to_two_ids_in_the_terminal_table`), which catches the same mistake at build time rather than at save time. |
 | S-124 | **Restore all defaults** affects only the current runtime/platform profile and asks for confirmation. | `ui-shortcuts/src/client/Reference.tsx:205`, `:213` | missing | — | As S-122. There is nothing to restore, because nothing is written. |
 | S-125 | Bindings persist per device: Web in `localStorage`, Desktop in `userData/keybindings.json`. | `shortcuts/src/client/storage.ts:6`, `:38` | partial | `crates/epsilon-desktop/src/keys.rs` | **M315: the window reads a keybinding store**, from the same `<config dir>/keybindings.json` the terminal reads and through the same grammar. What is missing is persistence *back*: nothing writes it, so a binding a user set by hand survives and one set in a UI would not. |
-| S-126 | An unreadable keybinding file disables all editing and names the document and reload action in a toast. | `ui-shortcuts/src/client/Reference.tsx:93`, `shortcuts/src/persistence.ts:17` | missing | — | As S-125. |
+| S-126 | An unreadable keybinding file disables all editing and names the document and reload action in a toast. | `ui-shortcuts/src/client/Reference.tsx:93`, `shortcuts/src/persistence.ts:17` | partial | The window falls back to defaults without stopping — and since round 31 a present-but-unusable file names itself with the reason and the fix (reopen after repairing) in a launch notice carried on the bindings themselves (`KeyBindings::load_warning`); absent stays silent as it should. No toast surface exists (notices persist in the transcript instead), and there is no bindings editor to disable | `a_broken_keybindings_file_names_itself` (absent silent, broken/non-object/unreadable warn, valid silent; negative control run) |
 | S-127 | Windows keycaps join modifiers with `+`; macOS uses control glyphs; a two-key chord prints no `aria-keyshortcuts`. | `shortcuts/src/binding.ts:86`, `:87`, `:78` | deliberately different | `crates/epsilon-desktop/src/app.rs:2864-2877` | There is no keycap reference to render. The few chords the window prints are printed as words — `ctrl+b sidebar  ·  left/right width` — and that spelling is itself a measured decision: the first rasterised frame drew the arrows as two tofu boxes because egui's bundled proportional font has no `U+2190`/`U+2192`, and no assertion was looking at the screen (`app.rs:2866-2874`). |
 | S-128 | Settings opens as a centred modal panel **800 px wide and 800 px tall**. | `ui-settings-general/src/client/SettingsRoot.module.css:89-91` | missing | — | No Settings surface. |
 | S-129 | The Settings navigation lists Account, General, Models, Built-in plugins in a fixed order. | `ui-settings-general/src/client/index.ts:234` | missing | — | As S-128. |
@@ -818,7 +818,7 @@ rather than merely underserved:
 | Electron shell | D-007, D-008, D-009, D-012, D-013, D-014, D-017, D-018, D-019, D-020, D-022, D-024, D-025, D-026, D-027, D-028, D-029, D-032, D-033, D-034, D-035, D-036, D-037, D-038, D-039, D-040, D-041, D-042, D-043, D-044, D-046, D-047, D-052, D-053, D-054, D-055, D-056, D-057, D-059, D-060, D-063, D-068, D-069, D-070 |
 | Approvals and presets | D-077, D-079, D-080, D-081, D-082 |
 | Transcript and tool cards | C-101, C-102, C-103, C-104, C-105, C-106, C-108, C-112, C-113, C-114, C-115, C-116, C-117, C-118, C-119, C-122, C-124, C-125, C-128, C-129, C-130, C-131, C-133, C-134, C-136, C-137, C-138, C-139, C-142, C-144, C-146, C-148, C-149, C-150, C-151, C-154, C-155, C-156, C-158, C-159, C-161, C-164, C-165, C-166, C-167, C-171, C-172, C-173, C-175, C-176, C-177, C-178, C-179, C-180, C-181, C-182 |
-| Keyboard and settings | S-102, S-104, S-105, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-126, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
+| Keyboard and settings | S-102, S-104, S-105, S-106, S-108, S-110, S-111, S-112, S-114, S-116, S-121, S-122, S-123, S-124, S-128, S-130, S-129, S-131, S-132, S-133, S-134, S-136, S-137, S-138, S-139, S-140, S-141, S-142, S-143, S-144, S-145, S-146, S-147, S-148, S-149, S-150, S-151, S-152, S-153, S-155, S-156, S-157, S-158, S-160, S-161, S-162, S-163, S-166, S-167, S-168 |
 | Palette and composer | P-103, P-105, P-107, P-109, P-110, P-111, P-112, P-113, P-115, P-116, P-118, P-119, P-120, P-123, P-124, P-125, P-129, P-130, P-131, P-134, P-135, P-137, P-139, P-141, P-142, P-143, P-144, P-145, P-147, P-149, P-151, P-152, P-153 |
 | Layout and panes | L-104, L-109, L-111, L-112, L-113, L-114, L-116, L-117, L-118, L-119, L-120, L-121, L-122, L-123, L-124, L-125, L-126, L-127, L-133, L-134, L-135, L-136, L-137, L-139, L-140, L-141, L-142, L-144, L-145, L-147, L-148, L-149, L-150, L-153, L-154, L-156, L-157, L-162, L-163 |
 | Approvals through models | I-108, I-109, I-110, I-111, I-112, I-113, I-114, I-115, I-116, I-117, I-118, I-119, I-120, I-121, I-122, I-123, I-124, I-125, I-126, I-127, I-128, I-129, I-130, I-131, I-132, I-135, I-136, I-138, I-140, I-143, I-144, I-145, I-146, I-147, I-148, I-150 |

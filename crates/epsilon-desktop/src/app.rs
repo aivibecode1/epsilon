@@ -1931,6 +1931,12 @@ impl IdeApp {
         // load or a session that migrated itself reached nobody — a window has no stderr.
         let mut notices = notices;
         notices.extend(session.notices().iter().cloned());
+        // A keybindings file that could not be used names itself at startup
+        // (S-126): every rebind in it is silently not applied otherwise.
+        let keys = window_keys();
+        if let Some(warning) = keys.load_warning() {
+            notices.push(warning.to_string());
+        }
         // Start listening before the first frame: an event that arrives between the
         // window opening and the bridge attaching would be dropped, and the first thing a
         // user does is type.
@@ -2017,7 +2023,7 @@ impl IdeApp {
             tree_cursor: None,
             session_cursor: None,
             layout,
-            keys: window_keys(),
+            keys,
             quit_confirm: None,
         };
         // **Once, here.** A window that opens onto an existing session has to show what
@@ -2040,6 +2046,13 @@ impl IdeApp {
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
+        // A keybindings file that could not be used names itself at startup
+        // (S-126), like `new` does above.
+        let keys = window_keys();
+        let mut notices: Vec<String> = vec!["not connected to an agent".into()];
+        if let Some(warning) = keys.load_warning() {
+            notices.push(warning.to_string());
+        }
         // The same load as `new`, for the same reason — see the field below.
         let prefs = Preferences::load_from(&opts.workspace, None);
         Self {
@@ -2052,7 +2065,7 @@ impl IdeApp {
             prefs_dir: None,
             prefs_save_error: None,
             session: None,
-            notices: vec!["not connected to an agent".into()],
+            notices,
             transcript,
             draft: String::new(),
             placeholder: "no agent attached",

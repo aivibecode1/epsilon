@@ -29,6 +29,11 @@ use epsilon_contracts::keybind::{Chord, Mods, WINDOW};
 #[derive(Debug, Clone, Default)]
 pub struct KeyBindings {
     user: HashMap<String, Vec<String>>,
+    /// Why the user file was ignored, if it was there to be read. `None`
+    /// means absent (normal first run) or fine — only a present-but-unusable
+    /// file names itself, because only that surprises: every rebind in it is
+    /// silently not applied.
+    load_warning: Option<String>,
 }
 
 impl KeyBindings {
@@ -36,6 +41,7 @@ impl KeyBindings {
     pub fn defaults() -> Self {
         Self {
             user: HashMap::new(),
+            load_warning: None,
         }
     }
 
@@ -45,16 +51,25 @@ impl KeyBindings {
     /// `{"window.sidebar.toggle": "ctrl+alt+b"}` means it here and means it in the terminal,
     /// because `Chord::parse` is one function in `epsilon-contracts`. Reads fail open: a
     /// missing or unreadable file leaves the defaults, because a preferences file must never
-    /// stop a window opening.
+    /// stop a window opening — but a present file that cannot be used says so
+    /// through [`Self::load_warning`], because silent defaults are how a
+    /// carefully written rebind goes missing without a trace.
     pub fn load(config_dir: &Path) -> Self {
-        Self {
-            user: load_user_file(config_dir),
-        }
+        let (user, load_warning) = load_user_file(config_dir);
+        Self { user, load_warning }
+    }
+
+    /// Why [`Self::load`] ignored the user file, if it did.
+    pub fn load_warning(&self) -> Option<&str> {
+        self.load_warning.as_deref()
     }
 
     /// Test seam: inject a user map directly.
     pub fn from_map(user: HashMap<String, Vec<String>>) -> Self {
-        Self { user }
+        Self {
+            user,
+            load_warning: None,
+        }
     }
 
     /// The chords bound to `id`, parsed. An unknown id yields nothing, and a chord that does
@@ -127,17 +142,48 @@ impl KeyBindings {
     }
 }
 
-/// Read `<config dir>/keybindings.json` into a map. Fails open, and says nothing.
-fn load_user_file(config_dir: &Path) -> HashMap<String, Vec<String>> {
-    let raw = match std::fs::read_to_string(config_dir.join("keybindings.json")) {
+/// Read `<config dir>/keybindings.json` into a map, plus why it was ignored.
+///
+/// Fails open either way — a preferences file must never stop a window
+/// opening — but only an *absent* file stays silent. A present file that
+/// cannot be used names itself with the reason and the fix, because every
+/// rebind in it is silently not applied otherwise.
+fn load_user_file(config_dir: &Path) -> (HashMap<String, Vec<String>>, Option<String>) {
+    let path = config_dir.join("keybindings.json");
+    let raw = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(_) => return HashMap::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (HashMap::new(), None),
+        Err(e) => {
+            return (
+                HashMap::new(),
+                Some(format!(
+                    "keybindings ignored: {}: {e} — defaults apply; reopen the window after fixing it",
+                    path.display()
+                )),
+            );
+        }
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return HashMap::new();
+    let value = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                HashMap::new(),
+                Some(format!(
+                    "keybindings ignored: {}: not JSON ({}); defaults apply until it parses — reopen the window after fixing it",
+                    path.display(),
+                    e
+                )),
+            );
+        }
     };
     let Some(object) = value.as_object() else {
-        return HashMap::new();
+        return (
+            HashMap::new(),
+            Some(format!(
+                "keybindings ignored: {}: not an object; defaults apply until it parses — reopen the window after fixing it",
+                path.display()
+            )),
+        );
     };
     let mut out = HashMap::new();
     for (id, value) in object {
@@ -153,7 +199,7 @@ fn load_user_file(config_dir: &Path) -> HashMap<String, Vec<String>> {
             }
         }
     }
-    out
+    (out, None)
 }
 
 /// egui's `Key` in the shared vocabulary.
@@ -237,6 +283,58 @@ pub fn neutral_mods(mods: egui::Modifiers) -> Mods {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A present-but-unusable keybindings file names itself (S-126).
+    ///
+    /// Absent stays silent (normal first run); broken JSON, a non-object, and
+    /// an unreadable path warn naming the file — because every rebind in them
+    /// is silently not applied otherwise. RED first: silence everywhere.
+    #[test]
+    fn a_broken_keybindings_file_names_itself() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path();
+        let file = dir.join("keybindings.json");
+
+        // Absent: silent, defaults.
+        assert!(
+            KeyBindings::load(dir).load_warning().is_none(),
+            "no file, no warning"
+        );
+
+        // Broken JSON: warns naming the file.
+        std::fs::write(&file, "{oops").unwrap();
+        let warning = KeyBindings::load(dir)
+            .load_warning()
+            .expect("broken JSON must warn")
+            .to_string();
+        assert!(
+            warning.contains("keybindings.json"),
+            "the warning names the document: {warning:?}"
+        );
+
+        // Valid JSON, not an object: warns.
+        std::fs::write(&file, "[1, 2]").unwrap();
+        assert!(
+            KeyBindings::load(dir).load_warning().is_some(),
+            "a non-object must warn"
+        );
+
+        // Unreadable path (a directory where the file should be): warns.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert!(
+            KeyBindings::load(dir).load_warning().is_some(),
+            "an unreadable path must warn"
+        );
+
+        // Valid file: silent.
+        std::fs::remove_dir(&file).unwrap();
+        std::fs::write(&file, r#"{"window.palette": "ctrl+alt+p"}"#).unwrap();
+        assert!(
+            KeyBindings::load(dir).load_warning().is_none(),
+            "a good file stays silent"
+        );
+    }
 
     #[test]
     fn every_window_id_resolves_to_a_printable_chord() {
