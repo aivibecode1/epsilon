@@ -72,7 +72,7 @@ this document**, tallied from its own tables — not a projection.
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
-| 2. Layout and renderer | 10 | 2 | 2 | 5 | 1 |
+| 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **41** | **124** | **156** | **18** |
+| **Total** | **339** | **42** | **124** | **155** | **18** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -206,7 +206,7 @@ then agreement about what a body should do when space runs out.
 | P-014 | Two renderers: a main screen that leaves the terminal's scrollback alone, and a fullscreen alt screen that owns the display | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:22-50` | deliberately different | `crates/epsilon-tui/src/app.rs:1348` — one renderer, always the alternate screen; Pi's default is `fullscreen`, and the regular screen exists so native scrollback survives. Epsilon has no scrollback to protect because the layout owns the whole frame | `the_binary_starts_a_tui_and_draws_its_chrome` (frame, real pty) |
 | P-015 | TUI mode is switchable live, and refused while an overlay is open | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:879-930`, `:5029-5038` | missing | none — there is no second mode to switch to | — |
 | P-016 | Fullscreen is a scrolling transcript plus a fixed input dock that stacks pending messages, status, widgets, the editor and the footer | `packages/coding-agent/src/modes/interactive/chat-viewport.ts:22-45`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts:957-970` | done | `crates/epsilon-tui/src/ui/layout.rs:84`, `:81` — five bands in a fixed order; the composer is capped at `min(8, height/3)` rows so a pasted document cannot claim the conversation's space | `the_shell_shows_a_header_a_body_and_a_footer_at_every_supported_size` (frame), `a_long_transcript_never_pushes_the_composer_off_the_screen` (frame) |
-| P-017 | The terminal title tracks the session name and the cwd basename | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1119-1127`, `:3429-3433` | missing | none — `/name` sets the name (`crates/epsilon-tui/src/app/commands.rs:1281`) but nothing sets the terminal title | — |
+| P-017 | The terminal title tracks the session name and the cwd basename | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:1119-1127`, `:3429-3433` | done | `crates/epsilon-tui/src/app/session.rs` — `terminal_title` words it (`epsilon - {name} - {base}`, base alone without a name; control characters stripped because the name is user-typed) and `refresh_title` emits it after every change of what it names: startup (with name re-hydrated), session switch, rename | `title_tracks_name_and_base`, `title_strips_terminal_breakouts` (hostile BEL/ESC/C0/bidi must not survive; negative control run) |
 | P-020 | An extension can place persistent content above or below the composer, capped at ten lines | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2350-2390`, `:2438` | missing | none | — |
 | P-021 | An extension can replace the header, the footer or the editor wholesale, and `undefined` restores the built-in one | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:2476-2498`, `:2503-2542`, `:2816-2891` | missing | none | — |
 | P-217 | Scrolled away from the bottom, a pill offers to jump to the latest message | `packages/coding-agent/src/modes/interactive/tui-renderer.ts:30`, `:32` | partial | `crates/epsilon-tui/src/ui/footer.rs:77` — the affordance is a footer position badge (`↑ 12/40`) plus the key back to live, not a pill inside the viewport | `the_jump_to_live_key_returns_the_view_to_the_tail` (frame), `a_live_frame_never_advertises_the_frozen_position` (frame) |
@@ -763,7 +763,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
-| 2. Layout and renderer | 10 | 2 | 2 | 5 | 1 |
+| 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
 | 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 5 | 22 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **41** | **124** | **156** | **18** |
+| **Total** | **339** | **42** | **124** | **155** | **18** |
 
 ### The `missing` rows — 161
 
@@ -790,7 +790,7 @@ nothing here is a claim that the behaviour cannot be built.
 | area | ids |
 |---|---|
 | Startup, header and resources (13) | P-002, P-003, P-004, P-005, P-008, P-009, P-011, P-012, P-059, P-088, P-089, P-119, P-216 |
-| Layout and renderer (5) | P-015, P-017, P-020, P-021, P-220 |
+| Layout and renderer (4) | P-015, P-020, P-021, P-220 |
 | Composer and editor (8) | P-013, P-029, P-032, P-033, P-211, P-212, P-213, P-214 |
 | Slash commands and autocomplete (6) | P-042, P-045, P-221, P-222, P-223, P-224 |
 | Transcript and streaming (22) | P-040, P-051, P-052, P-053, P-056, P-057, P-060, P-122, P-124, P-125, P-126, P-129, P-132, P-134, P-135, P-178, P-179, P-180, P-181, P-182, P-184, P-185 |

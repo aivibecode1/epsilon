@@ -73,6 +73,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 38. **Full-port round 22 — matrix citations become a gate leg** | Plan 025 §2.B, banked: `scripts/check-parity-citations.py` verifies all 464 backticked workspace citations (`:line`, `:start-end`) across both matrices resolve to real files and in-range lines — reference-side paths excluded like `check-links` excludes `references/`. Proven by breaking six citations and watching it name every one, then restored byte-identically. Wired into both gate scripts (eleven legs from here); proposal 11 filed for the locked §4 list, noting the partial overlap with proposal 10. No Rust changes, no rows move. Battery `port-r22` (2,133), green first time. |
 | (10-06) | 39. **Full-port round 23 — resumed sessions name their compactions (P-055)** | Opening a session whose history contains compactions now reports `Session compacted N times` (proper singular), counted from the store in `switch_session_file` — compactions are entries, not messages, so hydration cannot see them (the M144/F22 pattern); read failures stay silent (a count no action can follow is not worth noise). One end-to-end test through real `/resume` (twice-compacted reports, plain stays silent), RED first with a control on the wording. P-055 moves to `done`; Pi counts move to **40 / 124 / 157**. Battery `port-r23` (2,134), green first time. |
 | (10-06) | 40. **Full-port round 24 — the exit names the way back (P-085)** | After teardown the TUI prints `To resume this session: epsilon --resume <path>` when the session file exists — resolved through the shared `session_path_for`, absolutized for pasteability; `--continue` out of scope by design (re-resolving its target here could name a file the run created). One unit test (persisted fresh, persisted target, missing stays silent) with a control on the existence gate. P-085 moves to `done`; Pi counts move to **41 / 124 / 156**. Battery `port-r24` (2,135), green first time. |
+| (10-06) | 41. **Full-port round 25 — the terminal title tracks the session (P-017)** | `epsilon - {name} - {base}`, base alone without a name, refreshed on switch (name re-hydrated), rename, and startup. Control characters stripped via the shared `display_safe` — the name is user-typed, and a hostile BEL/ESC in it would break the OSC sequence; pinned by tests, proven by a control that drops the stripping. Stated limit: the OSC emission itself is reviewed, not asserted. P-017 moves to `done`; Pi counts move to **42 / 124 / 155**. Battery `port-r25` (2,137), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -164,7 +165,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 41 | 124 | 156 | 18 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 42 | 124 | 155 | 18 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 13 | 93 | 285 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
@@ -220,10 +221,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r24-2026-10-06.txt`](../audit/evidence/gate-port-r24-2026-10-06.txt),
+**Latest green battery: [`gate-port-r25-2026-10-06.txt`](../audit/evidence/gate-port-r25-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
-**2,135 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r23`: the resume-hint test. (`cargo fmt
+**2,137 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r24`: the terminal-title tests. (`cargo fmt
 --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10

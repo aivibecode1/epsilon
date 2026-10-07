@@ -293,25 +293,99 @@ impl App {
                 }
             }
             // Re-hydrate session_name from the newly attached store (survives swap).
-            self.session_name = (|| {
-                let store = agent.session_store()?;
-                let st = store.lock().ok()?;
-                let entries = st.read_all().ok()?;
-                for e in entries.iter().rev() {
-                    if let epsilon_contracts::session_entry::EntryKind::Custom { custom_type, data } =
-                        &e.kind
-                        && custom_type == "session_name"
-                        && let Some(v) = data
-                            .as_ref()
-                            .and_then(|d| d.get("name"))
-                            .and_then(|v| v.as_str())
-                    {
-                        return Some(v.to_string());
-                    }
-                }
-                None
-            })();
+            self.hydrate_session_name(agent);
+            // The title tracks what just attached (P-017).
+            self.refresh_title();
         }
         Ok(count)
+    }
+
+    /// Re-read the display name from the attached store, if it holds one.
+    ///
+    /// Extracted from `switch_session_file` unchanged: startup needs the same
+    /// read (a resumed named session would otherwise title itself nameless),
+    /// and two copies of a store scan are how they disagree.
+    pub(super) fn hydrate_session_name(&mut self, agent: &Arc<Agent>) {
+        self.session_name = (|| {
+            let store = agent.session_store()?;
+            let st = store.lock().ok()?;
+            let entries = st.read_all().ok()?;
+            for e in entries.iter().rev() {
+                if let epsilon_contracts::session_entry::EntryKind::Custom { custom_type, data } =
+                    &e.kind
+                    && custom_type == "session_name"
+                    && let Some(v) = data
+                        .as_ref()
+                        .and_then(|d| d.get("name"))
+                        .and_then(|v| v.as_str())
+                {
+                    return Some(v.to_string());
+                }
+            }
+            None
+        })();
+    }
+
+    /// Emit the terminal title for the current session (P-017).
+    ///
+    /// Called after every change of what it names: switch, rename, startup.
+    /// Best-effort by design — a title that cannot be written (stdout gone) is
+    /// not worth failing a switch over.
+    pub(super) fn refresh_title(&self) {
+        let base = self
+            .workspace_root
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.workspace_root.to_string_lossy().into_owned());
+        let title = terminal_title(self.session_name.as_deref(), &base);
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(title));
+    }
+}
+
+/// Terminal title tracking session name + cwd basename (P-017):
+/// `epsilon - {name} - {base}`, or `epsilon - {base}`.
+///
+/// Control characters are stripped: the name is user-typed, and a BEL or ESC
+/// in it would break out of the OSC sequence. Pure, so the wording (including
+/// what a hostile name becomes) is pinned by unit tests rather than by review.
+pub(super) fn terminal_title(session_name: Option<&str>, cwd_basename: &str) -> String {
+    use epsilon_runtime::text_safety::display_safe;
+    let clean = |s: &str| display_safe(s).0.into_owned();
+    match session_name.map(clean).filter(|n| !n.trim().is_empty()) {
+        Some(name) => format!("epsilon - {name} - {}", clean(cwd_basename)),
+        None => format!("epsilon - {}", clean(cwd_basename)),
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::terminal_title;
+
+    #[test]
+    fn title_tracks_name_and_base() {
+        assert_eq!(
+            terminal_title(Some("work"), "proj"),
+            "epsilon - work - proj"
+        );
+        assert_eq!(terminal_title(None, "proj"), "epsilon - proj");
+        assert_eq!(terminal_title(Some("   "), "proj"), "epsilon - proj");
+    }
+
+    #[test]
+    fn title_strips_terminal_breakouts() {
+        // A session name is user-typed: BEL/ESC/C0/bidi must not survive into
+        // the OSC sequence, while readable text does.
+        let hostile = "a\x1bb\x07c\x00d\u{202e}e";
+        let title = terminal_title(Some(hostile), "base\x1b]");
+        for c in title.chars() {
+            assert!(
+                !('\u{0}'..='\u{1f}').contains(&c) && c != '\u{7f}' && c != '\u{202e}',
+                "control character survived into the title: {title:?}"
+            );
+        }
+        assert!(
+            title.contains('a') && title.contains("base"),
+            "readable text must survive the stripping: {title:?}"
+        );
     }
 }

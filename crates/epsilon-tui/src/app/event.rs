@@ -60,6 +60,12 @@ pub(crate) async fn drive(cfg: TuiConfig, terminal: &mut ratatui::DefaultTermina
     // M233: the header reads this rather than re-deriving offline-ness from the model id, which
     // is the fact that let it name DeepSeek over a faux turn.
     app.offline = offline;
+    // P-017: the terminal title tracks the session from the first frame. The
+    // name is re-hydrated (a resumed named session would otherwise title
+    // itself nameless until its first switch), then emitted once; switches and
+    // renames refresh it from there.
+    app.hydrate_session_name(&agent);
+    app.refresh_title();
     // Prompt templates are discovered once here rather than per submit: expansion runs on
     // every message, and walking two directories to find files that have not changed would
     // tax the one path that has to stay fast. `/reload` refreshes them.

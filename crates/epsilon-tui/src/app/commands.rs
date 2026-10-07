@@ -1249,6 +1249,7 @@ impl App {
                         })();
                         if let Some(n) = persisted {
                             self.session_name = Some(n.clone());
+                            self.refresh_title();
                             self.ui.push_notice(format!("session name: '{n}'"));
                         } else {
                             self.ui.push_notice(
@@ -1278,7 +1279,10 @@ impl App {
                     // closed twice in the core, and it would have been a third instance of the
                     // same shape one layer up.
                     match persisted {
-                        Ok(()) => self.ui.push_notice(format!("session name set to '{name}'")),
+                        Ok(()) => {
+                            self.refresh_title();
+                            self.ui.push_notice(format!("session name set to '{name}'"))
+                        }
                         Err(why) => self.ui.push_notice(format!(
                             "session named '{name}' for this run, but not saved: {why}"
                         )),
