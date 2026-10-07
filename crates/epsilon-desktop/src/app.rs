@@ -617,6 +617,23 @@ struct ModelPicker {
     provider: Option<String>,
 }
 
+/// What a finished `gh` attempt was, in words the sentence needs.
+///
+/// Split from the spawn so every sentence shape is pinned without spawning
+/// anything: `ExitStatus` has no test constructor, so the mapping from
+/// process output to this enum stays with the spawn (reviewed), and
+/// everything after it is driven.
+enum ShareUpload {
+    /// `gh` ran and exited zero; the gist URL it printed.
+    Uploaded(String),
+    /// `gh` ran and failed; what it said on stderr (maybe nothing).
+    Failed(String),
+    /// `gh` never ran; why not, in words.
+    Unavailable(String),
+    /// The blocking task itself died; its report.
+    TaskFailed(String),
+}
+
 /// The transcript search overlay: what was typed, which rows match, where
 /// the highlight sits, and how many rows the match was computed against (so
 /// a transcript that grows under it invalidates the indices rather than
@@ -2069,6 +2086,11 @@ pub struct IdeApp {
     /// a reader who pressed `/compact` looking at an unchanged transcript.
     compact_tx: tokio::sync::mpsc::UnboundedSender<String>,
     compact_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    /// The `gh gist create` answer comes back on a channel, same shape as
+    /// the compaction's: the upload is a network call and must not run on
+    /// the paint thread.
+    share_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    share_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     /// Where each palette row was drawn last frame, with its index, so a click can be
     /// applied **before** the rows are drawn again.
     ///
@@ -2464,6 +2486,7 @@ impl IdeApp {
         // *count*, which `begin_goal_round` moves before it sends anything.
         let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (share_tx, share_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
         let live = opts.live.clone();
@@ -2509,6 +2532,8 @@ impl IdeApp {
             metrics: None,
             compact_tx,
             compact_rx,
+            share_tx,
+            share_rx,
             palette_rects: Vec::new(),
             model_picker: None,
             model_rects: Vec::new(),
@@ -2546,6 +2571,7 @@ impl IdeApp {
         // Bound once, as in `new` — see there for why this used to be two channels.
         let (goal_round_tx, goal_round_rx) = tokio::sync::mpsc::unbounded_channel();
         let (compact_tx, compact_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (share_tx, share_rx) = tokio::sync::mpsc::unbounded_channel();
         // Copied before `opts` moves into the struct below.
         let hide_thinking = opts.hide_thinking;
         let live = opts.live.clone();
@@ -2599,6 +2625,8 @@ impl IdeApp {
             metrics: None,
             compact_tx,
             compact_rx,
+            share_tx,
+            share_rx,
             palette_rects: Vec::new(),
             model_picker: None,
             model_rects: Vec::new(),
@@ -3190,6 +3218,9 @@ impl IdeApp {
         if let Some(said) = self.take_compact_notice() {
             self.transcript.push_notice(&said);
         }
+        if let Some(said) = self.take_share_notice() {
+            self.transcript.push_notice(&said);
+        }
         self.drive_goal_round();
         self.refresh_changed_files();
     }
@@ -3487,6 +3518,142 @@ impl IdeApp {
     /// Drain whatever the compaction reported, if anything is waiting.
     fn take_compact_notice(&mut self) -> Option<String> {
         self.compact_rx.try_recv().ok()
+    }
+
+    /// Write the session's HTML export to `dest`.
+    ///
+    /// Split from [`Self::run_share`] so the file half is pinned without
+    /// spawning anything: the spawn half is reviewed, not driven.
+    fn share_export(
+        agent: &std::sync::Arc<epsilon_core::Agent>,
+        dest: &std::path::Path,
+    ) -> Result<usize, String> {
+        let store = agent.session_store().ok_or("no session store attached")?;
+        let guard = store.lock().map_err(|_| "store unavailable")?;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+        }
+        epsilon_session::export::write_html(&guard, dest).map_err(|e| e.to_string())
+    }
+
+    /// Export the session to HTML and upload it as a secret gist.
+    ///
+    /// The terminal's act with its words, split where the thread demands:
+    /// the export runs here (local, fast), the `gh` upload runs off the
+    /// paint thread and reports back on the channel, and the transcript
+    /// says what is happening in between — an async gap with no notice is
+    /// a hang. `gh` missing (or failing) is guidance, not an error: the
+    /// file is already on disk either way.
+    ///
+    /// The `gh` spawn is reviewed, not driven: a test that drives it
+    /// uploads (or attempts to) whenever the binary happens to exist.
+    ///
+    /// Returns the immediate sentence; the upload's answer arrives later
+    /// on the channel, like the compaction's.
+    pub fn run_share(&mut self) -> String {
+        let Some(session) = self.session.as_ref() else {
+            return "share: no agent attached to this window".to_string();
+        };
+        let agent = Arc::clone(session.agent());
+        let dest = self
+            .workspace()
+            .join(".epsilon")
+            .join("exports")
+            .join(format!("share-{}.html", epsilon_contracts::new_id("share")));
+        let count = match Self::share_export(&agent, &dest) {
+            Ok(n) => n,
+            Err(e) => return format!("share failed: {e}"),
+        };
+        let tx = self.share_tx.clone();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return format!(
+                "share: exported html → {} ({count} entries) · upload needs the agent's runtime — it is not running here",
+                dest.display()
+            );
+        };
+        // Read once, before the spawn moves the path: the upload thread,
+        // its sentence, and the immediate answer all name the same file.
+        let shown = dest.display().to_string();
+        handle.spawn(async move {
+            // Cloned for the blocking thread: the sentence below still needs
+            // the original, and a move closure takes what it touches.
+            let dest_inner = dest.clone();
+            let out = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("gh")
+                    .args(["gist", "create", "--public=false"])
+                    .arg(&dest_inner)
+                    .output()
+            })
+            .await;
+            // The mapping from process output to words stays with the spawn
+            // (reviewed): `ExitStatus` has no test constructor, so driving
+            // this would need a real `gh`.
+            let upload = match out {
+                Err(e) => ShareUpload::TaskFailed(format!("{e}")),
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => ShareUpload::Unavailable(
+                    "gh not installed — https://cli.github.com/ (then `gh auth login`)".to_string(),
+                ),
+                Ok(Err(e)) => ShareUpload::Unavailable(format!("{e}")),
+                Ok(Ok(result)) if result.status.success() => {
+                    ShareUpload::Uploaded(String::from_utf8_lossy(&result.stdout).to_string())
+                }
+                Ok(Ok(result)) => {
+                    ShareUpload::Failed(String::from_utf8_lossy(&result.stderr).to_string())
+                }
+            };
+            tx.send(Self::share_sentence(
+                &dest.display().to_string(),
+                count,
+                upload,
+            ))
+            .ok();
+        });
+        format!("share: exported html → {shown} ({count} entries) · uploading…")
+    }
+
+    /// Shape a finished `gh` attempt into the transcript sentence.
+    ///
+    /// Pure, so the words are pinned without spawning anything: success
+    /// names the gist and its preview, anything else names the file and
+    /// the way up.
+    fn share_sentence(dest: &str, count: usize, upload: ShareUpload) -> String {
+        match upload {
+            ShareUpload::Uploaded(stdout) => {
+                let gist_url = stdout.trim().to_string();
+                let gist_id = gist_url.rsplit('/').next().unwrap_or("").to_string();
+                let preview = std::env::var("PI_SHARE_VIEWER_URL")
+                    .unwrap_or_else(|_| "https://pi.dev/session/".to_string())
+                    + &gist_id;
+                if gist_id.is_empty() {
+                    format!(
+                        "share: exported html → {dest} ({count} entries) · gist: {gist_url} (preview parse failed — copy the URL above)"
+                    )
+                } else {
+                    format!(
+                        "share: gist {gist_url} · preview {preview} · file {dest} ({count} entries)"
+                    )
+                }
+            }
+            ShareUpload::Failed(stderr) => {
+                let hint = if stderr.trim().is_empty() {
+                    "unknown error".to_string()
+                } else {
+                    stderr.trim().to_string()
+                };
+                format!(
+                    "share: exported html → {dest} ({count} entries) · gist not created ({hint}).\n       Publish the file or run: gh gist create --public=false {dest}"
+                )
+            }
+            ShareUpload::Unavailable(hint) => format!(
+                "share: exported html → {dest} ({count} entries) · gist deferred ({hint}).\n       When gh is available: gh gist create --public=false {dest}"
+            ),
+            ShareUpload::TaskFailed(e) => format!("share: upload task failed: {e}"),
+        }
+    }
+
+    /// Drain whatever the gist upload reported, if anything is waiting.
+    fn take_share_notice(&mut self) -> Option<String> {
+        self.share_rx.try_recv().ok()
     }
     /// Continue an armed goal once the agent has gone idle.
     ///
@@ -15701,5 +15868,130 @@ mod tests {
             after.contains("needle up top"),
             "the jumped-to row must reach the screen.\n{after}"
         );
+    }
+
+    /// `/share` exports the session and shapes every upload outcome (round 52).
+    ///
+    /// Split where the external world starts: the export writes a real file
+    /// in the scratch workspace, and the sentence shapes are pinned without
+    /// spawning `gh` (a driven spawn would upload wherever the binary
+    /// happens to exist). RED first: the honest refusal.
+    #[test]
+    fn slash_share_exports_and_shapes() {
+        let (ws, _keep) = scratch_workspace("slash-share");
+        let (session, notices) = faux_session(&ws);
+        session
+            .agent()
+            .session_store()
+            .expect("a store is attached")
+            .lock()
+            .expect("unlocked")
+            .append(epsilon_contracts::session_entry::EntryKind::Message {
+                message: epsilon_contracts::message::Message::User(
+                    epsilon_contracts::message::UserMessage {
+                        id: "m-share".into(),
+                        timestamp_ms: 0,
+                        content: vec![epsilon_contracts::content::UserContent::Text {
+                            text: "share me".into(),
+                        }],
+                    },
+                ),
+                api_request_sha256: None,
+            })
+            .expect("the message lands");
+        let dest = ws.join(".epsilon").join("exports").join("share-test.html");
+        let n = IdeApp::share_export(session.agent(), &dest).expect("export lands");
+        assert!(n >= 1, "the session must have entries to share");
+        let html = std::fs::read_to_string(&dest).expect("the file is there");
+        assert!(
+            html.contains('<'),
+            "the export must be markup, not air: {html:?}"
+        );
+
+        for (upload, want) in [
+            (
+                ShareUpload::Uploaded("https://gist.github.com/u/abc123\n".into()),
+                "gist https://gist.github.com/u/abc123 · preview https://pi.dev/session/abc123",
+            ),
+            (
+                ShareUpload::Uploaded("   \n".into()),
+                "preview parse failed",
+            ),
+            (
+                ShareUpload::Failed("denied".into()),
+                "gist not created (denied)",
+            ),
+            (
+                ShareUpload::Failed("".into()),
+                "gist not created (unknown error)",
+            ),
+            (
+                ShareUpload::Unavailable("gh not installed".into()),
+                "gist deferred (gh not installed)",
+            ),
+            (
+                ShareUpload::TaskFailed("gone".into()),
+                "upload task failed: gone",
+            ),
+        ] {
+            let said = IdeApp::share_sentence("share.html", 3, upload);
+            assert!(said.contains(want), "must say {want:?}: {said:?}");
+        }
+        // The file and the count ride every shaped outcome; the transport
+        // failure names neither (the uploading notice already named the
+        // file, and there is no count to report).
+        for upload in [
+            ShareUpload::Uploaded("https://gist.github.com/u/abc123".into()),
+            ShareUpload::Failed("denied".into()),
+            ShareUpload::Unavailable("gh not installed".into()),
+        ] {
+            let said = IdeApp::share_sentence("share.html", 3, upload);
+            assert!(
+                said.contains("share.html") && said.contains('3'),
+                "must name the file and the count: {said:?}"
+            );
+        }
+        let _ = notices;
+    }
+
+    /// `/share` with no agent answers rather than refusing.
+    #[test]
+    fn slash_share_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-share-no-agent");
+        let mut h = Harness::new(ws);
+        let outcome = h.app.try_command("/share");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/share without an agent must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("no agent"),
+            "names the missing piece: {said:?}"
+        );
+    }
+
+    /// `/share` with a session exports without spawning (round 52).
+    ///
+    /// Test threads hold no tokio `Handle`, so this deterministically takes
+    /// the no-runtime sentence *after* the export — the spawn half stays
+    /// reviewed, but the wiring (arm → export → sentence) is driven.
+    #[test]
+    fn slash_share_with_a_session_exports() {
+        let (ws, _keep) = scratch_workspace("slash-share-run");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws.clone(), session, notices);
+        let outcome = h.app.try_command("/share");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/share must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("exported html") && said.contains("upload needs the agent's runtime"),
+            "must export, then name the missing runtime: {said:?}"
+        );
+        let exports = ws.join(".epsilon").join("exports");
+        let landed = std::fs::read_dir(&exports)
+            .expect("exports dir")
+            .filter_map(|e| e.ok())
+            .any(|e| e.path().extension().is_some_and(|x| x == "html"));
+        assert!(landed, "the HTML file must be on disk");
     }
 }

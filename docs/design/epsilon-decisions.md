@@ -2533,6 +2533,12 @@ scrolls there through the row offsets. The jump runs instant and
 content-spaced (the default animation freezes under test paints; screen
 space sailed past the match once). 29 of 37.
 
+**Amendment (full-port round 52).** `/share` exports the session to HTML
+and uploads it as a secret gist: the export runs on the arm, the `gh`
+upload off the paint thread with an in-between notice, and `gh` missing
+is guidance (the file is already on disk). The spawn is reviewed, not
+driven; the export and every sentence shape are pinned. 30 of 37.
+
 ---
 
 ---

@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-nine names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -261,6 +261,17 @@ impl IdeApp {
             Command::Settings => {
                 self.open_settings();
                 Outcome::Ran("settings — values update live; Enter acts".to_string())
+            }
+            // **`/share` exports the session and uploads it (full-port round
+            // 52).** The export runs on the arm; the `gh` upload runs off
+            // the paint thread and reports back on a channel, with an
+            // in-between notice so the gap never reads as a hang. The spawn
+            // itself is reviewed, not driven (a driven test would upload
+            // wherever `gh` happens to exist); the export and the sentence
+            // shaping are pinned below.
+            Command::Share => {
+                let said = self.run_share();
+                Outcome::Ran(said)
             }
             // **`/search` finds text in the transcript (full-port round 51).**
             // An overlay over the live rows with the query pre-filled, so
@@ -1268,6 +1279,7 @@ pub const SUPPORTED: &[&str] = &[
     "session",
     "sessions",
     "settings",
+    "share",
     "skill",
     "skills",
     "tasks",
@@ -1566,6 +1578,7 @@ mod tests {
             Command::Session,
             Command::Sessions,
             Command::Settings,
+            Command::Share,
             Command::Skill(String::new()),
             Command::Skills,
             Command::Tasks,
