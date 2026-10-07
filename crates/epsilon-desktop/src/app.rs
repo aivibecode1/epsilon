@@ -15041,4 +15041,75 @@ mod tests {
             "the named session must list by name.\n{rows}"
         );
     }
+
+    /// `/restore` previews before it applies, and applies on `yes` (round 47).
+    ///
+    /// A real checkpoint round-trip in the scratch workspace: record, change,
+    /// preview (file untouched), apply (file back). Asking for the plan never
+    /// carries the power to act on it. RED first: the honest refusal.
+    #[test]
+    fn slash_restore_previews_then_applies() {
+        let (ws, _keep) = scratch_workspace("slash-restore");
+        let file = ws.join("notes.txt");
+        std::fs::write(&file, "version one").expect("v1");
+        let store = epsilon_tools::checkpoint::CheckpointStore::open(&ws);
+        let _ = store.record(&ws, &file, "test");
+        // Then the tool's write lands, and the store learns what it left
+        // behind — the store's own tests do the same, because a restore
+        // that cannot tell the harness's edit from yours must refuse.
+        std::fs::write(&file, "version two").expect("v2");
+        let _ = store.amend_with_post_image(&ws, &file, "test");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/restore notes.txt");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/restore must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("would put back") && said.contains("nothing has changed yet"),
+            "preview must promise no change: {said:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("read back"),
+            "version two",
+            "preview must not touch the file"
+        );
+
+        let outcome = h.app.try_command("/restore notes.txt yes");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/restore yes must run: {outcome:?}");
+        };
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("read back"),
+            "version one",
+            "apply must put the captured bytes back: {said:?}"
+        );
+    }
+
+    /// `/restore` teaches its shape and names files with no checkpoint.
+    #[test]
+    fn slash_restore_usage_and_missing() {
+        let (ws, _keep) = scratch_workspace("slash-restore-usage");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        let outcome = h.app.try_command("/restore");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/restore must answer: {outcome:?}");
+        };
+        assert!(
+            said.contains("usage: /restore <path>"),
+            "bare must teach: {said:?}"
+        );
+
+        let outcome = h.app.try_command("/restore nope.txt");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/restore missing must answer: {outcome:?}");
+        };
+        assert!(
+            said.starts_with("restore: "),
+            "a file with no checkpoint must still answer as restore: {said:?}"
+        );
+    }
 }

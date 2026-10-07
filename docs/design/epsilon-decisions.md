@@ -2517,6 +2517,11 @@ display name over the same `session_name` custom entry both front ends read
 copy. The sessions pane lists titles (name, else first message, else stem)
 instead of file stems, so a name set anywhere reads here. 26 of 37.
 
+**Amendment (full-port round 47).** `/restore` previews and applies file
+checkpoints: the terminal's two shared calls with its words and its guards
+(usage, busy, trailing-`yes` confirmation). Asking for the plan never
+carries the power to act on it. 27 of 37.
+
 ---
 
 ---

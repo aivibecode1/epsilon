@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-six names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-seven names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -230,6 +230,13 @@ impl IdeApp {
             // header, lines, overflow line — or the honest absence.
             // Read-only, so safe to drive in tests.
             Command::Changelog => self.run_changelog(),
+            // **`/restore` previews and applies file checkpoints (full-port
+            // round 47).** The terminal's two shared calls with its words:
+            // preview first (the sentence that lets a reader decide), apply
+            // only on a trailing `yes` — asking for the plan never carries
+            // the power to act on it. Same busy guard as `/resume`: a run in
+            // flight owns the workspace's files.
+            Command::Restore(arg) => self.run_restore_file(arg),
             // **`/name` shows and sets the session display name (full-port
             // round 46).** The terminal's act with its words, over the same
             // `session_name` custom entry: bare reads the persisted tail
@@ -948,6 +955,44 @@ impl IdeApp {
         Outcome::Ran(out.join("\n"))
     }
 
+    /// Preview a file checkpoint, or apply it on a trailing `yes`.
+    ///
+    /// The terminal's two shared calls with its words and its guards: usage
+    /// on bare, busy refusal while a run owns the workspace, preview first
+    /// (the sentence that lets a reader decide), apply only on confirmation.
+    /// The `yes` must be last — a file called `yes` is a file.
+    fn run_restore_file(&mut self, argument: String) -> Outcome {
+        let tail = argument.trim();
+        if tail.is_empty() {
+            return Outcome::Ran(
+                "usage: /restore <path> — preview the checkpoint for a file, then \
+                 `/restore <path> yes` to put it back"
+                    .to_string(),
+            );
+        }
+        if let Some(session) = self.session.as_ref()
+            && session.running()
+        {
+            return Outcome::Ran(
+                "restore: busy — wait for the current run to finish, then /restore again"
+                    .to_string(),
+            );
+        }
+        let (path, confirmed) = match tail.rsplit_once(char::is_whitespace) {
+            Some((p, word)) if word.eq_ignore_ascii_case("yes") => (p.trim(), true),
+            _ => (tail, false),
+        };
+        let answer = if confirmed {
+            epsilon_runtime::restore_checkpoint(self.workspace(), path)
+        } else {
+            epsilon_runtime::describe_checkpoint(self.workspace(), path)
+        };
+        match answer {
+            Ok(sentence) => Outcome::Ran(format!("restore: {sentence}")),
+            Err(why) => Outcome::Ran(format!("restore: {why}")),
+        }
+    }
+
     /// Show the session display name bare, set it with an id.
     ///
     /// The terminal's act with its words over the same `session_name` custom
@@ -1159,6 +1204,7 @@ pub const SUPPORTED: &[&str] = &[
     "name",
     "new",
     "reload",
+    "restore",
     "resume",
     "session",
     "sessions",
@@ -1454,6 +1500,7 @@ mod tests {
             Command::Name(None),
             Command::New,
             Command::Reload,
+            Command::Restore(String::new()),
             Command::Resume(String::new()),
             Command::Session,
             Command::Sessions,
