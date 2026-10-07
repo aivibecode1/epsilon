@@ -73,7 +73,7 @@ this document**, tallied from its own tables — not a projection.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
+| 3. Composer and editor | 24 | 2 | 14 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -89,7 +89,7 @@ this document**, tallied from its own tables — not a projection.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **42** | **125** | **152** | **20** |
+| **Total** | **339** | **44** | **123** | **152** | **20** |
 
 A further **17 rows are not in the counts above**: the 10 `Y-###` rows Pi ships outside its interactive mode (out of
 scope by design) and the 7 `AA-###` rows recording what was never inventoried. Both are listed in full near the end
@@ -227,13 +227,13 @@ destination — steering — rather than steer-or-follow-up chosen by key.
 |---|---|---|---|---|---|
 | P-013 | Text typed and submitted before startup finishes is kept, with a `Startup is still in progress` line | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3135-3138`, `:980-983` | missing | none — Epsilon has no deferred startup window; the key handlers are installed before the first frame (`crates/epsilon-tui/src/app.rs:1357`) | — |
 | P-022 | The editor border recolours the moment the text starts with `!`, and again encodes the thinking level otherwise | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3064-3070`, `:4429-4438` | partial | `crates/epsilon-tui/src/app.rs:856` — `!` is recognised on submit, but nothing signals it before you press Enter; the mode word in the footer is the channel (`crates/epsilon-tui/src/ui/footer.rs:357`) | none — no test types `!` in the composer |
-| P-023 | `!cmd` runs a shell command in the transcript; `!!cmd` keeps its result out of model context | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3287-3303`, `:6917-7008` | partial | `crates/epsilon-tui/src/app.rs:856` — both spellings route to the real `BashTool`, and `!!` marks the result excluded from context | none — no test types `!` or `!!`; the row is pinned by the source only |
+| P-023 | `!cmd` runs a shell command in the transcript; `!!cmd` keeps its result out of model context | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3287-3303`, `:6917-7008` | done | `crates/epsilon-tui/src/app.rs:856` — both spellings route to the real `BashTool`, and `!!` marks the result excluded from context | `a_bang_runs_a_shell_command_and_shows_its_output`, `a_double_bang_says_the_output_stays_out_of_the_context` (both drive the key path one character at a time and drain to a deadline) |
 | P-025 | Escape has a four-way priority: abort the stream (restoring queued text), abort bash, leave bash mode, then arm a double-Escape timer | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3011-3037` | partial | `crates/epsilon-tui/src/app/keys.rs:1369` — Escape aborts a run and disarms the goal, and quits when idle; there is no bash-command abort, no bash-mode exit and no double-Escape arm | `a_rebound_interrupt_key_is_the_key_that_interrupts`, `aborting_a_run_disarms_the_goal_without_touching_it` (frame) |
 | P-027 | `Ctrl+C` clears the composer; a second one inside 500 ms quits | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4189-4197`, `packages/coding-agent/src/core/keybindings.ts:94` | partial | `crates/epsilon-tui/src/app/keys.rs:649` — `app.clear` is `ctrl+c`; the exit chord is `ctrl+q` (`crates/epsilon-contracts/src/keybind.rs:252`), so there is no two-stage clear-then-quit | `/hotkeys` reaches the table through `no_slash_command_panics_when_typed`; the two-stage timing is unpinned |
 | P-028 | `Ctrl+D` quits only when the composer is empty, and the enforcement lives in the editor component | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4199-4202` | partial | `crates/epsilon-tui/src/app/editing.rs:85` — `Ctrl+D` is unconditionally delete-forward and guarded past the end; exit is `ctrl+q` | `ctrl_d_forward_deletes_and_alt_backspace_kills_word` |
 | P-029 | `Ctrl+Z` suspends with `SIGTSTP` and restarts on `SIGCONT`; on Windows it prints that it is unsupported | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4351-4386`, `packages/coding-agent/src/core/keybindings.ts:96-99` | missing | none — Epsilon's `Ctrl+Z` is undo (`crates/epsilon-contracts/src/keybind.rs:357`) | — |
 | P-030 | `Alt+Enter` queues a follow-up that waits for the turn; when idle it is plain Enter | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4388-4418`, `packages/coding-agent/src/core/keybindings.ts:134-137` | partial | `crates/epsilon-tui/src/app.rs:881` — one queue destination (steer), reached with the submit key; there is no separate follow-up chord | `none found` per E-037 |
-| P-031 | Enter while streaming steers the running turn rather than queueing behind it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3317-3326` | partial | `crates/epsilon-tui/src/app.rs:881`, `:882` — the queue decision and its transcript notice are both in the source | `none found` per E-037 — a core behaviour with no test pinning it |
+| P-031 | Enter while streaming steers the running turn rather than queueing behind it | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3317-3326` | done | `crates/epsilon-tui/src/app.rs:881`, `:882` — the queue decision and its transcript notice are both in the source | `enter_while_streaming_steers_rather_than_queueing` (staged through the `running` seam; asserts the notice and the steer-queue length, with a flag-off control) |
 | P-032 | Enter during compaction queues into a separate list, flushed in order when compaction ends | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3306-3315`, `:4676-4682`, `:4694-4771` | missing | none — `/compact` is queued behind a live turn (`crates/epsilon-tui/src/app/commands.rs:1561`), which is the reverse direction | — |
 | P-033 | One key pulls every queued message back into the composer and reports the count | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:4420-4427`, `:4655-4674` | missing | none | — |
 | P-034 | `Ctrl+X` copies the live selection in fullscreen, otherwise the last assistant message; the confirmation is a flash in fullscreen and a status line in regular mode | `packages/coding-agent/src/modes/interactive/interactive-mode.ts:6556-6585`, `packages/coding-agent/src/core/settings-manager.ts:1379-1381` | partial | `crates/epsilon-tui/src/app/commands.rs:2351`; chord `f4` at `crates/epsilon-contracts/src/keybind.rs:355` — the last-assistant-message half is done; the selection half is a deliberate divergence (mouse capture is off so drag-select still copies, `crates/epsilon-tui/src/app.rs:1359`) | `the_copy_key_reaches_the_clipboard_path`, `copy_parks_a_sequence_that_carries_the_message_and_the_notice_names_the_path` |
@@ -764,7 +764,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 |---|---|---|---|---|---|
 | 1. Startup, header and resources | 20 | 1 | 6 | 13 | 0 |
 | 2. Layout and renderer | 10 | 3 | 2 | 4 | 1 |
-| 3. Composer and editor | 24 | 0 | 16 | 8 | 0 |
+| 3. Composer and editor | 24 | 2 | 14 | 8 | 0 |
 | 4. Slash commands and autocomplete | 13 | 2 | 5 | 6 | 0 |
 | 5. Transcript and streaming | 35 | 8 | 6 | 21 | 0 |
 | 6. Model picker and thinking | 9 | 0 | 4 | 5 | 0 |
@@ -780,7 +780,7 @@ row says so — that is a gap in the inventory, and closing it is cheap.
 | 16. Status indicators | 13 | 2 | 5 | 5 | 1 |
 | 17. Footer | 12 | 3 | 4 | 3 | 2 |
 | 18. Selector and overlay components | 79 | 6 | 26 | 41 | 6 |
-| **Total** | **339** | **42** | **125** | **152** | **20** |
+| **Total** | **339** | **44** | **123** | **152** | **20** |
 
 ### The `missing` rows — 161
 
@@ -815,7 +815,7 @@ An `E-` row covers these and something is not finished. The reason column is the
 |---|---|---|
 | Startup, header and resources (6) | P-001, P-006, P-007, P-086, P-087, P-120 | no version in the welcome panel; resources reported as one summary line, not scope-grouped; unreadable roots named but duplicates not; no input drain, no dead-terminal classification, no persisted crash; no first-run dialog |
 | Layout and renderer (2) | P-217, P-218 | the jump affordance is a footer badge, not a pill in the viewport; matches are counted, not highlighted in the transcript |
-| Composer and editor (16) | P-022, P-023, P-025, P-027, P-028, P-030, P-031, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022/P-023 have no test typing `!`; P-030/P-031 are pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
+| Composer and editor (14) | P-022, P-025, P-027, P-028, P-030, P-034, P-035, P-036, P-209, P-210, L-000, L-001, L-002, L-003 | mostly: the behaviour exists in the source with **no test**, or only one half is built. P-022 has no test typing `!`; P-030 is pinned by no test at all; P-036's tests run the spawner seam and assert no frame; L-000 carries 23 ids, not 47 entries |
 | Slash commands and autocomplete (5) | P-043, P-044, P-046, P-047, P-084 | the `/` menu lists slash items only; no per-command argument completer; no refresh-then-open fallback; `/scoped-models` and `/changelog` are driven only by the all-heads sweep |
 | Transcript and streaming (6) | P-040, P-054, P-058, P-121, P-128, P-183 | thinking hides on Alt+T, not Ctrl+T, with a narrower affordance; a compaction rule instead of a summary card and cost line; notices have no fixed `Error:`/`Warning:` prefix; no `outputPad` setting; abort text lands on a system row, not the answer; the compaction row is not collapsible |
 | Model picker and thinking (4) | P-037, P-038, P-048, P-272 | the `/think` head parses but no row establishes the argument form or a picker; no per-model override submenu; P-037 has no no-reasoning message (the catalog carries no reasoning flag); P-038 cycles favorites, not all models (M23, deliberate) |

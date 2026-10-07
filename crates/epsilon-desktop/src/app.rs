@@ -12195,6 +12195,42 @@ mod tests {
         );
     }
 
+    /// Render the quit guard alone (round 58).
+    ///
+    /// NOT RUN — recorded, not attempted twice. The gallery deliberately
+    /// excludes it (blank PNGs, one `STATUS_STACK_BUFFER_OVERRUN`), and
+    /// this re-attempt died with `STATUS_ACCESS_VIOLATION` on the
+    /// machine's Intel UHD 620 (Vulkan); `WGPU_BACKEND=dx12` hung instead.
+    /// The baseline raster test crashes identically, so this is the
+    /// environment, not the dialog: offscreen frames cannot be produced
+    /// here at all, and visual QA must happen where the raster works.
+    /// Kept `#[ignore]`d (and failing there) as the marker for that
+    /// machine. `#[ignore]`d like the gallery (needs a wgpu adapter and
+    /// `EPSILON_FRAME_DIR`).
+    #[test]
+    #[ignore = "needs a wgpu adapter; run with --ignored and EPSILON_FRAME_DIR set"]
+    fn the_quit_guard_renders_for_a_person_to_see() {
+        let Some(dir) = std::env::var_os("EPSILON_FRAME_DIR") else {
+            eprintln!("quit_frame: EPSILON_FRAME_DIR is not set, so nothing is written");
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let (ws, _keep) = scratch_workspace("frames-quit");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        h.app.transcript.push_user("a turn in flight");
+        let outcome = h.app.try_command("/exit");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/exit must raise the guard, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            h.app.quit_confirm.is_some(),
+            "the guard must be up before rendering"
+        );
+        let written = save_frame(&mut h, &dir, "quit-guard.png");
+        eprintln!("quit_frame: wrote {written} frame(s) to {}", dir.display());
+    }
+
     /// A palette row can be **clicked**, not only typed at and confirmed.
     ///
     /// A palette whose rows can only be reached by typing is a worse editor than the file tree

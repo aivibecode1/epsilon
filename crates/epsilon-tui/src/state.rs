@@ -655,6 +655,17 @@ impl UiState {
         self.running
     }
 
+    /// Stage an in-flight run for tests.
+    ///
+    /// Exists because the interesting half of steering is what Enter does
+    /// *while* a run is active, and a real run cannot be held still for a
+    /// test to type into. A seam rather than a `pub` on the field, so the
+    /// production path keeps its lifecycle.
+    #[doc(hidden)]
+    pub fn set_running_for_test(&mut self, running: bool) {
+        self.running = running;
+    }
+
     /// Whether the context size is unknown because a compaction has not been
     /// re-measured yet.
     ///

@@ -6211,3 +6211,30 @@ async fn an_ordinary_ask_still_offers_the_usual_keys() {
         "and must not claim anything was removed:\n{frame}"
     );
 }
+
+/// Enter while a run is in flight steers it rather than queueing behind it.
+///
+/// The queue decision and its transcript notice both live in the source
+/// with no test pinning them. Staged through the `running` seam (a real
+/// run cannot be held still to type into); both halves asserted — the
+/// notice the reader sees, and the queue the agent reads — so a notice
+/// without a steer, or a steer without a notice, fails.
+#[tokio::test]
+async fn enter_while_streaming_steers_rather_than_queueing() {
+    let (mut app, agent, (_frx, mut nrx)) = test_app();
+    app.ui.set_running_for_test(true);
+    type_and_enter(&mut app, &agent, "steer toward the light");
+    let said = tokio::time::timeout(std::time::Duration::from_secs(5), nrx.recv())
+        .await
+        .expect("the notice arrives")
+        .expect("the channel stays open");
+    assert!(
+        said.contains("steering queued"),
+        "the reader must be told the turn was steered, not queued: {said:?}"
+    );
+    assert_eq!(
+        agent.steer_queue_len(),
+        1,
+        "and the steer must land in the queue the agent reads"
+    );
+}
