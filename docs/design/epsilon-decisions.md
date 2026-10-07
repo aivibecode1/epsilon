@@ -2545,6 +2545,11 @@ remembered path decision (same global store both front ends read). Bare
 and `no` never write; `yes` writes both, so that arm is reviewed, not
 driven. 31 of 37.
 
+**Amendment (full-port round 54).** `/expand` shows all tool output — or
+tails again: rows retain everything (same trade as the terminal's cards),
+the pane shows the shared 40-line tail with a marker until this flips.
+No chord (`Ctrl+X` is cut in text fields). 32 of 37.
+
 ---
 
 ---

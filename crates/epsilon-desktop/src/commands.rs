@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-one names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is thirty-two names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -280,6 +280,20 @@ impl IdeApp {
             // write; `yes` writes both, so that arm is reviewed, not driven
             // — a driven test would flip real global trust.
             Command::Trust(arg) => self.run_trust_argument(arg),
+            // **`/expand` shows all tool output — or tails again (full-port
+            // round 54).** Rows retain everything (same trade as the
+            // terminal's cards); the pane shows the shared 40-line tail with
+            // a marker until this flips. No chord: `Ctrl+X` is cut inside
+            // text fields, and stealing it would break editing to save
+            // typing — the head and the palette carry it, like `/copy`.
+            Command::Expand => {
+                self.expand_tool_output = !self.expand_tool_output;
+                Outcome::Ran(if self.expand_tool_output {
+                    "all tool output expanded".to_string()
+                } else {
+                    "tool output collapsed to tails".to_string()
+                })
+            }
             // **`/search` finds text in the transcript (full-port round 51).**
             // An overlay over the live rows with the query pre-filled, so
             // refining it never means leaving and retyping; choosing a match
@@ -1364,6 +1378,7 @@ pub const SUPPORTED: &[&str] = &[
     "compact",
     "copy",
     "exit",
+    "expand",
     "export",
     "fork",
     "goal",
@@ -1661,6 +1676,7 @@ mod tests {
             Command::Compact,
             Command::Copy,
             Command::Quit,
+            Command::Expand,
             Command::Export(None),
             Command::Fork,
             Command::Goal(None),

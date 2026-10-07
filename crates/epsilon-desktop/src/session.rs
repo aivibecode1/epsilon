@@ -58,24 +58,26 @@ const MAX_DIFF_LINES: usize = 12;
 /// view that grows without bound is a leak with a scrollbar.
 const MAX_ROWS: usize = 2_000;
 
-/// How many lines of a tool's output one row keeps.
+/// How many lines of a tool's output the pane shows unexpanded.
 ///
-/// `partial` is a **delta**, so a long `cargo build` arrives as hundreds of updates and the
-/// row would grow without bound — in a view that is itself capped at [`MAX_ROWS`] rows and
-/// cannot scroll to them all. The terminal keeps 40 lines for the same reason
-/// (`CARD_STREAM_TAIL_LINES`); one number, two frontends, rather than two that drift.
-const TOOL_OUTPUT_TAIL_LINES: usize = 40;
+/// The ROW keeps everything (full-port round 54): `/expand` shows it all,
+/// like the terminal's cards. The display caps at this number with a
+/// marker, so a long `cargo build` does not pin an unscrollable wall —
+/// the terminal keeps 40 display lines for the same reason
+/// (`CARD_STREAM_TAIL_LINES`); one number, two frontends. Retaining full
+/// output per row is the same trade the terminal makes (rows are capped
+/// at [`MAX_ROWS`]; bytes are not).
+pub(crate) const TOOL_OUTPUT_TAIL_LINES: usize = 40;
 
-/// Append `chunk` to `existing`, keeping only the last [`TOOL_OUTPUT_TAIL_LINES`] lines.
+/// Append `chunk` to `existing`, keeping everything.
 ///
-/// One function for the live path and the replay path, because the two answering this
-/// differently is what made a replayed session read differently from a live one.
-fn bounded_tail(existing: &str, chunk: &str, limit: usize) -> String {
+/// One function for the live path and the replay path, because the two
+/// answering this differently is what made a replayed session read
+/// differently from a live one. The bound moved to the draw: rows retain,
+/// the pane displays a tail until `/expand`.
+fn append_output(existing: &str, chunk: &str) -> String {
     let mut lines: Vec<&str> = existing.lines().collect();
     lines.extend(chunk.lines().filter(|l| !l.trim().is_empty()));
-    if lines.len() > limit {
-        lines.drain(..lines.len() - limit);
-    }
     lines.join("\n")
 }
 
@@ -335,7 +337,7 @@ impl Transcript {
                         // tail — it used to overwrite `text`, which held the arguments,
                         // so **a replayed session showed the result where a live one
                         // showed the call**. Same conversation, two transcripts.
-                        *output = bounded_tail("", &text, TOOL_OUTPUT_TAIL_LINES);
+                        *output = append_output("", &text);
                     }
                 }
                 Message::Custom(_) => {}
@@ -565,7 +567,7 @@ impl Transcript {
                     .position(|row| matches!(&row.kind, RowKind::Tool { id, .. } if *id == wanted))
                     && let RowKind::Tool { output, .. } = &mut self.rows[i].kind
                 {
-                    *output = bounded_tail(output, &text, TOOL_OUTPUT_TAIL_LINES);
+                    *output = append_output(output, &text);
                 }
             }
 
@@ -1439,10 +1441,12 @@ mod tests {
         assert_eq!(second.2, Some(true), "c2 failed");
     }
 
-    /// The tail is **bounded**, because `partial` is a delta and a runaway command would
-    /// otherwise pin its whole output in a row the pane cannot scroll.
+    /// The row keeps **everything**, because `/expand` shows it all: the
+    /// bound moved to the draw (a tail plus a marker until expanded), so a
+    /// runaway command's bytes live in the row and the pane stays
+    /// scrollable. Same trade the terminal makes.
     #[test]
-    fn streamed_tool_output_keeps_a_bounded_tail() {
+    fn streamed_tool_output_keeps_everything_for_expand() {
         let mut t = transcript();
         t.apply(&AgentEvent::ToolExecutionStart {
             tool_call_id: "c1".into(),
@@ -1466,8 +1470,8 @@ mod tests {
         };
         assert_eq!(
             output.lines().count(),
-            TOOL_OUTPUT_TAIL_LINES,
-            "kept {} lines, bound is {TOOL_OUTPUT_TAIL_LINES}",
+            TOOL_OUTPUT_TAIL_LINES + 25,
+            "kept {} lines for /expand; the draw caps at {TOOL_OUTPUT_TAIL_LINES}",
             output.lines().count()
         );
         assert!(
@@ -1475,8 +1479,8 @@ mod tests {
             "the newest line must survive: {output}"
         );
         assert!(
-            !output.contains("line 0\n"),
-            "the oldest must not: {output}"
+            output.contains("line 0\n"),
+            "and the oldest must survive too — dropping it is the draw's job: {output}"
         );
     }
 

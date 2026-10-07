@@ -2011,6 +2011,12 @@ pub struct IdeApp {
     /// the binary sets it from there, `for_workspace` leaves it off so tests
     /// stay hermetic regardless of the machine's config file.
     hide_thinking: bool,
+    /// Show full tool output instead of the tail (round 54).
+    ///
+    /// `/expand` flips it; the rows retain everything either way (the
+    /// bound moved to the draw), so flipping never loses a line.
+    /// `pub(crate)` for the command arm, like `keys`.
+    pub(crate) expand_tool_output: bool,
     /// Row rectangles of the last drawn model-picker frame, for clicks.
     model_rects: Vec<(usize, egui::Rect)>,
     /// A gate-checked goal round, from the task that ran the gates back to the draw path.
@@ -2519,6 +2525,7 @@ impl IdeApp {
             goal_round_rx,
             goal_round_pending: false,
             hide_thinking,
+            expand_tool_output: false,
             live,
             live_cache: Vec::new(),
             live_fetched: std::collections::BTreeSet::new(),
@@ -2612,6 +2619,7 @@ impl IdeApp {
             goal_round_rx,
             goal_round_pending: false,
             hide_thinking,
+            expand_tool_output: false,
             live,
             live_cache: Vec::new(),
             live_fetched: std::collections::BTreeSet::new(),
@@ -7095,7 +7103,19 @@ impl IdeApp {
             // there to prevent — and the line itself is the only thing that tells one
             // output line from another.
             let output_kind = format!("{name} output");
-            for line in output.lines() {
+            // The row retains everything; the pane shows a tail until
+            // `/expand`. The marker names the count and the way up — a
+            // capped list with no marker is a list that lies about its
+            // length, and an undiscoverable `/expand` is a verb nobody
+            // types.
+            let lines: Vec<&str> = output.lines().collect();
+            let tail = crate::session::TOOL_OUTPUT_TAIL_LINES;
+            let (shown_lines, hidden) = if self.expand_tool_output || lines.len() <= tail {
+                (lines.as_slice(), 0)
+            } else {
+                (&lines[lines.len() - tail..], lines.len() - tail)
+            };
+            for line in shown_lines {
                 // **Tool output is the highest-value text in the window and the least
                 // controlled**: for `read` it is a file's contents, and a file can contain
                 // anything the model has read, including a name it was told to render.
@@ -7107,6 +7127,16 @@ impl IdeApp {
                     &row_name(&output_kind, &shown),
                 );
                 summary.rows.push(("agent".into(), shown));
+            }
+            if hidden > 0 {
+                let marker = format!("    … {hidden} more lines — /expand shows all");
+                Self::row_label(
+                    ui,
+                    measure,
+                    egui::RichText::from(marker.clone()).color(theme.dim).into(),
+                    &row_name(&output_kind, &marker),
+                );
+                summary.rows.push(("agent".into(), marker));
             }
         }
         // **A change row is a link.** The row under it says "open the file", and until
@@ -16090,5 +16120,82 @@ mod tests {
                 "names the missing piece: {said:?}"
             );
         }
+    }
+
+    /// `/expand` toggles full tool output (round 54).
+    ///
+    /// Session-independent (it flips a display flag, like `/hotkeys`):
+    /// expand, collapse, with the terminal's words. RED first: the refusal.
+    #[test]
+    fn slash_expand_toggles() {
+        let (ws, _keep) = scratch_workspace("slash-expand");
+        let mut h = Harness::new(ws);
+        for (want, other) in [
+            ("all tool output expanded", "collapsed"),
+            ("tool output collapsed", "expanded"),
+        ] {
+            let outcome = h.app.try_command("/expand");
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("/expand must answer: {outcome:?}");
+            };
+            assert!(said.contains(want), "must say {want:?}: {said:?}");
+            assert!(!said.contains(other), "must not say both at once: {said:?}");
+        }
+    }
+
+    /// Long tool output shows a tail plus a marker — until `/expand` (round 54).
+    ///
+    /// Fifty lines through the reducer (which retains everything) draw
+    /// capped with the count named; expanded, the head reaches the screen
+    /// and the marker goes away.
+    #[test]
+    fn long_tool_output_caps_until_expand() {
+        let (ws, _keep) = scratch_workspace("expand-draw");
+        let mut h = Harness::new(ws);
+        use epsilon_contracts::AgentEvent;
+        h.app.transcript.apply(&AgentEvent::ToolExecutionStart {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({ "command": "build" }),
+        });
+        for n in 0..50 {
+            h.app.transcript.apply(&AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "c1".into(),
+                tool_name: "bash".into(),
+                partial: epsilon_contracts::tool::ToolPartial {
+                    content: vec![epsilon_contracts::content::ContentBlock::text(format!(
+                        "output line {n}"
+                    ))],
+                    details: serde_json::Value::Null,
+                },
+            });
+        }
+        let capped = h.paint().region("agent").join("\n");
+        assert!(
+            capped.contains("more lines — /expand shows all"),
+            "the cap must name itself.\n{capped}"
+        );
+        assert!(
+            !capped.contains("output line 0"),
+            "the head must stay off-screen until expanded.\n{capped}"
+        );
+        assert!(
+            capped.contains("output line 49"),
+            "the tail must stay on-screen.\n{capped}"
+        );
+
+        let outcome = h.app.try_command("/expand");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/expand must run: {outcome:?}");
+        };
+        let full = h.paint().region("agent").join("\n");
+        assert!(
+            full.contains("output line 0"),
+            "expanded, the head must reach the screen.\n{full}"
+        );
+        assert!(
+            !full.contains("more lines — /expand shows all"),
+            "expanded, the marker must go away.\n{full}"
+        );
     }
 }
