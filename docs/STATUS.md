@@ -78,6 +78,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 43. **Full-port round 27 — a shortcuts reference (S-101), and a dead-chord fix** | `Ctrl+/` toggles a read-only overlay listing every window binding with its effective chord (rebound shows rebound), Escape closes, screen-reader-named rows, one overlay at a time. Building it exposed that `Key::Slash` (and `.`/`Comma`) mapped to a null char — punctuation chords could never fire — fixed with explicit mappings. Three tests (toggle, escape, a11y) with a control on the open. S-101 moves to `done`; DSH counts move to **15 / 93 / 283**; round-12 debt repaid (S-103/S-107 were still in the missing list). Battery `port-r27` (2,145), green first time. |
 | (10-06) | 44. **Full-port round 28 — thinking hides on `Alt+T` and stays hidden (P-040)** | `UiState::hide_thinking` flipped by a new chord (`Ctrl+T` cycles generation level here; nearby `Ctrl` letters are terminal traps) and persisted globally in config `[display] hide_thinking`. The render cache filters Thinking lines under a cache key covering the flag — hiding is instant across committed history, unhiding restores everything, plus the live tail. Two tests (config round-trip, frame hide/unhide/restore) with a control on the filter; the chord arm itself untested by design (global save, cf. favorites). P-040 moves to `partial` (different chord, narrower affordance); Pi counts move to **42 / 125 / 154**. Battery `port-r28` (2,147), green first time. |
 | (10-06) | 45. **Full-port round 29 — the window hides thinking too** | Round 28's follow-up, closed the same day: the window reads the same shared config key (set by the binary, defaulted off in `for_workspace` so tests stay hermetic) and filters Thinking rows in one slice for measure and draw alike — unhiding restores everything. `Alt+T` in both front ends (one gesture; the window's `Ctrl+T` is free but would mean something different per front end). One pixels test (visible, hidden, prose-survives, restored) with a runtime control on the filter. No matrix rows move (P-040 already `partial`; no DSH row covers hiding). Battery `port-r29` (2,148), green first time. |
+| (10-06) | 46. **Full-port round 30 — the window answers `/think`** | Bare reads the agent's level, an id parses and sets through the shared `ThinkingLevel` with the terminal's words (`thinking level: …`, `unknown level …` with the vocabulary). No picker half to refuse — seven names, typed. Two tests, RED first with the honest refusal (via a temporary arm removal). 15 of 37, under ADR-029's criterion, amended. Battery `port-r30` (2,150), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -225,11 +226,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r29-2026-10-06.txt`](../audit/evidence/gate-port-r29-2026-10-06.txt),
+**Latest green battery: [`gate-port-r30-2026-10-06.txt`](../audit/evidence/gate-port-r30-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
-**2,148 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r28`: the window thinking-hide pixels test.
-(`cargo fmt --check` ran before launching.)
+**2,150 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r29`: the window `/think` tests. (`cargo fmt
+--check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked

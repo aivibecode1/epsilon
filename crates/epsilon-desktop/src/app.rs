@@ -8741,6 +8741,79 @@ mod tests {
         );
     }
 
+    /// `/think` shows the level bare and sets it with an id (round 30).
+    ///
+    /// Same act as the terminal's over the shared `ThinkingLevel`: read the
+    /// agent's level, or parse and set with the terminal's words. RED first:
+    /// the honest refusal.
+    #[test]
+    fn slash_think_shows_and_sets_the_level() {
+        let (ws, _keep) = scratch_workspace("slash-think");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        let current = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().thinking_level().as_str().to_string())
+            .unwrap_or_default();
+
+        let outcome = h.app.try_command("/think");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("bare /think must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains(&current),
+            "bare /think names the running level: {said:?}"
+        );
+
+        let other = if current == "high" { "low" } else { "high" };
+        let outcome = h.app.try_command(&format!("/think {other}"));
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/think <id> must run, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains(other),
+            "the answer names what it set: {said:?}"
+        );
+        let after = h
+            .app
+            .session
+            .as_ref()
+            .map(|s| s.agent().thinking_level().as_str().to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            after, other,
+            "the agent thinks at the named level afterwards"
+        );
+
+        let outcome = h.app.try_command("/think bogus-level");
+        let crate::commands::Outcome::Ran(said) = outcome else {
+            panic!("/think bogus must answer, not refuse or send: {outcome:?}");
+        };
+        assert!(
+            said.contains("unknown level"),
+            "an unknown level teaches the vocabulary: {said:?}"
+        );
+    }
+
+    /// `/think` with no agent answers rather than refusing.
+    #[test]
+    fn slash_think_without_an_agent_names_what_is_missing() {
+        let (ws, _keep) = scratch_workspace("slash-think-no-agent");
+        let mut h = Harness::new(ws);
+        for line in ["/think", "/think high"] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} without an agent must answer: {outcome:?}");
+            };
+            assert!(
+                said.contains("no agent"),
+                "names the missing piece: {said:?}"
+            );
+        }
+    }
+
     /// `/model` with no agent answers rather than refusing.
     ///
     /// Bare still opens the picker (browsing needs no agent — the catalog is

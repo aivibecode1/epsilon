@@ -2451,6 +2451,10 @@ active); choosing a model runs the same `run_model_argument` the head runs. Cust
 through the shared loader; live listings do not (the fetch is async, the paint thread is
 not) — stated, not silent.
 
+**Amendment (full-port round 30).** `/think` joins for both halves at once: bare reads
+`agent.thinking_level`, an id parses and sets through the shared `ThinkingLevel` with the
+terminal's words. No picker half exists to refuse — seven names, typed. 15 of 37.
+
 ---
 
 ---

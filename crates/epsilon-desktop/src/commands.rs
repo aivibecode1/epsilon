@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is fourteen names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is fifteen names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -171,6 +171,13 @@ impl IdeApp {
                 Outcome::Ran("models — pick a provider, then a model".to_string())
             }
             Command::Model(id) => self.run_model_argument(Some(id)),
+            // **`/think` shows the thinking level bare, sets it with an id
+            // (full-port round 30).** Same act as the terminal's: read
+            // `agent.thinking_level`, or parse and set through the shared
+            // `ThinkingLevel` with the terminal's words. No picker half
+            // exists to refuse — the level is one of seven names, and typing
+            // one is the whole interface.
+            Command::Think(arg) => self.run_think_argument(arg),
             // **`/help` opens the command palette.** The terminal's `/help` prints
             // the command reference; the window's equivalent surface is the
             // palette, which lists every file and every command this window
@@ -590,6 +597,7 @@ impl IdeApp {
     /// and its key warning, but not its machine-wide default save: that file
     /// is the terminal's default for *new* sessions, and a window action does
     /// not rewrite it behind the terminal's back.
+    ///
     /// Shared by the `/model <id>` head and the model picker: one act, two
     /// doors. `pub(crate)` for the picker; the head owns the words.
     pub(crate) fn run_model_argument(&mut self, arg: Option<String>) -> Outcome {
@@ -610,6 +618,39 @@ impl IdeApp {
             said.push_str(" (no key yet)");
         }
         Outcome::Ran(said)
+    }
+
+    /// Show the thinking level bare, set it with an id.
+    ///
+    /// Mirrors the terminal's words (`thinking level: …`, `unknown level …`)
+    /// over the same shared [`epsilon_contracts::ThinkingLevel`] parse. No
+    /// picker half exists to refuse: the level is one of seven names, and
+    /// typing one is the whole interface.
+    fn run_think_argument(&mut self, arg: Option<String>) -> Outcome {
+        let Some(session) = self.session.as_ref() else {
+            return Outcome::Ran("think: no agent attached to this window".to_string());
+        };
+        let agent = session.agent();
+        match arg.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => Outcome::Ran(format!(
+                "thinking level: {}",
+                agent.thinking_level().as_str()
+            )),
+            Some(word) => match epsilon_contracts::ThinkingLevel::parse(word) {
+                Some(level) => {
+                    agent.set_thinking_level(level);
+                    Outcome::Ran(format!("thinking level: {}", level.as_str()))
+                }
+                None => {
+                    let levels = epsilon_contracts::ThinkingLevel::ALL
+                        .iter()
+                        .map(|l| l.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Outcome::Ran(format!("unknown level '{word}' - use: {levels}"))
+                }
+            },
+        }
     }
 }
 
@@ -731,7 +772,7 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
     "clear", "clone", "compact", "export", "fork", "goal", "help", "model", "new", "resume",
-    "session", "sessions", "tasks", "theme",
+    "session", "sessions", "tasks", "theme", "think",
 ];
 
 #[cfg(test)]
@@ -1006,6 +1047,7 @@ mod tests {
             Command::Sessions,
             Command::Tasks,
             Command::Theme(None),
+            Command::Think(None),
         ]
         .iter()
         .filter_map(|command| head_of(command))
