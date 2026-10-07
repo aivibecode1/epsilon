@@ -111,7 +111,7 @@ write the checker, let it print the failures, then fix what it names.
 
 ### C. Bring the window up to a usable floor — **P1** (L)
 
-**Why.** The desktop is half the objective and answers 20 of 37 commands (review §3.2, plus `/help` in round 4, `/new` in round 6, `/resume` in round 7, `/fork` + `/clone` in round 8, `/export` in round 15, `/model` in round 20, `/think` in round 30, `/settings` in round 33, `/login` + `/logout` in round 38 and `/hotkeys` + `/copy` in round 40). Four gaps are
+**Why.** The desktop is half the objective and answers 21 of 37 commands (review §3.2, plus `/help` in round 4, `/new` in round 6, `/resume` in round 7, `/fork` + `/clone` in round 8, `/export` in round 15, `/model` in round 20, `/think` in round 30, `/settings` in round 33, `/login` + `/logout` in round 38, `/hotkeys` + `/copy` in round 40 and `/exit` in round 41). Four gaps are
 the ones a user hits first, and three of them are already itemised in the matrices:
 
 | Gap | Rows | Where |

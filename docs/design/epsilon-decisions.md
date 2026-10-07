@@ -2489,6 +2489,10 @@ it; no new dependency) with the terminal's words; the frame lends the
 context, which the harness discards, so no test touches the real clipboard.
 20 of 37.
 
+**Amendment (full-port round 41).** `/exit` (with `/quit` and `/q` spelling it)
+opens the quit guard instead of exiting: the terminal exits, the window asks
+first, and the dialog it opens is the one the platform close raises. 21 of 37.
+
 ---
 
 ---

@@ -6228,6 +6228,18 @@ impl IdeApp {
         false
     }
 
+    /// Open the quit guard from a head (`/exit`), not from the platform.
+    ///
+    /// The same dialog [`Self::answer_close_request`] raises — inspected once,
+    /// never refreshed while up — so the typed head and the window chrome
+    /// cannot disagree about what quitting costs. No `CancelClose` here:
+    /// there is no platform close pending, only a reader asking.
+    pub(crate) fn ask_quit(&mut self) {
+        if self.quit_confirm.is_none() {
+            self.quit_confirm = Some(self.inspect_quit());
+        }
+    }
+
     /// What closing the window right now would interrupt.
     ///
     /// **Read once, when the request arrives, and never again while the dialog is up** — a
@@ -14725,6 +14737,34 @@ mod tests {
         assert!(
             said.contains("no assistant message to copy"),
             "must name the missing answer: {said:?}"
+        );
+    }
+
+    /// `/exit` opens the quit guard instead of exiting (round 41).
+    ///
+    /// The terminal exits; the window asks first — closing is the reader's
+    /// decision even for an empty window. Same dialog the platform close
+    /// raises. RED first: the honest refusal.
+    #[test]
+    fn slash_exit_opens_the_quit_guard() {
+        let (ws, _keep) = scratch_workspace("slash-exit");
+        let mut h = Harness::new(ws);
+        for line in ["/exit", "/quit"] {
+            let outcome = h.app.try_command(line);
+            let crate::commands::Outcome::Ran(said) = outcome else {
+                panic!("{line} must answer, not refuse or send: {outcome:?}");
+            };
+            assert!(
+                h.app.quit_confirm.is_some(),
+                "{line} must raise the quit dialog"
+            );
+            let _ = said;
+        }
+        let frame = h.paint();
+        let agent = frame.region("agent").join("\n");
+        assert!(
+            agent.contains("Close this window?"),
+            "the dialog must reach the screen.\n{agent}"
         );
     }
 }

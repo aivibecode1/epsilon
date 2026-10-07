@@ -27,7 +27,7 @@
 //!
 //! # Why this file holds no list of commands
 //!
-//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty names and is
+//! It held two, and the second was the expensive one. [`SUPPORTED`] is twenty-one names and is
 //! still here — it is the declaration, and it stays. What went is a 38-arm `head_of` that
 //! spelled every [`Command`] variant out by hand, plus a `refusal_head` that existed only to
 //! re-derive the refusal set through it. Adding a terminal command meant editing that match
@@ -195,6 +195,16 @@ impl IdeApp {
             // (see the `ctx` field) — in a test harness the output is
             // discarded, so no test touches the real clipboard.
             Command::Copy => self.run_copy(),
+            // **`/exit` opens the quit guard (full-port round 41).** The
+            // terminal exits; the window asks first — a tested product rule
+            // says closing is the reader's decision even for an empty
+            // window. Same dialog the platform close raises (see `ask_quit`),
+            // so the two doors cannot disagree about what quitting costs.
+            // `/quit` and `/q` parse here too, and take the same door.
+            Command::Quit => {
+                self.ask_quit();
+                Outcome::Ran("quit — confirm in the dialog".to_string())
+            }
             // **`/login` stores a pasted provider key, `/logout` removes one
             // (full-port round 38).** The same shared store the terminal
             // uses (`epsilon_llm::auth`), so a key saved in either front end
@@ -897,9 +907,9 @@ pub fn refused_heads() -> Vec<&'static str> {
 /// has no such action, so it is refused with its name like every other unbuilt verb rather
 /// than mapped onto the nearest thing that exists.
 pub const SUPPORTED: &[&str] = &[
-    "clear", "clone", "compact", "copy", "export", "fork", "goal", "help", "hotkeys", "login",
-    "logout", "model", "new", "resume", "session", "sessions", "settings", "tasks", "theme",
-    "think",
+    "clear", "clone", "compact", "copy", "exit", "export", "fork", "goal", "help", "hotkeys",
+    "login", "logout", "model", "new", "resume", "session", "sessions", "settings", "tasks",
+    "theme", "think",
 ];
 
 #[cfg(test)]
@@ -1170,6 +1180,7 @@ mod tests {
             Command::Clone,
             Command::Compact,
             Command::Copy,
+            Command::Quit,
             Command::Export(None),
             Command::Fork,
             Command::Goal(None),
