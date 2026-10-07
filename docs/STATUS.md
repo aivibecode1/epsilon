@@ -96,6 +96,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-07) | 61. **Full-port round 46 — the window answers `/name`, and the pane lists titles** | Same custom entry both front ends read (bare reads the persisted tail, setting persists beside it, no in-memory copy); the sessions pane lists titles instead of timestamp stems, so a name set anywhere reads here — plus P-071 judged deliberately different (fallback presumes cwd-adoption this tree never does; the round-36 notice is the honest shape). Three tests (set+show, no-agent, pane titles) with a control removing the arm; the first battery caught two integration tests asserting stems, updated to content. 26 of 37, under ADR-029's criterion, amended. Battery `port-r46b` (2,181), green on the second attempt. |
 | (10-07) | 62. **Full-port round 47 — the window answers `/restore`** | The terminal's two shared checkpoint calls with its words and its guards (usage, busy, trailing-`yes` confirmation): preview first, apply only on confirmation. A real round-trip in the scratch workspace (record, change, preview untouched, apply reverts) plus usage/missing; control removing the arm. 27 of 37, under ADR-029's criterion, amended. Battery `port-r47` (2,183), green first time. |
 | (10-07) | 63. **Full-port round 48 — the window answers `/import`** | Same live switch as `/resume <path>` through the same `switch_session`, with the terminal's words ("imported", usage on bare since there is no browser here). Two tests (live switch with conversation on screen, usage/missing/no-agent) with a control removing the arm. 28 of 37, under ADR-029's criterion, amended. Battery `port-r48` (2,185), green first time. |
+| (10-07) | 64. **Full-port round 49 — drift-proofing the verb counts** | Four verb rounds running each missed at least one prose count (a paragraph still said 20/17 three rounds later), and no gate read prose numbers. New `check-verb-counts` leg in both gates: SUPPORTED length against the four current-claim sites, number-words included, dated records (ADR, STATUS) excluded by design — plus a control breaking one claim. Twelve legs now. Battery `port-r49` (2,185), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -243,12 +244,13 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r48-2026-10-07.txt`](../audit/evidence/gate-port-r48-2026-10-07.txt),
-2026-10-07 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
+**Latest green battery: [`gate-port-r49-2026-10-07.txt`](../audit/evidence/gate-port-r49-2026-10-07.txt),
+2026-10-07 — the tree this file describes.** Twelve legs, all `[exit=0]`, `GATE PASS` (the new
+`check-verb-counts` leg first runs here).
 **2,185 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r47`: the import tests. (`cargo fmt --check`
-ran before launching.) The first `port-r46` attempt failed its test leg on two integration
-tests asserting stems the pane no longer shows; preserved as
+`test result:` lines — same as `gate-port-r48`: an infrastructure round adds no Rust tests.
+(`cargo fmt --check` ran before launching.) The first `port-r46` attempt failed its test leg
+on two integration tests asserting stems the pane no longer shows; preserved as
 [`gate-port-r46-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r46-attempt1-FAILED-2026-10-07.txt).
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10

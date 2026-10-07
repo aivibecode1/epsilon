@@ -66,6 +66,10 @@ run "check-lint-tables" python scripts/check-lint-tables.py       || overall=1
 # the check that means nobody has to. Reference-side paths are excluded (not
 # committed) -- see the script.
 run "check-parity-citations" python scripts/check-parity-citations.py --quiet || overall=1
+# Verb counts are stated in prose in four places and updated by hand every
+# verb round; four rounds running each missed at least one site. Dated
+# records are excluded by design -- see the script.
+run "check-verb-counts" python scripts/check-verb-counts.py --quiet || overall=1
 # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises on
 # commit) and breaks every source-parsing test in the tree while reporting
 # something else entirely -- M231 lost a battery to a dispatcher reported as

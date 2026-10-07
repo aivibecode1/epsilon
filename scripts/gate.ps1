@@ -198,6 +198,11 @@ $gates = @(
     # round 14, all repaired by hand; this is the check that means nobody has
     # to. Reference-side paths are excluded (not committed) — see the script.
     @{ Name = "check-parity-citations"; Exe = "python"; Args = @("scripts/check-parity-citations.py", "--quiet") },
+    # Verb counts are stated in prose in four places and updated by hand every
+    # verb round; four rounds running each missed at least one site. Dated
+    # records (ADR amendments, the STATUS log) are excluded by design — see
+    # the script.
+    @{ Name = "check-verb-counts"; Exe = "python"; Args = @("scripts/check-verb-counts.py", "--quiet") },
     # A CRLF working copy is invisible to `git diff` (`.gitattributes` normalises
     # on commit), and it breaks every source-parsing test in the tree in a way that
     # reports something else entirely -- M231 lost a battery to a dispatcher
