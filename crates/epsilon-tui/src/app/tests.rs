@@ -6452,3 +6452,44 @@ fn import_yes_swaps_the_store() {
         app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
     );
 }
+
+/// `/resume <path>` switches directly with a report (round 62).
+///
+/// The browser's Enter is pinned; the typed path form was pinned only by
+/// the shared switch it shares with `/import`. Same words, same store.
+#[test]
+fn resume_path_switches_and_reports() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    let target = dir.path().join("other.jsonl");
+    let mut store =
+        epsilon_session::SessionStore::open_in(target.clone(), dir.path()).expect("a store opens");
+    store
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m-res".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text {
+                        text: "the resumed line".into(),
+                    }],
+                },
+            ),
+            api_request_sha256: None,
+        })
+        .expect("the message lands");
+    drop(store);
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command(&format!("/resume {}", target.display()))
+            .expect("/resume parses"),
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("resumed") && l.text.contains("history restored")),
+        "must report the resume: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}

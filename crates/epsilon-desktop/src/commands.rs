@@ -1310,7 +1310,11 @@ impl IdeApp {
             Ok(())
         })();
         match persisted {
-            Ok(()) => Outcome::Ran(format!("session name set to '{name}'")),
+            Ok(()) => {
+                // The session changed its name: the taskbar must follow it.
+                self.refresh_window_title();
+                Outcome::Ran(format!("session name set to '{name}'"))
+            }
             Err(why) => Outcome::Ran(format!(
                 "session named '{name}' for this run, but not saved: {why}"
             )),

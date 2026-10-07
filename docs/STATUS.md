@@ -109,6 +109,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-07) | 74. **Full-port round 59 — batch closes and a brand verdict** | P-164 got its tab test (value asserted, not just absence); P-003 went deliberately different (mouse off by design + the mark is Pi's brand, which CREDITS forbids taking); D-007/D-008 record why no menu can exist on egui 0.36's public API. Pi now 45 / 122 / 151. The counts checker caught my own section arithmetic mid-round. Battery `port-r59` (2,208), green first time. |
 | (10-07) | 75. **Full-port round 60 — batch closes for `/clone` and `/name`** | Both behaviors existed with no tests pinning them: `/clone` mirrors the fork test (new file, new id, notice) plus the empty honest case; `/name` pins memory, the unsaved notice, and bare read-back — with notice-mutation controls on both. Pi now 47 / 120 / 151. Battery `port-r60` (2,211), green first time. |
 | (10-07) | 76. **Full-port round 61 — `/import` asks before swapping, both front ends** | A swap drops the current context from view, so it asks (`yes` swaps, `no` cancels, anything else repeats without eating the line) — next to the trust gate in both composers. Four tests (TUI ask/bounce/cancel/proceed, window confirm flow) with arm-removal controls both sides; round-48's immediate-swap test updated to the new flow. Pi now 48 / 119 / 151. Battery `port-r61` (2,213), green first time. |
+| (10-07) | 77. **Full-port round 62 — the taskbar follows the session, plus a `/resume` pin** | The OS window title is `<session title> — Epsilon` (same words as the sessions pane), recomputed on start/resume/rename/send and sent when it differs — L-165 done (DSH 16 / 93). TUI `/resume <path>` gets its direct test (E-066's gap narrows to `/resume`-untested-never, now tested). Two tests, one with a removal control. Battery `port-r62` (2,215), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -201,7 +202,7 @@ inventories are inventories.
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 48 | 119 | 151 | 21 |
-| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 15 | 94 | 282 | 42 |
+| [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 16 | 93 | 282 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The
 > DSH row above read `11 / 85 / 295 / 42` and was wrong in two columns. Recounted from the matrix's
@@ -256,10 +257,10 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r61-2026-10-07.txt`](../audit/evidence/gate-port-r61-2026-10-07.txt),
+**Latest green battery: [`gate-port-r62-2026-10-07.txt`](../audit/evidence/gate-port-r62-2026-10-07.txt),
 2026-10-07 — the tree this file describes.** Thirteen legs, all `[exit=0]`, `GATE PASS`.
-**2,213 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — two more than `gate-port-r60`: the import-confirm tests.
+**2,215 passed / 0 failed / 13 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — two more than `gate-port-r61`: the title and resume tests.
 (`cargo fmt --check` ran before launching.) The first `port-r55` attempt failed its test leg
 on an integration test driving `/timeline` as refused; preserved as
 [`gate-port-r55-attempt1-FAILED-2026-10-07.txt`](../audit/evidence/gate-port-r55-attempt1-FAILED-2026-10-07.txt).

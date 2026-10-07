@@ -117,10 +117,10 @@ measurements taken here at all.
 | Transcript, streaming and tool cards | 82 | 2 | 18 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
-| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 0 | 23 | 37 | 5 |
+| Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 1 | 22 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **15** | **94** | **282** | **42** |
+| **Total** | **433** | **16** | **93** | **282** | **42** |
 
 ---
 
@@ -549,7 +549,7 @@ computed while drawing is a layout nobody can test.
 | L-162 | Splitting is blocked — with a distinct, focusable explanation — for a floating pane, a collapsed column, an empty pane, the two-pane budget, or insufficient width. | `ui-sidebar-right/src/client/service.ts:602-612` | missing | — | No splitting (S-111). |
 | L-163 | A floating panel is a pane whose host is `float`, draggable out and resizable down to 220x140. | `ui-dockkit/src/engine/constraints.ts:16`, `ui-dockkit/src/components/FloatLayer.tsx:139-147` | missing | — | No floating panel (P-152). |
 | L-164 | The theme presenter writes `color-scheme`, the theme's alias tokens and a content font size as inline body variables, plus one meta `theme-color`. | `ui-layout/src/client/theme-presenter.ts:53-70` | partial | `crates/epsilon-desktop/src/app.rs:5518-5520`, `crates/epsilon-desktop/src/theme.rs:190-269` | The window sets egui's `Visuals` from the palette on every frame (`app.rs:5518-5520`), and the palette is twenty-four named roles converted from the terminal's, with three contrast floors applied on top (`theme.rs:190-269`, `:292-326`). There is no CSS custom property, no `color-scheme` declaration and no meta theme colour, because there is no DOM for them to write to. |
-| L-165 | The window title is `<session title> — <product title>` while the Conversation is the selected main panel. | `ui-layout/src/client/DocumentTitle.tsx:18-27` | partial | `crates/epsilon-desktop/src/lib.rs:149-153`, `crates/epsilon-desktop/src/app.rs:2767-2798` | The **title bar** carries the workspace name, the model the launch resolved and the context/token/cost figures, all budgeted against the width (`app.rs:2767-2798`; covered by `the_title_bar_names_the_workspace_and_the_figures_it_drew`). The OS **window** title is the workspace directory name (`lib.rs:149-153`) and does not change with the selected session. |
+| L-165 | The window title is `<session title> — <product title>` while the Conversation is the selected main panel. | `ui-layout/src/client/DocumentTitle.tsx:18-27` | done | `crates/epsilon-desktop/src/app.rs` — the **title bar** carries the workspace name, the model the launch resolved and the context/token/cost figures (`the_title_bar_names_the_workspace_and_the_figures_it_drew`); the OS **window** title follows the session (`<name> — Epsilon`, same shape with this product's title), recomputed on start, resume, rename and send and sent when it differs | `window_title_follows_the_session_name` (rename retitles; the viewport send is reviewed) |
 ---
 
 ## G. Approvals, questions, schedule, jobs, goal, plan, subagents, deliverables, feedback, attachments, models
@@ -788,7 +788,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 | Transcript and tool cards | C-107, C-109, C-120, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |
-| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-114, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164, L-165 |
+| Layout and panes | L-101, L-102, L-103, L-105, L-108, L-113, L-114, L-128, L-129, L-130, L-131, L-132, L-143, L-146, L-151, L-152, L-155, L-158, L-159, L-160, L-161, L-164 |
 | Approvals through models | I-101, I-104, I-105, I-106, I-133, I-134, I-137, I-139, I-141, I-142, I-149 |
 | Un-numbered reference rows | U-003, U-006, U-017 |
 

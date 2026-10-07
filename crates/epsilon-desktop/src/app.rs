@@ -1547,6 +1547,28 @@ impl IdeApp {
         self.focus = FocusTarget::Agent;
     }
 
+    /// Recompute the OS window title (`<session> — Epsilon`).
+    ///
+    /// The name is the summary's title (name, else first message, else
+    /// stem): the same words the sessions pane lists, so the taskbar and
+    /// the pane cannot disagree about what a session is called.
+    /// `pub(crate)` for the command that renames, like `keys`.
+    pub(crate) fn refresh_window_title(&mut self) {
+        let name = match self.session.as_ref().and_then(|s| s.session_path()) {
+            Some(path) => epsilon_session::discover::summarize(&path)
+                .map(|summary| summary.title())
+                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "session".to_string()),
+            None => self
+                .workspace()
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Epsilon")
+                .to_string(),
+        };
+        self.window_title = format!("{name} — Epsilon");
+    }
+
     /// Recompute search matches when the query, the transcript, or the
     /// visibility flag moved under them. Stale indices would jump somewhere
     /// the match no longer is — the same reason the offsets exist.
@@ -2395,6 +2417,14 @@ pub struct IdeApp {
     /// current context from view, so it asks first. `pub(crate)` for the
     /// command arm and the tests, like `keys`.
     pub(crate) pending_import: Option<std::path::PathBuf>,
+    /// The OS window title to show (`<session> — Epsilon`).
+    ///
+    /// Recomputed where the session can change it (start, resume, rename,
+    /// send) and sent from `paint` when it differs — never read per frame.
+    window_title: String,
+    /// The title last sent to the viewport (`String::new()` forces the
+    /// first send).
+    sent_title: String,
     /// Live provider-listing fetcher for the model picker (`None` without the
     /// `real` feature). The same constructor the terminal's binary uses.
     live: Option<epsilon_tui::LiveFetcher>,
@@ -2974,6 +3004,8 @@ impl IdeApp {
             timeline: None,
             timeline_rects: Vec::new(),
             pending_import: None,
+            window_title: String::new(),
+            sent_title: String::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -2988,6 +3020,7 @@ impl IdeApp {
         // that refreshed only on `drain > 0` leaves the figures blank for exactly the
         // frames a reader looks at, and a blank gauge is read as "nothing has happened".
         app.refresh_metrics();
+        app.refresh_window_title();
         app
     }
     /// An application with **no** agent, for the test that asserts the absent state.
@@ -3016,7 +3049,7 @@ impl IdeApp {
         }
         // The same load as `new`, for the same reason — see the field below.
         let prefs = Preferences::load_from(&opts.workspace, None);
-        Self {
+        let mut app = Self {
             opts,
             theme: IdeTheme::resolve(None),
             // **The same load as `new`.** This constructor is a second way to build the
@@ -3072,6 +3105,8 @@ impl IdeApp {
             timeline: None,
             timeline_rects: Vec::new(),
             pending_import: None,
+            window_title: String::new(),
+            sent_title: String::new(),
             tabs: Vec::new(),
             sidebar: SidebarView::Files,
             focus: FocusTarget::Agent,
@@ -3083,7 +3118,9 @@ impl IdeApp {
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 820.0)),
                 prefs,
             ),
-        }
+        };
+        app.refresh_window_title();
+        app
     }
     /// The geometry of the last painted frame.
     pub fn layout(&self) -> &IdeLayout {
@@ -4299,6 +4336,13 @@ impl IdeApp {
         // Lend the frame's context to commands that run without a `Ui` (see
         // the `ctx` field): refreshed every frame, so it is never stale.
         self.ctx = Some(ctx.clone());
+        // The taskbar follows the session: send the title when it changed
+        // (and once at startup, when nothing was sent yet). Compared, not
+        // recomputed — the file read happens where the session changes.
+        if self.window_title != self.sent_title && !self.window_title.is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title.clone()));
+            self.sent_title = self.window_title.clone();
+        }
         // **A close request is caught here, before anything is drawn.** egui flags a close
         // the *platform* raised (`ViewportInfo::close_requested`) and waits for the frame to
         // end; `ViewportCommand::CancelClose` is how the application says "not yet". DSH does
@@ -5791,6 +5835,8 @@ impl IdeApp {
         let history = session.agent().history();
         let count = history.len();
         self.transcript = Transcript::from_messages(&history);
+        // The session changed: the taskbar must follow it.
+        self.refresh_window_title();
         // **The second of the two places these figures can change.** `live_resume` replaces
         // the whole history and emits nothing, so this is exactly the case `pump`'s
         // `arrived > 0` cannot see — and a window that kept the old numbers would show the
@@ -7913,6 +7959,9 @@ impl IdeApp {
                     return None;
                 }
                 self.draft.clear();
+                // A first message can title an untitled session: the
+                // taskbar must follow it.
+                self.refresh_window_title();
                 // The user's own words, on screen at the moment they are sent.
                 //
                 // `AgentEvent` has no "you said this" — the prompt is an input, not an output, so
@@ -17124,6 +17173,32 @@ mod tests {
         assert!(
             screen.contains("favorite: no agent"),
             "names the missing piece.\n{screen}"
+        );
+    }
+
+    /// The taskbar follows the session name (round 62).
+    ///
+    /// `<name> — Epsilon`, recomputed where the session can change it —
+    /// here, by renaming. The send itself goes to the viewport (reviewed);
+    /// the words are pinned here. RED first: the honest refusal.
+    #[test]
+    fn window_title_follows_the_session_name() {
+        let (ws, _keep) = scratch_workspace("window-title");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+        assert!(
+            h.app.window_title.ends_with(" — Epsilon") && !h.app.window_title.is_empty(),
+            "a title from the start, in the house shape: {:?}",
+            h.app.window_title
+        );
+
+        let outcome = h.app.try_command("/name tabby");
+        let crate::commands::Outcome::Ran(_) = outcome else {
+            panic!("/name must run: {outcome:?}");
+        };
+        assert_eq!(
+            h.app.window_title, "tabby — Epsilon",
+            "renaming must retitle the taskbar"
         );
     }
 }
