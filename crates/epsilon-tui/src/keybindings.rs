@@ -152,23 +152,60 @@ fn key_label(spec: &KeySpec) -> String {
 pub struct KeybindingsManager {
     user: HashMap<String, Vec<String>>,
     config_path: Option<PathBuf>,
+    /// Why the user file was ignored, if it was there to be read. `None`
+    /// means absent (normal first run) or fine — only a present-but-unusable
+    /// file names itself, because only that surprises.
+    load_warning: Option<String>,
 }
 
 impl KeybindingsManager {
     /// Load from `dir/keybindings.json` if present (fail-open).
     pub fn load(dir: &Path) -> HashMap<String, Vec<String>> {
+        Self::load_report(dir).0
+    }
+
+    /// [`Self::load`] plus why the file was ignored, if it was there to be
+    /// read. Absent stays silent; broken JSON, non-objects and unreadable
+    /// paths name the document with the reason and the fix.
+    pub fn load_report(dir: &Path) -> (HashMap<String, Vec<String>>, Option<String>) {
         let path = dir.join("keybindings.json");
         let raw = match std::fs::read_to_string(&path) {
             Ok(s) => s,
-            Err(_) => return HashMap::new(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (HashMap::new(), None),
+            Err(e) => {
+                return (
+                    HashMap::new(),
+                    Some(format!(
+                        "keybindings ignored: {}: {e} — defaults apply; restart after fixing it",
+                        path.display()
+                    )),
+                );
+            }
         };
         let v: serde_json::Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
-            Err(_) => return HashMap::new(),
+            Err(e) => {
+                return (
+                    HashMap::new(),
+                    Some(format!(
+                        "keybindings ignored: {}: not JSON ({}); defaults apply until it parses — restart after fixing it",
+                        path.display(),
+                        e
+                    )),
+                );
+            }
         };
         let obj = match v.as_object() {
             Some(o) => o,
-            None => return HashMap::new(),
+            None => {
+                return (
+                    HashMap::new(),
+                    Some(format!(
+                        "keybindings ignored: {}: not an object; defaults apply until it parses — restart after fixing it",
+                        path.display()
+                    )),
+                );
+            }
         };
         let mut out = HashMap::new();
         for (k, val) in obj {
@@ -184,23 +221,29 @@ impl KeybindingsManager {
                 }
             }
         }
-        out
+        (out, None)
+    }
+
+    /// Why [`Self::create`] ignored the user file, if it did.
+    pub fn load_warning(&self) -> Option<&str> {
+        self.load_warning.as_deref()
     }
 
     /// Create against the global config dir (`~/.config/epsilon`).
     pub fn create() -> Self {
         let dir = epsilon_core::config::global_dir();
-        let (user, path) = match dir {
+        let (user, path, load_warning) = match dir {
             Some(d) => {
-                let u = Self::load(&d);
+                let (u, w) = Self::load_report(&d);
                 let p = Some(d.join("keybindings.json"));
-                (u, p)
+                (u, p, w)
             }
-            None => (HashMap::new(), None),
+            None => (HashMap::new(), None, None),
         };
         Self {
             user,
             config_path: path,
+            load_warning,
         }
     }
 
@@ -209,6 +252,7 @@ impl KeybindingsManager {
         Self {
             user: map,
             config_path: None,
+            load_warning: None,
         }
     }
 
@@ -217,7 +261,9 @@ impl KeybindingsManager {
         if let Some(p) = &self.config_path.clone()
             && let Some(dir) = p.parent()
         {
-            self.user = Self::load(dir);
+            let (user, warning) = Self::load_report(dir);
+            self.user = user;
+            self.load_warning = warning;
         }
     }
 
@@ -353,6 +399,55 @@ mod tests {
         std::fs::write(&p, r#"{"app.exit":"ctrl+q","app.palette":["ctrl+p"]}"#).unwrap();
         let m = KeybindingsManager::load(tmp.path());
         assert_eq!(m.get("app.exit").unwrap(), &vec!["ctrl+q".to_string()]);
+    }
+
+    /// A present-but-unusable keybindings file names itself (S-126, terminal
+    /// half): absent stays silent, broken JSON / non-object / unreadable
+    /// paths warn naming the document. RED first: silence everywhere.
+    #[test]
+    fn a_broken_keybindings_file_names_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let file = dir.join("keybindings.json");
+
+        // Absent: silent.
+        assert!(
+            KeybindingsManager::load_report(dir).1.is_none(),
+            "no file, no warning"
+        );
+
+        // Broken JSON: warns naming the file.
+        std::fs::write(&file, "{oops").unwrap();
+        let warning = KeybindingsManager::load_report(dir)
+            .1
+            .expect("broken JSON must warn");
+        assert!(
+            warning.contains("keybindings.json"),
+            "the warning names the document: {warning:?}"
+        );
+
+        // Valid JSON, not an object: warns.
+        std::fs::write(&file, "[1, 2]").unwrap();
+        assert!(
+            KeybindingsManager::load_report(dir).1.is_some(),
+            "a non-object must warn"
+        );
+
+        // Unreadable path: warns.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert!(
+            KeybindingsManager::load_report(dir).1.is_some(),
+            "an unreadable path must warn"
+        );
+
+        // Valid file: silent.
+        std::fs::remove_dir(&file).unwrap();
+        std::fs::write(&file, r#"{"app.exit": "ctrl+q"}"#).unwrap();
+        assert!(
+            KeybindingsManager::load_report(dir).1.is_none(),
+            "a good file stays silent"
+        );
     }
 
     #[test]

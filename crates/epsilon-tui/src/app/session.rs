@@ -35,7 +35,7 @@ impl App {
         // other display preferences; flipped by `app.thinking.toggle`.
         let mut ui = UiState::new();
         ui.hide_thinking = epsilon_core::config::load_hide_thinking();
-        Self {
+        let mut app = Self {
             ui,
             input: String::new(),
             cursor_chars: 0,
@@ -156,7 +156,16 @@ impl App {
             auth_key_cursor: 0,
             auth_pick_open: false,
             auth_pick_index: 0,
+        };
+        // A keybindings file that could not be used names itself at startup
+        // (S-126, terminal half): every rebind in it is silently not applied
+        // otherwise. Pushed here — not inside the literal above, which has
+        // already moved `ui` — as a transcript line on the first frame, not a
+        // print lost above the alternate screen.
+        if let Some(warning) = app.keybindings.load_warning() {
+            app.ui.push_notice(warning.to_string());
         }
+        app
     }
 
     /// Git branch with a short TTL so we read `.git/HEAD` at most every 2s (pi's

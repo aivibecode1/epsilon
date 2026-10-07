@@ -79,7 +79,8 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-06) | 44. **Full-port round 28 — thinking hides on `Alt+T` and stays hidden (P-040)** | `UiState::hide_thinking` flipped by a new chord (`Ctrl+T` cycles generation level here; nearby `Ctrl` letters are terminal traps) and persisted globally in config `[display] hide_thinking`. The render cache filters Thinking lines under a cache key covering the flag — hiding is instant across committed history, unhiding restores everything, plus the live tail. Two tests (config round-trip, frame hide/unhide/restore) with a control on the filter; the chord arm itself untested by design (global save, cf. favorites). P-040 moves to `partial` (different chord, narrower affordance); Pi counts move to **42 / 125 / 154**. Battery `port-r28` (2,147), green first time. |
 | (10-06) | 45. **Full-port round 29 — the window hides thinking too** | Round 28's follow-up, closed the same day: the window reads the same shared config key (set by the binary, defaulted off in `for_workspace` so tests stay hermetic) and filters Thinking rows in one slice for measure and draw alike — unhiding restores everything. `Alt+T` in both front ends (one gesture; the window's `Ctrl+T` is free but would mean something different per front end). One pixels test (visible, hidden, prose-survives, restored) with a runtime control on the filter. No matrix rows move (P-040 already `partial`; no DSH row covers hiding). Battery `port-r29` (2,148), green first time. |
 | (10-06) | 46. **Full-port round 30 — the window answers `/think`** | Bare reads the agent's level, an id parses and sets through the shared `ThinkingLevel` with the terminal's words (`thinking level: …`, `unknown level …` with the vocabulary). No picker half to refuse — seven names, typed. Two tests, RED first with the honest refusal (via a temporary arm removal). 15 of 37, under ADR-029's criterion, amended. Battery `port-r30` (2,150), green first time. |
-| (10-06) | 47. **Full-port round 31 — a broken keybindings file names itself (S-126)** | Both loaders failed open *and silent* (one even documented it); now a present-but-unusable file warns naming the document, the reason, and the fix, carried on the bindings into a launch notice — absent stays silent as it should. One hermetic tempdir test (absent/broken/non-object/unreadable/valid) with a control suppressing the warning. S-126 moves to `partial` (notices, not toasts; no editor to disable). DSH counts move to **15 / 94 / 282**. Battery `port-r31` (2,151), green first time. |
+| (10-06) | 47. **Full-port round 31 — a broken keybindings file names itself (S-126)** | The window's loader failed open *and silent* (it even documented it); now a present-but-unusable file warns naming the document, the reason, and the fix, carried on the bindings into a launch notice — absent stays silent as it should. One hermetic tempdir test (absent/broken/non-object/unreadable/valid) with a control suppressing the warning. S-126 moves to `partial` (notices, not toasts; no editor to disable). DSH counts move to **15 / 94 / 282**. Battery `port-r31` (2,151), green first time. |
+| (10-06) | 48. **Full-port round 32 — the terminal names it too** | Round 31's follow-up, closed the same day: the TUI manager gains the same carried warning (`load_report`, same three failure shapes, `reload()` refreshes it) surfaced as a transcript line at construction. One hermetic test with a control on the parse branch. No rows move (S-126 already `partial`). Battery `port-r32` (2,152), green first time. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -227,11 +228,11 @@ instead of newlining, and the sessions sidebar being a keyboard trap. What remai
 
 ## Verification (what is actually true)
 
-**Latest green battery: [`gate-port-r31-2026-10-06.txt`](../audit/evidence/gate-port-r31-2026-10-06.txt),
+**Latest green battery: [`gate-port-r32-2026-10-06.txt`](../audit/evidence/gate-port-r32-2026-10-06.txt),
 2026-10-06 — the tree this file describes.** Eleven legs, all `[exit=0]`, `GATE PASS`.
-**2,151 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
-`test result:` lines — one more than `gate-port-r30`: the broken-keybindings test. (`cargo fmt
---check` ran before launching.)
+**2,152 passed / 0 failed / 12 ignored across 78 binaries**, summed from that one log's
+`test result:` lines — one more than `gate-port-r31`: the TUI broken-keybindings test. (`cargo
+fmt --check` ran before launching.)
 
 > **How this battery came to exist.** The first attempt on this tree (`gate-land316a`) went 9 of 10
 > green and failed the test leg with `Access is denied. (os error 5)` on a freshly linked
