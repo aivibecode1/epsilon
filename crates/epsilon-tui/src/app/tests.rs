@@ -6493,3 +6493,107 @@ fn resume_path_switches_and_reports() {
         app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
     );
 }
+
+/// Append one user message to the agent's attached store (export fixtures).
+fn push_user_message(agent: &std::sync::Arc<epsilon_core::Agent>, text: &str) {
+    agent
+        .session_store()
+        .expect("a store is attached")
+        .lock()
+        .expect("unlocked")
+        .append(epsilon_contracts::session_entry::EntryKind::Message {
+            message: epsilon_contracts::message::Message::User(
+                epsilon_contracts::message::UserMessage {
+                    id: "m-exp".into(),
+                    timestamp_ms: 0,
+                    content: vec![epsilon_contracts::content::UserContent::Text {
+                        text: text.into(),
+                    }],
+                },
+            ),
+            api_request_sha256: None,
+        })
+        .expect("the message lands");
+}
+
+/// `/export` infers format and destination (P-078).
+///
+/// Bare writes HTML to the default exports dir; `json` writes JSON;
+/// a `.jsonl` path infers the JSON writer. The writers themselves were
+/// pinned; the inference and the destination were pinned by source only.
+#[test]
+fn export_bare_defaults_to_html_in_exports() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    push_user_message(&agent, "export me");
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/export").expect("/export parses"),
+    );
+
+    let exports = dir.path().join(".epsilon").join("exports");
+    let html: Vec<_> = std::fs::read_dir(&exports)
+        .expect("exports dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "html"))
+        .collect();
+    assert_eq!(
+        html.len(),
+        1,
+        "bare /export must write one default HTML file; found {html:?}"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("exported html")),
+        "and report it: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
+
+/// `/export json` and a `.jsonl` path both reach the JSON writer (P-078).
+#[test]
+fn export_json_fmt_and_jsonl_suffix() {
+    let (mut app, agent, _rx, dir) = test_app_with_store();
+    push_user_message(&agent, "export me");
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/export json").expect("/export parses"),
+    );
+    let exports = dir.path().join(".epsilon").join("exports");
+    assert!(
+        std::fs::read_dir(&exports)
+            .expect("exports dir")
+            .filter_map(Result::ok)
+            .any(|e| e.path().extension().is_some_and(|x| x == "json")),
+        "json must land a default .json file"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("exported json")),
+        "and report it: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+
+    app.run_command(
+        &agent,
+        crate::picker::parse_command("/export out.jsonl").expect("/export parses"),
+    );
+    assert!(
+        dir.path().join("out.jsonl").exists(),
+        "a .jsonl path must infer the JSON writer to that path"
+    );
+    assert!(
+        app.ui
+            .lines()
+            .iter()
+            .any(|l| l.text.contains("exported json") && l.text.contains("out.jsonl")),
+        "and report it as JSON: {:?}",
+        app.ui.lines().iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+}
