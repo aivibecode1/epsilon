@@ -113,14 +113,14 @@ measurements taken here at all.
 | area | rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
 | Electron shell (`apps/desktop/**`) | 70 | 0 | 10 | 44 | 16 |
-| Approvals and permission presets | 14 | 3 | 9 | 2 | 0 |
+| Approvals and permission presets | 14 | 4 | 8 | 2 | 0 |
 | Transcript, streaming and tool cards | 82 | 2 | 18 | 56 | 6 |
 | Keyboard, settings, themes, locale, account, models, plugins | 68 | 4 | 9 | 50 | 5 |
 | Palette, quick open, composer, connection, design system | 54 | 2 | 14 | 33 | 5 |
 | Layout, sidebars, files tree, terminal, browser, preview, sessions | 65 | 2 | 21 | 37 | 5 |
 | Approvals, questions, schedule, jobs, goal, plan, subagents, models | 50 | 3 | 11 | 36 | 0 |
 | Un-numbered reference rows | 30 | 1 | 3 | 21 | 5 |
-| **Total** | **433** | **17** | **95** | **279** | **42** |
+| **Total** | **433** | **18** | **94** | **279** | **42** |
 
 ---
 
@@ -225,7 +225,7 @@ approval path is exercised end to end by a real faux agent in `tests/window.rs`.
 | D-081 | In the risk confirmation the safe choice is Cancel: the confirm button is disabled until an acknowledgement checkbox is ticked, and **initial focus goes to the checkbox**. | `packages/client/ui-primitives/src/RiskConfirmation.tsx:53`, `:59`, `:76` | partial | Both composers gate the raising switch on typed `yes` (`pending_preset`, next to the trust/import gates): non-`yes` cancels or repeats, so no reflexive Enter can take it — the contract without the widget. No checkbox, no focus move; a dialog remains an option, not a requirement (ADR-032 amendment) | `preset_full_access_asks_and_only_yes_switches` (TUI), `slash_preset_full_access_asks_and_only_yes_switches` (window) |
 | D-082 | Cancelling the confirmation **resets** the acknowledgement. | `packages/client/ui-permission-presets/src/client/PermissionSelect.tsx:133`, `:141` | partial | There is no persistent acknowledgement to reset: cancelling clears the pending question in both front ends (`pending_preset = None`), so a reopened switch asks fresh | Same two confirm-flow tests (both assert `no` closes and `yes` must ask again) |
 | D-083 | Selecting a preset is dispatched as a session command `/permission <preset>`, and a host that offers no `/permission` command is an error, not a silent no-op. | `packages/client/ui-permission-presets/src/client/index.ts:126`, `:130` | partial | `crates/epsilon-desktop/src/commands.rs:185`, `crates/epsilon-desktop/src/commands.rs:449-451` | `/permission` is a head the parser knows and the window does not run, so it is **refused by name** — "`/permission` — not in this window; it works in the terminal" — rather than forwarded to the model as a prompt. The reference's no-silent-no-op property holds; the capability exists under `/preset` (round 68), not `/permission`. Covered by `a_command_the_window_lacks_is_refused_and_never_sent_to_the_model`. |
-| D-084 | The session goal strip's **Clear** action calls the mutation directly, with **no confirmation dialog**; the strip hides only after the call succeeds, and a failure is announced inline. | `packages/client/ui-goal/src/client/GoalBar.tsx:81-83`, `:99`, `:139` | partial | `crates/epsilon-desktop/src/app.rs:962-971`, `crates/epsilon-desktop/src/app.rs:979-1031`, `crates/epsilon-desktop/src/app.rs:4661` | The shape matches: `goal: clear` calls the mutation with no dialog (`app.rs:1003`), a refusal is announced in the transcript (`app.rs:1030`), and the band disappears only because the cache no longer holds a goal (`app.rs:4661`). No test drives `clear` end to end through the window, so the effect is read from the source rather than exercised — hence `partial`. The evidence file flags this asymmetry as worth a deliberate decision on our side; ours currently agrees with the reference by default rather than by decision. |
+| D-084 | The session goal strip's **Clear** action calls the mutation directly, with **no confirmation dialog**; the strip hides only after the call succeeds, and a failure is announced inline. | `packages/client/ui-goal/src/client/GoalBar.tsx:81-83`, `:99`, `:139` | done | `crates/epsilon-desktop/src/app.rs` — `goal: clear` calls the mutation with no dialog, a refusal is announced in the transcript, and the band disappears because the cache no longer holds a goal | `goal_clear_clears_with_no_dialog_and_the_band_goes_with_it` (create → band cached → clear → cache empty + band gone from frame; skip-clear control) |
 ---
 
 ## C. Transcript, streaming, reasoning and tool cards (`ui-chat`, `ui-conversation`, `ui-tool`, `ui-trajectory`)
@@ -784,7 +784,7 @@ of the document**, so it lists ids rather than paraphrasing cells — the cell i
 | area | partial rows |
 |---|---|
 | Electron shell | D-001, D-021, D-030, D-031, D-045, D-058, D-061, D-062, D-064, D-066 |
-| Approvals and presets | D-073, D-074, D-075, D-076, D-080, D-081, D-082, D-083, D-084 |
+| Approvals and presets | D-073, D-074, D-075, D-076, D-080, D-081, D-082, D-083 |
 | Transcript and tool cards | C-107, C-109, C-120, C-121, C-123, C-126, C-132, C-135, C-141, C-143, C-145, C-147, C-157, C-160, C-162, C-163, C-168, C-169 |
 | Keyboard and settings | S-109, S-113, S-115, S-117, S-119, S-125, S-126, S-159, S-164 |
 | Palette and composer | P-102, P-106, P-108, P-117, P-121, P-122, P-126, P-128, P-132, P-136, P-140, P-146, P-148, P-150 |

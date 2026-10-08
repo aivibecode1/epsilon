@@ -17369,4 +17369,36 @@ mod tests {
             "names the missing piece: {said:?}"
         );
     }
+
+    /// `goal: clear` clears with no dialog and the band goes with it (D-084).
+    ///
+    /// The shape matches the reference: the mutation runs directly, the band
+    /// disappears because the cache no longer holds a goal (not because the
+    /// frame hides it), and the transcript says what happened. What was
+    /// missing was a test driving it end to end through the window.
+    #[test]
+    fn goal_clear_clears_with_no_dialog_and_the_band_goes_with_it() {
+        let (ws, _keep) = scratch_workspace("goal-clear");
+        let (session, notices) = faux_session(&ws);
+        let mut h = Harness::with_session(ws, session, notices);
+
+        h.app
+            .run_goal_command(crate::app::GoalCommand::Create, "ship it");
+        assert!(
+            h.app.goal.is_some(),
+            "the created goal must reach the band cache"
+        );
+
+        h.app.run_goal_command(crate::app::GoalCommand::Clear, "");
+        assert!(
+            h.app.goal.is_none(),
+            "clear must empty the cache the band reads"
+        );
+        let frame = h.paint();
+        assert!(
+            !frame.region("agent").join("\n").contains("Goal band"),
+            "and the band must be gone from the frame.\n{}",
+            frame.describe()
+        );
+    }
 }
