@@ -407,7 +407,15 @@ impl App {
         } else if self.ui.running() {
             Hints::running_at(&self.keybindings, self.steer_queue_len, view)
         } else {
-            Hints::idle_at(&self.keybindings, view)
+            // P-022: a leading `!` runs a shell command, not a prompt — the
+            // mode word says so before Enter is pressed (this composer has
+            // no border to recolour; the word is the signal).
+            let mode = if self.input.starts_with('!') {
+                "bash"
+            } else {
+                "insert"
+            };
+            Hints::idle_at_with_mode(&self.keybindings, view, mode)
         };
         // Both of these used to be recomputed on every drawn frame: two
         // `env::var_os` lookups and a path re-shorten, thirty times a second, for

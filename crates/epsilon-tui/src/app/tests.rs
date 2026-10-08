@@ -7204,3 +7204,30 @@ async fn ctrl_up_jumps_to_prompts_instead_of_recalling() {
         app.input
     );
 }
+
+/// A leading `!` puts the footer into bash mode before Enter (P-022).
+///
+/// This composer has no border to recolour (a rule, not a box, by design),
+/// so the mode word is the channel that says what Enter will do. Typed
+/// through the real key path and asserted on the frame: `!` shows `bash`,
+/// backspacing it out restores `insert`.
+#[test]
+fn bang_prefix_switches_the_footer_to_bash_mode() {
+    let (mut app, agent, _rx) = test_app();
+    for c in "!ls".chars() {
+        handle_key(&mut app, &agent, key(KeyCode::Char(c)));
+    }
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("bash"),
+        "a `!` draft must announce bash mode: {frame}"
+    );
+    handle_key(&mut app, &agent, key(KeyCode::Backspace));
+    handle_key(&mut app, &agent, key(KeyCode::Backspace));
+    handle_key(&mut app, &agent, key(KeyCode::Backspace));
+    let frame = render_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        !frame.lines().any(|l| l.contains("bash")),
+        "clearing the `!` must restore insert mode: {frame}"
+    );
+}

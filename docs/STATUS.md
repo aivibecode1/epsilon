@@ -134,6 +134,7 @@ Rule: a working, verified product beats breadth. Anything cut goes in the
 | (10-08) | 99. **Full-port round 85 — two verdicts: Ctrl+Z stays undo, no accept-and-discard placeholders (P-029, P-214)** | P-029: `Ctrl+Z` is undo (tested); Pi itself prints unsupported on win32 (verified in refs) — this platform, so deliberately different. P-214: no extension-input surface exists (verified by grep); invariant 7 would refuse accept-and-discard. Pi now 58 / 146 / 23dd. Battery `port-r85` (2,248), green first time. |
 | (10-08) | 100. **Full-port round 86 — Alt+Enter queues a follow-up (P-030)** | `submit_editor` takes a follow-up flag (Pi's `app.message.followUp`, `alt+enter` only); running diverts to `follow_up`, idle submits normally, every gate first. One test (real key path; notice + queue, steering untouched) with an arm-miss control. P-030 done (Pi 59 / 111). Battery `port-r86` (2,249), green first time. |
 | (10-08) | 101. **Full-port round 87 — explicit history bindings (P-211)** | Pi's `tui.editor.historyPrevious`/`historyNext` (`up`/`down`, rebindable); recall arms match ids not bare keycodes — which also un-shadows Ctrl+Up (it starved the prompt jump). Two tests (walk + empty-restore, split pinned) with a KeyCode-revert control proving the starvation. P-211 done (Pi 60 / 145). Battery `port-r87` (2,251), green first time. |
+| (10-08) | 102. **Full-port round 88 — `!` announces bash mode in the footer (P-022)** | No border to recolour by design (rule, not box), so the mode word is the signal: `bash` while the draft starts with `!` (`idle_at_with_mode`), `insert` otherwise; thinking level already rides the status mirror. One frame test (real key path; always-insert control). P-022 done (Pi 61 / 110). Committed without a full battery: the tree holds another round's uncommitted P-158/delete work (fmt leg red on those files, one of their warnings); focused test + clippy + read-only gates green on this slice. |
 
 > **A machine fault worth naming, because it nearly made me "fix" working code.** Restoring a
 > file from a `Copy-Item` backup preserved its **old timestamp**, so `cargo` decided nothing had
@@ -225,7 +226,7 @@ inventories are inventories.
 
 | Matrix | Rows | done | partial | missing | deliberately different |
 |---|---|---|---|---|---|
-| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 60 | 111 | 145 | 23 |
+| [`parity/pi-tui.md`](parity/pi-tui.md) | **339** | 61 | 110 | 145 | 23 |
 | [`parity/dsh-desktop.md`](parity/dsh-desktop.md) | **433** | 20 | 92 | 279 | 42 |
 
 > **Corrected 2026-10-06 by [an independent review](reviews/2026-10-06-objective-review.md).** The

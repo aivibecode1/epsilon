@@ -134,10 +134,20 @@ impl Hints {
     /// further back is stated next; both are live in this state, and both are
     /// resolved from the table like every other hint.
     pub fn idle_at(bindings: &KeybindingsManager, view: View) -> Self {
+        Self::idle_at_with_mode(bindings, view, "insert")
+    }
+
+    /// The idle hints with an explicit mode word (P-022).
+    ///
+    /// The composer has no border by design (a rule, not a box), so Pi's
+    /// bash-mode border recolour has no border to land on here — the mode
+    /// word is the channel that says what Enter will do. `idle_at` keeps
+    /// `"insert"`; the app passes `"bash"` when the draft starts with `!`.
+    pub fn idle_at_with_mode(bindings: &KeybindingsManager, view: View, mode: &str) -> Self {
         if view.frozen {
             return Self::frozen(bindings, view);
         }
-        let mut hints = Self::at_composer(bindings, "insert");
+        let mut hints = Self::at_composer(bindings, mode);
         Self::push_transcript_keys(&mut hints, bindings);
         hints.push(bindings, "tui.input.newLine", "newline");
         hints.push(bindings, "app.palette", "palette");
